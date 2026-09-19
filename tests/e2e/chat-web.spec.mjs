@@ -85,7 +85,7 @@ test("phone: a runtime this device may only watch gets no composer, and says why
 test("desktop: both panes, a message becomes a turn from the runtime, and a refused command says so", async () => {
     const { page, errors } = await open(DESKTOP);
     await expect(page.locator(".chat-list")).toBeVisible();
-    await expect(page.locator(".chat-pick")).toBeVisible();
+    await expect(page.locator(".chat-start-box")).toBeVisible();
     await row(page, CHAT).click();
     await expect(page.locator(".chat-list")).toBeVisible();
     await expect(row(page, CHAT)).toHaveClass(/active/);
@@ -112,7 +112,7 @@ test("desktop: a runtime that lost a session's history keeps what is shown and s
     await expect(page.locator(".chat-transcript")).toContainText("Quantising the cache");
 
     await page.evaluate((k) => globalThis.__chatFake.deleteSession(k), CHAT);
-    await expect(page.locator(".chat-pick")).toBeVisible();
+    await expect(page.locator(".chat-start-box")).toBeVisible();
     await expect(row(page, CHAT)).toHaveCount(0);
     await expect(page.locator(".chat-notice")).toContainText("deleted");
     await page.close();
@@ -185,18 +185,22 @@ test("a reload keeps the open session", async () => {
     await page.close();
 });
 
-test("phone: starting a chat from the list, and the form says what it cannot do", async () => {
+test("phone: starting a chat from the list, and the start page asks only what it must", async () => {
     const { page, errors } = await open(PHONE);
-    // `+` is one button per kind when more than one runtime kind can start something, so it opens a menu here.
-    await page.locator(".chat-start .hbtn").click();
-    await page.locator(".menu-item", { hasText: "New chat" }).click();
+    // The compose button opens the start page, on Agent: a run on a page is what this page is for.
+    await page.locator(".chat-start").click();
+    const box = page.locator(".chat-start-box textarea");
+    await expect(box).toBeFocused();
+    await expect(page.getByRole("radio", { name: "Agent" })).toHaveAttribute("aria-checked", "true");
+    await page.getByRole("radio", { name: "Chat" }).click();
 
     // One runtime can hold a chat here — the lab box has `agent` and no `chat`, the old Mac is offline — so there is
-    // nothing to choose between and the form does not ask.
-    await expect(page.locator('[data-field="runtime"]')).toHaveCount(0);
+    // nothing to choose between and the page does not ask; a chat has no "where" either.
+    await expect(page.locator(".chat-pick-rt")).toHaveCount(0);
+    await expect(page.locator(".chat-pick-where")).toHaveCount(0);
 
-    await page.locator('[data-field="text"] textarea').fill("what is a shared worker?");
-    await page.locator(".chat-new-foot .btn").click();
+    await box.fill("what is a shared worker?");
+    await box.press("Enter");
 
     // The page opens the session the runtime answered with, and the transcript is the runtime's, not the form's.
     await expect(page).toHaveURL(/#s=laptop%3A/);
@@ -205,23 +209,28 @@ test("phone: starting a chat from the list, and the form says what it cannot do"
     await page.close();
 });
 
-test("desktop: an agent run picks a tab, or a new one, and is started on the runtime that has tabs", async () => {
+test("desktop: with nothing open the page is a start box; an agent run picks a tab, or a new one", async () => {
     const { page, errors } = await open(DESKTOP);
-    await page.locator(".chat-start .hbtn").click();
-    await page.locator(".menu-item", { hasText: "New agent run" }).click();
+    // No "Pick a session.": the empty page is somewhere to start the next one.
+    await expect(page.locator(".chat-pick")).toHaveCount(0);
+    const box = page.locator(".chat-start-box textarea");
+    await expect(box).toBeVisible();
 
     // The tab picker is filled from the runtime's own `tabs.list`, so the titles are the runtime's.
-    await expect(page.locator('[data-field="tab"] option').first()).toHaveText("The front page");
+    const where = page.locator(".chat-pick-where");
+    await expect(where.locator("option").first()).toHaveText("The front page");
+    // Choosing a new tab adds a URL box, because a tab that does not exist has no title to choose.
+    await where.selectOption("blank");
+    await expect(page.locator(".chat-pick-url")).toBeVisible();
 
-    // Choosing a new tab swaps the picker for a URL, because a tab that does not exist has no title to choose.
-    await page.locator('[data-field="where"] select').selectOption("blank");
-    await expect(page.locator('[data-field="tab"]')).toHaveCount(0);
-    await expect(page.locator('[data-field="page"] input')).toBeVisible();
-
-    await page.locator('[data-field="text"] textarea').fill("summarise the front page");
-    await page.locator(".chat-new-foot .btn").click();
+    await box.fill("summarise the front page");
+    await box.press("Enter");
     await expect(page).toHaveURL(/#s=laptop%3A/);
     await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "agent.start", task: "summarise the front page", target: { kind: "blank" } });
+
+    // The compose button brings it back from an open session.
+    await page.locator(".chat-list .chat-start").click();
+    await expect(page.locator(".chat-start-box textarea")).toBeFocused();
     expect(errors).toEqual([]);
     await page.close();
 });

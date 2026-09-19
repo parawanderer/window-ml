@@ -248,20 +248,25 @@ core asks the platform rather than inferring it from the runtime.
 
 ## Starting a session from the page
 
-The list header's `+` (`src/chat/new-session.tsx`). Until it, every session in the list had been started somewhere
-else — a console call, a page script, the HUD — and the page could only answer what already existed.
+The START PAGE (`src/chat/start-page.tsx`) is what the page shows with nothing open, and what the compose button in
+the list header and on the rail opens: one pill to type in, Gemini's empty screen without the greeting, because this
+is a brainstorming tool and the first thing on it should be somewhere to put a thought. It replaced "Pick a
+session." and a separate start form. Agent is the default kind; a Chat/Agent switch appears when some runtime offers
+both. The pill's row holds what a start needs: where an agent runs (`useTargetPick`'s `inline` form: an open tab by
+title, or a new tab with an optional URL) and, with more than one, which runtime. Enter starts; what starts is saved
+(the start commands save unless told `ephemeral`), so it is in the list the moment the runtime answers. A model
+picker waits on a `models.list` contract command, which does not exist yet.
 
-It is rendered by capability like everything else here: a runtime offers "new chat" only where
-`capabilities.chat` says it can, "new agent run" only where `capabilities.agent` does, and the tab picker only
-where `capabilities.tabs` does, with `mayCommand` deciding whether this client may ask at all. A phone talking to
-a headless box gets a chat form and no tabs, and this file does not know what a box is. When only one runtime can
-hold the kind being started, the form does not ask which; when only one KIND can be started, `+` is that kind
-rather than a menu of one.
+It is rendered by capability like everything else here: a runtime offers "chat" only where `capabilities.chat` says
+it can, "agent" only where `capabilities.agent` does, and the tab picker only where `capabilities.tabs` does, with
+`mayCommand` deciding whether this client may ask at all. A phone talking to a headless box gets a chat and no tabs,
+and this file does not know what a box is. When no runtime can start anything, the page falls back to "Pick a
+session."
 
-**The form is deliberately not in the URL**, unlike the open session. It holds what someone is part way through
+**The start page is deliberately not in the URL**, unlike the open session. It holds what someone is part way through
 typing, and a link to a half-written message is not a thing to share or to reload into.
 
-**A refusal leaves the form standing, with the text still in it.** The store already raises the failure as a
+**A refusal leaves the start page standing, with the text still in it.** The store already raises the failure as a
 notice, so the person changes the target or the wording and presses start again, rather than retyping a task
 because a tab had closed.
 
@@ -361,7 +366,7 @@ run has nowhere to live. It is also exactly when `session.send` would end at a c
 the composer rather than sitting beside it: two ways to continue one run is one too many, and one of them would
 always fail.
 
-The WHERE picker is one component (`useTargetPick`), shared with the start form. Resuming is a navigation from the
+The WHERE picker is one component (`useTargetPick`), shared with the start page. Resuming is a navigation from the
 agent's side, so offering it a different set of places to go than a fresh run would be a difference with nothing
 behind it. The form has no message box, because resuming takes no turn, and it says what the resume will LOSE
 before it happens rather than only reporting it in the transcript afterwards — a person deciding where to resume

@@ -104,7 +104,7 @@ html, body, #root { height: 100%; }
 
 /* STARTING A SESSION: the list header's `+` and the form behind it (src/chat/new-session.tsx). The form takes the
    main pane on a wide screen and the whole width on a phone, so it is the same component either way. */
-.chat-start .hbtn { font-size: 1.25em; line-height: 1; min-width: 30px; min-height: 30px; }
+.chat-start.hbtn { font-size: 1.25em; line-height: 1; min-width: 30px; min-height: 30px; }
 .chat-new-body { display: flex; flex-direction: column; gap: 12px; padding: 14px; overflow: auto; }
 /* One labelled control per row: the label above its field, so a long tab title has the full width to itself. */
 .chat-new-field { display: flex; flex-direction: column; gap: 4px; font-size: .92em; color: var(--fg-dim); }
@@ -129,7 +129,7 @@ html, body, #root { height: 100%; }
 .chat.narrow .composer { padding-bottom: calc(8px + env(safe-area-inset-bottom)); }
 .chat.narrow .cbtn { min-width: 40px; min-height: 40px; }
 .chat.narrow .appr-btn { min-height: 40px; }
-.chat.narrow .chat-start .hbtn { min-width: 40px; min-height: 40px; }
+.chat.narrow .chat-start.hbtn { min-width: 40px; min-height: 40px; }
 .chat.narrow .chat-new-field > select,
 .chat.narrow .chat-new-field > input { min-height: 44px; }
 
@@ -726,7 +726,6 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-rail .hbtn, .chat-list-foot .hbtn, .chat-list .head .hbtn, .chat-sheet-back { min-width: 36px; min-height: 36px; border-radius: 50%; }
 .chat-rail .sp { flex: 1 1 auto; }
 /* The rail's `+` menu opens to the RIGHT of the rail: anchored under it, it would open off the left edge. */
-.chat-rail .chat-start .menu { left: calc(100% + 6px); right: auto; top: 0; }
 .chat-list-foot { flex: 0 0 auto; padding: 8px 10px 12px; display: flex; }
 
 /* THE PAGE'S ONE MENU LOOK (menu.tsx): a rounded sheet, a glyph and a label per row, a tick on a toggle — Android's
@@ -814,3 +813,34 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-seg-opt:hover { color: var(--fg); }
 .chat-seg-opt.on { background: var(--panel-2); color: var(--fg); }
 .chat-seg-opt:focus-visible { outline: 2px solid var(--fg-dim); outline-offset: 1px; }
+
+/* ===================== THE START PAGE (start-page.tsx) =====================
+   What the page is with nothing open: one pill to start the next session in, a little above the middle, and nothing
+   else — no greeting, because this is a place to put a thought down, not a product saying hello. */
+.chat-home { position: relative; }
+.chat-start-page { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; padding: 16px; min-height: 0; overflow: auto; }
+.chat-start-col { width: 100%; max-width: var(--read, 42rem); margin-bottom: 12vh; }
+/* The pill: the text on top, the choices a start needs on one row under it, the send at the end of that row. */
+.chat-start-box {
+    display: flex; flex-direction: column; gap: 10px; padding: 14px 14px 10px 20px; border-radius: 26px;
+    background: var(--panel); border: 1px solid transparent;
+}
+.chat-start-box:focus-within { border-color: var(--panel-2-hover); }
+.chat-start-box textarea {
+    border: none; background: none; outline: none; resize: none; color: var(--fg); font: inherit; font-size: 1.05em;
+    line-height: 1.5; padding: 4px 0; min-height: 1.5em; max-height: 280px;
+}
+.chat-start-box textarea::placeholder { color: var(--fg-faint); }
+.chat-start-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* The row's pickers read as quiet pills, not form fields. */
+.chat-pick-where, .chat-pick-rt, .chat-pick-url {
+    font: inherit; font-size: .88em; color: var(--fg-dim); background: var(--panel-2); border: none; border-radius: 999px;
+    padding: 6px 12px; max-width: 22rem; min-width: 0;
+}
+.chat-pick-url { flex: 1 1 12rem; outline: none; color: var(--fg); }
+.chat-pick-where:hover, .chat-pick-rt:hover { color: var(--fg); }
+.chat-start-send { flex: 0 0 auto; }
+.chat-start-hint { margin-top: 10px; padding: 0 20px; color: var(--fg-faint); font-size: .84em; }
+.chat.narrow .chat-start-hint { display: none; }
+/* On a phone the way back sits over the top-left corner; the pill stays centred. */
+.chat-home-back { position: absolute; top: 10px; left: 10px; z-index: 2; }

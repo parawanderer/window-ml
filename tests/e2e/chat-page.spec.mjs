@@ -85,11 +85,10 @@ test("starting a chat from the page: the worker hosts it, with no tab behind it"
         fake.setScript([{ content: "a service worker is a background script" }]);
         const { page: chat, errors } = await openChatPage(ext);
 
-        // This browser can start both kinds, so `+` is a menu.
-        await chat.locator(".chat-start .hbtn").click();
-        await chat.locator(".menu-item", { hasText: "New chat" }).click();
-        await chat.locator('[data-field="text"] textarea').fill("what is a service worker?");
-        await chat.locator(".chat-new-foot .btn").click();
+        // With nothing open the page is the start box; this browser can start both kinds, so Chat is one click.
+        await chat.getByRole("radio", { name: "Chat" }).click();
+        await chat.locator(".chat-start-box textarea").fill("what is a service worker?");
+        await chat.locator(".chat-start-box textarea").press("Enter");
 
         // The page opens the session the worker answered with, and the answer arrives through the stream.
         await expect(chat).toHaveURL(/#s=local%3A/);

@@ -12,7 +12,7 @@ import { parseSessionKey } from "../session-host";
 import { DetailView } from "../sidebar/session-detail";
 import { Composer } from "../sidebar/composer";
 import { AgentBadge } from "../sidebar/reply";
-import { IconBench, IconCompose, IconCamera, IconChevron, IconClose, IconHistory, IconMore, IconPin, IconSave, IconSearch, IconVram } from "../sidebar/icons";
+import { IconBack, IconBench, IconCompose, IconCamera, IconChevron, IconClose, IconHistory, IconMore, IconPin, IconSave, IconSearch, IconVram } from "../sidebar/icons";
 import { services } from "../sidebar/services";
 import { ContextMenu, CursorTipLayer, Dot, Hash, Stamp, cursorTipOn } from "../sidebar/ui-kit";
 import { benchOpen, openBench, rev, sessionMap, view, type Status } from "../sidebar/store";
@@ -20,7 +20,8 @@ import { truncate } from "../sidebar/format";
 import { STEP_JUMP_EVENT } from "../sidebar/step-scroll";
 import type { ChatStore } from "./chat-store";
 import { mayCommand, speaksOurContract } from "./grants";
-import { NewSession, ResumeSession, StartMenu, resumableHere, type StartKind } from "./new-session";
+import { ResumeSession, StartMenu, resumableHere, startableOn, type StartKind } from "./new-session";
+import { StartPage } from "./start-page";
 import { ListToggle, ViewToggle, calm, codeSize, foldedRuntimes, listOpen, pane, pinned, setPane, toggleRuntime } from "./view-mode";
 import { DeleteConfirm, RowMenu } from "./row-menu";
 import { GearMenu, Rail, mainView, openSearch } from "./nav";
@@ -561,7 +562,9 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
     useMovedSince(store, key);
     useEffect(() => { if (key) store.open(key); else store.close(); }, [key]);
     useEffect(() => { if (key) { setStarting(null); mainView.value = null; } }, [key]);   // opening a session puts the form and the search page away
-    const start = (k: StartKind) => { mainView.value = null; setStarting(k); };
+    // The compose button opens the start page: it closes whatever is open, because the start page IS the empty page.
+    const start = (k: StartKind) => { mainView.value = null; setStarting(k); if (key) view.value = { name: "list" }; };
+    const canStart = startableOn(store, "agent").length > 0 || startableOn(store, "chat").length > 0;
     const gear = <GearMenu graphsRt={graphsRt} benchRt={benchOwner} />;
     const gearWide = <GearMenu graphsRt={graphsRt} benchRt={benchOwner} labelled />;
     // The sheet is always there: this page's own display settings need no runtime; the browser's settings join them
@@ -577,8 +580,19 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
             <DockFrame panels={panels} narrow={narrow}>
             {main === "search" && (!narrow || !key) ? <SearchPage store={store} narrow={narrow} />
                 : main === "settings" ? <SettingsPage browser={browserSettings} />
-                : starting ? <NewSession store={store} kind={starting} onCancel={() => setStarting(null)}
-                    onStarted={(k) => { setStarting(null); openSession(k); }} />
+                : (starting || (!key && !narrow)) && canStart ? (
+                    <main class="chat-main chat-home">
+                        {calm.value || narrow ? null : (
+                            <div class="head chat-head">
+                                <span class="sp" />
+                                <DeviceViews extras={extras} rt={graphsRt ?? benchOwner} />
+                                <ViewToggle />
+                            </div>
+                        )}
+                        {narrow ? <button class="hbtn chat-sheet-back chat-home-back" aria-label="Back to sessions" onClick={() => setStarting(null)}><IconBack /></button> : null}
+                        <StartPage store={store} initialKind={starting ?? undefined} onStarted={(k) => { setStarting(null); openSession(k); }} />
+                    </main>
+                )
                     : key ? <SessionPane store={store} sessionKey={key} narrow={narrow} />
                         : !narrow ? (
                             <main class="chat-main">
