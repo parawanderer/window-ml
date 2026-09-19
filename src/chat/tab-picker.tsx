@@ -44,7 +44,7 @@ export function TabPicker({ tabs, groups, value, onChange }: {
     const [open, setOpen] = useState(false);
     const [q, setQ] = useState("");
     const [hot, setHot] = useState(0);
-    const [at, setAt] = useState<{ left: number; top?: number; bottom?: number; width: number } | null>(null);
+    const [at, setAt] = useState<{ left: number; top?: number; bottom?: number; width: number; maxHeight: number } | null>(null);
     const btn = useRef<HTMLButtonElement>(null);
     const pop = useRef<HTMLDivElement>(null);
     const filter = useRef<HTMLInputElement>(null);
@@ -61,9 +61,14 @@ export function TabPicker({ tabs, groups, value, onChange }: {
         if (!r) return;
         const width = Math.min(460, Math.max(r.width, 320), window.innerWidth - 16);
         const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
-        // Below when there is room, otherwise above: the start box sits a little above the middle of the page.
-        const below = window.innerHeight - r.bottom;
-        setAt(below > 320 || below > r.top ? { left, top: r.bottom + 6, width } : { left, bottom: window.innerHeight - r.top + 6, width });
+        // Below when there is room, otherwise above, and never past the window's edge: the list's height is capped by
+        // the room on the side it opens, so a short window gets a shorter list that scrolls rather than one whose
+        // bottom rows are off the page. A fixed cap alone did that whenever the room was between the two numbers.
+        const GAP = 6, MARGIN = 8;
+        const below = window.innerHeight - r.bottom - GAP - MARGIN, above = r.top - GAP - MARGIN;
+        const down = below >= 320 || below >= above;
+        const maxHeight = Math.max(120, Math.min(520, down ? below : above));
+        setAt(down ? { left, top: r.bottom + GAP, width, maxHeight } : { left, bottom: window.innerHeight - r.top + GAP, width, maxHeight });
     };
     const openIt = () => { place(); setQ(""); setHot(Math.max(0, picks.indexOf(value))); setOpen(true); };
     const pick = (v: TabChoice) => { setOpen(false); onChange(v); btn.current?.focus(); };
@@ -102,7 +107,7 @@ export function TabPicker({ tabs, groups, value, onChange }: {
             </button>
             {open && at ? (
                 <div ref={pop} class="chat-menu tp-pop" role="listbox" aria-label="Where it runs" tabIndex={-1} onKeyDown={onKey}
-                    style={{ left: `${at.left}px`, width: `${at.width}px`, ...(at.top != null ? { top: `${at.top}px` } : { bottom: `${at.bottom}px` }) }}>
+                    style={{ left: `${at.left}px`, width: `${at.width}px`, maxHeight: `${at.maxHeight}px`, ...(at.top != null ? { top: `${at.top}px` } : { bottom: `${at.bottom}px` }) }}>
                     {(tabs?.length ?? 0) > FILTER_AT ? (
                         <input ref={filter} class="tp-filter" type="search" placeholder="Filter tabs" aria-label="Filter tabs"
                             value={q} onInput={(e: any) => setQ(e.target.value)} />

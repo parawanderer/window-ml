@@ -293,6 +293,23 @@ test("a transcript that arrives from a short ring pages back to its start as you
     await failing.page.close();
 });
 
+test("the tab list ends inside the window however short it is, and scrolls instead", async () => {
+    for (const height of [360, 460, 700]) {
+        const { page, errors } = await open({ width: 1000, height });
+        await page.locator(".tp-pill").click();
+        const list = page.getByRole("listbox", { name: "Where it runs" });
+        await expect(list).toBeVisible();
+        const box = await list.boundingBox();
+        expect(box.y, `top inside at ${height}px`).toBeGreaterThanOrEqual(0);
+        expect(box.y + box.height, `bottom inside at ${height}px`).toBeLessThanOrEqual(height);
+        // Whatever did not fit is still reachable: the last tab scrolls into view.
+        await list.getByRole("option", { name: /Flights AMS/ }).scrollIntoViewIfNeeded();
+        await expect(list.getByRole("option", { name: /Flights AMS/ })).toBeInViewport();
+        expect(errors).toEqual([]);
+        await page.close();
+    }
+});
+
 test("an answer that cites its own steps renders the tool's output, not a retyping of it", async () => {
     const { page, errors } = await open(DESKTOP, "#s=laptop%3A5e6f7a80");
     const answer = page.locator(".answer-rendered").first();
