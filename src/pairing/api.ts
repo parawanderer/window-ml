@@ -64,6 +64,8 @@ export interface FoundOffer {
     grantable: string[] | null;
     /** the library's own found offer, handed back to `confirmOffer` untouched; opaque to the screens */
     ref?: unknown;
+    /** found by a SCANNED QR code whose full fingerprint already matched the offer's keys: nothing to compare by eye */
+    checked?: boolean;
 }
 
 /** One line of this device's connection history, as the worker kept it ("online (2 devices)", "offline: <reason>"). */
@@ -116,6 +118,12 @@ export interface PairingApi {
     beginOffer(o: { hubUrl: string; label: string }): Promise<OfferHandle>;
     /** find an offer by the code a person typed (any case, spaces and hyphens fine) */
     lookupOffer(typed: string): Promise<FoundOffer>;
+    /**
+     * find an offer by a scanned QR code's text, checking its keys against the full fingerprint the code carried. Rejects
+     * `bad-offer` (not a pairing code), `no-offer`, or `mismatch` (the keys are not the ones the code named). Absent where
+     * this device cannot scan.
+     */
+    lookupScanned?(text: string): Promise<FoundOffer>;
     /** pair it. ONLY after the person said the fingerprints match. Rejects with a sentence when a delegate may not grant it */
     confirmOffer(found: FoundOffer, grant: Grant): Promise<void>;
 }
@@ -155,7 +163,8 @@ export function pairingProblem(err: unknown): string {
         case "not-my-agreement-key":
         case "wrong-role":
             return "The answer did not check out, so nothing was paired. Start again, and compare the fingerprints closely.";
-        case "bad-offer": return "That code holds something that is not a pairing offer.";
+        case "bad-offer": return "That is not a pairing code. On the new device, choose Join an account for one.";
+        case "mismatch": return "The QR code named other keys than the ones waiting under it: something between the two devices swapped them. Nothing was paired. On the new device, cancel and start again; if it happens again, the hub is not one to trust.";
         case "no-offer": return "No device is waiting under that code. Check it, or ask for a new one: a code lasts ten minutes.";
     }
     const msg = err instanceof Error ? err.message : String(err ?? "");
