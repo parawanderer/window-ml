@@ -163,11 +163,8 @@ test("the standalone client creates the account and pairs this browser, then lis
 });
 
 test("a session this browser had BEFORE the client paired opens on the client with its transcript", async () => {
-    // KNOWN BROKEN (reported 2026-09-19 on a real phone): the client lists the session, and opening it sits on
-    // "Loading…": nothing arrives on its stream, not even the end-of-history marker. Transport side; handed over in
-    // tmp/chat-page-client-session-loading-2026-09-19.md. `test.fail` keeps CI green and turns red the day it is fixed,
-    // which is the cue to delete this line.
-    test.fail();
+    // Reported on a real phone as "Loading…" forever: the session had finished before the client paired, so it had no
+    // key for the client and no frames on the hub. Fixed in #228 (a keyless ring ends, and the history is asked for).
     const { startFakeLlm } = await import("./fake-llm.mjs");
     const { configureExtension } = await import("./harness.mjs");
     const { serveStatic } = await import("./static-server.mjs");
