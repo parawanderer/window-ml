@@ -907,3 +907,8 @@ button.chat-page-go:hover { color: var(--fg); }
 .tp-window { padding: 10px 10px 4px; color: var(--fg-faint); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
 /* A line in place of the tabs: loading, none, or nothing matching the filter. */
 .tp-note { padding: 8px 10px; color: var(--fg-faint); font-size: 13px; }
+
+/* The full address in the host's cursor tip: broken anywhere, since a URL has no spaces to wrap at. */
+.tp-url { word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
+/* The cursor tip over the page's own popovers (the tab picker's list sits at 60). */
+.chat .cursor-tip { z-index: 70; }

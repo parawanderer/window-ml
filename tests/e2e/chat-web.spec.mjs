@@ -228,6 +228,11 @@ test("desktop: with nothing open the page is a start box; an agent run picks a t
     await expect(list.locator(".tp-rule")).toHaveCount(1);
     await expect(options).toHaveText([/New tab/, /The front page.*news\.example/, /Tables — API reference/, /Inbox \(3\)/, /Flights AMS → LIS/]);
     await expect(list.locator(".tp-window")).toHaveCount(3);
+    // The host is what fits; hovering it shows the whole address, over the list.
+    await list.getByRole("option", { name: /Flights AMS/ }).locator(".tp-host").hover();
+    const tip = page.locator(".cursor-tip");
+    await expect(tip).toHaveText("https://flights.example/search?from=AMS&to=LIS");
+    expect(await tip.evaluate((el) => Number(getComputedStyle(el).zIndex))).toBeGreaterThan(await list.evaluate((el) => Number(getComputedStyle(el).zIndex)));
     // The keyboard walks it: Escape closes without leaving the start page.
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Escape");

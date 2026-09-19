@@ -8,6 +8,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { IconCheck, IconPlus } from "../sidebar/icons";
 import { truncate } from "../sidebar/format";
+import { cursorTipOn } from "../sidebar/ui-kit";
 import { faviconSrc, tabHost, tabMatches, tabTree, type TabGroupView, type TabTreeItem, type TabView } from "./tab-tree";
 
 /** What is picked: a tab by id, or a new tab. */
@@ -131,7 +132,10 @@ export function TabPicker({ tabs, groups, value, onChange }: {
                                             onMouseEnter={() => setHot(picks.indexOf(it.tab.tabId))} onClick={() => pick(it.tab.tabId)}>
                                             <TabIcon tab={it.tab} />
                                             <span class="tp-title">{it.tab.title || tabHost(it.tab.url)}</span>
-                                            <span class="tp-host">{tabHost(it.tab.url)}</span>
+                                            {/* The whole address follows the pointer: the host is what fits, and two tabs on one
+                                                site differ only in the rest. A node, not a string, so the URL is text
+                                                rather than markdown (an underscore in a path is not emphasis). */}
+                                            <span class="tp-host" {...cursorTipOn(<span class="tp-url">{it.tab.url}</span>)}>{tabHost(it.tab.url)}</span>
                                             {it.tab.active ? <span class="tp-active" aria-label="showing in its window">●</span> : null}
                                             {value === it.tab.tabId ? <span class="tp-check" aria-hidden="true"><IconCheck /></span> : null}
                                         </button>
