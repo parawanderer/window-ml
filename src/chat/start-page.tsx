@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { ModelChoice, RuntimeInfo } from "../session-host";
 import { IconSend } from "../sidebar/icons";
 import type { ChatStore } from "./chat-store";
+import type { ChatExtras } from "./extras";
 import { mayCommand } from "./grants";
 import { ModelPicker } from "./model-picker";
 import { startableOn, useTargetPick, type StartKind } from "./new-session";
@@ -37,7 +38,7 @@ export function useHeldTrue(on: boolean, ms: number): boolean {
 }
 
 /** The start page: a pill to type in, and the choices a start needs on one row inside it. */
-export function StartPage({ store, onStarted, initialKind }: { store: ChatStore; onStarted: (key: string) => void; initialKind?: StartKind }) {
+export function StartPage({ store, onStarted, initialKind, extras }: { store: ChatStore; onStarted: (key: string) => void; initialKind?: StartKind; extras?: ChatExtras }) {
     // Kept through a reconnect like the runtime below, or the Agent/Chat switch would vanish and come back with it.
     const liveKinds = (["agent", "chat"] as const).filter((k) => startableOn(store, k).length > 0);
     const lastKinds = useRef<StartKind[]>(liveKinds);
@@ -57,7 +58,7 @@ export function StartPage({ store, onStarted, initialKind }: { store: ChatStore;
     if (live) last.current = live.id;
     const [text, setText] = useState("");
     const [busy, setBusy] = useState(false);
-    const pick = useTargetPick(store, rt, kind === "agent");
+    const pick = useTargetPick(store, rt, kind === "agent", extras);
     // The chosen runtime's models, asked once per runtime (the first answer costs it a capability probe per model,
     // cached after). "" is the runtime's own default, which sends no `model` at all, so its choice stands.
     const [models, setModels] = useState<ModelChoice[] | null>(null);

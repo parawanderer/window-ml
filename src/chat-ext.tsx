@@ -90,6 +90,10 @@ const extras: ChatExtras = {
     bench: (id) => (localRuntimes.has(id) ? <PythonBench /> : null),
     settings: (id) => (localRuntimes.has(id) ? <SettingsPane /> : null),
     housekeeping: (id) => (localRuntimes.has(id) ? <HousekeepingView /> : null),
+    // Called straight from the click, so the browser still counts it as the user's gesture and shows its prompt.
+    tabGroupsGrant: (id) => (localRuntimes.has(id) && chrome.permissions
+        ? () => chrome.permissions.request({ permissions: ["tabGroups"] }).catch(() => false)
+        : null),
 };
 
 // One port for the page's life, reconnected by `LocalHost` itself: an MV3 worker is evicted when idle, which drops

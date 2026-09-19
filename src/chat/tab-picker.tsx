@@ -8,6 +8,7 @@
 import { IconCheck, IconPlus } from "../sidebar/icons";
 import { truncate } from "../sidebar/format";
 import { cursorTipOn } from "../sidebar/ui-kit";
+import { useState } from "preact/hooks";
 import { usePickerPop } from "./pop-picker";
 import { faviconSrc, tabHost, tabMatches, tabTree, type TabGroupView, type TabTreeItem, type TabView } from "./tab-tree";
 
@@ -34,14 +35,17 @@ function TabIcon({ tab }: { tab: TabView }) {
  * `groupsHint` is said under the list when some group is only known to be together (no names or colours).
  * Keyboard: arrows move, Enter picks, Escape closes; typing goes to the filter.
  */
-export function TabPicker({ tabs, groups, value, onChange, onOpen, groupsHint }: {
+export function TabPicker({ tabs, groups, value, onChange, onOpen, groupsHint, groupsGrant }: {
     tabs: readonly TabView[] | null;
     groups?: readonly TabGroupView[];
     value: TabChoice;
     onChange: (v: TabChoice) => void;
     onOpen?: () => void;
     groupsHint?: string;
+    /** asks for group names and colours; offered as a button in the foot where this device can (see ChatExtras) */
+    groupsGrant?: (() => Promise<boolean>) | null;
 }) {
+    const [asking, setAsking] = useState(false);
     const chosen = value === "blank" ? null : tabs?.find((t) => t.tabId === value) ?? null;
     // A filtered list drops the group and window headings of what no longer shows, and keeps the rest in place.
     const treeFor = (q: string): TabTreeItem[] => tabTree((tabs ?? []).filter((t) => tabMatches(t, q)), groups);
@@ -99,7 +103,16 @@ export function TabPicker({ tabs, groups, value, onChange, onOpen, groupsHint }:
                                         </button>
                                     ))}
                     </div>
-                    {unnamed && groupsHint ? <div class="tp-foot">{groupsHint}</div> : null}
+                    {unnamed && groupsGrant ? (
+                        <div class="tp-foot">
+                            Groups show without their names and colours.{" "}
+                            <button type="button" class="chat-link" disabled={asking} onClick={() => {
+                                // Called synchronously in the click: a browser shows a permission prompt only inside one.
+                                setAsking(true);
+                                void groupsGrant().then((ok) => { setAsking(false); if (ok) onOpen?.(); });
+                            }}>{asking ? "Asking…" : "Show them"}</button>
+                        </div>
+                    ) : unnamed && groupsHint ? <div class="tp-foot">{groupsHint}</div> : null}
                 </div>
             ) : null}
         </>

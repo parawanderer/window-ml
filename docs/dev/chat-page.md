@@ -311,7 +311,10 @@ left out (absent kinds mean unknown, never "cannot chat"). Both pickers are one 
 the Commander's (A→Z, a `cloud` tag from `where`) without its ★, which writes this browser's config and has no
 meaning for another machine. The tab list is asked again each time the picker opens, keeping the old list on screen
 until the new one lands: tabs open and close while the page sits, and an icon still on its way the first time is
-there the second.
+there the second. Tab group names and colours need the optional `tabGroups` permission; where groups arrive unnamed,
+the list's foot offers "Show them" on this browser's own runtime (`ChatExtras.tabGroupsGrant`), which calls
+`chrome.permissions.request` synchronously inside that click, the only place Chrome shows the prompt. It cannot be
+asked on load. A remote runtime's list says it is granted in that browser's Settings instead.
 
 **A worker restart must not redraw the page.** The browser stops an idle worker about every 30 seconds and
 `LocalHost` reconnects in a quarter of a second, but for that moment the runtime is offline, and anything gated on

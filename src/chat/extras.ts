@@ -22,4 +22,10 @@ export interface ChatExtras {
     settings?(runtime: RuntimeId): ComponentChildren | null;
     /** The runtime's housekeeping log (what it decided on its own: evictions, sweeps, worker restarts), read-only. */
     housekeeping?(runtime: RuntimeId): ComponentChildren | null;
+    /**
+     * Ask the browser for tab group names and colours (the optional `tabGroups` permission), for the tab picker. A
+     * function, not a view: it must be CALLED inside the click that asked, the only place a browser shows its
+     * permission prompt. Resolves whether it was granted. Null for a runtime this device cannot grant for.
+     */
+    tabGroupsGrant?(runtime: RuntimeId): (() => Promise<boolean>) | null;
 }

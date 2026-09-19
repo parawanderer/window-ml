@@ -15,6 +15,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { AgentTarget, Principal, RuntimeInfo, SessionKey, SessionSummary, TabGroupInfo, TabInfo } from "../session-host";
 import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
+import type { ChatExtras } from "./extras";
 import { mayCommand } from "./grants";
 import { TabPicker } from "./tab-picker";
 
@@ -55,7 +56,7 @@ export interface TargetPick {
  * The WHERE half of both forms. A runtime with no tabs at all (a box) is never asked the question, and its form
  * offers no tab to run on: the tabs are the runtime's, so they are asked for per runtime and re-asked when it changes.
  */
-export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, enabled: boolean): TargetPick {
+export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, enabled: boolean, extras?: ChatExtras): TargetPick {
     const [where, setWhere] = useState<"tab" | "blank">("tab");
     const [tabId, setTabId] = useState<number | null>(null);
     const [url, setUrl] = useState("");
@@ -112,6 +113,7 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
             <>
                 <TabPicker tabs={tabs} groups={groups} value={where === "tab" && tabId != null ? tabId : "blank"}
                     onOpen={() => load(false)}
+                    groupsGrant={rt ? extras?.tabGroupsGrant?.(rt.id) : null}
                     groupsHint="Group names and colours need the browser's permission: Settings → Extension → Appearance → Tab group names, in the browser the tabs are in."
                     onChange={(v) => { if (v === "blank") setWhere("blank"); else { setWhere("tab"); setTabId(v); } }} />
                 {where === "blank" ? (

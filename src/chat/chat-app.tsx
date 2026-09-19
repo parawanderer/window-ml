@@ -649,7 +649,7 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
                             </div>
                         )}
                         {narrow ? <button class="hbtn chat-sheet-back chat-home-back" aria-label="Back to sessions" onClick={() => setStarting(null)}><IconBack /></button> : null}
-                        <StartPage store={store} initialKind={starting ?? undefined} onStarted={(k) => { setStarting(null); openSession(k); }} />
+                        <StartPage store={store} extras={extras} initialKind={starting ?? undefined} onStarted={(k) => { setStarting(null); openSession(k); }} />
                     </main>
                 )
                     : key ? <SessionPane store={store} sessionKey={key} narrow={narrow} />
