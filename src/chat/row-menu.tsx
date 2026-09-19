@@ -7,7 +7,7 @@
 // command, and not before.
 import { signal } from "@preact/signals";
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { RuntimeInfo, SessionSummary } from "../session-host";
+import type { ArchiveCapability, RuntimeInfo, SessionSummary } from "../session-host";
 import { IconCompose, IconMore, IconPin, IconTrash } from "../sidebar/icons";
 import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
@@ -110,6 +110,15 @@ export function RowMenu({ store, s, rt, title }: { store: ChatStore; s: SessionS
     );
 }
 
+/** What a delete does to the runtime's archive FOLDER, in words, or null when it has none. A delete reaches the folder
+ *  on its next write (the month's file is rewritten without it); while the folder needs reconnecting, that month waits.
+ *  A copy a backup took before then is out of anyone's reach, which is why this never says "everywhere". */
+export function deleteFolderNote(archive: ArchiveCapability | undefined): string | null {
+    if (archive?.folder === "connected") return "It is also removed from your archive folder.";
+    if (archive?.folder === "needs-grant") return "It is removed from your archive folder when that is reconnected.";
+    return null;
+}
+
 /** The one confirmation a delete goes through, mounted once by the page. Deleting cannot be undone — the runtime drops
  *  the transcript from its own storage — so it asks, names the session, and puts the focus on Cancel. */
 export function DeleteConfirm({ store }: { store: ChatStore }) {
@@ -126,6 +135,7 @@ export function DeleteConfirm({ store }: { store: ChatStore }) {
     }, [c]);
     if (!c) return null;
     const key = `${c.s.id.runtime}:${c.s.id.hash}`;
+    const folder = deleteFolderNote(c.rt.capabilities.archive);
     const go = async () => {
         setBusy(true);
         const r = await store.send({ type: "session.delete", session: c.s.id });
@@ -137,7 +147,7 @@ export function DeleteConfirm({ store }: { store: ChatStore }) {
         <div class="chat-dialog-back" onPointerDown={(e) => { if (e.target === e.currentTarget) confirming.value = null; }}>
             <div class="chat-dialog" role="alertdialog" aria-modal="true" aria-labelledby="chat-del-h" aria-describedby="chat-del-p">
                 <h2 id="chat-del-h">Delete this session?</h2>
-                <p id="chat-del-p"><b>{truncate(c.title, 80)}</b> and its transcript will be removed from {c.rt.name}. This cannot be undone.</p>
+                <p id="chat-del-p"><b>{truncate(c.title, 80)}</b> and its transcript will be removed from {c.rt.name}.{folder ? ` ${folder}` : ""} This cannot be undone.</p>
                 <div class="chat-dialog-actions">
                     <button ref={cancel} class="btn" onClick={() => (confirming.value = null)}>Cancel</button>
                     <button class="btn primary" disabled={busy} onClick={go}>{busy ? "Deleting…" : "Delete"}</button>

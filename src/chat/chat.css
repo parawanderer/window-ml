@@ -777,9 +777,28 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-menu-caret { display: inline-flex; color: var(--fg-faint); transition: transform .15s ease; }
 .chat-menu-caret svg { width: 12px; height: 12px; }
 .chat-menu-caret.open { transform: rotate(90deg); }
-/* A choice under an opened row, indented past the icons. */
-.chat-menu-item.chat-menu-sub { padding-left: 40px; }
-@media (prefers-reduced-motion: reduce) { .chat-menu { animation: none; } }
+/* The choices under an opening row: the list slides open on a cubic ease (grid rows 0fr→1fr, so closing animates
+   too), hung off a thin guide under the parent's icon so they read as its children. */
+.chat-menu-subs {
+    display: grid; grid-template-rows: 0fr; margin-left: 19px; border-left: 1px solid transparent;
+    transition: grid-template-rows .26s cubic-bezier(.4, 0, .2, 1), border-color .26s cubic-bezier(.4, 0, .2, 1);
+}
+.chat-menu-subs.open { grid-template-rows: 1fr; border-left-color: var(--border); }
+.chat-menu-subs-in { min-height: 0; overflow: hidden; display: flex; flex-direction: column; padding-left: 6px; }
+/* One choice: fades in and slides left to right, each a beat after the one above; closing runs them back at once. */
+.chat-menu-item.chat-menu-sub {
+    padding-left: 30px; opacity: 0; transform: translateX(-10px);
+    transition: opacity .16s cubic-bezier(.4, 0, .2, 1), transform .16s cubic-bezier(.4, 0, .2, 1), background-color .1s;
+}
+.chat-menu-subs.open .chat-menu-sub {
+    opacity: 1; transform: none;
+    transition: opacity .22s cubic-bezier(.2, .7, .3, 1) calc(60ms + var(--i, 0) * 35ms),
+        transform .22s cubic-bezier(.2, .7, .3, 1) calc(60ms + var(--i, 0) * 35ms), background-color .1s;
+}
+@media (prefers-reduced-motion: reduce) {
+    .chat-menu { animation: none; }
+    .chat-menu-subs, .chat-menu-item.chat-menu-sub, .chat-menu-subs.open .chat-menu-sub { transition: none; }
+}
 
 /* The gear's menu rises from the gear, with room for its longer rows. */
 .chat-gear { position: relative; }

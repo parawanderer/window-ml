@@ -782,14 +782,18 @@ test("this page's theme: chosen from the gear, applied at once, kept per device,
     const theme = () => page.evaluate(() => document.documentElement.getAttribute("data-theme"));
     expect(await theme()).toBe("dark");   // the system's, as the extension's Auto means
     await page.locator(".chat-list-foot .chat-gear-btn").click();
-    await page.getByRole("menuitem", { name: /Theme for this page/ }).click();
     const menu = page.getByRole("menu", { name: "Page menu" });
+    // The choices stay mounted so closing animates, but a closed list is out of reach: not in the tree, not tabbable.
+    await expect(menu.getByRole("menuitemradio")).toHaveCount(0);
+    await page.getByRole("menuitem", { name: /Theme for this page/ }).click();
     // The extension is on Auto here, so following it would mean the same as System: no fourth choice.
     await expect(menu.getByRole("menuitemradio")).toHaveText(["System", "Light", "Dark"]);
     await expect(menu.getByRole("menuitemradio", { name: "System" })).toHaveAttribute("aria-checked", "true");
     await menu.getByRole("menuitemradio", { name: "Light" }).click();
     expect(await theme()).toBe("light");
     await expect(menu.getByRole("menuitem", { name: /Theme for this page/ })).toContainText("Light");
+    await menu.getByRole("menuitem", { name: /Theme for this page/ }).click();
+    await expect(menu.getByRole("menuitemradio")).toHaveCount(0);
     await page.reload();
     await page.locator(".chat").waitFor();
     expect(await theme()).toBe("light");

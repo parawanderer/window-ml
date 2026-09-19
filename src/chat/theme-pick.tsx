@@ -34,13 +34,19 @@ export function ThemeMenu() {
                 <span class="chat-menu-val">{now}</span>
                 <span class={`chat-menu-caret${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
             </button>
-            {open ? choices.map((c) => (
-                <button key={c.id} class="chat-menu-item chat-menu-sub" role="menuitemradio" aria-checked={c.id === chosen}
-                    onClick={() => setPageThemeMode(c.id)}>
-                    <span class="chat-menu-label">{c.label}</span>
-                    {c.id === chosen ? <span class="chat-menu-on" aria-hidden="true"><IconCheck /></span> : null}
-                </button>
-            )) : null}
+            {/* Always mounted, so closing animates too; `inert` and `aria-hidden` keep a closed list out of reach. */}
+            <div class={`chat-menu-subs${open ? " open" : ""}`} role="group" aria-label="Theme for this page"
+                aria-hidden={!open} inert={!open}>
+                <div class="chat-menu-subs-in">
+                    {choices.map((c, i) => (
+                        <button key={c.id} class="chat-menu-item chat-menu-sub" role="menuitemradio" aria-checked={c.id === chosen}
+                            style={`--i:${i}`} tabIndex={open ? 0 : -1} onClick={() => setPageThemeMode(c.id)}>
+                            <span class="chat-menu-label">{c.label}</span>
+                            {c.id === chosen ? <span class="chat-menu-on" aria-hidden="true"><IconCheck /></span> : null}
+                        </button>
+                    ))}
+                </div>
+            </div>
         </>
     );
 }
