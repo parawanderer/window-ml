@@ -111,7 +111,7 @@ test("panels dock to an edge, share one as tabs, resize from their edge, and zoo
         await chat.getByRole("menuitemcheckbox", { name: /is running/ }).click();
         await gear.click();
         await chat.getByRole("menuitemcheckbox", { name: "Python bench" }).click();
-        const top = chat.locator(".chat-dock.dock-top"), bottom = chat.locator(".chat-dock.dock-bottom");
+        const top = chat.locator(".chat-dock.chat-dock-top"), bottom = chat.locator(".chat-dock.chat-dock-bottom");
         await expect(top.getByRole("tab", { name: "Resources" })).toBeVisible();
         await expect(bottom.getByRole("tab", { name: "Python bench" })).toBeVisible();
 
@@ -157,8 +157,8 @@ test("panels dock to an edge, share one as tabs, resize from their edge, and zoo
         await chat.mouse.up();
         expect(Math.round((await top.boundingBox()).height)).toBe(Math.round(h1));
         await chat.reload();
-        await expect(chat.locator(".chat-dock.dock-top .vram")).toBeVisible();
-        expect(Math.round((await chat.locator(".chat-dock.dock-top").boundingBox()).height)).toBe(Math.round(h1));
+        await expect(chat.locator(".chat-dock.chat-dock-top .vram")).toBeVisible();
+        expect(Math.round((await chat.locator(".chat-dock.chat-dock-top").boundingBox()).height)).toBe(Math.round(h1));
 
         // Maximize covers the column; Escape comes back.
         await chat.getByRole("button", { name: "Resources options" }).click();
@@ -189,8 +189,8 @@ test("the box's panel and the Python bench are on this page, because THIS browse
         await expect(box).toBeVisible();
         await box.click();
         // Docked across the top by default, with its header row in the dock's tab bar rather than under it.
-        await expect(chat.locator(".chat-dock.dock-top .vram")).toBeVisible();
-        await expect(chat.locator(".chat-dock.dock-top .dock-bar .vram-head")).toBeVisible();
+        await expect(chat.locator(".chat-dock.chat-dock-top .vram")).toBeVisible();
+        await expect(chat.locator(".chat-dock.chat-dock-top .dock-bar .vram-head")).toBeVisible();
         await gear.click();
         await chat.getByRole("menuitemcheckbox", { name: /is running/ }).click();
         await expect(chat.locator(".chat-dock")).toHaveCount(0);
@@ -214,9 +214,9 @@ test("the box's panel and the Python bench are on this page, because THIS browse
         // that is not the panel. A drawer that opened and could not run would be worse than no drawer.
         await gear.click();
         await chat.getByRole("menuitemcheckbox", { name: "Python bench" }).click();
-        await expect(chat.locator(".chat-dock.dock-bottom .bench")).toBeVisible();
+        await expect(chat.locator(".chat-dock.chat-dock-bottom .bench")).toBeVisible();
         // One bar: the bench's own controls are in the dock's tab bar.
-        await expect(chat.locator(".chat-dock.dock-bottom .dock-bar .bench-play")).toBeVisible();
+        await expect(chat.locator(".chat-dock.chat-dock-bottom .dock-bar .bench-play")).toBeVisible();
         await chat.locator('.dock-bar [aria-label="Run"]').click();
         await expect(chat.locator(".bench-outbody")).toContainText("45", { timeout: 120_000 });
         expect(errors).toEqual([]);
