@@ -95,6 +95,25 @@ the check at the top of `send` and the listener being attached — at which poin
 that has already fired and will never fire again. The flag is asked once more after everything the resolver needs is
 in place.
 
+**`HubHost.reconnecting(open, channels, self)` outlives its connection.** A phone that sleeps drops its socket every
+time, and recovering by reloading the page lost the open session, its scroll and the composer draft. The host reopens
+the connection itself (1, 2, 5, 10, then 30 s; `reconnect()` tries at once, for a page that sees `visibilitychange`
+or `online`), status `connecting` → `online` → `offline` with `retryAt`. Every open subscription is re-subscribed on
+the new connection: the keys channel from its start (few frames, and a rotation may have added a grant), the data
+channel from the hub position of the last frame received, and each session stream through a new `HubStreamAdapter`
+started from the last contract position its reader saw, so it resumes or resets by the same rules as a fresh
+subscription with `since`. Runtimes known before the drop stay listed, offline, until presence names them again.
+`new HubHost(conn, …)` still takes one open connection and ends with it. `close()` stops for good.
+
+- **Unsubscribing from an ended connection must not throw.** It did (`the connection is closed`, from the client's
+  send guard), inside `bind`, which then counted a connection that had opened as a failure while still holding it;
+  every retry after that was refused by the hub as `principal already connected`, because the principal WAS still
+  connected, by us. `HubConnection.subscribe`'s stop is a no-op once the connection has ended, and each stream's and
+  follower's stop is caught.
+- **The hub admits one connection per principal** (`crates/relay`, `principal already connected`). A clean close frees
+  it at once. A socket that died without one (a phone asleep, a network gone) is held until the hub's idle timeout
+  (60 s without a frame), so a device reconnecting after such a drop is refused until then and simply retries.
+
 ## Pairing (`pairing.ts`)
 
 Option C of window-ml-hub `docs/design/pairing.md`. The NEW principal chooses the code, so a hub cannot hand one code
