@@ -900,6 +900,8 @@ button.chat-page-go:hover { color: var(--fg); }
 .tp-rule { height: 1px; margin: 5px 6px; background: var(--border); flex: 0 0 auto; }
 /* A group's heading: its colour, its name, how many tabs it holds. A window's, when there is more than one. */
 .tp-group { display: flex; align-items: center; gap: 8px; padding: 8px 10px 3px; color: var(--fg-dim); font-size: 12.5px; }
+/* A group the runtime knows only as "together" (no name, no colour): a rule over its indented tabs. */
+.tp-group-rule { height: 1px; margin: 6px 10px 3px 30px; background: var(--border); }
 .tp-group-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
 .tp-group-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .tp-group-n { color: var(--fg-faint); font-variant-numeric: tabular-nums; }

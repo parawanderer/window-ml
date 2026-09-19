@@ -31,7 +31,9 @@ export interface TabGroupView {
 /** One line of the picker's list. */
 export type TabTreeItem =
     | { kind: "window"; windowId: number; count: number }
-    | { kind: "group"; group: TabGroupView; count: number }
+    /** `described`: the runtime reported this group (its colour, and its name if it has one). Undescribed, the page
+     *  knows only that the tabs are together — a runtime without the optional `tabGroups` grant says no more. */
+    | { kind: "group"; group: TabGroupView; count: number; described: boolean }
     | { kind: "tab"; tab: TabView; indent: boolean };
 
 /**
@@ -39,7 +41,7 @@ export type TabTreeItem =
  * above each run of a group's members, and those members indented.
  *
  * Windows keep the order their first tab arrived in; within one, tabs follow `index` where reported, else arrival.
- * A group the runtime did not describe still gets a heading (untitled), since its members are still together.
+ * A group the runtime did not describe still gets its item (drawn as a plain rule), since its members are still together.
  */
 export function tabTree(tabs: readonly TabView[], groups: readonly TabGroupView[] = []): TabTreeItem[] {
     const byId = new Map(groups.map((g) => [g.id, g]));
@@ -59,7 +61,7 @@ export function tabTree(tabs: readonly TabView[], groups: readonly TabGroupView[
             if (g == null) { out.push({ kind: "tab", tab: list[i].tab, indent: false }); continue; }
             let end = i;
             while (end + 1 < list.length && inGroup(list[end + 1].tab) === g) end++;
-            out.push({ kind: "group", group: byId.get(g) ?? { id: g }, count: end - i + 1 });
+            out.push({ kind: "group", group: byId.get(g) ?? { id: g }, count: end - i + 1, described: byId.has(g) });
             for (let j = i; j <= end; j++) out.push({ kind: "tab", tab: list[j].tab, indent: true });
             i = end;
         }

@@ -120,6 +120,9 @@ export function TabPicker({ tabs, groups, value, onChange }: {
                                 : !items.length ? <div class="tp-note">No tab matches “{truncate(q.trim(), 30)}”.</div>
                                     : items.map((it) => it.kind === "window" ? (
                                         <div key={`w${it.windowId}`} class="tp-window">Window · {it.count} tab{it.count === 1 ? "" : "s"}</div>
+                                    ) : it.kind === "group" && !it.described ? (
+                                        // Only known to be together: the runtime has no grant to name groups.
+                                        <div key={`g${it.group.id}`} class="tp-group-rule" role="separator" />
                                     ) : it.kind === "group" ? (
                                         <div key={`g${it.group.id}`} class="tp-group">
                                             <span class="tp-group-dot" style={{ background: GROUP_COLOR[it.group.color ?? ""] ?? "var(--fg-faint)" }} aria-hidden="true" />

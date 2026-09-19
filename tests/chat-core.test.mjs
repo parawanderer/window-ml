@@ -499,7 +499,10 @@ test("tabTree: browser order per window, a group's run of tabs under its heading
     const two = tabTree([t(9, 0, -1, 2), t(1, 0, -1, 1)]);
     assert.deepEqual(two.map((i) => i.kind === "window" ? `W${i.windowId}:${i.count}` : `${i.tab.tabId}`), ["W2:1", "9", "W1:1", "1"]);
     // A group the runtime did not describe still gets a heading; a runtime that reports no index keeps arrival order.
-    assert.deepEqual(tabTree([{ ...t(1), index: undefined, groupId: 4 }]).map((i) => i.kind), ["group", "tab"]);
+    const undescribed = tabTree([{ ...t(1), index: undefined, groupId: 4 }]);
+    assert.deepEqual(undescribed.map((i) => i.kind), ["group", "tab"]);
+    assert.equal(undescribed[0].described, false, "no name or colour to draw: a plain rule");
+    assert.equal(one.find((i) => i.kind === "group").described, true);
     // Only a runtime-made data URL is ever drawn: a site's own favicon URL would be a fetch to that site.
     assert.equal(faviconSrc({ ...t(1), favicon: "data:image/png;base64,AAAA" }), "data:image/png;base64,AAAA");
     assert.equal(faviconSrc({ ...t(1), favicon: "https://evil.example/f.ico" }), null);
