@@ -40,7 +40,18 @@ html, body, #root { height: 100%; }
 .chat-rt:hover .chat-rt-name { color: var(--fg); }
 .chat-rt .tri { color: var(--fg-faint); flex: 0 0 auto; display: inline-flex; transition: transform .15s ease; }
 .chat-rt .tri.open { transform: rotate(90deg); }
-@media (prefers-reduced-motion: reduce) { .chat-rt .tri { transition: none; } }
+/* A runtime's sessions under its heading: folding slides them shut on a cubic ease (grid rows 1fr→0fr) and back open,
+   and a folded group is hidden once the slide ends, so nothing clipped in it can be reached or counted. */
+.chat-group-body {
+    display: grid; grid-template-rows: 1fr; opacity: 1;
+    transition: grid-template-rows .26s cubic-bezier(.4, 0, .2, 1), opacity .2s ease, visibility 0s;
+}
+.chat-group.folded .chat-group-body {
+    grid-template-rows: 0fr; opacity: 0; visibility: hidden;
+    transition: grid-template-rows .26s cubic-bezier(.4, 0, .2, 1), opacity .2s ease, visibility 0s .26s;
+}
+.chat-group-rows { min-height: 0; overflow: hidden; }
+@media (prefers-reduced-motion: reduce) { .chat-rt .tri, .chat-group-body, .chat-group.folded .chat-group-body { transition: none; } }
 .chat-rt-name { color: var(--fg); font-weight: 600; }
 .chat-rt-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fg-faint); flex: 0 0 auto; }
 .chat-rt-dot.on { background: var(--ok); }
@@ -249,9 +260,14 @@ html, body, #root { height: 100%; }
 .chat.calm .chat-row .dot.ok { visibility: hidden; }
 .chat.calm .chat-row .agent-badge { background: transparent; color: var(--fg-faint); padding: 0; font-weight: 600; }
 .chat.calm .chat-row .time { opacity: .55; }
-/* A runtime's fold chevron: the heading is still the button, and a folded one still says what it holds ("4 sessions"),
-   which is the state the chevron was drawing a second time. */
-.chat.calm .chat-rt .tri { display: none; }
+/* A runtime's fold chevron, calm: after the name instead of before it, and only while the pointer (or focus) is on the
+   heading, so a quiet list shows no furniture but a fold is still discoverable where you would click. */
+.chat.calm .chat-rt .tri {
+    order: 1; opacity: 0;
+    transition: opacity .18s ease, transform .24s cubic-bezier(.4, 0, .2, 1);
+}
+.chat.calm .chat-rt .chat-rt-note, .chat.calm .chat-rt .chat-chip { order: 2; }
+.chat.calm .chat-rt:hover .tri, .chat.calm .chat-rt:focus-visible .tri { opacity: 1; }
 
 /* WHERE THERE IS A POINTER, the quiet things above go further: all the way out until it comes looking. This is the
    whole of the hover behaviour, in one place and behind `hover: hover`, because the same rules on a touch screen

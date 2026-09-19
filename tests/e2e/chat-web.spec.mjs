@@ -388,11 +388,26 @@ test("a citation takes you to the step on the FIRST click, not the second", asyn
 
 test("desktop: the list folds a runtime away, and marks what moved while you were elsewhere", async () => {
     const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
-    const rows = page.locator(".chat-list .chat-row");
+    // Visible rows: a folded group stays mounted so it can slide, hidden once it has.
+    const rows = page.locator(".chat-list .chat-row:visible");
     await expect(rows).toHaveCount(6);
 
-    await page.locator(".chat-rt[data-runtime='laptop']").click();
+    // Calm: the heading's chevron sits after the name and shows only while the pointer is on the heading.
+    const head = page.locator(".chat-rt[data-runtime='laptop']");
+    const tri = head.locator(".tri");
+    const opacity = () => tri.evaluate((e) => getComputedStyle(e).opacity);
+    const after = await head.evaluate((h) => h.querySelector(".tri").getBoundingClientRect().left > h.querySelector(".chat-rt-name").getBoundingClientRect().right);
+    expect(after, "the chevron follows the name").toBe(true);
+    await page.mouse.move(0, 0);
+    await expect.poll(opacity).toBe("0");
+    await head.hover();
+    await expect.poll(opacity).toBe("1");
+
+    await head.click();
     await expect(rows).toHaveCount(2);
+    await expect(tri).not.toHaveClass(/open/);
+    await page.mouse.move(0, 0);
+    await expect.poll(opacity).toBe("0");
     await expect(page.locator(".chat-rt[data-runtime='laptop']")).toHaveAttribute("aria-expanded", "false");
     // …and it is this device's choice, so it survives a reload.
     await page.reload();
