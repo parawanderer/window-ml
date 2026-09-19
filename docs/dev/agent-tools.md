@@ -330,3 +330,21 @@ turn that failed without adding a message. Always safe to offer: a call that err
 worst case is failing again. It exists because a failure is usually not about what was asked: the backend
 restarting underneath a run answered "Model not found" for a model that was serving a minute earlier and was
 listed again a minute later, and the only way forward was to retype something.
+
+## `chat_metadata`: where the user is
+
+`chat_metadata` adds one `user focus:` line when the user is NOT on the agent's own tab, read at the moment of the
+call and stamped with it (`as of 11:52:03`), since focus moves. No line means the user is on the agent's page, and the
+tool's description says so. The rules are `userFocusLine` (`src/user-focus.ts`, pure and tested); the worker reads the
+focused window and its active tab (`src/sw-focus.ts`). Setting: `agentSeesFocus`, default on, in DevTools Settings.
+
+What it may say depends on who can READ the run's results, and every agent run with a tab executes through that
+page's own `ml.createAgent`, the chat page's and the HUD's included. So every such run is told only COARSE facts: the
+chat page (reading this conversation or not), another tab, or away from the browser. Naming the other tab's site
+would hand it to the page the agent runs on, which could start a run just to ask. The FULL detail (site and title,
+never a URL, never a private window, the title de-quoted and cut to 80 characters since the site wrote it) is kept for
+a run no page can read, which today is none, and a headless agent would be.
+
+The page-hosted loop asks the worker with `USER_FOCUS_REQUEST` → `USER_FOCUS`, answered relative to `sender.tab`,
+always coarse; the background-hosted loop calls `focusLineFor` directly. Both reach the one formatter,
+`formatChatMeta` (agent-loop.ts), through `ChatMeta.userFocus`.

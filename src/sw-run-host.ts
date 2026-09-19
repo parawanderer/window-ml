@@ -20,6 +20,7 @@ import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels
 import { navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, tabPageUrl, untrackRun, deleteRun } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue } from "./sw-values";
+import { focusLineFor } from "./sw-focus";
 
 // The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
 // `seen` marks where the model's copy stopped, exactly like the main-world exec path.
@@ -650,7 +651,7 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
                     : /open-?webui|\/api\/chat\/completions/i.test(url) ? "OpenWebUI (server-side tools available)"
                     : "OpenAI-compatible";
                 const overhead = { systemTokens: est(p.systemPrompt), toolTokens: est(toolJson), backend };
-                if (!model) return { model, contextWindow: null, capabilities: null, ...overhead };
+                if (!model) return { model, contextWindow: null, capabilities: null, userFocus: await focusLineFor(runId, tabId, "coarse").catch(() => null), ...overhead };
                 const [capabilities, resident] = await Promise.all([
                     modelCapabilities(config, model).catch(() => null),
                     residentModels(config).catch(() => [] as { model?: string; name?: string; context_length?: number; size_vram?: number }[]),
@@ -662,7 +663,9 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
                 const local = capabilities !== null;   // caps came back from Ollama /api/show → resident/local
                 // The machine (devices and memory, /api/info) — asked only for a LOCAL model; null where the route is missing.
                 const capacity = local ? await fetchOllamaInfo().then((raw) => (raw ? parseInfo(raw) : null)).catch(() => null) : undefined;
-                return { model, contextWindow, capabilities, vramBytes, local, capacity, ...overhead };
+                // Coarse: the run executes through this tab's page, which reads what the tool answers.
+                const userFocus = await focusLineFor(runId, tabId, "coarse").catch(() => null);
+                return { model, contextWindow, capabilities, vramBytes, local, capacity, userFocus, ...overhead };
             },
         },
     )

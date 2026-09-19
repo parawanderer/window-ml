@@ -4218,3 +4218,23 @@ test("SECURITY (page-hosted values): a tab reads a stored value the worker discl
     await bg.send({ type: "PYTHON_EXEC", payload: table(mine.key) }, page);
     assert.deepEqual(bg.pyRuns.filter((m) => m.type === "PY_RUN").map((m) => m.tables[0].data.key), [mine.key], "only the disclosed one reached the sandbox");
 });
+
+// USER_FOCUS: chat_metadata's "user focus" line, answered relative to the SENDER's tab and always COARSE — the
+// asking page reads the answer, so it must never name the site the user has open in another tab.
+test("USER_FOCUS says where the user is relative to the sender's tab, never names another site, and honours the setting", async () => {
+    const win = { focused: true, incognito: false, tabs: [{ id: 9, active: true, url: "https://github.com/acme/secret-repo?token=T0K3N", title: "acme/secret-repo" }] };
+    const bg = loadBackground({ config: baseConfig(), focusedWindow: () => win });
+    const other = await bg.send({ type: "USER_FOCUS", payload: { hash: "abc12345" } }, { tab: { id: 7 } });
+    assert.match(other.data, /^user focus: another tab \(as of \d\d:\d\d:\d\d\)$/);
+    assert.doesNotMatch(other.data, /github|secret|T0K3N/, "no site, title or URL reaches the asking page");
+    // On the user's own tab there is nothing to say.
+    assert.equal((await bg.send({ type: "USER_FOCUS", payload: { hash: "abc12345" } }, { tab: { id: 9 } })).data, null);
+    // The chat page is named, with whether it shows this run.
+    win.tabs = [{ id: 3, active: true, url: "chrome-extension://test/chat.html#s=local%3Aabc12345", title: "window.ml sessions" }];
+    assert.match((await bg.send({ type: "USER_FOCUS", payload: { hash: "abc12345" } }, { tab: { id: 7 } })).data, /the chat page, reading this conversation/);
+    // Not a page's question: an extension page (no tab) gets nothing.
+    assert.equal((await bg.send({ type: "USER_FOCUS", payload: { hash: "abc12345" } }, {})).data, null);
+    // Off: nothing about where the user is, at all.
+    const off = loadBackground({ config: { ...baseConfig(), agentSeesFocus: false }, focusedWindow: () => win });
+    assert.equal((await off.send({ type: "USER_FOCUS", payload: { hash: "abc12345" } }, { tab: { id: 7 } })).data, null);
+});

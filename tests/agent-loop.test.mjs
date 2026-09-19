@@ -246,6 +246,19 @@ test("a meta-capability tool (chat_metadata) is answered BY THE LOOP with live t
     assert.doesNotMatch(done.result, /`look`/, "a VISION model's look inlines the image into context — NOT flagged as untracked");
 });
 
+test("chat_metadata carries the user-focus line when there is one, and says nothing about focus when there is not", async () => {
+    const run = async (userFocus) => {
+        const { deps, calls } = makeDeps({ turns: [{ content: "", tool_calls: [{ id: "m1", name: "chat_metadata", arguments: {} }] }, reply("ok")] });
+        deps.chatMeta = async () => ({ model: "qwen3", contextWindow: null, capabilities: null, userFocus });
+        await runAgentLoop("x", { tools: [{ name: "chat_metadata", capabilities: ["meta"] }] }, deps);
+        return calls.emits.find(e => e.tool === "chat_metadata" && !e.pending).result;
+    };
+    assert.match(await run("user focus: another tab (as of 11:52:03)"), /\nuser focus: another tab \(as of 11:52:03\)/);
+    // On the agent's own tab (or the setting off) the world hands back null, and no focus line appears at all:
+    // the tool's description tells the model that no line means the user is on its page.
+    assert.doesNotMatch(await run(null), /user focus/);
+});
+
 test("chat_metadata reports cumulative token SPEND + generation rate with its basis", async () => {
     const { deps, calls } = makeDeps({ turns: [
         // The chat_metadata turn carries usage WITH Ollama eval timing → cumulative spend + a tok/s rate.

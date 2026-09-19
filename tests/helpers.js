@@ -116,7 +116,7 @@ function streamResponse(lines, { status = 200 } = {}) {
 // `commandShortcut` is what chrome.commands reports as CURRENTLY bound for the HUD
 // (null = the API is unavailable, "" = the user cleared the binding); `manifestPermissions`
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
-function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB }) {
+function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow }) {
     const calls = [];
     const captures = [];        // captureVisibleTab arg lists, for screenshot tests
     const tabMessages = [];     // chrome.tabs.sendMessage arg lists, for reverse-channel tests
@@ -243,6 +243,12 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                     addListener: (fn) => { debuggerEventListeners.add(fn); },
                     removeListener: (fn) => { debuggerEventListeners.delete(fn); },
                 },
+            },
+            // The browser's focus, for chat_metadata's "user focus" line: `focusedWindow` is what getLastFocused
+            // answers (`{ focused, incognito, tabs }`); unset, no window has focus.
+            windows: {
+                getLastFocused: async () => (typeof focusedWindow === "function" ? focusedWindow() : focusedWindow) ?? { focused: false, tabs: [] },
+                update: async () => ({}),
             },
             tabs: {
                 // Records args so tests can assert the windowId; onCaptureTab (if

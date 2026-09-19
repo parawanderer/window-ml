@@ -38,6 +38,7 @@ const HANDLE_MAP: Partial<Record<PageRequestType, RelayEntry>> = {
     EMBED_REQUEST: { type: "EMBED", responseType: "EMBED_RESPONSE" },
     LIST_SERVER_TOOLS_REQUEST: { type: "LIST_SERVER_TOOLS", responseType: "LIST_SERVER_TOOLS_RESPONSE" },
     INFO_REQUEST: { type: "OLLAMA_INFO", responseType: "INFO_RESPONSE" },
+    USER_FOCUS_REQUEST: { type: "USER_FOCUS", responseType: "USER_FOCUS_RESPONSE" },
     CONFIG_REQUEST: { type: "GET_CONFIG", responseType: "CONFIG_RESPONSE" },
     INVOCATION_REQUEST: { type: "GET_INVOCATION", responseType: "INVOCATION_RESPONSE" },
     PS_REQUEST: { type: "OLLAMA_PS", responseType: "PS_RESPONSE" },
