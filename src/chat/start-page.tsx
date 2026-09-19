@@ -14,16 +14,47 @@ import type { ModelChoice, RuntimeInfo } from "../session-host";
 import { IconSend } from "../sidebar/icons";
 import type { ChatStore } from "./chat-store";
 import { mayCommand } from "./grants";
+import { ModelPicker } from "./model-picker";
 import { startableOn, useTargetPick, type StartKind } from "./new-session";
+
+/** How long a runtime that dropped away still keeps the start page drawn: the extension's worker is stopped by the
+ *  browser whenever it idles (about every 30 seconds) and is back within a second, and redrawing the page from
+ *  nothing each time read as the page reloading on its own. */
+export const START_GRACE_MS = 5000;
+
+/**
+ * `on`, held true for `ms` after it last was. For what should survive a reconnect without pretending to be up: the
+ * caller still reads the live state for anything that acts.
+ */
+export function useHeldTrue(on: boolean, ms: number): boolean {
+    const [held, setHeld] = useState(on);
+    useEffect(() => {
+        if (on) { setHeld(true); return; }
+        const t = setTimeout(() => setHeld(false), ms);
+        return () => clearTimeout(t);
+    }, [on, ms]);
+    return on || held;
+}
 
 /** The start page: a pill to type in, and the choices a start needs on one row inside it. */
 export function StartPage({ store, onStarted, initialKind }: { store: ChatStore; onStarted: (key: string) => void; initialKind?: StartKind }) {
-    const kinds = (["agent", "chat"] as const).filter((k) => startableOn(store, k).length > 0);
+    // Kept through a reconnect like the runtime below, or the Agent/Chat switch would vanish and come back with it.
+    const liveKinds = (["agent", "chat"] as const).filter((k) => startableOn(store, k).length > 0);
+    const lastKinds = useRef<StartKind[]>(liveKinds);
+    if (liveKinds.length) lastKinds.current = liveKinds;
+    const kinds = liveKinds.length ? liveKinds : lastKinds.current;
     const [kindPick, setKind] = useState<StartKind>(initialKind ?? "agent");
     const kind: StartKind = kinds.includes(kindPick) ? kindPick : kinds[0] ?? "agent";
     const runtimes = startableOn(store, kind);
     const [runtimeId, setRuntimeId] = useState("");
-    const rt: RuntimeInfo | undefined = runtimes.find((r) => r.id === runtimeId) ?? runtimes[0];
+    // The runtime last drawn is kept while it reconnects (START_GRACE_MS), so the choices below, the tab list and the
+    // models already asked for, stay as they were instead of being dropped and asked for again. It cannot start
+    // anything until it is back: `ready` reads `online`.
+    const last = useRef<string>("");
+    const live: RuntimeInfo | undefined = runtimes.find((r) => r.id === runtimeId) ?? runtimes[0];
+    const kept = useHeldTrue(!!live, START_GRACE_MS);
+    const rt: RuntimeInfo | undefined = live ?? (kept ? store.runtimes.value.find((r) => r.id === last.current) : undefined);
+    if (live) last.current = live.id;
     const [text, setText] = useState("");
     const [busy, setBusy] = useState(false);
     const pick = useTargetPick(store, rt, kind === "agent");
@@ -43,7 +74,6 @@ export function StartPage({ store, onStarted, initialKind }: { store: ChatStore;
         });
         return () => { live = false; };
     }, [rt?.id, canList]);
-    const dflt = models?.find((m) => m.default);
     const box = useRef<HTMLTextAreaElement>(null);
     useEffect(() => { box.current?.focus(); }, [kind]);
     useEffect(() => { if (initialKind) setKind(initialKind); }, [initialKind]);
@@ -56,7 +86,7 @@ export function StartPage({ store, onStarted, initialKind }: { store: ChatStore;
     }, [text]);
 
     if (!rt) return null;
-    const ready = !!text.trim() && !busy && (kind === "chat" || pick.ready);
+    const ready = !!text.trim() && !busy && rt.online && (kind === "chat" || pick.ready);
     const start = async (): Promise<void> => {
         if (!ready) return;
         setBusy(true);
@@ -86,14 +116,8 @@ export function StartPage({ store, onStarted, initialKind }: { store: ChatStore;
                             </div>
                         ) : null}
                         {pick.inline}
-                        {models && models.length ? (
-                            <select class="chat-pick-rt chat-pick-model" aria-label="Model" value={model} onChange={(e: any) => setModel(e.target.value)}>
-                                {/* The runtime's default, by name when it is in the list: it may not be (filtered out, or
-                                    gone from the server), and then it is just "Default" and no model is sent. */}
-                                <option value="">{dflt ? `Default · ${dflt.id}` : "Default"}</option>
-                                {models.filter((m) => !m.default).map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
-                            </select>
-                        ) : null}
+                        {models && models.length ? <ModelPicker models={models} value={model} onChange={setModel} /> : null}
+                        {!rt.online ? <span class="chat-start-wait">Reconnecting…</span> : null}
                         {runtimes.length > 1 ? (
                             <select class="chat-pick-rt" aria-label="Runtime" value={rt.id} onChange={(e: any) => setRuntimeId(e.target.value)}>
                                 {runtimes.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}

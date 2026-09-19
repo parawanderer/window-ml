@@ -44,3 +44,17 @@ test("the strip order: the focused window first, then windows as met, each by in
     assert.deepEqual(stripOrder(tabs, 20).map((t) => t.id), [2, 5, 3, 1, 4]);
     assert.deepEqual(stripOrder(tabs).map((t) => t.id), [3, 1, 2, 5, 4], "no focused window known: the order windows were met");
 });
+
+test("the default fetch is called as the browser's own, not as a method of the cache", async () => {
+    // A browser's fetch throws "Illegal invocation" when called with any `this` but the global. Stored bare and called
+    // as `this.fetchImpl(url)`, every icon came back null in the real worker while every test passing its own fetch
+    // was green.
+    const real = globalThis.fetch;
+    globalThis.fetch = function (url) {
+        if (this !== undefined && this !== globalThis) throw new TypeError("Illegal invocation");
+        return Promise.resolve(reply([1, 2, 3]));
+    };
+    try {
+        assert.equal(await new FaviconCache().icon("https://site.example/favicon.ico"), "data:image/png;base64,AQID");
+    } finally { globalThis.fetch = real; }
+});

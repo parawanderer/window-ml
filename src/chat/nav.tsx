@@ -91,7 +91,7 @@ export function GearMenu({ graphsRt, benchRt, labelled }: {
             ) : null}
             {/* Named where there is room for a word (the open list's foot), a glyph alone on the rail. */}
             <button class={`${labelled ? "chat-gear-wide" : "tt hbtn"} chat-gear-btn${open ? " on" : ""}`} aria-label="Page menu" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-                <IconGear />{labelled ? <span>Settings</span> : <span class="tt-pop" role="tooltip">Settings: how this page reads, this browser's views</span>}
+                <IconGear />{labelled ? <span>Views &amp; settings</span> : <span class="tt-pop" role="tooltip">Views &amp; settings</span>}
             </button>
         </div>
     );

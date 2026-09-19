@@ -166,7 +166,7 @@ browser. Nothing new decides a gate, starts a loop or builds a request.
 | `session.continue` | only a `capped` session, through the page |
 | `session.delete` | refused while running; forgets the stored chat (`ml_session_<hash>`), the resumable snapshot and pointer store, then the index row |
 | `session.rename` | `capTitle` (session-title.ts), then `renameSession`: sets `title` and `renamed`, written to the store. Empty clears both and asks for a generated title again |
-| `models.list` | `listAvailableModels` filtered by `modelFilterAllows` (the same half `LIST_MODELS` does, so a whitelisted-out cloud model never reaches a remote client), `kinds` from `modelCapabilitiesBatch` (cached for the worker's life), `default` on `config.model`. An unreachable backend answers an empty list, not an error |
+| `models.list` | `listAvailableModels` filtered by `modelFilterAllows` (the same half `LIST_MODELS` does, so a whitelisted-out cloud model never reaches a remote client), `kinds` from `modelCapabilitiesBatch` (cached for the worker's life), `default` on `config.model`, `where` (`local`/`cloud`) from Ollama's own list when the backend has one. With a filter set, `filtered: { hidden }` says that it is on and how many it hid, never the filter. An unreachable backend answers an empty list, not an error |
 | `sessions.list` / `sessions.search` / `session.unarchive` | see `docs/dev/archive.md` § Reaching archived sessions: the index and the archive merged by `lastTs`; opening an archived session brings it back whole first |
 | `session.pin` | pinning keeps the session first (`keepSession`, so the ring reaches the store), then sets `pinned` on the row, which `planEviction` never drops and a restarted worker restores. At most `MAX_PINNED` (100); unpinning leaves it saved |
 | `page.highlight` | `ML_HL_REMOTE` to the session's tab with `anyMode`, since the shell otherwise draws remote highlights only in devtools mode |
@@ -306,7 +306,19 @@ title, or a new tab with an optional URL) and, with more than one, which runtime
 (the start commands save unless told `ephemeral`), so it is in the list the moment the runtime answers. The model
 picker is the chosen runtime's `models.list`, asked once per runtime: its default first and by name ("Default ·
 qwen3:32b"), which sends no `model` so the runtime's own choice stands, and a model whose kinds include `embedding`
-left out (absent kinds mean unknown, never "cannot chat").
+left out (absent kinds mean unknown, never "cannot chat"). Both pickers are one control, `usePickerPop`
+(pop-picker.ts): a pill opening a fixed list that fits the window, a filter, arrows and Enter. The model rows are
+the Commander's (A→Z, a `cloud` tag from `where`) without its ★, which writes this browser's config and has no
+meaning for another machine. The tab list is asked again each time the picker opens, keeping the old list on screen
+until the new one lands: tabs open and close while the page sits, and an icon still on its way the first time is
+there the second.
+
+**A worker restart must not redraw the page.** The browser stops an idle worker about every 30 seconds and
+`LocalHost` reconnects in a quarter of a second, but for that moment the runtime is offline, and anything gated on
+`online` unmounted and came back: the start page traded for "Pick a session." and back (typed text lost, models asked
+for again), the Extension settings tab gone. The start page holds its runtime, kinds and lists for `START_GRACE_MS`
+(`useHeldTrue`) and only disables sending ("Reconnecting…"); settings are not gated on `online` at all, since they
+read this browser's storage and need no worker.
 
 **Rename** (the row's `⋮`, `RenameDialog` in row-menu.tsx) sends `session.rename`; the title is the runtime's, so the
 row changes when its upsert arrives, and an empty name hands naming back to the model, which the dialog says.
@@ -639,9 +651,12 @@ has an ✕ that arrives with the pointer.
 of the prose, and the bench, built for the panel's 12px base, inherited the page's 15px and came out a size and a half
 too big. The extension's "Panel font size" sizes the DevTools panel and the overlay, never this page, and says so.
 
-**Settings** open as a SHEET in the main pane, always, because the page's own display settings need no runtime. Two
-tabs: "This page" (device preferences) and "Extension" (the extension's configuration, only where a runtime reports
-`localSettings`). The sheet's head is `SheetHead`: the title with a round back button hanging in the gutter. Settings
+**Settings** open as a SHEET in the main pane, always, because the page's own display settings need no runtime. Its
+tabs: "This page" (device preferences), "Runtimes" (each runtime's facts, models and storage, read-only, over the
+contract), "Extension" (the extension's configuration, only where a runtime reports `localSettings`) and
+"Housekeeping" (the DevTools panel's housekeeping log, through `ChatExtras.housekeeping`, extension build only). The
+gear that opens it reads "Views & settings", because its menu also holds the view toggles and an item called
+"Settings" inside a button called "Settings" read as a loop. The sheet's head is `SheetHead`: the title with a round back button hanging in the gutter. Settings
 open as a SHEET in the main pane, the search page's shape (`settings-page.tsx`: one column, a title, a
 back arrow, Escape from anywhere via `useEscapeCloses`): the extension's own settings view (`settings.tsx`, the DevTools panel's), supplied
 through `ChatExtras.settings` and offered where the runtime reports `localSettings` — so only the extension build

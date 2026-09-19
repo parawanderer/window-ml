@@ -863,6 +863,11 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-pick-url { flex: 1 1 12rem; outline: none; color: var(--fg); }
 .chat-pick-rt:hover { color: var(--fg); }
 .chat-start-send { flex: 0 0 auto; }
+/* Settings → Housekeeping: the log's output cell fills a fixed-height box, as it fills the DevTools view. */
+.chat-set-hk { display: flex; flex-direction: column; height: min(640px, calc(100vh - 220px)); min-height: 240px; }
+.chat-set-hk .hk-view { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; font-size: var(--panel-fs); }
+/* Said in the start pill's row while its runtime reconnects (the worker restarting): the form stays, sending waits. */
+.chat-start-wait { color: var(--fg-faint); font-size: .85em; white-space: nowrap; }
 .chat-start-hint { margin-top: 10px; padding: 0 20px; color: var(--fg-faint); font-size: .84em; }
 .chat.narrow .chat-start-hint { display: none; }
 /* On a phone the way back sits over the top-left corner; the pill stays centred. */
@@ -897,7 +902,7 @@ button.chat-page-go:hover { color: var(--fg); }
     font: inherit; font-size: 13.5px; outline: none;
 }
 /* The scrolling part of the list, under New tab and the rule. */
-.tp-list { overflow-y: auto; min-height: 0; }
+.tp-list { overflow-y: auto; min-height: 36px; flex: 1 1 auto; }
 /* A row: icon, title, host, and a check on the chosen one. */
 .tp-row {
     display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; border: none; border-radius: 10px;
@@ -934,6 +939,8 @@ button.chat-page-go:hover { color: var(--fg); }
 /* A line in place of the tabs: loading, none, or nothing matching the filter. */
 .tp-note { padding: 8px 10px; color: var(--fg-faint); font-size: 13px; }
 
+/* The tab picker's foot: a sentence under the list, e.g. how to get group names and colours. */
+.tp-foot { flex: 0 1 auto; min-height: 0; overflow: hidden; margin: 4px 6px 0; padding: 8px 4px 2px; border-top: 1px solid var(--border); color: var(--fg-faint); font-size: 12px; line-height: 1.4; }
 /* The full address in the host's cursor tip: broken anywhere, since a URL has no spaces to wrap at. */
 .tp-url { word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
 /* The cursor tip over the page's own popovers (the tab picker's list sits at 60). */
@@ -969,6 +976,20 @@ button.chat-page-go:hover { color: var(--fg); }
 /* The runtime's models, one per line, the default marked. */
 .rt-models { list-style: none; margin: 0; padding: 0 12px; display: flex; flex-direction: column; gap: 6px; }
 .rt-models li { display: flex; align-items: center; gap: 8px; }
+/* The runtime's model list: a fixed height that scrolls, so a gateway's fifty models do not push Storage off the page. */
+.rt-models { max-height: 360px; overflow-y: auto; }
+/* The filter over it, inset like the list. */
+.rt-filter { margin: 0 12px 8px; width: calc(100% - 24px); }
+/* How many models, beside the heading. */
+.rt-count { margin-left: 8px; color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+/* ⓘ: the runtime's model access filter is on (what it hid is in the tip; the filter itself is never sent). */
+.rt-filtered { margin-left: 8px; color: var(--fg-faint); cursor: help; }
+.rt-filtered:hover, .rt-filtered:focus-visible { color: var(--fg); }
+/* Where a model runs, as the Commander tags it: cloud in the accent, local in green. */
+.rt-where { flex: 0 0 auto; font-size: .68em; text-transform: uppercase; letter-spacing: .04em; font-weight: 700; color: var(--accent); }
+.rt-where.local { color: var(--ok); }
+/* "No model matches". */
+.rt-none { color: var(--fg-faint); }
 /* A model's kinds (completion, tools, vision…), dim after its id. */
 .rt-kinds { color: var(--fg-faint); font-size: .88em; }
 /* The sheet itself; the Storage view inside it takes the rows' inset. */

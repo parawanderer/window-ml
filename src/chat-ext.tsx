@@ -4,6 +4,7 @@
 // It lives OUT here rather than in `src/chat/` because it is the one file of the chat page that knows about
 // `chrome`: everything under `src/chat/` must build for a phone, and `scripts/build-web.mjs` fails on a `chrome.*`
 // reference to keep it that way. The same reason `sidebar/services-ext.ts` sits beside the seam it fills.
+import { HousekeepingView } from "./sidebar/housekeeping-log";
 import { render } from "preact";
 import { useEffect } from "preact/hooks";
 import { ChatApp } from "./chat/chat-app";
@@ -88,6 +89,7 @@ const extras: ChatExtras = {
     // The bench itself, not its drawer: the page's dock is the drawer here (edge, size, zoom, close).
     bench: (id) => (localRuntimes.has(id) ? <PythonBench /> : null),
     settings: (id) => (localRuntimes.has(id) ? <SettingsPane /> : null),
+    housekeeping: (id) => (localRuntimes.has(id) ? <HousekeepingView /> : null),
 };
 
 // One port for the page's life, reconnected by `LocalHost` itself: an MV3 worker is evicted when idle, which drops

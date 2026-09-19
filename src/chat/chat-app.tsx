@@ -21,7 +21,7 @@ import { STEP_JUMP_EVENT } from "../sidebar/step-scroll";
 import type { ChatStore } from "./chat-store";
 import { mayCommand, speaksOurContract } from "./grants";
 import { ResumeSession, StartMenu, resumableHere, startableOn, type StartKind } from "./new-session";
-import { StartPage } from "./start-page";
+import { START_GRACE_MS, StartPage, useHeldTrue } from "./start-page";
 import { ListToggle, ViewToggle, calm, codeSize, foldedRuntimes, panelSize, listOpen, pane, pinned, setPane, toggleRuntime } from "./view-mode";
 import { DeleteConfirm, RenameDialog, RowMenu, isPinned } from "./row-menu";
 import { GearMenu, Rail, mainView, openSearch } from "./nav";
@@ -611,19 +611,24 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
     if (bench) panels.push({ id: "bench", title: "Python bench", icon: <IconBench />, body: bench, close: () => { benchOpen.value = false; },
         tip: `Python against ${benchOwner!.name}'s sandbox, the one a run's python_exec uses` });
     // The runtime whose settings this device may edit: one that reports `localSettings` and this device can draw.
-    const settingsRt = store.runtimes.value.find((r) => r.online && r.capabilities.localSettings && extras?.settings?.(r.id) != null);
+    // Not gated on `online`: these read and write this browser's own storage, which needs no worker, and the browser
+    // stops an idle worker every half minute, which took the Extension tab away with it.
+    const settingsRt = store.runtimes.value.find((r) => r.capabilities.localSettings && extras?.settings?.(r.id) != null);
     const main = mainView.value;
     useMovedSince(store, key);
     useEffect(() => { if (key) store.open(key); else store.close(); }, [key]);
     useEffect(() => { if (key) { setStarting(null); mainView.value = null; } }, [key]);   // opening a session puts the form and the search page away
     // The compose button opens the start page: it closes whatever is open, because the start page IS the empty page.
     const start = (k: StartKind) => { mainView.value = null; setStarting(k); if (key) view.value = { name: "list" }; };
-    const canStart = startableOn(store, "agent").length > 0 || startableOn(store, "chat").length > 0;
+    // Held through a worker restart (START_GRACE_MS): the page does not trade the start page for "Pick a session" and
+    // back each time the browser stops an idle worker.
+    const canStart = useHeldTrue(startableOn(store, "agent").length > 0 || startableOn(store, "chat").length > 0, START_GRACE_MS);
     const gear = <GearMenu graphsRt={graphsRt} benchRt={benchOwner} />;
     const gearWide = <GearMenu graphsRt={graphsRt} benchRt={benchOwner} labelled />;
     // The sheet is always there: this page's own display settings need no runtime; the browser's settings join them
     // where a runtime offers them and this device can draw them.
     const browserSettings = settingsRt ? extras?.settings?.(settingsRt.id) : null;
+    const housekeeping = settingsRt ? extras?.housekeeping?.(settingsRt.id) : null;
     return (
         <div class={`chat${narrow ? " narrow" : ""}${calm.value ? " calm" : ""}${!narrow && !listOpen.value ? " list-hidden" : ""}`}
             style={{ "--code-fs": `${codeSize.value}px`, "--panel-fs": `${panelSize.value}px` }}>
@@ -633,7 +638,7 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
             {(!narrow || (!key && !starting && !main)) ? <SessionList store={store} activeKey={key} narrow={narrow} onStart={start} gear={gear} gearWide={gearWide} /> : null}
             <DockFrame panels={panels} narrow={narrow}>
             {main === "search" && (!narrow || !key) ? <SearchPage store={store} narrow={narrow} />
-                : main === "settings" ? <SettingsPage browser={browserSettings} store={store} />
+                : main === "settings" ? <SettingsPage browser={browserSettings} housekeeping={housekeeping} store={store} />
                 : (starting || (!key && !narrow)) && canStart ? (
                     <main class="chat-main chat-home">
                         {calm.value || narrow ? null : (

@@ -11,7 +11,7 @@
 // it can, "new agent run" only where `capabilities.agent` does, and the tab picker only where `capabilities.tabs`
 // does. A phone talking to a headless box gets a chat form and no tabs, without this file knowing what a box is.
 import type { ComponentChildren } from "preact";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { AgentTarget, Principal, RuntimeInfo, SessionKey, SessionSummary, TabGroupInfo, TabInfo } from "../session-host";
 import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
@@ -62,20 +62,25 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
     const [tabs, setTabs] = useState<TabInfo[] | null>(null);
     const [groups, setGroups] = useState<TabGroupInfo[]>([]);
     const wantsTabs = enabled && !!rt?.capabilities?.tabs;
-    useEffect(() => {
+    // Asked when the runtime changes, and again each time the picker opens: tabs open and close while this page sits,
+    // and an icon that was still on its way the first time is there the second. A refresh keeps the list it has on
+    // screen until the new one lands, rather than flashing "Loading".
+    const seq = useRef(0);
+    const load = (fresh: boolean) => {
         if (!wantsTabs || !rt) { setTabs(null); return; }
-        let live = true;
-        setTabs(null);
+        const n = ++seq.current;
+        if (fresh) setTabs(null);
         void store.send({ type: "tabs.list", runtime: rt.id }, { quiet: true }).then((r) => {
-            if (!live) return;
+            if (n !== seq.current) return;
+            if (!r.ok && !fresh) return;   // a refresh that failed leaves the last good list
             const list = r.ok ? r.data.tabs : [];
             setGroups(r.ok ? r.data.groups ?? [] : []);
             setTabs(list);
             setTabId((id) => (id != null && list.some((t) => t.tabId === id) ? id : list.find((t) => t.active)?.tabId ?? list[0]?.tabId ?? null));
-            if (!list.length) setWhere("blank");
+            if (fresh && !list.length) setWhere("blank");
         });
-        return () => { live = false; };
-    }, [rt?.id, wantsTabs]);
+    };
+    useEffect(() => { load(true); return () => { seq.current++; }; }, [rt?.id, wantsTabs]);
 
     return {
         target: () => (where === "tab" && tabId != null ? { kind: "tab", tabId } : { kind: "blank", ...(url.trim() ? { url: url.trim() } : {}) }),
@@ -106,6 +111,8 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
         inline: enabled ? (
             <>
                 <TabPicker tabs={tabs} groups={groups} value={where === "tab" && tabId != null ? tabId : "blank"}
+                    onOpen={() => load(false)}
+                    groupsHint="Group names and colours need the browser's permission: Settings → Extension → Appearance → Tab group names, in the browser the tabs are in."
                     onChange={(v) => { if (v === "blank") setWhere("blank"); else { setWhere("tab"); setTabId(v); } }} />
                 {where === "blank" ? (
                     <input class="chat-pick-url" type="url" value={url} aria-label="Page to open" placeholder="https://… (optional)"

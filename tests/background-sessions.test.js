@@ -453,7 +453,7 @@ test("models.list answers what the whitelist allows, with kinds and the default 
     const bg = loadBackground({
         config: { ...config, chatUrl: "http://host/api/chat/completions", model: "qwen3:14b", modelFilter: "^qwen" },
         onFetch: (call) => {
-            if (call.url === "http://host/api/models") return jsonResponse({ data: [{ id: "qwen3:14b" }, { id: "gpt-4o" }, { id: "qwen2.5vl:7b" }] });
+            if (call.url === "http://host/api/models") return jsonResponse({ data: [{ id: "qwen3:14b", owned_by: "ollama" }, { id: "gpt-4o", owned_by: "openai" }, { id: "qwen2.5vl:7b", owned_by: "ollama" }] });
             if (call.url.endsWith("/api/show")) return jsonResponse({ capabilities: call.body?.model === "qwen2.5vl:7b" ? ["completion", "vision"] : ["completion", "tools"] });
             return jsonResponse({});
         },
@@ -463,9 +463,10 @@ test("models.list answers what the whitelist allows, with kinds and the default 
     let reply;
     for (let i = 0; i < 100 && !reply; i++) { await new Promise((r) => setTimeout(r, 10)); reply = page.port.messages.find((m) => m.type === "result" && m.id === 1); }
     assert.deepEqual(reply.result, { ok: true, data: { models: [
-        { id: "qwen3:14b", kinds: ["completion", "tools"], default: true },
-        { id: "qwen2.5vl:7b", kinds: ["completion", "vision"] },
-    ] } }, "the cloud model the whitelist excludes never reaches the contract either");
+        { id: "qwen3:14b", kinds: ["completion", "tools"], default: true, where: "local" },
+        { id: "qwen2.5vl:7b", kinds: ["completion", "vision"], where: "local" },
+    ], filtered: { hidden: 1 } } }, "the cloud model the whitelist excludes never reaches the contract either; that a filter hid one does");
+    assert.ok(!JSON.stringify(reply).includes("^qwen"), "the filter itself is never sent");
 });
 
 test("the storage history is recorded at startup, answered over the contract, and refused to a page", T, async () => {

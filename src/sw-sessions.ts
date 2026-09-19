@@ -200,12 +200,19 @@ export function configureSessionCommands(run: RunDeps): void {
         renameSession,
         ...(sessionStore ? { storageReport } : {}),
         listModels: async () => {
-            const [{ ids }, cfg] = await Promise.all([listAvailableModels(), getConfig()]);
+            const [{ ids, ollamaModels }, cfg] = await Promise.all([listAvailableModels(), getConfig()]);
             const allowed = ids.filter((m) => modelFilterAllows(m, cfg.modelFilter));
+            // Ollama's own list says which are local; without it (a backend that is not Ollama-backed) nothing is said.
+            const local = ollamaModels ? new Set(ollamaModels) : null;
             // Kinds cost an /api/show per model, cached for the worker's life: what lets a picker leave out an
             // embedding model someone could not chat with.
             const { caps } = await modelCapabilitiesBatch(cfg, allowed).catch(() => ({ caps: {} as Record<string, string[] | null> }));
-            return allowed.map((id) => ({ id, ...(caps[id] ? { kinds: caps[id]! } : {}), ...(id === cfg.model ? { default: true as const } : {}) }));
+            const models = allowed.map((id) => ({
+                id, ...(caps[id] ? { kinds: caps[id]! } : {}), ...(id === cfg.model ? { default: true as const } : {}),
+                ...(local ? { where: local.has(id) ? "local" as const : "cloud" as const } : {}),
+            }));
+            // That a filter is on, and how much it hid: never the filter itself (modelFilter stays unreadable).
+            return cfg.modelFilter.trim() ? { models, filtered: { hidden: ids.length - allowed.length } } : models;
         },
         startChat: (opts) => startBackgroundChat(opts),
         startAgent: async (tabId, opts) => {

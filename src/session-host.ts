@@ -606,6 +606,8 @@ export interface ModelChoice {
     id: string;
     kinds?: string[];
     default?: true;
+    /** where it runs: on the runtime's own Ollama, or a cloud model its backend passes through. Absent: not known */
+    where?: "local" | "cloud";
 }
 
 /** What a successful command returns, by type. */
@@ -625,7 +627,9 @@ export interface CommandResultData {
      * marks the one a start command gets when it names no model. Empty when the backend could not be reached: a
      * picker then shows the default and sends no `model`.
      */
-    "models.list": { models: ModelChoice[] };
+    /** `filtered`: the runtime's model access filter is on and hid `hidden` of its backend's models. Only that it is
+     *  on and how many, never the filter itself, which no client reads. */
+    "models.list": { models: ModelChoice[]; filtered?: { hidden: number } };
     /** `unsupported` from a runtime that saves nothing. Sizes are serialized bytes, the measure the budget uses. */
     "storage.stats": StorageReport;
     /** `more`: another page exists below this one */

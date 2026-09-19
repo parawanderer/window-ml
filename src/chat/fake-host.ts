@@ -132,10 +132,13 @@ export class FakeHost implements SessionHost {
     ringLimit?: number;
     /** What `models.list` answers, on every runtime. */
     models: ModelChoice[] = [
-        { id: "qwen3:32b", kinds: ["completion", "tools", "thinking"], default: true },
-        { id: "gemma3:27b", kinds: ["completion", "vision"] },
-        { id: "nomic-embed-text", kinds: ["embedding"] },
+        { id: "qwen3:32b", kinds: ["completion", "tools", "thinking"], default: true, where: "local" },
+        { id: "gemma3:27b", kinds: ["completion", "vision"], where: "local" },
+        { id: "nomic-embed-text", kinds: ["embedding"], where: "local" },
+        { id: "litellm.google/gemini-flash-latest", where: "cloud" },
     ];
+    /** The model access filter's effect, as `models.list` reports it; null for no filter. */
+    modelsFiltered: { hidden: number } | null = { hidden: 2 };
 
     /** A short ring WITHOUT the session's start, as an older runtime would send it, to exercise the fallback. */
     ringDropsStart?: boolean;
@@ -361,7 +364,7 @@ export class FakeHost implements SessionHost {
                 }));
             }
             case "models.list":
-                return ok({ models: this.models });
+                return ok({ models: this.models, ...(this.modelsFiltered ? { filtered: this.modelsFiltered } : {}) });
             case "runtime.info":
                 return ok({ kind: rt.kind, contractVersion: rt.contractVersion, capabilities: caps, nowMs: Date.now() });
             // Starting a session: the demo world mints one and answers the first turn, so the new-session form is

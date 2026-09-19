@@ -3,6 +3,7 @@
 // app against a fake host; this one proves the wiring that only a real browser has — the port, the worker's index,
 // and a command that reaches another tab's page.
 import { test, expect } from "@playwright/test";
+import { createServer } from "node:http";
 import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
@@ -247,4 +248,59 @@ test("the box's panel and the Python bench are on this page, because THIS browse
         await expect(chat.locator(".bench-outbody")).toContainText("45", { timeout: 120_000 });
         expect(errors).toEqual([]);
     } finally { await ext.context.close(); await fake.stop(); }
+});
+
+test("the start page holds through a worker restart, and its tab list is fresh and has the sites' icons", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    // Pages with an icon: a tab's icon is what the runtime fetches and hands the picker as a data URL.
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+    const srv = createServer((q, r) => {
+        if (q.url === "/fav.png") { r.writeHead(200, { "content-type": "image/png" }); r.end(png); return; }
+        r.writeHead(200, { "content-type": "text/html" }); r.end(`<title>Page ${q.url}</title><link rel="icon" href="/fav.png"><p>hi`);
+    });
+    await new Promise((res) => srv.listen(0, "127.0.0.1", res));
+    const site = { url: `http://127.0.0.1:${srv.address().port}`, stop: () => new Promise((res) => srv.close(res)) };
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "overlay" });
+        const first = await ext.context.newPage();
+        await first.goto(site.url + "/");
+        const { page: chat, errors } = await openChatPage(ext);
+        const box = chat.locator(".chat-start-box textarea");
+        await box.fill("half a thought");
+
+        // The browser stops an idle worker about every 30 seconds and the page reconnects. The form, and what was
+        // typed, stay on screen throughout: it used to be traded for an empty page and drawn again.
+        await chat.evaluate(() => {
+            window.__gone = 0;
+            new MutationObserver(() => { if (!document.querySelector(".chat-start-box")) window.__gone++; }).observe(document.body, { subtree: true, childList: true });
+        });
+        const cdp = await ext.context.newCDPSession(chat);
+        await cdp.send("ServiceWorker.enable");
+        await cdp.send("ServiceWorker.stopAllWorkers");
+        await expect.poll(() => chat.evaluate(() => document.querySelector(".chat-start-wait") == null), { timeout: 10_000 }).toBe(true);
+        await chat.waitForTimeout(500);
+        expect(await chat.evaluate(() => window.__gone)).toBe(0);
+        await expect(box).toHaveValue("half a thought");
+
+        // A tab opened after the page is in the list the next time it opens, with the icon the runtime fetched.
+        const later = await ext.context.newPage();
+        await later.goto(site.url + "/?later");
+        await chat.bringToFront();
+        await chat.getByRole("button", { name: /^Where it runs/ }).click();
+        const list = chat.getByRole("listbox", { name: "Where it runs" });
+        await expect(list.locator(".tp-row", { hasText: "127.0.0.1" })).toHaveCount(2);
+        await expect(list.getByRole("searchbox", { name: "Filter tabs" })).toBeVisible();
+        await chat.keyboard.press("Escape");
+        await chat.getByRole("button", { name: /^Where it runs/ }).click();
+        await expect.poll(() => list.locator("img.tp-fav").count(), { timeout: 10_000 }).toBeGreaterThan(0);
+        await chat.keyboard.press("Escape");
+
+        // Settings has the housekeeping log, the one the DevTools panel shows.
+        await chat.locator(".chat-gear-btn").click();
+        await chat.getByRole("menuitem", { name: "Settings" }).click();
+        await chat.getByRole("tab", { name: "Housekeeping" }).click();
+        await expect(chat.locator(".chat-set-hk .hk-view")).toBeVisible();
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); await fake.stop(); await site.stop(); }
 });

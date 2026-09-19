@@ -161,7 +161,11 @@ test("the page's code size is a setting of its own, and the prose keeps its size
     await page.getByRole("tab", { name: "Runtimes" }).click();
     await page.getByRole("radiogroup", { name: "Runtime" }).getByRole("radio", { name: "Work laptop" }).click();
     await expect(page.locator(".rt-caps")).toContainText("Agent runs");
-    await expect(page.locator(".rt-models li")).toHaveText([/qwen3:32b\s*default/, /gemma3:27b/, /nomic-embed-text/]);
+    // The default first, then A→Z, each tagged with where it runs; an ⓘ says the model access filter is on (and how
+    // much it hid), never what the filter is.
+    await expect(page.locator(".rt-models li")).toHaveText([/qwen3:32b\s*default\s*local/, /gemma3:27b\s*local/, /litellm\.google\/gemini-flash-latest\s*cloud/, /nomic-embed-text\s*local/]);
+    await page.locator(".rt-filtered").hover();
+    await expect(page.locator(".cursor-tip")).toContainText("2 of this backend's models are hidden");
     await expect(page.getByRole("region", { name: "Storage" }).or(page.locator("section[aria-label=Storage]"))).toContainText(/keeps no saved sessions|Saved sessions/);
     await page.keyboard.press("Escape");
     expect(errors).toEqual([]);
@@ -210,7 +214,7 @@ test("phone: starting a chat from the list, and the start page asks only what it
     // One runtime can hold a chat here — the lab box has `agent` and no `chat`, the old Mac is offline — so there is
     // nothing to choose between and the page does not ask; a chat has no "where" either.
     await expect(page.getByRole("combobox", { name: "Runtime" })).toHaveCount(0);
-    await expect(page.locator(".tp-pill")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^Where it runs/ })).toHaveCount(0);
 
     await box.fill("what is a shared worker?");
     await box.press("Enter");
@@ -231,7 +235,7 @@ test("desktop: with nothing open the page is a start box; an agent run picks a t
 
     // The tab picker is filled from the runtime's own `tabs.list`, so the titles are the runtime's, and it starts on
     // the tab showing in the first window.
-    const pill = page.locator(".tp-pill");
+    const pill = page.getByRole("button", { name: /^Where it runs/ });
     await expect(pill).toContainText("The front page");
     await pill.click();
     const list = page.getByRole("listbox", { name: "Where it runs" });
@@ -266,9 +270,17 @@ test("desktop: with nothing open the page is a start box; an agent run picks a t
 
     // The model is the chosen runtime's list: its default first and by name, an embedding model left out (it
     // cannot run an agent), and picking another one sends it; the default sends no model at all.
-    const modelPick = page.getByRole("combobox", { name: "Model" });
-    await expect(modelPick.locator("option")).toHaveText(["Default · qwen3:32b", "gemma3:27b"]);
-    await modelPick.selectOption("gemma3:27b");
+    // It is the tab picker's popover: a filter, the rows A→Z, a cloud model tagged as the Commander tags it.
+    const modelPill = page.getByRole("button", { name: /^Model:/ });
+    await expect(modelPill).toContainText("Default · qwen3:32b");
+    await modelPill.click();
+    const models = page.getByRole("listbox", { name: "Model" });
+    await expect(models.getByRole("option")).toHaveText(["qwen3:32bdefault", "gemma3:27b", "litellm.google/gemini-flash-latestcloud"]);
+    await models.getByRole("searchbox", { name: "Filter models" }).fill("gem");
+    await expect(models.getByRole("option")).toHaveText(["gemma3:27b", "litellm.google/gemini-flash-latestcloud"]);
+    await page.keyboard.press("Enter");
+    await expect(models).toHaveCount(0);
+    await expect(modelPill).toContainText("gemma3:27b");
 
     await box.fill("summarise the front page");
     await box.press("Enter");
@@ -322,7 +334,7 @@ test("a transcript that arrives from a short ring pages back to its start as you
 test("the tab list ends inside the window however short it is, and scrolls instead", async () => {
     for (const height of [360, 460, 700]) {
         const { page, errors } = await open({ width: 1000, height });
-        await page.locator(".tp-pill").click();
+        await page.getByRole("button", { name: /^Where it runs/ }).click();
         const list = page.getByRole("listbox", { name: "Where it runs" });
         await expect(list).toBeVisible();
         const box = await list.boundingBox();

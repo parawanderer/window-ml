@@ -20,4 +20,6 @@ export interface ChatExtras {
     bench?(runtime: RuntimeId): ComponentChildren | null;
     /** The runtime's own settings, editable from here — offered where the runtime reports `localSettings`. */
     settings?(runtime: RuntimeId): ComponentChildren | null;
+    /** The runtime's housekeeping log (what it decided on its own: evictions, sweeps, worker restarts), read-only. */
+    housekeeping?(runtime: RuntimeId): ComponentChildren | null;
 }

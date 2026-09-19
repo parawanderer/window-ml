@@ -16,7 +16,7 @@ import { CODE_SIZES, PANEL_SIZES, codeSize, panelSize, setCodeSize, setPanelSize
 
 /** Which half of the settings is showing. Not stored: the sheet opens on this page's own, which is the half that is
  *  always there. */
-type SettingsTab = "page" | "runtimes" | "extension";
+type SettingsTab = "page" | "runtimes" | "extension" | "housekeeping";
 
 /**
  * The settings sheet: this page's display settings, and the extension's where there are any.
@@ -26,11 +26,15 @@ type SettingsTab = "page" | "runtimes" | "extension";
  * extension's configuration (the backend, the models, the key), the same view the DevTools panel shows and shared by
  * everything the extension draws.
  */
-export function SettingsPage({ browser, store }: { browser?: ComponentChildren | null; store: ChatStore }) {
+export function SettingsPage({ browser, housekeeping, store }: { browser?: ComponentChildren | null; housekeeping?: ComponentChildren | null; store: ChatStore }) {
     const [tab, setTab] = useState<SettingsTab>("page");
     useEscapeCloses();
-    const shown: SettingsTab = tab === "extension" && !browser ? "page" : tab;
-    const tabs: [SettingsTab, string][] = [["page", "This page"], ["runtimes", "Runtimes"], ...(browser ? [["extension", "Extension"] as [SettingsTab, string]] : [])];
+    const shown: SettingsTab = (tab === "extension" && !browser) || (tab === "housekeeping" && !housekeeping) ? "page" : tab;
+    const tabs: [SettingsTab, string][] = [
+        ["page", "This page"], ["runtimes", "Runtimes"],
+        ...(browser ? [["extension", "Extension"] as [SettingsTab, string]] : []),
+        ...(housekeeping ? [["housekeeping", "Housekeeping"] as [SettingsTab, string]] : []),
+    ];
     return (
         <main class="chat-main chat-settings" aria-label="Settings">
             <div class="view chat-sheet-scroll">
@@ -71,6 +75,8 @@ export function SettingsPage({ browser, store }: { browser?: ComponentChildren |
                         </section>
                     ) : shown === "runtimes" ? (
                         <RuntimeSheet store={store} />
+                    ) : shown === "housekeeping" ? (
+                        <section class="chat-set-group chat-set-hk" aria-label="Housekeeping log">{housekeeping}</section>
                     ) : (
                         <section class="chat-set-group" aria-label="Extension">
                             <p class="chat-set-lede">The extension's configuration: the same settings the DevTools panel and the toolbar popup edit.</p>

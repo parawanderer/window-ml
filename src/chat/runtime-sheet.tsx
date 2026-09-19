@@ -8,7 +8,7 @@
 import { useEffect, useState } from "preact/hooks";
 import type { ModelChoice, RuntimeCapabilities, RuntimeInfo } from "../session-host";
 import { StorageBody } from "../sidebar/storage-section";
-import { Stamp } from "../sidebar/ui-kit";
+import { Stamp, cursorTipOn } from "../sidebar/ui-kit";
 import type { ChatStore } from "./chat-store";
 import { mayCommand } from "./grants";
 
@@ -58,27 +58,56 @@ function RuntimeFacts({ rt }: { rt: RuntimeInfo }) {
     );
 }
 
+/** Past this many models the list gets a filter: a cloud gateway lists dozens. */
+const MODEL_FILTER_AT = 8;
+
 /** The models the runtime offers, from `models.list`: its default marked. Read-only here. */
 function RuntimeModels({ store, rt }: { store: ChatStore; rt: RuntimeInfo }) {
     const [models, setModels] = useState<ModelChoice[] | null | "unsupported">(null);
+    const [filtered, setFiltered] = useState<{ hidden: number } | null>(null);
+    const [q, setQ] = useState("");
     const may = rt.online && mayCommand(rt, "models.list");
     useEffect(() => {
         if (!may) return;
         let live = true;
-        void store.send({ type: "models.list", runtime: rt.id }, { quiet: true }).then((r) => { if (live) setModels(r.ok ? r.data.models : "unsupported"); });
+        void store.send({ type: "models.list", runtime: rt.id }, { quiet: true }).then((r) => {
+            if (!live) return;
+            setModels(r.ok ? r.data.models : "unsupported");
+            setFiltered(r.ok ? r.data.filtered ?? null : null);
+        });
         return () => { live = false; };
     }, [rt.id, may]);
+    const list = Array.isArray(models) ? models : [];
+    const needle = q.trim().toLowerCase();
+    // The default first, then A→Z, so a long list is scannable and the one a start uses is where the eye lands.
+    const shown = list.filter((m) => !needle || m.id.toLowerCase().includes(needle))
+        .sort((a, b) => Number(!!b.default) - Number(!!a.default) || a.id.localeCompare(b.id));
     return (
         <section class="chat-set-group" aria-label="Models">
-            <h2 class="rt-h">Models</h2>
+            <h2 class="rt-h">Models{list.length ? <span class="rt-count">{list.length}</span> : null}
+                {filtered ? (
+                    <span class="rt-filtered" tabIndex={0} aria-label="The model access filter is on"
+                        {...cursorTipOn(`The model access filter is on: ${filtered.hidden ? `${filtered.hidden} of this backend's models are hidden, and cannot be used from anywhere` : "every model on this backend passes it"}. It is set on that machine, in Settings → Models.`)}>ⓘ</span>
+                ) : null}</h2>
             {!may ? <p class="chat-set-hint rt-note">{rt.online ? "This device may not list its models." : "Offline: its models are listed when it is back."}</p>
                 : models === null ? <p class="chat-set-hint rt-note">Asking…</p>
                     : models === "unsupported" ? <p class="chat-set-hint rt-note">{rt.name} does not list its models.</p>
-                        : !models.length ? <p class="chat-set-hint rt-note">No models: its backend did not answer, or offers none.</p>
-                            : <ul class="rt-models">{models.map((m) => (
-                                <li key={m.id}><code>{m.id}</code>{m.default ? <span class="chat-chip">default</span> : null}
-                                    {m.kinds?.length ? <span class="rt-kinds">{m.kinds.join(" · ")}</span> : null}</li>
-                            ))}</ul>}
+                        : !list.length ? <p class="chat-set-hint rt-note">No models: its backend did not answer, or offers none.</p>
+                            : <>
+                                {list.length > MODEL_FILTER_AT ? (
+                                    <input class="tp-filter rt-filter" type="search" placeholder="Filter models" aria-label="Filter models"
+                                        value={q} onInput={(e: any) => setQ(e.target.value)} />
+                                ) : null}
+                                <ul class="rt-models">
+                                    {shown.map((m) => (
+                                        <li key={m.id}><code>{m.id}</code>
+                                            {m.default ? <span class="chat-chip">default</span> : null}
+                                            {m.where ? <span class={`rt-where ${m.where}`}>{m.where}</span> : null}
+                                            {m.kinds?.length ? <span class="rt-kinds">{m.kinds.join(" · ")}</span> : null}</li>
+                                    ))}
+                                    {!shown.length ? <li class="rt-none">No model matches “{q.trim()}”.</li> : null}
+                                </ul>
+                            </>}
             <p class="chat-set-hint rt-note">Which models it may use is set on that machine, in its own Settings.</p>
         </section>
     );
