@@ -121,6 +121,37 @@ shows the fingerprint, and on confirmation leaves a certificate sealed to the of
   whose printed fingerprint must equal ours and which must accept the answer we seal. `wmlbox` is built beside
   `wmlhub` from the same tag.
 
+## The runtime's side: `hub-runtime.ts` and `sw-hub.ts`
+
+This browser on a hub, once it has been paired as a RUNTIME (the keyring holds a membership whose leaf is
+`ROLE_RUNTIME`). `HubRuntime` is chrome-free and tested against the real hub with the chat page's own `HubHost`
+reading it (`tests/hub-runtime.test.mjs`); `sw-hub.ts` plugs it into the worker.
+
+- **What it publishes**: a snapshot of the index at every connection, then every index change and every session's
+  events as they happen, fed by `SessionServer.watch` whether or not a page is open. The hub never says who is
+  subscribed, so publishing is unconditional (window-ml-hub `docs/PROTOCOL.md`); a stream costs nothing until it is.
+- **Ids are rewritten at the boundary** (`rehome`). Locally every row says `runtime: "local"`; a device knows this
+  browser as its principal. Outgoing index updates, stream messages and results carry the principal; an incoming
+  command addressed to the principal runs as `"local"`. The extension's own pages, bookmarks and stored keys keep the
+  id they had.
+- **A device is a device because its chain verifies** to the account root, from presence; its key grants follow the
+  VERIFIED leaf (`view`), never what presence claims.
+- **A command must declare the scope its type needs.** The seal proves the sender holds the scope it declared; only
+  the runtime knows which scope `session.delete` needs, so `opened.scope !== COMMAND_SCOPE[type]` is `forbidden`
+  before the handler sees anything. Tested with a bare client sealing a delete under `view`.
+- **`runtime.info` over the hub never carries `localSettings`**: a remote device does not edit this runtime's
+  settings, whatever it holds.
+- **Each connection starts fresh**: new stream keys, a new snapshot, every present device granted again. Reconnects
+  back off 1, 2, 5, 10, then 30 s.
+- **Worker lifetime.** The hub pings every 20 s and websocket traffic extends a service worker's life, so a connected
+  worker stays up. When the browser stops it anyway, a one-minute alarm (created only while paired) starts it again.
+  Pairing happens in a PAGE, which holds the offering socket while the person carries the code, then sends
+  `HUB_RUNTIME { action: "paired" }`; the worker reads the keyring again.
+
+Not yet: envelope `pos` stamped from the store, keeping a session's start in the hub ring, pushing a changed
+description (clients re-ask `runtime.info`), the runtime's own revocation list (signing it, and refusing a revoked
+device), and rotating stream keys on revocation.
+
 ## Which browsers can do this at all
 
 Two of the curves arrived late and not everywhere: **Ed25519** (identities, every certificate) and **X25519**

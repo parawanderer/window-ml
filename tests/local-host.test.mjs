@@ -297,3 +297,19 @@ test("a worker that restarted serves a saved session from disk, and holds live e
     assert.equal(new Set(cursors).size, cursors.length, "and each exactly once: the ring and the disk overlap");
     assert.equal(world.streamed.find((m) => m.type === "backfilled").truncated, false, "nothing was lost: it was all on disk");
 });
+
+test("watch(): a sink hears every index change and every session's events with no page connected, until stopped", T, () => {
+    const { server } = worker(() => "spawn-1");
+    const index = [], streams = [];
+    const stop = server.watch({ index: (u) => index.push(u), stream: (hash, m) => streams.push([hash, m.type, m.cursor]) });
+    assert.equal(server.connections, 0, "nobody is watching locally: the hub publishes anyway");
+    server.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    server.ingest(step("aaaa0001", 1), { tabId: TAB, trusted: true });
+    assert.ok(index.length >= 1 && index.every((u) => u.type === "upsert" && u.session.id.hash === "aaaa0001"));
+    assert.deepEqual(streams, [["aaaa0001", "event", 1], ["aaaa0001", "event", 2]]);
+    server.pin("aaaa0001", true);
+    assert.equal(index.at(-1).session.pinned, true, "a change with no event behind it (a pin) reaches it too");
+    stop();
+    server.ingest(step("aaaa0001", 2), { tabId: TAB, trusted: true });
+    assert.equal(streams.length, 2, "nothing after the stop");
+});

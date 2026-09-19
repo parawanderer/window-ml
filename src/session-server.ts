@@ -61,9 +61,16 @@ interface Client {
  */
 const KNOWN_COMMANDS: ReadonlySet<string> = new Set(Object.keys(COMMAND_SCOPE));
 
+/** Something fed the whole index's changes and every session's stream, beside the connected pages. */
+export interface SessionSink {
+    index(update: SessionIndexUpdate): void;
+    stream(hash: string, message: SessionStreamMessage): void;
+}
+
 /** Serves a {@link SessionIndex} to connected extension pages. */
 export class SessionServer {
     private clients = new Set<Client>();
+    private sinks = new Set<SessionSink>();
 
     constructor(
         readonly index: SessionIndex,
@@ -74,6 +81,16 @@ export class SessionServer {
             stored?: (hash: string) => Promise<MlDebugEvent[]>;
         },
     ) {}
+
+    /**
+     * Feed every index change and every session's stream from now on to `sink`, whether or not a page is watching: the
+     * hub connection (hub-runtime.ts), which publishes a session while it happens because the hub never says who is
+     * subscribed. Returns the stop.
+     */
+    watch(sink: SessionSink): () => void {
+        this.sinks.add(sink);
+        return () => this.sinks.delete(sink);
+    }
 
     /** How many pages are connected. */
     get connections(): number {
@@ -175,8 +192,19 @@ export class SessionServer {
     /** Fold an event into the index and send what changed to every connected page. */
     ingest(event: MlDebugEvent, source: IngestSource): IngestOutcome {
         const out = this.index.ingest(event, source);
-        if (!out.accepted || !this.clients.size) return out;
+        if (!out.accepted) return out;
         const hash = out.session.hash;
+        if (this.sinks.size) {
+            const messages: SessionStreamMessage[] = out.reset
+                ? this.index.backfill(hash)
+                : [{ type: "event", v: SESSION_CONTRACT_VERSION, session: out.session, epoch: out.epoch, cursor: out.cursor, event: out.event }];
+            for (const sink of this.sinks) {
+                for (const id of out.evicted) sink.index({ type: "remove", id });
+                if (out.summary) sink.index({ type: "upsert", session: out.summary });
+                for (const message of messages) sink.stream(hash, message);
+            }
+        }
+        if (!this.clients.size) return out;
         for (const client of this.clients) {
             if (client.index) {
                 for (const id of out.evicted) this.post(client, { type: "index", update: { type: "remove", id } });
@@ -260,6 +288,7 @@ export class SessionServer {
     }
 
     private broadcastIndex(update: SessionIndexUpdate): void {
+        for (const sink of this.sinks) sink.index(update);
         for (const client of this.clients) if (client.index) this.post(client, { type: "index", update });
     }
 }
