@@ -16,7 +16,32 @@ export async function archiveCall<T>(op: ArchiveOp["op"], args?: ArchiveOp["args
         r = await send();
     }
     if (!r?.ok) throw new Error(r?.error || "the archive did not answer");
+    if (FOLDER_OPS.has(op)) noteFolder(r.result as FolderReport);
     return r.result as T;
+}
+
+/** The operations that answer with a `FolderReport`, so every one of them keeps `lastFolder` current. */
+const FOLDER_OPS = new Set<string>(["folder", "sync", "resync", "import"]);
+
+/** The folder's state as last reported, for the runtime's capabilities; null until the archive first answered. */
+let lastFolder: FolderReport | null = null;
+let folderListener: (() => void) | null = null;
+
+function noteFolder(r: FolderReport | undefined): void {
+    if (!r?.state) return;
+    const was = lastFolder;
+    lastFolder = r;
+    if (!was || was.state !== r.state || was.pending !== r.pending || was.lastSync !== r.lastSync) folderListener?.();
+}
+
+/** The folder's last reported state, or null before the archive answered once. */
+export function lastFolderReport(): FolderReport | null {
+    return lastFolder;
+}
+
+/** Called when the folder's state, its pending months or its last sync change (one listener: the session server). */
+export function onFolderChange(listener: () => void): void {
+    folderListener = listener;
 }
 
 /** How long after an archive write the folder is synced: a burst of evictions then writes each month once. */

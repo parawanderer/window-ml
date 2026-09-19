@@ -11,9 +11,14 @@ const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
 async function archive(ext, op, args) {
     return ext.sw.evaluate(async ([op, args]) => {
         if (!(await chrome.offscreen.hasDocument())) {
-            await chrome.offscreen.createDocument({ url: "offscreen.html", reasons: ["WORKERS"], justification: "archive e2e" });
+            await chrome.offscreen.createDocument({ url: "offscreen.html", reasons: ["WORKERS"], justification: "archive e2e" }).catch(() => { /* the worker created it first */ });
         }
-        return chrome.runtime.sendMessage({ type: "ARCHIVE_OP", op, args });
+        // Switching the archive on makes the worker create the document itself, and `hasDocument` is true while that
+        // one is still loading, before its listener exists: wait for it rather than for our own create.
+        for (let i = 0; ; i++) {
+            try { return await chrome.runtime.sendMessage({ type: "ARCHIVE_OP", op, args }); }
+            catch (e) { if (i >= 50 || !/Receiving end does not exist/.test(String(e?.message || e))) throw e; await new Promise((r) => setTimeout(r, 100)); }
+        }
     }, [op, args]);
 }
 
