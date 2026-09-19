@@ -155,6 +155,14 @@ test("the page's code size is a setting of its own, and the prose keeps its size
     // A device preference, so it survives a reload; Escape takes the sheet away.
     await page.reload();
     expect(await size()).toBe("14px");
+    // Runtimes: each runtime's own facts, read-only, over the contract: what it offers and the models it lists.
+    await page.locator(".chat-gear-btn").click();
+    await page.getByRole("menuitem", { name: "Settings" }).click();
+    await page.getByRole("tab", { name: "Runtimes" }).click();
+    await page.getByRole("radiogroup", { name: "Runtime" }).getByRole("radio", { name: "Work laptop" }).click();
+    await expect(page.locator(".rt-caps")).toContainText("Agent runs");
+    await expect(page.locator(".rt-models li")).toHaveText([/qwen3:32b\s*default/, /gemma3:27b/, /nomic-embed-text/]);
+    await expect(page.getByRole("region", { name: "Storage" }).or(page.locator("section[aria-label=Storage]"))).toContainText(/keeps no saved sessions|Saved sessions/);
     await page.keyboard.press("Escape");
     expect(errors).toEqual([]);
     await page.close();

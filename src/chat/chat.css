@@ -954,3 +954,22 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-search-snip mark { background: none; color: var(--fg); font-weight: 600; }
 /* An archived row is marked, since opening it brings it back first. */
 .chat-search-arch { flex: 0 0 auto; align-self: center; }
+
+/* Settings → Runtimes (runtime-sheet.tsx): one runtime's facts, models and storage, read-only. */
+/* The runtime picker above them. */
+.rt-pick { margin: 0 12px 20px; flex-wrap: wrap; }
+/* A part's heading: Models, Storage. */
+.rt-h { margin: 0 0 8px; padding: 0 12px; color: var(--fg-dim); font-size: .95em; font-weight: 500; }
+/* A fact's value, on the row's right. */
+.rt-val { color: var(--fg-dim); }
+/* What the runtime offers, as chips. */
+.rt-caps { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; max-width: 60%; }
+/* A line in place of a part: asking, offline, not offered. */
+.rt-note { padding: 0 12px; margin: 4px 0; }
+/* The runtime's models, one per line, the default marked. */
+.rt-models { list-style: none; margin: 0; padding: 0 12px; display: flex; flex-direction: column; gap: 6px; }
+.rt-models li { display: flex; align-items: center; gap: 8px; }
+/* A model's kinds (completion, tools, vision…), dim after its id. */
+.rt-kinds { color: var(--fg-faint); font-size: .88em; }
+/* The sheet itself; the Storage view inside it takes the rows' inset. */
+.rt-sheet .stor { padding: 0 12px; }

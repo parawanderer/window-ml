@@ -1,7 +1,7 @@
 // settings-page.tsx — the chat app's settings as a SHEET, laid out like the search page: one column, a title, no band
 // across the top, and Escape (or the back arrow) returns to where you were.
 //
-// Two tabs, owned by different things. "This page" is the device's own display preferences (view-mode.tsx), so
+// Tabs, owned by different things (a third, Runtimes, is every runtime's own facts, read-only: runtime-sheet.tsx). "This page" is the device's own display preferences (view-mode.tsx), so
 // it is there on every build, the web one included. The browser's settings are whatever the entry's
 // `ChatExtras.settings` hands over — the extension's own settings view — and appear only where a runtime reports
 // `localSettings` and this device can draw it; this file knows nothing about config, which keeps `src/chat/` free of
@@ -10,11 +10,13 @@ import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
 import { IconBack } from "../sidebar/icons";
 import { mainView, useEscapeCloses } from "./nav";
+import type { ChatStore } from "./chat-store";
+import { RuntimeSheet } from "./runtime-sheet";
 import { CODE_SIZES, PANEL_SIZES, codeSize, panelSize, setCodeSize, setPanelSize } from "./view-mode";
 
 /** Which half of the settings is showing. Not stored: the sheet opens on this page's own, which is the half that is
  *  always there. */
-type SettingsTab = "page" | "extension";
+type SettingsTab = "page" | "runtimes" | "extension";
 
 /**
  * The settings sheet: this page's display settings, and the extension's where there are any.
@@ -24,21 +26,21 @@ type SettingsTab = "page" | "extension";
  * extension's configuration (the backend, the models, the key), the same view the DevTools panel shows and shared by
  * everything the extension draws.
  */
-export function SettingsPage({ browser }: { browser?: ComponentChildren | null }) {
+export function SettingsPage({ browser, store }: { browser?: ComponentChildren | null; store: ChatStore }) {
     const [tab, setTab] = useState<SettingsTab>("page");
     useEscapeCloses();
-    const shown: SettingsTab = browser ? tab : "page";
+    const shown: SettingsTab = tab === "extension" && !browser ? "page" : tab;
+    const tabs: [SettingsTab, string][] = [["page", "This page"], ["runtimes", "Runtimes"], ...(browser ? [["extension", "Extension"] as [SettingsTab, string]] : [])];
     return (
         <main class="chat-main chat-settings" aria-label="Settings">
             <div class="view chat-sheet-scroll">
                 <div class="chat-sheet-col">
                     <SheetHead title="Settings" back="Close settings" />
-                    {browser ? (
-                        <div class="chat-seg chat-set-tabs" role="tablist" aria-label="Settings">
-                            <button role="tab" aria-selected={shown === "page"} class={`chat-seg-opt${shown === "page" ? " on" : ""}`} onClick={() => setTab("page")}>This page</button>
-                            <button role="tab" aria-selected={shown === "extension"} class={`chat-seg-opt${shown === "extension" ? " on" : ""}`} onClick={() => setTab("extension")}>Extension</button>
-                        </div>
-                    ) : null}
+                    <div class="chat-seg chat-set-tabs" role="tablist" aria-label="Settings">
+                        {tabs.map(([id, label]) => (
+                            <button key={id} role="tab" aria-selected={shown === id} class={`chat-seg-opt${shown === id ? " on" : ""}`} onClick={() => setTab(id)}>{label}</button>
+                        ))}
+                    </div>
                     {shown === "page" ? (
                         <section class="chat-set-group" aria-label="This page">
                             <div class="chat-set-row">
@@ -67,6 +69,8 @@ export function SettingsPage({ browser }: { browser?: ComponentChildren | null }
                                 </div>
                             </div>
                         </section>
+                    ) : shown === "runtimes" ? (
+                        <RuntimeSheet store={store} />
                     ) : (
                         <section class="chat-set-group" aria-label="Extension">
                             <p class="chat-set-lede">The extension's configuration: the same settings the DevTools panel and the toolbar popup edit.</p>
