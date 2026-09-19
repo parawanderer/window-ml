@@ -844,3 +844,88 @@ test("closing a step eases to a stop: nothing under it snaps once the body has g
     await expect(step).not.toHaveClass(/\bopen\b/);
     expect(errors).toEqual([]);
 });
+
+/** Settings → Devices, opened fresh (the panel reads the membership when it mounts). */
+async function openDevices(page) {
+    if (!(await page.getByRole("tab", { name: "Devices" }).count())) {
+        await page.locator(".chat-list-foot .chat-gear-btn").click();
+        await page.getByRole("menuitem", { name: "Settings" }).click();
+    } else {
+        await page.getByRole("tab", { name: "This page" }).click();
+    }
+    await page.getByRole("tab", { name: "Devices" }).click();
+}
+
+test("pairing a device: find it by its code, compare fingerprints, grant only what this device holds", async () => {
+    const { page, errors } = await open(DESKTOP);
+    // A label is the offering device's own word: markup in it is text, never HTML.
+    await page.evaluate(() => globalThis.__pairFake.addOffer("HACK 0001", { label: "<img src=x onerror=window.__owned=1>", role: "client", fingerprint: "0000aaaa1111" }));
+    await openDevices(page);
+    await expect(page.locator(".pair-card")).toContainText("“Shane's phone”");
+    await page.getByRole("button", { name: "Pair a device" }).click();
+
+    // A code nobody is waiting under says so, rather than failing in general words.
+    await page.getByLabel("Its code").fill("ZZZZ 9999");
+    await page.getByRole("button", { name: "Find it" }).click();
+    await expect(page.getByRole("alert")).toContainText("No device is waiting under that code");
+
+    // Typed any old way: lower case, a hyphen.
+    await page.getByLabel("Its code").fill("7k3m-q9xd");
+    await page.getByRole("button", { name: "Find it" }).click();
+    await expect(page.locator(".pair-h")).toHaveText("“Kitchen tablet” wants to join as a device");
+    await expect(page.locator(".pair-fp")).toHaveText("a41c 9e07 d3b2");
+    // This phone passes on only what it holds (view, drive, screen): no approve, no desktop, no install on offer.
+    const boxes = page.locator(".pair-grant .pair-check");
+    await expect(boxes).toHaveText([/See sessions/, /Start and steer/, /See its screen/]);
+    await expect(page.getByRole("checkbox", { name: /See sessions/ })).toBeChecked();
+    await expect(page.getByRole("checkbox", { name: /See its screen/ })).not.toBeChecked();
+    await page.getByRole("checkbox", { name: /See its screen/ }).check();
+    // The confirm is the answer to the question on screen, not an OK.
+    await page.getByRole("button", { name: "They match: pair it" }).click();
+    await expect(page.locator(".pair-h")).toHaveText("Paired");
+    expect(await page.evaluate(() => globalThis.__pairFake.confirmed.map((c) => [c.label, c.grant.scopes.join(",")])))
+        .toEqual([["Kitchen tablet", "view,drive,screen"]]);
+
+    // "They don't match" pairs nothing and says why that matters.
+    await page.getByRole("button", { name: "Pair another" }).click();
+    await page.getByLabel("Its code").fill("HACK0001");
+    await page.getByRole("button", { name: "Find it" }).click();
+    await expect(page.locator(".pair-h")).toContainText("<img src=x onerror=window.__owned=1>");
+    expect(await page.evaluate(() => globalThis.__owned)).toBeUndefined();
+    await page.getByRole("button", { name: "They don't match" }).click();
+    await expect(page.locator(".pair-h")).toHaveText("Nothing was paired");
+    expect(await page.evaluate(() => globalThis.__pairFake.confirmed.length)).toBe(1);
+    expect(errors).toEqual([]);
+});
+
+test("joining an account: the code and this device's fingerprint, then the account once the other side confirms", async () => {
+    const { page, errors } = await open(DESKTOP);
+    await page.evaluate(() => globalThis.__pairFake.setMembership(null));
+    await openDevices(page);
+    await expect(page.locator(".pair-h")).toHaveText("This device is in no account");
+    await page.getByRole("button", { name: "Join an account" }).click();
+    await page.getByRole("button", { name: "Get a code" }).click();
+    await expect(page.locator(".pair-code")).toHaveText("7K3M Q9XD");
+    await expect(page.locator(".pair-fp")).toHaveText("3f9a 0c21 b7e4");
+    await expect(page.getByRole("status")).toContainText(/works for [0-9]:[0-5][0-9]/);
+
+    // The hub gave up on it: said with what to do, and the form is back for another go.
+    await page.evaluate(() => globalThis.__pairFake.fail("timed-out"));
+    await expect(page.getByRole("alert")).toContainText("Nobody answered the code in time");
+    // Cancelling withdraws the offer: nothing is left answerable under the code.
+    await page.getByRole("button", { name: "Get a code" }).click();
+    await expect(page.locator(".pair-code")).toBeVisible();
+    await page.getByRole("button", { name: "Cancel" }).click();
+    expect(await page.evaluate(() => globalThis.__pairFake.waiting)).toBeNull();
+
+    // And answered from the other side: this device is in the account, as what it chose to be called.
+    await page.getByRole("button", { name: "Join an account" }).click();
+    await page.getByLabel("Call this device").fill("Kitchen tablet");
+    await page.getByRole("button", { name: "Get a code" }).click();
+    await expect(page.locator(".pair-code")).toBeVisible();
+    await page.evaluate(() => globalThis.__pairFake.answer());
+    await expect(page.locator(".pair-h")).toHaveText("“Kitchen tablet”, a device");
+    await expect(page.getByRole("button", { name: "Pair a device" })).toHaveCount(0);
+    await expect(page.locator(".pair-card")).toContainText("cannot pair others");
+    expect(errors).toEqual([]);
+});

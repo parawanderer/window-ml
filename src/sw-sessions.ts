@@ -111,6 +111,11 @@ export type RunDeps = Pick<CommandDeps, "steer" | "cancelRun" | "resolveApproval
 
 let handler: ((command: Command) => Promise<CommandResult<CommandType>>) | null = null;
 
+/** Run one contract command through the same handler the extension's pages use: the hub connection's way in. */
+export function runSessionCommand(command: Command): Promise<CommandResult<CommandType>> {
+    return runCommand(command);
+}
+
 async function runCommand(command: Command): Promise<CommandResult<CommandType>> {
     if (!handler) return { ok: false, error: { code: "unavailable", message: "the extension's worker is still starting" } };
     return handler(command);

@@ -9,6 +9,8 @@
 import { signal } from "@preact/signals";
 import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
+import type { PairingApi } from "../pairing/api";
+import { AccountPanel } from "../pairing/pairing-ui";
 import { IconBack } from "../sidebar/icons";
 import { mainView, useEscapeCloses } from "./nav";
 import type { ChatStore } from "./chat-store";
@@ -18,7 +20,7 @@ import { CODE_SIZES, PANEL_SIZES, codeSize, panelSize, setCodeSize, setPanelSize
 
 /** Which half of the settings is showing. Not stored: the sheet opens on this page's own, which is the half that is
  *  always there. */
-export type SettingsTab = "page" | "runtimes" | "extension" | "housekeeping";
+export type SettingsTab = "page" | "runtimes" | "devices" | "extension" | "housekeeping";
 
 /** The tab Settings shows; set before opening it to land on one (the attention list opens it on Extension). */
 export const settingsTab = signal<SettingsTab>("page");
@@ -31,13 +33,15 @@ export const settingsTab = signal<SettingsTab>("page");
  * extension's configuration (the backend, the models, the key), the same view the DevTools panel shows and shared by
  * everything the extension draws.
  */
-export function SettingsPage({ browser, housekeeping, store }: { browser?: ComponentChildren | null; housekeeping?: ComponentChildren | null; store: ChatStore }) {
+export function SettingsPage({ browser, housekeeping, pairing, store }: { browser?: ComponentChildren | null; housekeeping?: ComponentChildren | null; pairing?: PairingApi; store: ChatStore }) {
     const tab = settingsTab.value;
     const setTab = (t: SettingsTab) => { settingsTab.value = t; };
     useEscapeCloses();
-    const shown: SettingsTab = (tab === "extension" && !browser) || (tab === "housekeeping" && !housekeeping) ? "page" : tab;
+    const shown: SettingsTab = (tab === "extension" && !browser) || (tab === "housekeeping" && !housekeeping) || (tab === "devices" && !pairing) ? "page" : tab;
     const tabs: [SettingsTab, string][] = [
         ["page", "This page"], ["runtimes", "Runtimes"],
+        // DEVICES: this device's account on the hub, and pairing others. Only where the platform can pair at all.
+        ...(pairing ? [["devices", "Devices"] as [SettingsTab, string]] : []),
         ...(browser ? [["extension", "Extension"] as [SettingsTab, string]] : []),
         ...(housekeeping ? [["housekeeping", "Housekeeping"] as [SettingsTab, string]] : []),
     ];
@@ -88,6 +92,8 @@ export function SettingsPage({ browser, housekeeping, store }: { browser?: Compo
                         </section>
                     ) : shown === "runtimes" ? (
                         <RuntimeSheet store={store} />
+                    ) : shown === "devices" && pairing ? (
+                        <section class="chat-set-group" aria-label="Devices"><AccountPanel api={pairing} /></section>
                     ) : shown === "housekeeping" ? (
                         <section class="chat-set-group chat-set-hk" aria-label="Housekeeping log">{housekeeping}</section>
                     ) : (

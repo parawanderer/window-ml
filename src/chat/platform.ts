@@ -3,6 +3,7 @@
 // image is shown full size, how a file is handed over. Each place the core runs supplies one: the web adapter here,
 // the extension adapter with the extension page (slice 3), the Capacitor adapter with the phone app (slice 6).
 import { signal } from "@preact/signals";
+import type { PairingApi } from "../pairing/api";
 
 /** Device-local storage for display preferences. Synchronous reads, so a first render can use them. */
 export interface PlatformPrefs {
@@ -20,6 +21,8 @@ export interface ClientPlatform {
     /** hand a file to the person: a download on the web, the share sheet on a phone */
     saveFile(name: string, data: Blob): void;
     copyText(text: string): Promise<boolean>;
+    /** joining a hub account and pairing devices, where this device can: the Devices tab in Settings shows only then */
+    pairing?: PairingApi;
 }
 
 /** The image the web adapter's lightbox is showing, if any; the chat app renders it. */
