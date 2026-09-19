@@ -35,8 +35,11 @@ jobs:
   #
   # The decision is written to the run summary rather than being an invisible skip, so a job that did not
   # run says so on the page you are already looking at.
+  # Every Linux job names `ubuntu-24.04` rather than `ubuntu-latest`, which moves to 26.04 from 2026-10-19 and
+  # prints a notice on every job until then. Moving is then a one-line change made on purpose, with a CI run to
+  # judge it by: Playwright's `--with-deps` and the Android SDK on the image are what would break first.
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       code: ${{ steps.filter.outputs.code }}
     steps:
@@ -80,7 +83,7 @@ jobs:
           fi
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         # 22 + 24 are the Active LTS lines; 26 is Current (catches forward-compat). Node 20 was
@@ -103,7 +106,7 @@ jobs:
       # package set, so the CDN is hit only when those change.
       - name: Cache pyodide wheels
         id: pyocache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: pyodide-wheels
           key: pyodide-wheels-${{ hashFiles('package-lock.json', 'src/python-env.ts') }}
@@ -113,11 +116,11 @@ jobs:
       # The legend word-clipping "visual test" notebook — regenerate and upload it even when the run
       # FAILED (if: always()), so a red clip-case can be reviewed by eye: download the artifact, open the
       # HTML, and the failing cell shows the words, the crop box, and expected-vs-actual. Named per matrix
-      # leg (upload-artifact@v4 requires unique names).
+      # leg (upload-artifact requires unique names).
       - name: Legend visual-test notebook
         if: always()
         run: node tools/preview-legend.mjs
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: legend-notebook-node${{ matrix.node }}
@@ -140,7 +143,7 @@ jobs:
   # stdlib only, no install step, a couple of seconds — so the streaming contract has a check rather
   # than a deployment and a hope.
   tools:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # fetch-depth: 0 so the CSS ratchet below can diff against the merge base. Without it the checkout is
       # shallow, the base ref is missing, and the check SKIPS — quietly, which is the worst of both.
@@ -192,7 +195,7 @@ jobs:
           node scripts/check-file-size.mjs "$base"
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -204,14 +207,14 @@ jobs:
       # can't run python_exec — build.mjs copies pyodide-wheels/ in, so fetch them first.
       - name: Cache pyodide wheels
         id: pyocache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: pyodide-wheels
           key: pyodide-wheels-${{ hashFiles('package-lock.json', 'src/python-env.ts') }}
       - if: steps.pyocache.outputs.cache-hit != 'true'
         run: npm run fetch-pyodide
       - run: npm run build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: window-ml-extension
           path: dist/
@@ -228,7 +231,7 @@ jobs:
   e2e-shard:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: e2e (${{ matrix.shard }}/3)
     strategy:
       fail-fast: false
@@ -249,7 +252,7 @@ jobs:
       # sandbox is empty. Cached exactly as the `test` job caches it.
       - name: Cache pyodide wheels
         id: pyocache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: pyodide-wheels
           key: pyodide-wheels-${{ hashFiles('package-lock.json', 'src/python-env.ts') }}
@@ -266,7 +269,7 @@ jobs:
   e2e:
     needs: [changes, e2e-shard]
     if: always() && needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: All shards passed
         run: |
@@ -285,7 +288,7 @@ jobs:
   bench:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -299,7 +302,7 @@ jobs:
         run: xvfb-run -a npm run bench:calibrate
       - name: Upload the sweep
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bench-smoke-sweep
           path: tests/e2e/artifacts/bench/smoke/
@@ -316,7 +319,7 @@ jobs:
   mobile-android:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -325,14 +328,14 @@ jobs:
           cache: npm
       # 21, not 17: Capacitor 8's own Android library targets source release 21, so a 17 toolchain dies in
       # `:capacitor-android:compileDebugJavaWithJavac` with "invalid source release: 21" after a minute of gradle.
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 21
       # `packages: ""` because the action's DEFAULT list still names `tools`, which Google removed — the job dies on
       # "Failed to find package 'tools'" before it has built anything. The runner image already ships an Android SDK;
       # all this step has to do is point the environment at it, and gradle resolves the rest from the project.
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
         with:
           packages: ""
       - run: npm ci
@@ -341,7 +344,7 @@ jobs:
       - name: Assemble the debug APK
         run: ./gradlew assembleDebug --no-daemon
         working-directory: android
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: window-ml-android-debug
           path: android/app/build/outputs/apk/debug/*.apk
@@ -375,7 +378,7 @@ jobs:
   # OpenAI-compatible provider. Without the secret the job self-skips. (GitHub Models was the natural fit but
   # is being retired — verified: its API now 410s a "retirement brownout".)
   e2e-real-model:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     continue-on-error: true
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     steps:
@@ -403,7 +406,7 @@ jobs:
         # the pyodide wheels this job has no reason to fetch. What remains is the two tests that actually
         # exercise a real model end to end.
         run: xvfb-run -a npm run test:e2e -- --grep "@real-ok"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always() && steps.gate.outputs.have_key == 'true'
         with:
           name: e2e-real-model-artifacts
