@@ -28,6 +28,13 @@ cares about either must set or assert it rather than assume. Both are plain CSS 
 document — nothing is removed, so a locator still finds a quieted element and `toBeHidden()` is the assertion that
 means anything.
 
+## Its test suite
+
+`npm run test:chat` is the chat page's suite by name: the `chat` genre of `scripts/test.mjs` (the client store, the
+view prefs, the local host, and the check that the web bundle never reaches `chrome`), then `chat-web.spec.mjs` (the
+web build against the fake host) and `chat-page.spec.mjs` (the extension's page against a real worker). The Playwright
+half loads `dist/` and `dist-web/`, so build first, and never while another e2e run is going.
+
 ## Scripting the fake host
 
 The web entry exposes it as `window.__chatFake` (a `FakeHost`, `src/chat/fake-host.ts`). From the page's console or a

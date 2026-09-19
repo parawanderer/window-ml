@@ -69,6 +69,10 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
     /** Copy the trigger's tooltip content into the layer. Returns false when it has none (any more). */
     const fill = (trigger: Element): boolean => {
         const src = trigger.querySelector(".tt-pop");
+        // A trigger built as an HTML STRING (a markdown link) carries its tip in `data-tip` instead: a hidden child
+        // would print in every export that renders the same markdown. Set as TEXT, never parsed.
+        const tip = !src ? trigger.getAttribute("data-tip") : null;
+        if (tip) { layer.textContent = tip; layer.classList.add("wrap"); layer.classList.remove("wide"); return true; }
         if (!src) return false;
         layer.textContent = "";
         for (const n of Array.from(src.childNodes)) layer.appendChild(n.cloneNode(true));
@@ -79,8 +83,7 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
     };
 
     const show = (trigger: Element): void => {
-        const src = trigger.querySelector(".tt-pop");
-        if (!src) return hide();
+        if (!trigger.querySelector(".tt-pop") && !trigger.getAttribute("data-tip")) return hide();
         current = trigger;
         // Clone rather than move: the source stays put (and hidden), so nothing about the row's markup or its
         // tests changes, and a re-render can't strand the layer holding a detached node.

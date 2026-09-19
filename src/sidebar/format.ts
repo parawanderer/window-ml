@@ -124,6 +124,17 @@ export function htmlLines(html: string): string[] {
 
 // `math: true` renders LaTeX ($…$, $$…$$, \(…\), \[…\]) with KaTeX. Off for the export (keeps raw
 // LaTeX source — no bundled fonts in the print doc); the live sidebar turns it on.
+/**
+ * What a markdown link's tooltip says: WHERE it goes, because link text and destination are the two things markdown
+ * lets disagree. The URL arrives HTML-escaped, so a cut never ends inside an entity (`&amp;`), and the scheme goes —
+ * the host is what a reader checks.
+ */
+function linkTip(url: string): string {
+    let where = url.replace(/^https?:\/\//, "");
+    if (where.length > 80) where = where.slice(0, 80).replace(/&[#a-z0-9]*$/i, "") + "…";
+    return `Opens ${where} in a new tab`;
+}
+
 export function markdown(src: string, opts: { math?: boolean } = {}): string {
     const codeBlocks: string[] = [];
     // Pull fenced code from the RAW source first (highlighted, not double-escaped),
@@ -171,7 +182,7 @@ export function markdown(src: string, opts: { math?: boolean } = {}): string {
         const staged = t
             .replace(/`([^`]+)`/g, (_, c: string) => stash(`<code>${c}</code>`))
             .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_, txt: string, url: string) =>
-                stash(`<a href="${url}" target="_blank" rel="noopener">${emph(txt)}</a>`));
+                stash(`<a class="md-link tt" href="${url}" target="_blank" rel="noopener" data-tip="${linkTip(url)}">${emph(txt)}</a>`));
         return emph(staged).replace(/@@IS(\d+)@@/g, (_, i: string) => spans[+i]);
     };
     // GFM table helpers. Cells are already-escaped `text` (never raw source), so

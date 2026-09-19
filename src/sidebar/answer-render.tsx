@@ -139,7 +139,8 @@ function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment,
         }
         jump();
     };
-    const provenance = `Click to see the exact operation that produced this — step ${step.localStep ?? step.step} · ${step.tool || "tool"}`;
+    // WHERE a click goes, first: the reader is deciding whether to follow it, like any link.
+    const provenance = `Goes to step ${step.localStep ?? step.step} · ${step.tool || "tool"}, the operation that produced this`;
     // LINK form `[label](@tool:…)` — a clickable JUMP to the output (the source step), NOT an inline expansion
     // (that's the `![…]` embed form below). `label` is the link text.
     if (!seg.embed) {

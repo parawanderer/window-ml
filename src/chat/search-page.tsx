@@ -42,6 +42,18 @@ export function SearchPage({ store, narrow }: { store: ChatStore; narrow: boolea
     // Name the runtime only when the results span more than one: otherwise it is the same word on every row.
     const many = new Set(all.map((s) => s.id.runtime)).size > 1;
     useEffect(() => { box.current?.focus(); }, []);
+    // Escape closes the page from ANYWHERE on it, not only from inside the box: clicking a date or the page's margin
+    // took focus out of the input and left no key that closed it. The box keeps its own first step (clear what was
+    // typed), and a menu or dialog open over the page gets the key instead.
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key !== "Escape" || e.defaultPrevented || e.target === box.current) return;
+            if (document.querySelector(".chat-menu, .chat-dialog")) return;
+            mainView.value = null;
+        };
+        document.addEventListener("keydown", onKey);
+        return () => document.removeEventListener("keydown", onKey);
+    }, []);
     useEffect(() => { setShown(PAGE); }, [q]);
     useEffect(() => {
         const el = sentinel.current;

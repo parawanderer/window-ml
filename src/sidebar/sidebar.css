@@ -1902,7 +1902,11 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
 .md hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
 .md blockquote { margin: 6px 0; padding: 2px 0 2px 12px; border-left: 3px solid var(--border); color: var(--fg-dim); }
 .md blockquote p { margin: 0 0 4px; } .md blockquote p:last-child { margin-bottom: 0; }
-.md a { color: var(--accent); }
+.md a { color: var(--fg); text-decoration: underline dotted; text-underline-offset: 3px; }
+.md a:hover { text-decoration-style: solid; }
+/* A markdown link is a `.tt` trigger for its `data-tip`, and must stay an inline run of text, not the tooltip
+   primitive's inline-flex box — a link that wraps across two lines would otherwise become a block. */
+.md a.md-link.tt { display: inline; }
 .md code { background: var(--panel-2); border-radius: 3px; padding: 0 3px; font: 0.92em ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 /* `--code-bg`/`--code-fg` are the CODE THEME's surface colours (prefs.ts applyCodeTheme), set for any theme but
@@ -2560,8 +2564,14 @@ html[data-surface="card"] .appr-btn.no:hover {
 .answer-rendered .tok-anno { font-size: 0.8em; color: var(--fg-faint); margin-top: 2px; padding-left: 8px; font-style: italic; }
 /* LINK-form citation `[label](@tool:…)` — a clickable jump to the output's source step (vs the `![…]` embed which
    expands in place). Styled like an in-text link; the click scrolls to + pulses the step. */
-.answer-rendered .tok-link { color: var(--accent, #6366f1); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
-.answer-rendered .tok-link:hover { text-decoration-thickness: 2px; }
+/* TWO KINDS OF LINK, told apart by the underline and never by a colour change in the words: both read as prose, in the
+   text's own colour. A citation of a step (`[label](@tool:…)`, which scrolls to the step that produced it) is
+   underlined dotted in green, the colour of a step that ran; an ordinary link (`.md-link`, which leaves the page) is
+   underlined dotted in the text's colour. Blue link text in the middle of an answer pulled the eye to every link
+   before the sentence it sat in, and a citation looked exactly like a way off the page. Each says where it goes on
+   hover (`cursorTipOn` for a citation, `data-tip` for a markdown link). */
+.answer-rendered .tok-link { color: var(--fg); text-decoration: underline dotted var(--ok); text-underline-offset: 3px; cursor: pointer; }
+.answer-rendered .tok-link:hover { text-decoration-style: solid; }
 .answer-rendered .tok-link:focus-visible { outline: 2px solid var(--accent, #6366f1); outline-offset: 1px; border-radius: 2px; }
 /* The bottom-of-answer RESULT block (ResultBlock — the designated/auto-appended tool outputs, both surfaces). Its
    label is CHROME, not prose: muted + uppercase + tracked, so it reads as an extension-added section divider. */

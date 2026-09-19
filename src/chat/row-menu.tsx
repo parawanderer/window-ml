@@ -12,6 +12,7 @@ import { IconMore, IconPin, IconTrash } from "../sidebar/icons";
 import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
 import { mayCommand } from "./grants";
+import { MenuItem } from "./menu";
 import { dropPin, pinned, togglePin } from "./view-mode";
 
 /** Which row's menu is open, and where: ONE for the whole list, so opening a second closes the first. Local state per
@@ -58,7 +59,7 @@ export function RowMenu({ s, rt, title }: { s: SessionSummary; rt: RuntimeInfo; 
         const r = btn.current?.getBoundingClientRect();
         if (!r) return;
         const up = r.bottom + 110 > window.innerHeight;   // not enough room below: open upwards
-        setAt({ top: up ? r.top - 4 : r.bottom + 4, left: Math.max(8, r.right - 150), up });
+        setAt({ top: up ? r.top - 4 : r.bottom + 4, left: Math.max(8, r.right - 190), up });
     };
     const act = (run: () => void) => { setAt(null); run(); };
     return (
@@ -68,15 +69,9 @@ export function RowMenu({ s, rt, title }: { s: SessionSummary; rt: RuntimeInfo; 
                 <IconMore />
             </button>
             {at ? (
-                <div ref={menu} class={`chat-row-menu menu${at.up ? " up" : ""}`} role="menu" style={`top:${at.top}px;left:${at.left}px`}>
-                    <button class="menu-item" role="menuitem" onClick={() => act(() => togglePin(key))}>
-                        <IconPin />{isPinned ? "Unpin" : "Pin to the top"}
-                    </button>
-                    {mayDelete(rt) ? (
-                        <button class="menu-item danger" role="menuitem" onClick={() => act(() => { confirming.value = { s, rt, title }; })}>
-                            <IconTrash />Delete…
-                        </button>
-                    ) : null}
+                <div ref={menu} class={`chat-menu chat-row-menu${at.up ? " up" : ""}`} role="menu" style={`top:${at.top}px;left:${at.left}px`}>
+                    <MenuItem icon={<IconPin />} label={isPinned ? "Unpin" : "Pin to the top"} onPick={() => act(() => togglePin(key))} />
+                    {mayDelete(rt) ? <MenuItem icon={<IconTrash />} label="Delete…" onPick={() => act(() => { confirming.value = { s, rt, title }; })} /> : null}
                 </div>
             ) : null}
         </>
@@ -113,7 +108,7 @@ export function DeleteConfirm({ store }: { store: ChatStore }) {
                 <p id="chat-del-p"><b>{truncate(c.title, 80)}</b> and its transcript will be removed from {c.rt.name}. This cannot be undone.</p>
                 <div class="chat-dialog-actions">
                     <button ref={cancel} class="btn" onClick={() => (confirming.value = null)}>Cancel</button>
-                    <button class="btn danger" disabled={busy} onClick={go}>{busy ? "Deleting…" : "Delete"}</button>
+                    <button class="btn primary" disabled={busy} onClick={go}>{busy ? "Deleting…" : "Delete"}</button>
                 </div>
             </div>
         </div>

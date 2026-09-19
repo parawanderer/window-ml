@@ -406,6 +406,12 @@ test("desktop: the list shows the last month, and the search page holds every se
     await expect(search.locator(".chat-search-row")).toHaveCount(3);
     await search.locator("input").fill("tokyo");
     await expect(search.locator(".chat-search-row")).toHaveCount(4);
+    // Escape closes it from anywhere on the page, not only from inside the box.
+    await search.locator(".chat-search-label").click();
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".chat-search")).toHaveCount(0);
+    await page.getByRole("button", { name: "Search sessions" }).first().click();
+    await page.locator(".chat-search input").fill("tokyo");
     // Opening one puts the search page away.
     await search.locator(".chat-search-row").first().click();
     await expect(page.locator(".chat-search")).toHaveCount(0);

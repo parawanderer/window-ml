@@ -12,7 +12,7 @@ import { parseSessionKey } from "../session-host";
 import { DetailView } from "../sidebar/session-detail";
 import { Composer } from "../sidebar/composer";
 import { AgentBadge } from "../sidebar/reply";
-import { IconBack, IconBench, IconCamera, IconChevron, IconClose, IconHistory, IconMore, IconPin, IconSave, IconSearch, IconVram } from "../sidebar/icons";
+import { IconBack, IconBench, IconCompose, IconCamera, IconChevron, IconClose, IconHistory, IconMore, IconPin, IconSave, IconSearch, IconVram } from "../sidebar/icons";
 import { services } from "../sidebar/services";
 import { ContextMenu, CursorTipLayer, Dot, Hash, Stamp, cursorTipOn } from "../sidebar/ui-kit";
 import { benchOpen, openBench, rev, sessionMap, view, type Status } from "../sidebar/store";
@@ -239,7 +239,7 @@ const localTs = (s: SessionSummary, rt: RuntimeInfo | undefined) => s.lastTs - (
  * away something that wants you. Everything else past `RECENT_DAYS` lives on the search page (`search-page.tsx`),
  * which both the header's search button and the "Older sessions" row open: one place to find a session, not two.
  */
-function SessionList({ store, activeKey, narrow, onStart, gear }: { store: ChatStore; activeKey: SessionKey | null; narrow: boolean; onStart: (kind: StartKind) => void; gear: preact.ComponentChildren }) {
+function SessionList({ store, activeKey, narrow, onStart, gear, gearWide }: { store: ChatStore; activeKey: SessionKey | null; narrow: boolean; onStart: (kind: StartKind) => void; gear: preact.ComponentChildren; gearWide: preact.ComponentChildren }) {
     const runtimes = store.runtimes.value;
     const sessions = store.listed();
     const status = store.status.value;
@@ -265,7 +265,7 @@ function SessionList({ store, activeKey, narrow, onStart, gear }: { store: ChatS
                 <button class={`tt hbtn${mainView.value === "search" ? " on" : ""}`} aria-label="Search sessions" onClick={openSearch}>
                     <IconSearch /><span class="tt-pop" role="tooltip">Search sessions</span>
                 </button>
-                <StartMenu store={store} onPick={onStart} />{narrow ? gear : null}
+                <StartMenu store={store} onPick={onStart} icon={<IconCompose />} />{narrow ? gear : null}
             </div>
             <div class="view chat-list-scroll">
                 {runtimes.length === 0 && status.state === "online" ? <div class="empty">No runtimes yet. Pair one to see its sessions here.</div> : null}
@@ -295,7 +295,7 @@ function SessionList({ store, activeKey, narrow, onStart, gear }: { store: ChatS
                     </button>
                 ) : null}
             </div>
-            {narrow ? null : <div class="chat-list-foot">{gear}</div>}
+            {narrow ? null : <div class="chat-list-foot">{gearWide}</div>}
         </aside>
     );
 }
@@ -553,13 +553,14 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
     useEffect(() => { if (key) { setStarting(null); mainView.value = null; } }, [key]);   // opening a session puts the form and the search page away
     const start = (k: StartKind) => { mainView.value = null; setStarting(k); };
     const gear = <GearMenu extras={extras} rt={deviceRt} settingsRt={settingsRt} />;
+    const gearWide = <GearMenu extras={extras} rt={deviceRt} settingsRt={settingsRt} labelled />;
     const settings = main === "settings" && settingsRt ? extras?.settings?.(settingsRt.id) : null;
     return (
         <div class={`chat${narrow ? " narrow" : ""}${calm.value ? " calm" : ""}${!narrow && !listOpen.value ? " list-hidden" : ""}${aside ? " pane-open" : ""}`}>
             <ContextMenu />
             <CursorTipLayer />
             {!narrow && !listOpen.value ? <Rail store={store} onStart={start} gear={gear} /> : null}
-            {(!narrow || (!key && !starting && !main)) ? <SessionList store={store} activeKey={key} narrow={narrow} onStart={start} gear={gear} /> : null}
+            {(!narrow || (!key && !starting && !main)) ? <SessionList store={store} activeKey={key} narrow={narrow} onStart={start} gear={gear} gearWide={gearWide} /> : null}
             {main === "search" && (!narrow || !key) ? <SearchPage store={store} narrow={narrow} />
                 : settings ? (
                     <main class="chat-main chat-settings" aria-label="Settings">

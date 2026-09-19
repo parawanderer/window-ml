@@ -546,8 +546,9 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   FAILED now looks exactly like one that worked, and everything you run next tests the previous bundle —
   which will mislead a bisect. It exits non-zero and says so on stderr; do not discard that stream.
 - **Iterating? Run a GENRE, not the suite: `npm run test:core`** (~8s, 978 tests) — `node scripts/test.mjs`
-  with `core` / `panel` / `ext` / `python` / `live`, `--list` to see what each holds, `--timings` for
-  per-file durations slowest-first. The full suite is ~2 minutes and three files are 80% of it
+  with `core` / `panel` / `ext` / `chat` / `python` / `live`, `--list` to see what each holds, `--timings` for
+  per-file durations slowest-first (`npm run test:chat` is the chat page's suite by name: that genre plus its two
+  Playwright specs). The full suite is ~2 minutes and three files are 80% of it
   (`sidebar` 53s, `background` 22s, `cdp-stream` 20s), which is the right cost in CI and the wrong one in a
   loop where you changed one pure module. `core` is DERIVED — everything the named genres do not claim — so
   a new test file runs by DEFAULT rather than falling out of every bucket and being silently skipped; the

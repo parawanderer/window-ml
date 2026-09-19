@@ -8,7 +8,8 @@ import { signal } from "@preact/signals";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { RuntimeInfo } from "../session-host";
-import { IconBench, IconBrain, IconCheck, IconCompose, IconGear, IconMenu, IconSearch, IconVram } from "../sidebar/icons";
+import { IconBench, IconBrain, IconCompose, IconGear, IconMenu, IconSearch, IconVram } from "../sidebar/icons";
+import { MenuItem } from "./menu";
 import { benchOpen, openBench } from "../sidebar/store";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
@@ -39,17 +40,6 @@ export function Rail({ store, onStart, gear }: { store: ChatStore; onStart: (kin
     );
 }
 
-/** One row of the gear's menu. A toggle says its state with a tick rather than by changing its words. */
-function Item({ icon, label, on, onPick }: { icon: ComponentChildren; label: string; on?: boolean; onPick: () => void }) {
-    return (
-        <button class="chat-gear-item" role={on === undefined ? "menuitem" : "menuitemcheckbox"} aria-checked={on} onClick={onPick}>
-            <span class="chat-gear-ico" aria-hidden="true">{icon}</span>
-            <span class="chat-gear-label">{label}</span>
-            {on ? <span class="chat-gear-on" aria-hidden="true"><IconCheck /></span> : null}
-        </button>
-    );
-}
-
 /**
  * The gear and its menu: everything on the page that is not a session.
  *
@@ -57,7 +47,7 @@ function Item({ icon, label, on, onPick }: { icon: ComponentChildren; label: str
  * the same double question the rest of the page asks; Settings likewise, against `localSettings`. `rt` is the runtime
  * those views would describe — the open session's, or the first that offers any.
  */
-export function GearMenu({ extras, rt, settingsRt }: { extras?: ChatExtras; rt?: RuntimeInfo; settingsRt?: RuntimeInfo }) {
+export function GearMenu({ extras, rt, settingsRt, labelled }: { extras?: ChatExtras; rt?: RuntimeInfo; settingsRt?: RuntimeInfo; labelled?: boolean }) {
     const [open, setOpen] = useState(false);
     const wrap = useRef<HTMLDivElement>(null);
     useEffect(() => {
@@ -75,15 +65,16 @@ export function GearMenu({ extras, rt, settingsRt }: { extras?: ChatExtras; rt?:
     return (
         <div class="chat-gear" ref={wrap}>
             {open ? (
-                <div class="chat-gear-menu" role="menu" aria-label="Page menu">
-                    <Item icon={<IconBrain />} label="Calm view" on={calm.value} onPick={pick(() => setCalm(!calm.value))} />
-                    {graphs ? <Item icon={<IconVram />} label={`What ${rt!.name} is running`} on={pane.value === "resource"} onPick={pick(() => setPane(pane.value === "resource" ? null : "resource"))} /> : null}
-                    {bench ? <Item icon={<IconBench />} label="Python bench" on={benchOpen.value} onPick={pick(() => (benchOpen.value ? (benchOpen.value = false) : openBench()))} /> : null}
-                    {settings ? <Item icon={<IconGear />} label="Settings" onPick={pick(() => { mainView.value = "settings"; })} /> : null}
+                <div class="chat-menu chat-gear-menu" role="menu" aria-label="Page menu">
+                    <MenuItem icon={<IconBrain />} label="Calm view" on={calm.value} onPick={pick(() => setCalm(!calm.value))} />
+                    {graphs ? <MenuItem icon={<IconVram />} label={`What ${rt!.name} is running`} on={pane.value === "resource"} onPick={pick(() => setPane(pane.value === "resource" ? null : "resource"))} /> : null}
+                    {bench ? <MenuItem icon={<IconBench />} label="Python bench" on={benchOpen.value} onPick={pick(() => (benchOpen.value ? (benchOpen.value = false) : openBench()))} /> : null}
+                    {settings ? <MenuItem icon={<IconGear />} label="Settings" onPick={pick(() => { mainView.value = "settings"; })} /> : null}
                 </div>
             ) : null}
-            <button class={`tt hbtn chat-gear-btn${open ? " on" : ""}`} aria-label="Page menu" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-                <IconGear /><span class="tt-pop" role="tooltip">How this page reads, this browser's views, and settings</span>
+            {/* Named where there is room for a word (the open list's foot), a glyph alone on the rail. */}
+            <button class={`${labelled ? "chat-gear-wide" : "tt hbtn"} chat-gear-btn${open ? " on" : ""}`} aria-label="Page menu" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+                <IconGear />{labelled ? <span>Settings</span> : <span class="tt-pop" role="tooltip">Settings: how this page reads, this browser's views</span>}
             </button>
         </div>
     );

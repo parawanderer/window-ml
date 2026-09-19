@@ -6,6 +6,7 @@
 //   node scripts/test.mjs                # everything (what `npm test` does)
 //   node scripts/test.mjs core           # the fast majority: pure logic, no jsdom, no node:vm world
 //   node scripts/test.mjs panel ext      # more than one genre
+//   npm run test:chat                    # the chat page: this runner's `chat` genre, then its two Playwright specs
 //   node scripts/test.mjs --list         # what the genres hold
 //   node scripts/test.mjs --timings      # per-file durations, slowest first
 //   node scripts/test.mjs --jobs 1       # one file at a time, for when a failure might be interference
@@ -39,6 +40,12 @@ const GENRES = {
         files: ["background.test.js", "relay.test.js", "agent.test.js", "cdp-stream.test.mjs",
             "delegation.test.mjs", "redteam.test.js", "trusted-input.test.mjs", "dom-query.test.mjs",
             "tools-shadow.test.mjs", "bgrun.test.mjs", "replay.test.mjs"],
+    },
+    // The chat page's own logic (the client store, the view prefs, the local host) and the check that its web build
+    // never reaches `chrome`. Its browser half is Playwright: `npm run test:chat` runs both.
+    chat: {
+        about: "the chat page (src/chat/): store, hosts, view prefs, and the web bundle's no-chrome check",
+        files: ["chat-core.test.mjs", "chat-web-bundle.test.mjs", "local-host.test.mjs"],
     },
     python: { about: "real CPython in Pyodide (self-skips without dist/pyodide)", files: ["python.test.mjs"] },
     live: { about: "opt-in, hits the backend in .env", files: ["live.test.js"] },

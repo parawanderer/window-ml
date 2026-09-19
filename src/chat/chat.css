@@ -455,12 +455,6 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat.calm .answer-rendered .tok-block:hover { background: none; }
 .chat.calm .tok-anno:hover { background: color-mix(in srgb, var(--ok) 12%, transparent); border-radius: 3px; }
 
-/* THE LINK FORM in accent-blue on a near-black ground is the loudest thing in a paragraph, for the quietest of
-   the citation forms — the one that shows you nothing and takes you somewhere. It reads as text with the
-   citation colour under it instead, which is what the other two forms already say. */
-.chat.calm .tok-link { color: var(--fg); text-decoration: underline dotted var(--ok); text-underline-offset: 3px; }
-.chat.calm .tok-link:hover { text-decoration-style: solid; }
-
 /* THE REPLY'S PROVENANCE MOVES UNDER IT. Copying an answer and knowing when it landed are things you want AFTER
    reading it, and they were sitting on the line your eye lands on first. The status dot goes entirely unless it
    is saying something other than "this worked", which is what the answer itself says. The collapse control stays,
@@ -615,13 +609,10 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat.narrow .chat-row-wrap .chat-row { padding-right: 44px; }
 .chat.narrow .chat-row-more { opacity: .7; }
 
-/** The row menu, placed fixed from its button (row-menu.tsx), so a scrolling, clipping list cannot cut it off. */
-.chat-row-menu { position: fixed; right: auto; top: auto; z-index: 60; }
+/** The row menu, placed fixed from its button (row-menu.tsx), so a scrolling, clipping list cannot cut it off. Its
+ *  look is `.chat-menu`, shared with the gear's. */
+.chat-row-menu { position: fixed; z-index: 60; }
 .chat-row-menu.up { transform: translateY(-100%); }
-.chat-row-menu { min-width: 150px; font-size: 13px; }
-.chat-row-menu .menu-item { flex-direction: row; align-items: center; gap: 8px; padding: 6px 8px; }
-.chat-row-menu .menu-item svg { flex: 0 0 auto; width: 14px; height: 14px; color: var(--fg-dim); }
-.menu-item.danger, .menu-item.danger svg { color: var(--err); }
 
 /** The one confirmation a delete goes through: modal, centred, and focused on Cancel. */
 .chat-dialog-back {
@@ -643,8 +634,10 @@ button.chat-page-go:hover { color: var(--fg); }
 }
 .chat-dialog .btn:hover { background: var(--panel-2); }
 .chat-dialog .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.chat-dialog .btn.danger { background: var(--err); border-color: var(--err); color: var(--bg); font-weight: 600; }
-.chat-dialog .btn.danger:hover { filter: brightness(1.08); }
+/* The confirming button is the filled one, not a red one: the dialog is the warning, and a red button in a calm
+   page shouts a second time about something the sentence above it has already said. */
+.chat-dialog .btn.primary { background: var(--fg); border-color: var(--fg); color: var(--bg); font-weight: 600; }
+.chat-dialog .btn.primary:hover { filter: brightness(.92); }
 .chat-dialog .btn:disabled { opacity: .6; cursor: default; }
 @keyframes chat-fade { from { opacity: 0; } }
 @keyframes chat-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
@@ -667,24 +660,36 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-rail .chat-start .menu { left: calc(100% + 6px); right: auto; top: 0; }
 .chat-list-foot { flex: 0 0 auto; padding: 8px 10px 12px; display: flex; }
 
-/* The gear's menu: a sheet that rises from the gear, one row per thing, each with its glyph — Android's list menu,
-   which Gemini borrowed, and which reads as a place rather than a dropdown. */
+/* THE PAGE'S ONE MENU LOOK (menu.tsx): a rounded sheet, a glyph and a label per row, a tick on a toggle — Android's
+   list menu, which Gemini borrowed. The row menu and the gear's menu both use it, so they cannot drift apart. */
+.chat-menu {
+    display: flex; flex-direction: column; min-width: 190px; padding: 6px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: 0 12px 36px rgb(0 0 0 / .45); animation: chat-pop .16s cubic-bezier(.2, .7, .3, 1) both;
+    font-size: 13.5px;
+}
+.chat-menu-item {
+    display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px 10px; border: none; border-radius: 9px;
+    background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; white-space: nowrap;
+}
+.chat-menu-item:hover, .chat-menu-item:focus-visible { background: var(--panel-2); outline: none; }
+.chat-menu-ico { display: inline-flex; color: var(--fg-dim); }
+.chat-menu-ico svg { width: 18px; height: 18px; }
+.chat-menu-label { flex: 1 1 auto; }
+.chat-menu-on { display: inline-flex; color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .chat-menu { animation: none; } }
+
+/* The gear's menu rises from the gear, with room for its longer rows. */
 .chat-gear { position: relative; }
-.chat-gear-menu {
-    position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 40; min-width: 250px; padding: 8px;
-    display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--border); border-radius: 18px;
-    box-shadow: 0 12px 36px rgb(0 0 0 / .45); animation: chat-pop .16s cubic-bezier(.2, .7, .3, 1) both; transform-origin: bottom left;
+.chat-gear-menu { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 40; min-width: 240px; transform-origin: bottom left; }
+/* In the open list's foot the gear has a word beside it, Gemini's "Settings": there is room, and a lone glyph at
+   the bottom of a full column reads as an ornament. */
+.chat-gear-wide {
+    display: inline-flex; align-items: center; gap: 10px; padding: 8px 12px; border: none; border-radius: 999px;
+    background: none; color: var(--fg-dim); font: inherit; font-size: .95em; cursor: pointer;
 }
-.chat-gear-item {
-    display: flex; align-items: center; gap: 14px; width: 100%; padding: 10px 12px; border: none; border-radius: 10px;
-    background: none; color: var(--fg); font: inherit; font-size: 14px; text-align: left; cursor: pointer;
-}
-.chat-gear-item:hover, .chat-gear-item:focus-visible { background: var(--panel-2); outline: none; }
-.chat-gear-ico { display: inline-flex; color: var(--fg-dim); }
-.chat-gear-ico svg { width: 20px; height: 20px; }
-.chat-gear-label { flex: 1 1 auto; }
-.chat-gear-on { display: inline-flex; color: var(--accent); }
-@media (prefers-reduced-motion: reduce) { .chat-gear-menu { animation: none; } }
+.chat-gear-wide:hover, .chat-gear-wide.on { background: var(--panel); color: var(--fg); }
+.chat-gear-wide svg { width: 18px; height: 18px; }
 
 /* The search page: one column, a pill to type in, and the whole history under it with each date at the right. */
 .chat-search-scroll { padding: 0 16px; }
