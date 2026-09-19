@@ -361,3 +361,35 @@ test("the page follows the extension's Theme from the start, and offers to keep 
         expect(errors).toEqual([]);
     } finally { await ext.context.close(); }
 });
+
+test("the attention list proposes the archive: Keep them turns it on from the click, then offers a folder", async () => {
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { sessionArchive: false });
+        const { page: chat, errors } = await openChatPage(ext);
+        // Suggestions only: there may be no count, but the list is there to open.
+        await chat.locator(".chat-list-foot .chat-att-btn").click();
+        const sheet = chat.getByRole("main", { name: "Needs attention" });
+        const off = sheet.locator(".chat-att-item", { hasText: "Old sessions are deleted, not kept" });
+        await expect(off).toBeVisible();
+        await off.getByRole("button", { name: "Keep them" }).click();
+        // The setting is written, the worker follows it, and the runtime's codes move on to the next step.
+        await expect.poll(() => ext.sw.evaluate(() => chrome.storage.sync.get("sessionArchive").then((c) => c.sessionArchive))).toBe(true);
+        await expect(off).toHaveCount(0);
+        const folder = sheet.locator(".chat-att-item", { hasText: "Keep a copy of the archive on disk" });
+        await expect(folder).toBeVisible();
+        await expect(folder.getByRole("button", { name: "Pick a folder" })).toBeVisible();
+
+        // In Settings the folder sits under the switch it depends on, and only while that is on.
+        await chat.locator(".chat-gear-btn").first().click();
+        await chat.getByRole("menuitem", { name: "Settings" }).click();
+        await chat.getByRole("tab", { name: "Extension" }).click();
+        await chat.getByRole("tab", { name: "Appearance" }).click();
+        const group = chat.getByRole("group", { name: "Archive folder" });
+        await expect(group).toBeVisible();
+        await chat.getByRole("checkbox", { name: "Archive sessions instead of deleting them" }).uncheck();
+        await expect(group).toHaveCount(0);
+        await expect(chat.getByText("(above)")).toHaveCount(0);
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); }
+});

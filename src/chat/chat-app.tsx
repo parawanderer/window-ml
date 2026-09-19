@@ -285,11 +285,16 @@ function SessionList({ store, activeKey, narrow, onStart, gear, gearWide }: { st
                     return (
                         <section class={`chat-group${shut ? " folded" : ""}`} key={rt.id}>
                             <RuntimeHead rt={rt} folded={shut} />
-                            {shut ? null : !speaksOurContract(rt)
-                                ? <div class="chat-rt-empty">This runtime speaks version {rt.contractVersion} of the session contract, which this app does not. Its sessions open once both sides agree.</div>
-                                : mine.length
-                                    ? mine.map((s) => row(s))
-                                    : <div class="chat-rt-empty">Nothing in the last {RECENT_DAYS} days.</div>}
+                            {/* Mounted while folded, so folding slides both ways; `inert` keeps a folded group's rows out of reach. */}
+                            <div class="chat-group-body" inert={shut}>
+                                <div class="chat-group-rows">
+                                    {!speaksOurContract(rt)
+                                        ? <div class="chat-rt-empty">This runtime speaks version {rt.contractVersion} of the session contract, which this app does not. Its sessions open once both sides agree.</div>
+                                        : mine.length
+                                            ? mine.map((s) => row(s))
+                                            : <div class="chat-rt-empty">Nothing in the last {RECENT_DAYS} days.</div>}
+                                </div>
+                            </div>
                         </section>
                     );
                 })}
@@ -640,7 +645,7 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
             {(!narrow || (!key && !starting && !main)) ? <SessionList store={store} activeKey={key} narrow={narrow} onStart={start} gear={gear} gearWide={gearWide} /> : null}
             <DockFrame panels={panels} narrow={narrow}>
             {main === "search" && (!narrow || !key) ? <SearchPage store={store} narrow={narrow} />
-                : main === "attention" ? <AttentionPage items={att.items} extras={extras} recheck={att.recheck} />
+                : main === "attention" ? <AttentionPage items={att.items} extras={extras} />
                 : main === "settings" ? <SettingsPage browser={browserSettings} housekeeping={housekeeping} store={store} />
                 : (starting || (!key && !narrow)) && canStart ? (
                     <main class="chat-main chat-home">

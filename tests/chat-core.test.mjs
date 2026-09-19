@@ -516,7 +516,7 @@ test("attentionItems: reported and checked codes once each, problems first, fixe
     const here = rt("local", { localSettings: true, archive: { folder: "needs-grant" }, attention: ["no-model"] });
     const box = rt("box", { attention: ["no-utility-model", "some-future-code"] });
     const local = new Map([["local", ["no-model", "tab-groups", "site-access"]]]);
-    const canFix = (r, fix) => r.id === "local" && (fix.kind === "settings" || fix.kind === "grant");
+    const canFix = (r, fix) => r.id === "local" && (fix.kind === "settings" || fix.kind === "act");
     const items = attentionItems([here, box], local, canFix);
     assert.deepEqual(items.map((i) => i.key), [
         "local:no-model",                       // blocks: first, and once though both reported and checked
@@ -534,4 +534,13 @@ test("attentionItems: reported and checked codes once each, problems first, fixe
     // A runtime's text is never trusted as a code: long or non-string entries are dropped.
     const odd = attentionItems([rt("x", { attention: ["a".repeat(65), 7, "ok-code"] })], new Map(), () => false);
     assert.deepEqual(odd.map((i) => i.code), ["ok-code"]);
+});
+
+test("deleteFolderNote: a delete names the archive folder only where it reaches one, and says when", async () => {
+    const { deleteFolderNote } = await import("../src/chat/row-menu.tsx");
+    assert.match(deleteFolderNote({ folder: "connected" }), /also removed from your archive folder/);
+    assert.match(deleteFolderNote({ folder: "needs-grant" }), /when that is reconnected/);
+    for (const a of [undefined, { folder: "none" }, { folder: "unsupported" }, { folder: "some-future-state" }]) {
+        assert.equal(deleteFolderNote(a), null, JSON.stringify(a));
+    }
 });

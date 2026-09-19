@@ -19,10 +19,11 @@ import { applyCodePrefs, initThemeStyle } from "./sidebar/prefs";
 import { installTooltipLayer } from "./sidebar/tooltip-layer";
 import { installViewPrefs } from "./chat/view-mode";
 import { installPageTheme } from "./chat/page-theme";
+import { pickFolder, regrantFolder } from "./archive-folder";
 import { VRAM_POLL_MS } from "./sidebar/panel-state";
 import { BACKEND_HEALTH_MS, VramPanel, connectResourceStream, fetchModels, pollBackendHealth, pollPs } from "./sidebar/vram";
 import { PythonBench } from "./sidebar/vram-bench";
-import type { RuntimeId, RuntimeInfo } from "./session-host";
+import type { RuntimeId } from "./session-host";
 import { Settings } from "./sidebar/settings";
 import { config } from "./sidebar/store";
 import { DEFAULT_CONFIG, type MlConfig } from "./contract";
@@ -62,8 +63,6 @@ function BoxPanel() {
  * this browser's VRAM would draw someone else's machine under its name.
  */
 const localRuntimes = new Set<RuntimeId>();
-/** The latest description of each of them, for checks that read what the runtime reports about itself. */
-const runtimeInfo = new Map<RuntimeId, RuntimeInfo>();
 
 /**
  * The extension's own settings view, in the page's main pane. It reads and writes `chrome.storage.sync` itself
@@ -80,15 +79,22 @@ const GRANTS: Record<string, chrome.permissions.Permissions> = {
     "site-access": { origins: ["<all_urls>"] },
 };
 
+/** Tell the worker what a click just did to the archive folder. */
+const folderSaid = (action: "picked" | "sync"): Promise<boolean> =>
+    chrome.runtime.sendMessage({ type: "ARCHIVE_FOLDER", payload: { action } }).then((r: { data?: unknown } | undefined) => !!r?.data, () => false);
+
 /**
- * This browser's attention codes that its runtime does not report itself (src/chat/attention.ts). The runtime reports
- * the rest on the contract (`capabilities.attention`, sw-attention.ts): the model, the backend, site access, the
- * permissions, the archive folder. What is left is the build: `pythonBench` is measured, so false here means the wheels
- * are missing.
+ * The one-click fixes for attention codes (src/chat/attention.ts) on this browser. Each is started SYNCHRONOUSLY by the
+ * click that asked: a permission prompt and the folder picker only open inside one. The picker and the re-grant are the
+ * Settings section's own (`archive-folder.ts`), so both routes do exactly the same thing.
  */
-async function localAttention(id: string): Promise<string[]> {
-    return runtimeInfo.get(id)?.capabilities.pythonBench === false ? ["python-packages-missing"] : [];
-}
+const FIXES: Record<string, () => Promise<boolean>> = {
+    "tab-groups": () => chrome.permissions.request(GRANTS["tab-groups"]).catch(() => false),
+    "site-access": () => chrome.permissions.request(GRANTS["site-access"]).catch(() => false),
+    "archive-off": () => chrome.storage.sync.set({ sessionArchive: true }).then(() => true, () => false),
+    "archive-folder-none": () => pickFolder().then((name) => (name ? folderSaid("picked") : false), () => false),
+    "archive-folder-lapsed": () => regrantFolder().then((ok) => (ok ? folderSaid("sync") : false), () => false),
+};
 
 /** What this device can draw beyond the chat core. Every answer is per runtime, and null for one that is not ours. */
 const extras: ChatExtras = {
@@ -97,12 +103,7 @@ const extras: ChatExtras = {
     bench: (id) => (localRuntimes.has(id) ? <PythonBench /> : null),
     settings: (id) => (localRuntimes.has(id) ? <SettingsPane /> : null),
     housekeeping: (id) => (localRuntimes.has(id) ? <HousekeepingView /> : null),
-    attention: (id) => (localRuntimes.has(id) ? localAttention(id) : null),
-    // Called straight from the click, so the browser still counts it as the user's gesture and shows its prompt.
-    grant: (id, code) => {
-        const want = GRANTS[code];
-        return localRuntimes.has(id) && want && chrome.permissions ? () => chrome.permissions.request(want).catch(() => false) : null;
-    },
+    fix: (id, code) => (localRuntimes.has(id) && FIXES[code] ? FIXES[code] : null),
 };
 
 // One port for the page's life, reconnected by `LocalHost` itself: an MV3 worker is evicted when idle, which drops
@@ -110,8 +111,8 @@ const extras: ChatExtras = {
 const host = new LocalHost(() => chrome.runtime.connect({ name: SESSIONS_PORT }));
 const store = new ChatStore(host);
 host.runtimes((list) => {
-    localRuntimes.clear(); runtimeInfo.clear();
-    for (const r of list) { localRuntimes.add(r.id); runtimeInfo.set(r.id, r); }
+    localRuntimes.clear();
+    for (const r of list) localRuntimes.add(r.id);
 });
 
 installServices(hostServices(store, extensionPlatform));

@@ -684,14 +684,15 @@ so fixing a thing is what removes it, and only a suggestion can be dismissed (pe
 
 Items are CODES, turned into sentences here. Nearly all of them are facts about a runtime rather than the viewer (a
 phone driving a laptop needs to know the laptop has no model), so a runtime is meant to report its own as
-`capabilities.attention` (#205, `sw-attention.ts`: the model, the backend, site access, the permissions, the archive
-folder), read defensively: strings of at most 64 characters, and a code this page does not know is shown in general
-words. Codes and not prose, because a remote runtime's text is untrusted and the sentence depends on where it is read.
-`ChatExtras.attention` adds only what the runtime does not report: `python-packages-missing` (`pythonBench` is
-measured, so false on this browser means the wheels are missing). It runs on load, on focus (at most every 15 s) and
-after a fix. A fix is
-offered only where this device can apply it: `ChatExtras.grant` inside the click, or Settings opened on its
-Extension tab; anywhere else the item says on which runtime it is fixed.
+`capabilities.attention` (`sw-attention.ts`: the model, the backend, site access, the permissions, the archive folder,
+the Python wheels, and two suggestions, `archive-off` and `archive-folder-none`), read defensively: strings of at most
+64 characters, and a code this page does not know is shown in general words. Codes and not prose, because a remote
+runtime's text is untrusted and the sentence depends on where it is read. The page checks nothing itself: the worker
+follows permissions and settings, so a fix clears its item through the runtime's own description. A fix is offered
+only where this device can apply it: `ChatExtras.fix`, started synchronously by the click (a permission prompt and the
+folder picker open only inside one; "Keep them" writes `sessionArchive`, "Pick a folder" and "Reconnect" are the
+Settings section's own `pickFolder`/`regrantFolder`), or Settings opened on its Extension tab; anywhere else the item
+says on which runtime it is fixed. The archive codes wait until the worker has read whether the archive is on.
 
 **The page chip brings its tab to the front** with `tab.focus`, a contract command (tab and window both), so a phone
 driving this browser over a hub gets the same button. It started as a device-local `ChatExtras.focusTab` stand-in

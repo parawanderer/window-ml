@@ -1194,17 +1194,21 @@ export function Settings() {
                 <div class="set-hint">Where a run started from the chat page “on a blank tab” begins. The browser's own new-tab page cannot be used: the extension is not allowed to run there, so an agent would open on a page it cannot see.</div>
                 </Section>
 
-                <Section id="archive" title="Archive folder">
-                <LocalArchiveFolder archiveOn={c.sessionArchive} />
-                </Section>
-
                 <Section id="storage" title="Storage">
                 <label class="set-check">
                     <input type="checkbox" checked={c.sessionArchive}
                         onChange={(e: any) => setField("sessionArchive", e.target.checked)} />
                     <span>Archive sessions instead of deleting them</span>
                 </label>
-                <div class="set-hint">A session the retention or the storage limit would delete moves to a long-term archive (SQLite, in this browser's private storage) instead, with its images stored once and every word searchable. If moving one fails, it is kept, never deleted. An archive folder on your disk, which survives a wiped browser, comes next.</div>
+                <div class="set-hint">A session the retention or the storage limit would delete moves to a long-term archive (SQLite, in this browser's private storage) instead, with its images stored once and every word searchable. If moving one fails, it is kept, never deleted.</div>
+                {/* The folder belongs to the switch above it, so it sits under it and appears with it: it used to be its
+                    own section ABOVE this one, saying the switch was "above". */}
+                {c.sessionArchive ? (
+                    <div class="set-sub" role="group" aria-label="Archive folder">
+                        <div class="set-sub-title">Archive folder</div>
+                        <LocalArchiveFolder archiveOn={c.sessionArchive} />
+                    </div>
+                ) : null}
                 <StorageBody
                     load={() => new Promise((res, rej) => chrome.runtime.sendMessage({ type: "STORAGE_HISTORY" }, (r: any) => (r?.error ? rej(new Error(r.error)) : res(r?.data ?? null))))}
                     measure={() => new Promise((res, rej) => chrome.runtime.sendMessage({ type: "SESSION_STORAGE_STATS" }, (r: any) => (r?.error ? rej(new Error(r.error)) : res(r?.data ?? null))))} />

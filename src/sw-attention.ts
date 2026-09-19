@@ -9,7 +9,11 @@ import { lastFolderReport } from "./sw-archive";
 /** The codes this runtime reports. OPEN on the wire: a client words an unknown one generally. */
 export type AttentionCode =
     | "no-model" | "backend-unreachable" | "site-access" | "tab-groups" | "no-utility-model"
-    | "archive-folder-lapsed" | "archive-folder-unsupported";
+    | "archive-folder-lapsed" | "archive-folder-unsupported"
+    // Suggestions: the archive is off, so retention deletes for good; the archive is on and keeps no copy on disk.
+    | "archive-off" | "archive-folder-none"
+    // The build: made without Python's wheels, so python_exec and the bench fail at run time.
+    | "python-packages-missing";
 
 /** How long an answer about the backend stands before a page connecting asks again. */
 const BACKEND_TTL_MS = 60_000;
@@ -21,7 +25,8 @@ let perms = { sites: true, groups: true };
 let backendOk: boolean | null = null;
 let backendAt = 0;
 let probing: Promise<void> | null = null;
-let deps: { archiveOn: () => boolean; onChange: () => void } | null = null;
+/** `archiveOn` answers null until the setting has been read: no archive code is a guess. */
+let deps: { archiveOn: () => boolean | null; onChange: () => void; pythonMissing?: () => boolean } | null = null;
 
 /** The codes as they stand now, in a fixed order; empty until the first read. */
 export function attentionCodes(): AttentionCode[] {
@@ -40,11 +45,14 @@ export function recomputeAttention(): void {
     if (!perms.sites) next.push("site-access");
     if (!perms.groups) next.push("tab-groups");
     if (cfg && !cfg.utilityModel.trim()) next.push("no-utility-model");
-    if (deps.archiveOn()) {
+    const archive = deps.archiveOn();
+    if (archive) {
         const folder = lastFolderReport()?.state;
         if (folder === "needs-grant") next.push("archive-folder-lapsed");
         else if (folder === "unsupported") next.push("archive-folder-unsupported");
-    }
+        else if (folder === "none") next.push("archive-folder-none");
+    } else if (archive === false) next.push("archive-off");
+    if (deps.pythonMissing?.()) next.push("python-packages-missing");
     if (next.join() === codes.join()) return;
     codes = next;
     deps.onChange();
@@ -88,7 +96,7 @@ async function readConfig(): Promise<void> {
  * then on. `archiveOn` is the session store's reading of the setting; `onChange` re-sends the runtime's description.
  * The archive folder's own changes arrive through `recomputeAttention`, called by whoever hears them.
  */
-export function watchAttention(opts: { archiveOn: () => boolean; onChange: () => void }): void {
+export function watchAttention(opts: { archiveOn: () => boolean | null; onChange: () => void; pythonMissing?: () => boolean }): void {
     deps = opts;
     // The backend is asked only when a page connects (`refreshBackendAttention`) or its settings change: a worker
     // stopped when idle starts again often, and a fetch at every start would be traffic nobody reads.
