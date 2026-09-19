@@ -364,7 +364,11 @@ export const sessionStore = (() => {
 export const sessionServer = new SessionServer(new SessionIndex({ runtime: localRuntimeId(), spawn }), {
     runtime: localRuntime,
     command: runCommand,
-    ...(sessionStore ? { stored: (hash: string) => sessionStore.read(hash) } : {}),
+    ...(sessionStore ? {
+        stored: (hash: string) => sessionStore.read(hash),
+        // Only a kept session's events are stored, so only they have a position `session.backfill` can page from.
+        position: (hash: string) => (sessionServer.index.get(hash)?.saved ? sessionStore.nextPos(hash) : undefined),
+    } : {}),
 });
 
 // What a previous worker saved, so an evicted service worker comes back with its list rather than with nothing. The

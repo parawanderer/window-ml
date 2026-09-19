@@ -60,6 +60,33 @@ test("a read sees what is still queued, so a transcript is never missing its new
     assert.deepEqual((await store.read("aaaa0001")).map((e) => e.content), ["answer 0", "answer 1"]);
 });
 
+test("nextPos: where the next event will sit, counting what is queued and in flight, and unknown until the rows are read", T, async () => {
+    const be = backend();
+    const first = new SessionStore(be, { flushMs: 5 });
+    for (let n = 0; n < 3; n++) first.put(summary("aaaa0001"), ev("aaaa0001", n));
+    await first.flush();
+    const store = new SessionStore(be, { flushMs: 60_000 });
+    assert.equal(store.nextPos("aaaa0001"), undefined, "a row made before open() starts at 0, and open() replaces it");
+    await store.open();
+    assert.equal(store.nextPos("aaaa0001"), 3);
+    assert.equal(store.nextPos("bbbb0001"), 0, "a session with nothing stored starts at 0");
+    store.put(summary("aaaa0001"), ev("aaaa0001", 3));
+    store.put(summary("bbbb0001"), ev("bbbb0001", 0));
+    assert.equal(store.nextPos("aaaa0001"), 4);
+    // Mid-flush, with the queue already emptied: the batch being written still counts, for every session in it.
+    const slow = be.append;
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    be.append = async (...a) => { await gate; return slow(...a); };
+    const flushing = store.flush();
+    await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual([store.nextPos("aaaa0001"), store.nextPos("bbbb0001")], [4, 1]);
+    release();
+    await flushing;
+    be.append = slow;
+    assert.deepEqual((await store.read("aaaa0001")).map((e) => e.content), ["answer 0", "answer 1", "answer 2", "answer 3"]);
+});
+
 test("a restarted worker lists what it saved, newest first", T, async () => {
     const be = backend();
     const first = new SessionStore(be, { flushMs: 5 });

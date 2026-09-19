@@ -79,6 +79,11 @@ export class SessionServer {
             command: CommandHandler;
             /** every event a saved session holds, oldest first; absent when nothing is saved (session-store.ts) */
             stored?: (hash: string) => Promise<MlDebugEvent[]>;
+            /**
+             * Where the event being ingested will sit in the session's stored history (`SessionStore.nextPos`), for
+             * the envelope's `pos`; undefined for a session that is not kept. Asked BEFORE the event is stored.
+             */
+            position?: (hash: string) => number | undefined;
         },
     ) {}
 
@@ -194,10 +199,14 @@ export class SessionServer {
         const out = this.index.ingest(event, source);
         if (!out.accepted) return out;
         const hash = out.session.hash;
+        // A live event says where it sits in the session, which is what lets a client that got it from a short ring
+        // (the hub's) page back from there with `session.backfill`.
+        const pos = out.reset ? undefined : this.opts.position?.(hash);
+        const live = (): SessionStreamMessage[] => out.reset
+            ? this.index.backfill(hash)
+            : [{ type: "event", v: SESSION_CONTRACT_VERSION, session: out.session, epoch: out.epoch, cursor: out.cursor, ...(Number.isInteger(pos) && pos! >= 0 ? { pos } : {}), event: out.event }];
         if (this.sinks.size) {
-            const messages: SessionStreamMessage[] = out.reset
-                ? this.index.backfill(hash)
-                : [{ type: "event", v: SESSION_CONTRACT_VERSION, session: out.session, epoch: out.epoch, cursor: out.cursor, event: out.event }];
+            const messages = live();
             for (const sink of this.sinks) {
                 for (const id of out.evicted) sink.index({ type: "remove", id });
                 if (out.summary) sink.index({ type: "upsert", session: out.summary });
@@ -212,9 +221,7 @@ export class SessionServer {
             }
             for (const [sub, s] of client.subs) {
                 if (s.hash !== hash) continue;
-                const messages: SessionStreamMessage[] = out.reset
-                    ? this.index.backfill(hash)
-                    : [{ type: "event", v: SESSION_CONTRACT_VERSION, session: out.session, epoch: out.epoch, cursor: out.cursor, event: out.event }];
+                const messages = live();
                 // Still reading this session from disk: hold it, or the client would see an event before the
                 // backfill it comes after, and its reducer trusts that order.
                 if (s.loading) s.loading.push(...messages);
