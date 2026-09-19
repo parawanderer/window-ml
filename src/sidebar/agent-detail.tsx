@@ -394,7 +394,7 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const sheetGrants = awaiting ? externalSheetGrant(st.arguments) : [];
     const showGrants = awaiting && hasPersistGrants(st.grants);
     return (
-        <div data-astep-seq={st.seq} class={`astep tool${dimmed ? " away" : ""}${open ? " open" : ""}${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}>
+        <div data-astep-seq={st.seq} class={`astep tool${dimmed ? " away" : ""}${open ? " open" : ""}${closing ? " closing" : ""}${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}>
             <button class="astep-head" onClick={toggle}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 <Dot status={st.pending ? "pending" : toolFailed(st.result) ? "err" : "ok"} />
