@@ -302,8 +302,13 @@ is a brainstorming tool and the first thing on it should be somewhere to put a t
 session." and a separate start form. Agent is the default kind; a Chat/Agent switch appears when some runtime offers
 both. The pill's row holds what a start needs: where an agent runs (`useTargetPick`'s `inline` form: an open tab by
 title, or a new tab with an optional URL) and, with more than one, which runtime. Enter starts; what starts is saved
-(the start commands save unless told `ephemeral`), so it is in the list the moment the runtime answers. A model
-picker waits on a `models.list` contract command, which does not exist yet.
+(the start commands save unless told `ephemeral`), so it is in the list the moment the runtime answers. The model
+picker is the chosen runtime's `models.list`, asked once per runtime: its default first and by name ("Default ·
+qwen3:32b"), which sends no `model` so the runtime's own choice stands, and a model whose kinds include `embedding`
+left out (absent kinds mean unknown, never "cannot chat").
+
+**Rename** (the row's `⋮`, `RenameDialog` in row-menu.tsx) sends `session.rename`; the title is the runtime's, so the
+row changes when its upsert arrives, and an empty name hands naming back to the model, which the dialog says.
 
 It is rendered by capability like everything else here: a runtime offers "chat" only where `capabilities.chat` says
 it can, "agent" only where `capabilities.agent` does, and the tab picker only where `capabilities.tabs` does, with

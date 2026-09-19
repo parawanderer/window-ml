@@ -201,7 +201,7 @@ test("phone: starting a chat from the list, and the start page asks only what it
 
     // One runtime can hold a chat here — the lab box has `agent` and no `chat`, the old Mac is offline — so there is
     // nothing to choose between and the page does not ask; a chat has no "where" either.
-    await expect(page.locator(".chat-pick-rt")).toHaveCount(0);
+    await expect(page.getByRole("combobox", { name: "Runtime" })).toHaveCount(0);
     await expect(page.locator(".tp-pill")).toHaveCount(0);
 
     await box.fill("what is a shared worker?");
@@ -256,10 +256,16 @@ test("desktop: with nothing open the page is a start box; an agent run picks a t
     await expect(pill).toContainText("New tab");
     await expect(page.locator(".chat-pick-url")).toBeVisible();
 
+    // The model is the chosen runtime's list: its default first and by name, an embedding model left out (it
+    // cannot run an agent), and picking another one sends it; the default sends no model at all.
+    const modelPick = page.getByRole("combobox", { name: "Model" });
+    await expect(modelPick.locator("option")).toHaveText(["Default · qwen3:32b", "gemma3:27b"]);
+    await modelPick.selectOption("gemma3:27b");
+
     await box.fill("summarise the front page");
     await box.press("Enter");
     await expect(page).toHaveURL(/#s=laptop%3A/);
-    await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "agent.start", task: "summarise the front page", target: { kind: "blank" } });
+    await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "agent.start", task: "summarise the front page", target: { kind: "blank" }, model: "gemma3:27b" });
 
     // The compose button brings it back from an open session.
     await page.locator(".chat-list .chat-start").click();
@@ -484,6 +490,17 @@ test("desktop: a row's menu pins a session to the top, and deletes one only afte
     await expect(page.locator(".chat-notice.error")).toContainText("at most 100 sessions can be pinned");
     await expect(page.locator(".chat-pinned").locator(`.chat-row[data-session="${CAPPED}"]`)).toHaveCount(0);
     await page.evaluate(() => { delete globalThis.__chatFake.handlers["session.pin"]; });
+
+    // Rename: the runtime's title, so what the row shows is what the runtime stored, after its upsert.
+    await menuOf(CHAT).click();
+    await page.getByRole("menuitem", { name: "Rename…" }).click();
+    const field = page.getByRole("textbox", { name: "Session name" });
+    await expect(field).toBeFocused();
+    await expect(page.locator(".chat-dialog-hint")).toHaveText("Clear to let the model name it.");
+    await field.fill("  KV   cache sizing  ");
+    await field.press("Enter");
+    await expect.poll(async () => (await commands(page)).find((c) => c.type === "session.rename")).toMatchObject({ title: "  KV   cache sizing  " });
+    await expect(page.locator(`.chat-row[data-session="${CHAT}"] .row-title`)).toHaveText("KV cache sizing");
 
     // A runtime this device may only watch offers no delete.
     await menuOf(WATCHED).click();

@@ -23,7 +23,7 @@ import { mayCommand, speaksOurContract } from "./grants";
 import { ResumeSession, StartMenu, resumableHere, startableOn, type StartKind } from "./new-session";
 import { StartPage } from "./start-page";
 import { ListToggle, ViewToggle, calm, codeSize, foldedRuntimes, panelSize, listOpen, pane, pinned, setPane, toggleRuntime } from "./view-mode";
-import { DeleteConfirm, RowMenu, isPinned } from "./row-menu";
+import { DeleteConfirm, RenameDialog, RowMenu, isPinned } from "./row-menu";
 import { GearMenu, Rail, mainView, openSearch } from "./nav";
 import { SearchPage } from "./search-page";
 import { SettingsPage } from "./settings-page";
@@ -666,6 +666,7 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
             <Notices store={store} />
             <Lightbox platform={platform} />
             <DeleteConfirm store={store} />
+            <RenameDialog store={store} />
         </div>
     );
 }

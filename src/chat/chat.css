@@ -938,3 +938,11 @@ button.chat-page-go:hover { color: var(--fg); }
 .tp-url { word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
 /* The cursor tip over the page's own popovers (the tab picker's list sits at 60). */
 .chat .cursor-tip { z-index: 70; }
+
+/* The rename dialog's field, and the line under it saying what an empty name does. */
+.chat-dialog-field {
+    width: 100%; box-sizing: border-box; margin: 4px 0 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
+    background: var(--bg); color: var(--fg); font: inherit; outline: none;
+}
+.chat-dialog-field:focus { border-color: var(--fg-dim); }
+.chat-dialog-hint { margin: 0 0 12px; color: var(--fg-faint); font-size: .9em; }

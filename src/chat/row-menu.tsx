@@ -8,7 +8,7 @@
 import { signal } from "@preact/signals";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { RuntimeInfo, SessionSummary } from "../session-host";
-import { IconMore, IconPin, IconTrash } from "../sidebar/icons";
+import { IconCompose, IconMore, IconPin, IconTrash } from "../sidebar/icons";
 import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
 import { mayCommand } from "./grants";
@@ -21,6 +21,14 @@ const openMenu = signal<{ key: string; top: number; left: number; up: boolean } 
 
 /** The session a delete is waiting to be confirmed for, or null. One at a time, drawn by `DeleteConfirm`. */
 const confirming = signal<{ s: SessionSummary; rt: RuntimeInfo; title: string } | null>(null);
+
+/** The session a rename is being typed for, or null. One at a time, drawn by `RenameDialog`. */
+const renaming = signal<{ s: SessionSummary; rt: RuntimeInfo; title: string } | null>(null);
+
+/** Can this device rename this session: the runtime is reachable, and this client holds the grant to ask. */
+export function mayRename(rt: RuntimeInfo): boolean {
+    return rt.online && mayCommand(rt, "session.rename");
+}
 
 /** Can this device delete this session: the runtime is reachable, and this client holds the grant to ask. */
 export function mayDelete(rt: RuntimeInfo): boolean {
@@ -94,6 +102,7 @@ export function RowMenu({ store, s, rt, title }: { store: ChatStore; s: SessionS
             {at ? (
                 <div ref={menu} class={`chat-menu chat-row-menu${at.up ? " up" : ""}`} role="menu" style={`top:${at.top}px;left:${at.left}px`}>
                     <MenuItem icon={<IconPin />} label={pinnedNow ? "Unpin" : "Pin to the top"} onPick={() => act(() => void setPin(store, s, rt, !pinnedNow))} />
+                    {mayRename(rt) ? <MenuItem icon={<IconCompose />} label="Rename…" onPick={() => act(() => { renaming.value = { s, rt, title }; })} /> : null}
                     {mayDelete(rt) ? <MenuItem icon={<IconTrash />} label="Delete…" onPick={() => act(() => { confirming.value = { s, rt, title }; })} /> : null}
                 </div>
             ) : null}
@@ -134,6 +143,50 @@ export function DeleteConfirm({ store }: { store: ChatStore }) {
                     <button class="btn primary" disabled={busy} onClick={go}>{busy ? "Deleting…" : "Delete"}</button>
                 </div>
             </div>
+        </div>
+    );
+}
+
+/**
+ * Renaming a session: a field holding the current title. The TITLE IS THE RUNTIME'S (`session.rename`), so every
+ * device shows the same name and the runtime's generator never retitles it again; what comes back is what was stored
+ * (trimmed, collapsed, capped at 80), and the row changes when the runtime's upsert arrives, not before. An empty
+ * title hands the naming back to the model, which is said under the field rather than discovered.
+ */
+export function RenameDialog({ store }: { store: ChatStore }) {
+    const r = renaming.value;
+    const [text, setText] = useState("");
+    const [busy, setBusy] = useState(false);
+    const field = useRef<HTMLInputElement>(null);
+    useEffect(() => {
+        if (!r) return;
+        setBusy(false);
+        setText(r.s.renamed ? r.title : "");
+        requestAnimationFrame(() => { field.current?.focus(); field.current?.select(); });
+        const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") renaming.value = null; };
+        document.addEventListener("keydown", onKey);
+        return () => document.removeEventListener("keydown", onKey);
+    }, [r]);
+    if (!r) return null;
+    const go = async () => {
+        setBusy(true);
+        // A failure is already a notice (ChatStore.send); the dialog closes either way.
+        await store.send({ type: "session.rename", session: r.s.id, title: text });
+        renaming.value = null;
+    };
+    return (
+        <div class="chat-dialog-back" onPointerDown={(e) => { if (e.target === e.currentTarget) renaming.value = null; }}>
+            <form class="chat-dialog" role="dialog" aria-modal="true" aria-labelledby="chat-ren-h"
+                onSubmit={(e) => { e.preventDefault(); if (!busy) void go(); }}>
+                <h2 id="chat-ren-h">Rename</h2>
+                <input ref={field} class="chat-dialog-field" type="text" maxLength={200} value={text} placeholder={truncate(r.title, 80)}
+                    aria-label="Session name" aria-describedby="chat-ren-p" onInput={(e: any) => setText(e.target.value)} />
+                <p id="chat-ren-p" class="chat-dialog-hint">{text.trim() ? `Shown on every device that reaches ${r.rt.name}.` : "Clear to let the model name it."}</p>
+                <div class="chat-dialog-actions">
+                    <button type="button" class="btn" onClick={() => (renaming.value = null)}>Cancel</button>
+                    <button type="submit" class="btn primary" disabled={busy}>{busy ? "Renaming…" : "Rename"}</button>
+                </div>
+            </form>
         </div>
     );
 }
