@@ -20,6 +20,13 @@ import { Envelope, Frame, HubErrorFrame, Kind, Limits, Role, encodeFrames } from
 import type { Position, StreamRef } from "./wire";
 
 /** The protocol major this client speaks. */
+
+/** The hub refused a pairing frame (an Error with no `ref`): for a fetch, no offer waits under that code. */
+export class PairingRefused extends Error {
+    constructor(readonly code: number, message: string) {
+        super(message);
+    }
+}
 export const PROTOCOL = 1;
 
 /** Everything a principal needs to log in: who it is, what proves it, and which hub it expects. */
@@ -272,7 +279,7 @@ export class HubClient {
         if (frame.error && this.pairing && !frame.error.ref) {
             const waiting = this.pairing;
             this.pairing = null;
-            waiting.reject(new Error(`${frame.error.message} (code ${frame.error.code})`));
+            waiting.reject(new PairingRefused(frame.error.code, `${frame.error.message} (code ${frame.error.code})`));
             return;
         }
         if (frame.error) {
@@ -411,7 +418,7 @@ export class HubClient {
      */
     async pairingOffered(codeHash: Bytes): Promise<Bytes> {
         const { offer } = await this.pairingRequest({ pairFetch: { codeHash } });
-        if (!offer.length) throw new Error("the hub holds no offer under that code");
+        if (!offer.length) throw new PairingRefused(0, "the hub holds no offer under that code");
         return offer;
     }
 
