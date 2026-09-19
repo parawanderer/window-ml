@@ -171,3 +171,83 @@ test("a command this device may not SEND is refused here, not waited on", T, asy
         conn.close();
     } finally { hub.stop(); }
 });
+
+// --- subscriptions: the frames the pump used to drop ---
+
+const { ChannelKey, StreamKey, StreamReader, sealFrame, wrapKey } = await import("../src/hub/seal.ts");
+const { Kind } = await import("../src/hub/wire.ts");
+
+test("a subscription hears its stream's frames, then `backfilled` — and nothing of another stream", T, async () => {
+    // The pump used to handle presence and command results and DROP every published frame. That was harmless while
+    // nothing subscribed, and is everything once something does.
+    const hub = await startHub();
+    try {
+        const root = await generateIdentity();
+        const runtime = await device(root, Role.ROLE_RUNTIME, [], "laptop");
+        const phone = await device(root, Role.ROLE_CLIENT, [SCOPE.view]);
+        const common = { url: hub.url, hubName: HUB, accountRoot: root.publicKey };
+        const conn = await HubConnection.open({ ...common, ...phone, role: Role.ROLE_CLIENT });
+        const rt = await HubClient.connect({ ...common, ...runtime, role: Role.ROLE_RUNTIME });
+
+        const ck = await ChannelKey.generate();
+        const mine = await ck.channel("events", new TextEncoder().encode("one"));
+        const other = await ck.channel("events", new TextEncoder().encode("two"));
+        const key = await StreamKey.generate();
+        // Published BEFORE anyone subscribes, so it has to come out of the ring.
+        rt.publish(mine, Kind.KIND_SESSION_EVENTS, await sealFrame(rt.sender(), mine, key, 1, new TextEncoder().encode("retained")));
+        rt.publish(other, Kind.KIND_SESSION_EVENTS, await sealFrame(rt.sender(), other, key, 1, new TextEncoder().encode("not yours")));
+
+        const heard = [];
+        const stop = conn.subscribe(runtime.principal, mine, (e) => heard.push(e));
+        await poll("the backfill to finish", () => heard.some((e) => e.kind === "backfilled"));
+        rt.publish(mine, Kind.KIND_SESSION_EVENTS, await sealFrame(rt.sender(), mine, key, 2, new TextEncoder().encode("live")));
+        await poll("the live frame", () => heard.filter((e) => e.kind === "published").length === 2);
+
+        const reader = new StreamReader({ publisher: runtime.principal, publisherKey: runtime.identity.publicKey, channel: mine, key, fromCounter: 1 });
+        const texts = [];
+        for (const e of heard.filter((x) => x.kind === "published")) texts.push(new TextDecoder().decode((await reader.open(e.payload)).batch));
+        assert.deepEqual(texts, ["retained", "live"], "the ring first, then live — and not the other stream's frame");
+        assert.deepEqual(heard.map((e) => e.kind), ["published", "backfilled", "published"], "backfilled marks the seam");
+
+        // After unsubscribing, nothing more arrives.
+        stop();
+        const before = heard.length;
+        rt.publish(mine, Kind.KIND_SESSION_EVENTS, await sealFrame(rt.sender(), mine, key, 3, new TextEncoder().encode("after")));
+        await new Promise((r) => setTimeout(r, 300));
+        assert.equal(heard.length, before, "an unsubscribed stream is silent");
+
+        rt.close();
+        conn.close();
+    } finally { hub.stop(); }
+});
+
+test("a grant opens through the connection, verified, so a key from the wrong sender never opens", T, async () => {
+    const hub = await startHub();
+    try {
+        const root = await generateIdentity();
+        const runtime = await device(root, Role.ROLE_RUNTIME, [], "laptop");
+        const phone = await device(root, Role.ROLE_CLIENT, [SCOPE.view]);
+        const common = { url: hub.url, hubName: HUB, accountRoot: root.publicKey };
+        const conn = await HubConnection.open({ ...common, ...phone, role: Role.ROLE_CLIENT });
+        const rt = await HubClient.connect({ ...common, ...runtime, role: Role.ROLE_RUNTIME });
+
+        const ck = await ChannelKey.generate();
+        const events = await ck.channel("events", new TextEncoder().encode("s"));
+        const keys = await ck.channel("keys", new TextEncoder().encode("s"));
+        const key = await StreamKey.generate();
+        rt.publish(keys, Kind.KIND_SESSION_EVENTS, await wrapKey(rt.sender(), { principal: phone.principal, agreementKey: phone.agreement.publicKey }, events, key, 1, Date.now()));
+
+        const heard = [];
+        conn.subscribe(runtime.principal, keys, (e) => heard.push(e));
+        const g = await poll("the wrapped key", () => heard.find((e) => e.kind === "published"));
+        const grant = await conn.openGrant(g.sender, g.payload);
+        assert.deepEqual([...grant.channel], [...events], "a grant names the one channel it opens");
+        assert.deepEqual([...grant.key.id], [...key.id]);
+
+        // The same bytes claimed as coming from someone else do not open: the sender is checked, not trusted.
+        await assert.rejects(() => conn.openGrant(phone.principal, g.payload));
+
+        rt.close();
+        conn.close();
+    } finally { hub.stop(); }
+});
