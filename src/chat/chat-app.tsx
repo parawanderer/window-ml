@@ -646,7 +646,7 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
             <DockFrame panels={panels} narrow={narrow}>
             {main === "search" && (!narrow || !key) ? <SearchPage store={store} narrow={narrow} />
                 : main === "attention" ? <AttentionPage items={att.items} extras={extras} />
-                : main === "settings" ? <SettingsPage browser={browserSettings} housekeeping={housekeeping} store={store} />
+                : main === "settings" ? <SettingsPage browser={browserSettings} housekeeping={housekeeping} pairing={platform.pairing} store={store} />
                 : (starting || (!key && !narrow)) && canStart ? (
                     <main class="chat-main chat-home">
                         {calm.value || narrow ? null : (
