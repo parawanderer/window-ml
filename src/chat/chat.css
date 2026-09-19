@@ -704,7 +704,9 @@ button.chat-page-go:hover { color: var(--fg); }
    row you are scanning, the menu is what you want from the one you are on, and they never need to be seen together.
    Keyboard focus shows it too; a touch screen cannot hover, so there it is always shown and the row makes room. */
 .chat-row-wrap { position: relative; }
+/* Round, like the page's other icon buttons (the rail's, the gear, back): it was the hover button's 22px rounded square. */
 .chat-row-more {
+    width: 28px; height: 28px; padding: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
     position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
     opacity: 0; transition: opacity .15s ease;
 }
@@ -824,6 +826,9 @@ button.chat-page-go:hover { color: var(--fg); }
 /* The gear's menu rises from the gear, with room for its longer rows. */
 .chat-gear { position: relative; }
 .chat-gear-menu { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 40; min-width: 240px; transform-origin: bottom left; }
+/* On a PHONE the gear is in the list's top bar, not its foot, so its menu drops DOWN from it: rising, it opened above
+   the top of the screen and nothing of it could be seen. */
+.chat.narrow .chat-list .head .chat-gear-menu { top: calc(100% + 8px); bottom: auto; left: auto; right: 0; transform-origin: top right; max-width: calc(100vw - 16px); }
 /* In the open list's foot the gear has a word beside it, Gemini's "Settings": there is room, and a lone glyph at
    the bottom of a full column reads as an ornament. */
 .chat-gear-wide {
@@ -1144,7 +1149,8 @@ button.chat-page-go:hover { color: var(--fg); }
 @media (pointer: coarse) {
     .chat .hbtn { min-width: 40px; min-height: 40px; border-radius: 50%; }
     .chat-rt { min-height: 40px; }
-    .chat-att-fix, .chat-att-dismiss, .chat-seg-opt, .chat-menu-item { min-height: 40px; }
+    .chat-att-fix, .chat-att-dismiss, .chat-seg-opt { min-height: 40px; }
+    .chat-menu-item { min-height: 44px; }
     .pair-history summary { padding: 10px 0; }
     .tp-pill { min-height: 40px; }
     /* List rows at 44px, the size a phone's own lists use. */
@@ -1175,3 +1181,7 @@ button.chat-page-go:hover { color: var(--fg); }
    phone it leaves room at the left for the round back button that sits in that corner. */
 .chat-start-top { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; min-height: 56px; padding: 8px 16px; }
 .chat.narrow .chat-start-top { padding-left: 60px; }
+/* The note at the top of a session's model list while its runtime cannot switch: why picking does nothing. */
+.tp-note.tp-switch-note { margin: 2px 4px 6px; padding: 8px 10px; border-radius: 8px; background: var(--panel-2); color: var(--fg-dim); white-space: normal; }
+/* A model that cannot be picked yet: listed, readable, visibly not a choice. */
+.tp-row.off { cursor: default; opacity: .7; }

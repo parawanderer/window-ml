@@ -1091,14 +1091,22 @@ test("phone (touch): no view scrolls sideways, and everything a finger taps is a
     const page = await ctx.newPage();
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
-    const probe = () => page.evaluate(() => {
+    const probe = () => page.evaluate(async () => {
+        // Measured at rest: the list's rows slide in from the left as the page opens, and a row mid-slide is not a row
+        // off the screen.
+        // (Finite ones only: a loading shimmer runs forever.)
+        await Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity).map((a) => a.finished.catch(() => {})));
         const W = innerWidth, out = [];
         if (document.documentElement.scrollWidth > W + 1) out.push(`the page scrolls sideways (${document.documentElement.scrollWidth}px)`);
         const name = (e) => (e.getAttribute("aria-label") || e.textContent || e.className).trim().replace(/\s+/g, " ").slice(0, 40);
         for (const e of document.querySelectorAll("button, [role=button], [role=tab], [role=radio], [role=option], [role=menuitem], [role=menuitemradio], [role=menuitemcheckbox], summary")) {
             const r = e.getBoundingClientRect();
             if (!r.width || !r.height || getComputedStyle(e).visibility === "hidden" || e.closest("[inert],[aria-hidden=true]")) continue;
-            if (r.right > W + 1 || r.left < -1) out.push(`off the screen: "${name(e)}"`);
+            // Sideways, anything; above or below, only what floats (a menu, a list): a page's content scrolls to it.
+            const floats = e.closest("[role=menu], .chat-menu, .tp-pop");
+            // For what floats, the POPUP must be on the screen; its rows may scroll inside it.
+            const fr = floats?.getBoundingClientRect();
+            if (r.right > W + 1 || r.left < -1 || (fr && (fr.top < -1 || fr.bottom > innerHeight + 1))) out.push(`off the screen: "${name(e)}"`);
             // A chip inside a line of text takes the finger with a hidden area around it (`::after`), so measure that.
             if (e.hasAttribute("data-inline-target")) {
                 const a = getComputedStyle(e, "::after");
@@ -1119,6 +1127,12 @@ test("phone (touch): no view scrolls sideways, and everything a finger taps is a
             await page.waitForTimeout(300);
             expect(await probe(), `view ${hash || "(the list)"}`).toEqual([]);
         }
+        // The gear's menu on a phone: it rose from a gear at the TOP of the screen, off the screen entirely.
+        await page.goto(server.url);
+        await page.locator(".chat").waitFor();
+        await page.locator(".chat-list .head .chat-gear-btn").tap();
+        await expect(page.getByRole("menu", { name: "Page menu" })).toBeVisible();
+        expect(await probe(), "the gear's menu, open").toEqual([]);
         await page.goto(server.url);
         await page.locator(".chat-start").tap();
         expect(await probe(), "the start page").toEqual([]);
@@ -1126,4 +1140,20 @@ test("phone (touch): no view scrolls sideways, and everything a finger taps is a
         expect(await probe(), "the start page with the tab picker open").toEqual([]);
         expect(errors).toEqual([]);
     } finally { await ctx.close(); }
+});
+
+test("a session's model is at the top of its page, as the picker to swap it, and says when its runtime cannot yet", async () => {
+    for (const vp of [PHONE, DESKTOP]) {
+        const { page, errors } = await open(vp, `#s=${encodeURIComponent(CHAT)}`);
+        const pill = page.getByRole("button", { name: /^Model: / });
+        await expect(pill).toBeVisible();
+        await pill.click();
+        const list = page.getByRole("listbox", { name: "Model" });
+        await expect(list).toBeVisible();
+        // No runtime can switch a session's model yet: the list says so, and picking changes nothing.
+        await expect(list.getByRole("note")).toContainText("cannot switch a session's model yet");
+        await expect(list.getByRole("option").first()).toHaveAttribute("aria-disabled", "true");
+        expect(errors, `at ${vp.width}px`).toEqual([]);
+        await page.close();
+    }
 });

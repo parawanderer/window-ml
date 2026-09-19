@@ -25,6 +25,7 @@ import { START_GRACE_MS, StartPage, useHeldTrue } from "./start-page";
 import { AttentionButton, AttentionPage, useAttention } from "./attention-page";
 import { ListToggle, ViewToggle, calm, codeSize, foldedRuntimes, panelSize, listOpen, pane, pinned, setCalm, setPane, toggleRuntime } from "./view-mode";
 import { MenuItem } from "./menu";
+import { SessionModelPicker } from "./model-picker";
 import { DeleteConfirm, RenameDialog, RowMenu, isPinned } from "./row-menu";
 import { GearMenu, Rail, mainView, openSearch } from "./nav";
 import { SearchPage } from "./search-page";
@@ -185,6 +186,13 @@ function usePeek(store: ChatStore, id: SessionId | null, rt: RuntimeInfo | undef
             .finally(() => setBusy(false));
     };
     return { busy, peek };
+}
+
+/** The session's model at the top of its page, as a picker (model-picker.tsx). Switching waits on the runtime saying it
+ *  can (`capabilities.switchModel`), which no runtime does yet. */
+function ModelTop({ store, rt, model }: { store: ChatStore; rt: RuntimeInfo; model: string }) {
+    const canSwitch = !!(rt.capabilities as { switchModel?: boolean }).switchModel;
+    return <SessionModelPicker store={store} rt={rt} current={model} canSwitch={canSwitch} />;
 }
 
 /** The camera button in a wide header. */
@@ -492,13 +500,14 @@ function SessionPane({ store, sessionKey, narrow, extras }: { store: ChatStore; 
                         spent on it again says nothing new, where the model is what the next reply comes from. The
                         title is still one tap away, at the top of the ⋮ menu. */}
                     <span class="chat-head-title">
-                        {narrow && summary?.model ? <b class="chat-head-model">{summary.model}</b> : <b>{truncate(title, 120)}</b>}
+                        {narrow && summary?.model && rt ? <ModelTop store={store} rt={rt} model={summary.model} /> : <b>{truncate(title, 120)}</b>}
                         <span class="chat-head-sub">
-                            {rt?.name ?? id?.runtime}{!narrow && summary?.model ? ` · ${summary.model}` : ""}
+                            {rt?.name ?? id?.runtime}
                             {summary?.page ? <> · <PageChip page={summary.page} onShow={tabFocus(store, rt, summary)} /></> : null}
                         </span>
                     </span>
                     <span class="sp" />
+                    {!narrow && summary?.model && rt ? <ModelTop store={store} rt={rt} model={summary.model} /> : null}
                     {narrow ? <SessionMenu peek={peek} hash={id?.hash} title={summary?.model ? title : undefined} /> : <>
                         <PagePeek peek={peek} />
                         <DeviceViews extras={extras} rt={rt} />
@@ -578,8 +587,9 @@ function Lede({ title, rt, summary, id, store, sessionKey }: {
     return (
         <div class="chat-lede">
             <b class="chat-lede-title">{truncate(title, 120)}</b>
+            {summary?.model && rt ? <ModelTop store={store} rt={rt} model={summary.model} /> : null}
             <span class="chat-lede-sub">
-                {rt?.name ?? id?.runtime}{summary?.model ? ` · ${summary.model}` : ""}
+                {rt?.name ?? id?.runtime}
                 {summary?.page ? <> · <PageChip page={summary.page} onShow={show} /></> : null}
                 <PagePeek peek={peek} />
             </span>
