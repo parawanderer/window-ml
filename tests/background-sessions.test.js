@@ -273,3 +273,48 @@ test("a run's history is kept for a session the store holds, and dropped for one
     await flush();
     assert.equal(await storedRow(idb, "run00011", 3), null);
 });
+
+test("session.pin keeps an unsaved session, writes the pin, and a restarted worker lists it pinned", T, async () => {
+    const { IDBFactory } = await import("fake-indexeddb");
+    const idb = new IDBFactory();
+    const bg = loadBackground({ config, indexedDB: idb });
+    const page = openPage(bg);
+    void bg.send({ type: "ML_DEBUG_EVENT", event: start("eeee0001") }, tab(7));
+    void bg.send({ type: "ML_DEBUG_EVENT", event: ev("eeee0001", "agent-result", { answer: "done", steps: 1, status: "done" }) }, tab(7));
+    await flush();
+    assert.equal(page.rows().get("eeee0001").saved, false, "a page script's session, not kept");
+
+    page.port.send({ type: "cmd", id: 1, command: { type: "session.pin", session: { runtime: "local", hash: "eeee0001" }, pinned: true } });
+    await flush();
+    assert.deepEqual(page.port.messages.find((m) => m.type === "result" && m.id === 1)?.result, { ok: true, data: {} });
+    const row = page.rows().get("eeee0001");
+    assert.equal(row.pinned, true);
+    assert.equal(row.saved, true, "a pin on something that dies with the worker would keep nothing");
+
+    // What a restart reads: the stored row carries the pin, and the events the session had before it was pinned.
+    const stored = await storedRow(idb, "eeee0001");
+    assert.equal(stored?.summary?.pinned, true);
+    assert.ok(stored.count >= 2, "the ring reached the store with the pin");
+
+    const next = loadBackground({ config, indexedDB: idb });
+    const again = openPage(next);
+    let restored;
+    for (let i = 0; i < 30 && !restored; i++) { await flush(); restored = again.rows().get("eeee0001"); }
+    assert.equal(restored?.pinned, true);
+});
+
+test("every command the contract defines reaches the handler through the port", T, async () => {
+    // The port kept its own list of known commands, which went stale: slice 5's commands were built and tested in the
+    // handler and answered `unsupported` from here, which is the only way the chat page reaches them.
+    const { COMMAND_SCOPE } = await import("../src/session-host.ts");
+    const bg = loadBackground({ config });
+    const page = openPage(bg);
+    const types = Object.keys(COMMAND_SCOPE);
+    types.forEach((type, i) => page.port.send({ type: "cmd", id: 100 + i, command: { type } }));
+    await flush(10);
+    for (const [i, type] of types.entries()) {
+        const reply = page.port.messages.find((m) => m.type === "result" && m.id === 100 + i);
+        assert.ok(reply, `${type} was answered`);
+        assert.notEqual(reply.result.error?.message, "this runtime does not know that command", type);
+    }
+});

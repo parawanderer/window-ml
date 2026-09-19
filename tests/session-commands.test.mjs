@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { SessionIndex } from "../src/session-index.ts";
-import { createCommandHandler, imageSize, dataUrlBytes, SIDE_CALL_MAX_TOKENS } from "../src/session-commands.ts";
+import { createCommandHandler, imageSize, dataUrlBytes, MAX_PINNED, SIDE_CALL_MAX_TOKENS } from "../src/session-commands.ts";
 import { SESSION_CONTRACT_VERSION } from "../src/session-host.ts";
 
 const TAB = 7;
@@ -51,6 +51,7 @@ function world(over = {}) {
         cancelChat: rec("cancelChat", true),
         hostsChat: rec("hostsChat", false),
         keepSession: rec("keepSession"),
+        pinSession: rec("pinSession", (hash, pinned) => { index.setPinned(hash, pinned); }),
         startAgent: rec("startAgent", async () => ({ outcome: "started", hash: "ab120001" })),
         history: rec("history", async () => AGENT_HISTORY),
         storedEvents: rec("storedEvents", async () => STORED),
@@ -78,6 +79,7 @@ test("every session command refuses a session this runtime does not hold, or ano
         { type: "session.cancel", session: sid("aaaa0001", "laptop") },
         { type: "session.continue", session: sid("ffff0000") },
         { type: "session.delete", session: sid("ffff0000") },
+        { type: "session.pin", session: sid("ffff0000"), pinned: true },
         { type: "approval.answer", session: sid("ffff0000"), seq: 1, decision: "approve" },
         { type: "page.highlight", session: sid("ffff0000"), ref: null },
         { type: "tabs.list", runtime: "laptop" },
@@ -141,6 +143,32 @@ test("session.continue only for a run stopped at its cap, through the page that 
         w.deps.toPage = async (_t, action, body) => { assert.deepEqual([action, body], ["continue", { hash: "aaaa0001" }]); return outcome; };
         assert.equal(code(await createCommandHandler(w.deps)({ type: "session.continue", session: sid("aaaa0001") })), expected, outcome);
     }
+});
+
+test("session.pin: bounded, idempotent, and handed to the one pin path", async () => {
+    const { run, index, named } = world();
+    index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    assert.equal(code(await run({ type: "session.pin", session: sid("aaaa0001"), pinned: "yes" })), "invalid");
+    assert.equal(code(await run({ type: "session.pin", session: sid("aaaa0001"), pinned: true })), "ok");
+    assert.equal(index.get("aaaa0001").pinned, true);
+    // Two devices pinning the same session both asked for the state it is in: success, and no second write.
+    assert.equal(code(await run({ type: "session.pin", session: sid("aaaa0001"), pinned: true })), "ok");
+    assert.equal(named("pinSession").length, 1);
+    assert.equal(code(await run({ type: "session.pin", session: sid("aaaa0001"), pinned: false })), "ok");
+    assert.equal(index.get("aaaa0001").pinned, undefined);
+
+    // Past the bound, a new pin is refused; unpinning and re-pinning what is already pinned are not.
+    for (let i = 0; i < MAX_PINNED; i++) {
+        const h = (0xb0000000 + i).toString(16);
+        index.ingest(start(h), { tabId: TAB, trusted: true });
+        index.setPinned(h, true);
+    }
+    const refused = await run({ type: "session.pin", session: sid("aaaa0001"), pinned: true });
+    assert.equal(code(refused), "conflict");
+    assert.match(refused.error.message, /unpin one/);
+    assert.equal(code(await run({ type: "session.pin", session: sid("b0000000"), pinned: true })), "ok");
+    assert.equal(code(await run({ type: "session.pin", session: sid("b0000000"), pinned: false })), "ok");
+    assert.equal(code(await run({ type: "session.pin", session: sid("aaaa0001"), pinned: true })), "ok");
 });
 
 test("session.delete refuses a running session, and forgets a finished one everywhere", async () => {

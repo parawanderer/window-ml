@@ -356,3 +356,23 @@ test("a SAVED session is never evicted whole: the store decides whether it exist
     assert.deepEqual(third.evicted, [{ runtime: "local", hash: "bbbb0001" }], "the oldest UNSAVED session goes");
     for (const h of ["aaaa0001", "aaaa0002", "aaaa0003"]) assert.ok(ix.get(h), `saved ${h} is still listed`);
 });
+
+test("a pin is a field on the row: set and cleared once, counted, and carried through a restore", () => {
+    const ix = index();
+    ix.ingest(start("aaaa0001"), bg());
+    ix.markSaved("aaaa0001");
+    assert.equal(ix.setPinned("aaaa0001", true).pinned, true);
+    assert.equal(ix.setPinned("aaaa0001", true), null, "pinning what is pinned changes nothing, so nothing is broadcast");
+    assert.equal(ix.pinnedCount(), 1);
+    assert.equal(ix.setPinned("ffff0000", true), null, "a session not held");
+
+    const row = ix.setPinned("aaaa0001", false);
+    assert.equal("pinned" in row, false, "unpinned is ABSENT, as the contract says, not false");
+    assert.equal(ix.pinnedCount(), 0);
+
+    // A restarted worker gets `pinned` back from the stored summary: nothing else remembers it.
+    ix.setPinned("aaaa0001", true);
+    const next = index();
+    next.restore([{ summary: ix.get("aaaa0001"), count: 1 }]);
+    assert.equal(next.get("aaaa0001").pinned, true);
+});

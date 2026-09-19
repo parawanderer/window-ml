@@ -153,6 +153,7 @@ browser. Nothing new decides a gate, starts a loop or builds a request.
 | `session.cancel` | a background run: `cancelBackgroundRun` (the `CANCEL_RUN` body, factored out); otherwise the page |
 | `session.continue` | only a `capped` session, through the page |
 | `session.delete` | refused while running; forgets the stored chat (`ml_session_<hash>`), the resumable snapshot and pointer store, then the index row |
+| `session.pin` | pinning keeps the session first (`keepSession`, so the ring reaches the store), then sets `pinned` on the row, which `planEviction` never drops and a restarted worker restores. At most `MAX_PINNED` (100); unpinning leaves it saved |
 | `page.highlight` | `ML_HL_REMOTE` to the session's tab with `anyMode`, since the shell otherwise draws remote highlights only in devtools mode |
 | `side.call` | `fetchLLM` on the utility profile, `think: false`, `maxTokens` capped at 1024, the session on the hint; `unsupported` without a utility model, which `capabilities.sideCalls` also says (kept current from storage) |
 | `tab.screenshot` | `captureVisibleTab`, only for a tab in front in its window; PNG, then JPEG at falling quality until it fits `maxBytes` (ceiling 4 MB); size read from the image header |
