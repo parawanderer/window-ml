@@ -6,84 +6,12 @@
 // says how to build the pinned tag.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { createConnection, createServer } from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { HUB, LIVE as T, device, hex, poll, startHub } from "./fixtures/hub-harness.mjs";
 
-const { generateAgreementKey } = await import("../src/hub/hpke.ts");
-const { generateIdentity, issueCertificate, principalId, SCOPE } = await import("../src/hub/keys.ts");
+const { generateIdentity, SCOPE } = await import("../src/hub/keys.ts");
 const { HubClient } = await import("../src/hub/client.ts");
 const { Role } = await import("../src/hub/wire.ts");
 const { HubConnection } = await import("../src/chat/hub-connection.ts");
-
-const HUB = "hub.test";
-const HUB_TAG = "v0.2.0";
-const BIN =
-    process.env.WMLHUB_BIN ??
-    [`../../window-ml-hub-${HUB_TAG}/target/release/wmlhub`, `../../window-ml-hub-${HUB_TAG}/target/debug/wmlhub`]
-        .map((p) => new URL(p, import.meta.url).pathname)
-        .find((p) => existsSync(p));
-const HAVE_HUB = !!BIN && existsSync(BIN);
-const NO_HUB = `no wmlhub ${HUB_TAG} binary: clone the tag and \`cargo build --release -p wmlhub\`, or set WMLHUB_BIN`;
-const T = { skip: !HAVE_HUB && NO_HUB, timeout: 30_000 };
-
-const hex = (b) => [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
-
-const freePort = () =>
-    new Promise((resolve) => {
-        const probe = createServer();
-        probe.listen(0, "127.0.0.1", () => {
-            const { port } = probe.address();
-            probe.close(() => resolve(port));
-        });
-    });
-
-const canConnect = (port) =>
-    new Promise((resolve) => {
-        const socket = createConnection({ port, host: "127.0.0.1" });
-        socket.setTimeout(300, () => { socket.destroy(); resolve(false); });
-        socket.on("connect", () => { socket.end(); resolve(true); });
-        socket.on("error", () => resolve(false));
-    });
-
-async function startHub() {
-    const port = await freePort();
-    const state = mkdtempSync(join(tmpdir(), "wmlhub-conn-"));
-    const hub = spawn(BIN, ["serve", "--hub-name", HUB, "--registration", "open", "--state-dir", state, "--listen", `127.0.0.1:${port}`], { stdio: ["ignore", "ignore", "pipe"] });
-    let stderr = "";
-    hub.stderr.on("data", (d) => { stderr += d; });
-    const stop = () => { hub.kill(); try { rmSync(state, { recursive: true, force: true }); } catch { /* gone */ } };
-    for (let i = 0; i < 100; i++) {
-        if (await canConnect(port)) return { url: `ws://127.0.0.1:${port}`, stop };
-        await new Promise((r) => setTimeout(r, 50));
-    }
-    stop();
-    throw new Error(`the hub did not listen on ${port}: ${stderr}`);
-}
-
-/** One principal of an account: fresh keys, and the certificate the root issued it. */
-async function device(root, role, scopes, label = "") {
-    const identity = await generateIdentity();
-    const agreement = await generateAgreementKey();
-    const chain = [await issueCertificate(root, {
-        subject: identity.publicKey, agreementKey: agreement.publicKey, role, scopes, label,
-        notBeforeMs: Date.now() - 3_600_000, notAfterMs: Date.now() + 3_600_000,
-    })];
-    return { identity, agreement, chain, principal: await principalId(identity.publicKey) };
-}
-
-/** Wait until a predicate holds, so presence arriving a tick late never makes a test flaky. */
-async function poll(what, fn, ms = 5000) {
-    const until = Date.now() + ms;
-    for (;;) {
-        const v = fn();
-        if (v !== undefined && v !== null && v !== false) return v;
-        if (Date.now() > until) assert.fail(`waiting for ${what}: it never happened`);
-        await new Promise((r) => setTimeout(r, 25));
-    }
-}
 
 /** A runtime that answers every command sealed to it with whatever `answer` returns for that command. */
 function runtimeThatAnswers(client, answer) {
