@@ -118,6 +118,12 @@ shows the fingerprint, and on confirmation leaves a certificate sealed to the of
   runtime. `confirmOffer` refuses what a verifier would refuse of a delegate (a never-delegable scope, one it does not
   hold, `may_revoke`) before anything is issued.
 - The hex fingerprint is twelve characters, identical to `wmlbox pair`'s. Words, if any, are the UI's choice.
+- **A QR code instead of typing** (`PendingOffer.qr`, `lookupScanned`). The offering screen draws
+  `WMLPAIR:1:<code>:<64 hex>`: the code and the WHOLE fingerprint, where the screen shows a 48-bit prefix sized for a
+  person. The scanning device checks the offer's keys against it itself and refuses a mismatch (`"mismatch"`) before
+  showing anything, so `FoundOffer.checked` means no comparison by eye is needed. That is stronger than the typed path,
+  not only quicker: the full digest, carried over a camera the hub has no part in. Upper case, digits and colons only,
+  for QR's alphanumeric mode. This format is defined here; `wmlbox pair` does not print one yet.
 - Checked against the other implementation in `tests/hub-pairing.test.mjs`: this client answers a real `wmlbox pair`,
   whose printed fingerprint must equal ours and which must accept the answer we seal. `wmlbox` is built beside
   `wmlhub` from the same tag.
@@ -150,7 +156,10 @@ reading it (`tests/hub-runtime.test.mjs`); `sw-hub.ts` plugs it into the worker.
   `HUB_RUNTIME { action: "paired" }`; the worker reads the keyring again.
 - **History.** Every start, state reached and reason for going offline is appended to `chrome.storage.local`
   (`ml_hub_log`, last 200) and read by `HUB_RUNTIME { action: "log" }`. It outlives the worker, which is the point:
-  whether an idle worker stayed connected is read afterwards, not watched, since watching it keeps it alive.
+  whether an idle worker stayed connected is read afterwards, not watched, since watching it keeps it alive. A
+  stopped worker logs nothing on its way out, so each `start` says when a worker was last alive (`ml_hub_alive`,
+  stamped once a minute while connected; a timer does not keep a worker alive), and an alarm arriving within 5 s of
+  the module running logs `woken by the keepalive alarm`.
 - **Until the screens exist**, `dev-hub-pair.html` offers this browser and `scripts/hub-root.mjs` is the root device
   that confirms it (skill: `hub-pairing`).
 
@@ -173,7 +182,14 @@ reading it (`tests/hub-runtime.test.mjs`); `sw-hub.ts` plugs it into the worker.
   never bites while this runtime is up. Only when this runtime's leaf carries `may_revoke`. Each version is
   `max(now, last + 1)`.
 
-Not yet: envelope `pos` stamped from the store, keeping a session's start in the hub ring, pushing a changed
+**Paging back past the hub's ring.** A live event of a KEPT session carries `pos`, its index in the stored history
+(`SessionStore.nextPos`, asked before the event is queued, counting what is written, in flight and queued). The chat
+page turns the first ring event's `pos` into `backfilled.from`, and pages back with `session.backfill { before }`,
+which counts the same positions, down to the session's start. So a kept session's start needs no place in the hub
+ring. An unkept session has no stored history and no `pos`: once the ring rolls past its start, that start is gone,
+and `backfilled.truncated` says so.
+
+Not yet: keeping an UNKEPT session's start reachable over the hub, pushing a changed
 description (clients re-ask `runtime.info`), `device.renew` / `device.scopes`, and `DeviceInfo.rotation`. No vector
 is needed in the other direction: Ed25519 is deterministic, and signing the hub vector's body here reproduces its list
 byte for byte, so a list signed here is the same bytes the Rust verifier already accepts.

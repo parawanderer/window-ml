@@ -373,6 +373,40 @@ test("every event of a saved session reaches the store, not only the ones that c
     assert.equal(row?.count, 7);
 });
 
+test("a kept session's live events say where they sit, and session.backfill counts the same positions", T, async () => {
+    // What lets a client that got a session from the hub's short ring page back to its start: `pos` on each live event
+    // is the event's index in the stored history, which is what `session.backfill` pages through.
+    const { IDBFactory } = require("fake-indexeddb");
+    const bg = loadBackground({ config, indexedDB: new IDBFactory() });
+    const { port } = openPage(bg);
+    void bg.send({ type: "ML_KEEP_SESSION", hash: "dddd0001" }, tab(7));
+    void bg.send({ type: "ML_DEBUG_EVENT", event: start("dddd0001") }, tab(7));
+    await flush();
+    port.send({ type: "events", sub: 1, hash: "dddd0001" });
+    await flush();
+    for (let i = 1; i <= 4; i++) void bg.send({ type: "ML_DEBUG_EVENT", event: ev("dddd0001", "agent-step", { step: i, seq: i, tool: "exec", result: `r${i}` }) }, tab(7));
+    // An unkept session's events carry no position: nothing stored is there to page from.
+    void bg.send({ type: "ML_DEBUG_EVENT", event: start("eeee0001") }, tab(8));
+    port.send({ type: "events", sub: 2, hash: "eeee0001" });
+    void bg.send({ type: "ML_DEBUG_EVENT", event: ev("eeee0001", "agent-step", { step: 1, seq: 1, tool: "exec", result: "x" }) }, tab(8));
+    let live = [];
+    for (let i = 0; i < 100 && live.length < 4; i++) {
+        await flush();
+        live = port.messages.filter((m) => m.type === "stream" && m.sub === 1 && m.message.type === "event" && m.message.event.kind === "agent-step").map((m) => m.message);
+    }
+    assert.deepEqual(live.map((m) => m.pos), [1, 2, 3, 4]);
+    const other = port.messages.filter((m) => m.type === "stream" && m.sub === 2 && m.message.type === "event" && m.message.event.kind === "agent-step");
+    assert.equal(other.length, 1);
+    assert.equal(other[0].message.pos, undefined);
+
+    port.send({ type: "cmd", id: 9, command: { type: "session.backfill", session: { runtime: "local", hash: "dddd0001" }, before: 3, limit: 2 } });
+    let page = null;
+    for (let i = 0; i < 100 && !page; i++) { await flush(); page = port.messages.find((m) => m.type === "result" && m.id === 9)?.result; }
+    assert.equal(page.ok, true, JSON.stringify(page));
+    assert.equal(page.data.from, 1);
+    assert.deepEqual(page.data.events.map((e) => e.step), [1, 2], "positions 1 and 2 are the events live said were at 1 and 2");
+});
+
 test("session storage stats answer an extension page and refuse a page", T, async () => {
     const { IDBFactory } = require("fake-indexeddb");
     const idb = new IDBFactory();

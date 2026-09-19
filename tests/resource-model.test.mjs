@@ -1501,6 +1501,14 @@ describe("scrubIntent", () => {
         assert.equal(scrubIntent(ex, { from: 10_000, to: 300_000 }, SLACK).windowS, 290);
     });
 
+    test("where the unzoomed view does not follow (a scoped, finished session), the tail PINS too", () => {
+        // The reported bug: scrolling the strip to its end cleared the zoom, and a finished session's unzoomed view
+        // is its own stretch near the START of the history, so the window jumped back to the left edge.
+        assert.deepEqual(scrubIntent(ex, { from: 200_000, to: 300_000 }, SLACK, false),
+            { live: false, window: { from: 200_000, to: 300_000 } });
+        assert.deepEqual(scrubIntent(ex, { from: 200_000, to: 300_000 }, SLACK, true), { live: true, windowS: 100 });
+    });
+
     test("away from the tail it pins a range instead — it is no longer following", () => {
         assert.deepEqual(scrubIntent(ex, { from: 60_000, to: 200_000 }, SLACK),
             { live: false, window: { from: 60_000, to: 200_000 } });

@@ -184,3 +184,18 @@ test("the other implementation: this client answers `wmlbox pair`, whose fingerp
         client.close();
     } finally { box.kill(); hub.stop(); rmSync(state, { recursive: true, force: true }); }
 });
+
+test("a pairing QR code: the code and the whole fingerprint, in QR alphanumeric characters, read back leniently", async () => {
+    const identity = await generateIdentity();
+    const agreement = await generateAgreementKey();
+    const code = P.generatePairingCode();
+    const qr = await P.pairingQrText(code, identity.publicKey, agreement.publicKey);
+    assert.match(qr, /^[0-9A-Z:]+$/);
+    const back = P.parsePairingQr(` ${qr.toLowerCase()} `);
+    assert.equal(back.code, code);
+    assert.equal(back.fingerprint.slice(0, 12), await P.pairingFingerprintHex(identity.publicKey, agreement.publicKey), "the screen's fingerprint is its prefix");
+    assert.equal(back.fingerprint.length, 64);
+    for (const bad of ["", "WMLPAIR:2:" + qr.slice(10), qr.slice(0, -1), qr + "0", `WMLPAIR:1:ABCDEFGU:${"0".repeat(64)}`]) {
+        assert.equal(P.parsePairingQr(bad), null, bad);
+    }
+});

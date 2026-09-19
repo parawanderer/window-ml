@@ -62,6 +62,7 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
     let unwatch: (() => void) | null = null;
     const hide = (): void => {
         current = null; layer.hidden = true; layer.textContent = "";
+        layer.style.removeProperty("--fs");
         watcher?.disconnect();
         unwatch?.(); unwatch = null;
     };
@@ -89,6 +90,12 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
         // tests changes, and a re-render can't strand the layer holding a detached node.
         // (`wrap`/`wide` carry a width intent worth keeping; direction classes do not — see fill.)
         fill(trigger);
+        // THE SIZE OF WHAT RAISED IT. The layer hangs off the root, so it read the root's `--fs`: on the chat page that is
+        // the prose's 15px, and a tip raised from the docked resource panel (sized by its own "Panel text size") came
+        // out larger than the panel's own text and its own chart tips beside it. The trigger's `--fs` is the one its
+        // surface chose, so the tip matches the text it explains.
+        const fs = doc.defaultView?.getComputedStyle?.(trigger).getPropertyValue("--fs").trim();
+        if (fs) layer.style.setProperty("--fs", fs); else layer.style.removeProperty("--fs");
         layer.hidden = false;
         // WRAP IF IT DOES NOT FIT, whatever the call site said. `.tt-layer` is nowrap with a max-width, so a
         // sentence longer than that is simply CLIPPED — the end of the very thing being explained is the part

@@ -9,7 +9,9 @@ const require_ = createRequire(import.meta.url);
 
 let h, render, ArchiveFolderBody, BRAVE_FLAG, doc;
 before(async () => {
-    const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { pretendToBeVisual: true });
+    // An origin, so `localStorage` exists: whether the folder was reconnected before is remembered there.
+    const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { pretendToBeVisual: true, url: "https://extension.test/" });
+    globalThis.localStorage = dom.window.localStorage;
     globalThis.window = dom.window;
     globalThis.document = dom.window.document;
     globalThis.Node = dom.window.Node;
@@ -39,10 +41,27 @@ test("a lapsed grant: says what happened, what waits, and to choose Allow on eve
     assert.match(host.textContent, /3 month files wait to be written\. Nothing is lost/);
 });
 
+test("lapsed AGAIN after a reconnect: it was allowed only once, so this time choose Always allow", () => {
+    localStorage.setItem("wml-archive-regranted", "1");
+    try {
+        const host = show({ report: { state: "needs-grant", name: "Archive", pending: 1, lastSync: 1 } });
+        assert.match(host.textContent, /Archive lapsed again/);
+        assert.match(host.textContent, /allowed only until the browser restarted/);
+        assert.match(host.textContent, /Always allow/);
+        // …and the connected state's heads-up is gone once it has been through a reconnect.
+        const conn = show({ report: { state: "connected", name: "Archive", pending: 0, lastSync: Date.now() } });
+        assert.doesNotMatch(conn.textContent, /may ask for this folder again/);
+    } finally {
+        localStorage.removeItem("wml-archive-regranted");
+    }
+});
+
 test("connected: the folder, its last write, and the four actions", () => {
     const host = show({ report: { state: "connected", name: "Archive", pending: 0, lastSync: Date.now() } });
     assert.deepEqual(buttons(host), ["Write now", "Import from this folder", "Change folder…", "Stop using this folder"]);
     assert.match(host.textContent, /Archive, written just now/);
+    // The lasting grant is only offered on the NEXT ask, so it is said before that ask arrives.
+    assert.match(host.textContent, /may ask for this folder again\. Choose Always allow then/);
 });
 
 test("unsupported: Brave gets its flag to copy, anything else a plain sentence", () => {
