@@ -99,10 +99,17 @@ test("starting a chat from the page: the worker hosts it, with no tab behind it"
     } finally { await ext.context.close(); await fake.stop(); }
 });
 
+/** A two-card box for the fake backend to report, so the resource panel has something to draw. */
+const GiB = 1024 ** 3;
+const card = (id, free) => ({ gpu_id: String(id), name: `CUDA${id}`, runner: "CUDA", compute: "12.0", driver: "13.2", total_memory: 101972967424, physical_memory: 102641958912, free_memory: free });
+const BOX = { compute: { system_compute: { cpu_cores: 32, total_memory: 130142785536, free_memory: 12.3 * GiB }, supported_gpus: [card(0, 90 * GiB), card(1, 94 * GiB)] } };
+
 test("panels dock to an edge, share one as tabs, resize from their edge, and zoom until Escape", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    fake.setCapacity(BOX);
     const ext = await launchExtension();
     try {
-        await configureExtension(ext.sw, { chatUrl: "http://127.0.0.1:1/", apiKey: "", apiFormat: "openai", model: "m", debugMode: "off" });
+        await configureExtension(ext.sw, { chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off" });
         const { page: chat, errors } = await openChatPage(ext);
         await expect(chat.locator(".chat-rt", { hasText: "This browser" })).toBeVisible();
         const gear = chat.locator(".chat-gear-btn");
@@ -112,6 +119,9 @@ test("panels dock to an edge, share one as tabs, resize from their edge, and zoo
         await chat.getByRole("menuitemcheckbox", { name: "Python bench" }).click();
         const top = chat.locator(".chat-dock.chat-dock-top"), bottom = chat.locator(".chat-dock.chat-dock-bottom");
         await expect(top.getByRole("tab", { name: "Resources" })).toBeVisible();
+        // Docked panels read at the DevTools panel's base size, not the page's 15px reading size.
+        const panelFs = () => top.locator(".vram").evaluate((el) => getComputedStyle(el).getPropertyValue("--fs").trim());
+        expect(await panelFs()).toBe("12px");
         await expect(bottom.getByRole("tab", { name: "Python bench" })).toBeVisible();
 
         // The docked panels live in the reading column, so the rail keeps its whole height: its gear is never under
@@ -133,6 +143,15 @@ test("panels dock to an edge, share one as tabs, resize from their edge, and zoo
         await expect(top.locator(".vram")).toBeHidden();
         await top.getByRole("tab", { name: "Resources" }).click();
         await expect(top.locator(".vram")).toBeVisible();
+        // A tab closes from its own ✕, which arrives with the pointer.
+        const x = top.getByRole("button", { name: "Close Python bench" });
+        await chat.mouse.move(0, 0);
+        await expect(x).toHaveCSS("opacity", "0");
+        await top.getByRole("tab", { name: "Python bench" }).hover();
+        await expect(x).toHaveCSS("opacity", "1");
+        await x.click();
+        await expect(top.getByRole("tab")).toHaveCount(1);
+        await expect(chat.locator(".bench")).toHaveCount(0);
 
         // The region resizes from its inner edge, and keeps the size across a reload.
         const h0 = (await top.boundingBox()).height;
@@ -150,6 +169,14 @@ test("panels dock to an edge, share one as tabs, resize from their edge, and zoo
         await chat.mouse.move(e2.x + e2.width / 2, 0, { steps: 4 });
         await chat.mouse.up();
         expect(Math.round((await top.boundingBox()).height)).toBe(64);
+        // In a dock the graphs give way to the region: a plot keeps no 72px height and no 44px floor there, as it
+        // does in the DevTools panel. (Checked on the rule, since a chart needs a box report the fake does not reach.)
+        const plotRule = await top.locator(".dock-pane").first().evaluate((pane) => {
+            const p = document.createElement("div"); p.className = "rc-plot"; pane.appendChild(p);
+            const cs = getComputedStyle(p); const r = { h: cs.height, min: cs.minHeight }; p.remove(); return r;
+        });
+        expect(plotRule.min).toBe("14px");
+        expect(plotRule.h).not.toBe("72px");
         await chat.mouse.move(e2.x + e2.width / 2, 64 - 1);
         await chat.mouse.down();
         await chat.mouse.move(e2.x + e2.width / 2, 64 - 1 + (h1 - 64), { steps: 4 });
@@ -168,7 +195,7 @@ test("panels dock to an edge, share one as tabs, resize from their edge, and zoo
         await chat.keyboard.press("Escape");
         await expect(chat.locator(".chat-dock.max")).toHaveCount(0);
         expect(errors).toEqual([]);
-    } finally { await ext.context.close(); }
+    } finally { await ext.context.close(); await fake.stop(); }
 });
 
 test("the box's panel and the Python bench are on this page, because THIS browser is the runtime", async () => {

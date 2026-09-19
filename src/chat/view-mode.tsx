@@ -17,7 +17,7 @@ import { IconBrain, IconMenu } from "../sidebar/icons";
 import type { PlatformPrefs } from "./platform";
 
 /** Preference keys, under the platform's own namespace. */
-export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", CODE_KEY = "view.codeSize", DOCK_KEY = "view.dock";
+export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", CODE_KEY = "view.codeSize", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize";
 
 /** Is the page in calm view? Read it in a render to re-render when it changes. */
 export const calm = signal(true);
@@ -61,6 +61,20 @@ export const CODE_SIZES = [{ px: 11, label: "Small" }, { px: 12.5, label: "Defau
 export const CODE_DEFAULT = 12.5;
 /** The code size this device reads at, in px. */
 export const codeSize = signal<number>(CODE_DEFAULT);
+
+/**
+ * The base size of the DOCKED PANELS (the resource panel, the bench's chrome, their tab bars), in px.
+ *
+ * Those panels were built for the DevTools panel's 12px base and size everything off `--fs`; docked in this page they
+ * inherited its 15px reading size and came out a quarter too big — a chart's labels, legends and rows crowding a
+ * region you want to be a strip. The default is the DevTools panel's own size, so a panel reads the same in both
+ * places; the page's reading size is the largest choice, for someone who wants them to match the prose.
+ */
+export const PANEL_SIZES = [{ px: 11, label: "Small" }, { px: 12, label: "Default" }, { px: 13.5, label: "Large" }, { px: 15, label: "Page size" }] as const;
+/** The default docked-panel size, in px: the DevTools panel's base. */
+export const PANEL_FS_DEFAULT = 12;
+/** The docked panels' base size on this device, in px. */
+export const panelSize = signal<number>(PANEL_FS_DEFAULT);
 
 /** An edge of the reading column a panel can be docked to. */
 export type DockSide = "top" | "right" | "bottom" | "left";
@@ -128,9 +142,17 @@ export function installViewPrefs(prefs: PlatformPrefs): void {
     const p = prefs.get<string[]>(PINNED_KEY);
     pinned.value = new Set(Array.isArray(p) ? p.filter((x) => typeof x === "string") : []);
     dockLayout.value = readDock(prefs.get<DockLayout>(DOCK_KEY));
+    const ps = prefs.get<number>(PANEL_FS_KEY);
+    panelSize.value = PANEL_SIZES.some((x) => x.px === ps) ? ps! : PANEL_FS_DEFAULT;
     const cs = prefs.get<number>(CODE_KEY);
     codeSize.value = CODE_SIZES.some((x) => x.px === cs) ? cs! : CODE_DEFAULT;
     applyCalm();
+}
+
+/** Set the docked panels' base size (one of `PANEL_SIZES`). */
+export function setPanelSize(px: number): void {
+    panelSize.value = px;
+    store?.set(PANEL_FS_KEY, px);
 }
 
 /** Set the page's code size (one of `CODE_SIZES`). */

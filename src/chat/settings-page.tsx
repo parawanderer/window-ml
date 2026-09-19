@@ -10,7 +10,7 @@ import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
 import { IconBack } from "../sidebar/icons";
 import { mainView, useEscapeCloses } from "./nav";
-import { CODE_SIZES, codeSize, setCodeSize } from "./view-mode";
+import { CODE_SIZES, PANEL_SIZES, codeSize, panelSize, setCodeSize, setPanelSize } from "./view-mode";
 
 /** Which half of the settings is showing. Not stored: the sheet opens on this page's own, which is the half that is
  *  always there. */
@@ -54,6 +54,18 @@ export function SettingsPage({ browser }: { browser?: ComponentChildren | null }
                                 </div>
                             </div>
                             <pre class="code chat-set-sample" aria-hidden="true">{"for i in range(3):\n    print(f\"{i} hello\")"}</pre>
+                            <div class="chat-set-row">
+                                <div class="chat-set-label">
+                                    <span>Panel text size</span>
+                                    <span class="chat-set-hint">The docked panels: the resource graphs, the bench's controls, their tabs. Default is the DevTools panel's size.</span>
+                                </div>
+                                <div class="chat-seg" role="radiogroup" aria-label="Panel text size">
+                                    {PANEL_SIZES.map((o) => (
+                                        <button key={o.px} role="radio" aria-checked={panelSize.value === o.px}
+                                            class={`chat-seg-opt${panelSize.value === o.px ? " on" : ""}`} onClick={() => setPanelSize(o.px)}>{o.label}</button>
+                                    ))}
+                                </div>
+                            </div>
                         </section>
                     ) : (
                         <section class="chat-set-group" aria-label="Extension">

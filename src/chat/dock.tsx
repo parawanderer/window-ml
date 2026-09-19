@@ -139,11 +139,17 @@ function DockRegion({ side, panels, frame, full }: { side: DockSide; panels: rea
             )}
             <div class="dock-bar">
                 <div class="dock-tabs" role="tablist">
+                    {/* Each tab closes from itself, with an ✕ that arrives with the pointer: the region's menu does
+                        the same, but a panel you are done with should go where you are already looking. */}
                     {panels.map((p) => (
-                        <button key={p.id} role="tab" aria-selected={p === active} class={`dock-tab${p === active ? " on" : ""}${p.tip ? " tt" : ""}`} onClick={() => pick(p.id)}>
-                            {p.icon}<span>{p.title}</span>
-                            {p.tip ? <span class="tt-pop" role="tooltip">{p.tip}</span> : null}
-                        </button>
+                        <span key={p.id} class={`dock-tabwrap${p === active ? " on" : ""}`}>
+                            <button role="tab" aria-selected={p === active} class={`dock-tab${p === active ? " on" : ""}${p.tip ? " tt" : ""}`} onClick={() => pick(p.id)}>
+                                {p.icon}<span>{p.title}</span>
+                                {p.tip ? <span class="tt-pop" role="tooltip">{p.tip}</span> : null}
+                            </button>
+                            <button class="dock-tab-x" aria-label={`Close ${p.title}`}
+                                onClick={() => { if (maximized.value === p.id) maximized.value = null; p.close(); }}><IconClose /></button>
+                        </span>
                     ))}
                 </div>
                 {panels.map((p) => <div key={p.id} class="dock-slot" hidden={p !== active} ref={slotRef(p.id)} />)}

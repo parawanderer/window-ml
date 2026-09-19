@@ -312,7 +312,10 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-work { display: flex; min-width: 0; min-height: 0; position: relative; }
 .chat-work-mid { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .chat-work-mid > .chat-main { flex: 1 1 auto; }
-.chat-dock { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; flex: 0 0 auto; background: var(--bg); }
+/* Its base size is the docked panels' own (`--panel-fs`, "Panel text size"), never the page's reading size: they were
+   built for the DevTools panel's 12px and size everything off `--fs`. */
+.chat-dock { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; flex: 0 0 auto; background: var(--bg);
+    --fs: var(--panel-fs, 12px); font-size: var(--fs); }
 /* A region docked to the top edge: its border faces the reading column. */
 .chat-dock.chat-dock-top { border-bottom: 1px solid var(--border); }
 /* A region docked to the bottom edge. */
@@ -340,11 +343,26 @@ button.chat-page-go:hover { color: var(--fg); }
 /* One panel's tab: its icon and name, underlined while it is the visible one. */
 .dock-tab {
     display: inline-flex; align-items: center; gap: 7px; padding: 0 12px; border: none; background: none; font: inherit;
-    font-size: .88em; color: var(--fg-faint); cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap;
+    font-size: .88em; color: var(--fg-faint); cursor: pointer; white-space: nowrap;
 }
 .dock-tab svg { width: 15px; height: 15px; }
 .dock-tab:hover { color: var(--fg-dim); }
-.dock-tab.on { color: var(--fg); border-bottom-color: var(--fg-dim); }
+/* A tab and its ✕, side by side (a button cannot hold a button); the underline is the pair's, so the ✕ sits on it. */
+.dock-tabwrap { display: inline-flex; align-items: stretch; border-bottom: 2px solid transparent; }
+.dock-tabwrap.on { border-bottom-color: var(--fg-dim); }
+.dock-tabwrap > .dock-tab { border-bottom: none; padding-right: 4px; }
+/* The tab's ✕: there on hover, keyboard focus and touch; otherwise it keeps its room so nothing shifts. */
+.dock-tab-x {
+    display: inline-flex; align-items: center; justify-content: center; align-self: center; width: 20px; height: 20px;
+    margin-right: 6px; padding: 0; border: none; border-radius: 5px; background: none; color: var(--fg-faint); cursor: pointer;
+    opacity: 0; transition: opacity .12s ease;
+}
+.dock-tab-x svg { width: 12px; height: 12px; }
+.dock-tab-x:hover { color: var(--fg); background: var(--panel-2); }
+.dock-tabwrap:hover .dock-tab-x, .dock-tab-x:focus-visible { opacity: 1; }
+@media (hover: none) { .dock-tab-x { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .dock-tab-x { transition: none; } }
+.dock-tab.on { color: var(--fg); }
 /* The visible panel's own controls fill the bar between the tabs and the region's menu. */
 .dock-slot { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; }
 .dock-slot[hidden] { display: none; }
@@ -368,7 +386,12 @@ button.chat-page-go:hover { color: var(--fg); }
 /* The resource panel was built to sit ON TOP of the session list and fight it for height, which is why it carries
    a dragged height and a grip. In a region of its own there is nothing to fight: it takes the room, the dock's edge
    does the resizing, and the height it was dragged to in the DevTools panel does not follow it here. */
-.dock-pane > .vram { flex: 1 1 auto; height: auto !important; min-height: 0 !important; border-bottom: none; }
+.dock-pane > .vram { flex: 1 1 auto; height: auto !important; min-height: 0 !important; border-bottom: none; overflow-y: auto; }
+/* …and the GRAPHS give way first. Elsewhere a plot keeps a 44px floor and a 72px height, because there the panel sits
+   above a session list and must not squeeze its chart to nothing. Here the region's size is the choice: the plots
+   fill it and shrink with it, down to a sliver, before anything scrolls. */
+.dock-pane .rc, .dock-pane .rc-track { min-height: 0; }
+.dock-pane .rc-plot { height: auto; min-height: 14px; }
 .dock-pane > .vram > .vram-grip { display: none; }
 .dock-pane > .bench { flex: 1 1 auto; min-height: 0; padding: 0 0 4px; }
 

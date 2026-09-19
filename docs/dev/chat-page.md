@@ -601,7 +601,11 @@ is no dock and the row renders in place. Regions resize from their inner edge do
 (edge per panel, size per edge, visible tab per edge) is a device preference (`dockLayout`). A phone draws every
 open panel as one full-screen region. Two traps: `PanelHead` portals with Preact's own `render`, never
 `preact/compat`, whose global hooks turn `onChange` into `onInput` for every text input in the bundle; and context
-does not cross that portal, so a header row reads signals and props only.
+does not cross that portal, so a header row reads signals and props only. Docked panels read at their own base size
+(`--panel-fs`, "Panel text size" under Settings → This page, default the DevTools panel's 12px), because they size
+everything off `--fs` and inherited the page's 15px. In a dock the resource panel's plots drop their 72px height and
+44px floor and fill the region, so a region dragged to a strip shrinks the charts before anything scrolls. Each tab
+has an ✕ that arrives with the pointer.
 
 **Code has its own size** on this page, `--code-fs` (12.5px by default, the device's "Code size" setting,
 `codeSize` in view-mode.tsx): transcript code, the Python bench's editor and what it prints. It used to be a fraction

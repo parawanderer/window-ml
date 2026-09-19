@@ -144,8 +144,13 @@ test("the page's code size is a setting of its own, and the prose keeps its size
     // Settings is on every build: this page's display settings need no runtime behind them.
     await page.locator(".chat-gear-btn").click();
     await page.getByRole("menuitem", { name: "Settings" }).click();
-    await page.getByRole("radio", { name: "Large", exact: true }).click();
+    await page.getByRole("radio", { name: "Large", exact: true }).first().click();
     expect(await size()).toBe("14px");
+    // The docked panels' base size is its own setting, beside it.
+    const panelFs = () => page.evaluate(() => getComputedStyle(document.querySelector(".chat")).getPropertyValue("--panel-fs").trim());
+    expect(await panelFs()).toBe("12px");
+    await page.getByRole("radiogroup", { name: "Panel text size" }).getByRole("radio", { name: "Small" }).click();
+    expect(await panelFs()).toBe("11px");
     await expect(page.locator(".chat-set-sample")).toHaveCSS("font-size", "14px");
     // A device preference, so it survives a reload; Escape takes the sheet away.
     await page.reload();

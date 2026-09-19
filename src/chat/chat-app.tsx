@@ -22,7 +22,7 @@ import type { ChatStore } from "./chat-store";
 import { mayCommand, speaksOurContract } from "./grants";
 import { ResumeSession, StartMenu, resumableHere, startableOn, type StartKind } from "./new-session";
 import { StartPage } from "./start-page";
-import { ListToggle, ViewToggle, calm, codeSize, foldedRuntimes, listOpen, pane, pinned, setPane, toggleRuntime } from "./view-mode";
+import { ListToggle, ViewToggle, calm, codeSize, foldedRuntimes, panelSize, listOpen, pane, pinned, setPane, toggleRuntime } from "./view-mode";
 import { DeleteConfirm, RowMenu, isPinned } from "./row-menu";
 import { GearMenu, Rail, mainView, openSearch } from "./nav";
 import { SearchPage } from "./search-page";
@@ -626,7 +626,7 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
     const browserSettings = settingsRt ? extras?.settings?.(settingsRt.id) : null;
     return (
         <div class={`chat${narrow ? " narrow" : ""}${calm.value ? " calm" : ""}${!narrow && !listOpen.value ? " list-hidden" : ""}`}
-            style={{ "--code-fs": `${codeSize.value}px` }}>
+            style={{ "--code-fs": `${codeSize.value}px`, "--panel-fs": `${panelSize.value}px` }}>
             <ContextMenu />
             <CursorTipLayer />
             {!narrow && !listOpen.value ? <Rail store={store} onStart={start} gear={gear} /> : null}
