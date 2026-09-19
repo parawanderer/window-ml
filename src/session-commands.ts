@@ -55,6 +55,15 @@ export interface CommandDeps {
     startChat(opts: { text: string; images?: string[]; model?: string; system?: string; think?: boolean | null; ephemeral?: boolean }): Promise<string>;
     /** the next turn of a worker-hosted chat; `not-found` when this worker does not host it and storage has nothing */
     sendChat(hash: string, text: string, images?: string[]): Promise<"turn" | "busy" | "not-found">;
+    /** switch a worker-hosted chat's model from its next turn; false when this worker does not host it */
+    setChatModel(hash: string, model: string): Promise<boolean>;
+    /** switch a run whose loop this worker hosts: `running` takes it at the next model call, `stored` at its next turn;
+     *  null when the worker holds no such run (its loop is in a page) */
+    setRunModel(hash: string, model: string): "running" | "stored" | null;
+    /** why this runtime would refuse `model` (not offered, or the whitelist excludes it), or null when it would not */
+    checkModel(model: string): Promise<string | null>;
+    /** record the switch on the session's row, and tell every client */
+    remodel(hash: string, model: string): void;
     /** abort a worker-hosted chat's turn; false when it was idle or is not ours */
     cancelChat(hash: string): boolean;
     /** does this worker host this chat itself, rather than a tab? */
@@ -440,6 +449,28 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
             if (typeof r !== "string") return r;
             if (r === "steer" || r === "turn") return ok({ mode: r });
             return fail("not-found", "the page no longer holds this session (it was reloaded, or the session was never resumable)");
+        },
+
+        "session.model": async (c) => {
+            const s = session(c);
+            if (s.error) return s.error;
+            const model = typeof c.model === "string" ? c.model.trim() : "";
+            if (!model) return fail("invalid", "model must be a model id");
+            const refused = await deps.checkModel(model).catch((e: Error) => `could not check the model: ${e?.message || e}`);
+            if (refused) return fail("invalid", refused);
+            let applies: "next-step" | "next-turn";
+            if (pagelessChat(s.id.hash)) {
+                if (!(await deps.setChatModel(s.id.hash, model))) return fail("not-found", "this browser no longer holds that chat");
+                applies = "next-turn";
+            } else {
+                const run = deps.setRunModel(s.id.hash, model);
+                // A run whose loop is in a page, or a page's own chat: its model is the page script's, and changing
+                // it from here would be one party overriding another's code.
+                if (!run) return fail("unsupported", "this session's model belongs to the page that runs it");
+                applies = run === "running" ? "next-step" : "next-turn";
+            }
+            deps.remodel(s.id.hash, model);
+            return ok({ model, applies });
         },
 
         "session.cancel": async (c) => {

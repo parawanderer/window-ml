@@ -121,7 +121,7 @@ test("an unknown command is answered unsupported", T, async () => {
     // `resourcePanel`/`pythonBench` are not commands: they say this browser's box can be DRAWN and its sandbox
     // driven, which a client offers only where it also holds something to draw with (the chat page's `ChatExtras`).
     // `pythonBench: false` because this harness has no Pyodide bundle to find: it is measured, never assumed.
-    assert.deepEqual(port.messages[0].runtime.capabilities, { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: false, persistence: false, resourcePanel: true, pythonBench: false, localSettings: true });
+    assert.deepEqual(port.messages[0].runtime.capabilities, { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: false, persistence: false, resourcePanel: true, pythonBench: false, localSettings: true, switchModel: true });
 });
 
 test("a live background run, driven from the chat page: steered while its gate is open, then approved through approval.answer", T, async () => {
@@ -405,6 +405,66 @@ test("a kept session's live events say where they sit, and session.backfill coun
     assert.equal(page.ok, true, JSON.stringify(page));
     assert.equal(page.data.from, 1);
     assert.deepEqual(page.data.events.map((e) => e.step), [1, 2], "positions 1 and 2 are the events live said were at 1 and 2");
+});
+
+test("session.model: a running loop's next step and a worker chat's next turn go to the model switched to", T, async () => {
+    let bg, port, runCalls = [], chatCalls = [];
+    const cmd = (id, command) => port.send({ type: "cmd", id, command });
+    const result = async (id) => {
+        for (let i = 0; i < 200; i++) { const r = port.messages.find((m) => m.type === "result" && m.id === id); if (r) return r.result; await flush(); }
+        return null;
+    };
+    bg = loadBackground({
+        config,
+        onFetch: (call) => {
+            // The model list (what `session.model` checks against) and anything else that is not a turn.
+            if (!/chat\/completions/.test(call.url)) return jsonResponse({ data: [{ id: "default-model" }, { id: "m" }, { id: "m2" }] });
+            if (call.body.tools) {
+                runCalls.push(call.body.model);
+                if (runCalls.length === 1) return jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "click", arguments: JSON.stringify({ selector: "#buy" }) } }] } }] });
+                return jsonResponse({ choices: [{ message: { content: "bought it" } }] });
+            }
+            chatCalls.push(call.body.model);
+            return jsonResponse({ choices: [{ message: { content: `answer ${chatCalls.length}` } }] });
+        },
+        onTabMessage: async (tabId, msg) => {
+            // At the gate, between the first model call and the second: switch, then approve.
+            if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) {
+                cmd(1, { type: "session.model", session: { runtime: "local", hash: "run00005" }, model: "m2" });
+                await result(1);
+                cmd(2, { type: "approval.answer", session: { runtime: "local", hash: "run00005" }, seq: msg.event.seq, decision: "approve" });
+            }
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && !msg.payload?.renderOnly && !msg.payload?.precheck) return { result: "clicked" };
+            return undefined;
+        },
+    });
+    port = bg.connect("ml-sessions", PAGE);
+    port.send({ type: "sessions" });
+    const res = await bg.send({ type: "START_RUN", payload: {
+        runId: "run00005", task: "buy it", systemPrompt: "S",
+        tools: [{ name: "click", requiresApproval: true, description: "", parameters: { type: "object", properties: { selector: { type: "string" } } }, capabilities: [] }],
+        model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+    } }, tab(7));
+    assert.equal(res.data.summary, "bought it");
+    assert.deepEqual(await result(1), { ok: true, data: { model: "m2", applies: "next-step" } });
+    assert.deepEqual(runCalls, ["m", "m2"], "the call under way kept its model; the next step used the new one");
+
+    cmd(3, { type: "chat.start", runtime: "local", text: "hello", model: "m" });
+    const started = await result(3);
+    const hash = started.data.session.hash;
+    for (let i = 0; i < 100 && chatCalls.length < 1; i++) await flush();
+    cmd(4, { type: "session.model", session: { runtime: "local", hash }, model: "m2" });
+    assert.deepEqual(await result(4), { ok: true, data: { model: "m2", applies: "next-turn" } });
+    const row = [...port.messages].reverse().find((m) => m.type === "index" && m.update.type === "upsert" && m.update.session.id.hash === hash);
+    assert.equal(row.update.session.model, "m2", "every client hears the row change before the next turn");
+    for (let i = 0; i < 50; i++) await flush();
+    cmd(5, { type: "session.send", session: { runtime: "local", hash }, text: "and now?" });
+    assert.equal((await result(5)).ok, true);
+    for (let i = 0; i < 100 && chatCalls.length < 2; i++) await flush();
+    assert.deepEqual(chatCalls, ["m", "m2"]);
+
+    cmd(6, { type: "session.model", session: { runtime: "local", hash }, model: "not-offered" });
+    assert.equal((await result(6)).error.code, "invalid");
 });
 
 test("session storage stats answer an extension page and refuse a page", T, async () => {

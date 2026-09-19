@@ -5,7 +5,7 @@
 import { hintSession } from "./contract-run";
 import { type MlDebugEvent } from "./contract-debug";
 import { createCommandHandler, type CommandDeps, type PageOutcome } from "./session-commands";
-import { cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat, sendBackgroundChat, startBackgroundChat } from "./sw-chat";
+import { cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat, sendBackgroundChat, setBackgroundChatModel, startBackgroundChat } from "./sw-chat";
 import { type StoredSession } from "./contract-messages";
 import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type ArchiveCapability, type RuntimeInfo, type SessionSummary, type TabGroupInfo, type TabInfo } from "./session-host";
 import { FaviconCache, stripOrder } from "./tab-favicons";
@@ -82,7 +82,7 @@ function localRuntime(): RuntimeInfo {
         // backend behind it); `pythonBench` is MEASURED, because a checkout without the wheels builds a bundle whose
         // bench would fail at run time. `localSettings`: this browser's pages may edit its settings, which only the
         // extension's own pages can (a phone over the hub reports the capability and holds nothing to edit with).
-        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled, localSettings: true, ...archiveCapability(), ...(attentionCodes().length ? { attention: attentionCodes() } : {}) },
+        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled, localSettings: true, switchModel: true, ...archiveCapability(), ...(attentionCodes().length ? { attention: attentionCodes() } : {}) },
         // This browser's own pages hold every scope.
         grants: [{ scope: "view" }, { scope: "drive" }, { scope: "approve" }, { scope: "screen" }],
     };
@@ -104,7 +104,7 @@ function archiveToggled(): void {
 }
 
 /** What only background.ts can do, because it owns the runs: set once at startup by `configureSessionCommands`. */
-export type RunDeps = Pick<CommandDeps, "steer" | "cancelRun" | "resolveApproval"> & {
+export type RunDeps = Pick<CommandDeps, "steer" | "cancelRun" | "resolveApproval" | "setRunModel"> & {
     /** drop a finished run's resumable snapshot and pointer store */
     forgetRun(hash: string): void;
 };
@@ -213,6 +213,7 @@ export function configureSessionCommands(run: RunDeps): void {
         },
         highlight: (tabId, ref) => { chrome.tabs.sendMessage(tabId, { type: "ML_HL_REMOTE", ref, anyMode: true }).catch(() => { /* tab gone */ }); },
         steer: run.steer,
+        setRunModel: run.setRunModel,
         cancelRun: run.cancelRun,
         resolveApproval: run.resolveApproval,
         forgetStored: async (hash) => {
@@ -293,6 +294,20 @@ export function configureSessionCommands(run: RunDeps): void {
         },
         startPage: () => agentStartPage,
         sendChat: (hash, text, images) => sendBackgroundChat(hash, text, images),
+        setChatModel: (hash, model) => setBackgroundChatModel(hash, model),
+        checkModel: async (model) => {
+            // The same two checks `setModel` makes, without making it the default: the server offers it, and the
+            // whitelist lets it through.
+            const { ids } = await listAvailableModels();
+            if (!ids.includes(model)) return `this runtime does not offer "${model}"`;
+            const config = await getConfig();
+            if (!modelFilterAllows(model, config.modelFilter)) return `"${model}" is not allowed by this runtime's model filter`;
+            return null;
+        },
+        remodel: (hash, model) => {
+            const row = sessionServer.remodel(hash, model);
+            if (row) sessionStore?.putSummary(row);
+        },
         cancelChat: (hash) => cancelBackgroundChat(hash),
         hostsChat: (hash) => isBackgroundChat(hash),
         utilityConfigured: () => utilityModelSet,

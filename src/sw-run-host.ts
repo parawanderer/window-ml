@@ -17,7 +17,7 @@ import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from
 import { grantsFor, serverToolKey, pendingGrants, pendingApprovals, grantCredFetch, consentFetch, persistGrants, fetchConsent } from "./sw-consent";
 import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
-import { navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, tabPageUrl, untrackRun, deleteRun } from "./sw-runs";
+import { navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue } from "./sw-values";
 import { focusLineFor } from "./sw-focus";
@@ -76,6 +76,12 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
         priorSub = bgRuns.get(p.runId)?.sub;
     }
     const runId = p.runId;
+    // A run switched to another model (`session.model`) keeps it, whoever starts its next turn: a handle sends the
+    // model it was built with, and a stored snapshot may predate the switch.
+    const switched = runModelFor(runId);
+    if (switched) p = { ...p, model: switched };
+    /** The model for THIS call: a switch made while the loop runs takes effect at its next step. */
+    const modelNow = (): string | null => runModelFor(runId) ?? p.model;
     const stepBase = p.stepBase || 0, seqBase = p.seqBase || 0;   // offsets for a handle's continued turns
     let runMaxStep = 0, runMaxSeq = 0;   // this run's max step/seq (raw) → returned so the page advances its bases
     // The session's DELEGATED vision sub-call spend, summed from each delegated tool's envelope delta (the
@@ -277,7 +283,7 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
                             ...(acc.reasoning ? { reasoning: acc.reasoning } : {}), ...(acc.content ? { content: acc.content } : {}),
                             ...(tokens != null ? { tokens } : {}), ...(reasoningTokens != null ? { reasoningTokens } : {}) });
                     };
-                    const r = await streamAgentTurn({ messages, tools: toolDefs, model: p.model, think: p.think, hint },
+                    const r = await streamAgentTurn({ messages, tools: toolDefs, model: modelNow(), think: p.think, hint },
                         (acc) => {
                             // Kept even when this delta is throttled away, so the next one out — or the final
                             // flush — carries the newest count rather than the last one that happened to fan.
@@ -292,7 +298,7 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
                     flush({ reasoning: r.reasoning || "", content: r.content || "" });   // final: land the last delta even if throttled
                     return { content: r.content, tool_calls: r.tool_calls, reasoning: r.reasoning, usage: r.usage };
                 }
-                const r = await fetchLLM({ messages, tools: toolDefs, model: p.model, think: p.think, raw: true, hint }, abortCtl.signal) as { content: string | null; tool_calls: ToolCall[]; reasoning: string | null; usage: TokenUsage | null };
+                const r = await fetchLLM({ messages, tools: toolDefs, model: modelNow(), think: p.think, raw: true, hint }, abortCtl.signal) as { content: string | null; tool_calls: ToolCall[]; reasoning: string | null; usage: TokenUsage | null };
                 return { content: r.content, tool_calls: r.tool_calls, reasoning: r.reasoning, usage: r.usage };
             },
             delegateTool: async (name, args, onStream) => {
@@ -642,7 +648,7 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
             // chat_metadata: the run's model FACTS from the SW's caches (the loop supplies the live
             // token/message counts). The SW can also read the URL → name the backend. Degrades to null.
             chatMeta: async () => {
-                const model = p.model || null;
+                const model = modelNow() || null;
                 const est = (s: unknown) => (s ? Math.round(String(s).length / 4) : 0);   // ~chars/4, no tokenizer
                 let toolJson = ""; try { toolJson = JSON.stringify(p.tools.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }))); } catch { /* skip */ }
                 const config = await getConfig();
