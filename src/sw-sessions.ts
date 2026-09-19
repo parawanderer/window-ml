@@ -13,6 +13,7 @@ import { SESSIONS_PORT, SessionServer } from "./session-server";
 import { SessionStore, indexedDbBackend, type SessionHistory } from "./session-store";
 import { bgRuns, trackRun, untrackRun } from "./sw-runs";
 import { fetchLLM } from "./sw-llm";
+import { recordHousekeeping } from "./sw-housekeeping";
 
 /**
  * What this browser is called before it has a key to derive an id from (docs/spec/SESSION_CONTRACT.md), and the
@@ -208,6 +209,10 @@ export function configureSessionCommands(run: RunDeps): void {
     });
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** `sessionRetentionDays`, as the store reads it. Kept current from storage; 0 until read, which keeps everything. */
+let retentionDays = 0;
+
 /** Saved sessions, which outlive this worker. A worker with no IndexedDB (a test harness) simply saves nothing.
  *  What a page is subscribed to is what someone is looking at, so that is what an eviction may never take. */
 export const sessionStore = (() => {
@@ -217,6 +222,12 @@ export const sessionStore = (() => {
             // The store decides whether a saved session exists, so an eviction there is one here too. Without this a
             // session stayed listed after its history had left the disk.
             onEvict: (hashes) => { for (const hash of hashes) sessionServer.remove({ runtime: localRuntimeId(), hash }); },
+            // Every session the store drops without being asked is a housekeeping decision, whichever rule made it.
+            onEvicted: (e) => recordHousekeeping({
+                subsystem: "sessions", kind: "evict", reason: e.reason, key: e.hash, bytes: e.bytes,
+                detail: { outcome: e.outcome, idleDays: Math.floor(e.idleMs / DAY_MS) },
+            }),
+            retainMs: () => Math.max(0, retentionDays) * DAY_MS,
         });
     }
     catch { return null; }
@@ -231,10 +242,27 @@ export const sessionServer = new SessionServer(new SessionIndex({ runtime: local
 
 // What a previous worker saved, so an evicted service worker comes back with its list rather than with nothing. The
 // events stay on disk until something subscribes to that session.
+// Retention runs BEFORE the list is restored, so a session past its time is forgotten rather than listed for a moment
+// and then removed; which needs the setting first.
 if (sessionStore) {
-    void sessionStore.open().then((rows) => {
-        sessionServer.restored(sessionServer.index.restore(rows.map((r) => ({ summary: r.summary, count: r.count }))));
-    }).catch(() => { /* no storage: the list is whatever this worker sees from now on */ });
+    const store = sessionStore;
+    void readRetention()
+        .then(() => store.sweep())
+        // A sweep that fails must not cost the list: the sessions it meant to drop are listed one more time instead.
+        .catch(() => [])
+        .then(() => store.open())
+        .then((rows) => {
+            sessionServer.restored(sessionServer.index.restore(rows.map((r) => ({ summary: r.summary, count: r.count }))));
+        })
+        .catch(() => { /* no storage: the list is whatever this worker sees from now on */ });
+}
+
+/** Read `sessionRetentionDays` once; never rejects, since a worker without storage keeps everything. */
+async function readRetention(): Promise<void> {
+    try {
+        const cfg = await chrome.storage.sync.get({ sessionRetentionDays: 0 }) as { sessionRetentionDays?: unknown };
+        retentionDays = Math.max(0, Number(cfg?.sessionRetentionDays) || 0);
+    } catch { /* keep everything */ }
 }
 
 // Kept current from storage: `side.call` needs a utility model, and the runtime's capabilities say whether it has one.
@@ -248,6 +276,12 @@ try {
     chrome.storage.onChanged?.addListener((changes, area) => {
         if (area !== "sync") return;
         if (changes.agentStartPage) agentStartPage = String(changes.agentStartPage.newValue ?? "").trim();
+        // A shorter retention applies now, not on the next write: someone who just lowered it expects the list to
+        // shrink while they watch.
+        if (changes.sessionRetentionDays) {
+            retentionDays = Math.max(0, Number(changes.sessionRetentionDays.newValue) || 0);
+            void sessionStore?.sweep().catch(() => { /* storage unavailable */ });
+        }
         if (!changes.utilityModel) return;
         utilityModelSet = !!String(changes.utilityModel.newValue ?? "").trim();
         sessionServer.runtimeChanged();
@@ -329,9 +363,15 @@ export function ingestSessionEvent(event: unknown, source: IngestSource): void {
     try {
         const out = sessionServer.ingest(event as MlDebugEvent, source);
         if (!out.accepted) return;
+        // `out.summary` is the row only when it CHANGED, which most events do not: keying the write on it stored a
+        // saved run's start and end and dropped the steps between, so a restarted worker served a transcript with
+        // holes. Whether to write is whether the session is saved, read from the index every time — and read BEFORE
+        // a pending keep runs, since that writes the ring, this event included.
+        const wasSaved = !!(out.summary ?? sessionServer.index.get(out.session.hash))?.saved;
         // A request to keep this session that arrived before the session did.
         if (pendingKeep.has(out.session.hash)) keepSession(out.session.hash);
-        if (out.summary?.saved && sessionStore) sessionStore.put(out.summary, out.event);
+        const row = sessionServer.index.get(out.session.hash);
+        if (wasSaved && row && sessionStore) sessionStore.put(row, out.event);
     } catch { /* refused */ }
 }
 

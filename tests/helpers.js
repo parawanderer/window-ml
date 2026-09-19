@@ -151,7 +151,11 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         Blob,              // the value store keeps a fetched body as a Blob
         // The value store's database. Absent by default, as in any realm with no IndexedDB, which leaves the store off;
         // a test that exercises it passes a `fake-indexeddb` IDBFactory.
-        ...(indexedDB ? { indexedDB } : {}),
+        // A key range is how the store deletes a session's events, so a worker given a database needs it too: without
+        // it every eviction threw, and nothing noticed until retention was the first test to evict through a worker. It
+        // is the CommonJS build's, so a test that evicts must take its IDBFactory from `require("fake-indexeddb")` too:
+        // the ESM build's database refuses the other build's key range.
+        ...(indexedDB ? { indexedDB, IDBKeyRange: require("fake-indexeddb").IDBKeyRange } : {}),
         fetch: async (url, opts = {}) => {
             const call = {
                 url: String(url),

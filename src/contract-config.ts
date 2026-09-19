@@ -109,6 +109,9 @@ export interface MlConfig {
      *  and can be read tomorrow. A session started from CODE is unaffected: `ml.agent()` and `ml.chat()` stay
      *  ephemeral unless they ask to be saved, which is the rule `ml.createChat({ save: true })` already follows. */
     persistUiRuns: boolean;
+    /** Days a saved session is kept after it last did something, unless it is pinned. 0 keeps every session until
+     *  the store's size and count caps need the room. Enforced by the store, logged to the housekeeping log. */
+    sessionRetentionDays: number;
     /** The page a run started "on a blank tab" opens, when the client names no URL of its own. Empty: the client
      *  must name one, since the extension cannot run on the browser's own new-tab page. */
     agentStartPage: string;
@@ -250,6 +253,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     agentHudInDevtools: false,
     listPageSessions: false,
     persistUiRuns: true,
+    sessionRetentionDays: 0,
     agentStartPage: "",
     utilityModel: "",
     utilityNumCtx: 4096,
