@@ -1,6 +1,6 @@
-// session-relay.ts — the session INDEX, carried over a hub: what a runtime publishes, and how a client reads it back
-// into the same `SessionIndexUpdate`s the local host produces (docs/spec/SESSION_CONTRACT.md, window-ml-hub
-// docs/PROTOCOL.md §How the session contract maps onto it).
+// session-relay.ts — the session contract's two SUBSCRIPTIONS carried over a hub: the index, and one session's event
+// stream. What a runtime publishes, and how a client reads it back into the same messages the local host produces
+// (docs/spec/SESSION_CONTRACT.md, window-ml-hub docs/PROTOCOL.md §How the session contract maps onto it).
 //
 // Both halves live here because they are one format, and a format written twice drifts. The runtime side publishes;
 // the client side reads. Neither touches `chrome`, since the reader runs in the chat page and the phone app.
@@ -10,7 +10,7 @@
 // phone that wakes to a sleeping laptop then backfills a run of upserts with nothing to apply them to — a list that
 // looks complete and is not. So the PUBLISHER re-publishes a whole snapshot every `SNAPSHOT_EVERY` updates, which
 // keeps one inside the ring at all times, and the READER's single job is to know whether it has seen one yet.
-import type { SessionIndexUpdate, SessionSummary } from "./session-host";
+import type { SessionIndexUpdate, SessionStreamMessage, SessionSummary } from "./session-host";
 import type { ChannelKey } from "./hub/seal";
 import type { Bytes } from "./hub/hpke";
 
@@ -120,4 +120,69 @@ export class IndexReader {
         if (u.type === "snapshot") { this.seen = true; return [u]; }
         return this.seen ? [u] : [];
     }
+}
+
+/* ------------------------------ one session's event stream ------------------------------ */
+
+// Following the hub's own pattern: a session's frames on one channel, and the keys to read them on a retained sibling.
+// The keys channel is what lets a phone that wakes to a sleeping laptop still read its key out of the ring — a key
+// handed over by command would need the runtime online to answer.
+//
+// ONE KEY PER SESSION. A grant binds one channel anyway, so a per-session key costs exactly the grants a shared key
+// would. And a shared key would make the channel binding no boundary at all: a device holding the key from one
+// session's grant can name another session's channel itself (it has the channel key from pairing), build its AAD and
+// decrypt it. The AEAD binds a frame to its channel against a hub moving frames about; it does not stop a KEY HOLDER
+// who knows the channel. So only a per-session key lets a grant that covers some sessions keep the others unreadable.
+
+/** The channel one session's events travel on. The subject is the session hash, which the HMAC hides: the hub sees a
+ *  name and never the hash, which would otherwise be a join key against the same hash in a box's request hints. */
+export function eventsChannel(channels: ChannelKey, hash: string): Promise<Bytes> {
+    return channels.channel("events", encoder.encode(hash) as Bytes);
+}
+
+/** The retained channel carrying one wrapped key per device, each FOR `eventsChannel` of the same session. */
+export function keysChannel(channels: ChannelKey, hash: string): Promise<Bytes> {
+    return channels.channel("keys", encoder.encode(hash) as Bytes);
+}
+
+/** One stream message as the bytes that get sealed. The contract's own `epoch`/`cursor` travel INSIDE, which is the
+ *  point: the hub's own position resumes within what the hub retained, and this one survives the hub entirely. */
+export const encodeStreamFrame = (m: SessionStreamMessage): Bytes => encoder.encode(JSON.stringify(m)) as Bytes;
+
+/** A stream message from its opened bytes, or null. Untrusted for the same reason an index frame is. */
+export function decodeStreamFrame(batch: Bytes): SessionStreamMessage | null {
+    let v: unknown;
+    try { v = JSON.parse(decoder.decode(batch)); } catch { return null; }
+    const m = v as { type?: unknown; session?: unknown; epoch?: unknown; cursor?: unknown; event?: unknown };
+    if (!m || typeof m !== "object" || !m.session || typeof m.session !== "object") return null;
+    if (m.type === "event") return typeof m.epoch === "string" && typeof m.cursor === "number" && !!m.event ? (v as SessionStreamMessage) : null;
+    if (m.type === "reset") return typeof m.epoch === "string" ? (v as SessionStreamMessage) : null;
+    if (m.type === "backfilled") return typeof m.epoch === "string" && typeof m.cursor === "number" ? (v as SessionStreamMessage) : null;
+    if (m.type === "gone") return v as SessionStreamMessage;
+    return null;
+}
+
+/** A device the runtime can see, as far as deciding whether to hand it a session's key is concerned. */
+export interface Grantee {
+    /** principal id, hex */
+    id: string;
+    /** the scopes its VERIFIED leaf holds */
+    scopes: readonly string[];
+}
+
+/**
+ * Which devices receive a session's key.
+ *
+ * Only one whose verified leaf holds `view`. That is the same check the runtime makes before answering a command, and
+ * it has to be made HERE as well, because a key is not a command: a device handed one can read the stream by
+ * subscribing, with no further question asked. So a device without `view` never receives a key, and cannot watch a
+ * session even by naming its channel.
+ *
+ * There is no per-session filter yet, and not by oversight. The contract's `Grant.sessions` has nothing behind it on
+ * the wire — a certificate carries `scopes` and no session restriction — so every device is effectively `"all"`. When
+ * a certificate can carry one, this is the one place that has to learn it, and per-session keys are what will make
+ * that restriction hold against a key holder rather than only at the command layer.
+ */
+export function grantees(devices: readonly Grantee[]): Grantee[] {
+    return devices.filter((d) => d.scopes.includes("view"));
 }
