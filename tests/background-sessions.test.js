@@ -492,3 +492,25 @@ test("the storage history is recorded at startup, answered over the contract, an
 
     assert.match((await next.send({ type: "STORAGE_HISTORY" }, tab(7))).error, /Refused/);
 });
+
+test("the archive's folder state rides the runtime's description: read at startup, sent again when it changes, gone when the archive is switched off", T, async () => {
+    const { IDBFactory } = require("fake-indexeddb");
+    let folder = { state: "needs-grant", pending: 2, lastSync: null };
+    const bg = loadBackground({
+        config: { ...config, sessionArchive: true }, indexedDB: new IDBFactory(),
+        onArchiveOp: (msg) => (msg.op === "folder" || msg.op === "sync" ? { ok: true, result: folder } : { ok: true, result: null }),
+    });
+    const port = bg.connect("ml-sessions", PAGE);
+    const archive = () => port.messages.filter((m) => m.type === "runtime").at(-1)?.runtime.capabilities.archive;
+    for (let i = 0; i < 100 && archive()?.folder !== "needs-grant"; i++) await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual(archive(), { folder: "needs-grant", pending: 2 }, "a lapsed grant, read at startup");
+
+    // Re-granted in Settings: the resync's report reaches every page without it asking.
+    folder = { state: "connected", pending: 0, lastSync: 1234 };
+    await bg.send({ type: "ARCHIVE_FOLDER", payload: { action: "sync" } }, { url: "chrome-extension://test/settings.html" });
+    assert.deepEqual(archive(), { folder: "connected", lastSync: 1234 });
+
+    bg.setSync({ sessionArchive: false });
+    for (let i = 0; i < 100 && archive(); i++) await new Promise((r) => setTimeout(r, 20));
+    assert.equal(archive(), undefined);
+});

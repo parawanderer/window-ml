@@ -189,6 +189,10 @@ function ensureArchiveWorker(): Worker {
     const w = new Worker(chrome.runtime.getURL("archive-worker.js"));
     w.onmessage = (e: MessageEvent) => {
         const { id, ...reply } = e.data ?? {};
+        // No worker can pick a folder, so the archive worker says "none" where this browser could never pick one
+        // (Brave with its flag off). This document is a page and can tell.
+        const r = reply.result as { state?: string } | undefined;
+        if (r?.state === "none" && typeof (globalThis as { showDirectoryPicker?: unknown }).showDirectoryPicker !== "function") r.state = "unsupported";
         archivePending.get(id)?.(reply);
         archivePending.delete(id);
     };
