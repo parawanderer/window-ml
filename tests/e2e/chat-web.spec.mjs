@@ -744,3 +744,33 @@ test("the model pill waits as a placeholder of its own size and slides in; a sec
     await expect(pill).not.toHaveClass(/tp-pill-in/);
     await page.close();
 });
+
+test("tabs the runtime could not list are counted in a warning at the top of the list, with where to allow them", async () => {
+    const { page, errors } = await open(DESKTOP);
+    await page.evaluate(() => { globalThis.__chatFake.tabsWithheld = 7; });
+    const pill = page.getByRole("button", { name: /^Where it runs/ });
+    await pill.click();   // opening asks for the list again, which now reports them
+    const list = page.getByRole("listbox", { name: "Where it runs" });
+    const warn = list.getByRole("note");
+    await expect(warn).toContainText("7 open tabs are not listed: the extension may only read the sites you allowed it.");
+    // This device cannot grant for that runtime (the web build has no extension), so it says where it is allowed.
+    await expect(warn).toContainText("Allowed in that browser's extension settings");
+    await expect(warn.getByRole("button")).toHaveCount(0);
+    // It is about the whole list: filtering hides it, and the listed tabs are all still there.
+    await expect(list.getByRole("option")).toHaveCount(7);
+    await list.getByRole("searchbox", { name: "Filter tabs" }).fill("cart");
+    await expect(warn).toHaveCount(0);
+    await list.getByRole("searchbox", { name: "Filter tabs" }).fill("");
+    // One is said as one; none says nothing.
+    await page.evaluate(() => { globalThis.__chatFake.tabsWithheld = 1; });
+    await page.keyboard.press("Escape");
+    await pill.click();
+    await expect(warn).toContainText("1 open tab is not listed");
+    await page.evaluate(() => { globalThis.__chatFake.tabsWithheld = 0; });
+    await page.keyboard.press("Escape");
+    await pill.click();
+    await expect(list.getByRole("option").first()).toBeVisible();
+    await expect(warn).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await page.close();
+});

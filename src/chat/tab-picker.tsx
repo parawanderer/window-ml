@@ -5,7 +5,7 @@
 //
 // The order and grouping are `tabTree` (tab-tree.ts); this file draws them. A favicon is drawn only when the runtime
 // sent it as a data URL (`faviconSrc`), otherwise the site's first letter stands in.
-import { IconCheck, IconPlus } from "../sidebar/icons";
+import { IconCheck, IconPlus, IconWarn } from "../sidebar/icons";
 import { truncate } from "../sidebar/format";
 import { cursorTipOn } from "../sidebar/ui-kit";
 import { useState } from "preact/hooks";
@@ -59,7 +59,7 @@ function TabIcon({ tab }: { tab: TabView }) {
  * `groupsHint` is said under the list when some group is only known to be together (no names or colours).
  * Keyboard: arrows move, Enter picks, Escape closes; typing goes to the filter.
  */
-export function TabPicker({ tabs, groups, value, onChange, onOpen, groupsHint, groupsGrant, runtime }: {
+export function TabPicker({ tabs, groups, value, onChange, onOpen, groupsHint, groupsGrant, runtime, withheld = 0, sitesGrant }: {
     tabs: readonly TabView[] | null;
     groups?: readonly TabGroupView[];
     value: TabChoice;
@@ -70,8 +70,12 @@ export function TabPicker({ tabs, groups, value, onChange, onOpen, groupsHint, g
     groupsGrant?: (() => Promise<boolean>) | null;
     /** whose tabs these are: a folded group is remembered per runtime */
     runtime?: string;
+    /** open tabs the runtime could not list because its site access is limited (`tabs.list`'s `withheld`) */
+    withheld?: number;
+    /** asks for access to every site, where this device can (the fix for `withheld`) */
+    sitesGrant?: (() => Promise<boolean>) | null;
 }) {
-    const [asking, setAsking] = useState(false);
+    const [asking, setAsking] = useState<"" | "groups" | "sites">("");
     // A group starts folded as the browser's strip has it, then as it was last left here; typing opens every group,
     // since a match hidden inside a fold is a match not found.
     const foldKey = (g: TabGroupView) => `${runtime ?? ""}:${g.id}`;
@@ -120,6 +124,22 @@ export function TabPicker({ tabs, groups, value, onChange, onOpen, groupsHint, g
                         {value === "blank" ? <span class="tp-check" aria-hidden="true"><IconCheck /></span> : null}
                     </button>
                     <div class="tp-rule" role="separator" />
+                    {withheld > 0 && !p.q.trim() ? (
+                        // Said, not silently dropped: a tab that is open but missing reads as a bug in the list.
+                        <div class="tp-warn" role="note">
+                            <span class="tp-warn-icon" aria-hidden="true"><IconWarn /></span>
+                            <span class="tp-warn-text">
+                                {withheld} open tab{withheld === 1 ? " is" : "s are"} not listed: the extension may only read the sites you allowed it.{" "}
+                                {sitesGrant ? (
+                                    <button type="button" class="chat-link" disabled={asking === "sites"} onClick={() => {
+                                        // Called synchronously in the click: a browser shows a permission prompt only inside one.
+                                        setAsking("sites");
+                                        void sitesGrant().then((ok) => { setAsking(""); if (ok) onOpen?.(); });
+                                    }}>{asking === "sites" ? "Asking…" : "Allow all sites"}</button>
+                                ) : <>Allowed in that browser's extension settings (site access).</>}
+                            </span>
+                        </div>
+                    ) : null}
                     <div class="tp-list">
                         {tabs === null ? <div class="tp-note">Loading tabs…</div>
                             : !tabs.length ? <div class="tp-note">No open tabs this runtime can run on.</div>
@@ -155,11 +175,11 @@ export function TabPicker({ tabs, groups, value, onChange, onOpen, groupsHint, g
                     {unnamed && groupsGrant ? (
                         <div class="tp-foot">
                             Groups show without their names and colours.{" "}
-                            <button type="button" class="chat-link" disabled={asking} onClick={() => {
+                            <button type="button" class="chat-link" disabled={asking === "groups"} onClick={() => {
                                 // Called synchronously in the click: a browser shows a permission prompt only inside one.
-                                setAsking(true);
-                                void groupsGrant().then((ok) => { setAsking(false); if (ok) onOpen?.(); });
-                            }}>{asking ? "Asking…" : "Show them"}</button>
+                                setAsking("groups");
+                                void groupsGrant().then((ok) => { setAsking(""); if (ok) onOpen?.(); });
+                            }}>{asking === "groups" ? "Asking…" : "Show them"}</button>
                         </div>
                     ) : unnamed && groupsHint ? <div class="tp-foot">{groupsHint}</div> : null}
                 </div>

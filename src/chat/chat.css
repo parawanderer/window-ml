@@ -998,6 +998,11 @@ button.chat-page-go:hover { color: var(--fg); }
 /* A line in place of the tabs: loading, none, or nothing matching the filter. */
 .tp-note { padding: 8px 10px; color: var(--fg-faint); font-size: 13px; }
 
+/* Tabs the runtime could not list (site access limited): a warning row at the top of the list, with its fix. */
+.tp-warn { flex: 0 0 auto; display: flex; align-items: flex-start; gap: 8px; margin: 0 4px 6px; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--fg-dim); font-size: 12.5px; line-height: 1.45; }
+.tp-warn-icon { flex: 0 0 auto; display: inline-flex; color: var(--warn); margin-top: 1px; }
+.tp-warn-icon svg { width: 14px; height: 14px; }
+.tp-warn-text { min-width: 0; }
 /* The pill when the chosen tab has closed: said in the warning colour, since starting waits for another pick. */
 .tp-gone { color: var(--warn); }
 /* The tab picker's foot: a sentence under the list, e.g. how to get group names and colours. */

@@ -124,16 +124,25 @@ const tabInfo = (t: chrome.tabs.Tab): TabInfo | null =>
 /** The tab picker's icons, fetched here and handed over as data URLs (tab-favicons.ts). */
 const favicons = new FaviconCache();
 
-/** http(s) tabs in strip order, the focused window first, with their icons. */
-async function listTabsForPicker(): Promise<TabInfo[]> {
-    const raw = (await chrome.tabs.query({})).filter((t) => /^https?:/.test(t.url || ""));
+/**
+ * http(s) tabs in strip order, the focused window first, with their icons, and how many were WITHHELD: with site access
+ * limited ("On click", or some sites), a tab on any other site reaches the extension with no `url` and no `title`, so it
+ * cannot be listed. Counted only while `<all_urls>` is not granted; with it, the tabs still without an address are the
+ * browser's own pages, which are left out on purpose and are nothing to warn about.
+ */
+async function listTabsForPicker(): Promise<{ tabs: TabInfo[]; withheld: number }> {
+    const all = await chrome.tabs.query({});
+    const raw = all.filter((t) => /^https?:/.test(t.url || ""));
+    const allSites = await chrome.permissions.contains({ origins: ["<all_urls>"] }).catch(() => true);
+    const withheld = allSites ? 0 : all.filter((t) => !t.url && !t.pendingUrl && !t.incognito).length;
     const focused = await chrome.windows.getLastFocused().then((w) => w.id, () => undefined);
     const ordered = stripOrder(raw, focused);
     const icons = await favicons.many(ordered.map((t) => t.favIconUrl));
-    return ordered.map((t, i) => {
+    const tabs = ordered.map((t, i) => {
         const info = tabInfo(t);
         return info && icons[i] ? { ...info, favicon: icons[i]! } : info;
     }).filter((t): t is TabInfo => !!t);
+    return { tabs, withheld };
 }
 
 /**

@@ -28,7 +28,7 @@ export interface CommandDeps {
     /** what this runtime IS, for a client that reached it over a transport that cannot know */
     describe(): { kind: "browser" | "desktop" | "headless"; contractVersion: number; capabilities: unknown };
     /** http(s) tabs this browser has open */
-    listTabs(): Promise<TabInfo[]>;
+    listTabs(): Promise<TabInfo[] | { tabs: TabInfo[]; withheld?: number }>;
     /** the tab groups, named; empty where the runtime cannot say */
     listTabGroups?(): Promise<TabGroupInfo[]>;
     /** archived sessions, a page at a time; absent when this runtime keeps no archive */
@@ -255,8 +255,9 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
         "tabs.list": async (c) => {
             const not = ownRuntime(c);
             if (not) return not;
-            const [tabs, groups] = await Promise.all([deps.listTabs(), deps.listTabGroups?.().catch(() => []) ?? []]);
-            return ok({ tabs, ...(groups.length ? { groups } : {}) });
+            const [got, groups] = await Promise.all([deps.listTabs(), deps.listTabGroups?.().catch(() => []) ?? []]);
+            const { tabs, withheld = 0 } = Array.isArray(got) ? { tabs: got } : got;
+            return ok({ tabs, ...(groups.length ? { groups } : {}), ...(withheld > 0 ? { withheld } : {}) });
         },
 
         "sessions.list": async (c) => {

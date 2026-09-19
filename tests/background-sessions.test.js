@@ -469,6 +469,29 @@ test("models.list answers what the whitelist allows, with kinds and the default 
     assert.ok(!JSON.stringify(reply).includes("^qwen"), "the filter itself is never sent");
 });
 
+test("tabs.list says how many tabs site access withheld, and only while it is limited", T, async () => {
+    // As the browser reports them: tabs on sites the extension may not read arrive with no url and no title.
+    const openTabs = [
+        { id: 1, windowId: 1, index: 0, active: true, url: "https://allowed.example/", title: "Allowed" },
+        { id: 2, windowId: 1, index: 1, active: false },
+        { id: 3, windowId: 1, index: 2, active: false },
+    ];
+    const ask = async (bg) => {
+        const page = openPage(bg);
+        page.port.send({ type: "cmd", id: 1, command: { type: "tabs.list", runtime: "local" } });
+        let reply;
+        for (let i = 0; i < 100 && !reply; i++) { await new Promise((r) => setTimeout(r, 10)); reply = page.port.messages.find((m) => m.type === "result" && m.id === 1); }
+        return reply.result;
+    };
+    const limited = await ask(loadBackground({ config, openTabs, allSites: false }));
+    assert.equal(limited.ok, true);
+    assert.deepEqual(limited.data.tabs.map((t) => t.tabId), [1]);
+    assert.equal(limited.data.withheld, 2, "the two tabs it could not read are counted, not silently dropped");
+    // With every site allowed, a tab still without an address is a browser page: left out on purpose, not counted.
+    const full = await ask(loadBackground({ config, openTabs, allSites: true }));
+    assert.equal(full.data.withheld, undefined);
+});
+
 test("the storage history is recorded at startup, answered over the contract, and refused to a page", T, async () => {
     const { IDBFactory } = require("fake-indexeddb");
     const idb = new IDBFactory();

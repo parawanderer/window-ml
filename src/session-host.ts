@@ -683,7 +683,9 @@ export interface CommandResultData {
     "runtime.info": { kind: RuntimeInfo["kind"]; contractVersion: number; capabilities: RuntimeCapabilities; nowMs: number };
     /** Windows in order, the focused one first; each window's tabs in strip order. `groups` only where the runtime
      *  can name them (in this browser, after the optional `tabGroups` permission was granted). */
-    "tabs.list": { tabs: TabInfo[]; groups?: TabGroupInfo[] };
+    /** `withheld`: open tabs left out because this runtime may not read them (site access limited to "on click" or
+     *  some sites). Absent or 0 when it may read every site; a browser's own pages are left out without being counted. */
+    "tabs.list": { tabs: TabInfo[]; groups?: TabGroupInfo[]; withheld?: number };
     "device.list": { devices: DeviceInfo[] };
     /** the new window, so a list can say when it next needs attention without asking again */
     "device.renew": { notAfterMs: number };

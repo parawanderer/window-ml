@@ -116,7 +116,7 @@ function streamResponse(lines, { status = 200 } = {}) {
 // `commandShortcut` is what chrome.commands reports as CURRENTLY bound for the HUD
 // (null = the API is unavailable, "" = the user cleared the binding); `manifestPermissions`
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
-function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow }) {
+function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true }) {
     const calls = [];
     const captures = [];        // captureVisibleTab arg lists, for screenshot tests
     const tabMessages = [];     // chrome.tabs.sendMessage arg lists, for reverse-channel tests
@@ -227,7 +227,8 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
             permissions: {
                 // Track named permissions (debugger); treat origin grants as present (FETCH_SHEET only
                 // contains()-checks Google origins, and the harness assumes those are granted).
-                contains: async ({ permissions = [] }) => permissions.every(p => permsHeld.has(p)),
+                // `allSites: false` withholds `<all_urls>`, as site access "On click" does.
+                contains: async ({ permissions = [], origins = [] }) => permissions.every(p => permsHeld.has(p)) && (allSites || !origins.includes("<all_urls>")),
                 request: async ({ permissions = [] }) => { permissions.forEach(p => permsHeld.add(p)); return true; },
             },
             // CDP surface for reserved-element clicks. Records attach/sendCommand/detach so tests assert the
@@ -268,6 +269,9 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 create: async (props) => { tabsCreated.push(props); return { id: 4242 + tabsCreated.length }; },
                 remove: async (id) => { tabsRemoved.push(id); },
                 onRemoved: { addListener: (fn) => tabRemovedListeners.push(fn) },
+                // What `tabs.query({})` answers: `openTabs`, as the browser reports them (a tab on a site the
+                // extension may not read has no `url` and no `title`).
+                query: async () => openTabs.map((t) => ({ ...t })),
             }
         }
     };

@@ -139,6 +139,8 @@ export class FakeHost implements SessionHost {
     ];
     /** The open tabs `tabs.list` reports, a copy per host so a test can close one as a person would. */
     tabs: TabInfo[] = DEMO_TABS.map((t) => ({ ...t }));
+    /** Open tabs `tabs.list` says it could not list (site access limited), 0 for none. */
+    tabsWithheld = 0;
     /** The tab groups `tabs.list` reports, a copy per host so a test can fold one as the browser's strip would. */
     tabGroups: TabGroupInfo[] = DEMO_GROUPS.map((g) => ({ ...g }));
     /** The model access filter's effect, as `models.list` reports it; null for no filter. */
@@ -325,7 +327,7 @@ export class FakeHost implements SessionHost {
             case "page.highlight":
                 return caps.highlight ? ok({}) : fail("unsupported", "no page to highlight on");
             case "tabs.list":
-                return caps.tabs ? ok({ tabs: this.tabs, groups: this.tabGroups }) : fail("unsupported", "this runtime has no tabs");
+                return caps.tabs ? ok({ tabs: this.tabs, groups: this.tabGroups, ...(this.tabsWithheld ? { withheld: this.tabsWithheld } : {}) }) : fail("unsupported", "this runtime has no tabs");
             // The real runtime can only capture the tab its window is SHOWING (src/session-commands.ts), so a run
             // working in a background tab is refused rather than captured behind the scenes. The demo world keeps
             // that rule, since a peek that always works would teach the UI the wrong lesson about when it does.

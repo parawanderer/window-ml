@@ -62,6 +62,7 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
     const [url, setUrl] = useState("");
     const [tabs, setTabs] = useState<TabInfo[] | null>(null);
     const [groups, setGroups] = useState<TabGroupInfo[]>([]);
+    const [withheld, setWithheld] = useState(0);
     const wantsTabs = enabled && !!rt?.capabilities?.tabs;
     // Asked when the runtime changes, and again each time the picker opens: tabs open and close while this page sits,
     // and an icon that was still on its way the first time is there the second. A refresh keeps the list it has on
@@ -76,6 +77,7 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
             if (!r.ok && !fresh) return;   // a refresh that failed leaves the last good list
             const list = r.ok ? r.data.tabs : [];
             setGroups(r.ok ? r.data.groups ?? [] : []);
+            setWithheld(r.ok ? r.data.withheld ?? 0 : 0);
             setTabs(list);
             // The first list picks the tab showing in the first window. A refresh NEVER moves a choice: a chosen tab
             // that has closed stays chosen and says so (`closed`), because silently switching to whichever tab is in
@@ -119,6 +121,8 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
                     onOpen={() => load(false)}
                     runtime={rt?.id}
                     groupsGrant={rt ? extras?.grant?.(rt.id, "tab-groups") : null}
+                    withheld={withheld}
+                    sitesGrant={rt ? extras?.grant?.(rt.id, "site-access") : null}
                     groupsHint="Group names and colours need the browser's permission: Settings → Extension → Appearance → Tab group names, in the browser the tabs are in."
                     onChange={(v) => { if (v === "blank") setWhere("blank"); else { setWhere("tab"); setTabId(v); } }} />
                 {where === "blank" ? (
