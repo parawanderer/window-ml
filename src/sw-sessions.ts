@@ -7,7 +7,8 @@ import { type MlDebugEvent } from "./contract-debug";
 import { createCommandHandler, type CommandDeps, type PageOutcome } from "./session-commands";
 import { cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat, sendBackgroundChat, startBackgroundChat } from "./sw-chat";
 import { type StoredSession } from "./contract-messages";
-import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type RuntimeInfo, type TabInfo } from "./session-host";
+import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type RuntimeInfo, type TabGroupInfo, type TabInfo } from "./session-host";
+import { FaviconCache, stripOrder } from "./tab-favicons";
 import { SessionIndex, type IngestSource } from "./session-index";
 import { SESSIONS_PORT, SessionServer } from "./session-server";
 import { STORE_MAX_SESSIONS, SessionStore, indexedDbBackend, type SessionHistory } from "./session-store";
@@ -87,7 +88,39 @@ async function runCommand(command: Command): Promise<CommandResult<CommandType>>
 }
 
 const tabInfo = (t: chrome.tabs.Tab): TabInfo | null =>
-    t.id == null ? null : { tabId: t.id, url: t.url || "", title: t.title || "", active: !!t.active, ...(t.windowId != null ? { windowId: t.windowId } : {}) };
+    t.id == null ? null : {
+        tabId: t.id, url: t.url || "", title: t.title || "", active: !!t.active,
+        ...(t.windowId != null ? { windowId: t.windowId } : {}),
+        ...(typeof t.index === "number" ? { index: t.index } : {}),
+        // -1 is Chrome's "in no group".
+        ...(typeof t.groupId === "number" && t.groupId >= 0 ? { groupId: t.groupId } : {}),
+    };
+
+/** The tab picker's icons, fetched here and handed over as data URLs (tab-favicons.ts). */
+const favicons = new FaviconCache();
+
+/** http(s) tabs in strip order, the focused window first, with their icons. */
+async function listTabsForPicker(): Promise<TabInfo[]> {
+    const raw = (await chrome.tabs.query({})).filter((t) => /^https?:/.test(t.url || ""));
+    const focused = await chrome.windows.getLastFocused().then((w) => w.id, () => undefined);
+    const ordered = stripOrder(raw, focused);
+    const icons = await favicons.many(ordered.map((t) => t.favIconUrl));
+    return ordered.map((t, i) => {
+        const info = tabInfo(t);
+        return info && icons[i] ? { ...info, favicon: icons[i]! } : info;
+    }).filter((t): t is TabInfo => !!t);
+}
+
+/**
+ * Tab groups with their names and colours. Needs `tabGroups`, an OPTIONAL permission (it carries an install warning,
+ * so it is asked for from Settings, never at install): without it the API is absent and this is empty, and a picker
+ * still indents grouped tabs by `groupId`.
+ */
+async function listTabGroups(): Promise<TabGroupInfo[]> {
+    const api = (chrome as unknown as { tabGroups?: { query(q: object): Promise<{ id: number; title?: string; color?: string }[]> } }).tabGroups;
+    if (!api) return [];
+    return (await api.query({})).map((g) => ({ id: g.id, ...(g.title ? { title: g.title } : {}), ...(g.color ? { color: g.color } : {}) }));
+}
 
 const CAPTURE_RETRIES = 5, CAPTURE_RETRY_MS = 550;   // captureVisibleTab allows about two calls a second
 
@@ -113,7 +146,8 @@ export function configureSessionCommands(run: RunDeps): void {
         describe: () => { const { kind, contractVersion, capabilities } = localRuntime(); return { kind, contractVersion, capabilities }; },
         index: sessionServer.index,
         removeFromIndex: (id) => { sessionServer.remove(id); },
-        listTabs: async () => (await chrome.tabs.query({})).filter((t) => /^https?:/.test(t.url || "")).map(tabInfo).filter((t): t is TabInfo => !!t),
+        listTabs: listTabsForPicker,
+        listTabGroups,
         getTab: async (tabId) => { try { return tabInfo(await chrome.tabs.get(tabId)); } catch { return null; } },
         focusTab: async (tabId, windowId) => {
             try {

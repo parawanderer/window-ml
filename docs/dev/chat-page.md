@@ -171,7 +171,7 @@ browser. Nothing new decides a gate, starts a loop or builds a request.
 | `page.highlight` | `ML_HL_REMOTE` to the session's tab with `anyMode`, since the shell otherwise draws remote highlights only in devtools mode |
 | `side.call` | `fetchLLM` on the utility profile, `think: false`, `maxTokens` capped at 1024, the session on the hint; `unsupported` without a utility model, which `capabilities.sideCalls` also says (kept current from storage) |
 | `tab.screenshot` | `captureVisibleTab`, only for a tab in front in its window; PNG, then JPEG at falling quality until it fits `maxBytes` (ceiling 4 MB); size read from the image header |
-| `tabs.list` | `chrome.tabs.query`, http(s) tabs only |
+| `tabs.list` | `chrome.tabs.query`, http(s) tabs only, in strip order with the focused window first (`stripOrder`). Icons from each tab's `favIconUrl`, fetched by the worker without cookies, once per icon URL, images of 16 KB or less, as data URLs (`tab-favicons.ts`); a slow one is left out of this answer and cached for the next. `groups` from `chrome.tabGroups`, an OPTIONAL permission (install warning "View and manage your tab groups"), granted from Settings → DevTools; without it, `groupId` alone still groups. The `favicon` permission was not used: it carries a warning too, and `favIconUrl` needs none |
 | `chat.start` | a chat the worker hosts itself: `sw-chat.ts` (below) |
 | `agent.start` | the target tab's own start path, the one the HUD composer uses (below) |
 

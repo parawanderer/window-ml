@@ -8,7 +8,7 @@
 import type { NeutralMessage } from "./contract-chat";
 import type { MlDebugEvent } from "./contract-debug";
 import type { SessionHistory } from "./session-store";
-import type { Command, CommandError, CommandResult, CommandType, ModelChoice, SessionId, StorageReport, TabInfo } from "./session-host";
+import type { Command, CommandError, CommandResult, CommandType, ModelChoice, SessionId, StorageReport, TabGroupInfo, TabInfo } from "./session-host";
 import type { SessionIndex } from "./session-index";
 import { capTitle } from "./session-title";
 
@@ -29,6 +29,8 @@ export interface CommandDeps {
     describe(): { kind: "browser" | "desktop" | "headless"; contractVersion: number; capabilities: unknown };
     /** http(s) tabs this browser has open */
     listTabs(): Promise<TabInfo[]>;
+    /** the tab groups, named; empty where the runtime cannot say */
+    listTabGroups?(): Promise<TabGroupInfo[]>;
     /** one tab, or null when it is gone */
     getTab(tabId: number): Promise<TabInfo | null>;
     /** relay a session action to the page in a tab and wait for what it did; rejects when nothing listens there */
@@ -246,7 +248,12 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
         // every other command, which is what makes the answer worth anything.
         "runtime.info": async (c) => ownRuntime(c) ?? ok({ ...deps.describe(), nowMs: deps.now() }),
 
-        "tabs.list": async (c) => ownRuntime(c) ?? ok({ tabs: await deps.listTabs() }),
+        "tabs.list": async (c) => {
+            const not = ownRuntime(c);
+            if (not) return not;
+            const [tabs, groups] = await Promise.all([deps.listTabs(), deps.listTabGroups?.().catch(() => []) ?? []]);
+            return ok({ tabs, ...(groups.length ? { groups } : {}) });
+        },
 
         // An unreachable backend is an empty list, not a failure: the picker then offers the default, which is what
         // a start command would use anyway, rather than an error in a box someone opened to type into.
