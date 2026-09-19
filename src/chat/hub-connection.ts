@@ -12,7 +12,8 @@
 // decided by the runtime from the signature inside the seal, never here.
 import { verifyChain } from "../hub/keys";
 import type { Bytes } from "../hub/hpke";
-import type { Recipient } from "../hub/seal";
+import type { Grant, Recipient } from "../hub/seal";
+import type { Position } from "../hub/wire";
 import { HubClient, type HubEvent } from "../hub/client";
 import { COMMAND_SCOPE, type Command, type CommandResult, type CommandType } from "../session-host";
 
@@ -32,7 +33,18 @@ export interface HubPeer {
     recipient: Recipient;
 }
 
+/** What one subscription hears about its stream. The payload is still SEALED: opening it needs a grant, which is the
+ *  caller's business, since which grant opens a stream is exactly the decision that must not be made here. */
+export type StreamEvent =
+    | { kind: "published"; sender: Bytes; seq: number; epoch: number; payload: Bytes }
+    /** the hub has finished sending what it retained; `truncated` means the ring no longer holds the start */
+    | { kind: "backfilled"; epoch: number; seq: number; truncated: boolean }
+    /** frames the hub dropped for this subscriber (a slow consumer): what is missing has to be read another way */
+    | { kind: "gap"; dropped: number };
+
 const hex = (b: Bytes): string => [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+/** A stream's identity: whose it is AND which channel, since two publishers may use the same channel name. */
+const streamKey = (publisher: Uint8Array, channel: Uint8Array): string => `${hex(publisher as Bytes)}:${hex(channel as Bytes)}`;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -51,6 +63,8 @@ export class HubConnection {
      *  knows, so the map holds the widest shape and each `send` narrows its own. */
     private readonly waiting = new Map<string, (r: CommandResult<CommandType>) => void>();
     private readonly peerListeners = new Set<(peers: HubPeer[]) => void>();
+    /** by `<publisher hex>:<channel hex>`: every stream this connection is subscribed to, and who hears it */
+    private readonly streams = new Map<string, (e: StreamEvent) => void>();
     private stopped = false;
 
     private constructor(
@@ -139,6 +153,31 @@ export class HubConnection {
         });
     }
 
+    /**
+     * Subscribe to one stream and hear everything it carries: the retained frames first, then `backfilled`, then
+     * live frames as they are published.
+     *
+     * One listener per stream. A stream is named by its publisher AND its channel, because two runtimes may publish on
+     * channels with the same name and they are two streams. Unsubscribing tells the hub, which matters beyond tidiness:
+     * a subscription holds one of `max_subscriptions_per_connection` (256) and subscribing CREATES the stream, so a
+     * client that never let go of what it stopped showing would run the account out of streams.
+     */
+    subscribe(publisher: Bytes, channel: Bytes, listener: (e: StreamEvent) => void, since?: Position): () => void {
+        const key = streamKey(publisher, channel);
+        this.streams.set(key, listener);
+        this.client.subscribe(publisher, channel, since);
+        return () => {
+            if (this.streams.get(key) !== listener) return;   // replaced by a later subscribe to the same stream
+            this.streams.delete(key);
+            if (!this.stopped) this.client.unsubscribe(publisher, channel);
+        };
+    }
+
+    /** Open a stream key granted to this principal. It verifies the grant, so a key from anyone else never opens. */
+    openGrant(sender: Bytes, payload: Bytes): Promise<Grant> {
+        return this.client.openGrant(sender, payload);
+    }
+
     close(): void {
         this.stopped = true;
         this.client.close();
@@ -163,6 +202,20 @@ export class HubConnection {
     }
 
     private async handle(event: HubEvent): Promise<void> {
+        // A subscription's frames. Dropped before this, which was fine while nothing subscribed and is everything once
+        // something does. A frame for a stream nobody here listens to is ignored rather than an error: it can arrive in
+        // the moment between an unsubscribe and the hub hearing about it.
+        if (event.kind === "published") {
+            this.streams.get(streamKey(event.stream.publisher, event.stream.channel))?.({ kind: "published", sender: event.sender, seq: event.seq, epoch: event.epoch, payload: event.payload });
+            return;
+        }
+        if (event.kind === "backfilled" || event.kind === "gap") {
+            if (!event.stream) return;
+            const listener = this.streams.get(streamKey(event.stream.publisher, event.stream.channel));
+            if (event.kind === "backfilled") listener?.({ kind: "backfilled", epoch: event.epoch, seq: event.seq, truncated: event.truncated });
+            else listener?.({ kind: "gap", dropped: event.dropped });
+            return;
+        }
         if (event.kind === "presence") {
             await this.onPresence(event);
             return;
