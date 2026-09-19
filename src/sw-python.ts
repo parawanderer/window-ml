@@ -4,6 +4,7 @@
 
 import { senderTrust, pendingGrants } from "./sw-consent";
 import { recordHousekeeping } from "./sw-housekeeping";
+import { ensureOffscreen, forgetOffscreen } from "./sw-offscreen";
 import { activeRuns, pageValueSession } from "./sw-runs";
 import { valueHolders, budgetBytes as valueBudgetBytes, claimValue } from "./sw-values";
 
@@ -123,7 +124,7 @@ export function pythonExec(message: any, sender: chrome.runtime.MessageSender, s
                 // The offscreen doc can be gone (SW slept and the doc was torn down, or a stale cached-
                 // ready) → "Receiving end does not exist." Drop the cache, recreate, retry ONCE.
                 if (!/Receiving end does not exist|Could not establish connection/.test(String(err?.message || err))) throw err;
-                offscreenReady = null;
+                forgetOffscreen();
                 return attempt();
             })
             .then((res) => {
@@ -152,27 +153,4 @@ export function relayPyStdout(message: any): void {
     // is reached the long way, through its content script.
     if (tabId == null) chrome.runtime.sendMessage(chunk).catch(() => { /* nobody listening → drop */ });
     else chrome.tabs.sendMessage(tabId, chunk).catch(() => { /* page gone → drop */ });
-}
-
-// ---- Offscreen Pyodide host (python_exec) ----
-// The service worker can't run WASM, so python_exec runs in an offscreen document
-// (extension-origin, 'wasm-unsafe-eval' CSP). Created lazily on first use, reused after.
-let offscreenReady: Promise<void> | null = null;
-
-function ensureOffscreen(): Promise<void> {
-    if (offscreenReady) return offscreenReady;
-    offscreenReady = (async () => {
-        if (await chrome.offscreen.hasDocument?.()) return;
-        try {
-            await chrome.offscreen.createDocument({
-                url: "offscreen.html",
-                reasons: [chrome.offscreen.Reason.WORKERS],
-                justification: "Runs the sandboxed Python (Pyodide/WASM) execution for the python_exec tool.",
-            });
-        } catch (e) {
-            if (!(await chrome.offscreen.hasDocument?.())) throw e;   // tolerate a concurrent create
-        }
-    })();
-    offscreenReady.catch(() => { offscreenReady = null; });   // let a failed create be retried
-    return offscreenReady;
 }

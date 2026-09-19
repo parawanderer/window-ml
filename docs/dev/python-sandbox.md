@@ -9,7 +9,7 @@ as in AGENTS.md — they are all under `src/`.
 tool (`buildPythonTool`, like `clickTool`) for pixel/array/spatial work better done in Python
 than JS. The service worker can't run WASM and the page main-world CSP blocks it, so CPython
 runs in an **offscreen document** (`offscreen.ts`, extension-origin, its CSP allows
-`'wasm-unsafe-eval'`): `sw-python.ts` `ensureOffscreen()` → `PY_RUN` message → the offscreen
+`'wasm-unsafe-eval'`): `sw-offscreen.ts` `ensureOffscreen()` → `PY_RUN` message → the offscreen
 doc, which relays to a **dedicated worker** (`python-worker.ts`) that actually runs Pyodide.
 The worker exists because the offscreen doc shares a renderer process with the sidebar iframe,
 so a compute-bound run on the main thread froze the sidebar's clicks (scroll — compositor thread
