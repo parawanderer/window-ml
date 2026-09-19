@@ -117,7 +117,7 @@ function RuntimeModels({ store, rt }: { store: ChatStore; rt: RuntimeInfo }) {
                                     {shown.map((m) => (
                                         <li key={m.id}><code>{m.id}</code>
                                             {m.default ? <span class="chat-chip">default</span> : null}
-                                            {m.where ? <span class={`rt-where ${m.where}`}>{m.where}</span> : null}
+                                            {m.where ? <span class={`chat-chip rt-where ${m.where}`}>{m.where}</span> : null}
                                             {m.kinds?.length ? <span class="rt-kinds">{m.kinds.join(" · ")}</span> : null}</li>
                                     ))}
                                     {!shown.length ? <li class="rt-none">No model matches “{q.trim()}”.</li> : null}

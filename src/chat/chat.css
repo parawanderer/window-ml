@@ -983,7 +983,14 @@ button.chat-page-go:hover { color: var(--fg); }
 .rt-models { list-style: none; margin: 0; padding: 0 12px; display: flex; flex-direction: column; gap: 6px; }
 .rt-models li { display: flex; align-items: center; gap: 8px; }
 /* The runtime's model list: a fixed height that scrolls, so a gateway's fifty models do not push Storage off the page. */
-.rt-models { max-height: 360px; overflow-y: auto; }
+.rt-models { max-height: 360px; overflow-y: auto; font-size: .92em; }
+.rt-models code { font-size: var(--code-fs); }
+/* The panel's themed scrollbar on the page's own scrolling lists: thin, no track, a thumb in the panel's grey. */
+.rt-models, .tp-list { scrollbar-width: thin; scrollbar-color: var(--panel-2) transparent; }
+.rt-models::-webkit-scrollbar, .tp-list::-webkit-scrollbar { width: 8px; }
+.rt-models::-webkit-scrollbar-track, .tp-list::-webkit-scrollbar-track { background: transparent; }
+.rt-models::-webkit-scrollbar-thumb, .tp-list::-webkit-scrollbar-thumb { background: var(--panel-2); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+.rt-models::-webkit-scrollbar-thumb:hover, .tp-list::-webkit-scrollbar-thumb:hover { background: var(--panel-2-hover); background-clip: padding-box; }
 /* The filter over it, inset like the list. */
 .rt-filter { margin: 0 12px 8px; width: calc(100% - 24px); }
 /* How many models, beside the heading. */
@@ -991,12 +998,12 @@ button.chat-page-go:hover { color: var(--fg); }
 /* ⓘ: the runtime's model access filter is on (what it hid is in the tip; the filter itself is never sent). */
 .rt-filtered { margin-left: 8px; color: var(--fg-faint); cursor: help; }
 .rt-filtered:hover, .rt-filtered:focus-visible { color: var(--fg); }
-/* Where a model runs, as the Commander tags it: cloud in the accent, local in green. */
-.rt-where { flex: 0 0 auto; font-size: .68em; text-transform: uppercase; letter-spacing: .04em; font-weight: 700; color: var(--accent); }
-.rt-where.local { color: var(--ok); }
+/* Where a model runs: a pill (the page's chip). Local, the common case, stays the chip's grey; cloud is tinted. */
+.rt-where { flex: 0 0 auto; font-size: .76em; }
+.rt-where.cloud { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
 /* "No model matches". */
 .rt-none { color: var(--fg-faint); }
 /* A model's kinds (completion, tools, vision…), dim after its id. */
-.rt-kinds { color: var(--fg-faint); font-size: .88em; }
+.rt-kinds { color: var(--fg-faint); font-size: .84em; }
 /* The sheet itself; the Storage view inside it takes the rows' inset. */
 .rt-sheet .stor { padding: 0 12px; }

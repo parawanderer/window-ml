@@ -46,7 +46,7 @@ export function ModelPicker({ models, value, onChange }: { models: readonly Mode
                         {list.map((id) => (
                             <button key={id} type="button" role="option" aria-selected={value === id} {...p.row(id)}>
                                 <span class="tp-title">{id}</span>
-                                {where.get(id) === "cloud" ? <span class="rt-where cloud">cloud</span> : null}
+                                {where.get(id) === "cloud" ? <span class="chat-chip rt-where cloud">cloud</span> : null}
                                 {value === id ? <span class="tp-check" aria-hidden="true"><IconCheck /></span> : null}
                             </button>
                         ))}
