@@ -533,3 +533,34 @@ test("`install` is root-only: a delegate that may pair still cannot hand it out"
     const direct = await issueCertificate(root, { subject: phone.publicKey, agreementKey: agree, role: Role.ROLE_CLIENT, scopes: [SCOPE.install], ...window });
     assert.ok((await verifyChain(root.publicKey, [direct], 1_500_000)).leaf.scopes.includes("install"));
 });
+
+test("`may_revoke` is the one power a delegate may neither ISSUE nor RENEW — and `install` it may renew", async () => {
+    // `may_revoke` is a boolean, not a scope, so `NEVER_DELEGABLE` never covered it and this verifier used to accept a
+    // delegate minting one while the hub refused it. Once revocation lists exist, that is a forged revoker accepted.
+    const { issueCertificate, generateIdentity } = await import("../src/hub/keys.ts");
+    const { root } = await cast();
+    const laptop = await generateIdentity();
+    const phone = await generateIdentity();
+    const agree = (await agreementKeyFromSeed(hex(V.principals.phone.agreement_seed))).publicKey;
+    const win = (a, b) => ({ notBeforeMs: a, notAfterMs: b });
+    const delegate = await issueCertificate(root, { subject: laptop.publicKey, agreementKey: agree, role: Role.ROLE_CLIENT, scopes: [SCOPE.view, SCOPE.approve, SCOPE.install], mayPair: true, ...win(1_000_000, 9_000_000) });
+
+    // 1. A delegate ISSUING it.
+    const minted = await issueCertificate(laptop, { subject: phone.publicKey, agreementKey: agree, role: Role.ROLE_CLIENT, scopes: [SCOPE.view], mayRevoke: true, ...win(1_000_000, 2_000_000) });
+    await assert.rejects(() => verifyChain(root.publicKey, [minted, delegate], 1_500_000), /may_revoke/);
+
+    // 2. A delegate RENEWING the root's own grant of it. The renewal exemption must not wave this through: exclusivity
+    //    is the whole value of a revoker, and a delegate able to keep one alive would be a second way to hold it.
+    const rootGrant = await issueCertificate(root, { subject: phone.publicKey, agreementKey: agree, role: Role.ROLE_CLIENT, scopes: [SCOPE.view], mayRevoke: true, ...win(1_000_000, 2_000_000) });
+    const renewedByDelegate = await issueCertificate(laptop, { subject: phone.publicKey, agreementKey: agree, role: Role.ROLE_CLIENT, scopes: [SCOPE.view], mayRevoke: true, renews: rootGrant, ...win(3_000_000, 4_000_000) });
+    await assert.rejects(() => verifyChain(root.publicKey, [renewedByDelegate, delegate], 3_500_000), /may_revoke/);
+
+    // 3. The case to MATCH the hub on, not to over-correct: a delegate may renew a grant carrying `install`. Renewal
+    //    re-issues what the root already granted and creates nothing, so the reason `install` is never delegable — a
+    //    new, irreversible grant — does not apply to keeping an existing one alive. Refusing it here would make a
+    //    runtime's renewal of a phone holding `install` a chain the hub accepts and this refuses.
+    const installGrant = await issueCertificate(root, { subject: phone.publicKey, agreementKey: agree, role: Role.ROLE_CLIENT, scopes: [SCOPE.view, SCOPE.install], ...win(1_000_000, 2_000_000) });
+    const renewedInstall = await issueCertificate(laptop, { subject: phone.publicKey, agreementKey: agree, role: Role.ROLE_CLIENT, scopes: [SCOPE.view, SCOPE.install], renews: installGrant, ...win(3_000_000, 4_000_000) });
+    const v = await verifyChain(root.publicKey, [renewedInstall, delegate], 3_500_000);
+    assert.ok(v.leaf.scopes.includes("install"), "a delegate keeps an existing `install` grant alive");
+});

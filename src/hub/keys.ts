@@ -268,6 +268,18 @@ export async function verifyChain(root: Bytes, chain: Certificate[], nowMs: numb
         if (parent) {
             if (!parent.mayPair) throw new ChainError("an intermediate may not pair");
             if (body.notAfterMs > parent.notAfterMs) throw new ChainError("a certificate outlives its issuer");
+            // `may_revoke` is the one power a delegate may neither ISSUE nor RENEW. It is not a scope, so
+            // `NEVER_DELEGABLE` (a list of scope names) never covered it and this verifier accepted both — while the
+            // hub refused them. The two sides have to agree, and the reason it is special is EXCLUSIVITY: its whole
+            // value is that only the root can make a revoker, so a delegate able to keep one alive by renewing it
+            // would be a second way to hold it. Checked BEFORE the renewal exemption below, which would otherwise
+            // wave a delegate's renewal straight through.
+            //
+            // Every other never-delegable power (`install` included) MAY be renewed by a delegate, because renewal
+            // re-issues a grant the root already made and creates nothing. Special-casing `install` here the way
+            // `may_revoke` is — the obvious move after reading "revocation cannot undo an install" — would make a
+            // runtime's renewal of a phone holding it a chain the hub accepts and this refuses.
+            if (body.mayRevoke) throw new ChainError("a delegate issued or renewed `may_revoke`, which only the root may");
             // A RENEWAL re-issues, unchanged, something the ROOT already granted. That gives the holder nothing it
             // did not have, so it is exempt from exactly the two checks that stop a delegate handing out power:
             // `NEVER_DELEGABLE` and scope-widening. Everything else still applies, the window above included.
