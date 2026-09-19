@@ -331,7 +331,7 @@ export function AccountPanel({ api }: { api: PairingApi }) {
     if (step === "pair") return <PairDevice api={api} onDone={() => setStep(null)} />;
     return (
         <div class="pair-stack">
-        <section class="pair-card" aria-label="Account">
+        <section class="pair-card pair-box" aria-label="Account">
             <h3 class="pair-h">“{m.label}”, {roleName(m.role)}{m.root ? ", holding the account's root" : ""}</h3>
             <div class="pair-facts">
                 <span class="pair-field-label">Hub</span><code class="pair-mono">{m.hubUrl}</code>
@@ -339,12 +339,12 @@ export function AccountPanel({ api }: { api: PairingApi }) {
                 <span class="pair-field-label">Fingerprint</span><Fingerprint value={m.fingerprint} />
             </div>
             {m.mayPair ? null : <p class="pair-hint">Pair new devices on the one that holds the account's root.</p>}
-            <ConnectionHistory api={api} />
             <div class="pair-actions">
                 <LeaveAccount api={api} onLeft={() => setM(null)} />
                 {m.mayPair ? <button class="btn primary" onClick={() => setStep("pair")}>Pair a device</button> : null}
             </div>
         </section>
+        <ConnectionHistory api={api} />
         <DevicesList api={api} self={m.principal} />
         </div>
     );

@@ -3368,8 +3368,12 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .pair-conn.connecting .pair-conn-dot, .pair-conn.offline .pair-conn-dot { background: var(--warn); }
 /* Leaving the account, asked a second time with what it costs: a quiet box under the facts. */
 .pair-leave { display: flex; flex-direction: column; gap: 8px; flex: 1 1 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
-/* The account view and the devices list under it, one card above the other. */
-.pair-stack { display: flex; flex-direction: column; gap: 28px; }
+/* The account view, its connection history and the devices list, one above the other. */
+.pair-stack { display: flex; flex-direction: column; gap: 22px; }
+/* This device on its account, boxed so its facts and actions read as one thing, apart from the list below. */
+.pair-card.pair-box { padding: 16px 18px; margin: 0 12px; border: 1px solid var(--border); border-radius: 14px; background: color-mix(in srgb, var(--fg) 3%, transparent); }
+/* The connection history sits under the box, lined up with its content. */
+.pair-stack > .pair-history { padding: 0 12px; }
 /* The devices on an account: one row per device, ruled apart, the one in your hand marked. */
 .pair-devs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 /* One device: its name, kind and "seen" on the first line, what it may do and its certificate under it. */
