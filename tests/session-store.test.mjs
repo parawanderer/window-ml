@@ -341,3 +341,23 @@ test("a session brought back from the archive is written whole, and not archived
     await store.restoreSession(old, [ev("abcd0001", 9)], null, now);
     assert.equal((await store.read("abcd0001")).length, 2);
 });
+
+test("a step or a result is written on the next tick; only streamed deltas wait for the batch", T, async () => {
+    const be = backend();
+    const store = new SessionStore(be, { flushMs: 60_000 });
+    const delta = (n) => ({ kind: "agent-stream", id: "aaaa0001", ts: n, session: { hash: "aaaa0001", turn: 0 }, step: 1, content: `d${n}` });
+    store.put(summary("aaaa0001"), delta(1));
+    store.put(summary("aaaa0001"), delta(2));
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(be.calls.append ?? 0, 0, "deltas wait for company");
+
+    // A chat's whole turn: the worker may be stopped a moment later, so it must not sit in memory for the batch.
+    store.put(summary("aaaa0001"), ev("aaaa0001", 3));
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(be.calls.append, 1, "written without anyone flushing, the deltas before it included");
+    assert.equal(be._rows.get("aaaa0001").count, 3);
+
+    store.putHistory("aaaa0001", { kind: "chat", session: { messages: [] } });
+    await new Promise((r) => setTimeout(r, 20));
+    assert.ok(be._rows.get("aaaa0001").history, "a history too: without it the chat cannot be continued");
+});
