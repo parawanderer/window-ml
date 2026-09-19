@@ -197,6 +197,14 @@ export class HubConnection {
         return this.client.openGrant(sender, payload);
     }
 
+    /**
+     * The hub client under this connection, for pairing (`lookupOffer` / `confirmOffer` in pair-flow.ts): the hub refuses
+     * a second connection from a principal that is connected, so pairing has to go over this one.
+     */
+    get hubClient(): HubClient {
+        return this.client;
+    }
+
     close(): void {
         this.stopped = true;
         this.client.close();
