@@ -9,7 +9,8 @@ const row = (hash, over = {}) => ({ id: { runtime: "rt", hash }, kind: "agent", 
 /** A publisher whose frames are collected in order, the way a hub's ring would retain them. */
 function publisher(every) {
     const frames = [];
-    const p = new IndexPublisher("rt", async (counter, batch) => { frames.push({ counter, update: decodeIndexFrame(batch) }); }, every);
+    let n = 0;
+    const p = new IndexPublisher("rt", async (batch) => { frames.push({ order: ++n, update: decodeIndexFrame(batch) }); }, every);
     return { p, frames };
 }
 
@@ -29,13 +30,14 @@ test("the ring always holds a complete snapshot, however many updates go by", as
     assert.ok(SNAPSHOT_EVERY < RING, "and the cadence is under the ring with room to spare");
 });
 
-test("counters are strictly increasing, even when updates are fired without waiting", async () => {
-    // A publish is asynchronous; a reader that sees counter 5 before 4 treats 4 as a replay.
+test("batches go out in the order they were made, even when updates are fired without waiting", async () => {
+    // A publish is asynchronous, and whatever seals these counts them in the order they arrive — so arriving out of
+    // order would number a later snapshot below an earlier upsert, and a reader treats the earlier one as a replay.
     const { p, frames } = publisher(4);
-    await Promise.all(Array.from({ length: 20 }, (_, i) => p.update({ type: "upsert", session: row(`c${String(i).padStart(7, "0")}`) })));
-    const counters = frames.map((f) => f.counter);
-    assert.deepEqual(counters, [...counters].sort((a, b) => a - b));
-    assert.equal(new Set(counters).size, counters.length, "and never reused");
+    const names = Array.from({ length: 20 }, (_, i) => `c${String(i).padStart(7, "0")}`);
+    await Promise.all(names.map((h) => p.update({ type: "upsert", session: row(h) })));
+    const upserted = frames.filter((f) => f.update.type === "upsert").map((f) => f.update.session.id.hash);
+    assert.deepEqual(upserted, names, "in the order they were asked for");
 });
 
 test("a re-published snapshot carries every row the publisher has said, including removals", async () => {

@@ -23,7 +23,7 @@ async function world(deviceScopes = [SCOPE.view, SCOPE.drive]) {
     const rt = await HubClient.connect({ ...common, ...runtime, role: Role.ROLE_RUNTIME });
     const ph = await HubClient.connect({ ...common, ...phone, role: Role.ROLE_CLIENT });
     const channels = await ChannelKey.generate();
-    const pub = new SessionPublisher(hubPublish(rt, Kind.KIND_SESSION_EVENTS), channels);
+    const pub = new SessionPublisher(hubPublish(rt, Kind.KIND_SESSION_EVENTS), channels, runtime.principal);
     const asDevice = { id: hex(phone.principal), scopes: deviceScopes, recipient: { principal: phone.principal, agreementKey: phone.agreement.publicKey } };
     const close = () => { rt.close(); ph.close(); hub.stop(); };
     return { hub, runtime, phone, rt, ph, channels, pub, asDevice, close };
@@ -113,5 +113,42 @@ test("each session has its OWN key: one session's grant does not open another's 
         });
         const readerA = new StreamReader(await w.ph.openGrant(grantA.sender, grantA.payload));
         await assert.rejects(() => readerA.open(frameB.payload), "A's key does not read B");
+    } finally { w.close(); }
+});
+
+// --- the index, through the same grant path ---
+
+const { IndexPublisher, IndexReader, indexChannel, indexKeysChannel } = await import("../src/session-relay.ts");
+
+test("the index's key reaches a device the same way a session's does, and the list reads back whole", LIVE, async () => {
+    // Without the index's key a device could subscribe to a runtime's session list and never be able to read it.
+    const w = await world();
+    try {
+        await w.pub.deviceOnline(w.asDevice);
+        const index = new IndexPublisher("rt", (batch) => w.pub.publishIndex(batch));
+        const row = (hash) => ({ id: { runtime: "rt", hash }, kind: "agent", status: "done", createdTs: 1, lastTs: 1, pendingApprovals: 0, saved: true });
+        await index.snapshot([row("aaaa0001")]);
+        await index.update({ type: "upsert", session: row("aaaa0002") });
+
+        const ic = await indexChannel(w.channels, w.runtime.principal);
+        const ik = await indexKeysChannel(w.channels, w.runtime.principal);
+        w.ph.subscribe(w.runtime.principal, ik);
+        w.ph.subscribe(w.runtime.principal, ic);
+        let reader = null;
+        const frames = [];
+        await until(w.ph, "the index key and two frames", (e) => {
+            if (e.kind !== "published") return false;
+            if (hex(e.stream.channel) === hex(ik) && !reader) return w.ph.openGrant(e.sender, e.payload).then((g) => { reader = new StreamReader(g); }) && false;
+            if (hex(e.stream.channel) === hex(ic)) frames.push(e.payload);
+            return false;
+        }, 1500).catch(() => { /* read what arrived */ });
+
+        assert.ok(reader, "the device was handed the index's key");
+        const ix = new IndexReader();
+        const applied = [];
+        for (const f of frames) applied.push(...ix.read((await reader.open(f)).batch));
+        assert.equal(ix.complete, true, "a whole index arrived");
+        assert.deepEqual(applied.map((u) => u.type), ["snapshot", "upsert"]);
+        assert.deepEqual(applied[0].sessions.map((s) => s.id.hash), ["aaaa0001"]);
     } finally { w.close(); }
 });
