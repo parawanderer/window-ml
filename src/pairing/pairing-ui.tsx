@@ -7,6 +7,7 @@
 // button that pairs is the answer to "do these match?", never a generic OK.
 
 import { useEffect, useRef, useState } from "preact/hooks";
+import { ConnectionHistory, DevicesList } from "./devices-ui";
 import { groupFour, pairingProblem, roleName, SCOPES, type FoundOffer, type Grant, type HubConnectionView, type Membership, type OfferHandle, type PairingApi } from "./api";
 
 /** A fingerprint as both screens draw it: four-character groups in the code face, large enough to compare. */
@@ -329,6 +330,7 @@ export function AccountPanel({ api }: { api: PairingApi }) {
     }
     if (step === "pair") return <PairDevice api={api} onDone={() => setStep(null)} />;
     return (
+        <div class="pair-stack">
         <section class="pair-card" aria-label="Account">
             <h3 class="pair-h">“{m.label}”, {roleName(m.role)}{m.root ? ", holding the account's root" : ""}</h3>
             <div class="pair-facts">
@@ -337,10 +339,13 @@ export function AccountPanel({ api }: { api: PairingApi }) {
                 <span class="pair-field-label">Fingerprint</span><Fingerprint value={m.fingerprint} />
             </div>
             {m.mayPair ? null : <p class="pair-hint">Pair new devices on the one that holds the account's root.</p>}
+            <ConnectionHistory api={api} />
             <div class="pair-actions">
                 <LeaveAccount api={api} onLeft={() => setM(null)} />
                 {m.mayPair ? <button class="btn primary" onClick={() => setStep("pair")}>Pair a device</button> : null}
             </div>
         </section>
+        <DevicesList api={api} self={m.principal} />
+        </div>
     );
 }

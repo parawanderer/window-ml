@@ -9,10 +9,12 @@
 
 import { CertificateBody } from "../proto/wmlhub/v1/identity.gen";
 import { Keyring } from "../hub/keyring";
+import { principalId } from "../hub/keys";
 import { beginOffer } from "../hub/pair-flow";
 import { PAIRING_WINDOW_MS, pairingFingerprintHex } from "../hub/pairing";
 import { Role } from "../hub/wire";
-import type { HubConnectionView, Membership, PairingApi, PairRole } from "./api";
+import type { DeviceInfo } from "../session-host";
+import type { HubConnectionView, HubLogLine, Membership, PairingApi, PairRole, RevokeOutcome } from "./api";
 
 /** The certificate's role, as the screens name it. */
 function roleOf(role: Role | undefined): PairRole {
@@ -50,6 +52,7 @@ export function extensionPairing(): PairingApi {
             fingerprint: await pairingFingerprintHex(me.identity.publicKey, me.agreement.publicKey),
             root: !!me.root,
             mayPair: false,
+            principal: [...await principalId(me.identity.publicKey)].map((b) => b.toString(16).padStart(2, "0")).join(""),
         };
     };
     const notHere = () => Promise.reject(new Error("Pair devices on the device that holds the account's root."));
@@ -86,6 +89,19 @@ export function extensionPairing(): PairingApi {
                 case "unpaired": return { state: "unpaired" };
                 default: return { state: "stopped", hubName: s.hubName };
             }
+        },
+        async history(): Promise<HubLogLine[]> {
+            const log = await hubRuntime({ action: "log" });
+            return Array.isArray(log) ? log as HubLogLine[] : [];
+        },
+        async devices(): Promise<DeviceInfo[]> {
+            const list = await hubRuntime({ action: "devices" });
+            return Array.isArray(list) ? list as DeviceInfo[] : [];
+        },
+        async revoke(principal: string): Promise<RevokeOutcome> {
+            const r = await hubRuntime({ action: "revoke", principal });
+            if (r === "revoked" || r === "already" || r === "self" || r === "unpaired") return r;
+            throw new Error("The worker did not answer; nothing was removed.");
         },
         async leave() {
             // The membership only: this browser never holds a root, and its keys stay, so joining again is the same principal.

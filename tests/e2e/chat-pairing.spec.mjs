@@ -37,9 +37,9 @@ test("this browser joins an account as a runtime: code and fingerprint here, con
         await openDevices(page);
 
         // A runtime joins; it never creates (the root is not a runtime's to hold), and says where that happens.
-        await expect(page.locator(".pair-h")).toHaveText("This device is in no account");
+        await expect(page.locator(".pair-h").first()).toHaveText("This device is in no account");
         await expect(page.getByRole("button", { name: "Create an account" })).toHaveCount(0);
-        await expect(page.locator(".pair-card")).toContainText("This browser joins an account; it never holds one");
+        await expect(page.locator(".pair-card").first()).toContainText("This browser joins an account; it never holds one");
 
         // A hub that is not there fails in words, with the form still up.
         await page.getByRole("button", { name: "Join an account" }).click();
@@ -70,17 +70,27 @@ test("this browser joins an account as a runtime: code and fingerprint here, con
         await F.confirmOffer(phoneClient, issuer, found, F.defaultGrant(Role.ROLE_RUNTIME, issuer));
 
         // Joined: the page shows what this browser is on the account, and the worker connects by itself.
-        await expect(page.locator(".pair-h")).toHaveText("“Test laptop”, a browser runtime", { timeout: 15_000 });
+        await expect(page.locator(".pair-h").first()).toHaveText("“Test laptop”, a browser runtime", { timeout: 15_000 });
         await expect(page.locator(".pair-facts")).toContainText(hub.url);
         await expect(page.locator(".pair-conn")).toContainText("Connected", { timeout: 20_000 });
         // A runtime pairs nobody: that happens on the root device.
         await expect(page.getByRole("button", { name: "Pair a device" })).toHaveCount(0);
 
+        // The phone is connected, so this browser's allowlist lists it (seen in presence, its chain verified): named as
+        // its certificate names it, and removable from here.
+        const list = page.getByRole("region", { name: "Devices on this account" });
+        const phoneRow = list.locator(".pair-dev", { hasText: "Shane's phone" });
+        await expect(phoneRow).toBeVisible({ timeout: 20_000 });
+        await expect(phoneRow.locator(".pair-dev-seen")).toContainText("Seen");
+        await phoneRow.getByRole("button", { name: "Remove…" }).click();
+        await phoneRow.getByRole("button", { name: /^Remove it/ }).click();
+        await expect(list.getByRole("status")).toContainText("was removed", { timeout: 10_000 });
+
         // Leaving asks first, says what it costs, and then this browser is in no account and stops connecting.
         await page.getByRole("button", { name: "Leave this account…" }).click();
         await expect(page.locator(".pair-leave")).toContainText("Your devices stop reaching this browser");
         await page.getByRole("button", { name: "Leave", exact: true }).click();
-        await expect(page.locator(".pair-h")).toHaveText("This device is in no account");
+        await expect(page.locator(".pair-h").first()).toHaveText("This device is in no account");
         expect(errors).toEqual([]);
     } finally {
         phoneClient?.close();

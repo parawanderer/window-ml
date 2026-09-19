@@ -3,7 +3,8 @@
 // unknown code, a scope a delegate may not pass on, a hub that is not a URL), and hands the test the moments a person
 // cannot fake from one screen: the other device answering a join, or the hub giving up on it.
 
-import type { FoundOffer, Grant, Membership, OfferHandle, PairingApi, PairRole } from "./api";
+import type { DeviceInfo } from "../session-host";
+import type { FoundOffer, Grant, HubLogLine, Membership, OfferHandle, PairingApi, PairRole, RevokeOutcome } from "./api";
 
 /** The error shape the library's `PairingError` has: a reason the screens turn into words. */
 class FakePairingError extends Error {
@@ -43,7 +44,11 @@ function defaultGrant(role: PairRole, grantable: string[] | null, root: boolean)
 export function fakePairing(o: {
     joinsAs?: PairRole; defaultLabel?: string; defaultHubUrl?: string;
     membership?: Membership | null; grantable?: string[] | null; latencyMs?: number;
+    /** the account's devices, as a runtime's allowlist or the root's `device.list` would give them */
+    devices?: DeviceInfo[];
 } = {}): PairingApi & FakePairingControls {
+    let devices = [...(o.devices ?? [])];
+    const history: HubLogLine[] = [{ atMs: Date.now() - 60_000, event: "connecting" }, { atMs: Date.now() - 59_000, event: `online (${devices.length} devices)` }];
     let membership = o.membership ?? null;
     const grantable = o.grantable === undefined ? null : o.grantable;
     const offers = new Map<string, Omit<FoundOffer, "grant" | "grantable"> & Partial<Pick<FoundOffer, "grant" | "grantable">>>();
@@ -87,6 +92,19 @@ export function fakePairing(o: {
             confirmed.push({ label: found.label, grant });
             for (const [code, f] of offers) if (f.label === found.label) offers.delete(code);
         },
+        ...(o.devices ? {
+            async devices() { await wait(); return devices; },
+            async history() { await wait(); return history; },
+            async revoke(principal: string): Promise<RevokeOutcome> {
+                await wait();
+                if (!membership) return "unpaired";
+                if (principal === membership.principal) return "self";
+                if (!devices.some((d) => d.principal === principal)) return "already";
+                devices = devices.filter((d) => d.principal !== principal);
+                history.push({ atMs: Date.now(), event: `revoked ${principal.slice(0, 8)}` });
+                return "revoked";
+            },
+        } : {}),
         setMembership(m) { membership = m; },
         addOffer(code, offer) { offers.set(norm(code), offer); },
         get waiting() { return join ? { code: join.code, fingerprint: join.fingerprint } : null; },
