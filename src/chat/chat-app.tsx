@@ -23,6 +23,8 @@ import { mayCommand, speaksOurContract } from "./grants";
 import { NewSession, ResumeSession, StartMenu, resumableHere, type StartKind } from "./new-session";
 import { ListToggle, ViewToggle, calm, foldedRuntimes, listOpen, pane, pinned, setPane, toggleRuntime } from "./view-mode";
 import { DeleteConfirm, RowMenu } from "./row-menu";
+import { GearMenu, Rail, mainView, openSearch } from "./nav";
+import { SearchPage } from "./search-page";
 import type { ChatExtras } from "./extras";
 import { lightboxSrc, type ClientPlatform } from "./platform";
 
@@ -224,149 +226,76 @@ function IndexRow({ s, rt, active, moved, showRuntime }: { s: SessionSummary; rt
     );
 }
 
-/** Does a session answer to what was typed in the filter? Matched against everything a person would use to name
- *  one out loud: its title, the task it was given, the page it is on, and the runtime it is running on. */
-function matches(s: SessionSummary, rt: RuntimeInfo, q: string): boolean {
-    if (!q) return true;
-    return [s.title, s.task, s.page?.url, s.page?.title, rt.name].some((v) => !!v && v.toLowerCase().includes(q));
-}
-
-/** How far back the list's default view reaches. Older sessions are one click away, in their own view. */
+/** How far back the list reaches. Everything older is on the search page, which holds the whole history. */
 const RECENT_DAYS = 30;
-/** How many older sessions are drawn at a time; scrolling to the end of them draws the next page. */
-const OLDER_PAGE = 40;
 
 /** A session's last activity on THIS device's clock (the runtime's clock may be off; `clockOffsetMs` says by how much). */
 const localTs = (s: SessionSummary, rt: RuntimeInfo | undefined) => s.lastTs - (rt?.clockOffsetMs ?? 0);
 
-/** "September 2026": the heading an older session is filed under. */
-const monthOf = (ts: number) => new Date(ts).toLocaleDateString(undefined, { month: "long", year: "numeric" });
-
 /**
- * The session list: what is pinned, then each runtime's RECENT sessions, then a way into the rest.
+ * The session list: what is pinned, then each runtime's RECENT sessions, then a way to the rest.
  *
- * Two views on one track, which slides: the recent list, and "Older sessions" (by month, drawn a page at a time as it
- * is scrolled). A session that is still running or waiting on you is recent however long ago it started — the list
- * never files away something that wants you. A search looks across BOTH, from either view: searching from the recent
- * list and finding nothing would read as "that session is gone" when it is only old.
+ * A session that is still running or waiting on you is recent however long ago it started — the list never files
+ * away something that wants you. Everything else past `RECENT_DAYS` lives on the search page (`search-page.tsx`),
+ * which both the header's search button and the "Older sessions" row open: one place to find a session, not two.
  */
-function SessionList({ store, activeKey, narrow, onStart }: { store: ChatStore; activeKey: SessionKey | null; narrow: boolean; onStart: (kind: StartKind) => void }) {
+function SessionList({ store, activeKey, narrow, onStart, gear }: { store: ChatStore; activeKey: SessionKey | null; narrow: boolean; onStart: (kind: StartKind) => void; gear: preact.ComponentChildren }) {
     const runtimes = store.runtimes.value;
     const sessions = store.listed();
     const status = store.status.value;
     const moved = movedSince.value;
     const folded = foldedRuntimes.value;
     const pins = pinned.value;
-    const [query, setQuery] = useState("");
-    const [searching, setSearching] = useState(false);
-    const [older, setOlder] = useState(false);
-    const [olderShown, setOlderShown] = useState(OLDER_PAGE);
-    const box = useRef<HTMLInputElement>(null);
-    const sentinel = useRef<HTMLDivElement>(null);
-    const q = searching ? query.trim().toLowerCase() : "";
     const rtOf = new Map(runtimes.map((rt) => [rt.id, rt]));
     const keyOf = (s: SessionSummary) => `${s.id.runtime}:${s.id.hash}`;
     const cutoff = Date.now() - RECENT_DAYS * 86_400_000;
     const live = (s: SessionSummary) => s.status === "running" || s.status === "waiting";
     const isRecent = (s: SessionSummary) => live(s) || localTs(s, rtOf.get(s.id.runtime)) >= cutoff;
     const pinnedRows = sessions.filter((s) => pins.has(keyOf(s)) && rtOf.has(s.id.runtime));
-    const olderRows = sessions.filter((s) => !pins.has(keyOf(s)) && !isRecent(s) && rtOf.has(s.id.runtime));
-    // A filter is a way of FINDING one session, so it looks past a folded group rather than through it: hiding a
-    // match because its runtime happens to be folded would be the list refusing to answer the question asked.
-    const shown = (rt: RuntimeInfo) => sessions.filter((s) => s.id.runtime === rt.id && (q ? matches(s, rt, q) : !pins.has(keyOf(s)) && isRecent(s)));
-    const groups = runtimes.map((rt) => ({ rt, mine: shown(rt) })).filter(({ mine }) => !q || mine.length);
-    const inOlder = older && !q;
-
-    // Draw the next page of older sessions when the end of the drawn ones scrolls into view.
-    useEffect(() => {
-        const el = sentinel.current;
-        if (!inOlder || !el || typeof IntersectionObserver !== "function") return;
-        const io = new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) setOlderShown((n) => n + OLDER_PAGE); });
-        io.observe(el);
-        return () => io.disconnect();
-    }, [inOlder, olderShown, olderRows.length]);
-
+    const olderCount = sessions.filter((s) => !pins.has(keyOf(s)) && !isRecent(s) && rtOf.has(s.id.runtime)).length;
     const row = (s: SessionSummary, showRuntime = false) => {
         const key = keyOf(s);
         return <IndexRow key={key} s={s} rt={rtOf.get(s.id.runtime)!} active={activeKey === key} moved={moved.has(key)} showRuntime={showRuntime} />;
     };
-    // A row outside its runtime's group names its runtime — but only where there is more than one to tell apart.
-    const spans = (rows: SessionSummary[]) => new Set(rows.map((s) => s.id.runtime)).size > 1;
-    const pinnedMulti = runtimes.length > 1, olderMulti = spans(olderRows);
-    const months: { month: string; rows: SessionSummary[] }[] = [];
-    for (const s of olderRows.slice(0, olderShown)) {
-        const m = monthOf(localTs(s, rtOf.get(s.id.runtime)));
-        if (months.at(-1)?.month !== m) months.push({ month: m, rows: [] });
-        months.at(-1)!.rows.push(s);
-    }
     return (
         <aside class="chat-list" aria-label="Sessions">
             <div class="head">
                 <ListToggle narrow={narrow} /><b>Sessions</b><span class="sp" />
                 {status.state !== "online" ? <span class="chat-chip warn">{status.state === "connecting" ? "connecting…" : "offline"}</span> : null}
-                {/* The box is not there until it is asked for: a list you can still scan does not need one, and a
-                    permanent field at the top of a quiet page is chrome that earns nothing most of the time. */}
-                {sessions.length > 4 ? (
-                    <button class={`tt hbtn${searching ? " on" : ""}`} aria-label="Find a session" aria-expanded={searching}
-                        onClick={() => { const next = !searching; setSearching(next); if (!next) setQuery(""); else requestAnimationFrame(() => box.current?.focus()); }}>
-                        <IconSearch /><span class="tt-pop" role="tooltip">Find a session</span>
+                <button class={`tt hbtn${mainView.value === "search" ? " on" : ""}`} aria-label="Search sessions" onClick={openSearch}>
+                    <IconSearch /><span class="tt-pop" role="tooltip">Search sessions</span>
+                </button>
+                <StartMenu store={store} onPick={onStart} />{narrow ? gear : null}
+            </div>
+            <div class="view chat-list-scroll">
+                {runtimes.length === 0 && status.state === "online" ? <div class="empty">No runtimes yet. Pair one to see its sessions here.</div> : null}
+                {pinnedRows.length ? (
+                    <section class="chat-group chat-pinned" aria-label="Pinned">
+                        <div class="chat-group-label"><IconPin />Pinned</div>
+                        {pinnedRows.map((s) => row(s, runtimes.length > 1))}
+                    </section>
+                ) : null}
+                {runtimes.map((rt) => {
+                    const mine = sessions.filter((s) => s.id.runtime === rt.id && !pins.has(keyOf(s)) && isRecent(s));
+                    const shut = folded.has(rt.id);
+                    return (
+                        <section class={`chat-group${shut ? " folded" : ""}`} key={rt.id}>
+                            <RuntimeHead rt={rt} folded={shut} count={mine.length} />
+                            {shut ? null : !speaksOurContract(rt)
+                                ? <div class="chat-rt-empty">This runtime speaks version {rt.contractVersion} of the session contract, which this app does not. Its sessions open once both sides agree.</div>
+                                : mine.length
+                                    ? mine.map((s) => row(s))
+                                    : <div class="chat-rt-empty">Nothing in the last {RECENT_DAYS} days.</div>}
+                        </section>
+                    );
+                })}
+                {olderCount ? (
+                    <button class="chat-older-go" onClick={openSearch}>
+                        <IconHistory /><span>Older sessions</span><span class="chat-older-n">{olderCount}</span>
                     </button>
                 ) : null}
-                <StartMenu store={store} onPick={onStart} />{narrow ? <ViewToggle /> : null}
             </div>
-            <div class={`chat-filter${searching ? " open" : ""}`} aria-hidden={!searching}>
-                <div class="chat-filter-row">
-                    <input ref={box} type="search" class="chat-filter-in" value={query} tabIndex={searching ? 0 : -1}
-                        aria-label="Filter sessions" placeholder="Search every session, older ones too…"
-                        onInput={(e: any) => setQuery(e.target.value)}
-                        onKeyDown={(e: KeyboardEvent) => { if (e.key === "Escape") { setQuery(""); setSearching(false); } }} />
-                </div>
-            </div>
-            <div class={`chat-list-track${inOlder ? " older" : ""}`}>
-                <div class="view chat-list-scroll chat-list-recent" aria-hidden={inOlder} inert={inOlder}>
-                    {runtimes.length === 0 && status.state === "online" ? <div class="empty">No runtimes yet. Pair one to see its sessions here.</div> : null}
-                    {q && !groups.length ? <div class="empty">Nothing matches “{truncate(query.trim(), 40)}”.</div> : null}
-                    {!q && pinnedRows.length ? (
-                        <section class="chat-group chat-pinned" aria-label="Pinned">
-                            <div class="chat-group-label"><IconPin />Pinned</div>
-                            {pinnedRows.map((s) => row(s, pinnedMulti))}
-                        </section>
-                    ) : null}
-                    {groups.map(({ rt, mine }) => {
-                        const shut = folded.has(rt.id) && !q;
-                        return (
-                            <section class={`chat-group${shut ? " folded" : ""}`} key={rt.id}>
-                                <RuntimeHead rt={rt} folded={shut} count={mine.length} />
-                                {shut ? null : !speaksOurContract(rt)
-                                    ? <div class="chat-rt-empty">This runtime speaks version {rt.contractVersion} of the session contract, which this app does not. Its sessions open once both sides agree.</div>
-                                    : mine.length
-                                        ? mine.map((s) => row(s))
-                                        : <div class="chat-rt-empty">{q ? "No sessions." : "Nothing in the last " + RECENT_DAYS + " days."}</div>}
-                            </section>
-                        );
-                    })}
-                    {!q && olderRows.length ? (
-                        <button class="chat-older-go" onClick={() => { setOlderShown(OLDER_PAGE); setOlder(true); }}>
-                            <IconHistory /><span>Older sessions</span><span class="chat-older-n">{olderRows.length}</span>
-                        </button>
-                    ) : null}
-                </div>
-                <div class="view chat-list-scroll chat-list-older" aria-hidden={!inOlder} inert={!inOlder} aria-label="Older sessions">
-                    <div class="chat-older-head">
-                        <button class="tt hbtn" aria-label="Back to recent sessions" onClick={() => setOlder(false)}>
-                            <IconBack /><span class="tt-pop" role="tooltip">Back to recent sessions</span>
-                        </button>
-                        <b>Older sessions</b>
-                    </div>
-                    {months.map(({ month, rows }) => (
-                        <section class="chat-group" key={month}>
-                            <div class="chat-group-label">{month}</div>
-                            {rows.map((s) => row(s, olderMulti))}
-                        </section>
-                    ))}
-                    {olderShown < olderRows.length ? <div ref={sentinel} class="chat-older-more" aria-hidden="true" /> : null}
-                </div>
-            </div>
+            {narrow ? null : <div class="chat-list-foot">{gear}</div>}
         </aside>
     );
 }
@@ -432,16 +361,15 @@ function SessionPane({ store, sessionKey, narrow, extras }: { store: ChatStore; 
     }, [waiting, sessionKey, r]);
 
     // NO HEADER BAND on a wide calm page: what it held has gone where each part belongs — the title into the
-    // transcript, navigation to the edge, the page's own tools into one corner (see `Lede`, `PageTools`). A phone
-    // keeps the bar: it holds the way back, and there is no room to float anything over a 390px column.
+    // transcript (`Lede`), navigation and the page's tools to the left edge (the rail and the gear, `nav.tsx`). A
+    // phone keeps the bar: it holds the way back, and there is no room for a rail beside a 390px column.
     const bare = calm.value && !narrow;
     return (
         <main class="chat-main" data-rev={r} data-session={sessionKey}>
             {bare
-                ? (!listOpen.value ? <div class="chat-nav-float"><ListToggle narrow={narrow} /></div> : null)
+                ? null
                 : <div class="head chat-head">
                     {narrow ? <button class="nav" aria-label="Back to sessions" onClick={() => (pushedEntry ? history.back() : (view.value = { name: "list" }))}>‹</button> : null}
-                    {!narrow && !listOpen.value ? <ListToggle narrow={narrow} /> : null}
                     <span class="chat-head-title">
                         <b>{truncate(title, 120)}</b>
                         <span class="chat-head-sub">
@@ -478,7 +406,6 @@ function SessionPane({ store, sessionKey, narrow, extras }: { store: ChatStore; 
             ) : s && canDrive ? <Composer s={s} multiline />
                 : s && rt ? <div class="chat-readonly">{!rt.online ? `${rt.name} is offline. You can read this session, and send to it once it is back.` : `This device may watch sessions on ${rt.name}, not drive them.`}</div>
                     : null}
-            {bare ? <PageTools store={store} extras={extras} rt={rt} /> : null}
         </main>
     );
 }
@@ -510,35 +437,6 @@ function DeviceViews({ extras, rt }: { extras?: ChatExtras; rt?: RuntimeInfo }) 
                 </button>
             ) : null}
         </>
-    );
-}
-
-/**
- * THE PAGE'S OWN TOOLS, in one corner, behind one mark.
- *
- * They were a row across the top of a header that existed to hold them. Four glyphs resting in the busiest corner
- * of the page, for a view mode and two workspaces nobody presses twice an hour. One button opens them, bottom
- * right, in the composer's row rather than over the transcript — a cluster floating over what you are reading
- * would fight a table's own controls, which sit in exactly that corner of exactly that table.
- */
-function PageTools({ store, extras, rt }: { store: ChatStore; extras?: ChatExtras; rt?: RuntimeInfo }) {
-    const [open, setOpen] = useState(false);
-    useEffect(() => {
-        if (!open) return;
-        const onDown = (e: Event) => { if (!(e.target as HTMLElement)?.closest?.(".chat-tools")) setOpen(false); };
-        const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
-        document.addEventListener("pointerdown", onDown);
-        document.addEventListener("keydown", onKey);
-        return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); };
-    }, [open]);
-    void store;
-    return (
-        <div class={`chat-tools${open ? " open" : ""}`}>
-            {open ? <><DeviceViews extras={extras} rt={rt} /><ViewToggle /></> : null}
-            <button class={`tt hbtn chat-tools-btn${open ? " on" : ""}`} aria-label="Page tools" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-                <IconMore /><span class="tt-pop left" role="tooltip">How this page reads, and what this browser can show you</span>
-            </button>
-        </div>
     );
 }
 
@@ -647,33 +545,48 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
     const benchRt = !narrow && benchOpen.value && deviceRt?.capabilities.pythonBench ? deviceRt : undefined;
     const aside = asideRt ? extras?.resourcePanel?.(asideRt.id) : null;
     const bench = benchRt ? extras?.bench?.(benchRt.id) : null;
+    // The runtime whose settings this device may edit: one that reports `localSettings` and this device can draw.
+    const settingsRt = store.runtimes.value.find((r) => r.online && r.capabilities.localSettings && extras?.settings?.(r.id) != null);
+    const main = mainView.value;
     useMovedSince(store, key);
     useEffect(() => { if (key) store.open(key); else store.close(); }, [key]);
-    useEffect(() => { if (key) setStarting(null); }, [key]);   // opening a session puts the form away
+    useEffect(() => { if (key) { setStarting(null); mainView.value = null; } }, [key]);   // opening a session puts the form and the search page away
+    const start = (k: StartKind) => { mainView.value = null; setStarting(k); };
+    const gear = <GearMenu extras={extras} rt={deviceRt} settingsRt={settingsRt} />;
+    const settings = main === "settings" && settingsRt ? extras?.settings?.(settingsRt.id) : null;
     return (
         <div class={`chat${narrow ? " narrow" : ""}${calm.value ? " calm" : ""}${!narrow && !listOpen.value ? " list-hidden" : ""}${aside ? " pane-open" : ""}`}>
             <ContextMenu />
             <CursorTipLayer />
-            {(!narrow || (!key && !starting)) ? <SessionList store={store} activeKey={key} narrow={narrow} onStart={setStarting} /> : null}
-            {starting ? <NewSession store={store} kind={starting} onCancel={() => setStarting(null)}
-                onStarted={(k) => { setStarting(null); openSession(k); }} />
-                : key ? <SessionPane store={store} sessionKey={key} narrow={narrow} />
-                    : !narrow ? (
-                        <main class="chat-main">
-                            {/* The same shape as an open session: nothing across the top, the way back at the edge,
-                                the page's tools in the one corner they are always in. */}
-                            {calm.value
-                                ? (!listOpen.value ? <div class="chat-nav-float"><ListToggle narrow={narrow} /></div> : null)
-                                : <div class="head chat-head">
-                                    {!listOpen.value ? <ListToggle narrow={narrow} /> : null}
-                                    <span class="sp" />
-                                    <DeviceViews extras={extras} rt={deviceRt} />
-                                    <ViewToggle />
-                                </div>}
-                            <div class="empty chat-pick">Pick a session.</div>
-                            {calm.value ? <PageTools store={store} extras={extras} rt={deviceRt} /> : null}
-                        </main>
-                    ) : null}
+            {!narrow && !listOpen.value ? <Rail store={store} onStart={start} gear={gear} /> : null}
+            {(!narrow || (!key && !starting && !main)) ? <SessionList store={store} activeKey={key} narrow={narrow} onStart={start} gear={gear} /> : null}
+            {main === "search" && (!narrow || !key) ? <SearchPage store={store} narrow={narrow} />
+                : settings ? (
+                    <main class="chat-main chat-settings" aria-label="Settings">
+                        <div class="head chat-head">
+                            <button class="nav" aria-label="Close settings" onClick={() => (mainView.value = null)}><IconBack /></button>
+                            <b>Settings</b>
+                        </div>
+                        <div class="view chat-settings-body">{settings}</div>
+                    </main>
+                )
+                : starting ? <NewSession store={store} kind={starting} onCancel={() => setStarting(null)}
+                    onStarted={(k) => { setStarting(null); openSession(k); }} />
+                    : key ? <SessionPane store={store} sessionKey={key} narrow={narrow} />
+                        : !narrow ? (
+                            <main class="chat-main">
+                                {/* The same shape as an open session: nothing across the top on a calm page, the
+                                    way back and the page's tools at the left edge. */}
+                                {calm.value ? null : (
+                                    <div class="head chat-head">
+                                        <span class="sp" />
+                                        <DeviceViews extras={extras} rt={deviceRt} />
+                                        <ViewToggle />
+                                    </div>
+                                )}
+                                <div class="empty chat-pick">Pick a session.</div>
+                            </main>
+                        ) : null}
             {aside ? <aside class="chat-pane" aria-label="The box">{aside}</aside> : null}
             {bench ? <div class="chat-bench">{bench}</div> : null}
             <Notices store={store} />

@@ -16,6 +16,9 @@ html, body, #root { height: 100%; }
        and re-lays out every row on the way, so the text crawls sideways while the pane moves. Fixed, the content
        is drawn once and the pane reveals it. */
     --list-w: 320px;
+    /* What the list's column narrows to when the list is hidden: the rail (nav.tsx), never nothing. */
+    --rail-w: 56px;
+    position: relative;
     grid-template-columns: var(--list-w) minmax(0, 1fr);
     /* Two rows: the panes, and the bench drawer under all of them when it is open. The drawer is a full-width
        surface in the sidebar too — it is a workspace, not a sidecar of whatever is beside it. */
@@ -140,7 +143,7 @@ html, body, #root { height: 100%; }
 /* `minmax(0px, 0px)`, not `0`: a track only interpolates against the same FUNCTION, so animating a `minmax()`
    column down to a bare length does not tween at all — the column snaps shut and the body jumps a pane's width
    sideways, while the pane itself slides. Both sides `minmax()`, and the two move together. */
-.chat.list-hidden { grid-template-columns: 0px minmax(0, 1fr); }
+.chat.list-hidden { grid-template-columns: var(--rail-w) minmax(0, 1fr); }
 /* A hidden pane must not be reachable by TAB — it is off screen, and a focus ring lands nowhere the eye can
    follow — but `visibility` does not interpolate, so switching it with the class would take the pane away on the
    first frame and leave the column animating over nothing. It is DELAYED by the slide's own duration on the way
@@ -296,33 +299,6 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-peek { flex: 0 0 auto; }
 .chat-peek:disabled { opacity: .5; cursor: progress; }
 
-/* FINDING ONE SESSION AMONG MANY. The box appears once there are enough of them to need it, and stays while
-   something is typed, so it never vanishes under the cursor mid-search. It matches everything a person would use to
-   name a session out loud — its title, the task, the page it is on, the runtime — and it looks PAST a folded group,
-   because hiding a match because its runtime happens to be folded is the list refusing the question it was asked. */
-/* Closed, it takes NO ROOM and opens by growing its own row — `grid-template-rows: 0fr → 1fr`, which is the one
-   way to animate to a height nobody has measured. `visibility` is delayed on the way out for the same reason the
-   list pane delays its own: it does not interpolate, so switching it with the class would blank the field on the
-   first frame of the close. */
-.chat-filter {
-    flex: 0 0 auto; display: grid; grid-template-rows: 0fr; padding: 0 8px;
-    transition: grid-template-rows .2s cubic-bezier(.4, 0, .2, 1), padding .2s ease, opacity .15s ease, visibility 0s linear .2s;
-    opacity: 0; visibility: hidden;
-}
-.chat-filter.open {
-    grid-template-rows: 1fr; padding: 0 8px 6px; opacity: 1; visibility: visible;
-    transition: grid-template-rows .2s cubic-bezier(.4, 0, .2, 1), padding .2s ease, opacity .15s ease, visibility 0s linear 0s;
-}
-.chat-filter-row { overflow: hidden; min-height: 0; }
-@media (prefers-reduced-motion: reduce) { .chat-filter, .chat-filter.open { transition: none; } }
-.chat-filter-in {
-    width: 100%; font: inherit; color: var(--fg); background: var(--panel); border: 1px solid transparent;
-    border-radius: 999px; padding: 6px 12px; min-height: 32px;
-}
-.chat-filter-in::placeholder { color: var(--fg-faint); }
-.chat-filter-in:focus { outline: none; border-color: var(--panel-2-hover); }
-.chat.narrow .chat-filter-in { min-height: 40px; }
-
 /* Something happened in a session while you were reading another one. A dot, in the accent, where the unread mark
    goes in every list that has one — and NOT a count, because the number of events a run emits is not a number
    anybody wants read to them. */
@@ -339,8 +315,8 @@ button.chat-page-go:hover { color: var(--fg); }
    function, and a bare `0` would snap the column shut while its contents were still moving. */
 .chat { grid-template-columns: var(--list-w) minmax(0, 1fr) 0px; }
 .chat.pane-open { grid-template-columns: var(--list-w) minmax(0, 1fr) minmax(320px, 420px); }
-.chat.list-hidden { grid-template-columns: 0px minmax(0, 1fr) 0px; }
-.chat.list-hidden.pane-open { grid-template-columns: 0px minmax(0, 1fr) minmax(320px, 420px); }
+.chat.list-hidden { grid-template-columns: var(--rail-w) minmax(0, 1fr) 0px; }
+.chat.list-hidden.pane-open { grid-template-columns: var(--rail-w) minmax(0, 1fr) minmax(320px, 420px); }
 .chat.narrow, .chat.narrow.pane-open { grid-template-columns: minmax(0, 1fr); }
 .chat-pane {
     display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden;
@@ -405,9 +381,9 @@ button.chat-page-go:hover { color: var(--fg); }
    The rows keep a fixed width (above), so nothing re-wraps while the pane moves — the same reason the HUD's card
    fixes its content width before it animates. */
 .chat:not(.narrow) > .chat-list > .head,
-.chat:not(.narrow) > .chat-list > .chat-filter,
-.chat:not(.narrow) > .chat-list > .chat-list-track { width: var(--list-w); flex: 0 0 auto; }
-.chat:not(.narrow) > .chat-list > .chat-list-track { flex: 1 1 auto; }
+.chat:not(.narrow) > .chat-list > .chat-list-foot,
+.chat:not(.narrow) > .chat-list > .view { width: var(--list-w); flex: 0 0 auto; }
+.chat:not(.narrow) > .chat-list > .view { flex: 1 1 auto; }
 
 @keyframes chat-row-in {
     from { opacity: 0; transform: translateX(-14px); }
@@ -578,10 +554,9 @@ button.chat-page-go:hover { color: var(--fg); }
 }
 
 /* ===================== NO BAND ACROSS THE TOP =====================
-   What the header held has gone where each part belongs: the title into the transcript (`.chat-lede`), the way
-   back to the edge a sidebar lives on, and the page's own tools into one corner. The band itself is what a page
+   What the header held has gone where each part belongs: the title into the transcript (`.chat-lede`), and the way
+   back and the page's own tools to the left edge (the rail and the gear, below). The band itself is what a page
    this quiet cannot justify — it was there to hold four glyphs and a line of text you read once. */
-.chat-nav-float { position: absolute; top: 10px; left: 10px; z-index: 5; }
 .chat.calm .chat-main { position: relative; }
 
 /* The session's identity as the transcript's first line: there when you arrive, gone as soon as you scroll. */
@@ -590,24 +565,8 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-lede-sub { display: flex; align-items: center; gap: 6px; margin-top: 4px; color: var(--fg-faint); font-size: .88em; }
 .chat.calm .chat-transcript { padding-top: 26px; }
 
-/* ONE MARK, bottom right, in the composer's row rather than over the transcript — a cluster floating over what
-   you are reading would fight a table's own controls, which sit in that corner of that table. */
-.chat-tools {
-    position: absolute; right: 14px; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 6;
-    display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: 12px;
-}
-.chat-tools.open { background: color-mix(in srgb, var(--panel) 92%, transparent); box-shadow: 0 4px 18px rgb(0 0 0 / .35); }
-.chat-tools .hbtn { min-width: 32px; min-height: 32px; }
-.chat-tools-btn { color: var(--fg-faint); }
-.chat-tools-btn:hover, .chat-tools-btn.on { color: var(--fg); }
-/* Everything that ends in that corner keeps clear of it: the composer, its footer, and the button a FORM puts at
-   the end of its last row — a cluster that floats over a `Resume` is a cluster that eats the click. */
-.chat.calm:not(.narrow) .composer { padding-right: 58px; }
-.chat.calm:not(.narrow) .composer-foot { padding-right: 44px; }
-.chat.calm:not(.narrow) .chat-new-foot { padding-right: 44px; }
-/* …and none of it at a phone's width, where there is no cluster to keep clear of and every pixel of the row is
-   the box you are typing in. The send hint goes too: on a phone Enter makes a line and the button sends, so a
-   line explaining the keyboard is advice about a keyboard that is not there. */
+/* The send hint goes at a phone's width: there Enter makes a line and the button sends, so a line explaining the
+   keyboard is advice about a keyboard that is not there. */
 .chat.narrow .chint { display: none; }
 
 /* THE RULE ABOUT WHAT HIDES. Anything you go LOOKING for stays put; only what belongs to a thing you are reading
@@ -618,23 +577,8 @@ button.chat-page-go:hover { color: var(--fg); }
     .chat.calm .composer-foot { opacity: .45; }
 }
 
-/* ===================== RECENT, PINNED AND OLDER: THE LIST'S TWO VIEWS =====================
-   The list is a TRACK holding two views, and going to "Older sessions" slides one out and the other in rather than
-   swapping them, so the history reads as a place to the right of the list you came from, with a way back. Each view
-   keeps its own scroll, so coming back finds the recent list where you left it.
-   `visibility` does not interpolate, so it waits out the slide on the way out and flips at once on the way in — the
-   same trick as the list pane itself. */
-.chat-list-track { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
-.chat-list-track > .view {
-    position: absolute; inset: 0;
-    transition: transform .26s cubic-bezier(.2, .7, .3, 1), opacity .2s ease, visibility 0s linear 0s;
-}
-.chat-list-older { transform: translateX(48px); opacity: 0; visibility: hidden; transition-delay: 0s, 0s, .26s; }
-.chat-list-track.older > .chat-list-recent { transform: translateX(-48px); opacity: 0; visibility: hidden; transition-delay: 0s, 0s, .26s; }
-.chat-list-track.older > .chat-list-older { transform: none; opacity: 1; visibility: visible; }
-@media (prefers-reduced-motion: reduce) { .chat-list-track > .view { transition: none; } }
-
-/** A heading inside the list that is not a runtime: "Pinned", or a month in the older view. */
+/* ===================== PINNED, AND THE WAY TO OLDER SESSIONS ===================== */
+/** A heading inside the list that is not a runtime: "Pinned". */
 .chat-group-label {
     display: flex; align-items: center; gap: 6px; padding: 4px 4px 6px;
     color: var(--fg-faint); font-size: .8em; font-weight: 600; letter-spacing: .03em;
@@ -651,8 +595,6 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-older-go:hover { color: var(--fg); background: var(--panel); border-style: solid; }
 .chat-older-go svg { flex: 0 0 auto; }
 .chat-older-n { margin-left: auto; color: var(--fg-faint); font-size: .86em; font-variant-numeric: tabular-nums; }
-.chat-older-head { display: flex; align-items: center; gap: 6px; padding: 0 0 10px; }
-.chat-older-more { height: 1px; }
 
 /* A row's `⋮`. It arrives with the pointer, in the corner the timestamp was using — the time is what you read on a
    row you are scanning, the menu is what you want from the one you are on, and they never need to be seen together.
@@ -707,3 +649,69 @@ button.chat-page-go:hover { color: var(--fg); }
 @keyframes chat-fade { from { opacity: 0; } }
 @keyframes chat-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
 @media (prefers-reduced-motion: reduce) { .chat-dialog-back, .chat-dialog { animation: none; } }
+
+/* ===================== THE RAIL, THE GEAR, AND THE SEARCH PAGE (nav.tsx, search-page.tsx) =====================
+   Gemini's chrome, because it is the quietest there is: with the list away, the left edge keeps a column of glyphs —
+   the list, a new session, search — and a gear at the bottom that holds everything that is not a session. With the
+   list open, the gear sits at the list's own bottom-left. Nothing else on the page is chrome. */
+.chat-rail {
+    position: absolute; left: 0; top: 0; bottom: 0; width: var(--rail-w); z-index: 4;
+    display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 0 14px;
+    animation: chat-rail-in .22s ease .12s both;
+}
+@keyframes chat-rail-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .chat-rail { animation: none; } }
+.chat-rail .hbtn, .chat-list-foot .hbtn, .chat-list .head .hbtn { min-width: 36px; min-height: 36px; border-radius: 50%; }
+.chat-rail .sp { flex: 1 1 auto; }
+/* The rail's `+` menu opens to the RIGHT of the rail: anchored under it, it would open off the left edge. */
+.chat-rail .chat-start .menu { left: calc(100% + 6px); right: auto; top: 0; }
+.chat-list-foot { flex: 0 0 auto; padding: 8px 10px 12px; display: flex; }
+
+/* The gear's menu: a sheet that rises from the gear, one row per thing, each with its glyph — Android's list menu,
+   which Gemini borrowed, and which reads as a place rather than a dropdown. */
+.chat-gear { position: relative; }
+.chat-gear-menu {
+    position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 40; min-width: 250px; padding: 8px;
+    display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--border); border-radius: 18px;
+    box-shadow: 0 12px 36px rgb(0 0 0 / .45); animation: chat-pop .16s cubic-bezier(.2, .7, .3, 1) both; transform-origin: bottom left;
+}
+.chat-gear-item {
+    display: flex; align-items: center; gap: 14px; width: 100%; padding: 10px 12px; border: none; border-radius: 10px;
+    background: none; color: var(--fg); font: inherit; font-size: 14px; text-align: left; cursor: pointer;
+}
+.chat-gear-item:hover, .chat-gear-item:focus-visible { background: var(--panel-2); outline: none; }
+.chat-gear-ico { display: inline-flex; color: var(--fg-dim); }
+.chat-gear-ico svg { width: 20px; height: 20px; }
+.chat-gear-label { flex: 1 1 auto; }
+.chat-gear-on { display: inline-flex; color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .chat-gear-menu { animation: none; } }
+
+/* The search page: one column, a pill to type in, and the whole history under it with each date at the right. */
+.chat-search-scroll { padding: 0 16px; }
+.chat-search-col { max-width: 760px; margin: 0 auto; padding: 56px 0 40px; position: relative; }
+.chat.narrow .chat-search-col { padding-top: 12px; }
+.chat-search-back { margin-bottom: 8px; }
+.chat-search-box {
+    display: flex; align-items: center; gap: 12px; padding: 0 20px; min-height: 56px; border-radius: 999px;
+    background: var(--panel); color: var(--fg-dim); border: 1px solid transparent;
+}
+.chat-search-box:focus-within { border-color: var(--panel-2-hover); }
+.chat-search-box svg { width: 20px; height: 20px; flex: 0 0 auto; }
+.chat-search-box input { flex: 1 1 auto; min-width: 0; border: none; background: none; outline: none; color: var(--fg); font: inherit; font-size: 1.05em; }
+.chat-search-box input::placeholder { color: var(--fg-faint); }
+.chat-search-label { margin: 34px 0 10px; padding: 0 12px; color: var(--fg-dim); font-size: .95em; }
+.chat-search-empty { padding: 8px 12px; color: var(--fg-faint); }
+.chat-search-list { list-style: none; margin: 0; padding: 0; }
+.chat-search-row {
+    display: flex; align-items: baseline; gap: 12px; width: 100%; padding: 13px 12px; border: none; border-radius: 12px;
+    background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer;
+}
+.chat-search-row:hover, .chat-search-row:focus-visible { background: var(--panel); outline: none; }
+.chat-search-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-search-rt { flex: 0 0 auto; color: var(--fg-faint); font-size: .86em; }
+.chat-search-date { flex: 0 0 auto; color: var(--fg-faint); font-size: .92em; font-variant-numeric: tabular-nums; }
+.chat-search-more { height: 1px; }
+
+/* Settings in the main pane: the extension's own settings view, given the page's reading width. */
+.chat-settings-body { padding: 16px; }
+.chat-settings-body > * { max-width: 760px; margin: 0 auto; }

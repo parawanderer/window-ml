@@ -21,6 +21,9 @@ import { VRAM_POLL_MS } from "./sidebar/panel-state";
 import { BACKEND_HEALTH_MS, VramPanel, connectResourceStream, fetchModels, pollBackendHealth, pollPs } from "./sidebar/vram";
 import { BenchDrawer } from "./sidebar/vram-bench";
 import type { RuntimeId } from "./session-host";
+import { Settings } from "./sidebar/settings";
+import { config } from "./sidebar/store";
+import { DEFAULT_CONFIG, type MlConfig } from "./contract";
 
 /**
  * The extension's device adapter.
@@ -58,10 +61,32 @@ function BoxPanel() {
  */
 const localRuntimes = new Set<RuntimeId>();
 
+/**
+ * The extension's own settings view, in the page's main pane. It reads and writes `chrome.storage.sync` itself
+ * (settings.tsx), which is what the popup and the DevTools panel read too, so an edit here is the same edit there.
+ * The page does not otherwise load the config, so the view loads it when it opens and follows changes made
+ * elsewhere while it is open.
+ */
+function SettingsPane() {
+    useEffect(() => {
+        chrome.storage.sync.get(DEFAULT_CONFIG as never, (cfg: unknown) => { config.value = cfg as MlConfig; });
+        const onChange = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+            if (area !== "sync") return;
+            const patch: Record<string, unknown> = {};
+            for (const k in changes) patch[k] = changes[k].newValue;
+            config.value = { ...config.value, ...patch } as MlConfig;
+        };
+        chrome.storage.onChanged.addListener(onChange);
+        return () => chrome.storage.onChanged.removeListener(onChange);
+    }, []);
+    return <Settings />;
+}
+
 /** What this device can draw beyond the chat core. Every answer is per runtime, and null for one that is not ours. */
 const extras: ChatExtras = {
     resourcePanel: (id) => (localRuntimes.has(id) ? <BoxPanel /> : null),
     bench: (id) => (localRuntimes.has(id) ? <BenchDrawer /> : null),
+    settings: (id) => (localRuntimes.has(id) ? <SettingsPane /> : null),
 };
 
 // One port for the page's life, reconnected by `LocalHost` itself: an MV3 worker is evicted when idle, which drops

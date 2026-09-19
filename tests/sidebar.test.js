@@ -8828,8 +8828,9 @@ test("embed: a click on the render's OWN controls does not jump to the source st
     cell.dispatchEvent(new w.window.MouseEvent("click", { bubbles: true }));
     // A citation to a COLLAPSED step now scrolls once the step has settled rather than at the moment of the
     // click — it opens it, and where the step was before it opened is not where the reader wants to be
-    // (step-scroll.ts). So this waits for those frames, which is what a person watching it also does.
-    await new Promise((r) => setTimeout(r, 120));
+    // (step-scroll.ts). So this waits for those frames, which is what a person watching it also does — POLLED, not
+    // a fixed wait: jsdom's frames are timers, and a loaded machine let a 120ms wait expire before they ran.
+    for (let t = 0; jumps === 0 && t < 50; t++) await new Promise((r) => setTimeout(r, 20));
     assert.ok(jumps > 0, "clicking the render itself still goes to the step that produced it");
 });
 

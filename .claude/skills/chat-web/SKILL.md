@@ -20,9 +20,10 @@ npx playwright test tests/e2e/chat-web.spec.mjs  # the spec, ~2s; E2E_DIST_WEB=<
 Open a session directly with `#s=<runtime:hash>` (`#s=laptop%3A3f9a0c21` is the one waiting on an approval).
 
 The page opens in CALM view (`src/chat/view-mode.tsx`), which on a wide screen has NO HEADER BAR: the title is the
-transcript's first line (`.chat-lede`), the `☰` floats top-left, and the page's tools live behind `.chat-tools-btn`
-in the bottom right — open that before clicking the brain (`.chat-view-btn`, which hands the DevTools panel's full
-detail back) or the box and the bench. Both view choices are stored per device, so a screenshot run or a spec that
+transcript's first line (`.chat-lede`). With the list hidden a rail (`.chat-rail`) keeps `☰`, new session and search
+at the left edge. The page's tools live in the gear's menu (`.chat-gear-btn`, bottom-left of the rail or the list):
+"Calm view" (a `menuitemcheckbox`, which hands the DevTools panel's full detail back), the box, the bench and, in the
+extension, Settings. Search and older sessions are one page in the main pane (`.chat-search`). Both view choices are stored per device, so a screenshot run or a spec that
 cares about either must set or assert it rather than assume. Both are plain CSS over the same
 document — nothing is removed, so a locator still finds a quieted element and `toBeHidden()` is the assertion that
 means anything.

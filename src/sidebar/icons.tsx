@@ -255,3 +255,9 @@ export const IconHistory = () => (
         <path d="M4 12a8 8 0 1 0 2.4-5.7" /><path d="M4 4.5v3.8h3.8" /><path d="M12 8v4.3l2.8 1.8" />
     </svg>
 );
+/** A pencil over a rounded page — start something new (the chat page's rail). */
+export const IconCompose = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M11 4.5H7A2.5 2.5 0 0 0 4.5 7v10A2.5 2.5 0 0 0 7 19.5h10a2.5 2.5 0 0 0 2.5-2.5v-4" /><path d="M17.3 3.9a1.9 1.9 0 0 1 2.8 2.8L12.5 14.3 9.5 15l.7-3z" />
+    </svg>
+);

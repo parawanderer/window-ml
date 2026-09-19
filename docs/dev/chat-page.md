@@ -429,13 +429,13 @@ that runs somewhere else — it wants to become a question about a session befor
 
 ## Finding one session among many
 
-Three affordances in the list, all of them only worth having once an agent owns several tabs at once.
-
-**The filter** appears once there are more than four sessions, and stays while something is typed so it never
-vanishes under the cursor mid-search. It matches everything a person would use to name a session out loud: the
-title, the task it was given, the page it is on, and the runtime it is running on. It looks PAST a folded group —
-hiding a match because its runtime happens to be folded would be the list refusing the question it was asked — and
-a runtime with no match disappears with its rows rather than leaving a row of empty headings.
+**The search page** (`search-page.tsx`) is the one place to find a session: Gemini's, in the main pane — a pill to
+type in, then EVERY session newest first with its date at the right (the time for today, the day this year, the
+year before that), drawn 40 at a time as the end scrolls into view. The list's search button, the rail's, and the
+list's "Older sessions" row all open it. It matches what a person would use to name a session out loud: the title,
+the task, the page it is on, and the runtime. It replaced an inline filter over the list and a slide-over "older"
+view, because two ways to find a session is one more than anyone remembers. The runtime is named on a row only when
+the results span more than one runtime.
 
 **A runtime's group folds**, by id, stored per device. A folded head says how many sessions it is holding, because
 folding one should not be the same as forgetting it.
@@ -446,15 +446,10 @@ the next tab gets somewhere — and not "what is unread", which would mark every
 the page is opened and teach everyone to ignore the mark. A session seen for the first time is never marked, and
 reading one IS catching up with it.
 
-**Recent, pinned and older** (`SessionList`, `row-menu.tsx`). The list's default view is the last `RECENT_DAYS` (30)
-of each runtime, under a **Pinned** group that spans runtimes, and ends in an "Older sessions" row with a count. That
-opens a second view on the same track, which slides in from the right with a back arrow: older sessions by month,
-drawn `OLDER_PAGE` (40) at a time as the end scrolls into view. Two rules keep it honest:
-
-- A session that is RUNNING or WAITING is recent however long ago it started. The list never files away something
-  that wants you.
-- A search covers both views from either one. Searching from the recent list and finding nothing would read as "that
-  session is gone" when it is only old.
+**Recent and pinned** (`SessionList`, `row-menu.tsx`). The list shows the last `RECENT_DAYS` (30) of each runtime,
+under a **Pinned** group that spans runtimes, and ends in an "Older sessions" row with a count that opens the search
+page. A session that is RUNNING or WAITING is recent however long ago it started: the list never files away
+something that wants you.
 
 **A pin is this device's** (`pinned`, `view.pinned`), like the other view prefs. It does NOT protect a session from
 the runtime's index cap (`maxSessions`, 300, oldest finished dropped first), so a pinned key whose session is gone draws
@@ -534,11 +529,12 @@ things in it had four different scopes and only one of them was about the page:
 
 - the session's TITLE, the runtime, the model and the page are the transcript's first line (`.chat-lede`) — there
   when you arrive, gone as soon as you scroll, which is exactly as long as they are worth the room;
-- the `☰` is navigation, so it floats at the edge a list pane lives on;
-- the view toggle, the box and the bench are the PAGE's tools, so they sit behind one mark in the bottom right,
-  in the composer's row. Not floating over the transcript: a cluster there would fight a table's own controls,
-  which sit in that corner of that table. Everything that ends in that corner (the composer, its footer, a form's
-  last row) keeps clear of it, because a cluster over a `Resume` button is a cluster that eats the click.
+- navigation lives at the left edge: with the list hidden, a RAIL (`nav.tsx`) keeps `☰`, a new session and search
+  there, Gemini's shape, and the list's column narrows to the rail's width (`--rail-w`) instead of to nothing;
+- the view toggle, the box, the bench and Settings are the PAGE's, so they live in ONE menu behind a gear at the
+  bottom-left — of the rail, or of the list when it is open (on a phone, in the list's header). It opens as a sheet
+  of rows with a glyph each. It replaced a `⋮` floating bottom-right, which had to push the composer and a form's
+  last button out of its way; the left edge has nothing to fight.
 
 A phone keeps its header: it holds the way back, and there is no room to float anything over a 390px column.
 
@@ -546,6 +542,10 @@ A phone keeps its header: it holds the way back, and there is no room to float a
 composer's counters, quiet but present. Only what belongs to a thing you are READING arrives with the pointer: a
 table's controls, a code block's, a citation's tip. The rule exists because five separate hover-reveals turn
 finding a control into a memory game.
+
+**Settings** open in the main pane: the extension's own settings view (`settings.tsx`, the DevTools panel's), supplied
+through `ChatExtras.settings` and offered where the runtime reports `localSettings` — so only the extension build
+has it, and it edits the same `chrome.storage.sync` the popup and the panel do.
 
 **The page chip brings its tab to the front** with `tab.focus`, a contract command (tab and window both), so a phone
 driving this browser over a hub gets the same button. It started as a device-local `ChatExtras.focusTab` stand-in

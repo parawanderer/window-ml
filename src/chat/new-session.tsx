@@ -10,6 +10,7 @@
 // Rendered by capability, like everything else here: a runtime offers "new chat" only where `capabilities.chat` says
 // it can, "new agent run" only where `capabilities.agent` does, and the tab picker only where `capabilities.tabs`
 // does. A phone talking to a headless box gets a chat form and no tabs, without this file knowing what a box is.
+import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import type { AgentTarget, Principal, RuntimeInfo, SessionKey, SessionSummary, TabInfo } from "../session-host";
 import { truncate } from "../sidebar/format";
@@ -25,8 +26,9 @@ export function startableOn(store: ChatStore, kind: StartKind): RuntimeInfo[] {
     return store.runtimes.value.filter((rt) => rt.online && !!rt.capabilities?.[kind] && mayCommand(rt, command));
 }
 
-/** The list header's `+`: what can be started, or nothing at all when no runtime offers either. */
-export function StartMenu({ store, onPick }: { store: ChatStore; onPick: (kind: StartKind) => void }) {
+/** The list header's `+`: what can be started, or nothing at all when no runtime offers either. `icon` replaces the
+ *  `+` (the rail draws a compose glyph there). */
+export function StartMenu({ store, onPick, icon }: { store: ChatStore; onPick: (kind: StartKind) => void; icon?: ComponentChildren }) {
     const [open, setOpen] = useState(false);
     const kinds: StartKind[] = (["chat", "agent"] as const).filter((k) => startableOn(store, k).length > 0);
     useEffect(() => {
@@ -40,12 +42,12 @@ export function StartMenu({ store, onPick }: { store: ChatStore; onPick: (kind: 
     if (!kinds.length) return null;
     // One kind needs no menu: the button is that kind.
     if (kinds.length === 1) {
-        return <button class="chat-start hbtn" aria-label={kinds[0] === "chat" ? "New chat" : "New agent run"} onClick={() => onPick(kinds[0])}>+</button>;
+        return <button class="chat-start hbtn" aria-label={kinds[0] === "chat" ? "New chat" : "New agent run"} onClick={() => onPick(kinds[0])}>{icon ?? "+"}</button>;
     }
     const pick = (k: StartKind) => { setOpen(false); onPick(k); };
     return (
         <span class="chat-start menuwrap">
-            <button class={`hbtn${open ? " on" : ""}`} aria-label="New session" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>+</button>
+            <button class={`hbtn${open ? " on" : ""}`} aria-label="New session" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{icon ?? "+"}</button>
             {open ? (
                 <div class="menu" role="menu">
                     <button class="menu-item" role="menuitem" onClick={() => pick("chat")}>New chat<span class="menu-hint">a conversation, no tools</span></button>

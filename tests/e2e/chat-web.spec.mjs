@@ -126,9 +126,9 @@ test("calm view is what the page opens in, and the toggle hands the panel's deta
     await expect(page.locator(".step-pill").first()).toBeHidden();
     // …but nothing has left the document: the toggle brings all of it back, and the approval never quiets.
     await expect(page.locator(".astep-approve")).toBeVisible();
-    // The page's tools live behind one mark in the corner now, rather than in a band across the top.
-    await page.locator(".chat-tools-btn").click();
-    await page.locator(".chat-tools .chat-view-btn").click();
+    // The page's tools live in the gear's menu at the bottom-left, rather than in a band across the top.
+    await page.locator(".chat-gear-btn").click();
+    await page.getByRole("menuitemcheckbox", { name: "Calm view" }).click();
     await expect(page.locator(".chat")).not.toHaveClass(/calm/);
     await expect(page.locator(".step-pill").first()).toBeVisible();
     // The choice is this device's, so it survives a reload.
@@ -137,15 +137,20 @@ test("calm view is what the page opens in, and the toggle hands the panel's deta
     await page.close();
 });
 
-test("desktop: the session list hides and comes back, and is out of the tab order while hidden", async () => {
+test("desktop: the session list hides to a rail and comes back, and is out of the tab order while hidden", async () => {
     const { page } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
     const list = page.locator(".chat-list");
     await expect(list).toBeVisible();
+    await expect(page.locator(".chat-rail")).toHaveCount(0);
     await page.locator(".chat-list .head .chat-list-btn").click();
     await expect(list).toBeHidden();
-    // The way back is in the header of what is now the only pane, not only where the list used to be.
-    await page.locator(".chat-nav-float .chat-list-btn").click();
+    // What stays at the edge is a rail: the list, a new session, search, and the gear.
+    const rail = page.locator(".chat-rail");
+    await expect(rail.getByRole("button", { name: "Search sessions" })).toBeVisible();
+    await expect(rail.getByRole("button", { name: "Page menu" })).toBeVisible();
+    await rail.getByRole("button", { name: "Show the session list" }).click();
     await expect(list).toBeVisible();
+    await expect(page.locator(".chat-rail")).toHaveCount(0);
     await page.close();
 });
 
@@ -239,25 +244,9 @@ test("a citation takes you to the step on the FIRST click, not the second", asyn
     await page.close();
 });
 
-test("desktop: the list filters, folds a runtime away, and marks what moved while you were elsewhere", async () => {
+test("desktop: the list folds a runtime away, and marks what moved while you were elsewhere", async () => {
     const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
-    // The RECENT view's rows: the older view is in the DOM too, one slide over (its own test is below).
-    const rows = page.locator(".chat-list-recent .chat-row");
-    await expect(rows).toHaveCount(6);
-
-    // The box is not there until it is asked for, and it takes no room until it is.
-    await expect(page.locator(".chat-filter-in")).toBeHidden();
-    await page.locator('.chat-list .head [aria-label="Find a session"]').click();
-    await expect(page.locator(".chat-filter-in")).toBeFocused();
-
-    // Filtering matches the PAGE a run is on, not only its title, and a runtime with no match goes with its rows.
-    await page.locator(".chat-filter-in").fill("flights");
-    await expect(rows).toHaveCount(3);
-    await expect(page.locator(".chat-rt", { hasText: "Lab box" })).toHaveCount(0);
-    // Escape puts it away, and putting it away is also clearing it: a hidden filter still filtering would be a
-    // list quietly lying about what it holds.
-    await page.locator(".chat-filter-in").press("Escape");
-    await expect(page.locator(".chat-filter-in")).toBeHidden();
+    const rows = page.locator(".chat-list .chat-row");
     await expect(rows).toHaveCount(6);
 
     // Folding a runtime says what it is holding, so folding is not the same as forgetting.
@@ -397,28 +386,30 @@ test("desktop: a row's menu pins a session to the top, and deletes one only afte
     await page.close();
 });
 
-test("desktop: the list shows the last month, older sessions are one view over, and a search reaches both", async () => {
-    const { page, errors } = await open(DESKTOP);
-    const recent = page.locator(".chat-list-recent"), older = page.locator(".chat-list-older");
-    await expect(recent.locator(".chat-row", { hasText: "Tokyo in four days" })).toHaveCount(0);
-    const go = page.locator(".chat-older-go");
-    await expect(go.locator(".chat-older-n")).toHaveText("48");
-    await expect(older).toHaveAttribute("aria-hidden", "true");
+test("desktop: the list shows the last month, and the search page holds every session with its date", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
+    const list = page.locator(".chat-list");
+    await expect(list.locator(".chat-row", { hasText: "Tokyo in four days" })).toHaveCount(0);
+    await expect(list.locator(".chat-older-go .chat-older-n")).toHaveText("48");
 
-    await go.click();
-    await expect(older).toHaveAttribute("aria-hidden", "false");
-    await expect(older.locator(".chat-group-label").first()).toHaveText(/2026/);
-    // Drawn a page at a time: forty first, the rest when the end scrolls into view.
-    await expect(older.locator(".chat-row")).toHaveCount(40);
-    await older.evaluate((el) => { el.scrollTop = el.scrollHeight; });
-    await expect(older.locator(".chat-row")).toHaveCount(48);
+    // "Older sessions" opens the search page in the main pane, focused, newest first, drawn forty at a time.
+    await list.locator(".chat-older-go").click();
+    const search = page.locator(".chat-search");
+    await expect(search.locator("input")).toBeFocused();
+    await expect(search.locator(".chat-search-row")).toHaveCount(40);
+    await expect(search.locator(".chat-search-row").first().locator(".chat-search-date")).toHaveText(/\S/);
+    await search.locator(".chat-search-scroll").evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    await expect(search.locator(".chat-search-row")).toHaveCount(54);
 
-    await older.getByRole("button", { name: "Back to recent sessions" }).click();
-    await expect(recent).toHaveAttribute("aria-hidden", "false");
-    // A search from the recent list finds an old session: filed away is not gone.
-    await page.getByRole("button", { name: "Find a session" }).click();
-    await page.locator(".chat-filter-in").fill("tokyo");
-    await expect(recent.locator(".chat-row", { hasText: "Tokyo in four days" })).toHaveCount(4);
+    // A search matches the PAGE a run is on, not only its title, and reaches months back.
+    await search.locator("input").fill("flights");
+    await expect(search.locator(".chat-search-row")).toHaveCount(3);
+    await search.locator("input").fill("tokyo");
+    await expect(search.locator(".chat-search-row")).toHaveCount(4);
+    // Opening one puts the search page away.
+    await search.locator(".chat-search-row").first().click();
+    await expect(page.locator(".chat-search")).toHaveCount(0);
+    await expect(page.locator(".chat-lede-title")).toHaveText("Tokyo in four days");
     expect(errors).toEqual([]);
     await page.close();
 });

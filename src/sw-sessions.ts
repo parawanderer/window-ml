@@ -70,8 +70,9 @@ function localRuntime(): RuntimeInfo {
         // page's `ChatExtras`). A phone reaching this same runtime over the hub reports the capability and draws
         // nothing, because it has nothing to draw with. `resourcePanel` is true by construction (a browser with a
         // backend behind it); `pythonBench` is MEASURED, because a checkout without the wheels builds a bundle whose
-        // bench would fail at run time.
-        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled },
+        // bench would fail at run time. `localSettings`: this browser's pages may edit its settings, which only the
+        // extension's own pages can (a phone over the hub reports the capability and holds nothing to edit with).
+        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled, localSettings: true },
         // This browser's own pages hold every scope.
         grants: [{ scope: "view" }, { scope: "drive" }, { scope: "approve" }, { scope: "screen" }],
     };

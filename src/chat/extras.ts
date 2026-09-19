@@ -18,4 +18,6 @@ export interface ChatExtras {
     resourcePanel?(runtime: RuntimeId): ComponentChildren | null;
     /** A Python bench running against one runtime's sandbox. */
     bench?(runtime: RuntimeId): ComponentChildren | null;
+    /** The runtime's own settings, editable from here — offered where the runtime reports `localSettings`. */
+    settings?(runtime: RuntimeId): ComponentChildren | null;
 }

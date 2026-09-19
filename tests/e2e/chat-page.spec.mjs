@@ -110,18 +110,29 @@ test("the box's panel and the Python bench are on this page, because THIS browse
 
         // Offered because the RUNTIME reports it can be drawn and this DEVICE holds something to draw it with.
         // Neither question is "is this local", and a phone reaching the same runtime would answer the second one no.
-        // The page's tools live behind one mark in the bottom-right corner, not in a band across the top.
-        await chat.locator(".chat-tools-btn").click();
-        const box = chat.locator('.chat-tools [aria-label="The box"]');
+        // The page's tools live in the gear's menu at the bottom-left, with the settings beside them.
+        const gear = chat.locator(".chat-gear-btn");
+        await gear.click();
+        const box = chat.getByRole("menuitemcheckbox", { name: /is running/ });
         await expect(box).toBeVisible();
         await box.click();
         await expect(chat.locator(".chat-pane .vram")).toBeVisible();
-        await box.click();
+        await gear.click();
+        await chat.getByRole("menuitemcheckbox", { name: /is running/ }).click();
         await expect(chat.locator(".chat-pane")).toHaveCount(0);
+
+        // Settings are this browser's own, offered because the runtime reports `localSettings` and this page can
+        // draw them: the same settings view the DevTools panel has, in the main pane.
+        await gear.click();
+        await chat.getByRole("menuitem", { name: "Settings" }).click();
+        await expect(chat.locator(".chat-settings")).toBeVisible();
+        await chat.getByRole("button", { name: "Close settings" }).click();
+        await expect(chat.locator(".chat-settings")).toHaveCount(0);
 
         // The bench is not a picture of one: it runs, through this browser's own offscreen sandbox, from a page
         // that is not the panel. A drawer that opened and could not run would be worse than no drawer.
-        await chat.locator('.chat-tools [aria-label="Python bench"]').click();
+        await gear.click();
+        await chat.getByRole("menuitemcheckbox", { name: "Python bench" }).click();
         await expect(chat.locator(".bench")).toBeVisible();
         await chat.locator('.bench [aria-label="Run"]').click();
         await expect(chat.locator(".bench-outbody")).toContainText("45", { timeout: 120_000 });
