@@ -17,7 +17,7 @@ import { ChainError, Identity, MAX_CERTIFICATE_MS, NEVER_DELEGABLE, SCOPE, gener
 import { Keyring, Membership } from "./keyring";
 import {
     Offer, PAIRING_WINDOW_MS, PairingError, decodeOffer, encodeOffer, generatePairingCode, offerPairing, openPairingAnswer,
-    pairingCodeHash, pairingFingerprintHex, parsePairingCode, sealPairingAnswer,
+    pairingCodeHash, pairingFingerprint, pairingFingerprintHex, pairingQrText, parsePairingCode, parsePairingQr, sealPairingAnswer,
 } from "./pairing";
 import { Frame, Role } from "./wire";
 
@@ -124,6 +124,8 @@ export interface PendingOffer {
     code: string;
     /** twelve hex characters; the screen may render them however it likes, as long as both screens agree */
     fingerprint: string;
+    /** the text to draw as a QR code, for a device that scans instead of typing (`lookupScanned`) */
+    qr: string;
     hubName: string;
     /** Resolves with the membership once answered and saved. Rejects on timeout, a refusal, or a bad answer. */
     done: Promise<Membership>;
@@ -156,6 +158,7 @@ export async function beginOffer(
     return {
         code: `${code.slice(0, 4)} ${code.slice(4)}`,
         fingerprint: await pairingFingerprintHex(me.identity.publicKey, me.agreement.publicKey),
+        qr: await pairingQrText(code, me.identity.publicKey, me.agreement.publicKey),
         hubName: slot.hubName,
         done,
         cancel: () => slot.close(),
@@ -168,6 +171,8 @@ export interface FoundOffer {
     offer: Offer;
     /** compare with what the offering screen shows; the screen confirms only on a match the PERSON saw */
     fingerprint: string;
+    /** true when a scanned QR code's full fingerprint already matched the offer's keys (`lookupScanned`) */
+    checked?: boolean;
 }
 
 /** Look an offer up by the code a person typed. Rejects on something that is not a code, or no offer under it. */
@@ -181,6 +186,23 @@ export async function lookupOffer(client: HubClient, typed: string): Promise<Fou
     });
     const offer = decodeOffer(offered);
     return { codeHash, offer, fingerprint: await pairingFingerprintHex(offer.identityKey, offer.agreementKey) };
+}
+
+/**
+ * Look an offer up by a scanned QR code (`PendingOffer.qr`), and check its keys against the full fingerprint the code
+ * carried. A match needs no comparing by eye, so `FoundOffer.checked` is true and the screen may go straight to the
+ * grant; a mismatch rejects (`"mismatch"`) before anything about the offer is shown.
+ */
+export async function lookupScanned(client: HubClient, scanned: string): Promise<FoundOffer> {
+    const qr = parsePairingQr(scanned);
+    if (!qr) throw new PairingError("bad-offer", "that QR code is not a window.ml pairing code");
+    const found = await lookupOffer(client, qr.code);
+    const digest = await pairingFingerprint(found.offer.identityKey, found.offer.agreementKey);
+    const hex = [...digest].map((b) => b.toString(16).padStart(2, "0")).join("");
+    if (hex !== qr.fingerprint) {
+        throw new PairingError("mismatch", "the offer's keys are not the ones the QR code named, so it was refused: something between the two devices swapped them");
+    }
+    return { ...found, checked: true };
 }
 
 /** Who issues a certificate from this device: the root, or this device's own certificate if it holds `may_pair`. */

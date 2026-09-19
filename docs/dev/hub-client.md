@@ -118,6 +118,12 @@ shows the fingerprint, and on confirmation leaves a certificate sealed to the of
   runtime. `confirmOffer` refuses what a verifier would refuse of a delegate (a never-delegable scope, one it does not
   hold, `may_revoke`) before anything is issued.
 - The hex fingerprint is twelve characters, identical to `wmlbox pair`'s. Words, if any, are the UI's choice.
+- **A QR code instead of typing** (`PendingOffer.qr`, `lookupScanned`). The offering screen draws
+  `WMLPAIR:1:<code>:<64 hex>`: the code and the WHOLE fingerprint, where the screen shows a 48-bit prefix sized for a
+  person. The scanning device checks the offer's keys against it itself and refuses a mismatch (`"mismatch"`) before
+  showing anything, so `FoundOffer.checked` means no comparison by eye is needed. That is stronger than the typed path,
+  not only quicker: the full digest, carried over a camera the hub has no part in. Upper case, digits and colons only,
+  for QR's alphanumeric mode. This format is defined here; `wmlbox pair` does not print one yet.
 - Checked against the other implementation in `tests/hub-pairing.test.mjs`: this client answers a real `wmlbox pair`,
   whose printed fingerprint must equal ours and which must accept the answer we seal. `wmlbox` is built beside
   `wmlhub` from the same tag.
