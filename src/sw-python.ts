@@ -123,7 +123,7 @@ export function pythonExec(message: any, sender: chrome.runtime.MessageSender, s
                 // The offscreen doc can be gone (SW slept and the doc was torn down, or a stale cached-
                 // ready) → "Receiving end does not exist." Drop the cache, recreate, retry ONCE.
                 if (!/Receiving end does not exist|Could not establish connection/.test(String(err?.message || err))) throw err;
-                offscreenReady = null;
+                forgetOffscreen();
                 return attempt();
             })
             .then((res) => {
@@ -159,6 +159,12 @@ export function relayPyStdout(message: any): void {
 // (extension-origin, 'wasm-unsafe-eval' CSP). Created lazily on first use, reused after.
 let offscreenReady: Promise<void> | null = null;
 
+/** Drop the cached "the offscreen document exists", so the next call creates it again: it was torn down. */
+function forgetOffscreen(): void {
+    offscreenReady = null;
+}
+
+/** The one offscreen document, created once: it hosts the Python sandbox's worker and the session archive's. */
 function ensureOffscreen(): Promise<void> {
     if (offscreenReady) return offscreenReady;
     offscreenReady = (async () => {
