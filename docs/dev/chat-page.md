@@ -545,6 +545,18 @@ composer's counters, quiet but present. Only what belongs to a thing you are REA
 table's controls, a code block's, a citation's tip. The rule exists because five separate hover-reveals turn
 finding a control into a memory game.
 
+**Panels dock to an edge** (`dock.tsx`), DevTools' way: the resource panel and the Python bench, each to the top,
+right, bottom or left of the reading column, picked from the region's `⋮` (which also maximizes, until Escape, and
+closes). Left and right run the column's height and top and bottom sit between them; the frame is the grid's second
+column, so the list and its rail keep the page's full height. Panels on one edge are TABS, and the tab bar is also
+the visible panel's header: a panel wraps its header row in `PanelHead` (sidebar/panel-head.tsx) and the dock renders
+it into the bar, so there is one bar rather than tabs over a row of controls. Elsewhere (the DevTools panel) there
+is no dock and the row renders in place. Regions resize from their inner edge down to a 64px strip, and the layout
+(edge per panel, size per edge, visible tab per edge) is a device preference (`dockLayout`). A phone draws every
+open panel as one full-screen region. Two traps: `PanelHead` portals with Preact's own `render`, never
+`preact/compat`, whose global hooks turn `onChange` into `onInput` for every text input in the bundle; and context
+does not cross that portal, so a header row reads signals and props only.
+
 **Code has its own size** on this page, `--code-fs` (12.5px by default, the device's "Code size" setting,
 `codeSize` in view-mode.tsx): transcript code, the Python bench's editor and what it prints. It used to be a fraction
 of the prose, and the bench, built for the panel's 12px base, inherited the page's 15px and came out a size and a half

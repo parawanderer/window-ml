@@ -261,3 +261,13 @@ export const IconCompose = () => (
         <path d="M11 4.5H7A2.5 2.5 0 0 0 4.5 7v10A2.5 2.5 0 0 0 7 19.5h10a2.5 2.5 0 0 0 2.5-2.5v-4" /><path d="M17.3 3.9a1.9 1.9 0 0 1 2.8 2.8L12.5 14.3 9.5 15l.7-3z" />
     </svg>
 );
+
+/** Dock a panel to one side: a window outline with that side's band filled, DevTools' own "Dock side" glyphs. */
+export const IconDock = ({ side }: { side: "top" | "right" | "bottom" | "left" }) => {
+    const band = { top: "M4.5 4.5h15v5h-15z", bottom: "M4.5 14.5h15v5h-15z", left: "M4.5 4.5h5v15h-5z", right: "M14.5 4.5h5v15h-5z" }[side];
+    return (
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true">
+            <rect x="4.5" y="4.5" width="15" height="15" rx="2" /><path d={band} fill="currentColor" stroke="none" />
+        </svg>
+    );
+};

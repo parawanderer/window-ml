@@ -100,6 +100,78 @@ test("starting a chat from the page: the worker hosts it, with no tab behind it"
     } finally { await ext.context.close(); await fake.stop(); }
 });
 
+test("panels dock to an edge, share one as tabs, resize from their edge, and zoom until Escape", async () => {
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: "http://127.0.0.1:1/", apiKey: "", apiFormat: "openai", model: "m", debugMode: "off" });
+        const { page: chat, errors } = await openChatPage(ext);
+        await expect(chat.locator(".chat-rt", { hasText: "This browser" })).toBeVisible();
+        const gear = chat.locator(".chat-gear-btn");
+        await gear.click();
+        await chat.getByRole("menuitemcheckbox", { name: /is running/ }).click();
+        await gear.click();
+        await chat.getByRole("menuitemcheckbox", { name: "Python bench" }).click();
+        const top = chat.locator(".chat-dock.dock-top"), bottom = chat.locator(".chat-dock.dock-bottom");
+        await expect(top.getByRole("tab", { name: "Resources" })).toBeVisible();
+        await expect(bottom.getByRole("tab", { name: "Python bench" })).toBeVisible();
+
+        // The docked panels live in the reading column, so the rail keeps its whole height: its gear is never under
+        // (or over) a bottom panel, which is what happened while the bench was a full-width row.
+        await chat.getByRole("button", { name: "Sessions" }).first().click();
+        await expect(chat.locator(".chat-rail")).toBeVisible();
+        await expect.poll(async () => (await bottom.boundingBox()).x).toBeGreaterThanOrEqual((await chat.locator(".chat-rail").boundingBox()).width - 1);
+        const gearBox = await chat.locator(".chat-rail .chat-gear-btn").boundingBox();
+        expect(gearBox.x + gearBox.width).toBeLessThanOrEqual((await bottom.boundingBox()).x + 1);
+        await chat.locator(".chat-rail").getByRole("button", { name: "Show the session list" }).click();
+
+        // Moving the bench to the top makes the two tabs of one region, the moved one showing.
+        await bottom.getByRole("button", { name: "Python bench options" }).click();
+        await chat.getByRole("menuitemradio", { name: "Dock to the top" }).click();
+        await expect(bottom).toHaveCount(0);
+        await expect(top.getByRole("tab")).toHaveCount(2);
+        await expect(top.getByRole("tab", { name: "Python bench" })).toHaveAttribute("aria-selected", "true");
+        await expect(top.locator(".bench")).toBeVisible();
+        await expect(top.locator(".vram")).toBeHidden();
+        await top.getByRole("tab", { name: "Resources" }).click();
+        await expect(top.locator(".vram")).toBeVisible();
+
+        // The region resizes from its inner edge, and keeps the size across a reload.
+        const h0 = (await top.boundingBox()).height;
+        const edge = await top.locator(".dock-edge").boundingBox();
+        await chat.mouse.move(edge.x + edge.width / 2, edge.y + edge.height / 2);
+        await chat.mouse.down();
+        await chat.mouse.move(edge.x + edge.width / 2, edge.y + edge.height / 2 + 80, { steps: 4 });
+        await chat.mouse.up();
+        const h1 = (await top.boundingBox()).height;
+        expect(Math.round(h1 - h0)).toBe(80);
+        // …down to a strip: the tab bar and a sliver, much smaller than the resource panel's own floor elsewhere.
+        const e2 = await top.locator(".dock-edge").boundingBox();
+        await chat.mouse.move(e2.x + e2.width / 2, e2.y + e2.height / 2);
+        await chat.mouse.down();
+        await chat.mouse.move(e2.x + e2.width / 2, 0, { steps: 4 });
+        await chat.mouse.up();
+        expect(Math.round((await top.boundingBox()).height)).toBe(64);
+        await chat.mouse.move(e2.x + e2.width / 2, 64 - 1);
+        await chat.mouse.down();
+        await chat.mouse.move(e2.x + e2.width / 2, 64 - 1 + (h1 - 64), { steps: 4 });
+        await chat.mouse.up();
+        expect(Math.round((await top.boundingBox()).height)).toBe(Math.round(h1));
+        await chat.reload();
+        await expect(chat.locator(".chat-dock.dock-top .vram")).toBeVisible();
+        expect(Math.round((await chat.locator(".chat-dock.dock-top").boundingBox()).height)).toBe(Math.round(h1));
+
+        // Maximize covers the column; Escape comes back.
+        await chat.getByRole("button", { name: "Resources options" }).click();
+        await chat.getByRole("menuitem", { name: "Maximize" }).click();
+        await expect(chat.locator(".chat-dock.max")).toBeVisible();
+        // Off the chart first: over it, the panel's own Escape takes the chart's tooltip down before anything else.
+        await chat.mouse.move(2, 2);
+        await chat.keyboard.press("Escape");
+        await expect(chat.locator(".chat-dock.max")).toHaveCount(0);
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); }
+});
+
 test("the box's panel and the Python bench are on this page, because THIS browser is the runtime", async () => {
     const fake = await startFakeLlm({ model: "fake-model" });
     const ext = await launchExtension();
@@ -116,10 +188,12 @@ test("the box's panel and the Python bench are on this page, because THIS browse
         const box = chat.getByRole("menuitemcheckbox", { name: /is running/ });
         await expect(box).toBeVisible();
         await box.click();
-        await expect(chat.locator(".chat-pane .vram")).toBeVisible();
+        // Docked across the top by default, with its header row in the dock's tab bar rather than under it.
+        await expect(chat.locator(".chat-dock.dock-top .vram")).toBeVisible();
+        await expect(chat.locator(".chat-dock.dock-top .dock-bar .vram-head")).toBeVisible();
         await gear.click();
         await chat.getByRole("menuitemcheckbox", { name: /is running/ }).click();
-        await expect(chat.locator(".chat-pane")).toHaveCount(0);
+        await expect(chat.locator(".chat-dock")).toHaveCount(0);
 
         // Settings are this browser's own, offered because the runtime reports `localSettings` and this page can
         // draw them: the same settings view the DevTools panel has, in the main pane.
@@ -140,8 +214,10 @@ test("the box's panel and the Python bench are on this page, because THIS browse
         // that is not the panel. A drawer that opened and could not run would be worse than no drawer.
         await gear.click();
         await chat.getByRole("menuitemcheckbox", { name: "Python bench" }).click();
-        await expect(chat.locator(".bench")).toBeVisible();
-        await chat.locator('.bench [aria-label="Run"]').click();
+        await expect(chat.locator(".chat-dock.dock-bottom .bench")).toBeVisible();
+        // One bar: the bench's own controls are in the dock's tab bar.
+        await expect(chat.locator(".chat-dock.dock-bottom .dock-bar .bench-play")).toBeVisible();
+        await chat.locator('.dock-bar [aria-label="Run"]').click();
         await expect(chat.locator(".bench-outbody")).toContainText("45", { timeout: 120_000 });
         expect(errors).toEqual([]);
     } finally { await ext.context.close(); await fake.stop(); }

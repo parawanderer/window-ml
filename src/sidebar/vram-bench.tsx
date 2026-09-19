@@ -23,6 +23,7 @@ import { type BenchJumpDetail, BENCH_JUMP_EVENT, PyBenchOut } from "./render-pan
 import { benchH, BENCH_H_KEY, benchDock, BENCH_DOCK_KEY, view, viewReturn, benchOpen, BENCH_OPEN_KEY, benchEnv, benchMode, benchKept, noteBenchEnv, benchLost, benchCode, lsSet, BENCH_CODE_KEY, benchRunning, benchResult, type BenchRun, benchLive, benchTimeout, noteBenchKept, benchSplit, BENCH_SPLIT_KEY, codeLineNumbers } from "./store";
 import { cursorTipOn, TipText } from "./ui-kit";
 import { followDrag } from "./drag";
+import { PanelHead, useDocked } from "./panel-head";
 
 // Shape a raw PYTHON_EXEC response into a `python-out` descriptor for RenderPanel.
 export function pyBenchDescriptor(r: { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img" }): Extract<RenderDescriptor, { type: "python-out" }> {
@@ -253,6 +254,7 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
     // mount sites, so `⤢` destroys this component and builds the other one; as `useState` that threw away
     // the script, the result you were reading and any run still in flight, which made changing the bench's
     // SHAPE also a way to lose your work in it.
+    const docked = useDocked();
     const code = benchCode.value, setCode = (v: string) => { benchCode.value = v; lsSet(BENCH_CODE_KEY, v); };
     const mode = benchMode.value, setMode = (v: "readonly" | "full") => { benchMode.value = v; lsSet("ml_bench_mode", v); };
     const running = benchRunning.value, setRunning = (v: boolean) => { benchRunning.value = v; };
@@ -371,11 +373,13 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                 layout allowed, and moving them up naively would have deleted them from full-page mode, where
                 there is no drawer to draw a strip. So the row lives here and the drawer INJECTS its grip and
                 shape controls into it. */}
-            <div class={`bench-top${drag ? " bench-grip" : ""}`}
+            {/* DOCKED (the chat page), the row goes into the dock's tab bar: the tab is the bench's name, so the
+                row starts at the version, and the dock draws the resize edge, maximize and close. */}
+            <PanelHead><div class={`bench-top${drag ? " bench-grip" : ""}`}
                 {...(drag ? { role: "separator", "aria-label": "Drag to resize the Python bench", onPointerDown: drag } : {})}>
                 {/* Only in the drawer: full-page already has the name and version in the app header, and a
                     second copy an inch below it reads as two different things. */}
-                {drag ? <><span class="bench-title">Python bench</span><BenchVer /></> : null}
+                {drag ? <><span class="bench-title">Python bench</span><BenchVer /></> : docked ? <BenchVer /> : null}
                 <BenchEnvButton />
                 <span class="tt bench-info" aria-label="about the bench">ⓘ<span class="tt-pop wrap left" role="tooltip">
                     <TipText md="Runs against the SAME sandbox `python_exec` uses (offscreen → worker → Pyodide), but in its own namespace: **variables are kept between runs**, like a notebook, separately for readonly and full. Reset them in **environment**. Code-only — no page image or tables. `return` a value (or end with a bare expression, Jupyter-style); `print()` is captured. 15s cap." />
@@ -435,7 +439,7 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                         md="Send this script, and what it printed, to the model as a new turn — so you can hand it a snippet you just got working. **Not built yet.**" /></span>
                 </button>
                 {shape}
-            </div>
+            </div></PanelHead>
             <BenchEnv />
             {/* THE SANDBOX RESTARTED UNDER YOU — said where you are looking, once, instead of surfacing as a
                 NameError on a variable you defined three runs ago. A runaway run being stopped is the usual

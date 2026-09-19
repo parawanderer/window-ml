@@ -19,7 +19,7 @@ import { installTooltipLayer } from "./sidebar/tooltip-layer";
 import { installViewPrefs } from "./chat/view-mode";
 import { VRAM_POLL_MS } from "./sidebar/panel-state";
 import { BACKEND_HEALTH_MS, VramPanel, connectResourceStream, fetchModels, pollBackendHealth, pollPs } from "./sidebar/vram";
-import { BenchDrawer } from "./sidebar/vram-bench";
+import { PythonBench } from "./sidebar/vram-bench";
 import type { RuntimeId } from "./session-host";
 import { Settings } from "./sidebar/settings";
 import { config } from "./sidebar/store";
@@ -85,7 +85,8 @@ function SettingsPane() {
 /** What this device can draw beyond the chat core. Every answer is per runtime, and null for one that is not ours. */
 const extras: ChatExtras = {
     resourcePanel: (id) => (localRuntimes.has(id) ? <BoxPanel /> : null),
-    bench: (id) => (localRuntimes.has(id) ? <BenchDrawer /> : null),
+    // The bench itself, not its drawer: the page's dock is the drawer here (edge, size, zoom, close).
+    bench: (id) => (localRuntimes.has(id) ? <PythonBench /> : null),
     settings: (id) => (localRuntimes.has(id) ? <SettingsPane /> : null),
 };
 

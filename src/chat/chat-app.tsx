@@ -26,6 +26,7 @@ import { DeleteConfirm, RowMenu } from "./row-menu";
 import { GearMenu, Rail, mainView, openSearch } from "./nav";
 import { SearchPage } from "./search-page";
 import { SettingsPage } from "./settings-page";
+import { DockFrame, type DockPanel } from "./dock";
 import type { ChatExtras } from "./extras";
 import { lightboxSrc, type ClientPlatform } from "./platform";
 
@@ -546,10 +547,14 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
         openRt && can(openRt) ? openRt : store.runtimes.value.find((r) => r.online && can(r));
     const graphsRt = offering((r) => !!r.capabilities.resourcePanel && extras?.resourcePanel?.(r.id) != null);
     const benchOwner = offering((r) => !!r.capabilities.pythonBench && extras?.bench?.(r.id) != null);
-    const asideRt = !narrow && pane.value === "resource" ? graphsRt : undefined;
-    const benchRt = !narrow && benchOpen.value ? benchOwner : undefined;
-    const aside = asideRt ? extras?.resourcePanel?.(asideRt.id) : null;
-    const bench = benchRt ? extras?.bench?.(benchRt.id) : null;
+    const aside = pane.value === "resource" && graphsRt ? extras?.resourcePanel?.(graphsRt.id) : null;
+    const bench = benchOpen.value && benchOwner ? extras?.bench?.(benchOwner.id) : null;
+    // The open panels, for the dock to place (dock.tsx): each is docked where this device last put it.
+    const panels: DockPanel[] = [];
+    if (aside) panels.push({ id: "resource", title: "Resources", icon: <IconVram />, body: aside, close: () => setPane(null),
+        tip: `What ${graphsRt!.name} is running, and what it is using` });
+    if (bench) panels.push({ id: "bench", title: "Python bench", icon: <IconBench />, body: bench, close: () => { benchOpen.value = false; },
+        tip: `Python against ${benchOwner!.name}'s sandbox, the one a run's python_exec uses` });
     // The runtime whose settings this device may edit: one that reports `localSettings` and this device can draw.
     const settingsRt = store.runtimes.value.find((r) => r.online && r.capabilities.localSettings && extras?.settings?.(r.id) != null);
     const main = mainView.value;
@@ -563,12 +568,13 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
     // where a runtime offers them and this device can draw them.
     const browserSettings = settingsRt ? extras?.settings?.(settingsRt.id) : null;
     return (
-        <div class={`chat${narrow ? " narrow" : ""}${calm.value ? " calm" : ""}${!narrow && !listOpen.value ? " list-hidden" : ""}${aside ? " pane-open" : ""}`}
+        <div class={`chat${narrow ? " narrow" : ""}${calm.value ? " calm" : ""}${!narrow && !listOpen.value ? " list-hidden" : ""}`}
             style={{ "--code-fs": `${codeSize.value}px` }}>
             <ContextMenu />
             <CursorTipLayer />
             {!narrow && !listOpen.value ? <Rail store={store} onStart={start} gear={gear} /> : null}
             {(!narrow || (!key && !starting && !main)) ? <SessionList store={store} activeKey={key} narrow={narrow} onStart={start} gear={gear} gearWide={gearWide} /> : null}
+            <DockFrame panels={panels} narrow={narrow}>
             {main === "search" && (!narrow || !key) ? <SearchPage store={store} narrow={narrow} />
                 : main === "settings" ? <SettingsPage browser={browserSettings} />
                 : starting ? <NewSession store={store} kind={starting} onCancel={() => setStarting(null)}
@@ -588,8 +594,7 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
                                 <div class="empty chat-pick">Pick a session.</div>
                             </main>
                         ) : null}
-            {aside ? <aside class="chat-pane" aria-label="The box">{aside}</aside> : null}
-            {bench ? <div class="chat-bench">{bench}</div> : null}
+            </DockFrame>
             <Notices store={store} />
             <Lightbox platform={platform} />
             <DeleteConfirm store={store} />

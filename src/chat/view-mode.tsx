@@ -17,7 +17,7 @@ import { IconBrain, IconMenu } from "../sidebar/icons";
 import type { PlatformPrefs } from "./platform";
 
 /** Preference keys, under the platform's own namespace. */
-export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", CODE_KEY = "view.codeSize";
+export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", CODE_KEY = "view.codeSize", DOCK_KEY = "view.dock";
 
 /** Is the page in calm view? Read it in a render to re-render when it changes. */
 export const calm = signal(true);
@@ -62,6 +62,48 @@ export const CODE_DEFAULT = 12.5;
 /** The code size this device reads at, in px. */
 export const codeSize = signal<number>(CODE_DEFAULT);
 
+/** An edge of the reading column a panel can be docked to. */
+export type DockSide = "top" | "right" | "bottom" | "left";
+/** The panels the page can dock: the box's resource panel and the Python bench. */
+export type DockPanelId = "resource" | "bench";
+/** Where each panel is docked, how big each edge's region is, and which tab each edge is showing. */
+export interface DockLayout {
+    side: Record<DockPanelId, DockSide>;
+    /** px: a height for top and bottom, a width for left and right */
+    size: Record<DockSide, number>;
+    active: Partial<Record<DockSide, DockPanelId>>;
+}
+/** The graphs across the top, because a timeline is wide and short; the bench underneath, where a drawer is. */
+export const DOCK_DEFAULT: DockLayout = {
+    side: { resource: "top", bench: "bottom" },
+    size: { top: 300, bottom: 320, left: 380, right: 420 },
+    active: {},
+};
+const SIDES: readonly DockSide[] = ["top", "right", "bottom", "left"];
+/** This device's dock layout. */
+export const dockLayout = signal<DockLayout>(DOCK_DEFAULT);
+
+/** Read a stored layout, keeping only what is well formed: a stored value from an older build is a hint, not a
+ *  contract, and one bad field must not cost the rest. */
+function readDock(v: unknown): DockLayout {
+    const o = (v && typeof v === "object" ? v : {}) as Partial<DockLayout>;
+    const side = { ...DOCK_DEFAULT.side }, size = { ...DOCK_DEFAULT.size }, active: DockLayout["active"] = {};
+    for (const id of Object.keys(side) as DockPanelId[]) if (SIDES.includes(o.side?.[id] as DockSide)) side[id] = o.side![id];
+    for (const sd of SIDES) {
+        const n = o.size?.[sd];
+        if (typeof n === "number" && Number.isFinite(n) && n >= 64) size[sd] = n;
+        const a = o.active?.[sd];
+        if (a === "resource" || a === "bench") active[sd] = a;
+    }
+    return { side, size, active };
+}
+
+/** Change the dock layout, and keep it. */
+export function setDockLayout(next: DockLayout): void {
+    dockLayout.value = next;
+    store?.set(DOCK_KEY, next);
+}
+
 let store: PlatformPrefs | null = null;
 
 /** Mirror `calm` onto the document, where the shared views' own reading rules already live. */
@@ -85,6 +127,7 @@ export function installViewPrefs(prefs: PlatformPrefs): void {
     foldedRuntimes.value = new Set(Array.isArray(f) ? f.filter((x) => typeof x === "string") : []);
     const p = prefs.get<string[]>(PINNED_KEY);
     pinned.value = new Set(Array.isArray(p) ? p.filter((x) => typeof x === "string") : []);
+    dockLayout.value = readDock(prefs.get<DockLayout>(DOCK_KEY));
     const cs = prefs.get<number>(CODE_KEY);
     codeSize.value = CODE_SIZES.some((x) => x.px === cs) ? cs! : CODE_DEFAULT;
     applyCalm();
