@@ -187,3 +187,23 @@ test("a history for a session this store does not keep is dropped", T, async () 
     assert.equal(await store.history("ffff0001"), null);
     assert.equal(be._rows.size, 0, "an ephemeral session does not become saved by having a history");
 });
+
+test("an eviction is reported, so whatever lists sessions stops listing one whose history has gone", T, async () => {
+    // The store is the one authority on whether a saved session exists. It used to evict without telling anyone, so a
+    // session stayed in the list after its history had left the disk.
+    const be = backend();
+    const told = [];
+    const store = new SessionStore(be, { flushMs: 5, maxSessions: 2, onEvict: (h) => told.push(...h) });
+    for (const [i, h] of ["aaaa0001", "aaaa0002", "aaaa0003"].entries()) {
+        store.put(summary(h, { lastTs: 100 + i }), ev(h, 0));
+        await store.flush();
+    }
+    assert.deepEqual(told, ["aaaa0001"], "the oldest, and only it");
+    assert.equal(await store.history("aaaa0001"), null, "and it really is gone");
+
+    // A write that evicts nothing reports nothing: a listener is not told about a non-event.
+    const before = told.length;
+    store.put(summary("aaaa0003", { lastTs: 200 }), ev("aaaa0003", 1));
+    await store.flush();
+    assert.equal(told.length, before);
+});

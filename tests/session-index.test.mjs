@@ -333,3 +333,26 @@ test("every event kind the index accepts has been considered for de-duplication"
         assert.ok(duplicate.includes(`"${kind}"`), `${kind} has no de-duplication rule and is not listed as needing none`);
     }
 });
+
+test("a SAVED session is never evicted whole: the store decides whether it exists", () => {
+    // It used to be. The index told every client `remove`, the store still held the session, and the next worker's
+    // `restore` put it straight back — a saved session flickered out of the list and in again. The old sessions
+    // somebody pins are exactly the saved ones this dropped first.
+    const ix = index({ maxSessions: 2 });
+    for (const h of ["aaaa0001", "aaaa0002", "aaaa0003"]) {
+        ix.ingest(start(h), bg());
+        ix.ingest(result(h), bg());
+        ix.markSaved(h);
+        ix.tick(10);
+    }
+    // Three saved sessions, a cap of two, and nothing was forgotten.
+    assert.deepEqual(ix.list().map((s) => s.id.hash).sort(), ["aaaa0001", "aaaa0002", "aaaa0003"]);
+
+    // Unsaved sessions still count toward the cap and are still dropped, oldest finished first — and the saved ones
+    // around them are not what makes room.
+    ix.ingest(start("bbbb0001"), bg(TAB_B)); ix.ingest(result("bbbb0001"), bg(TAB_B)); ix.tick(10);
+    ix.ingest(start("bbbb0002"), bg(TAB_B)); ix.ingest(result("bbbb0002"), bg(TAB_B)); ix.tick(10);
+    const third = ix.ingest(start("bbbb0003"), bg(TAB_B));
+    assert.deepEqual(third.evicted, [{ runtime: "local", hash: "bbbb0001" }], "the oldest UNSAVED session goes");
+    for (const h of ["aaaa0001", "aaaa0002", "aaaa0003"]) assert.ok(ix.get(h), `saved ${h} is still listed`);
+});

@@ -120,6 +120,12 @@ export class SessionStore {
             now?: () => number;
             /** hashes that must survive an eviction: what a page has open */
             protect?: () => readonly string[];
+            /**
+             * Sessions this store has just thrown away to stay inside its budget. The store is the one authority on
+             * whether a SAVED session exists, so whatever else lists sessions has to hear about it — or a session
+             * stays in the list after its history has left the disk.
+             */
+            onEvict?: (hashes: string[]) => void;
             onError?: (err: unknown) => void;
         } = {},
     ) {}
@@ -229,7 +235,9 @@ export class SessionStore {
             budgetBytes: this.opts.budgetBytes, maxSessions: this.opts.maxSessions,
             protect: [...(this.opts.protect?.() ?? []), ...this.running()],
         });
+        if (!evict.length) return;
         await this.forget(evict);
+        this.opts.onEvict?.(evict);
     }
 
     /** A session whose events are still arriving would be evicted and immediately written again. */
