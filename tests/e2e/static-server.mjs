@@ -13,6 +13,9 @@ export async function serveStatic(root, { port = 0, host = "127.0.0.1" } = {}) {
         let p = decodeURIComponent(new URL(req.url, "http://x").pathname);
         if (p.endsWith("/")) p += "index.html";
         const f = path.join(base, p);
+        // A PAGE ADDRESS as a path (`/settings/devices`): the chat page routes in the hash (src/chat/route.ts), since
+        // the extension and the phone app cannot serve paths, so a path that is not a file goes to its hash.
+        if (!path.extname(p) && !(fs.existsSync(f) && fs.statSync(f).isFile())) { res.writeHead(302, { location: `/#${p}` }); res.end(); return; }
         if (!f.startsWith(base + path.sep) || !fs.existsSync(f) || !fs.statSync(f).isFile()) { res.writeHead(404); res.end(); return; }
         res.writeHead(200, { "content-type": TYPES[path.extname(f)] || "application/octet-stream", "cache-control": "no-store" });
         fs.createReadStream(f).pipe(res);

@@ -52,7 +52,7 @@ test("phone: the list first, a session on its own, approve through the runtime, 
 
     await row(page, WAITING).click();
     await expect(page.locator(".chat-list")).toHaveCount(0);
-    await expect(page).toHaveURL(/#s=laptop%3A3f9a0c21$/);
+    await expect(page).toHaveURL(/#\/s\/laptop%3A3f9a0c21$/);
     const approve = page.locator(".astep-approve .appr-btn.yes");
     await expect(approve).toBeVisible();
     // Touch-sized, at a phone's width.
@@ -221,7 +221,7 @@ test("phone: starting a chat from the list, and the start page asks only what it
     await box.press("Enter");
 
     // The page opens the session the runtime answered with, and the transcript is the runtime's, not the form's.
-    await expect(page).toHaveURL(/#s=laptop%3A/);
+    await expect(page).toHaveURL(/#\/s\/laptop%3A/);
     await expect(page.locator(".chat-main")).toContainText("You said: what is a shared worker?");
     expect(errors).toEqual([]);
     await page.close();
@@ -286,7 +286,7 @@ test("desktop: with nothing open the page is a start box; an agent run picks a t
 
     await box.fill("summarise the front page");
     await box.press("Enter");
-    await expect(page).toHaveURL(/#s=laptop%3A/);
+    await expect(page).toHaveURL(/#\/s\/laptop%3A/);
     await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "agent.start", task: "summarise the front page", target: { kind: "blank" }, model: "gemma3:27b" });
 
     // The compose button brings it back from an open session.
@@ -633,9 +633,10 @@ test("the attention list: an inbox above the gear, problems counted, each said f
     const tip = items.filter({ hasText: "No utility model" });
     await tip.getByRole("button", { name: "Dismiss" }).click();
     await expect(items).toHaveCount(2);
-    // Dismissed on this device: it stays away after a reload, and the count never included it.
+    // Dismissed on this device: it stays away after a reload, and the count never included it. The list is in the
+    // address (#/attention), so the reload reopens it rather than needing the button again.
     await page.reload();
-    await btn.click();
+    await expect(page).toHaveURL(/#\/attention$/);
     await expect(items).toHaveCount(2);
     await expect(btn.locator(".chat-att-n")).toHaveText("2");
     // Off any tooltip first: a first Escape over one only mutes it.
@@ -707,12 +708,12 @@ test("a chosen tab that closes is never swapped for another: the pill says so an
     await box.press("Enter");
     await expect.poll(async () => (await starts()).length).toBe(1);
     await expect(page.locator(".chat-start-box textarea")).toHaveValue("check out");
-    await expect(page).not.toHaveURL(/#s=/);
+    await expect(page).not.toHaveURL(/#\/s\//);
     // Picking a tab that is open starts there, and only there.
     await pill.click();
     await list.getByRole("option", { name: /Flights AMS/ }).click();
     await box.press("Enter");
-    await expect(page).toHaveURL(/#s=laptop%3A/);
+    await expect(page).toHaveURL(/#\/s\/laptop%3A/);
     const last = (await starts()).at(-1);
     const flights = await page.evaluate(() => globalThis.__chatFake.tabs.find((t) => /Flights/.test(t.title)).tabId);
     expect(last.target).toEqual({ kind: "tab", tabId: flights });
@@ -993,4 +994,35 @@ test("the devices on the account: which is this one, when each was seen, and rem
     await history.locator("summary").click();
     await expect(history.locator(".pair-log li").first()).toContainText("revoked");
     expect(errors).toEqual([]);
+});
+
+test("addresses: a link opens a view and its tab, the address follows what is on screen, and back undoes a step", async () => {
+    // A path, as someone would type or paste it; the server sends it to its hash, where the page routes.
+    const page = await browser.newPage({ viewport: DESKTOP });
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto(`${server.url}settings/devices`);
+    await expect(page).toHaveURL(/#\/settings\/devices$/);
+    await expect(page.getByRole("tab", { name: "Devices" })).toHaveAttribute("aria-selected", "true");
+
+    // Another tab rewrites the address in place: back does not step through tabs.
+    await page.getByRole("tab", { name: "Runtimes" }).click();
+    await expect(page).toHaveURL(/#\/settings\/runtimes$/);
+
+    // Closing Settings and opening it again from the gear: back from there closes it.
+    await page.getByRole("button", { name: "Close settings" }).click();
+    await expect(page).not.toHaveURL(/#\/settings/);
+    await page.locator(".chat-list-foot .chat-gear-btn").click();
+    await page.getByRole("menuitem", { name: "Settings" }).click();
+    await expect(page).toHaveURL(/#\/settings\//);
+    await page.goBack();
+    await expect(page.getByRole("tablist", { name: "Settings" })).toHaveCount(0);
+
+    // The other views have addresses too, and a reload keeps the one you are on.
+    await page.goto(`${server.url}#/search`);
+    await expect(page.getByRole("main", { name: /Search/ })).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole("main", { name: /Search/ })).toBeVisible();
+    expect(errors).toEqual([]);
+    await page.close();
 });

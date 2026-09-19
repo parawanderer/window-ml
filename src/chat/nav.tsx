@@ -17,8 +17,8 @@ import type { ChatExtras } from "./extras";
 import { StartMenu, type StartKind } from "./new-session";
 import { calm, pane, setCalm, setListOpen, setPane } from "./view-mode";
 
-/** What the MAIN pane shows instead of a session: the search page, or this device's settings. Not stored: both are
- *  places you go to and come back from, and a reload that reopened settings would be a surprise. */
+/** What the MAIN pane shows instead of a session: the search page, this device's settings, or the attention list. Not
+ *  stored as a preference: it lives in the URL (route.ts), so a reload keeps it and a fresh page does not. */
 export const mainView = signal<"search" | "settings" | "attention" | null>(null);
 
 /** Open the search page (and close any session-level view that would sit on top of it). */

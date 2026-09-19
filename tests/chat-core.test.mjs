@@ -585,3 +585,16 @@ test("fakePairing: an unknown code, a scope a delegate does not hold, and a join
     assert.equal((await h.done).label, "Phone");
     assert.equal((await f.load()).label, "Phone");
 });
+
+test("routes: the hash names a session or a view, round trip; old links and nonsense still open the page", async () => {
+    const { parseRoute, formatRoute } = await import("../src/chat/route.ts");
+    for (const r of [{ main: "settings", tab: "devices" }, { main: "settings" }, { main: "search" }, { main: "attention" }, { session: "laptop:3f9a0c21" }, {}]) {
+        assert.deepEqual(parseRoute(formatRoute(r)), r, JSON.stringify(r));
+    }
+    assert.equal(formatRoute({ main: "settings", tab: "devices" }), "#/settings/devices");
+    assert.equal(formatRoute({ session: "laptop:3f9a0c21" }), "#/s/laptop%3A3f9a0c21");
+    assert.deepEqual(parseRoute("#s=laptop%3A3f9a0c21"), { session: "laptop:3f9a0c21" }, "the old form still opens a session");
+    assert.deepEqual(parseRoute("#/settings/nope"), { main: "settings" }, "an unknown tab is Settings on its first tab");
+    assert.deepEqual(parseRoute("#/wherever"), {}, "an unknown place is the list");
+    assert.equal(formatRoute({ session: "laptop:x", main: "search" }), "#/search", "a view drawn over a session is what is on screen");
+});

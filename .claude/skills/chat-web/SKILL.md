@@ -18,7 +18,10 @@ SERVE=1 node tests/e2e/chat-shots.mjs          # serve dist-web/ and print the U
 npx playwright test tests/e2e/chat-web.spec.mjs  # the spec, ~2s; E2E_DIST_WEB=<dir> for a build elsewhere
 ```
 
-Open a session directly with `#s=<runtime:hash>` (`#s=laptop%3A3f9a0c21` is the one waiting on an approval).
+Every view has an address (`src/chat/route.ts`): `#/s/<runtime:hash>` opens a session (`#/s/laptop%3A3f9a0c21` is
+the one waiting on an approval; the old `#s=` form still works), `#/settings/<page|runtimes|devices|extension|housekeeping>`
+a Settings tab, `#/search` and `#/attention` those sheets. The dev server redirects a path to its hash, so
+`http://127.0.0.1:<port>/settings/devices` works too; the extension and the phone app can only use the hash form.
 
 The page opens in CALM view (`src/chat/view-mode.tsx`), which on a wide screen has NO HEADER BAR: the title is the
 transcript's first line (`.chat-lede`). With the list hidden a rail (`.chat-rail`) keeps `☰`, new session and search

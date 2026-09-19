@@ -92,7 +92,7 @@ test("starting a chat from the page: the worker hosts it, with no tab behind it"
         await chat.locator(".chat-start-box textarea").press("Enter");
 
         // The page opens the session the worker answered with, and the answer arrives through the stream.
-        await expect(chat).toHaveURL(/#s=local%3A/);
+        await expect(chat).toHaveURL(/#\/s\/local%3A/);
         await expect(chat.locator(".chat-main")).toContainText("a service worker is a background script");
         // No tab was opened for it: the chat page and the popup-less context are all there is.
         expect(ext.context.pages().filter((p) => p.url().startsWith("http")).length).toBe(0);
