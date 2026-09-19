@@ -501,6 +501,21 @@ export class SessionIndex {
         return s.summary;
     }
 
+    /**
+     * Set a session's title. `renamed` marks it as one a person chose; `title: null` clears both, so the session can
+     * be titled again. Returns the changed row, or null when the session is not held or nothing changed.
+     */
+    setTitle(hash: string, title: string | null, renamed = false): SessionSummary | null {
+        const s = this.sessions.get(hash);
+        if (!s) return null;
+        const before = `${s.summary.title ?? ""}\u0000${s.summary.renamed ? 1 : 0}`;
+        if (title) s.summary.title = title; else delete s.summary.title;
+        if (title && renamed) s.summary.renamed = true; else delete s.summary.renamed;
+        if (`${s.summary.title ?? ""}\u0000${s.summary.renamed ? 1 : 0}` === before) return null;
+        this.refreshSummary(s);
+        return s.summary;
+    }
+
     /** How many sessions are pinned, which the runtime bounds. */
     pinnedCount(): number {
         let n = 0;

@@ -165,11 +165,13 @@ browser. Nothing new decides a gate, starts a loop or builds a request.
 | `session.cancel` | a background run: `cancelBackgroundRun` (the `CANCEL_RUN` body, factored out); otherwise the page |
 | `session.continue` | only a `capped` session, through the page |
 | `session.delete` | refused while running; forgets the stored chat (`ml_session_<hash>`), the resumable snapshot and pointer store, then the index row |
+| `session.rename` | `capTitle` (session-title.ts), then `renameSession`: sets `title` and `renamed`, written to the store. Empty clears both and asks for a generated title again |
+| `models.list` | `listAvailableModels` filtered by `modelFilterAllows` (the same half `LIST_MODELS` does, so a whitelisted-out cloud model never reaches a remote client), `kinds` from `modelCapabilitiesBatch` (cached for the worker's life), `default` on `config.model`. An unreachable backend answers an empty list, not an error |
 | `session.pin` | pinning keeps the session first (`keepSession`, so the ring reaches the store), then sets `pinned` on the row, which `planEviction` never drops and a restarted worker restores. At most `MAX_PINNED` (100); unpinning leaves it saved |
 | `page.highlight` | `ML_HL_REMOTE` to the session's tab with `anyMode`, since the shell otherwise draws remote highlights only in devtools mode |
 | `side.call` | `fetchLLM` on the utility profile, `think: false`, `maxTokens` capped at 1024, the session on the hint; `unsupported` without a utility model, which `capabilities.sideCalls` also says (kept current from storage) |
 | `tab.screenshot` | `captureVisibleTab`, only for a tab in front in its window; PNG, then JPEG at falling quality until it fits `maxBytes` (ceiling 4 MB); size read from the image header |
-| `tabs.list` | `chrome.tabs.query`, http(s) tabs only |
+| `tabs.list` | `chrome.tabs.query`, http(s) tabs only, in strip order with the focused window first (`stripOrder`). Icons from each tab's `favIconUrl`, fetched by the worker without cookies, once per icon URL, images of 16 KB or less, as data URLs (`tab-favicons.ts`); a slow one is left out of this answer and cached for the next. `groups` from `chrome.tabGroups`, an OPTIONAL permission (install warning "View and manage your tab groups"), granted from Settings → DevTools; without it, `groupId` alone still groups. The `favicon` permission was not used: it carries a warning too, and `favIconUrl` needs none |
 | `chat.start` | a chat the worker hosts itself: `sw-chat.ts` (below) |
 | `agent.start` | the target tab's own start path, the one the HUD composer uses (below) |
 
@@ -178,6 +180,19 @@ is deleted, measured from its last activity. `planExpiry` (session-store.ts) is 
 startup BEFORE the list is restored (so an expired session is never listed then removed), on every write, and when the
 setting changes. It ignores the budget: retention is about a person's history, not space. Every drop, by retention or
 by the caps, is a `sessions/evict` housekeeping record.
+
+**Titles are the runtime's** (`maybeTitle`, sw-sessions.ts): a SAVED session with a `task`, no title and not `renamed`
+is titled once, by the utility model through the same prompt the sidebar uses (`session-title.ts`), when a utility
+model is set and `autoTitles` is on. The title lands on the row, so every device shows one name; the chat page's list
+already reads `summary.title`. Ephemeral sessions are not titled (the sidebar still titles what it shows, per device).
+The worker reads these settings at startup whether or not it has a store.
+
+**Storage over time** (the Settings "Storage" section, `storage-section.tsx`; `storage.stats` on the contract): each
+saved session's row keeps a running breakdown (`split`, from `measureEvents` on each written batch, sharing the one
+serialization the budget already does), so a snapshot SUMS rows and reads no event. The worker appends a snapshot to
+`ml_storage_history` (chrome.storage.local) at startup and on a six-hourly alarm, at most one a day, capped at a year,
+with the top 20 tools and no session hashes. A session saved before breakdowns existed counts as `unmeasured` until it
+ages out; "Measure exactly" is the full read (`SESSION_STORAGE_STATS`).
 
 **The budget** (`sessionStoreBudgetMB`, default 256): the store's size cap, with the count cap (`STORE_MAX_SESSIONS`)
 beside it; 0 removes both, leaving retention and pins. The store reads it at every eviction (`limits`), and a lowered

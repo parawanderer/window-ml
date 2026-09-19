@@ -3,6 +3,8 @@
 // this runs in the extension-origin iframe, not the page DOM — so edits sync live
 // with the popup. Text fields persist on change (blur) to avoid chatty writes; the
 // signal updates on input for a responsive UI + the utility-field enable gating.
+import { StorageBody } from "./storage-section";
+import { LocalArchiveFolder } from "./archive-section";
 import { signal } from "@preact/signals";
 import { useState, useEffect, useRef } from "preact/hooks";
 import type { ComponentChildren } from "preact";
@@ -53,6 +55,29 @@ function Section({ id, title, children }: { id: string; title: ComponentChildren
             <summary class="set-group">{title}</summary>
             {children}
         </details>
+    );
+}
+
+/**
+ * The optional `tabGroups` permission: tab group NAMES and colours in the chat page's tab picker. Optional because it
+ * carries an install warning ("View and manage your tab groups"); asked for here, inside a click, which is the only
+ * place Chrome allows it. Without it the picker still indents grouped tabs, unnamed.
+ */
+function TabGroupsPermission() {
+    const [granted, setGranted] = useState<boolean | null>(null);
+    const P = { permissions: ["tabGroups"] as chrome.runtime.ManifestPermission[] };
+    useEffect(() => { chrome.permissions?.contains(P).then(setGranted, () => setGranted(false)); }, []);
+    if (granted === null || !chrome.permissions) return null;
+    const flip = () => (granted ? chrome.permissions.remove(P) : chrome.permissions.request(P)).then((ok) => setGranted(granted ? !ok : ok), () => {});
+    return (
+        <div class="set-field"><span>Tab group names</span>
+            <div>
+                <button class="test-btn" onClick={flip}>{granted ? "Stop showing them" : "Show them in the tab picker"}</button>
+                <div class="set-hint">{granted
+                    ? "The chat page's tab picker shows each group's name and colour."
+                    : "The chat page's tab picker groups tabs either way. Their names and colours need the browser's permission to read tab groups, which it asks you for once."}</div>
+            </div>
+        </div>
     );
 }
 
@@ -1160,11 +1185,28 @@ export function Settings() {
                         onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("sessionStoreBudgetMB", Number.isFinite(n) && n >= 0 ? n : DEFAULT_CONFIG.sessionStoreBudgetMB); }} />
                 </label>
                 <div class="set-hint">Disk for saved sessions. Past it, the oldest unpinned session is deleted first (and logged). 0 sets no size limit, so only the retention above and your pins decide what is kept. Pinned sessions count toward this and are never what makes room, so many large pins can hold it over. The browser does not clear this storage when the disk runs low.</div>
+                <TabGroupsPermission />
                 <label class="set-field"><span>Blank-tab start page</span>
                     <input type="url" placeholder="https://example.com" value={c.agentStartPage}
                         onChange={(e: any) => setField("agentStartPage", e.target.value.trim())} />
                 </label>
                 <div class="set-hint">Where a run started from the chat page “on a blank tab” begins. The browser's own new-tab page cannot be used: the extension is not allowed to run there, so an agent would open on a page it cannot see.</div>
+                </Section>
+
+                <Section id="archive" title="Archive folder">
+                <LocalArchiveFolder archiveOn={c.sessionArchive} />
+                </Section>
+
+                <Section id="storage" title="Storage">
+                <label class="set-check">
+                    <input type="checkbox" checked={c.sessionArchive}
+                        onChange={(e: any) => setField("sessionArchive", e.target.checked)} />
+                    <span>Archive sessions instead of deleting them</span>
+                </label>
+                <div class="set-hint">A session the retention or the storage limit would delete moves to a long-term archive (SQLite, in this browser's private storage) instead, with its images stored once and every word searchable. If moving one fails, it is kept, never deleted. An archive folder on your disk, which survives a wiped browser, comes next.</div>
+                <StorageBody
+                    load={() => new Promise((res, rej) => chrome.runtime.sendMessage({ type: "STORAGE_HISTORY" }, (r: any) => (r?.error ? rej(new Error(r.error)) : res(r?.data ?? null))))}
+                    measure={() => new Promise((res, rej) => chrome.runtime.sendMessage({ type: "SESSION_STORAGE_STATS" }, (r: any) => (r?.error ? rej(new Error(r.error)) : res(r?.data ?? null))))} />
                 </Section>
 
                 <Section id="agenthud" title="Agent HUD">

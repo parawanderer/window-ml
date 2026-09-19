@@ -177,6 +177,41 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
     });
 }
 
+// ---- The session archive's worker (archive-worker.ts) ----
+// Started on the first ARCHIVE_OP and kept: it holds the archive's one SQLite connection. Its replies are matched by
+// id, and it answers in order, so this only relays.
+let archiveWorker: Worker | null = null;
+let archiveSeq = 0;
+const archivePending = new Map<number, (r: { ok: boolean; result?: unknown; error?: string }) => void>();
+
+function ensureArchiveWorker(): Worker {
+    if (archiveWorker) return archiveWorker;
+    const w = new Worker(chrome.runtime.getURL("archive-worker.js"));
+    w.onmessage = (e: MessageEvent) => {
+        const { id, ...reply } = e.data ?? {};
+        archivePending.get(id)?.(reply);
+        archivePending.delete(id);
+    };
+    w.onerror = (e) => {
+        // A worker that died answers nobody: fail what waits, and start a fresh one next time.
+        for (const done of archivePending.values()) done({ ok: false, error: `archive worker stopped: ${e.message || "error"}` });
+        archivePending.clear();
+        archiveWorker = null;
+    };
+    archiveWorker = w;
+    return w;
+}
+
+chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
+    if (msg?.type === "ARCHIVE_OP") {
+        const id = ++archiveSeq;
+        archivePending.set(id, sendResponse);
+        ensureArchiveWorker().postMessage({ id, op: msg.op, args: msg.args });
+        return true;
+    }
+    return undefined;
+});
+
 chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
     // Start the runtime ahead of a run that is likely to need it (see the background's PYTHON_PREWARM). No
     // watchdog: nothing waits on it, and a run that later waits on a start that hangs arms its own.

@@ -3275,3 +3275,30 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .rc-tip-pools .rc-tip-links .rc-tip-row { grid-template-columns: auto 1fr; column-gap: 10px; }
 .rc-tip-pools .rc-tip-links .rc-tip-amt { text-align: right; white-space: normal; }
 .rc-tip-pools .rc-tip-linknote { grid-column: 1 / -1; font-size: .92em; }
+
+/* The Settings STORAGE section (storage-section.tsx): where saved sessions' bytes go, a split bar, a stacked history
+   chart, and bars per tool. The four part colours are shared by the bar, the legend and the chart. */
+.stor { display: flex; flex-direction: column; gap: 6px; }
+.stor-sub { color: var(--fg-dim); font-size: 0.85em; font-weight: 600; margin: 8px 4px 0; }
+.stor-bar { display: flex; height: 10px; border-radius: 3px; overflow: hidden; background: var(--border); margin: 0 4px; }
+.stor-bar > span { display: block; height: 100%; }
+.stor-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 0.83em; color: var(--fg-dim); margin: 0 4px; }
+.stor-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
+.stor-img { background: var(--accent); fill: var(--accent); }
+.stor-tool { background: var(--warn); fill: var(--warn); }
+.stor-other { background: var(--ok); fill: var(--ok); }
+.stor-unm { background: var(--fg-faint); fill: var(--fg-faint); opacity: 0.5; }
+.stor-chart { margin: 0 4px; }
+.stor-chart svg { width: 100%; height: 90px; display: block; }
+.stor-axis { display: flex; justify-content: space-between; font-size: 0.8em; color: var(--fg-faint); }
+.stor-tools, .stor-largest { display: flex; flex-direction: column; gap: 3px; margin: 0 4px; font-size: 0.85em; }
+.stor-toolrow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.stor-toolrow > :first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stor-toolbar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+.stor-toolbar > span { display: block; height: 100%; background: var(--warn); }
+
+/* The Settings ARCHIVE FOLDER section (archive-section.tsx): one state at a time, its next step a primary button. */
+.arch { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.arch-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.arch-primary { font-weight: 600; }
+.arch-msg { color: var(--fg); }

@@ -7,16 +7,20 @@ import { type MlDebugEvent } from "./contract-debug";
 import { createCommandHandler, type CommandDeps, type PageOutcome } from "./session-commands";
 import { cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat, sendBackgroundChat, startBackgroundChat } from "./sw-chat";
 import { type StoredSession } from "./contract-messages";
-import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type RuntimeInfo, type TabInfo } from "./session-host";
+import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type RuntimeInfo, type TabGroupInfo, type TabInfo } from "./session-host";
+import { FaviconCache, stripOrder } from "./tab-favicons";
 import { SessionIndex, type IngestSource } from "./session-index";
 import { SESSIONS_PORT, SessionServer } from "./session-server";
 import { STORE_MAX_SESSIONS, SessionStore, indexedDbBackend, type SessionHistory } from "./session-store";
-import { DEFAULT_CONFIG } from "./contract-config";
+import { DEFAULT_CONFIG, modelFilterAllows } from "./contract-config";
+import type { NeutralMessage } from "./contract-chat";
+import { cleanTitle, titleMessages } from "./session-title";
 import { bgRuns, trackRun, untrackRun } from "./sw-runs";
-import { fetchLLM } from "./sw-llm";
+import { fetchLLM, getConfig, listAvailableModels, modelCapabilitiesBatch } from "./sw-llm";
 import { pythonBundlePresent } from "./sw-python";
 import { recordHousekeeping } from "./sw-housekeeping";
-import { measureEvents, summarizeStore, type StoreBytes } from "./session-storage-stats";
+import { archiveCall, scheduleFolderSync } from "./sw-archive";
+import { appendSnapshot, measureEvents, summarizeStore, type StorageReport, type StorageSnapshot, type StoreBytes } from "./session-storage-stats";
 
 /**
  * What this browser is called before it has a key to derive an id from (docs/spec/SESSION_CONTRACT.md), and the
@@ -95,7 +99,39 @@ async function runCommand(command: Command): Promise<CommandResult<CommandType>>
 }
 
 const tabInfo = (t: chrome.tabs.Tab): TabInfo | null =>
-    t.id == null ? null : { tabId: t.id, url: t.url || "", title: t.title || "", active: !!t.active, ...(t.windowId != null ? { windowId: t.windowId } : {}) };
+    t.id == null ? null : {
+        tabId: t.id, url: t.url || "", title: t.title || "", active: !!t.active,
+        ...(t.windowId != null ? { windowId: t.windowId } : {}),
+        ...(typeof t.index === "number" ? { index: t.index } : {}),
+        // -1 is Chrome's "in no group".
+        ...(typeof t.groupId === "number" && t.groupId >= 0 ? { groupId: t.groupId } : {}),
+    };
+
+/** The tab picker's icons, fetched here and handed over as data URLs (tab-favicons.ts). */
+const favicons = new FaviconCache();
+
+/** http(s) tabs in strip order, the focused window first, with their icons. */
+async function listTabsForPicker(): Promise<TabInfo[]> {
+    const raw = (await chrome.tabs.query({})).filter((t) => /^https?:/.test(t.url || ""));
+    const focused = await chrome.windows.getLastFocused().then((w) => w.id, () => undefined);
+    const ordered = stripOrder(raw, focused);
+    const icons = await favicons.many(ordered.map((t) => t.favIconUrl));
+    return ordered.map((t, i) => {
+        const info = tabInfo(t);
+        return info && icons[i] ? { ...info, favicon: icons[i]! } : info;
+    }).filter((t): t is TabInfo => !!t);
+}
+
+/**
+ * Tab groups with their names and colours. Needs `tabGroups`, an OPTIONAL permission (it carries an install warning,
+ * so it is asked for from Settings, never at install): without it the API is absent and this is empty, and a picker
+ * still indents grouped tabs by `groupId`.
+ */
+async function listTabGroups(): Promise<TabGroupInfo[]> {
+    const api = (chrome as unknown as { tabGroups?: { query(q: object): Promise<{ id: number; title?: string; color?: string }[]> } }).tabGroups;
+    if (!api) return [];
+    return (await api.query({})).map((g) => ({ id: g.id, ...(g.title ? { title: g.title } : {}), ...(g.color ? { color: g.color } : {}) }));
+}
 
 const CAPTURE_RETRIES = 5, CAPTURE_RETRY_MS = 550;   // captureVisibleTab allows about two calls a second
 
@@ -121,7 +157,8 @@ export function configureSessionCommands(run: RunDeps): void {
         describe: () => { const { kind, contractVersion, capabilities } = localRuntime(); return { kind, contractVersion, capabilities }; },
         index: sessionServer.index,
         removeFromIndex: (id) => { sessionServer.remove(id); },
-        listTabs: async () => (await chrome.tabs.query({})).filter((t) => /^https?:/.test(t.url || "")).map(tabInfo).filter((t): t is TabInfo => !!t),
+        listTabs: listTabsForPicker,
+        listTabGroups,
         getTab: async (tabId) => { try { return tabInfo(await chrome.tabs.get(tabId)); } catch { return null; } },
         focusTab: async (tabId, windowId) => {
             try {
@@ -144,10 +181,26 @@ export function configureSessionCommands(run: RunDeps): void {
             run.forgetRun(hash);
             forgetBackgroundChat(hash);
             await sessionStore?.forget([hash]);
+            // A session is in the live store OR the archive; deleting it means from both. Only when the archive is on:
+            // otherwise nothing was ever moved there, and asking would start SQLite for every delete.
+            if (archiveOn) {
+                const removed = await archiveCall<boolean>("remove", { hash }).catch(() => false);
+                if (removed) scheduleFolderSync();   // its month's folder file is rewritten without it
+            }
             try { await chrome.storage.local.remove(`ml_session_${hash}`); } catch { /* storage unavailable */ }
         },
         keepSession,
         pinSession,
+        renameSession,
+        ...(sessionStore ? { storageReport } : {}),
+        listModels: async () => {
+            const [{ ids }, cfg] = await Promise.all([listAvailableModels(), getConfig()]);
+            const allowed = ids.filter((m) => modelFilterAllows(m, cfg.modelFilter));
+            // Kinds cost an /api/show per model, cached for the worker's life: what lets a picker leave out an
+            // embedding model someone could not chat with.
+            const { caps } = await modelCapabilitiesBatch(cfg, allowed).catch(() => ({ caps: {} as Record<string, string[] | null> }));
+            return allowed.map((id) => ({ id, ...(caps[id] ? { kinds: caps[id]! } : {}), ...(id === cfg.model ? { default: true as const } : {}) }));
+        },
         startChat: (opts) => startBackgroundChat(opts),
         startAgent: async (tabId, opts) => {
             const reqId = Math.random().toString(36).slice(2, 12);
@@ -198,14 +251,7 @@ export function configureSessionCommands(run: RunDeps): void {
         cancelChat: (hash) => cancelBackgroundChat(hash),
         hostsChat: (hash) => isBackgroundChat(hash),
         utilityConfigured: () => utilityModelSet,
-        sideCall: async ({ messages, schema, maxTokens, session }) => {
-            const r = await fetchLLM({
-                messages, extend: "utility", maxTokens, think: false,
-                ...(schema ? { schema: schema as never } : {}),
-                hint: { use: "utility", ...(session ? { session: hintSession(session) } : {}) },
-            }) as { content: string | null; usage?: unknown };
-            return { content: r.content ?? "", usage: r.usage };
-        },
+        sideCall: utilityCall,
         captureVisible: async (windowId, opts) => {
             for (let attempt = 0; ; attempt++) {
                 try { return await chrome.tabs.captureVisibleTab(windowId, opts); }
@@ -223,6 +269,10 @@ export function configureSessionCommands(run: RunDeps): void {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** `sessionArchive`, as the store reads it: an evicted session moves to the SQLite archive rather than being deleted.
+ *  False until read, so nothing is moved on a guess. */
+let archiveOn = false;
+
 /** `sessionRetentionDays`, as the store reads it. Kept current from storage; 0 until read, which keeps everything. */
 let retentionDays = 0;
 /**
@@ -248,9 +298,16 @@ export const sessionStore = (() => {
             onEvict: (hashes) => { for (const hash of hashes) sessionServer.remove({ runtime: localRuntimeId(), hash }); },
             // Every session the store drops without being asked is a housekeeping decision, whichever rule made it.
             onEvicted: (e) => recordHousekeeping({
-                subsystem: "sessions", kind: "evict", reason: e.reason, key: e.hash, bytes: e.bytes,
-                detail: { outcome: e.outcome, idleDays: Math.floor(e.idleMs / DAY_MS) },
+                subsystem: "sessions", kind: e.outcome === "kept" ? "archive-failed" : "evict", reason: e.reason, key: e.hash, bytes: e.bytes,
+                detail: { outcome: e.outcome, idleDays: Math.floor(e.idleMs / DAY_MS), ...(e.error ? { error: e.error } : {}) },
             }),
+            archive: {
+                enabled: () => archiveOn,
+                move: async (row, events) => {
+                    await archiveCall<boolean>("put", { input: { summary: row.summary, events, history: row.history ?? null, split: row.split, bytes: row.bytes }, archivedTs: Date.now() });
+                    scheduleFolderSync();
+                },
+            },
             retainMs: () => Math.max(0, retentionDays) * DAY_MS,
             limits: storeLimits,
         });
@@ -269,23 +326,31 @@ export const sessionServer = new SessionServer(new SessionIndex({ runtime: local
 // events stay on disk until something subscribes to that session.
 // Retention runs BEFORE the list is restored, so a session past its time is forgotten rather than listed for a moment
 // and then removed; which needs the setting first.
+/** The worker's session settings, read once at startup whether or not there is a store: titling needs them too. */
+const settingsRead = readSessionSettings();
 if (sessionStore) {
     const store = sessionStore;
-    void readRetention()
+    void settingsRead
         .then(() => store.sweep())
         // A sweep that fails must not cost the list: the sessions it meant to drop are listed one more time instead.
         .catch(() => [])
         .then(() => store.open())
         .then((rows) => {
             sessionServer.restored(sessionServer.index.restore(rows.map((r) => ({ summary: r.summary, count: r.count }))));
+            void recordStorageSnapshot().catch(() => { /* storage unavailable */ });
         })
         .catch(() => { /* no storage: the list is whatever this worker sees from now on */ });
 }
 
-/** Read the store's settings once; never rejects, since a worker without storage keeps everything. */
-async function readRetention(): Promise<void> {
+/** Read the session settings once (retention, budget, titles); never rejects, since a worker without storage keeps
+ *  everything and titles nothing. */
+async function readSessionSettings(): Promise<void> {
     try {
-        const cfg = await chrome.storage.sync.get({ sessionRetentionDays: 0, sessionStoreBudgetMB: DEFAULT_CONFIG.sessionStoreBudgetMB }) as { sessionRetentionDays?: unknown; sessionStoreBudgetMB?: unknown };
+        const cfg = await chrome.storage.sync.get({ sessionRetentionDays: 0, sessionStoreBudgetMB: DEFAULT_CONFIG.sessionStoreBudgetMB, autoTitles: DEFAULT_CONFIG.autoTitles, utilityModel: "", sessionArchive: DEFAULT_CONFIG.sessionArchive }) as { sessionRetentionDays?: unknown; sessionStoreBudgetMB?: unknown; autoTitles?: unknown; utilityModel?: unknown; sessionArchive?: unknown };
+        autoTitles = cfg?.autoTitles !== false;
+        archiveOn = cfg?.sessionArchive === true;
+        // Also read by the callback below; read here too, since titling waits on this read and not on that one.
+        utilityModelSet = !!String(cfg?.utilityModel ?? "").trim();
         retentionDays = Math.max(0, Number(cfg?.sessionRetentionDays) || 0);
         budgetMB = parseBudget(cfg?.sessionStoreBudgetMB);
     } catch { /* keep everything */ }
@@ -311,6 +376,8 @@ try {
     chrome.storage.onChanged?.addListener((changes, area) => {
         if (area !== "sync") return;
         if (changes.agentStartPage) agentStartPage = String(changes.agentStartPage.newValue ?? "").trim();
+        if (changes.autoTitles) autoTitles = changes.autoTitles.newValue !== false;
+        if (changes.sessionArchive) archiveOn = changes.sessionArchive.newValue === true;
         // A shorter retention applies now, not on the next write: someone who just lowered it expects the list to
         // shrink while they watch.
         if (changes.sessionRetentionDays || changes.sessionStoreBudgetMB) {
@@ -352,6 +419,40 @@ export function keepSession(hash: string): void {
     for (const event of already) sessionStore.put({ ...summary, saved: true }, event);
 }
 
+const HISTORY_KEY = "ml_storage_history";
+const SNAPSHOT_ALARM = "ml-storage-snapshot";
+/** A snapshot a day; the alarm checks more often, so a browser closed at the usual time still records one. */
+const SNAPSHOT_EVERY_MS = 20 * 60 * 60 * 1000;
+const SNAPSHOT_CHECK_MIN = 6 * 60;
+
+/** The recorded history, oldest first. Empty when nothing was recorded or storage is unavailable. */
+async function storageHistory(): Promise<StorageSnapshot[]> {
+    try {
+        const got = await chrome.storage.local.get(HISTORY_KEY) as Record<string, unknown>;
+        return Array.isArray(got[HISTORY_KEY]) ? got[HISTORY_KEY] as StorageSnapshot[] : [];
+    } catch { return []; }
+}
+
+/**
+ * Record today's snapshot when the last one is a day old. Sums the rows' running breakdowns, so it costs nothing like
+ * a read of the store; it is what lets the Storage page show what grew, over months of real use, which no single
+ * measurement can.
+ */
+export async function recordStorageSnapshot(): Promise<void> {
+    if (!sessionStore) return;
+    const next = appendSnapshot(await storageHistory(), await sessionStore.snapshot(), SNAPSHOT_EVERY_MS);
+    if (next) await chrome.storage.local.set({ [HISTORY_KEY]: next });
+}
+
+/** `storage.stats`, and the DevTools Storage section: the history, today's picture, and the largest sessions. */
+export async function storageReport(): Promise<StorageReport> {
+    const store = sessionStore!;
+    const [history, now, largest] = await Promise.all([storageHistory(), store.snapshot(), store.largest()]);
+    // Only when it is on: asking would start SQLite for a page that has never used the archive.
+    const archive = archiveOn ? await archiveCall<NonNullable<StorageReport["archive"]>>("stats").catch(() => undefined) : undefined;
+    return { history, now, largest, ...(archive ? { archive } : {}) };
+}
+
 /**
  * Where the saved-session store's bytes go (session-storage-stats.ts). Reads every session from disk one at a time,
  * so it is for a person asking, never for anything on a timer. Null when this worker has no store.
@@ -367,6 +468,51 @@ export async function sessionStorageStats(): Promise<StoreBytes | null> {
     return summarizeStore(rows, seen);
 }
 
+/** A small model call on the utility profile: `side.call`, and the runtime's own titles. */
+async function utilityCall({ messages, schema, maxTokens, session }: { messages: NeutralMessage[]; schema?: object; maxTokens: number; session?: string }): Promise<{ content: string; usage?: unknown }> {
+    const r = await fetchLLM({
+        messages, extend: "utility", maxTokens, think: false,
+        ...(schema ? { schema: schema as never } : {}),
+        hint: { use: "utility", ...(session ? { session: hintSession(session) } : {}) },
+    }) as { content: string | null; usage?: unknown };
+    return { content: r.content ?? "", usage: r.usage };
+}
+
+/** `autoTitles`, as the worker reads it: the same switch that lets the sidebar title sessions. */
+let autoTitles = DEFAULT_CONFIG.autoTitles;
+/** Sessions a title was asked for in this worker's life, so a failure is not retried on every event. Bounded. */
+const titleAsked = new Set<string>();
+const MAX_TITLE_ASKED = 1000;
+
+/**
+ * Title a session this runtime keeps, once: so every device shows one name rather than each generating its own.
+ * Only a SAVED session (an ephemeral one is gone before the name matters), one with something to summarise, not
+ * already titled or named by a person, and only with a utility model set and auto-titles on — without a utility
+ * model the call would fall to the main model, which nobody asked to spend on this.
+ */
+export function maybeTitle(hash: string): void {
+    const row = sessionServer.index.get(hash);
+    if (!row?.saved || row.title || row.renamed || row.kind === "embed" || !row.task?.trim()) return;
+    if (!utilityModelSet || !autoTitles || titleAsked.has(hash)) return;
+    if (titleAsked.size >= MAX_TITLE_ASKED) titleAsked.delete(titleAsked.values().next().value as string);
+    titleAsked.add(hash);
+    void utilityCall({ messages: titleMessages(row.task), maxTokens: 32, session: hash }).then((r) => {
+        const title = cleanTitle(r.content);
+        const now = sessionServer.index.get(hash);
+        // Renamed, titled or deleted while the model was asked: that answer wins.
+        if (!title || !now || now.title || now.renamed) return;
+        const changed = sessionServer.retitle(hash, title);
+        if (changed) sessionStore?.putSummary(changed);
+    }).catch(() => { /* no title: the list shows the task */ });
+}
+
+/** `session.rename`: a person's title, which the runtime never replaces; or null, back to a generated one. */
+export function renameSession(hash: string, title: string | null): void {
+    const row = sessionServer.retitle(hash, title, !!title);
+    if (row) sessionStore?.putSummary(row);
+    if (!title) { titleAsked.delete(hash); maybeTitle(hash); }
+}
+
 /**
  * Pin a session, or unpin it. Pinning keeps it first, through `keepSession`, so the events it has already emitted
  * reach the store with it; the row then carries `pinned`, which is what the store's eviction reads and what a
@@ -376,6 +522,8 @@ export function pinSession(hash: string, pinned: boolean): void {
     if (pinned) keepSession(hash);
     const row = sessionServer.pin(hash, pinned);
     if (row) sessionStore?.putSummary(row);
+    // A finished session emits nothing more, so being kept is the last chance to title it.
+    if (pinned) maybeTitle(hash);
 }
 
 /**
@@ -423,6 +571,7 @@ export function ingestSessionEvent(event: unknown, source: IngestSource): void {
         if (pendingKeep.has(out.session.hash)) keepSession(out.session.hash);
         const row = sessionServer.index.get(out.session.hash);
         if (wasSaved && row && sessionStore) sessionStore.put(row, out.event);
+        if (row?.saved) maybeTitle(out.session.hash);
     } catch { /* refused */ }
 }
 
@@ -442,3 +591,14 @@ export function serveSessionsPort(port: chrome.runtime.Port): void {
     }
     sessionServer.attach(port);
 }
+
+// The storage history's clock. An alarm, not a timer: a timer is what would keep the worker alive to wait for it.
+try {
+    chrome.alarms?.onAlarm.addListener((a) => {
+        if (a.name !== SNAPSHOT_ALARM) return;
+        void recordStorageSnapshot().catch(() => {});
+        // The same clock catches a folder whose grant came back (re-granted from a page since the last write).
+        if (archiveOn) void archiveCall("sync").catch(() => {});
+    });
+    void chrome.alarms?.get(SNAPSHOT_ALARM).then((a) => { if (!a) void chrome.alarms.create(SNAPSHOT_ALARM, { periodInMinutes: SNAPSHOT_CHECK_MIN }); }).catch(() => {});
+} catch { /* no alarms (a test harness) */ }

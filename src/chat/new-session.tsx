@@ -12,7 +12,7 @@
 // does. A phone talking to a headless box gets a chat form and no tabs, without this file knowing what a box is.
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
-import type { AgentTarget, Principal, RuntimeInfo, SessionKey, SessionSummary, TabInfo } from "../session-host";
+import type { AgentTarget, Principal, RuntimeInfo, SessionKey, SessionSummary, TabGroupInfo, TabInfo } from "../session-host";
 import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
 import { mayCommand } from "./grants";
@@ -60,6 +60,7 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
     const [tabId, setTabId] = useState<number | null>(null);
     const [url, setUrl] = useState("");
     const [tabs, setTabs] = useState<TabInfo[] | null>(null);
+    const [groups, setGroups] = useState<TabGroupInfo[]>([]);
     const wantsTabs = enabled && !!rt?.capabilities?.tabs;
     useEffect(() => {
         if (!wantsTabs || !rt) { setTabs(null); return; }
@@ -68,6 +69,7 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
         void store.send({ type: "tabs.list", runtime: rt.id }, { quiet: true }).then((r) => {
             if (!live) return;
             const list = r.ok ? r.data.tabs : [];
+            setGroups(r.ok ? r.data.groups ?? [] : []);
             setTabs(list);
             setTabId((id) => (id != null && list.some((t) => t.tabId === id) ? id : list.find((t) => t.active)?.tabId ?? list[0]?.tabId ?? null));
             if (!list.length) setWhere("blank");
@@ -103,7 +105,7 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
         ) : null,
         inline: enabled ? (
             <>
-                <TabPicker tabs={tabs} value={where === "tab" && tabId != null ? tabId : "blank"}
+                <TabPicker tabs={tabs} groups={groups} value={where === "tab" && tabId != null ? tabId : "blank"}
                     onChange={(v) => { if (v === "blank") setWhere("blank"); else { setWhere("tab"); setTabId(v); } }} />
                 {where === "blank" ? (
                     <input class="chat-pick-url" type="url" value={url} aria-label="Page to open" placeholder="https://… (optional)"

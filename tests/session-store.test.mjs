@@ -278,3 +278,50 @@ test("the store expires on a sweep and on a write, and records each drop with it
     await store.flush();
     assert.deepEqual(records.slice(2).map((r) => [r.hash, r.reason]).sort(), [["aaaa0003", "retention"], ["aaaa0004", "retention"]]);
 });
+
+test("a session keeps a running breakdown from its first event, and one saved before that stays unmeasured", T, async () => {
+    const be = backend();
+    const store = new SessionStore(be, { flushMs: 5 });
+    store.put(summary("aaaa0001"), ev("aaaa0001", 0));
+    store.put(summary("aaaa0001"), ev("aaaa0001", 1));
+    await store.flush();
+    // A row written by an older build: events on disk, no breakdown.
+    await be.append({ hash: "aaaa0002", summary: summary("aaaa0002"), lastTs: 1, createdTs: 1, bytes: 777, count: 3 }, 0, []);
+    const again = new SessionStore(be, { flushMs: 5 });
+    again.put(summary("aaaa0002"), ev("aaaa0002", 3));
+    await again.flush();
+    const snap = await again.snapshot();
+    const row1 = (await be.rows()).find((r) => r.hash === "aaaa0001");
+    assert.equal(row1.split.total, row1.bytes, "measured from the start: the breakdown is all of it");
+    assert.equal((await be.rows()).find((r) => r.hash === "aaaa0002").split, undefined, "not measured from its first event");
+    assert.ok(snap.unmeasured >= 777);
+    assert.deepEqual((await again.largest(1)).map((r) => r.hash), [row1.bytes > 777 + JSON.stringify(ev("aaaa0002", 3)).length ? "aaaa0001" : "aaaa0002"]);
+});
+
+test("with the archive on, an evicted session is MOVED; a failed move keeps it and is not retried for an hour", T, async () => {
+    const be = backend();
+    let now = 10 * DAY, fail = false;
+    const moved = [], records = [];
+    const store = new SessionStore(be, {
+        flushMs: 5, now: () => now, retainMs: () => 5 * DAY, onEvicted: (e) => records.push(e),
+        archive: { enabled: () => true, move: async (row, events) => { if (fail) throw new Error("no OPFS here"); moved.push([row.hash, events.length]); } },
+    });
+    store.put(summary("aaaa0001", { lastTs: 1 * DAY }), ev("aaaa0001", 0, { ts: 1 * DAY }));
+    store.put(summary("aaaa0001", { lastTs: 1 * DAY }), ev("aaaa0001", 1, { ts: 1 * DAY }));
+    store.put(summary("aaaa0002", { lastTs: 2 * DAY }), ev("aaaa0002", 0, { ts: 2 * DAY }));
+    fail = true;
+    await store.flush();
+    assert.equal(store.has("aaaa0001"), true, "kept: deleting what was meant to be archived cannot be undone");
+    assert.deepEqual(records.map((r) => [r.hash, r.outcome]), [["aaaa0001", "kept"], ["aaaa0002", "kept"]]);
+    assert.match(records[0].error, /no OPFS/);
+
+    await store.sweep();
+    assert.equal(records.length, 2, "not retried, and not logged again, within the hour");
+
+    fail = false;
+    now += 61 * 60 * 1000;
+    await store.sweep();
+    assert.deepEqual(moved, [["aaaa0001", 2], ["aaaa0002", 1]], "every event goes with it");
+    assert.deepEqual(records.slice(2).map((r) => [r.hash, r.outcome]), [["aaaa0001", "archived"], ["aaaa0002", "archived"]]);
+    assert.equal(store.has("aaaa0001"), false);
+});

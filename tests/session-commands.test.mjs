@@ -51,7 +51,9 @@ function world(over = {}) {
         cancelChat: rec("cancelChat", true),
         hostsChat: rec("hostsChat", false),
         keepSession: rec("keepSession"),
+        listModels: rec("listModels", async () => [{ id: "m", default: true }]),
         pinSession: rec("pinSession", (hash, pinned) => { index.setPinned(hash, pinned); }),
+        renameSession: rec("renameSession", (hash, title) => { index.setTitle(hash, title, !!title); }),
         startAgent: rec("startAgent", async () => ({ outcome: "started", hash: "ab120001" })),
         history: rec("history", async () => AGENT_HISTORY),
         storedEvents: rec("storedEvents", async () => STORED),
@@ -80,6 +82,7 @@ test("every session command refuses a session this runtime does not hold, or ano
         { type: "session.continue", session: sid("ffff0000") },
         { type: "session.delete", session: sid("ffff0000") },
         { type: "session.pin", session: sid("ffff0000"), pinned: true },
+        { type: "session.rename", session: sid("ffff0000"), title: "x" },
         { type: "approval.answer", session: sid("ffff0000"), seq: 1, decision: "approve" },
         { type: "page.highlight", session: sid("ffff0000"), ref: null },
         { type: "tabs.list", runtime: "laptop" },
@@ -145,6 +148,14 @@ test("session.continue only for a run stopped at its cap, through the page that 
     }
 });
 
+test("models.list: this runtime's list, another runtime's refused, and an unreachable backend is an empty list", async () => {
+    const { run } = world();
+    assert.deepEqual(await run({ type: "models.list", runtime: "local" }), { ok: true, data: { models: [{ id: "m", default: true }] } });
+    assert.equal(code(await run({ type: "models.list", runtime: "laptop" })), "not-found");
+    const down = world({ listModels: async () => { throw new Error("ECONNREFUSED"); } });
+    assert.deepEqual(await down.run({ type: "models.list", runtime: "local" }), { ok: true, data: { models: [] } });
+});
+
 test("session.pin: bounded, idempotent, and handed to the one pin path", async () => {
     const { run, index, named } = world();
     index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
@@ -169,6 +180,29 @@ test("session.pin: bounded, idempotent, and handed to the one pin path", async (
     assert.equal(code(await run({ type: "session.pin", session: sid("b0000000"), pinned: true })), "ok");
     assert.equal(code(await run({ type: "session.pin", session: sid("b0000000"), pinned: false })), "ok");
     assert.equal(code(await run({ type: "session.pin", session: sid("aaaa0001"), pinned: true })), "ok");
+});
+
+test("tabs.list carries groups only when the runtime can name some", async () => {
+    const none = world();
+    assert.deepEqual(Object.keys((await none.run({ type: "tabs.list", runtime: "local" })).data), ["tabs"]);
+    const named = world({ listTabGroups: async () => [{ id: 5, title: "Work", color: "blue" }] });
+    assert.deepEqual((await named.run({ type: "tabs.list", runtime: "local" })).data.groups, [{ id: 5, title: "Work", color: "blue" }]);
+    const broken = world({ listTabGroups: async () => { throw new Error("no permission"); } });
+    assert.equal((await broken.run({ type: "tabs.list", runtime: "local" })).ok, true, "a group failure never costs the tabs");
+});
+
+test("session.rename: capped, marked as a person's, and empty goes back to generated", async () => {
+    const { run, index, named } = world();
+    index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    assert.equal(code(await run({ type: "session.rename", session: sid("aaaa0001"), title: 7 })), "invalid");
+    const r = await run({ type: "session.rename", session: sid("aaaa0001"), title: "  Lamp   hunt  " });
+    assert.deepEqual(r, { ok: true, data: { title: "Lamp hunt" } });
+    assert.equal(index.get("aaaa0001").title, "Lamp hunt");
+    assert.equal(index.get("aaaa0001").renamed, true);
+    const back = await run({ type: "session.rename", session: sid("aaaa0001"), title: "   " });
+    assert.deepEqual(back, { ok: true, data: { title: "" } });
+    assert.deepEqual(named("renameSession").at(-1), ["renameSession", "aaaa0001", null]);
+    assert.equal(index.get("aaaa0001").renamed, undefined);
 });
 
 test("session.delete refuses a running session, and forgets a finished one everywhere", async () => {

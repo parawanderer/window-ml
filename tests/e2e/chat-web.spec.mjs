@@ -231,8 +231,15 @@ test("desktop: with nothing open the page is a start box; an agent run picks a t
     const options = list.getByRole("option");
     await expect(options.first()).toHaveText("New tab");
     await expect(list.locator(".tp-rule")).toHaveCount(1);
-    await expect(options).toHaveText([/New tab/, /The front page.*news\.example/, /Tables — API reference/, /Inbox \(3\)/, /Flights AMS → LIS/]);
+    await expect(options).toHaveText([/New tab/, /The front page.*news\.example/, /Tables — API reference/, /Pointers — the pipe dialect/, /Your cart/, /Inbox \(3\)/, /Flights AMS → LIS/]);
     await expect(list.locator(".tp-window")).toHaveCount(3);
+    // A group the runtime can name has a coloured heading; one it cannot (no tabGroups grant) is a plain rule. Both
+    // indent their tabs. A runtime-made icon is drawn; a tab without one gets its site's letter.
+    await expect(list.locator(".tp-group")).toHaveText([/Research\s*2/]);
+    await expect(list.locator(".tp-group-rule")).toHaveCount(1);
+    await expect(list.locator(".tp-row.indent")).toHaveCount(3);
+    await expect(list.getByRole("option", { name: /The front page/ }).locator("img.tp-fav")).toHaveCount(1);
+    await expect(list.getByRole("option", { name: /Inbox/ }).locator(".tp-letter")).toHaveText("M");
     // The host is what fits; hovering it shows the whole address, over the list.
     await list.getByRole("option", { name: /Flights AMS/ }).locator(".tp-host").hover();
     const tip = page.locator(".cursor-tip");

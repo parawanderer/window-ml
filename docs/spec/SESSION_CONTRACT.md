@@ -176,6 +176,9 @@ runtime answers a type or option it does not offer with `unsupported`.
 | `session.cancel` | drive | | `sessionCancel` → `CANCEL_RUN` |
 | `session.continue`: past the step cap | drive | | `continueRun` |
 | `session.delete` | drive | `persistence` for saved sessions | nothing |
+| `session.rename`: a person's title, trimmed and capped (80); empty returns to a generated one; the row's `title` and `renamed` change by `upsert` | drive | | nothing |
+| `models.list`: what `chat.start`/`agent.start` would accept, after the runtime's whitelist, with `kinds` and the `default` marked; empty when the backend is unreachable | view | | `LIST_MODELS` |
+| `storage.stats`: where saved-session storage goes now (images, tool output by tool, the rest, unmeasured), a daily history of the same (no session hashes), and the largest sessions | view | `persistence` | `STORAGE_HISTORY` |
 | `session.pin`: keep a session whatever the caps and retention say, or stop; the row's `pinned` changes by `upsert`; bounded, `conflict` past it | drive | `persistence` | nothing |
 | `approval.answer`: by the pending step's `seq`; `persist`, `feedback` | approve | | `approval` → `SET_APPROVAL` → `resolveApproval` |
 | `chat.start` | drive | `chat` | nothing background-hosted |
@@ -183,7 +186,7 @@ runtime answers a type or option it does not offer with `unsupported`.
 | `session.resume`: pick a saved session up on another page, by target | drive | `persistence`, `tabs`, and `agent` or `chat` by the session's kind | nothing |
 | `session.backfill`: a page of a session's events, older than a position | view | `persistence` | nothing |
 | `runtime.info`: what this runtime IS — its kind, contract version, capabilities and its own clock | view | | nothing |
-| `tabs.list` | drive | `tabs` | nothing |
+| `tabs.list`: windows in order (the focused one first), each window's tabs in strip order, with `index`, `groupId` and a `favicon` data URL the RUNTIME fetched (a client never loads a site's own icon URL); `groups` with names and colours where the runtime can name them | drive | `tabs` | nothing |
 | `tab.focus`: bring a tab and its window to the front; only a tab `tabs.list` would show | drive | `tabs` | nothing |
 | `tab.screenshot`: on demand, size-capped | screen | `screenshots` | `CAPTURE_TAB` |
 | `page.highlight`: a selector, a canvas token, or clear | drive | `highlight` | `__mlHighlight` → `ML_HL_REMOTE` |

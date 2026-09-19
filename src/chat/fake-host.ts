@@ -8,9 +8,10 @@
 import type { MlDebugEvent } from "../contract-debug";
 import {
     COMMAND_SCOPE, SESSION_CONTRACT_VERSION, sessionKey,
-    type Command, type CommandResult, type HostStatus, type Principal, type RuntimeId, type RuntimeInfo, type SessionHost,
-    type SessionId, type SessionIndexUpdate, type SessionKey, type SessionStreamMessage, type SessionSummary, type StreamPosition, type Unsubscribe,
+    type Command, type CommandResult, type HostStatus, type ModelChoice, type Principal, type RuntimeId, type RuntimeInfo, type SessionHost,
+    type SessionId, type SessionIndexUpdate, type SessionKey, type SessionStreamMessage, type SessionSummary, type StreamPosition, type TabGroupInfo, type TabInfo, type Unsubscribe,
 } from "../session-host";
+import { capTitle } from "../session-title";
 import { holds } from "./grants";
 
 interface Logged { cursor: number; event: MlDebugEvent }
@@ -31,13 +32,23 @@ let epochSeq = 0;
 const newEpoch = () => `e${++epochSeq}`;
 
 /** The tabs a demo runtime says it has, so the new-session form's picker has something real to show. */
-const DEMO_TABS = [
-    { tabId: 11, url: "https://news.example/front", title: "The front page", active: true, windowId: 1 },
-    { tabId: 12, url: "https://docs.example/api/tables", title: "Tables — API reference", active: false, windowId: 1 },
+/** A favicon as the runtime hands one on: a small image already turned into a data URL. */
+const DEMO_ICON = "data:image/svg+xml;utf8," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" rx="3" fill="#4f7cff"/><path d="M4 11V5h2l2 3 2-3h2v6" stroke="#fff" stroke-width="1.6" fill="none"/></svg>`);
+
+/** The demo's tabs, in the order a runtime sends them (focused window first, strip order within it). Window 1 holds
+ *  one group the runtime can name ("Research") and one it cannot (no `tabGroups` grant), so both drawings show. */
+const DEMO_TABS: TabInfo[] = [
+    { tabId: 11, url: "https://news.example/front", title: "The front page", active: true, windowId: 1, index: 0, favicon: DEMO_ICON },
+    { tabId: 12, url: "https://docs.example/api/tables", title: "Tables — API reference", active: false, windowId: 1, index: 1, groupId: 5 },
+    { tabId: 14, url: "https://docs.example/api/pointers#pipe", title: "Pointers — the pipe dialect", active: false, windowId: 1, index: 2, groupId: 5 },
+    { tabId: 15, url: "https://shop.example/cart", title: "Your cart", active: false, windowId: 1, index: 3, groupId: 6 },
     { tabId: 13, url: "https://mail.example/inbox", title: "Inbox (3)", active: false, windowId: 2 },
     // The tab the demo world's flight runs are driving (their `page.tabId`), so `tab.focus` on their chip finds it.
     { tabId: 41, url: "https://flights.example/search?from=AMS&to=LIS", title: "Flights AMS → LIS", active: true, windowId: 3 },
 ];
+
+/** The groups the runtime can name; group 6 is left out, as it is without the `tabGroups` grant. */
+const DEMO_GROUPS: TabGroupInfo[] = [{ id: 5, title: "Research", color: "blue" }];
 
 /** What the demo world hands back for a screenshot: an SVG of a page rather than a real capture, because the point
  *  of the demo is the button, the round trip and the viewer, and none of those can tell. */
@@ -94,6 +105,13 @@ export class FakeHost implements SessionHost {
      * then says where they begin (`from`) and `session.backfill` serves the rest. Unset: the whole history, `from: 0`.
      */
     ringLimit?: number;
+    /** What `models.list` answers, on every runtime. */
+    models: ModelChoice[] = [
+        { id: "qwen3:32b", kinds: ["completion", "tools", "thinking"], default: true },
+        { id: "gemma3:27b", kinds: ["completion", "vision"] },
+        { id: "nomic-embed-text", kinds: ["embedding"] },
+    ];
+
     /** A short ring WITHOUT the session's start, as an older runtime would send it, to exercise the fallback. */
     ringDropsStart?: boolean;
 
@@ -275,7 +293,7 @@ export class FakeHost implements SessionHost {
             case "page.highlight":
                 return caps.highlight ? ok({}) : fail("unsupported", "no page to highlight on");
             case "tabs.list":
-                return caps.tabs ? ok({ tabs: DEMO_TABS }) : fail("unsupported", "this runtime has no tabs");
+                return caps.tabs ? ok({ tabs: DEMO_TABS, groups: DEMO_GROUPS }) : fail("unsupported", "this runtime has no tabs");
             // The real runtime can only capture the tab its window is SHOWING (src/session-commands.ts), so a run
             // working in a background tab is refused rather than captured behind the scenes. The demo world keeps
             // that rule, since a peek that always works would teach the UI the wrong lesson about when it does.
@@ -297,6 +315,8 @@ export class FakeHost implements SessionHost {
                 const from = Math.max(0, end - Math.min(c.limit ?? 40, 40));
                 return ok({ session: h.summary.id, epoch: h.epoch, events: h.log.slice(from, end).map((e) => e.event), from, more: from > 0, truncated: from === 0 && h.lostBefore > 0 });
             }
+            case "models.list":
+                return ok({ models: this.models });
             case "runtime.info":
                 return ok({ kind: rt.kind, contractVersion: rt.contractVersion, capabilities: caps, nowMs: Date.now() });
             // Starting a session: the demo world mints one and answers the first turn, so the new-session form is
@@ -388,6 +408,12 @@ export class FakeHost implements SessionHost {
             case "session.delete":
                 this.deleteSession(key);
                 return ok({});
+            case "session.rename": {
+                if (!key || !h) return fail("not-found", "no such session");
+                const title = capTitle(c.title ?? "");
+                this.updateSummary(key, title ? { title, renamed: true } : { title: SIDE_REPLIES.title, renamed: undefined });
+                return ok({ title });
+            }
             case "session.pin":
                 if (!key || !h) return fail("not-found", "no such session");
                 this.updateSummary(key, c.pinned ? { pinned: true, saved: true } : { pinned: undefined });

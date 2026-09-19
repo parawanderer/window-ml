@@ -9,6 +9,7 @@ import type { MlDebugEvent } from "../contract-debug";
 import { isBackendUnreachable } from "../contract-server";
 import { services } from "./services";
 import { truncate, lastUser, rollupStatus } from "./format";
+import { cleanTitle, titleMessages } from "../session-title";
 
 // The highest (cumulative) step number seen so far — the position a say()/answer arriving NOW belongs at,
 // so the chat log interleaves user messages + answers with the turn step-groups in order.
@@ -300,18 +301,10 @@ export function onDebug(ev: MlDebugEvent, runtime?: string): void {
  */
 export const titleTried = new Set<string>();
 
-function cleanTitle(raw: string): string {
-    const line = raw.trim().split("\n").map(s => s.trim()).filter(Boolean)[0] || "";
-    return truncate(line.replace(/^["'`*]+|["'`*.]+$/g, "").trim(), 60);
-}
-
 /** Ask the utility model for a short session title, once per session, best-effort. */
 export function genTitle(hash: string, prompt: string): void {
     const started = Date.now();
-    const messages = [
-        { role: "system", content: "You write terse 3-6 word titles for a request. Reply with ONLY the title — no quotes, no trailing punctuation, no preamble." },
-        { role: "user", content: `Summarise this request as a short title:\n\n${truncate(prompt, 500)}` },
-    ];
+    const messages = titleMessages(prompt);
     // A side task about this session: the host tags the request with its id.
     void services().sideCall({ purpose: "title", session: hash, messages, maxTokens: 32 }).then((r) => {
         const s = sessionMap.get(hash);
