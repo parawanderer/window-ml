@@ -4,6 +4,7 @@
     "version": "1.0",
     "incognito": "spanning",
     "permissions": ["scripting", "activeTab", "storage", "offscreen", "debugger", "contextMenus", "webNavigation", "alarms", "unlimitedStorage"],
+    "optional_permissions": ["tabGroups"],
     "content_security_policy": {
       "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
     },

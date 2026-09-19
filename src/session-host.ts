@@ -555,6 +555,23 @@ export interface TabInfo {
     title: string;
     active: boolean;
     windowId?: number;
+    /** its position in its window's tab strip */
+    index?: number;
+    /** the tab group it is in; absent when it is in none. Names and colours come in `tabs.list`'s `groups`. */
+    groupId?: number;
+    /**
+     * A small icon as a `data:image/…` URL the RUNTIME fetched, never the site's own icon URL: a client loading that
+     * would tell each site, and the client's network, what the runtime has open. Absent when there is none.
+     */
+    favicon?: string;
+}
+
+/** A tab group, for a picker that draws tabs the way the browser's strip does. */
+export interface TabGroupInfo {
+    id: number;
+    title?: string;
+    /** the browser's colour name (`blue`, `red`, …); a client maps it to its own palette */
+    color?: string;
 }
 
 export type { StorageReport, StorageSnapshot } from "./session-storage-stats";
@@ -607,7 +624,9 @@ export interface CommandResultData {
     /** What a transport cannot know about a runtime, from the runtime. `nowMs` is its OWN clock at the moment it
      *  answered, which is how `clockOffsetMs` is estimated: the round trip bounds the error. */
     "runtime.info": { kind: RuntimeInfo["kind"]; contractVersion: number; capabilities: RuntimeCapabilities; nowMs: number };
-    "tabs.list": { tabs: TabInfo[] };
+    /** Windows in order, the focused one first; each window's tabs in strip order. `groups` only where the runtime
+     *  can name them (in this browser, after the optional `tabGroups` permission was granted). */
+    "tabs.list": { tabs: TabInfo[]; groups?: TabGroupInfo[] };
     "device.list": { devices: DeviceInfo[] };
     /** the new window, so a list can say when it next needs attention without asking again */
     "device.renew": { notAfterMs: number };

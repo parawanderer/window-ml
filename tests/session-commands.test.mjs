@@ -182,6 +182,15 @@ test("session.pin: bounded, idempotent, and handed to the one pin path", async (
     assert.equal(code(await run({ type: "session.pin", session: sid("aaaa0001"), pinned: true })), "ok");
 });
 
+test("tabs.list carries groups only when the runtime can name some", async () => {
+    const none = world();
+    assert.deepEqual(Object.keys((await none.run({ type: "tabs.list", runtime: "local" })).data), ["tabs"]);
+    const named = world({ listTabGroups: async () => [{ id: 5, title: "Work", color: "blue" }] });
+    assert.deepEqual((await named.run({ type: "tabs.list", runtime: "local" })).data.groups, [{ id: 5, title: "Work", color: "blue" }]);
+    const broken = world({ listTabGroups: async () => { throw new Error("no permission"); } });
+    assert.equal((await broken.run({ type: "tabs.list", runtime: "local" })).ok, true, "a group failure never costs the tabs");
+});
+
 test("session.rename: capped, marked as a person's, and empty goes back to generated", async () => {
     const { run, index, named } = world();
     index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
