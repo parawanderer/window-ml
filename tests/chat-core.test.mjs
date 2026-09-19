@@ -10,7 +10,7 @@ import { FakeHost } from "../src/chat/fake-host.ts";
 import { hostServices } from "../src/chat/host-services.ts";
 import { holds, mayCommand } from "../src/chat/grants.ts";
 import { resumableHere } from "../src/chat/new-session.tsx";
-import { CALM_KEY, LIST_KEY, calm, installViewPrefs, listOpen, setCalm, setListOpen } from "../src/chat/view-mode.tsx";
+import { CALM_KEY, LIST_KEY, PINNED_KEY, calm, dropPin, installViewPrefs, listOpen, pinned, setCalm, setListOpen, togglePin } from "../src/chat/view-mode.tsx";
 import { sessionMap, view } from "../src/sidebar/store.ts";
 import { SESSION_CONTRACT_VERSION } from "../src/session-host.ts";
 
@@ -468,4 +468,70 @@ test("view prefs: calm is the default, a stored answer wins, and both toggles wr
     // A stored value of the wrong shape is ignored rather than coerced: `undefined` means "never asked".
     installViewPrefs(fakePrefs({ [CALM_KEY]: "yes" }));
     assert.equal(calm.value, true);
+});
+
+test("view prefs: a pin is this device's, survives a reload, and a delete from here takes it away", () => {
+    const prefs = fakePrefs();
+    installViewPrefs(prefs);
+    assert.deepEqual([...pinned.value], []);
+    togglePin("laptop:aaaa0001");
+    togglePin("laptop:bbbb0002");
+    assert.deepEqual(prefs.all.get(PINNED_KEY), ["laptop:aaaa0001", "laptop:bbbb0002"]);
+    togglePin("laptop:aaaa0001");   // pressed again: unpinned
+    assert.deepEqual([...pinned.value], ["laptop:bbbb0002"]);
+
+    installViewPrefs(fakePrefs({ [PINNED_KEY]: ["laptop:bbbb0002", 7] }));   // a junk entry is dropped, not coerced
+    assert.deepEqual([...pinned.value], ["laptop:bbbb0002"]);
+    dropPin("laptop:bbbb0002");
+    dropPin("laptop:never");   // not pinned: nothing happens
+    assert.deepEqual([...pinned.value], []);
+});
+
+// The tab picker's order (src/chat/tab-tree.ts): the browser's, window by window, groups gathered under a heading.
+test("tabTree: browser order per window, a group's run of tabs under its heading, and no window heading for one window", async () => {
+    const { tabTree, faviconSrc, tabMatches } = await import("../src/chat/tab-tree.ts");
+    const t = (tabId, index, groupId, windowId = 1) => ({ tabId, url: `https://s${tabId}.example/`, title: `T${tabId}`, active: false, windowId, index, groupId });
+    // Arrival order is not strip order: `index` wins.
+    const one = tabTree([t(3, 2, -1), t(1, 0, -1), t(2, 1, 7), t(4, 3, 7), t(5, 4, 7)], [{ id: 7, title: "Research", color: "blue" }]);
+    assert.deepEqual(one.map((i) => i.kind === "tab" ? `${i.indent ? "  " : ""}${i.tab.tabId}` : i.kind === "group" ? `[${i.group.title}:${i.count}]` : `W${i.windowId}`),
+        ["1", "[Research:1]", "  2", "3", "[Research:2]", "  4", "  5"]);
+    // Two windows: a heading each, in the order their tabs arrived.
+    const two = tabTree([t(9, 0, -1, 2), t(1, 0, -1, 1)]);
+    assert.deepEqual(two.map((i) => i.kind === "window" ? `W${i.windowId}:${i.count}` : `${i.tab.tabId}`), ["W2:1", "9", "W1:1", "1"]);
+    // A group the runtime did not describe still gets a heading; a runtime that reports no index keeps arrival order.
+    const undescribed = tabTree([{ ...t(1), index: undefined, groupId: 4 }]);
+    assert.deepEqual(undescribed.map((i) => i.kind), ["group", "tab"]);
+    assert.equal(undescribed[0].described, false, "no name or colour to draw: a plain rule");
+    assert.equal(one.find((i) => i.kind === "group").described, true);
+    // Only a runtime-made data URL is ever drawn: a site's own favicon URL would be a fetch to that site.
+    assert.equal(faviconSrc({ ...t(1), favicon: "data:image/png;base64,AAAA" }), "data:image/png;base64,AAAA");
+    assert.equal(faviconSrc({ ...t(1), favicon: "https://evil.example/f.ico" }), null);
+    assert.equal(faviconSrc({ ...t(1), favicon: "javascript:alert(1)" }), null);
+    assert.ok(tabMatches(t(1), "s1.EXAMPLE") && !tabMatches(t(1), "nope"));
+});
+
+test("attentionItems: reported and checked codes once each, problems first, fixes only where this device can apply them", async () => {
+    const { attentionItems, attentionCount } = await import("../src/chat/attention.ts");
+    const rt = (id, caps) => ({ id, name: id === "local" ? "This browser" : "Lab box", kind: "browser", online: true, contractVersion: 1, grants: [], capabilities: caps });
+    const here = rt("local", { localSettings: true, archive: { folder: "needs-grant" }, attention: ["no-model"] });
+    const box = rt("box", { attention: ["no-utility-model", "some-future-code"] });
+    const local = new Map([["local", ["no-model", "tab-groups", "site-access"]]]);
+    const canFix = (r, fix) => r.id === "local" && (fix.kind === "settings" || fix.kind === "grant");
+    const items = attentionItems([here, box], local, canFix);
+    assert.deepEqual(items.map((i) => i.key), [
+        "local:no-model",                       // blocks: first, and once though both reported and checked
+        "local:archive-folder-lapsed", "local:site-access", "box:some-future-code",   // limits
+        "local:tab-groups", "box:no-utility-model",                                   // suggests
+    ]);
+    assert.equal(items.find((i) => i.key === "local:no-model").fix.kind, "settings");
+    assert.equal(items.find((i) => i.key === "box:no-utility-model").fix, undefined, "fixed on the box, not from here");
+    assert.match(items.find((i) => i.code === "some-future-code").detail, /does not know/, "an unknown code is said in general words");
+    assert.equal(attentionCount(items), 4, "suggestions are never counted");
+    // A dismissed suggestion is gone; a dismissed PROBLEM is not something a dismissal can hide.
+    const kept = attentionItems([here, box], local, canFix, new Set(["local:tab-groups", "local:site-access"]));
+    assert.ok(!kept.some((i) => i.key === "local:tab-groups"));
+    assert.ok(kept.some((i) => i.key === "local:site-access"));
+    // A runtime's text is never trusted as a code: long or non-string entries are dropped.
+    const odd = attentionItems([rt("x", { attention: ["a".repeat(65), 7, "ok-code"] })], new Map(), () => false);
+    assert.deepEqual(odd.map((i) => i.code), ["ok-code"]);
 });

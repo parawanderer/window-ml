@@ -24,6 +24,7 @@ import { runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayB
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw-debug";   // the DevTools panel's copy of the page debug stream
 import { startBackgroundRun, delegateStreams } from "./sw-run-host";
 import { pythonPrewarm, pythonExec, relayPyStdout } from "./sw-python";
+import { focusLineFor } from "./sw-focus";
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -667,6 +668,16 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         fetchOllamaInfo()
             .then(info => sendResponse({ data: info }))
             .catch(e => sendResponse({ error: String((e as Error)?.message || e) }));
+        return true;
+    } else if (message.type === "USER_FOCUS") {
+        // chat_metadata's "user focus" line, relative to the SENDER's own tab and always COARSE: it names no other
+        // site, since the asking page reads the answer. What coarse reveals (another tab, the chat page, away from the
+        // browser) is no more than a page can infer from its own focus and visibility, bar that the chat page is
+        // open. A sender with no tab gets nothing: this is a page's question about itself.
+        const tabId = sender.tab?.id;
+        const hash = typeof message.payload?.hash === "string" ? message.payload.hash.slice(0, 64) : "";
+        if (tabId == null) { sendResponse({ data: null }); return; }
+        focusLineFor(hash, tabId, "coarse").then((line) => sendResponse({ data: line })).catch(() => sendResponse({ data: null }));
         return true;
     } else if (message.type === "LIST_SERVER_TOOLS") {
         // Read-only discovery of what `toolIds` accepts. No sender gating: the tool

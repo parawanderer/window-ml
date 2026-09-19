@@ -36,6 +36,19 @@ export const IconChevron = () => (
     </svg>
 );
 /** Settings. */
+// A half-filled circle: light and dark, the page's theme.
+export const IconTheme = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+        <circle cx="12" cy="12" r="8.25" />
+        <path d="M12 3.75a8.25 8.25 0 0 1 0 16.5Z" fill="currentColor" stroke="none" />
+    </svg>
+);
+// An inbox tray: what needs someone's hand (the chat page's attention list).
+export const IconInbox = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z" />
+    </svg>
+);
 export const IconGear = () => (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
         <path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
@@ -100,11 +113,35 @@ export const IconMenu = () => (
         <path d="M4 6h16M4 12h16M4 18h16" />
     </svg>
 );
+/** Three bars of unequal length — a column-by-column SUMMARY of a table, as against its rows. */
+export const IconSummary = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+        <path d="M5 7h14M5 12h9M5 17h5" />
+    </svg>
+);
+/** A grid — a table's ROWS, as against a summary of them. */
+export const IconRows = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3.5" y="5" width="17" height="14" rx="2" /><path d="M3.5 10h17M3.5 14.5h17M10 10v9" />
+    </svg>
+);
+/** A tray with an arrow into it — keep this file. */
+export const IconSave = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 4v10m0 0 4-4m-4 4-4-4" /><path d="M5 17v1.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V17" />
+    </svg>
+);
+/** A magnifier — find one thing in a list long enough that scanning it has stopped working. */
+export const IconSearch = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" />
+    </svg>
+);
 /** A camera — capture what a tab looks like RIGHT NOW (the chat page's peek at the page a run is driving). */
 export const IconCamera = () => (
-    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M3 8.5A1.5 1.5 0 0 1 4.5 7h2.2l1-1.8h6.6l1 1.8h2.2A1.5 1.5 0 0 1 19 8.5v8A1.5 1.5 0 0 1 17.5 18h-11A1.5 1.5 0 0 1 5 16.5v-8" />
-        <circle cx="12" cy="12.3" r="3.1" />
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M2.5 8.6A2.1 2.1 0 0 1 4.6 6.5h2.6l1.2-2.3h7.2l1.2 2.3h2.6a2.1 2.1 0 0 1 2.1 2.1v9.2a2.1 2.1 0 0 1-2.1 2.1H4.6a2.1 2.1 0 0 1-2.1-2.1z" />
+        <circle cx="12" cy="13.1" r="3.9" />
     </svg>
 );
 /** Vision OFF — the composer's per-call native-vision toggle, struck through. */
@@ -205,5 +242,62 @@ export const IconTimer = ({ off = false }: { off?: boolean } = {}) => (
 export const IconPlay = () => (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true">
         <path d="M8.5 5.6 18 12l-9.5 6.4V5.6Z" />
+    </svg>
+);
+/** A pushpin — keep a session at the top of the list. */
+export const IconPin = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M9 3.5h6l-1 5.5 3.5 3.5v1.5h-11V12.5L10 9z" /><path d="M12 14v6.5" />
+    </svg>
+);
+/** A bin — delete something for good (always behind a confirmation). */
+export const IconTrash = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4.5 7h15M9.5 7V4.8h5V7" /><path d="M6.5 7l.9 12.2a1.5 1.5 0 0 0 1.5 1.3h6.2a1.5 1.5 0 0 0 1.5-1.3L17.5 7" /><path d="M10 11v6M14 11v6" />
+    </svg>
+);
+/** A left chevron — go back to where this view was opened from. */
+export const IconBack = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M14.5 5.5 8 12l6.5 6.5" />
+    </svg>
+);
+/** A clock with an arrow running back round it — older things, history. */
+export const IconHistory = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 12a8 8 0 1 0 2.4-5.7" /><path d="M4 4.5v3.8h3.8" /><path d="M12 8v4.3l2.8 1.8" />
+    </svg>
+);
+/** A pencil over a rounded page — start something new (the chat page's rail). */
+export const IconCompose = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M11 4.5H7A2.5 2.5 0 0 0 4.5 7v10A2.5 2.5 0 0 0 7 19.5h10a2.5 2.5 0 0 0 2.5-2.5v-4" /><path d="M17.3 3.9a1.9 1.9 0 0 1 2.8 2.8L12.5 14.3 9.5 15l.7-3z" />
+    </svg>
+);
+
+/** Dock a panel to one side: a window outline with that side's band filled, DevTools' own "Dock side" glyphs. */
+export const IconDock = ({ side }: { side: "top" | "right" | "bottom" | "left" }) => {
+    const band = { top: "M4.5 4.5h15v5h-15z", bottom: "M4.5 14.5h15v5h-15z", left: "M4.5 4.5h5v15h-5z", right: "M14.5 4.5h5v15h-5z" }[side];
+    return (
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true">
+            <rect x="4.5" y="4.5" width="15" height="15" rx="2" /><path d={band} fill="currentColor" stroke="none" />
+        </svg>
+    );
+};
+
+/** Unload every model from the box's memory: a chip with the eject glyph in it, because this takes what is loaded
+ *  OUT of the card (an arrow up over a bar read as "upload to it", which is the opposite). */
+export const IconEvictAll = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="5" y="5" width="14" height="14" rx="2" />
+        <path d="M2.5 9.5h2.5M2.5 14.5h2.5M19 9.5h2.5M19 14.5h2.5M9.5 2.5V5M14.5 2.5V5M9.5 19v2.5M14.5 19v2.5" />
+        <path d="M12 8.6l3 3.4H9z" fill="currentColor" stroke-width="1.2" /><path d="M9 15h6" />
+    </svg>
+);
+
+/** A plus: add, or "a new one" (the tab picker's "New tab"). */
+export const IconPlus = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+        <path d="M12 5v14M5 12h14" />
     </svg>
 );

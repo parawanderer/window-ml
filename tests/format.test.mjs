@@ -91,7 +91,15 @@ test("`_underscores_` are italic at a word boundary, but intraword `_` is litera
 
 test("emphasis never mangles a URL with underscores", () => {
     assert.equal(markdown("see [docs](https://x.com/a_b_c_d) now"),
-        '<p>see <a href="https://x.com/a_b_c_d" target="_blank" rel="noopener">docs</a> now</p>');
+        '<p>see <a class="md-link tt" href="https://x.com/a_b_c_d" target="_blank" rel="noopener" data-tip="Opens x.com/a_b_c_d in a new tab">docs</a> now</p>');
+});
+
+test("a link's tooltip says where it goes, and a long address is cut outside an entity", () => {
+    const long = `https://example.com/${"p".repeat(76)}&amp;q=1`;
+    const html = markdown(`[x](${long})`);
+    const tip = /data-tip="([^"]*)"/.exec(html)[1];
+    assert.ok(tip.startsWith("Opens example.com/"), tip);
+    assert.ok(!/&[#a-z0-9]*…/i.test(tip), `no half entity before the ellipsis: ${tip}`);
 });
 
 // --- blockquotes (`>`) ---

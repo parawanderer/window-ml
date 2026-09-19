@@ -267,6 +267,7 @@ const TIP = {
     autoApprovePython: "Experimental. Run readonly-mode python_exec calls without an approval prompt. A readonly run is isolated by construction — the WASM sandbox has no DOM, no filesystem, and (in this mode) no network or JS/extension scope — so it's a pure function over the injected data and can't affect the page or exfiltrate. A `mode:'full'` call (which the agent must explicitly request to get network) ALWAYS asks. Code with hidden/bidi characters also still asks.",
     autoApproveSameOriginAuth: "Advanced, default OFF. Auto-approve a fetch that spends your session on the SAME origin you're already on — a fetch_url/ml.fetch with credentials:true (sends your cookies), or a rendered:true load in a normal (non-incognito) tab that inherits your login. OFF keeps you in charge: those always ask. This never touches cross-origin fetches (always ask) or the uncredentialed same-origin reads (already free — the page could fetch its own origin itself).",
     protoStream: "Default AUTO. Ask for the streamed chat reply as varint-delimited PROTOBUF (Accept: application/protobuf) rather than OpenAI SSE, which re-sends the id/model/created/choices envelope for every token — measured here at 25x fewer bytes (7343 → 292). Self-negotiating, which is why asking by default is safe: the RESPONSE's content type picks the path, so a backend that doesn't serve it answers with the usual SSE and nothing breaks. ON sends the same request but REPORTS a reply that came back as SSE (once per URL, in the worker's console) — for when you believe your backend serves it; it never fails the call over it. OFF never sends the header. Tool calls and reasoning decode fine. Skipped for a call carrying toolIds, because OpenWebUI's source citations are emitted on a different route than protobuf is served over and would vanish silently. Saves BYTES, not time.",
+    agentSeesFocus: "Default ON. When you are not on the agent's tab, chat_metadata says where you are: the chat page (reading this run or not), another tab, or away from the browser. A run started from the extension's UI also gets that tab's site and title; a page-started run only \"another tab\". Never a full URL, never a private window. Off: nothing about where you are.",
     autoApproveSelfSource: "Default ON. Auto-approve an UNCREDENTIALED fetch_url/ml.fetch of the agent's OWN repo source — committed files (raw.githubusercontent.com) or structural/code API endpoints (api.github.com/repos/<owner>/<repo>/…), locked to this build's repoUrl — so it can read the code it's running to explain/debug itself. NEVER auto-approves user-generated PROSE endpoints (issues/pulls/comments/discussions/reviews/releases — a prompt-injection surface), a credentialed fetch, or a rendered load; those still ask. Public, read-only, uncredentialed → near-zero risk.",
     cdp: "Experimental. Use chrome.debugger (CDP) for two things a normal page context can't do: (1) CLICK surfaces a synthetic click can't reach — cross-origin iframes and declarative/native closed shadow roots; (2) run imperative `exec` on strict-CSP / Trusted-Types pages (GitHub, Google apps) where main-world eval is blocked. The debugger is exempt from the page's CSP/TT, so it's the only mechanism that works. The `debugger` permission is declared at install; this toggle gates USAGE (the API stays unused until it's on AND the model hits a reserved surface). Still gated by the per-action approval. Attaching flashes Chrome's \"is debugging this browser\" banner — only for these reserved actions, so the flash marks the risk. Off by default; while off, a reserved click / a blocked exec just reports an actionable error and the agent falls back to read-only / ml.fetch.",
     pierceClosedShadow: "Let the DOM tools reach inside CLOSED shadow roots too (normally selector-invisible). A tiny script captures each closed root as the page builds it — the tools then treat it like an open root (same `host >>> inner` syntax). Closed shadow DOM is encapsulation, not a security boundary, so this doesn't cross any origin. On by default: the capture script wraps attachShadow on every page regardless of this setting (capture only — page behaviour is unchanged), so this just gates whether the tools use it. Turn it off to keep the tools' selector reach limited to open roots. Declarative/native closed roots still can't be captured; the agent falls back to visual locate/@pt for those.",
@@ -1133,13 +1134,16 @@ export function Settings() {
 
             {tab === "appearance" ? <>
                 <Section id="general" title="General">
-                <div class="set-field"><span>Font size</span>
+                {/* Named for what it sizes: the chat page reads at its own sizes and shows these settings too, where an
+                    unqualified "Font size" that moved nothing on the page it was changed from read as broken. */}
+                <div class="set-field"><span>Panel font size</span>
                     <div class="stepper">
                         <button title="Smaller" onClick={() => setScale(fontScale.value - 0.1)}>−</button>
                         <span class="set-val">{pct}%</span>
                         <button title="Larger" onClick={() => setScale(fontScale.value + 0.1)}>+</button>
                         <button class="reset" title="Reset to 100%" onClick={() => setScale(1)}>reset</button>
                     </div>
+                    <div class="set-hint">The DevTools panel and the sidebar over a page. The chat page has its own sizes.</div>
                 </div>
                 <label class="set-field"><span>Theme</span>
                     <select value={c.theme} onChange={(e: any) => setField("theme", e.target.value as Theme)}>
@@ -1351,6 +1355,15 @@ export function Settings() {
                     <input type="checkbox" checked={c.autoApproveSelfSource}
                         onChange={(e: any) => setField("autoApproveSelfSource", e.target.checked)} />
                     <Lbl tip={TIP.autoApproveSelfSource}>Auto-approve reading the agent's own repo source</Lbl>
+                </label>
+                </Section>
+
+                <Section id="focus" title="Where you are (chat_metadata)">
+                <div class="set-note">When you are <b>not</b> on the agent's tab, <code>chat_metadata</code> tells it so: that you are in the chat page (and whether you are reading this run), on another tab, or away from the browser. For a run started from the extension's own UI (the chat page, the HUD, this panel) it also names that tab's <b>site and title</b>, never the full address and never a private window's. A run a <b>page</b> started only learns "another tab", because the page can read its own run's results. With a <b>cloud</b> model, the site you are on goes to the provider. <b>On by default.</b></div>
+                <label class="set-check">
+                    <input type="checkbox" checked={c.agentSeesFocus}
+                        onChange={(e: any) => setField("agentSeesFocus", e.target.checked)} />
+                    <Lbl tip={TIP.agentSeesFocus}>Tell the agent where you are</Lbl>
                 </label>
                 </Section>
 

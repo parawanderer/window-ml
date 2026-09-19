@@ -22,7 +22,9 @@ function base64(bytes: Uint8Array): string {
 export class FaviconCache {
     private readonly got = new Map<string, Promise<string | null>>();
 
-    constructor(private readonly fetchImpl: typeof fetch = fetch) {}
+    // Wrapped, not stored bare: `this.fetchImpl(url)` calls the browser's fetch with the cache as `this`, which throws
+    // "Illegal invocation", and the catch below turned that into "no icon" for every tab.
+    constructor(private readonly fetchImpl: typeof fetch = (input, init) => fetch(input, init)) {}
 
     /** The icon for a tab's `favIconUrl`, as a data URL, or null. Never throws. */
     icon(favIconUrl: string | undefined): Promise<string | null> {

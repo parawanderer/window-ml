@@ -19,11 +19,21 @@ npx playwright test tests/e2e/chat-web.spec.mjs  # the spec, ~2s; E2E_DIST_WEB=<
 
 Open a session directly with `#s=<runtime:hash>` (`#s=laptop%3A3f9a0c21` is the one waiting on an approval).
 
-The page opens in CALM view (`src/chat/view-mode.tsx`): the brain button in the session header hands the DevTools
-panel's full detail back, the `☰` hides the list pane, and both choices are stored per device, so a screenshot run
-or a spec that cares about either must set or assert it rather than assume. Both are plain CSS over the same
+The page opens in CALM view (`src/chat/view-mode.tsx`), which on a wide screen has NO HEADER BAR: the title is the
+transcript's first line (`.chat-lede`). With the list hidden a rail (`.chat-rail`) keeps `☰`, new session and search
+at the left edge. The page's tools live in the gear's menu (`.chat-gear-btn`, bottom-left of the rail or the list):
+"Calm view" (a `menuitemcheckbox`, which hands the DevTools panel's full detail back), the box, the bench and, in the
+extension, Settings. Search and older sessions are one page in the main pane (`.chat-search`); Settings is a sheet of the same shape (`.chat-settings`, extension only). Both view choices are stored per device, so a screenshot run or a spec that
+cares about either must set or assert it rather than assume. Both are plain CSS over the same
 document — nothing is removed, so a locator still finds a quieted element and `toBeHidden()` is the assertion that
 means anything.
+
+## Its test suite
+
+`npm run test:chat` is the chat page's suite by name: the `chat` genre of `scripts/test.mjs` (the client store, the
+view prefs, the local host, and the check that the web bundle never reaches `chrome`), then `chat-web.spec.mjs` (the
+web build against the fake host) and `chat-page.spec.mjs` (the extension's page against a real worker). The Playwright
+half loads `dist/` and `dist-web/`, so build first, and never while another e2e run is going.
 
 ## Scripting the fake host
 

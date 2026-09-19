@@ -17,6 +17,7 @@ import type { NeutralMessage } from "./contract-chat";
 import { cleanTitle, titleMessages } from "./session-title";
 import { bgRuns, trackRun, untrackRun } from "./sw-runs";
 import { fetchLLM, getConfig, listAvailableModels, modelCapabilitiesBatch } from "./sw-llm";
+import { pythonBundlePresent } from "./sw-python";
 import { recordHousekeeping } from "./sw-housekeeping";
 import { archiveCall, lastFolderReport, onFolderChange, scheduleFolderSync } from "./sw-archive";
 import { attentionCodes, recomputeAttention, refreshBackendAttention, watchAttention } from "./sw-attention";
@@ -59,6 +60,9 @@ const spawn = (() => {
 
 /** Whether a utility model is set (see the storage listener below). */
 let utilityModelSet = false;
+/** Whether this build can run Python (`pythonBundlePresent`): false until the bundle has been looked at, so a client
+ *  never offers a bench on a guess. */
+let pythonBundled = false;
 /** The page a blank agent target opens when the command names none (see the storage listener below). */
 let agentStartPage = "";
 
@@ -69,7 +73,14 @@ const TAB_READY_MS = 15_000, TAB_POLL_MS = 250;
 function localRuntime(): RuntimeInfo {
     return {
         id: localRuntimeId(), name: "This browser", kind: "browser", online: true, contractVersion: SESSION_CONTRACT_VERSION,
-        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, ...archiveCapability(), ...(attentionCodes().length ? { attention: attentionCodes() } : {}) },
+        // `resourcePanel` and `pythonBench` are not commands: they say the box behind this runtime can be drawn and
+        // its sandbox can be driven, which a client offers only where it ALSO holds an implementation (the chat
+        // page's `ChatExtras`). A phone reaching this same runtime over the hub reports the capability and draws
+        // nothing, because it has nothing to draw with. `resourcePanel` is true by construction (a browser with a
+        // backend behind it); `pythonBench` is MEASURED, because a checkout without the wheels builds a bundle whose
+        // bench would fail at run time. `localSettings`: this browser's pages may edit its settings, which only the
+        // extension's own pages can (a phone over the hub reports the capability and holds nothing to edit with).
+        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled, localSettings: true, ...archiveCapability(), ...(attentionCodes().length ? { attention: attentionCodes() } : {}) },
         // This browser's own pages hold every scope.
         grants: [{ scope: "view" }, { scope: "drive" }, { scope: "approve" }, { scope: "screen" }],
     };
@@ -115,16 +126,25 @@ const tabInfo = (t: chrome.tabs.Tab): TabInfo | null =>
 /** The tab picker's icons, fetched here and handed over as data URLs (tab-favicons.ts). */
 const favicons = new FaviconCache();
 
-/** http(s) tabs in strip order, the focused window first, with their icons. */
-async function listTabsForPicker(): Promise<TabInfo[]> {
-    const raw = (await chrome.tabs.query({})).filter((t) => /^https?:/.test(t.url || ""));
+/**
+ * http(s) tabs in strip order, the focused window first, with their icons, and how many were WITHHELD: with site access
+ * limited ("On click", or some sites), a tab on any other site reaches the extension with no `url` and no `title`, so it
+ * cannot be listed. Counted only while `<all_urls>` is not granted; with it, the tabs still without an address are the
+ * browser's own pages, which are left out on purpose and are nothing to warn about.
+ */
+async function listTabsForPicker(): Promise<{ tabs: TabInfo[]; withheld: number }> {
+    const all = await chrome.tabs.query({});
+    const raw = all.filter((t) => /^https?:/.test(t.url || ""));
+    const allSites = await chrome.permissions.contains({ origins: ["<all_urls>"] }).catch(() => true);
+    const withheld = allSites ? 0 : all.filter((t) => !t.url && !t.pendingUrl && !t.incognito).length;
     const focused = await chrome.windows.getLastFocused().then((w) => w.id, () => undefined);
     const ordered = stripOrder(raw, focused);
     const icons = await favicons.many(ordered.map((t) => t.favIconUrl));
-    return ordered.map((t, i) => {
+    const tabs = ordered.map((t, i) => {
         const info = tabInfo(t);
         return info && icons[i] ? { ...info, favicon: icons[i]! } : info;
     }).filter((t): t is TabInfo => !!t);
+    return { tabs, withheld };
 }
 
 /**
@@ -133,9 +153,9 @@ async function listTabsForPicker(): Promise<TabInfo[]> {
  * still indents grouped tabs by `groupId`.
  */
 async function listTabGroups(): Promise<TabGroupInfo[]> {
-    const api = (chrome as unknown as { tabGroups?: { query(q: object): Promise<{ id: number; title?: string; color?: string }[]> } }).tabGroups;
+    const api = (chrome as unknown as { tabGroups?: { query(q: object): Promise<{ id: number; title?: string; color?: string; collapsed?: boolean }[]> } }).tabGroups;
     if (!api) return [];
-    return (await api.query({})).map((g) => ({ id: g.id, ...(g.title ? { title: g.title } : {}), ...(g.color ? { color: g.color } : {}) }));
+    return (await api.query({})).map((g) => ({ id: g.id, ...(g.title ? { title: g.title } : {}), ...(g.color ? { color: g.color } : {}), ...(g.collapsed ? { collapsed: true } : {}) }));
 }
 
 const CAPTURE_RETRIES = 5, CAPTURE_RETRY_MS = 550;   // captureVisibleTab allows about two calls a second
@@ -205,12 +225,19 @@ export function configureSessionCommands(run: RunDeps): void {
         renameSession,
         ...(sessionStore ? { storageReport } : {}),
         listModels: async () => {
-            const [{ ids }, cfg] = await Promise.all([listAvailableModels(), getConfig()]);
+            const [{ ids, ollamaModels }, cfg] = await Promise.all([listAvailableModels(), getConfig()]);
             const allowed = ids.filter((m) => modelFilterAllows(m, cfg.modelFilter));
+            // Ollama's own list says which are local; without it (a backend that is not Ollama-backed) nothing is said.
+            const local = ollamaModels ? new Set(ollamaModels) : null;
             // Kinds cost an /api/show per model, cached for the worker's life: what lets a picker leave out an
             // embedding model someone could not chat with.
             const { caps } = await modelCapabilitiesBatch(cfg, allowed).catch(() => ({ caps: {} as Record<string, string[] | null> }));
-            return allowed.map((id) => ({ id, ...(caps[id] ? { kinds: caps[id]! } : {}), ...(id === cfg.model ? { default: true as const } : {}) }));
+            const models = allowed.map((id) => ({
+                id, ...(caps[id] ? { kinds: caps[id]! } : {}), ...(id === cfg.model ? { default: true as const } : {}),
+                ...(local ? { where: local.has(id) ? "local" as const : "cloud" as const } : {}),
+            }));
+            // That a filter is on, and how much it hid: never the filter itself (modelFilter stays unreadable).
+            return cfg.modelFilter.trim() ? { models, filtered: { hidden: ids.length - allowed.length } } : models;
         },
         startChat: (opts) => startBackgroundChat(opts),
         startAgent: async (tabId, opts) => {
@@ -377,6 +404,9 @@ function parseBudget(v: unknown): number {
     const n = Number(v);
     return Number.isFinite(n) && n >= 0 ? n : DEFAULT_CONFIG.sessionStoreBudgetMB;
 }
+
+// The bundle is looked at once; a client already connected hears the answer as a runtime update.
+void pythonBundlePresent().then((ok) => { if (ok !== pythonBundled) { pythonBundled = ok; sessionServer.runtimeChanged(); } });
 
 // Kept current from storage: `side.call` needs a utility model, and the runtime's capabilities say whether it has one.
 // After `sessionServer` exists, since a storage callback may run synchronously.

@@ -7,6 +7,7 @@ import { recordHousekeeping } from "./sw-housekeeping";
 import { ensureOffscreen, forgetOffscreen } from "./sw-offscreen";
 import { activeRuns, pageValueSession } from "./sw-runs";
 import { valueHolders, budgetBytes as valueBudgetBytes, claimValue } from "./sw-values";
+import { PY_PACKAGE_LOADS } from "./python-env";
 
 // LIVE python_exec stdout streaming: maps a run's streamId (the page requestId) → its tabId, so a PY_STDOUT
 // chunk the offscreen doc forwards can be relayed to the RIGHT page. Set when a streaming PYTHON_EXEC starts,
@@ -153,4 +154,34 @@ export function relayPyStdout(message: any): void {
     // is reached the long way, through its content script.
     if (tabId == null) chrome.runtime.sendMessage(chunk).catch(() => { /* nobody listening → drop */ });
     else chrome.tabs.sendMessage(tabId, chunk).catch(() => { /* page gone → drop */ });
+}
+
+let bundleChecked: Promise<boolean> | null = null;
+
+/**
+ * Can this build run Python at all: an offscreen document to host it, the Pyodide core, and the wheel of every package
+ * the sandbox loads at start. The wheels are gitignored (`pyodide-wheels/`) and the build only warns when they are
+ * missing, so a fresh checkout ships a bundle whose first run dies on `ModuleNotFoundError: No module named 'numpy'`.
+ * This is what the runtime's `pythonBench` capability reports, so a client never offers a bench that fails like that.
+ *
+ * Read from the bundle's own files (the lock names each wheel's file), once per worker life: the bundle cannot change
+ * under a running worker. A lazy package (the bench editor's completion) is not required — the bench runs without it.
+ */
+export function pythonBundlePresent(): Promise<boolean> {
+    return bundleChecked ??= (async () => {
+        if (typeof chrome.offscreen?.createDocument !== "function") return false;
+        const at = (f: string) => chrome.runtime.getURL(`pyodide/${f}`);
+        // A missing extension resource REJECTS rather than answering 404, hence the catch. The body is cancelled
+        // unread: a wheel is megabytes, and whether it opens is the whole question.
+        const exists = async (f: string) => {
+            try { const r = await fetch(at(f)); void r.body?.cancel().catch(() => {}); return r.ok; } catch { return false; }
+        };
+        try {
+            const lock = await (await fetch(at("pyodide-lock.json"))).json() as { packages?: Record<string, { file_name?: string }> };
+            const pk = lock.packages ?? {};
+            const files = PY_PACKAGE_LOADS.map((n) => (pk[n] ?? pk[Object.keys(pk).find((k) => k.toLowerCase() === n.toLowerCase()) ?? ""])?.file_name);
+            if (files.some((f) => !f)) return false;
+            return (await Promise.all([exists("pyodide.asm.wasm"), ...files.map((f) => exists(f!))])).every(Boolean);
+        } catch { return false; }
+    })();
 }

@@ -141,6 +141,9 @@ export interface ChatMeta {
     // full system prompt + tool descriptions; the loop only has ToolMeta names).
     systemTokens?: number | null;
     toolTokens?: number | null;
+    /** Where the user is, when it is NOT this run's own tab (`userFocusLine`, user-focus.ts); absent when they are
+     *  on it, or the setting is off. */
+    userFocus?: string | null;
 }
 
 /** prompt/completion token counts from a usage object. The extension NORMALIZES usage to camelCase
@@ -199,6 +202,7 @@ function formatChatMeta(
     if (cm?.local === true) L.push(...capacityLines(cm.capacity));
     // conversation SHAPE — "messages" was ambiguous; split turns / your messages / model replies
     L.push(`conversation so far: ${role("user")} of your messages · ${role("assistant")} model replies${imgs ? ` · ${imgs} carried images` : ""}`);
+    if (cm?.userFocus) L.push(cm.userFocus);
     // Delegated sub-call tokens: `locate` is ALWAYS a delegated vision sub-call; `look` is only a sub-call
     // when the model itself can't see (delegated to a reader). A VISION model's `look` inlines the image into
     // context (counted in "context in use"), so it's NOT delegated. Gate the look-note on the model's caps.

@@ -347,6 +347,26 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const litSeqs = laneLitSeqs.value;
     const dimmed = !!litSeqs && st.seq != null && !litSeqs.has(st.seq);
     const open = expanded || awaiting;
+    // CLOSING A STEP, on a surface that animates it shut. The body is unmounted the moment it closes, so there is
+    // nothing left to animate — the way to give it a way out is to keep it mounted for exactly as long as the
+    // surface says its own animation lasts, and the surface says so in CSS (`--astep-close-ms`) rather than here.
+    // A surface that sets nothing (the panel, the overlay) reads 0 and closes in the same tick it always did, so
+    // this costs them neither a frame nor a behaviour change.
+    const bodyRef = useRef<HTMLDivElement>(null);
+    const [closing, setClosing] = useState(false);
+    const closeMs = (): number => {
+        const el = bodyRef.current;
+        if (!el || typeof getComputedStyle !== "function") return 0;
+        const ms = parseFloat(getComputedStyle(el).getPropertyValue("--astep-close-ms"));
+        return Number.isFinite(ms) && ms > 0 ? ms : 0;
+    };
+    const toggle = (): void => {
+        if (!open || awaiting) { setClosing(false); setExpanded((v) => !v); return; }
+        const ms = closeMs();
+        if (!ms) { setExpanded(false); return; }
+        setClosing(true);
+        setTimeout(() => { setClosing(false); setExpanded(false); }, ms);
+    };
     // Keep the step expanded after you decide (setExpanded), so it doesn't collapse when `awaiting`
     // clears — you see the Out result fill in on the same open cell.
     //
@@ -375,7 +395,7 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const showGrants = awaiting && hasPersistGrants(st.grants);
     return (
         <div data-astep-seq={st.seq} class={`astep tool${dimmed ? " away" : ""}${open ? " open" : ""}${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}>
-            <button class="astep-head" onClick={() => setExpanded(v => !v)}>
+            <button class="astep-head" onClick={toggle}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 <Dot status={st.pending ? "pending" : toolFailed(st.result) ? "err" : "ok"} />
                 {/* Tool-authored short summary (contract MlTool.summary) → hover tooltip, both surfaces. */}
@@ -388,7 +408,7 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                 {!open ? <span class="astep-preview">{awaiting ? <span class="dim">needs approval</span> : st.pending ? (st.streamOutput ? <span class="astep-livepreview">{collapsedPreview(st.streamOutput).text}</span> : <span class="dim">running…<RunningFor since={st.ts} /></span>) : collapsedPreview(st.result || "").text}</span> : null}
             </button>
             {open
-                ? <div class="astep-body">
+                ? <div class={`astep-body${closing ? " closing" : ""}`} ref={bodyRef}>
                     {issues ? <div class="tt tt-row arg-issues"><IconWarn /><span>arg schema: {issues.join("; ")}</span><span class="tt-pop wrap left" role="tooltip">The args don't match this tool's parameter schema.</span></div> : null}
                     {st.reused?.length ? <ReusedBlock reused={st.reused} /> : null}
                     {args || inRender

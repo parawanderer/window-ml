@@ -172,6 +172,12 @@ export interface MlConfig {
      *  user-generated PROSE endpoints (issues/pulls/comments/discussions/reviews/releases — a prompt-injection
      *  surface) or a credentialed fetch: those still ask. See self-source.ts. */
     autoApproveSelfSource: boolean;
+    /** Default ON. `chat_metadata` tells the agent where the user is when it is NOT the agent's own tab: in the chat
+     *  page (and whether reading this session), in another tab, or away from the browser. For a run started from the
+     *  extension's own UI it also names that other tab's site and title (never the full URL, never a private window's);
+     *  a run a PAGE started learns only "another tab", since the page reads its own run's results. Off: no user-focus
+     *  line at all. The site goes into the model's context, which for a cloud model means the provider sees it. */
+    agentSeesFocus: boolean;
     /** The most disk, in MB, the value store may hold: the whole bodies of fetched tables too large for their preview,
      *  kept so a later step can read every row by pointer. Least recently read goes first past it; the browser's own
      *  quota caps it further. */
@@ -274,6 +280,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     autoApprovePython: true,
     autoApproveSameOriginAuth: false,   // Advanced, default off: a same-origin as-you fetch always asks
     autoApproveSelfSource: true,        // default on: an uncredentialed read of the agent's OWN repo source is free
+    agentSeesFocus: true,               // default on: chat_metadata says where the user is, when it is not the agent's tab
     valueStoreBudgetMB: 1024,           // capped at half the browser's quota for the extension
     protoStream: "auto",                // ask every time: one header, and a backend that won't serve it answers as it always did
     pierceClosedShadow: true,

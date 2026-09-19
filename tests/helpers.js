@@ -116,7 +116,7 @@ function streamResponse(lines, { status = 200 } = {}) {
 // `commandShortcut` is what chrome.commands reports as CURRENTLY bound for the HUD
 // (null = the API is unavailable, "" = the user cleared the binding); `manifestPermissions`
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
-function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB }) {
+function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true }) {
     const calls = [];
     const captures = [];        // captureVisibleTab arg lists, for screenshot tests
     const tabMessages = [];     // chrome.tabs.sendMessage arg lists, for reverse-channel tests
@@ -159,6 +159,9 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         // the ESM build's database refuses the other build's key range.
         ...(indexedDB ? { indexedDB, IDBKeyRange: require("fake-indexeddb").IDBKeyRange } : {}),
         fetch: async (url, opts = {}) => {
+            // The extension's own files: this harness has no bundle, and Chrome REJECTS a missing extension resource
+            // rather than answering 404. Not a call to the backend, so never recorded or handed to `onFetch`.
+            if (String(url).startsWith("chrome-extension://")) throw new TypeError("Failed to fetch");
             const call = {
                 url: String(url),
                 opts,
@@ -225,7 +228,8 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
             permissions: {
                 // Track named permissions (debugger); treat origin grants as present (FETCH_SHEET only
                 // contains()-checks Google origins, and the harness assumes those are granted).
-                contains: async ({ permissions = [] }) => permissions.every(p => permsHeld.has(p)),
+                // `allSites: false` withholds `<all_urls>`, as site access "On click" does.
+                contains: async ({ permissions = [], origins = [] }) => permissions.every(p => permsHeld.has(p)) && (allSites || !origins.includes("<all_urls>")),
                 request: async ({ permissions = [] }) => { permissions.forEach(p => permsHeld.add(p)); for (const fn of permAddedListeners) fn({ permissions }); return true; },
                 onAdded: { addListener: (fn) => permAddedListeners.push(fn) },
                 onRemoved: { addListener: () => {} },
@@ -246,6 +250,12 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                     removeListener: (fn) => { debuggerEventListeners.delete(fn); },
                 },
             },
+            // The browser's focus, for chat_metadata's "user focus" line: `focusedWindow` is what getLastFocused
+            // answers (`{ focused, incognito, tabs }`); unset, no window has focus.
+            windows: {
+                getLastFocused: async () => (typeof focusedWindow === "function" ? focusedWindow() : focusedWindow) ?? { focused: false, tabs: [] },
+                update: async () => ({}),
+            },
             tabs: {
                 // Records args so tests can assert the windowId; onCaptureTab (if
                 // given) provides the data URL or throws to simulate a failure.
@@ -262,6 +272,9 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 create: async (props) => { tabsCreated.push(props); return { id: 4242 + tabsCreated.length }; },
                 remove: async (id) => { tabsRemoved.push(id); },
                 onRemoved: { addListener: (fn) => tabRemovedListeners.push(fn) },
+                // What `tabs.query({})` answers: `openTabs`, as the browser reports them (a tab on a site the
+                // extension may not read has no `url` and no `title`).
+                query: async () => openTabs.map((t) => ({ ...t })),
             }
         }
     };

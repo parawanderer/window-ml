@@ -22,6 +22,8 @@ import { IconExpand, IconClose, IconChevron, IconTimer, IconPlay, IconSendToMode
 import { type BenchJumpDetail, BENCH_JUMP_EVENT, PyBenchOut } from "./render-panel";
 import { benchH, BENCH_H_KEY, benchDock, BENCH_DOCK_KEY, view, viewReturn, benchOpen, BENCH_OPEN_KEY, benchEnv, benchMode, benchKept, noteBenchEnv, benchLost, benchCode, lsSet, BENCH_CODE_KEY, benchRunning, benchResult, type BenchRun, benchLive, benchTimeout, noteBenchKept, benchSplit, BENCH_SPLIT_KEY, codeLineNumbers } from "./store";
 import { cursorTipOn, TipText } from "./ui-kit";
+import { followDrag } from "./drag";
+import { PanelHead, useDocked } from "./panel-head";
 
 // Shape a raw PYTHON_EXEC response into a `python-out` descriptor for RenderPanel.
 export function pyBenchDescriptor(r: { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img" }): Extract<RenderDescriptor, { type: "python-out" }> {
@@ -46,19 +48,12 @@ export function BenchDrawer() {
         // just `button`: the row gained a <select> and a <label>, and `preventDefault` on a pointerdown over
         // a select stops the menu from opening at all — the control looked dead rather than busy.
         if ((e.target as HTMLElement).closest("button, select, input, textarea, label, a")) return;
-        e.preventDefault();
-        const grip = e.currentTarget as HTMLElement;
-        try { grip.setPointerCapture(e.pointerId); } catch { /* older engines */ }
         const startY = e.clientY, startH = benchH.value;
         // Dragging UP grows it. Floored so the editor and its bar still fit, and capped so the drawer can
         // never take the whole panel — at which point it is not a drawer and full mode is what you wanted.
         const cap = Math.max(200, Math.round((typeof window !== "undefined" ? window.innerHeight : 800) * 0.75));
-        const move = (ev: PointerEvent) => { benchH.value = Math.max(150, Math.min(cap, startH + (startY - ev.clientY))); };
-        const up = () => {
-            grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up);
-            chrome.storage.local.set({ [BENCH_H_KEY]: benchH.value });
-        };
-        grip.addEventListener("pointermove", move); grip.addEventListener("pointerup", up);
+        followDrag(e, (ev) => { benchH.value = Math.max(150, Math.min(cap, startH + (startY - ev.clientY))); },
+            () => { try { chrome.storage.local.set({ [BENCH_H_KEY]: benchH.value }); } catch { /* no extension storage */ } });
     };
     // The drawer owns the DRAG and the SHAPE, and hands both to the bench's own header row — one row doing
     // every job, rather than a title strip here and a control bar at the far end of the panel.
@@ -259,6 +254,7 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
     // mount sites, so `⤢` destroys this component and builds the other one; as `useState` that threw away
     // the script, the result you were reading and any run still in flight, which made changing the bench's
     // SHAPE also a way to lose your work in it.
+    const docked = useDocked();
     const code = benchCode.value, setCode = (v: string) => { benchCode.value = v; lsSet(BENCH_CODE_KEY, v); };
     const mode = benchMode.value, setMode = (v: "readonly" | "full") => { benchMode.value = v; lsSet("ml_bench_mode", v); };
     const running = benchRunning.value, setRunning = (v: boolean) => { benchRunning.value = v; };
@@ -326,21 +322,13 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
      *  output pane. Clamped so neither pane can be dragged out of existence: a pane you cannot get back is
      *  not a smaller pane, it is a lost one. */
     const onSplit = (e: PointerEvent) => {
-        e.preventDefault();
         const host = (e.currentTarget as HTMLElement).parentElement;
         if (!host) return;
-        const el = e.currentTarget as HTMLElement;
-        try { el.setPointerCapture(e.pointerId); } catch { /* older engines */ }
-        const move = (ev: PointerEvent) => {
+        followDrag(e, (ev) => {
             const b = host.getBoundingClientRect();
             if (b.height <= 0) return;
             benchSplit.value = Math.max(0.15, Math.min(0.85, (ev.clientY - b.top) / b.height));
-        };
-        const up = () => {
-            el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up);
-            chrome.storage.local.set({ [BENCH_SPLIT_KEY]: benchSplit.value });
-        };
-        el.addEventListener("pointermove", move); el.addEventListener("pointerup", up);
+        }, () => { try { chrome.storage.local.set({ [BENCH_SPLIT_KEY]: benchSplit.value }); } catch { /* no extension storage */ } });
     };
     // MEMOED on the result, not rebuilt each render: the output pane keeps your chosen tab across runs, and
     // it decides that from this object's identity — a fresh one every render would re-pick on every keypress.
@@ -385,11 +373,13 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                 layout allowed, and moving them up naively would have deleted them from full-page mode, where
                 there is no drawer to draw a strip. So the row lives here and the drawer INJECTS its grip and
                 shape controls into it. */}
-            <div class={`bench-top${drag ? " bench-grip" : ""}`}
+            {/* DOCKED (the chat page), the row goes into the dock's tab bar: the tab is the bench's name, so the
+                row starts at the version, and the dock draws the resize edge, maximize and close. */}
+            <PanelHead><div class={`bench-top${drag ? " bench-grip" : ""}`}
                 {...(drag ? { role: "separator", "aria-label": "Drag to resize the Python bench", onPointerDown: drag } : {})}>
                 {/* Only in the drawer: full-page already has the name and version in the app header, and a
                     second copy an inch below it reads as two different things. */}
-                {drag ? <><span class="bench-title">Python bench</span><BenchVer /></> : null}
+                {drag ? <><span class="bench-title">Python bench</span><BenchVer /></> : docked ? <BenchVer /> : null}
                 <BenchEnvButton />
                 <span class="tt bench-info" aria-label="about the bench">ⓘ<span class="tt-pop wrap left" role="tooltip">
                     <TipText md="Runs against the SAME sandbox `python_exec` uses (offscreen → worker → Pyodide), but in its own namespace: **variables are kept between runs**, like a notebook, separately for readonly and full. Reset them in **environment**. Code-only — no page image or tables. `return` a value (or end with a bare expression, Jupyter-style); `print()` is captured. 15s cap." />
@@ -449,7 +439,7 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                         md="Send this script, and what it printed, to the model as a new turn — so you can hand it a snippet you just got working. **Not built yet.**" /></span>
                 </button>
                 {shape}
-            </div>
+            </div></PanelHead>
             <BenchEnv />
             {/* THE SANDBOX RESTARTED UNDER YOU — said where you are looking, once, instead of surfacing as a
                 NameError on a variable you defined three runs ago. A runaway run being stopped is the usual

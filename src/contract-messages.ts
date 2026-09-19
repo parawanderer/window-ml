@@ -36,6 +36,7 @@ export type PageRequestType =
     | "LIST_SERVER_TOOLS_REQUEST"   // discover the OpenWebUI server-side tools this key may use (valid `toolIds`)
     | "SERVER_TOOL_REQUEST"   // run ONE of them ourselves, in our own loop, streaming its frames back
     | "INFO_REQUEST"                // machine CAPACITY: per-device VRAM totals/free + system RAM (Ollama /api/info)
+    | "USER_FOCUS_REQUEST"          // chat_metadata's "user focus" line: where the user is, relative to THIS tab (coarse)
     | "INVOCATION_REQUEST"   // how the user can open the HUD here (live shortcut — user-rebindable, never hardcode it)
     | "START_RUN_REQUEST"   // design A: kick off a background-hosted ml.agent loop
     | "RESUME_RUN_REQUEST"   // design A: continue a background-hosted run (append a follow-up turn to its stored history)
@@ -60,6 +61,7 @@ export type BackgroundMessageType =
     | "LIST_SERVER_TOOLS"   // GET OpenWebUI /api/v1/tools/ — the server-side tools, with their function specs
     | "SERVER_TOOL_EXEC"   // run ONE of them ourselves (privileged: the user's API key), streaming NDJSON frames back
     | "OLLAMA_INFO"         // GET Ollama /api/info — machine capacity (per-device VRAM, system RAM)
+    | "USER_FOCUS"          // where the user is relative to the SENDER's tab, coarse (user-focus.ts); null when on it
     | "GET_INVOCATION"   // read chrome.commands' LIVE shortcut for the HUD (+ whether the user rebound it)
     | "ABORT_TASK"    // abort the AbortController registered for a requestId (only FETCH_LLM registers one today)
     | "START_RUN"     // design A: run an ml.agent loop in the background (unforgeable gate); tools delegate to the page

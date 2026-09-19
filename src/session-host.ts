@@ -617,6 +617,8 @@ export interface TabGroupInfo {
     title?: string;
     /** the browser's colour name (`blue`, `red`, …); a client maps it to its own palette */
     color?: string;
+    /** collapsed in the browser's own tab strip; a picker starts it the same way */
+    collapsed?: boolean;
 }
 
 export type { StorageReport, StorageSnapshot } from "./session-storage-stats";
@@ -636,6 +638,8 @@ export interface ModelChoice {
     id: string;
     kinds?: string[];
     default?: true;
+    /** where it runs: on the runtime's own Ollama, or a cloud model its backend passes through. Absent: not known */
+    where?: "local" | "cloud";
 }
 
 /** What a successful command returns, by type. */
@@ -655,7 +659,9 @@ export interface CommandResultData {
      * marks the one a start command gets when it names no model. Empty when the backend could not be reached: a
      * picker then shows the default and sends no `model`.
      */
-    "models.list": { models: ModelChoice[] };
+    /** `filtered`: the runtime's model access filter is on and hid `hidden` of its backend's models. Only that it is
+     *  on and how many, never the filter itself, which no client reads. */
+    "models.list": { models: ModelChoice[]; filtered?: { hidden: number } };
     /** `unsupported` from a runtime that saves nothing. Sizes are serialized bytes, the measure the budget uses. */
     "storage.stats": StorageReport;
     /** `more`: another page exists below this one */
@@ -684,7 +690,9 @@ export interface CommandResultData {
     "runtime.info": { kind: RuntimeInfo["kind"]; contractVersion: number; capabilities: RuntimeCapabilities; nowMs: number };
     /** Windows in order, the focused one first; each window's tabs in strip order. `groups` only where the runtime
      *  can name them (in this browser, after the optional `tabGroups` permission was granted). */
-    "tabs.list": { tabs: TabInfo[]; groups?: TabGroupInfo[] };
+    /** `withheld`: open tabs left out because this runtime may not read them (site access limited to "on click" or
+     *  some sites). Absent or 0 when it may read every site; a browser's own pages are left out without being counted. */
+    "tabs.list": { tabs: TabInfo[]; groups?: TabGroupInfo[]; withheld?: number };
     "device.list": { devices: DeviceInfo[] };
     /** the new window, so a list can say when it next needs attention without asking again */
     "device.renew": { notAfterMs: number };

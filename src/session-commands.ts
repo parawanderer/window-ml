@@ -28,7 +28,7 @@ export interface CommandDeps {
     /** what this runtime IS, for a client that reached it over a transport that cannot know */
     describe(): { kind: "browser" | "desktop" | "headless"; contractVersion: number; capabilities: unknown };
     /** http(s) tabs this browser has open */
-    listTabs(): Promise<TabInfo[]>;
+    listTabs(): Promise<TabInfo[] | { tabs: TabInfo[]; withheld?: number }>;
     /** the tab groups, named; empty where the runtime cannot say */
     listTabGroups?(): Promise<TabGroupInfo[]>;
     /** archived sessions, a page at a time; absent when this runtime keeps no archive */
@@ -64,7 +64,7 @@ export interface CommandDeps {
     /** where saved-session storage goes, now and day by day; absent when this runtime saves nothing */
     storageReport?(): Promise<StorageReport>;
     /** the models this runtime would accept, after its whitelist, its default marked */
-    listModels(): Promise<ModelChoice[]>;
+    listModels(): Promise<ModelChoice[] | { models: ModelChoice[]; filtered?: { hidden: number } }>;
     /** pin or unpin a session this runtime holds: saved first when pinning, then the row changed and written */
     pinSession(hash: string, pinned: boolean): void;
     /** name a session (a capped, non-empty title), or with null return it to a generated title */
@@ -255,8 +255,9 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
         "tabs.list": async (c) => {
             const not = ownRuntime(c);
             if (not) return not;
-            const [tabs, groups] = await Promise.all([deps.listTabs(), deps.listTabGroups?.().catch(() => []) ?? []]);
-            return ok({ tabs, ...(groups.length ? { groups } : {}) });
+            const [got, groups] = await Promise.all([deps.listTabs(), deps.listTabGroups?.().catch(() => []) ?? []]);
+            const { tabs, withheld = 0 } = Array.isArray(got) ? { tabs: got } : got;
+            return ok({ tabs, ...(groups.length ? { groups } : {}), ...(withheld > 0 ? { withheld } : {}) });
         },
 
         "sessions.list": async (c) => {
@@ -283,7 +284,12 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
 
         // An unreachable backend is an empty list, not a failure: the picker then offers the default, which is what
         // a start command would use anyway, rather than an error in a box someone opened to type into.
-        "models.list": async (c) => ownRuntime(c) ?? ok({ models: await deps.listModels().catch(() => []) }),
+        "models.list": async (c) => {
+            const not = ownRuntime(c);
+            if (not) return not;
+            const got = await deps.listModels().catch(() => [] as ModelChoice[]);
+            return ok(Array.isArray(got) ? { models: got } : got);
+        },
 
         "storage.stats": async (c) => {
             const not = ownRuntime(c);

@@ -118,7 +118,10 @@ test("an unknown command is answered unsupported", T, async () => {
     assert.deepEqual([result.id, result.result.ok, result.result.error.code], [2, false, "unsupported"]);
     // `persistence: false` because this harness has no IndexedDB: the runtime reports what it can actually do rather
     // than what the code hopes for, which is the whole point of a client rendering by capability.
-    assert.deepEqual(port.messages[0].runtime.capabilities, { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: false, persistence: false });
+    // `resourcePanel`/`pythonBench` are not commands: they say this browser's box can be DRAWN and its sandbox
+    // driven, which a client offers only where it also holds something to draw with (the chat page's `ChatExtras`).
+    // `pythonBench: false` because this harness has no Pyodide bundle to find: it is measured, never assumed.
+    assert.deepEqual(port.messages[0].runtime.capabilities, { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: false, persistence: false, resourcePanel: true, pythonBench: false, localSettings: true });
 });
 
 test("a live background run, driven from the chat page: steered while its gate is open, then approved through approval.answer", T, async () => {
@@ -452,7 +455,7 @@ test("models.list answers what the whitelist allows, with kinds and the default 
     const bg = loadBackground({
         config: { ...config, chatUrl: "http://host/api/chat/completions", model: "qwen3:14b", modelFilter: "^qwen" },
         onFetch: (call) => {
-            if (call.url === "http://host/api/models") return jsonResponse({ data: [{ id: "qwen3:14b" }, { id: "gpt-4o" }, { id: "qwen2.5vl:7b" }] });
+            if (call.url === "http://host/api/models") return jsonResponse({ data: [{ id: "qwen3:14b", owned_by: "ollama" }, { id: "gpt-4o", owned_by: "openai" }, { id: "qwen2.5vl:7b", owned_by: "ollama" }] });
             if (call.url.endsWith("/api/show")) return jsonResponse({ capabilities: call.body?.model === "qwen2.5vl:7b" ? ["completion", "vision"] : ["completion", "tools"] });
             return jsonResponse({});
         },
@@ -462,9 +465,33 @@ test("models.list answers what the whitelist allows, with kinds and the default 
     let reply;
     for (let i = 0; i < 100 && !reply; i++) { await new Promise((r) => setTimeout(r, 10)); reply = page.port.messages.find((m) => m.type === "result" && m.id === 1); }
     assert.deepEqual(reply.result, { ok: true, data: { models: [
-        { id: "qwen3:14b", kinds: ["completion", "tools"], default: true },
-        { id: "qwen2.5vl:7b", kinds: ["completion", "vision"] },
-    ] } }, "the cloud model the whitelist excludes never reaches the contract either");
+        { id: "qwen3:14b", kinds: ["completion", "tools"], default: true, where: "local" },
+        { id: "qwen2.5vl:7b", kinds: ["completion", "vision"], where: "local" },
+    ], filtered: { hidden: 1 } } }, "the cloud model the whitelist excludes never reaches the contract either; that a filter hid one does");
+    assert.ok(!JSON.stringify(reply).includes("^qwen"), "the filter itself is never sent");
+});
+
+test("tabs.list says how many tabs site access withheld, and only while it is limited", T, async () => {
+    // As the browser reports them: tabs on sites the extension may not read arrive with no url and no title.
+    const openTabs = [
+        { id: 1, windowId: 1, index: 0, active: true, url: "https://allowed.example/", title: "Allowed" },
+        { id: 2, windowId: 1, index: 1, active: false },
+        { id: 3, windowId: 1, index: 2, active: false },
+    ];
+    const ask = async (bg) => {
+        const page = openPage(bg);
+        page.port.send({ type: "cmd", id: 1, command: { type: "tabs.list", runtime: "local" } });
+        let reply;
+        for (let i = 0; i < 100 && !reply; i++) { await new Promise((r) => setTimeout(r, 10)); reply = page.port.messages.find((m) => m.type === "result" && m.id === 1); }
+        return reply.result;
+    };
+    const limited = await ask(loadBackground({ config, openTabs, allSites: false }));
+    assert.equal(limited.ok, true);
+    assert.deepEqual(limited.data.tabs.map((t) => t.tabId), [1]);
+    assert.equal(limited.data.withheld, 2, "the two tabs it could not read are counted, not silently dropped");
+    // With every site allowed, a tab still without an address is a browser page: left out on purpose, not counted.
+    const full = await ask(loadBackground({ config, openTabs, allSites: true }));
+    assert.equal(full.data.withheld, undefined);
 });
 
 test("the storage history is recorded at startup, answered over the contract, and refused to a page", T, async () => {

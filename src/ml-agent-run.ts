@@ -786,7 +786,10 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
             // Asked only for a LOCAL model: a cloud model's hardware is not this box's.
             let capacity: import("./resource-model").Capacity | null | undefined;
             if (local === true) { try { const raw = await mlApi.info(); capacity = raw ? parseInfo(raw) : null; } catch { capacity = null; } }
-            return { model: runModel, contextWindow, capabilities, vramBytes, local, backend, systemTokens: est(systemPrompt), toolTokens: est(toolJson), capacity };
+            // Where the user is, from the worker (only it sees the browser's focus), relative to THIS tab.
+            let userFocus: string | null = null;
+            try { userFocus = await makeBackgroundTaskPromise("USER_FOCUS_REQUEST", "USER_FOCUS_RESPONSE", { hash: runHash }); } catch { /* not said */ }
+            return { model: runModel, contextWindow, capabilities, vramBytes, local, backend, systemTokens: est(systemPrompt), toolTokens: est(toolJson), capacity, userFocus };
         },
     };
 

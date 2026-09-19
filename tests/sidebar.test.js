@@ -8810,7 +8810,7 @@ test("embed: a click on the render's OWN controls does not jump to the source st
     let jumps = 0;
     for (const el of w.shadow.querySelectorAll("*")) el.scrollIntoView = () => { jumps++; };
 
-    const copy = [...embed.querySelectorAll("button")].find((b) => /copy csv/i.test(b.textContent || ""));
+    const copy = [...embed.querySelectorAll("button")].find((b) => /copy csv/i.test(b.getAttribute("aria-label") || ""));
     assert.ok(copy, "the DataFrame render offers copy CSV");
     copy.dispatchEvent(new w.window.MouseEvent("click", { bubbles: true }));
     await w.tick();
@@ -8826,7 +8826,11 @@ test("embed: a click on the render's OWN controls does not jump to the source st
     const cell = embed.querySelector("tbody td");
     assert.ok(cell, "a body cell is inert");
     cell.dispatchEvent(new w.window.MouseEvent("click", { bubbles: true }));
-    await w.tick();
+    // A citation to a COLLAPSED step now scrolls once the step has settled rather than at the moment of the
+    // click — it opens it, and where the step was before it opened is not where the reader wants to be
+    // (step-scroll.ts). So this waits for those frames, which is what a person watching it also does — POLLED, not
+    // a fixed wait: jsdom's frames are timers, and a loaded machine let a 120ms wait expire before they ran.
+    for (let t = 0; jumps === 0 && t < 50; t++) await new Promise((r) => setTimeout(r, 20));
     assert.ok(jumps > 0, "clicking the render itself still goes to the step that produced it");
 });
 
@@ -9160,7 +9164,9 @@ const openTableStep = async (w, hash, renderOut) => {
     for (const h of w.shadow.querySelectorAll(".astep.tool .astep-head")) h.click();
     await w.tick();
 };
-const btn = (w, re) => [...w.shadow.querySelectorAll(".r-df-btn")].find((b) => re.test(b.textContent));
+// By the accessible NAME: the controls are icons, so their label is what carries the words — including the copy's,
+// which says how much it will copy ("copy all 300 rows") and is the reason that one is not merely decorative.
+const btn = (w, re) => [...w.shadow.querySelectorAll(".r-df-btn")].find((b) => re.test(b.getAttribute("aria-label") || ""));
 
 test("table view: a table past the grid's rows opens as a SUMMARY of its preview, saying so, and flips to the rows", async () => {
     const w = await loadSidebarWorld();

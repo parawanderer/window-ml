@@ -313,7 +313,9 @@ learned by shipping the wrong version first.
   its tab. The ONE session with no such pair is a chat the worker hosts itself (`chat.start`, `sw-chat.ts`): it has no
   tab, so no panel can be attached to it, and its events reach the index and nothing else. A run started from an
   extension page (`agent.start`) goes through the target tab's OWN start path, because the page builds the toolset
-  and the system prompt; the worker has no second way to start one.
+  and the system prompt; the worker has no second way to start one. The extension-only views (the resource panel,
+  the Python bench) reach the chat page through `ChatExtras`, asked PER RUNTIME: the runtime says the capability
+  exists and the device says it can draw it, and a page that answers only one of the two shows nothing.
 - **Exports.** Diff two runs with `run.json` after stripping `VOLATILE_FIELDS` and running `canonicalizeText()`.
 
 ## Showing a run: the log, the exports and tooltips
@@ -546,8 +548,9 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   FAILED now looks exactly like one that worked, and everything you run next tests the previous bundle —
   which will mislead a bisect. It exits non-zero and says so on stderr; do not discard that stream.
 - **Iterating? Run a GENRE, not the suite: `npm run test:core`** (~8s, 978 tests) — `node scripts/test.mjs`
-  with `core` / `panel` / `ext` / `python` / `live`, `--list` to see what each holds, `--timings` for
-  per-file durations slowest-first. The full suite is ~2 minutes and three files are 80% of it
+  with `core` / `panel` / `ext` / `chat` / `python` / `live`, `--list` to see what each holds, `--timings` for
+  per-file durations slowest-first (`npm run test:chat` is the chat page's suite by name: that genre plus its two
+  Playwright specs). The full suite is ~2 minutes and three files are 80% of it
   (`sidebar` 53s, `background` 22s, `cdp-stream` 20s), which is the right cost in CI and the wrong one in a
   loop where you changed one pure module. `core` is DERIVED — everything the named genres do not claim — so
   a new test file runs by DEFAULT rather than falling out of every bucket and being silently skipped; the

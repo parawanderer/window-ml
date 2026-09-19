@@ -9,7 +9,7 @@ import type { MlDebugEvent } from "../contract-debug";
 import {
     COMMAND_SCOPE, SESSION_CONTRACT_VERSION, sessionKey,
     type Command, type CommandResult, type HostStatus, type ModelChoice, type Principal, type RuntimeId, type RuntimeInfo, type SessionHost,
-    type SessionId, type SessionIndexUpdate, type SessionKey, type SessionStreamMessage, type SessionSummary, type StreamPosition, type Unsubscribe,
+    type SessionId, type SessionIndexUpdate, type SessionKey, type SessionStreamMessage, type SessionSummary, type StreamPosition, type TabGroupInfo, type TabInfo, type Unsubscribe, type ListedSession,
 } from "../session-host";
 import { capTitle } from "../session-title";
 import { holds } from "./grants";
@@ -32,11 +32,23 @@ let epochSeq = 0;
 const newEpoch = () => `e${++epochSeq}`;
 
 /** The tabs a demo runtime says it has, so the new-session form's picker has something real to show. */
-const DEMO_TABS = [
-    { tabId: 11, url: "https://news.example/front", title: "The front page", active: true, windowId: 1 },
-    { tabId: 12, url: "https://docs.example/api/tables", title: "Tables — API reference", active: false, windowId: 1 },
+/** A favicon as the runtime hands one on: a small image already turned into a data URL. */
+const DEMO_ICON = "data:image/svg+xml;utf8," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" rx="3" fill="#4f7cff"/><path d="M4 11V5h2l2 3 2-3h2v6" stroke="#fff" stroke-width="1.6" fill="none"/></svg>`);
+
+/** The demo's tabs, in the order a runtime sends them (focused window first, strip order within it). Window 1 holds
+ *  one group the runtime can name ("Research") and one it cannot (no `tabGroups` grant), so both drawings show. */
+const DEMO_TABS: TabInfo[] = [
+    { tabId: 11, url: "https://news.example/front", title: "The front page", active: true, windowId: 1, index: 0, favicon: DEMO_ICON },
+    { tabId: 12, url: "https://docs.example/api/tables", title: "Tables — API reference", active: false, windowId: 1, index: 1, groupId: 5 },
+    { tabId: 14, url: "https://docs.example/api/pointers#pipe", title: "Pointers — the pipe dialect", active: false, windowId: 1, index: 2, groupId: 5 },
+    { tabId: 15, url: "https://shop.example/cart", title: "Your cart", active: false, windowId: 1, index: 3, groupId: 6 },
     { tabId: 13, url: "https://mail.example/inbox", title: "Inbox (3)", active: false, windowId: 2 },
+    // The tab the demo world's flight runs are driving (their `page.tabId`), so `tab.focus` on their chip finds it.
+    { tabId: 41, url: "https://flights.example/search?from=AMS&to=LIS", title: "Flights AMS → LIS", active: true, windowId: 3 },
 ];
+
+/** The groups the runtime can name; group 6 is left out, as it is without the `tabGroups` grant. */
+const DEMO_GROUPS: TabGroupInfo[] = [{ id: 5, title: "Research", color: "blue" }];
 
 /** What the demo world hands back for a screenshot: an SVG of a page rather than a real capture, because the point
  *  of the demo is the button, the round trip and the viewer, and none of those can tell. */
@@ -78,11 +90,36 @@ export class FakeHost implements SessionHost {
     private indexL = new Set<{ fn: (u: SessionIndexUpdate) => void; runtime?: RuntimeId }>();
     private subs = new Set<Sub>();
 
-    constructor(opts: { self?: Principal; runtimes: RuntimeInfo[]; sessions?: { summary: SessionSummary; events?: MlDebugEvent[] }[]; latencyMs?: number }) {
+    constructor(opts: { self?: Principal; runtimes: RuntimeInfo[]; sessions?: { summary: SessionSummary; events?: MlDebugEvent[] }[]; archived?: { summary: SessionSummary; events?: MlDebugEvent[] }[]; latencyMs?: number }) {
         this.self = opts.self ?? { id: "fake-device", kind: "device", name: "This device" };
         this._runtimes = opts.runtimes;
         this.latencyMs = opts.latencyMs ?? 0;
         for (const s of opts.sessions ?? []) this.addSession(s.summary, s.events);
+        for (const a of opts.archived ?? []) this.archive.set(sessionKey(a.summary.id), { summary: a.summary, events: a.events ?? [] });
+    }
+
+    /** Sessions only the ARCHIVE holds: not in the index, found by `sessions.list` / `sessions.search`, and brought
+     *  back into it by `session.unarchive`, the way the runtime's SQLite archive behaves. */
+    archive = new Map<SessionKey, { summary: SessionSummary; events: MlDebugEvent[] }>();
+
+    /** A page of `sessions.list` or `sessions.search` rows for one runtime: live and archived merged, newest first,
+     *  strictly older than `before`. `match` decides a row and may return its snippet. */
+    private listPage(runtime: RuntimeId, before: number | undefined, limit: number | undefined,
+        match: (s: SessionSummary, events: MlDebugEvent[] | null) => { snippet?: string } | null): { sessions: ListedSession[]; more: boolean } {
+        const rows: ListedSession[] = [];
+        for (const h of this.held.values()) {
+            if (h.summary.id.runtime !== runtime) continue;
+            const m = match(h.summary, null);
+            if (m) rows.push({ ...h.summary, ...(m.snippet ? { match: { snippet: m.snippet } } : {}) });
+        }
+        for (const a of this.archive.values()) {
+            if (a.summary.id.runtime !== runtime) continue;
+            const m = match(a.summary, a.events);
+            if (m) rows.push({ ...a.summary, archived: true, ...(m.snippet ? { match: { snippet: m.snippet } } : {}) });
+        }
+        const n = Math.min(Math.max(1, limit ?? 40), 200);
+        const older = rows.filter((r) => before == null || r.lastTs < before).sort((a, b) => b.lastTs - a.lastTs);
+        return { sessions: older.slice(0, n), more: older.length > n };
     }
 
     /** delay before every delivery and command result, to see loading states */
@@ -95,10 +132,19 @@ export class FakeHost implements SessionHost {
     ringLimit?: number;
     /** What `models.list` answers, on every runtime. */
     models: ModelChoice[] = [
-        { id: "qwen3:32b", kinds: ["completion", "tools", "thinking"], default: true },
-        { id: "gemma3:27b", kinds: ["completion", "vision"] },
-        { id: "nomic-embed-text", kinds: ["embedding"] },
+        { id: "qwen3:32b", kinds: ["completion", "tools", "thinking"], default: true, where: "local" },
+        { id: "gemma3:27b", kinds: ["completion", "vision"], where: "local" },
+        { id: "nomic-embed-text", kinds: ["embedding"], where: "local" },
+        { id: "litellm.google/gemini-flash-latest", where: "cloud" },
     ];
+    /** The open tabs `tabs.list` reports, a copy per host so a test can close one as a person would. */
+    tabs: TabInfo[] = DEMO_TABS.map((t) => ({ ...t }));
+    /** Open tabs `tabs.list` says it could not list (site access limited), 0 for none. */
+    tabsWithheld = 0;
+    /** The tab groups `tabs.list` reports, a copy per host so a test can fold one as the browser's strip would. */
+    tabGroups: TabGroupInfo[] = DEMO_GROUPS.map((g) => ({ ...g }));
+    /** The model access filter's effect, as `models.list` reports it; null for no filter. */
+    modelsFiltered: { hidden: number } | null = { hidden: 2 };
 
     /** A short ring WITHOUT the session's start, as an older runtime would send it, to exercise the fallback. */
     ringDropsStart?: boolean;
@@ -281,7 +327,7 @@ export class FakeHost implements SessionHost {
             case "page.highlight":
                 return caps.highlight ? ok({}) : fail("unsupported", "no page to highlight on");
             case "tabs.list":
-                return caps.tabs ? ok({ tabs: DEMO_TABS }) : fail("unsupported", "this runtime has no tabs");
+                return caps.tabs ? ok({ tabs: this.tabs, groups: this.tabGroups, ...(this.tabsWithheld ? { withheld: this.tabsWithheld } : {}) }) : fail("unsupported", "this runtime has no tabs");
             // The real runtime can only capture the tab its window is SHOWING (src/session-commands.ts), so a run
             // working in a background tab is refused rather than captured behind the scenes. The demo world keeps
             // that rule, since a peek that always works would teach the UI the wrong lesson about when it does.
@@ -289,13 +335,13 @@ export class FakeHost implements SessionHost {
                 if (!caps.screenshots) return fail("unsupported", "this runtime cannot capture a tab");
                 const tabId = "tabId" in c.target ? c.target.tabId : this.held.get(sessionKey(c.target.session))?.summary.page?.tabId;
                 if (tabId == null) return fail("not-found", "that session is not on a tab");
-                const tab = DEMO_TABS.find((t) => t.tabId === tabId);
+                const tab = this.tabs.find((t) => t.tabId === tabId);
                 if (tab && !tab.active) return fail("conflict", "that tab is not in front in its window, so it cannot be captured");
                 return ok({ image: DEMO_SHOT, width: 900, height: 560, ts: Date.now() });
             }
             case "tab.focus":
                 if (!caps.tabs) return fail("unsupported", "this runtime has no tabs");
-                return DEMO_TABS.some((t) => t.tabId === c.tabId) ? ok({}) : fail("not-found", "no such tab");
+                return this.tabs.some((t) => t.tabId === c.tabId) ? ok({}) : fail("not-found", "no such tab");
             case "session.backfill": {
                 if (!h) return fail("not-found", "no such session");
                 if (c.before != null && (!Number.isInteger(c.before) || c.before < 0)) return fail("invalid", "before must be a position in this session's history");
@@ -303,8 +349,28 @@ export class FakeHost implements SessionHost {
                 const from = Math.max(0, end - Math.min(c.limit ?? 40, 40));
                 return ok({ session: h.summary.id, epoch: h.epoch, events: h.log.slice(from, end).map((e) => e.event), from, more: from > 0, truncated: from === 0 && h.lostBefore > 0 });
             }
+            case "sessions.list":
+                return ok(this.listPage(c.runtime, c.before, c.limit, (s) => (c.archived === true && !this.archive.has(sessionKey(s.id))) || (c.archived === false && this.archive.has(sessionKey(s.id))) ? null : {}));
+            case "sessions.search": {
+                const q = c.query.trim().toLowerCase();
+                if (!q) return fail("invalid", "an empty search");
+                // Live sessions by title, task and page title; archived ones by every word they hold, with a snippet.
+                return ok(this.listPage(c.runtime, c.before, c.limit, (s, events) => {
+                    if ([s.title, s.task, s.page?.title].some((v) => v?.toLowerCase().includes(q))) return {};
+                    if (!events) return null;
+                    for (const e of events) {
+                        const text = (e as { content?: unknown; task?: unknown; text?: unknown }).content ?? (e as { task?: unknown }).task ?? (e as { text?: unknown }).text;
+                        if (typeof text !== "string") continue;
+                        const at = text.toLowerCase().indexOf(q);
+                        if (at < 0) continue;
+                        const from = Math.max(0, at - 40), to = Math.min(text.length, at + q.length + 60);
+                        return { snippet: `${from > 0 ? "…" : ""}${text.slice(from, at)}«${text.slice(at, at + q.length)}»${text.slice(at + q.length, to)}${to < text.length ? "…" : ""}` };
+                    }
+                    return null;
+                }));
+            }
             case "models.list":
-                return ok({ models: this.models });
+                return ok({ models: this.models, ...(this.modelsFiltered ? { filtered: this.modelsFiltered } : {}) });
             case "runtime.info":
                 return ok({ kind: rt.kind, contractVersion: rt.contractVersion, capabilities: caps, nowMs: Date.now() });
             // Starting a session: the demo world mints one and answers the first turn, so the new-session form is
@@ -327,12 +393,22 @@ export class FakeHost implements SessionHost {
                 if (!caps.agent) return fail("unsupported", "this runtime runs no agents");
                 if (c.target.kind === "headless" && !caps.headless) return fail("unsupported", "this runtime has no headless target");
                 if (c.target.kind === "tab" && !caps.tabs) return fail("unsupported", "this runtime has no tabs");
+                // As the real runtime does: a tab that has closed is refused, never swapped for another.
+                if (c.target.kind === "tab" && !this.tabs.some((t) => c.target.kind === "tab" && t.tabId === c.target.tabId)) return fail("not-found", "no such tab");
                 const hash = newHash();
                 const key = sessionKey({ runtime: rt.id, hash });
                 this.addSession({ id: { runtime: rt.id, hash }, kind: "agent", status: "running", createdTs: Date.now(), lastTs: Date.now(), pendingApprovals: 0, saved: !c.ephemeral, task: c.task });
                 this.emit(key, { id: hash, ts: Date.now(), save: !c.ephemeral, session: { hash, turn: 0 }, kind: "agent", task: c.task, model: c.model ?? "fake", maxSteps: c.maxSteps ?? 10, config: undefined as never } as MlDebugEvent);
                 return ok({ session: { runtime: rt.id, hash } });
             }
+        }
+        // Unarchiving is the one session command about a session the index does NOT hold: the archive has it.
+        if (c.type === "session.unarchive" && key) {
+            const a = this.archive.get(key);
+            if (!a) return h ? ok({ session: c.session }) : fail("not-found", "no such session");
+            this.archive.delete(key);
+            this.addSession(a.summary, a.events);
+            return ok({ session: c.session });
         }
         if (!("session" in c) || !h || !key) return key ? fail("not-found", "no such session") : fail("unsupported", `the fake host does not do ${c.type}`);
         const now = Date.now();
@@ -380,7 +456,7 @@ export class FakeHost implements SessionHost {
                 // offering to resume something it had just resumed.
                 const tabId = c.target.kind === "tab" ? c.target.tabId : nextFakeTabId++;
                 const url = c.target.kind === "tab"
-                    ? DEMO_TABS.find((t) => t.tabId === tabId)?.url ?? "https://example.com/"
+                    ? this.tabs.find((t) => t.tabId === tabId)?.url ?? "https://example.com/"
                     : (c.target.kind === "blank" && c.target.url) || "https://example.com/";
                 // The note the real runtime writes, so the divider is exercised by the demo rather than only by a
                 // test: a resume a reader cannot see is how the seam stops being drawn without anyone noticing.

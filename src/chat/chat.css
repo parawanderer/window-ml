@@ -6,7 +6,23 @@
 html, body, #root { height: 100%; }
 /* The chat page's two-pane grid (the session list, then one session), one pane when `.narrow`. `dvh` is the height that
    excludes a phone's collapsing toolbars, so the composer is never under them. */
-.chat { font-size: var(--fs); height: 100vh; height: 100dvh; display: grid; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); }
+/* The page paints the canvas itself. `body`'s background reads the ROOT tokens, and calm redefines them on `.chat`
+   — so anything the panes do not cover (the main pane, which has no background of its own) showed the panel's
+   lighter dark through the page's darker one. */
+.chat { background: var(--bg); }
+.chat {
+    font-size: var(--fs); height: 100vh; height: 100dvh; display: grid;
+    /* A FIXED list width, not a `minmax()` range: the pane slides, and a column that RESIZES re-wraps every title
+       and re-lays out every row on the way, so the text crawls sideways while the pane moves. Fixed, the content
+       is drawn once and the pane reveals it. */
+    --list-w: 320px;
+    /* What the list's column narrows to when the list is hidden: the rail (nav.tsx), never nothing. */
+    --rail-w: 56px;
+    position: relative;
+    grid-template-columns: var(--list-w) minmax(0, 1fr);
+    /* One row: the list, and the column that holds the reading pane and every docked panel (`.chat-work`). */
+    grid-template-rows: minmax(0, 1fr);
+}
 .chat.narrow { grid-template-columns: minmax(0, 1fr); }
 .chat-list, .chat-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .chat-list { border-right: 1px solid var(--border); background: var(--bg); }
@@ -15,7 +31,16 @@ html, body, #root { height: 100%; }
 
 /* A runtime's heading in the list: a dot for reachable, its name, and what this device may do there. */
 .chat-group { margin-bottom: 14px; }
-.chat-rt { display: flex; align-items: center; gap: 7px; padding: 4px 2px 6px; color: var(--fg-dim); font-size: .92em; }
+.chat-rt {
+    display: flex; align-items: center; gap: 7px; padding: 4px 2px 6px; color: var(--fg-dim); font: inherit;
+    font-size: .92em; width: 100%; text-align: left; background: none; border: none; cursor: pointer;
+}
+/* Hovering brightens rather than recolouring: the accent is for what is selected, and a list of runtime names turning
+   purple under the pointer is colour where the page is meant to be quiet. */
+.chat-rt:hover .chat-rt-name { color: var(--fg); }
+.chat-rt .tri { color: var(--fg-faint); flex: 0 0 auto; display: inline-flex; transition: transform .15s ease; }
+.chat-rt .tri.open { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .chat-rt .tri { transition: none; } }
 .chat-rt-name { color: var(--fg); font-weight: 600; }
 .chat-rt-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fg-faint); flex: 0 0 auto; }
 .chat-rt-dot.on { background: var(--ok); }
@@ -79,7 +104,7 @@ html, body, #root { height: 100%; }
 
 /* STARTING A SESSION: the list header's `+` and the form behind it (src/chat/new-session.tsx). The form takes the
    main pane on a wide screen and the whole width on a phone, so it is the same component either way. */
-.chat-start .hbtn { font-size: 1.25em; line-height: 1; min-width: 30px; min-height: 30px; }
+.chat-start.hbtn { font-size: 1.25em; line-height: 1; min-width: 30px; min-height: 30px; }
 .chat-new-body { display: flex; flex-direction: column; gap: 12px; padding: 14px; overflow: auto; }
 /* One labelled control per row: the label above its field, so a long tab title has the full width to itself. */
 .chat-new-field { display: flex; flex-direction: column; gap: 4px; font-size: .92em; color: var(--fg-dim); }
@@ -104,7 +129,7 @@ html, body, #root { height: 100%; }
 .chat.narrow .composer { padding-bottom: calc(8px + env(safe-area-inset-bottom)); }
 .chat.narrow .cbtn { min-width: 40px; min-height: 40px; }
 .chat.narrow .appr-btn { min-height: 40px; }
-.chat.narrow .chat-start .hbtn { min-width: 40px; min-height: 40px; }
+.chat.narrow .chat-start.hbtn { min-width: 40px; min-height: 40px; }
 .chat.narrow .chat-new-field > select,
 .chat.narrow .chat-new-field > input { min-height: 44px; }
 
@@ -116,7 +141,7 @@ html, body, #root { height: 100%; }
 /* `minmax(0px, 0px)`, not `0`: a track only interpolates against the same FUNCTION, so animating a `minmax()`
    column down to a bare length does not tween at all — the column snaps shut and the body jumps a pane's width
    sideways, while the pane itself slides. Both sides `minmax()`, and the two move together. */
-.chat.list-hidden { grid-template-columns: minmax(0px, 0px) minmax(0, 1fr); }
+.chat.list-hidden { grid-template-columns: var(--rail-w) minmax(0, 1fr); }
 /* A hidden pane must not be reachable by TAB — it is off screen, and a focus ring lands nowhere the eye can
    follow — but `visibility` does not interpolate, so switching it with the class would take the pane away on the
    first frame and leave the column animating over nothing. It is DELAYED by the slide's own duration on the way
@@ -144,9 +169,9 @@ html, body, #root { height: 100%; }
    Every rule here is presentational. Nothing is removed from the document, every disclosure still opens, and the
    toggle brings all of it back, which is the standing rule about a run's raw view being quiet but never gone. */
 .chat.calm { --fs: 15px; --read: 42rem; }
-.chat.calm .chat-transcript { padding: 18px 18px 2px; line-height: 1.65; }
+.chat.calm .chat-transcript { padding: 18px 18px 2px; line-height: 1.7; }
 .chat.calm:not(.narrow) .chat-transcript > div { max-width: var(--read); }
-.chat.calm .md p { margin: 0 0 .85em; }
+.chat.calm .md p { margin: 0 0 1.05em; }
 .chat.calm .md h1, .chat.calm .md h2, .chat.calm .md h3 { margin: 1.1em 0 .4em; }
 .chat.calm .md li { margin: .2em 0; }
 
@@ -169,7 +194,7 @@ html, body, #root { height: 100%; }
    affordance that only a mouse can summon is one a phone does not have at all. */
 .chat.calm .msg.asst > .mrow { opacity: .55; margin-bottom: 1px; }
 .chat.calm .msg.asst { padding: 0; margin-bottom: 18px; }
-.chat.calm .msg.asst > .md { padding: 0; }
+.chat.calm .msg.asst .asst-body > .md { padding: 0; }
 
 /* An agent turn's box: the border earns its keep in a 360px panel, where a turn and its steps need telling apart at
    a glance. At page width the left rail on the steps already says it, and eight bordered cards down a column do
@@ -182,8 +207,11 @@ html, body, #root { height: 100%; }
 .chat.calm .block { background: transparent; border: none; margin-bottom: 4px; opacity: .6; }
 .chat.calm .block:has(.tbody) .block-head { border-bottom: none; }
 
-/* The header: a session's identity is its title, and the hash is how a DEVELOPER names it. */
-.chat.calm .chat-head .hash { opacity: .5; }
+/* The header: a session's identity is its title, and the hash is how a DEVELOPER names it — so here it is simply
+   not drawn. Fading it left its box holding a gap in the header for something nobody could see, which is worse
+   than either showing it or not: the eye reads the space as a missing control. It is in the URL, in the panel and
+   in every export. */
+.chat.calm .chat-head .hash { display: none; }
 
 /* The composer as a page's composer rather than a panel's: one rounded field on the canvas, aligned to the same
    measure as the prose above it, with the token counters kept for whoever hovers it. */
@@ -193,6 +221,18 @@ html, body, #root { height: 100%; }
     background: var(--panel); border: 1px solid var(--border); border-radius: 24px; padding: 4px 5px;
 }
 .chat.calm .composer-row:focus-within { border-color: var(--panel-2-hover); }
+/* ATTACHMENTS SIT ON THE BOX THEY WILL BE SENT WITH. The strip is a sibling of the field rather than a child, so
+   at full width it floated off to the left of a centred pill, attached to nothing — a screenshot you had just
+   pasted, apparently belonging to the page. It takes the pill's own width and rounds its bottom corners into it,
+   so the two read as one surface with the pictures resting on top of the words. */
+.chat.calm .cthumbs {
+    max-width: var(--read); width: 100%; margin: 0 auto -6px; padding: 7px 8px 12px; gap: 7px;
+    background: var(--panel); border: 1px solid var(--border); border-bottom: none;
+    border-radius: 16px 16px 0 0;
+}
+.chat.calm .cthumbs:empty { display: none; }
+.chat.calm .cthumbs + .composer-row { border-top-left-radius: 6px; border-top-right-radius: 6px; }
+.chat.calm .cthumb { width: 52px; height: 52px; border-radius: 9px; }
 .chat.calm .cinput { background: transparent; border: none; padding: 7px 6px; }
 .chat.calm .cinput:focus { outline: none; }
 .chat.calm .cbtn { border-radius: 50%; }
@@ -209,6 +249,9 @@ html, body, #root { height: 100%; }
 .chat.calm .chat-row .dot.ok { visibility: hidden; }
 .chat.calm .chat-row .agent-badge { background: transparent; color: var(--fg-faint); padding: 0; font-weight: 600; }
 .chat.calm .chat-row .time { opacity: .55; }
+/* A runtime's fold chevron: the heading is still the button, and a folded one still says what it holds ("4 sessions"),
+   which is the state the chevron was drawing a second time. */
+.chat.calm .chat-rt .tri { display: none; }
 
 /* WHERE THERE IS A POINTER, the quiet things above go further: all the way out until it comes looking. This is the
    whole of the hover behaviour, in one place and behind `hover: hover`, because the same rules on a touch screen
@@ -217,9 +260,7 @@ html, body, #root { height: 100%; }
 @media (hover: hover) and (pointer: fine) {
     .chat.calm .msg.user .mrow,
     .chat.calm .msg.asst > .mrow,
-    .chat.calm .chat-head .hash,
     .chat.calm .composer-foot,
-    .chat.calm .chat-row .time,
     .chat.calm .block { opacity: 0; transition: opacity .15s ease; }
     .chat.calm .msg.user:hover .mrow, .chat.calm .msg.user:focus-within .mrow { opacity: .75; }
     .chat.calm .msg.asst:hover > .mrow, .chat.calm .msg.asst:focus-within > .mrow { opacity: 1; }
@@ -227,13 +268,16 @@ html, body, #root { height: 100%; }
     .chat.calm .msg.asst.streaming > .mrow,
     .chat.calm .msg.asst.err > .mrow,
     .chat.calm .msg.asst.capped > .mrow { opacity: 1; }
-    .chat.calm .chat-head:hover .hash, .chat.calm .chat-head:focus-within .hash { opacity: .8; }
     .chat.calm .composer:hover .composer-foot, .chat.calm .composer:focus-within .composer-foot { opacity: .8; }
-    .chat.calm .chat-row:hover .time, .chat.calm .chat-row.active .time { opacity: .8; }
+    /* A row's time is not drawn at all: hovering a row brings its `⋮` into that corner instead, so a time that came
+       with the pointer would only ever be seen for the instant before the menu covered it — while its invisible
+       width cut every title short. The older view's month headings do the dating there. */
+    .chat.calm .chat-row .time { display: none; }
+    .chat.calm .chat-row-wrap .chat-row { padding-right: 36px; }
     .chat.calm .block:hover, .chat.calm .block:focus-within { opacity: 1; }
     @media (prefers-reduced-motion: reduce) {
-        .chat.calm .msg.user .mrow, .chat.calm .msg.asst > .mrow, .chat.calm .chat-head .hash,
-        .chat.calm .composer-foot, .chat.calm .chat-row .time, .chat.calm .block { transition: none; }
+        .chat.calm .msg.user .mrow, .chat.calm .msg.asst > .mrow,
+        .chat.calm .composer-foot, .chat.calm .block { transition: none; }
     }
 }
 
@@ -242,6 +286,798 @@ html, body, #root { height: 100%; }
    cursor because there is something more to read and nothing to click — the chip deliberately does not navigate
    (see `PageChip`). */
 .chat-page { color: var(--fg-faint); max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }
+/* …and where the device can reach that tab, the chip IS the way to it: a button, underlined the way anything you
+   can follow is, rather than a label with a hidden action on it. */
+button.chat-page-go {
+    font: inherit; background: none; border: none; padding: 0; cursor: pointer;
+    text-decoration: underline dotted; text-underline-offset: 3px;
+}
+button.chat-page-go:hover { color: var(--fg); }
 .chat-head-sub .chat-page { display: inline; max-width: none; }
 .chat-peek { flex: 0 0 auto; }
 .chat-peek:disabled { opacity: .5; cursor: progress; }
+
+/* Something happened in a session while you were reading another one. A dot, in the accent, where the unread mark
+   goes in every list that has one — and NOT a count, because the number of events a run emits is not a number
+   anybody wants read to them. */
+.chat-moved {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: 0 0 auto; align-self: center;
+}
+
+/* ============================ THE DOCK: panels around the reading column ============================
+   (dock.tsx) The box's resource panel and the Python bench, each on the edge the person picked. The frame sits in the
+   grid's second column, so the list and its rail keep the page's full height whatever is docked: left and right run
+   the column's height, top and bottom sit between them. Panels on one edge are tabs, and the tab bar is also the
+   visible panel's header (`PanelHead`), so there is one bar. */
+.chat-work { display: flex; min-width: 0; min-height: 0; position: relative; }
+.chat-work-mid { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.chat-work-mid > .chat-main { flex: 1 1 auto; }
+/* Its base size is the docked panels' own (`--panel-fs`, "Panel text size"), never the page's reading size: they were
+   built for the DevTools panel's 12px and size everything off `--fs`. */
+.chat-dock { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; flex: 0 0 auto; background: var(--bg);
+    --fs: var(--panel-fs, 12px); font-size: var(--fs); }
+/* A region docked to the top edge: its border faces the reading column. */
+.chat-dock.chat-dock-top { border-bottom: 1px solid var(--border); }
+/* A region docked to the bottom edge. */
+.chat-dock.chat-dock-bottom { border-top: 1px solid var(--border); }
+/* A region docked to the left edge. */
+.chat-dock.chat-dock-left { border-right: 1px solid var(--border); }
+/* A region docked to the right edge. */
+.chat-dock.chat-dock-right { border-left: 1px solid var(--border); }
+/* The resize edge: a strip over the region's inner border, wider than the line so it is easy to catch. */
+.dock-edge { position: absolute; z-index: 3; touch-action: none; }
+.chat-dock-top > .dock-edge { left: 0; right: 0; bottom: -4px; height: 8px; cursor: row-resize; }
+.chat-dock-bottom > .dock-edge { left: 0; right: 0; top: -4px; height: 8px; cursor: row-resize; }
+.chat-dock-left > .dock-edge { top: 0; bottom: 0; right: -4px; width: 8px; cursor: col-resize; }
+.chat-dock-right > .dock-edge { top: 0; bottom: 0; left: -4px; width: 8px; cursor: col-resize; }
+.dock-edge:hover, .dock-edge:active { background: color-mix(in srgb, var(--fg) 14%, transparent); }
+/* Maximized: over the whole column, until Escape or Restore. */
+.chat-dock.max { position: absolute; inset: 0; z-index: 20; border: none; }
+/* A phone: every panel as one region over the whole page. */
+.chat-dock.full { position: fixed; inset: 0; z-index: 30; border: none; }
+
+/* A dock region's one header bar: its tabs, the visible panel's own controls, and the region's menu. */
+.dock-bar { display: flex; align-items: center; gap: 6px; min-height: 38px; padding: 0 6px 0 4px; border-bottom: 1px solid var(--border); flex: 0 0 auto; }
+/* The strip of tabs, one per panel docked to this edge. */
+.dock-tabs { display: flex; align-items: stretch; align-self: stretch; flex: 0 0 auto; }
+/* One panel's tab: its icon and name, underlined while it is the visible one. */
+.dock-tab {
+    display: inline-flex; align-items: center; gap: 7px; padding: 0 12px; border: none; background: none; font: inherit;
+    font-size: .88em; color: var(--fg-faint); cursor: pointer; white-space: nowrap;
+}
+.dock-tab svg { width: 15px; height: 15px; }
+.dock-tab:hover { color: var(--fg-dim); }
+/* A tab and its ✕, side by side (a button cannot hold a button); the underline is the pair's, so the ✕ sits on it. */
+.dock-tabwrap { display: inline-flex; align-items: stretch; border-bottom: 2px solid transparent; }
+.dock-tabwrap.on { border-bottom-color: var(--fg-dim); }
+.dock-tabwrap > .dock-tab { border-bottom: none; padding-right: 4px; }
+/* The tab's ✕: there on hover, keyboard focus and touch; otherwise it keeps its room so nothing shifts. */
+.dock-tab-x {
+    display: inline-flex; align-items: center; justify-content: center; align-self: center; width: 20px; height: 20px;
+    margin-right: 6px; padding: 0; border: none; border-radius: 5px; background: none; color: var(--fg-faint); cursor: pointer;
+    opacity: 0; transition: opacity .12s ease;
+}
+.dock-tab-x svg { width: 12px; height: 12px; }
+.dock-tab-x:hover { color: var(--fg); background: var(--panel-2); }
+.dock-tabwrap:hover .dock-tab-x, .dock-tab-x:focus-visible { opacity: 1; }
+@media (hover: none) { .dock-tab-x { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .dock-tab-x { transition: none; } }
+.dock-tab.on { color: var(--fg); }
+/* The visible panel's own controls fill the bar between the tabs and the region's menu. */
+.dock-slot { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; }
+.dock-slot[hidden] { display: none; }
+.dock-slot > * { flex: 1 1 auto; min-width: 0; margin: 0; padding: 0; border: none; background: none; }
+/* The region's `⋮`: dock side, maximize, close. */
+.dock-menu { position: relative; flex: 0 0 auto; }
+/* The menu the `⋮` opens, below the bar (above it for a bottom region). */
+.dock-popup { position: absolute; right: 0; top: calc(100% + 4px); z-index: 40; min-width: 260px; }
+.chat-dock-bottom .dock-popup { top: auto; bottom: calc(100% + 4px); }
+/* The menu's "Dock side" row: four edge glyphs, the current one filled. */
+.dock-sides { display: flex; align-items: center; gap: 2px; padding: 4px 8px 6px 14px; }
+/* The row's label, kept on one line. */
+.dock-sides-label { flex: 1 1 auto; color: var(--fg-dim); font-size: 13.5px; white-space: nowrap; margin-right: 10px; }
+.dock-sides .hbtn { min-width: 30px; min-height: 30px; border-radius: 8px; }
+.dock-sides .hbtn.on { color: var(--fg); background: var(--panel-2); }
+
+/* Under the bar: every panel's body, only the visible tab's shown. */
+.dock-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.dock-pane { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
+.dock-pane[hidden] { display: none; }
+/* The resource panel was built to sit ON TOP of the session list and fight it for height, which is why it carries
+   a dragged height and a grip. In a region of its own there is nothing to fight: it takes the room, the dock's edge
+   does the resizing, and the height it was dragged to in the DevTools panel does not follow it here. */
+.dock-pane > .vram { flex: 1 1 auto; height: auto !important; min-height: 0 !important; border-bottom: none; overflow-y: auto; }
+/* …and the GRAPHS give way first. Elsewhere a plot keeps a 44px floor and a 72px height, because there the panel sits
+   above a session list and must not squeeze its chart to nothing. Here the region's size is the choice: the plots
+   fill it and shrink with it, down to a sliver, before anything scrolls. */
+.dock-pane .rc, .dock-pane .rc-track { min-height: 0; }
+.dock-pane .rc-plot { height: auto; min-height: 14px; }
+.dock-pane > .vram > .vram-grip { display: none; }
+.dock-pane > .bench { flex: 1 1 auto; min-height: 0; padding: 0 0 4px; }
+
+/* ===================== THE DARK THEME THIS PAGE WANTS, which is not the panel's =====================
+   The panel's dark tokens SINK your own message below the surface (`--user-bg` darker than `--bg`), which reads as
+   an inset field — right for a debug drawer whose ground is already dark, and backwards for a page. Gemini and the
+   rest do the opposite: the canvas is the darkest thing on the screen, and what you typed and the box you type
+   into are raised out of it. Calm view takes that, and only in dark, because in light the panel's ground is white
+   and a raised surface there is ALREADY a shade darker — the inversion is a dark-mode problem only.
+   Scoped to `.chat.calm`: the toggle back to the panel's view brings the panel's palette with it. */
+/* The anchored tooltip layer too: it is appended to `<body>`, OUTSIDE `.chat`, so it read the panel's palette while the
+   cursor tip (mounted inside `.chat`) read this one, and the two looked like different components. `data-focus` on
+   the root is what calm sets (view-mode.tsx), so it scopes this the same way `.chat.calm` does. The font size comes
+   along for the same reason: the layer sizes itself off `--fs`. */
+:root[data-focus] body > .tt-layer { --fs: 15px; }
+:root[data-focus]:not([data-theme="light"]) body > .tt-layer,
+:root:not([data-theme="light"]) .chat.calm {
+    --bg: #121316;
+    --panel: #1c1d21;
+    --panel-2: #2a2b31;
+    --panel-2-hover: #34353c;
+    --user-bg: #2a2b31;
+    --border: #2a2b31;
+}
+
+/* ===================== A TOOL STEP IS AN ASIDE, NOT THE SUBJECT =====================
+   In the DevTools panel a run's machinery IS what you came for, and every row of it earns its place. Here the run
+   is something that happened in the middle of a conversation, and one `fetch_url` was drawing ten things: an
+   identifier, a chevron, a dot, `In:`, a rendered/raw switch, the action, `Out:`, `running…`, the timer, and the
+   card. Calm keeps the two that say what is going on — what it is doing, and how long it has been doing it. */
+.chat.calm .io-label { display: none; }
+/* No `Out:` at all while the step is waiting on a PERSON: there is no output, and "running…" over a run that is
+   not running is the one thing on screen that is actually wrong. */
+.chat.calm .astep.awaiting .io + .io { display: none; }
+/* The approval card states it, with the buttons on it; the note under the rule states it again, and the bar at the
+   top of the pane a third time (that one is hidden from the component, which knows whether the card is in view). */
+.chat.calm .pending-note.blocked { display: none; }
+/* The rail down the left of a tool step groups its BODY against the prose either side. A collapsed step has no
+   body, so the rail is a stroke beside a single line — structure drawn for nothing. It keeps its width, so
+   opening one moves nothing sideways. */
+.chat.calm .astep.tool:not(.open) { border-left-color: transparent; }
+
+/* `rendered | raw` is a developer's control over somebody else's prose, and in calm it goes — Shane's call, and the
+   right one: a segmented switch above every input and every output was the single busiest thing left in a step, and
+   whoever wants the model-facing text turns calm off, which is one click and brings all of it back at once. The
+   standing rule is that a raw view may never be UNAVAILABLE; it does not say it must be on the screen at all times,
+   and the way to it is a control this page carries in its header. */
+.chat.calm .rr-toggle { display: none; }
+
+/* ===================== THE LIST ARRIVES, RATHER THAN APPEARING =====================
+   Two halves, and the order is the point: the PANE opens first, and what is in it comes in after, from the left
+   and top to bottom. A list that simply exists the instant the column has width reads as a jump-cut; one that
+   arrives tells you where it came from.
+   The rows keep a fixed width (above), so nothing re-wraps while the pane moves — the same reason the HUD's card
+   fixes its content width before it animates. */
+.chat:not(.narrow) > .chat-list > .head,
+.chat:not(.narrow) > .chat-list > .chat-list-foot,
+.chat:not(.narrow) > .chat-list > .view { width: var(--list-w); flex: 0 0 auto; }
+.chat:not(.narrow) > .chat-list > .view { flex: 1 1 auto; }
+
+@keyframes chat-row-in {
+    from { opacity: 0; transform: translateX(-14px); }
+    to { opacity: 1; transform: none; }
+}
+/* Driven by the animation NAME changing from `none`, which is what makes it play again each time the pane opens
+   without any JavaScript: a closed list has none, an open one has this.
+   ONE delay for all of them, not a stagger down the list. A stagger makes the arrival itself the thing you watch,
+   and the list is navigation — you are looking for a row, not at the animation. The order that matters is still
+   there: the pane opens, and then its contents are in it. */
+.chat.list-hidden .chat-list .chat-row, .chat.list-hidden .chat-list .chat-rt { animation: none; }
+.chat:not(.list-hidden) .chat-list .chat-row,
+.chat:not(.list-hidden) .chat-list .chat-rt {
+    animation: chat-row-in .28s cubic-bezier(.2, .7, .3, 1) both;
+    animation-delay: 150ms;   /* after the pane's own .24s is most of the way through */
+}
+@media (prefers-reduced-motion: reduce) {
+    .chat:not(.list-hidden) .chat-list .chat-row, .chat:not(.list-hidden) .chat-list .chat-rt { animation: none; }
+}
+
+/* ===================== WHAT IS LEFT INSIDE A STEP, AND AROUND AN ANSWER =====================
+   The same question as the rest of calm, asked one level in: of the controls drawn on every step, every table
+   and every reply, which does a person reading actually need in front of them? */
+
+/* THE CHEVRON GOES. The row is a button whose whole width is the target and whose cursor already says so, and a
+   step that is open says it by having a body. A disclosure triangle beside a tool's name is a third statement of
+   the same thing. */
+.chat.calm .astep-head > .tri { display: none; }
+
+/* ROOM BETWEEN WHAT RAN AND WHAT CAME BACK. Two `details` stacked with no gap put a result hard against the
+   code that produced it, which reads as one block with a rule through it rather than as a question and answer. */
+.chat.calm .astep-body .io + .io { margin-top: 12px; }
+
+/* THE POINTER AND THE CLOCK SHARE A LINE. `ran in 1.6s` and `@tool:a1b2c3d` are both the step's own footnotes,
+   and stacked they cost two rows and an awkward gap between them for one short sentence's worth of fact. */
+.chat.calm .astep-body .r-ranfor { display: inline-block; }
+.chat.calm .astep-token { display: inline-flex; float: right; margin-top: -1.6em; }
+
+/* A TABLE'S CONTROLS BELONG TO THE TABLE, so they appear when the pointer is on it instead of holding a row above
+   it at all times. UNDER the grid, right-aligned: over it they cover the last row, and the top left is where the
+   column names are — a control there is a control over the thing you are trying to read. The strip they sit in is
+   RESERVED whether or not they are showing, so a table does not change height under the pointer. */
+.chat.calm .r-df { position: relative; }
+.chat.calm .r-df > .r-df-bar {
+    position: absolute; top: 100%; right: 4px; z-index: 2; margin: 0; padding: 3px;
+    border-radius: 9px; background: color-mix(in srgb, var(--panel) 86%, transparent);
+    backdrop-filter: blur(6px); box-shadow: 0 2px 12px rgb(0 0 0 / .35);
+}
+@media (hover: hover) and (pointer: fine) {
+    .chat.calm .r-df > .r-df-bar { opacity: 0; transition: opacity .15s ease; }
+    .chat.calm .r-df:hover > .r-df-bar, .chat.calm .r-df:focus-within > .r-df-bar { opacity: 1; }
+    @media (prefers-reduced-motion: reduce) { .chat.calm .r-df > .r-df-bar { transition: none; } }
+}
+
+/* A CITATION'S TOOLTIP BELONGS TO ITS CAPTION. An embed is something you READ — a table, a plot — and a tip that
+   fires anywhere over it is an explanation of the frame appearing on top of the contents. The caption is the
+   frame's own text, so that is what carries the explanation; the block itself stays clickable. */
+.chat.calm .tok-block:hover > .tok-tip { opacity: 0; }
+.chat.calm .tok-anno { cursor: help; }
+.chat.calm .tok-anno:hover ~ .tok-tip, .chat.calm .tok-block:focus-visible > .tok-tip { opacity: 1; }
+/* …and it appears AT the caption, not at the top of the embed. The tip is anchored rather than cursor-following
+   (the shared component draws it, and the panel's own tests pin that), so the least confusing thing it can do is
+   sit against the one element that raises it — a tip that opens half a screen from the pointer reads as belonging
+   to something else. */
+.chat.calm .tok-block > .tok-tip { bottom: auto; top: calc(100% + 4px); left: 8px; }
+/* The green wash over the whole embed goes with the tip, for the same reason: it fires while you are reading a
+   table, and the rail already says where the transclusion starts and stops. It moves to the caption, which is the
+   part that is now behaving like a control. */
+.chat.calm .answer-rendered .tok-block:hover { background: none; }
+.chat.calm .tok-anno:hover { background: color-mix(in srgb, var(--ok) 12%, transparent); border-radius: 3px; }
+
+/* THE REPLY'S PROVENANCE MOVES UNDER IT. Copying an answer and knowing when it landed are things you want AFTER
+   reading it, and they were sitting on the line your eye lands on first. The status dot goes entirely unless it
+   is saying something other than "this worked", which is what the answer itself says. The collapse control stays,
+   to the LEFT of the reply where it does not cost a row. */
+.chat.calm .msg.asst { display: flex; flex-direction: column; position: relative; }
+.chat.calm .msg.asst > .mrow { order: 2; margin: 6px 0 0; }
+/* The dot rides inside its own tooltip wrapper, so hiding the dot alone would leave the shell holding a gap —
+   the same shape the panel's focus mode has to handle for the model pill. */
+.chat.calm .msg.asst:not(.err):not(.capped):not(.streaming) > .mrow > .tt:has(> .dot) { display: none; }
+/* Out in the GUTTER, which only a wide layout has: at a phone's width there is no margin to put it in, so it
+   stays in the row it moved to. */
+.chat.calm:not(.narrow) .msg.asst > .mrow > .who-toggle { position: absolute; top: 7px; left: -20px; margin: 0; }
+/* It centres on the FIRST LINE (a 25.5px line, an 11px glyph), and in the gutter it is a thing you reach for, not
+   something to read past: it arrives with the pointer over the reply and leaves with it. A touch screen keeps it. */
+@media (hover: hover) and (pointer: fine) {
+    .chat.calm:not(.narrow) .msg.asst > .mrow > .who-toggle { opacity: 0; transition: opacity .18s ease; }
+    .chat.calm:not(.narrow) .msg.asst:hover > .mrow > .who-toggle,
+    .chat.calm:not(.narrow) .msg.asst > .mrow > .who-toggle:focus-visible { opacity: 1; }
+    @media (prefers-reduced-motion: reduce) { .chat.calm:not(.narrow) .msg.asst > .mrow > .who-toggle { transition: none; } }
+}
+
+/* A STEP OPENS RATHER THAN APPEARING. A tool body arriving at full height in one frame shoves everything under it
+   down the page, and on a long step that is most of the screen moving at once.
+   `height: 0 → auto` needs `interpolate-size`, because `auto` is a keyword and keywords do not interpolate
+   without it. `overflow` is set INSIDE the keyframes so it applies for the animation and reverts after — a
+   permanently clipped body would cut off the tooltips its own controls raise.
+   The CLOSE is not animated: the body is unmounted by the component the instant it closes, and keeping every
+   step's body mounted for the whole of a run — tables, highlighted source, screenshots — to animate its removal
+   would be an expensive way to buy a fifth of a second. */
+.chat.calm { interpolate-size: allow-keywords; }
+@keyframes chat-step-open {
+    from { height: 0; opacity: .3; overflow: hidden; }
+    to { height: auto; opacity: 1; overflow: hidden; }
+}
+@keyframes chat-step-close {
+    from { height: auto; opacity: 1; overflow: hidden; }
+    to { height: 0; opacity: .3; overflow: hidden; }
+}
+/* `--astep-close-ms` is how this surface tells the component how long to keep the body mounted on the way out —
+   the component reads it and waits, and a surface that sets nothing closes in the same tick it always has. */
+.chat.calm .astep-body { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); --astep-close-ms: 200; }
+.chat.calm .astep-body.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; }
+@media (prefers-reduced-motion: reduce) {
+    .chat.calm .astep-body { animation: none; --astep-close-ms: 0; }
+    .chat.calm .astep-body.closing { animation: none; }
+}
+
+/* The full-size image's own controls, top right of the overlay and out of the picture's way. Icon buttons with
+   the panel's tooltips: the overlay is a viewer, and two words of chrome across its corner is a caption nobody
+   asked for. */
+.chat-lightbox-bar {
+    position: fixed; top: calc(10px + env(safe-area-inset-top)); right: 12px; z-index: 61;
+    display: flex; align-items: center; gap: 4px; padding: 4px;
+    background: color-mix(in srgb, var(--panel) 80%, transparent); border-radius: 10px; backdrop-filter: blur(6px);
+}
+.chat-lightbox-bar .hbtn { color: var(--fg); min-width: 34px; min-height: 34px; }
+
+/* ROOM. Everything above is about what is on the page; this is about how tightly it is packed. A transcript read
+   at arm's length wants more air between one thing and the next than a panel docked beside a page does, and the
+   step rows were the worst of it — a run read as a dense block rather than as a sequence of things that happened. */
+.chat.calm .aturn { margin-bottom: 26px; }
+/* COLLAPSED steps are a LIST — one line each, and a list is read as a group, so they sit close together. An OPEN
+   one is a thing you are reading, and it gets the room that goes with that. */
+.chat.calm .astep.tool { margin: 3px 0; }
+.chat.calm .astep.tool.open { margin: 16px 0; padding-bottom: 4px; }
+.chat.calm .astep-body { padding: 6px 0 10px 4px; }
+.chat.calm .aturn-prose { margin: 6px 0 14px; }
+.chat.calm .msg.user { margin-bottom: 22px; }
+/* …and room ABOVE it: a reply starting immediately under your own bubble reads as one block of text
+   with a shape in the middle, rather than as an answer to something. */
+.chat.calm .msg.asst { margin-bottom: 26px; margin-top: 14px; }
+
+/* CODE HAS ITS OWN SIZE on this page, `--code-fs` (the device's "Code size" setting, `codeSize` in view-mode.tsx),
+   rather than a fraction of the prose's. The panel's `.code` is 0.92em of a 12px base — proportionate beside 12px
+   text and heavy beside 15px, where a monospace face of nearly the same size as the prose stops reading as an inset
+   and starts competing with it. */
+.chat { --code-fs: 12.5px; }
+.chat .code, .chat .md pre.code, .chat .jt-value { font-size: var(--code-fs); }
+/* The bench was built for the panel, where its editor is 0.88em of the base: give it the base that makes its code
+   `--code-fs`, and its toolbar and tabs scale with it instead of with the page's reading size. */
+.chat-dock .bench, .dock-slot > .bench-top { font-size: calc(var(--code-fs) / .88); }
+.chat-dock .bench .code, .chat-dock .bench .md pre.code { font-size: var(--code-fs); }
+
+/* The same rule for a CODE block's own tools (explain, copy, bench): they belong to the block, so they arrive when
+   the pointer is in it. They are positioned over its top-right corner already, so nothing moves when they do. */
+@media (hover: hover) and (pointer: fine) {
+    .chat.calm .code-tools { opacity: 0; transition: opacity .15s ease; }
+    .chat.calm .r-code:hover .code-tools, .chat.calm .io-body:hover .code-tools,
+    .chat.calm .code-tools:focus-within { opacity: 1; }
+    @media (prefers-reduced-motion: reduce) { .chat.calm .code-tools { transition: none; } }
+}
+
+/* THE REPLY FOLDS TO ITS SUMMARY WITHOUT BOUNCING. The old version shrank to nothing and grew back, which read as
+   the reply closing and then reopening. Now the height stops where the summary will stand — one line, `1lh` — so
+   nothing below moves twice:
+     folding:   the prose fades as the box shrinks to one line, then the summary slides in from the left;
+     unfolding: the summary slides back out to the left, then the box grows from that line as the prose fades in.
+   The component holds each half for `--asst-close-ms` and says which side is mounted with `.folded`; the panel sets
+   no duration and swaps in one frame, as it always has. */
+.chat.calm .asst-body { --asst-close-ms: 180; }
+@keyframes chat-asst-shrink { from { height: auto; opacity: 1; } to { height: 1lh; opacity: 0; } }
+@keyframes chat-asst-grow { from { height: 1lh; opacity: 0; } to { height: auto; opacity: 1; } }
+@keyframes chat-asst-sum-in { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: none; } }
+@keyframes chat-asst-sum-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(-14px); } }
+.chat.calm .asst-body:not(.folded).closing { animation: chat-asst-shrink .18s cubic-bezier(.4, 0, .2, 1) both; overflow: hidden; }
+.chat.calm .asst-body.folded.opening > .asst-collapsed { animation: chat-asst-sum-in .18s cubic-bezier(0, 0, .2, 1) both; }
+.chat.calm .asst-body.folded.closing > .asst-collapsed { animation: chat-asst-sum-out .18s cubic-bezier(.4, 0, 1, 1) both; }
+.chat.calm .asst-body:not(.folded).opening { animation: chat-asst-grow .18s cubic-bezier(.4, 0, .2, 1) both; overflow: hidden; }
+@media (prefers-reduced-motion: reduce) {
+    .chat.calm .asst-body { --asst-close-ms: 0; }
+    .chat.calm .asst-body.closing, .chat.calm .asst-body.opening,
+    .chat.calm .asst-body > .asst-collapsed { animation: none; }
+}
+
+/* ===================== NO BAND ACROSS THE TOP =====================
+   What the header held has gone where each part belongs: the title into the transcript (`.chat-lede`), and the way
+   back and the page's own tools to the left edge (the rail and the gear, below). The band itself is what a page
+   this quiet cannot justify — it was there to hold four glyphs and a line of text you read once. */
+.chat.calm .chat-main { position: relative; }
+
+/* The session's identity as the transcript's first line: there when you arrive, gone as soon as you scroll. */
+.chat-lede { margin: 6px 0 26px; }
+.chat-lede-title { display: block; font-size: 1.32em; line-height: 1.3; }
+.chat-lede-sub { display: flex; align-items: center; gap: 6px; margin-top: 4px; color: var(--fg-faint); font-size: .88em; }
+.chat.calm .chat-transcript { padding-top: 26px; }
+
+/* The send hint goes at a phone's width: there Enter makes a line and the button sends, so a line explaining the
+   keyboard is advice about a keyboard that is not there. */
+.chat.narrow .chint { display: none; }
+
+/* THE RULE ABOUT WHAT HIDES. Anything you go LOOKING for stays put; only what belongs to a thing you are reading
+   arrives with the pointer. The reply's copy and the composer's counters are the first kind — quiet, but there —
+   and were on the wrong side of it. */
+@media (hover: hover) and (pointer: fine) {
+    .chat.calm .msg.asst > .mrow { opacity: .45; }
+    .chat.calm .composer-foot { opacity: .45; }
+}
+
+/* ===================== PINNED, AND THE WAY TO OLDER SESSIONS ===================== */
+/** A heading inside the list that is not a runtime: "Pinned". */
+.chat-group-label {
+    display: flex; align-items: center; gap: 6px; padding: 4px 4px 6px;
+    color: var(--fg-faint); font-size: .8em; font-weight: 600; letter-spacing: .03em;
+}
+.chat-group-label svg { width: 13px; height: 13px; }
+.chat-row-rt { color: var(--fg-faint); }
+
+/** The way into the older view: the last thing in the recent list, quiet, with how many are behind it. */
+.chat-older-go {
+    display: flex; align-items: center; gap: 8px; width: 100%; margin: 2px 0 10px; padding: 9px 10px;
+    background: none; border: 1px dashed var(--border); border-radius: 10px;
+    color: var(--fg-dim); font: inherit; cursor: pointer; text-align: left;
+}
+.chat-older-go:hover { color: var(--fg); background: var(--panel); border-style: solid; }
+.chat-older-go svg { flex: 0 0 auto; }
+.chat-older-n { margin-left: auto; color: var(--fg-faint); font-size: .86em; font-variant-numeric: tabular-nums; }
+
+/* A row's `⋮`. It arrives with the pointer, in the corner the timestamp was using — the time is what you read on a
+   row you are scanning, the menu is what you want from the one you are on, and they never need to be seen together.
+   Keyboard focus shows it too; a touch screen cannot hover, so there it is always shown and the row makes room. */
+.chat-row-wrap { position: relative; }
+.chat-row-more {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    opacity: 0; transition: opacity .15s ease;
+}
+.chat-row-wrap:hover .chat-row-more, .chat-row-wrap:focus-within .chat-row-more, .chat-row-more.on { opacity: 1; }
+.chat-row-wrap:hover .chat-row .time, .chat-row-wrap:focus-within .chat-row .time,
+.chat-row-wrap:has(.chat-row-more.on) .chat-row .time { opacity: 0 !important; }
+@media (hover: none) {
+    .chat-row-more { opacity: .7; }
+    .chat-row-wrap .chat-row { padding-right: 40px; }
+    .chat-row-wrap .chat-row .time { display: none; }
+}
+.chat.narrow .chat-row-wrap .chat-row { padding-right: 44px; }
+.chat.narrow .chat-row-more { opacity: .7; }
+
+/** The row menu, placed fixed from its button (row-menu.tsx), so a scrolling, clipping list cannot cut it off. Its
+ *  look is `.chat-menu`, shared with the gear's. */
+.chat-row-menu { position: fixed; z-index: 60; }
+.chat-row-menu.up { transform: translateY(-100%); }
+
+/** The one confirmation a delete goes through: modal, centred, and focused on Cancel. */
+.chat-dialog-back {
+    position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 16px;
+    background: rgba(0, 0, 0, .45); animation: chat-fade .15s ease both;
+}
+.chat-dialog {
+    width: min(420px, 100%); padding: 20px 20px 16px; border-radius: 16px;
+    background: var(--panel); border: 1px solid var(--border); box-shadow: 0 18px 50px rgba(0, 0, 0, .45);
+    animation: chat-pop .18s cubic-bezier(.2, .7, .3, 1) both;
+}
+.chat-dialog h2 { margin: 0 0 8px; font-size: 1.12em; font-weight: 600; }
+.chat-dialog p { margin: 0 0 18px; color: var(--fg-dim); line-height: 1.5; }
+.chat-dialog p b { color: var(--fg); font-weight: 600; }
+.chat-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.chat-dialog .btn {
+    padding: 7px 14px; border-radius: 999px; font: inherit; cursor: pointer;
+    background: transparent; color: var(--fg); border: 1px solid var(--border);
+}
+.chat-dialog .btn:hover { background: var(--panel-2); }
+.chat-dialog .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* The confirming button is the filled one, not a red one: the dialog is the warning, and a red button in a calm
+   page shouts a second time about something the sentence above it has already said. */
+.chat-dialog .btn.primary { background: var(--fg); border-color: var(--fg); color: var(--bg); font-weight: 600; }
+.chat-dialog .btn.primary:hover { filter: brightness(.92); }
+.chat-dialog .btn:disabled { opacity: .6; cursor: default; }
+@keyframes chat-fade { from { opacity: 0; } }
+@keyframes chat-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
+@media (prefers-reduced-motion: reduce) { .chat-dialog-back, .chat-dialog { animation: none; } }
+
+/* ===================== THE RAIL, THE GEAR, AND THE SEARCH PAGE (nav.tsx, search-page.tsx) =====================
+   Gemini's chrome, because it is the quietest there is: with the list away, the left edge keeps a column of glyphs —
+   the list, a new session, search — and a gear at the bottom that holds everything that is not a session. With the
+   list open, the gear sits at the list's own bottom-left. Nothing else on the page is chrome. */
+.chat-rail {
+    position: absolute; left: 0; top: 0; bottom: 0; width: var(--rail-w); z-index: 4;
+    display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 0 14px;
+    animation: chat-rail-in .22s ease .12s both;
+}
+@keyframes chat-rail-in { from { opacity: 0; } }
+/* Outside calm view the page draws its edges (the header's rule, the open list's border), so the rail draws one too,
+   where the list's border would be. Calm view draws none, so its rail stays a column of glyphs on the page. */
+.chat:not(.calm) .chat-rail { border-right: 1px solid var(--border); }
+@media (prefers-reduced-motion: reduce) { .chat-rail { animation: none; } }
+.chat-rail .hbtn, .chat-list-foot .hbtn, .chat-list .head .hbtn, .chat-sheet-back { min-width: 36px; min-height: 36px; border-radius: 50%; }
+.chat-rail .sp { flex: 1 1 auto; }
+/* The rail's `+` menu opens to the RIGHT of the rail: anchored under it, it would open off the left edge. */
+.chat-list-foot { flex: 0 0 auto; padding: 8px 10px 12px; display: flex; flex-direction: column; align-items: stretch; gap: 2px; }
+/* In the foot each button spans the list's width, so its hover and open state read as a row, not a floating pill. */
+.chat-list-foot .chat-gear { display: flex; }
+.chat-list-foot .chat-gear-wide { flex: 1 1 auto; width: 100%; }
+.chat-list-foot .chat-att-n { margin-left: auto; }
+
+/* THE PAGE'S ONE MENU LOOK (menu.tsx): a rounded sheet, a glyph and a label per row, a tick on a toggle — Android's
+   list menu, which Gemini borrowed. The row menu and the gear's menu both use it, so they cannot drift apart. */
+.chat-menu {
+    display: flex; flex-direction: column; min-width: 190px; padding: 6px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: 0 12px 36px rgb(0 0 0 / .45); animation: chat-pop .16s cubic-bezier(.2, .7, .3, 1) both;
+    font-size: 13.5px;
+}
+.chat-menu-item {
+    display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px 10px; border: none; border-radius: 9px;
+    background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; white-space: nowrap;
+}
+.chat-menu-item:hover, .chat-menu-item:focus-visible { background: var(--panel-2); outline: none; }
+.chat-menu-ico { display: inline-flex; color: var(--fg-dim); }
+.chat-menu-ico svg { width: 18px; height: 18px; }
+.chat-menu-label { flex: 1 1 auto; }
+.chat-menu-on { display: inline-flex; color: var(--fg); }
+/* A menu row's current value, dim at its right (the theme row: "Dark"), and its caret, turned down while open. */
+.chat-menu-val { margin-left: auto; color: var(--fg-faint); font-size: .92em; }
+.chat-menu-caret { display: inline-flex; color: var(--fg-faint); transition: transform .15s ease; }
+.chat-menu-caret svg { width: 12px; height: 12px; }
+.chat-menu-caret.open { transform: rotate(90deg); }
+/* A choice under an opened row, indented past the icons. */
+.chat-menu-item.chat-menu-sub { padding-left: 40px; }
+@media (prefers-reduced-motion: reduce) { .chat-menu { animation: none; } }
+
+/* The gear's menu rises from the gear, with room for its longer rows. */
+.chat-gear { position: relative; }
+.chat-gear-menu { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 40; min-width: 240px; transform-origin: bottom left; }
+/* In the open list's foot the gear has a word beside it, Gemini's "Settings": there is room, and a lone glyph at
+   the bottom of a full column reads as an ornament. */
+.chat-gear-wide {
+    display: inline-flex; align-items: center; gap: 10px; padding: 8px 12px; border: none; border-radius: 999px;
+    background: none; color: var(--fg-dim); font: inherit; font-size: .95em; cursor: pointer;
+}
+.chat-gear-wide:hover, .chat-gear-wide.on { background: var(--panel); color: var(--fg); }
+.chat-gear-wide svg { width: 18px; height: 18px; }
+
+/* THE ATTENTION LIST's button, above the gear (attention-page.tsx): absent when there is nothing to do. Its count
+   is for problems only, in the warning colour, since a suggestion is not something to be nagged about. */
+.chat-att-btn { position: relative; }
+.chat-att-dot { position: absolute; top: 2px; right: 1px; min-width: 15px; height: 15px; padding: 0 3px; box-sizing: border-box; border-radius: 999px; background: var(--warn); color: var(--bg); font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; }
+.chat-att-n { margin-left: -4px; min-width: 18px; padding: 0 5px; border-radius: 999px; background: color-mix(in srgb, var(--warn) 22%, transparent); color: var(--warn); font-size: .8em; font-weight: 600; text-align: center; }
+/* The sheet's rows: a sentence on the left, its fix on the right; problems carry a coloured edge, suggestions none. */
+.chat-att-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.chat-att-item { display: flex; align-items: flex-start; gap: 16px; padding: 14px 16px; border-radius: 14px; background: var(--panel); box-shadow: inset 3px 0 0 transparent; }
+.chat-att-item.blocks { box-shadow: inset 3px 0 0 var(--err); }
+.chat-att-item.limits { box-shadow: inset 3px 0 0 var(--warn); }
+.chat-att-text { flex: 1 1 auto; min-width: 0; }
+.chat-att-title { font-weight: 600; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.chat-att-rt { color: var(--fg-faint); font-weight: 400; font-size: .85em; }
+.chat-att-detail { margin-top: 4px; color: var(--fg-dim); font-size: .92em; line-height: 1.5; overflow-wrap: anywhere; }
+.chat-att-acts { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.chat-att-fix { padding: 6px 14px; border: none; border-radius: 999px; background: var(--fg); color: var(--bg); font: inherit; font-size: .9em; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.chat-att-fix:hover { opacity: .88; }
+.chat-att-fix:disabled { opacity: .5; cursor: default; }
+.chat-att-dismiss { padding: 2px 6px; border: none; background: none; color: var(--fg-faint); font: inherit; font-size: .85em; cursor: pointer; }
+.chat-att-dismiss:hover { color: var(--fg); }
+.chat.narrow .chat-att-item { flex-direction: column; gap: 10px; }
+.chat.narrow .chat-att-acts { flex-direction: row; align-items: center; }
+
+/* A SHEET: a page of the app that is not a session — the search page and Settings. One quiet column at the reading
+   width, no band across the top, and Escape takes you back. */
+.chat-sheet-scroll { padding: 0 16px; }
+.chat-sheet-col { max-width: 760px; margin: 0 auto; padding: 56px 0 40px; position: relative; }
+.chat.narrow .chat-sheet-col { padding-top: 12px; }
+/* The title, and the way back as the rail's round button hanging in the gutter to its left, so the title still lines
+   up with the rows under it. A phone has no gutter, so there the button sits in the line. */
+.chat-sheet-head { position: relative; display: flex; align-items: center; gap: 8px; margin: 0 0 24px; padding: 0 12px; }
+.chat-sheet-back { position: absolute; right: 100%; top: 50%; transform: translateY(-50%); color: var(--fg-dim); }
+.chat.narrow .chat-sheet-back { position: static; transform: none; }
+.chat-sheet-col > .chat-sheet-back { margin-bottom: 8px; }
+.chat.narrow .chat-sheet-head { padding-left: 0; }
+.chat-sheet-title { margin: 0; font-size: 1.6em; font-weight: 500; color: var(--fg); }
+/* The search page: a pill to type in, and the whole history under it with each date at the right. */
+.chat-search-box {
+    display: flex; align-items: center; gap: 12px; padding: 0 20px; min-height: 56px; border-radius: 999px;
+    background: var(--panel); color: var(--fg-dim); border: 1px solid transparent;
+}
+.chat-search-box:focus-within { border-color: var(--panel-2-hover); }
+.chat-search-box svg { width: 20px; height: 20px; flex: 0 0 auto; }
+.chat-search-box input { flex: 1 1 auto; min-width: 0; border: none; background: none; outline: none; color: var(--fg); font: inherit; font-size: 1.05em; }
+.chat-search-box input::placeholder { color: var(--fg-faint); }
+.chat-search-label { margin: 34px 0 10px; padding: 0 12px; color: var(--fg-dim); font-size: .95em; }
+/* The search page's foot: what limits the search, such as an archive folder that needs reconnecting. */
+.chat-search-foot { margin-top: 18px; padding: 10px 12px 0; border-top: 1px solid var(--border); color: var(--fg-dim); font-size: .9em; line-height: 1.5; }
+.chat-search-foot p { margin: 0 0 8px; }
+/* A button that reads as a link inside a sentence (opening Settings from a note). */
+.chat-link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.chat-link:hover { color: var(--fg); }
+.chat-search-empty { padding: 8px 12px; color: var(--fg-faint); }
+.chat-search-list { list-style: none; margin: 0; padding: 0; }
+.chat-search-row {
+    display: flex; align-items: baseline; gap: 12px; width: 100%; padding: 13px 12px; border: none; border-radius: 12px;
+    background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer;
+}
+.chat-search-row:hover, .chat-search-row:focus-visible { background: var(--panel); outline: none; }
+.chat-search-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-search-rt { flex: 0 0 auto; color: var(--fg-faint); font-size: .86em; }
+.chat-search-date { flex: 0 0 auto; color: var(--fg-faint); font-size: .92em; font-variant-numeric: tabular-nums; }
+.chat-search-more { height: 1px; }
+
+/* Settings as a sheet: this page's display settings, then the extension's own settings view, in the search page's
+   column. A setting is a row: what it is and what it touches on the left, the choice on the right. */
+.chat-settings-body { padding: 0 12px; }
+.chat-set-group { margin-bottom: 36px; }
+.chat-set-tabs { margin: 0 12px 24px; }
+.chat-set-lede { margin: 0 0 16px; padding: 0 12px; color: var(--fg-faint); font-size: .92em; }
+.chat-set-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 10px 12px; }
+.chat-set-label { flex: 1 1 240px; display: flex; flex-direction: column; gap: 3px; }
+.chat-set-hint { color: var(--fg-faint); font-size: .88em; }
+.chat-set-sample { margin: 4px 12px 0; }
+/* A segmented choice: the options side by side in one pill, the chosen one filled. */
+.chat-seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 999px; background: var(--panel); }
+.chat-seg-opt {
+    border: none; border-radius: 999px; padding: 6px 14px; background: none; color: var(--fg-dim); font: inherit;
+    font-size: .92em; cursor: pointer;
+}
+.chat-seg-opt:hover { color: var(--fg); }
+.chat-seg-opt.on { background: var(--panel-2); color: var(--fg); }
+.chat-seg-opt:focus-visible { outline: 2px solid var(--fg-dim); outline-offset: 1px; }
+
+/* ===================== THE START PAGE (start-page.tsx) =====================
+   What the page is with nothing open: one pill to start the next session in, a little above the middle, and nothing
+   else — no greeting, because this is a place to put a thought down, not a product saying hello. */
+.chat-home { position: relative; }
+.chat-start-page { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; padding: 16px; min-height: 0; overflow: auto; }
+.chat-start-col { width: 100%; max-width: var(--read, 42rem); margin-bottom: 12vh; }
+/* The pill: the text on top, the choices a start needs on one row under it, the send at the end of that row. */
+.chat-start-box {
+    display: flex; flex-direction: column; gap: 10px; padding: 14px 14px 10px 20px; border-radius: 26px;
+    background: var(--panel); border: 1px solid transparent;
+}
+.chat-start-box:focus-within { border-color: var(--panel-2-hover); }
+.chat-start-box textarea {
+    border: none; background: none; outline: none; resize: none; color: var(--fg); font: inherit; font-size: 1.05em;
+    line-height: 1.5; padding: 4px 0; min-height: 1.5em; max-height: 280px;
+}
+.chat-start-box textarea::placeholder { color: var(--fg-faint); }
+.chat-start-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* The row's pickers read as quiet pills, not form fields. */
+.chat-pick-rt, .chat-pick-url {
+    font: inherit; font-size: .88em; color: var(--fg-dim); background: var(--panel-2); border: none; border-radius: 999px;
+    padding: 6px 12px; max-width: 22rem; min-width: 0;
+}
+.chat-pick-url { flex: 1 1 12rem; outline: none; color: var(--fg); }
+.chat-pick-rt:hover { color: var(--fg); }
+.chat-start-send { flex: 0 0 auto; }
+/* Settings → Housekeeping: the log's output cell fills a fixed-height box, as it fills the DevTools view. */
+.chat-set-hk { display: flex; flex-direction: column; height: min(640px, calc(100vh - 220px)); min-height: 240px; }
+/* The log is the one thing on a sheet that is wide by nature, so it breaks out of the reading column to the pane's
+   full width (less a gutter), while the title and the tabs above it stay where every other tab has them. 50% is half
+   the column, 50cqw half the pane (the sheet's scroller is the size container). */
+.chat-sheet-scroll { container-type: inline-size; }
+.chat-set-hk { width: calc(100cqw - 48px); margin-left: calc(50% - 50cqw + 24px); height: calc(100vh - 230px); }
+.chat.narrow .chat-set-hk { width: auto; margin-left: 0; }
+.chat-set-hk .hk-view { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; font-size: var(--panel-fs); }
+/* Said in the start pill's row while its runtime reconnects (the worker restarting): the form stays, sending waits. */
+.chat-start-wait { color: var(--fg-faint); font-size: .85em; white-space: nowrap; }
+.chat-start-hint { margin-top: 10px; padding: 0 20px; color: var(--fg-faint); font-size: .84em; }
+.chat.narrow .chat-start-hint { display: none; }
+/* On a phone the way back sits over the top-left corner; the pill stays centred. */
+.chat-home-back { position: absolute; top: 10px; left: 10px; z-index: 2; }
+
+/* The top of a transcript that does not reach its start (`EarlierEdge`): a quiet line that loads earlier events as it
+   scrolls into view, or says why it cannot. Never styled like `.chat-truncated`, which says they are gone. */
+.chat-earlier { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 4px 0 18px; color: var(--fg-faint); font-size: .88em; }
+.chat-earlier.err { color: var(--fg-dim); }
+.chat-earlier-retry {
+    border: none; border-radius: 999px; padding: 5px 12px; background: var(--panel); color: var(--fg-dim); font: inherit; cursor: pointer;
+}
+.chat-earlier-retry:hover { color: var(--fg); }
+
+/* ===================== THE TAB PICKER (tab-picker.tsx) =====================
+   Where an agent run goes: a pill with the chosen tab's icon and title, opening "New tab", a rule, and the tabs in
+   browser order with each group's members indented under a coloured heading. */
+.tp-pill {
+    display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 24rem; padding: 6px 10px 6px 10px;
+    border: none; border-radius: 999px; background: var(--panel-2); color: var(--fg-dim); font: inherit; font-size: .88em; cursor: pointer;
+}
+.tp-pill:hover, .tp-pill[aria-expanded="true"] { color: var(--fg); }
+.tp-pill-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The start row's two pickers, capped so the row fits the start box on one line at its full width (42rem): the kind
+   switch, both pills and the send. The text ellipsizes; the whole name is in the list. */
+.tp-pill-tab, .tp-pill.tp-pill-tab { flex: 0 1 auto; max-width: 14rem; }
+/* A pill still waiting for its list: the model pill's size, a slow shimmer across it, nothing to read. */
+.tp-pill.tp-pill-wait { width: 9rem; height: 30px; box-sizing: border-box; cursor: default; background: linear-gradient(90deg, var(--panel-2) 0%, var(--panel-2-hover) 50%, var(--panel-2) 100%); background-size: 200% 100%; animation: chat-pill-shimmer 1.2s ease-in-out infinite; }
+@keyframes chat-pill-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+/* The pill that replaces it arrives with a short fade and slide from the left. */
+.tp-pill-in { animation: chat-pill-in .22s ease-out; }
+@keyframes chat-pill-in { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .tp-pill.tp-pill-wait, .tp-pill-in { animation: none; } }
+.tp-pill-model, .tp-pill.tp-pill-model { flex: 0 1 auto; max-width: 12rem; }
+/* The pill's down caret. */
+.tp-caret { flex: 0 0 auto; opacity: .7; }
+/* The list: fixed from the pill's rect, so no scrolling or clipping container can cut it. */
+/* The list; its max-height is set from the room on the side it opens (see `place` in tab-picker.tsx). */
+.tp-pop { position: fixed; z-index: 60; display: flex; flex-direction: column; padding: 6px; outline: none; }
+/* The list's filter box, shown past eight tabs. */
+.tp-filter {
+    margin: 2px 2px 6px; padding: 8px 12px; border: none; border-radius: 10px; background: var(--panel-2); color: var(--fg);
+    font: inherit; font-size: 13.5px; outline: none;
+}
+/* The scrolling part of the list, under New tab and the rule. */
+.tp-list { overflow-y: auto; min-height: 36px; flex: 1 1 auto; }
+/* A row: icon, title, host, and a check on the chosen one. */
+.tp-row {
+    display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; border: none; border-radius: 10px;
+    background: none; color: var(--fg); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer;
+}
+.tp-row.hot { background: var(--panel-2); }
+.tp-row.indent { padding-left: 30px; }
+/* A row's tab title, cut with an ellipsis. */
+.tp-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A row's host, dim, after the title. */
+.tp-host { flex: 0 1 auto; max-width: 40%; color: var(--fg-faint); font-size: .9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The dot on the tab showing in its window. */
+.tp-active { color: var(--ok); font-size: 8px; flex: 0 0 auto; }
+/* The check on the chosen row. */
+.tp-check { display: inline-flex; flex: 0 0 auto; color: var(--fg); }
+/* A tab's icon: the runtime's favicon, or the site's letter in a small rounded square of the same size. */
+.tp-fav { width: 16px; height: 16px; flex: 0 0 auto; border-radius: 4px; object-fit: contain; }
+/* The letter icon for a tab with no runtime-made favicon. */
+.tp-letter { display: inline-flex; align-items: center; justify-content: center; background: var(--panel-2); color: var(--fg-dim); font-size: 10px; font-weight: 600; }
+/* The plus icon of "New tab". */
+.tp-new { display: inline-flex; align-items: center; justify-content: center; color: var(--fg-dim); }
+.tp-new svg { width: 14px; height: 14px; }
+/* The rule between New tab and the tabs. */
+.tp-rule { height: 1px; margin: 5px 6px; background: var(--border); flex: 0 0 auto; }
+/* A group's heading: its colour, its name, how many tabs it holds. A window's, when there is more than one. */
+.tp-group { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px 5px; border: none; border-radius: 10px; background: none; color: var(--fg-dim); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
+.tp-group:hover { color: var(--fg); background: var(--panel-2); }
+/* The group's chevron: down while open, turned to point right while folded, as the browser's strip does. */
+.tp-group-caret { flex: 0 0 auto; opacity: .6; transition: transform .15s ease; }
+.tp-grp.folded .tp-group-caret { transform: rotate(-90deg); }
+/* A group box (heading + its tabs). Its ARM is a line in the group's colour (--gc) from under the heading's dot down
+   beside the tabs, ending at the last one: which tabs belong together reads at a glance, as the strip's underline does. */
+.tp-grp { position: relative; }
+.tp-grp::before { content: ""; position: absolute; left: 14px; top: 24px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--gc); opacity: .75; pointer-events: none; }
+.tp-grp.plain::before { top: 10px; opacity: 1; }
+.tp-grp.folded::before { opacity: 0; }
+.tp-grp::before { transition: opacity .2s ease; }
+/* A group's tabs, folding by animating the row's height from its content to nothing (a grid row of 1fr → 0fr). */
+.tp-grp-body { display: grid; grid-template-rows: 1fr; transition: grid-template-rows .2s ease, opacity .2s ease; }
+.tp-grp.folded .tp-grp-body { grid-template-rows: 0fr; opacity: 0; }
+.tp-grp-rows { min-height: 0; overflow: hidden; }
+/* A group the runtime knows only as "together" (no name, no colour): a rule over its indented tabs. */
+.tp-group-rule { height: 1px; margin: 6px 10px 3px 30px; background: var(--border); }
+.tp-group-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; background: var(--gc); }
+.tp-group-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.tp-group-n { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+/* A window's heading, when the runtime has more than one. */
+.tp-window { padding: 10px 10px 4px; color: var(--fg-faint); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+/* A line in place of the tabs: loading, none, or nothing matching the filter. */
+.tp-note { padding: 8px 10px; color: var(--fg-faint); font-size: 13px; }
+
+/* Tabs the runtime could not list (site access limited): a warning row at the top of the list, with its fix. */
+.tp-warn { flex: 0 0 auto; display: flex; align-items: flex-start; gap: 8px; margin: 0 4px 6px; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--fg-dim); font-size: 12.5px; line-height: 1.45; }
+.tp-warn-icon { flex: 0 0 auto; display: inline-flex; color: var(--warn); margin-top: 1px; }
+.tp-warn-icon svg { width: 14px; height: 14px; }
+.tp-warn-text { min-width: 0; }
+/* The pill when the chosen tab has closed: said in the warning colour, since starting waits for another pick. */
+.tp-gone { color: var(--warn); }
+/* The tab picker's foot: a sentence under the list, e.g. how to get group names and colours. */
+.tp-foot { flex: 0 1 auto; min-height: 0; overflow: hidden; margin: 4px 6px 0; padding: 8px 4px 2px; border-top: 1px solid var(--border); color: var(--fg-faint); font-size: 12px; line-height: 1.4; }
+/* The full address in the host's cursor tip: broken anywhere, since a URL has no spaces to wrap at. */
+.tp-url { word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
+/* The cursor tip over the page's own popovers (the tab picker's list sits at 60). */
+.chat .cursor-tip { z-index: 70; }
+
+/* The rename dialog's field, and the line under it saying what an empty name does. */
+.chat-dialog-field {
+    width: 100%; box-sizing: border-box; margin: 4px 0 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
+    background: var(--bg); color: var(--fg); font: inherit; outline: none;
+}
+.chat-dialog-field:focus { border-color: var(--fg-dim); }
+.chat-dialog-hint { margin: 0 0 12px; color: var(--fg-faint); font-size: .9em; }
+
+/* A search row's title with, under it, why it matched: the runtime's snippet, the match picked out. */
+.chat-search-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.chat-search-main > .chat-search-title { flex: none; }
+.chat-search-snip { color: var(--fg-dim); font-size: .9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-search-snip mark { background: none; color: var(--fg); font-weight: 600; }
+/* An archived row is marked, since opening it brings it back first. */
+.chat-search-arch { flex: 0 0 auto; align-self: center; }
+
+/* Settings → Runtimes (runtime-sheet.tsx): one runtime's facts, models and storage, read-only. */
+/* The runtime picker above them. */
+.rt-pick { margin: 0 12px 20px; flex-wrap: wrap; }
+/* A part's heading: Models, Storage. */
+.rt-h { margin: 0 0 8px; padding: 0 12px; color: var(--fg-dim); font-size: .95em; font-weight: 500; }
+/* A fact's value, on the row's right. */
+.rt-val { color: var(--fg-dim); }
+/* What the runtime offers, as chips. */
+.rt-caps { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; max-width: 60%; }
+/* A line in place of a part: asking, offline, not offered. */
+.rt-note { padding: 0 12px; margin: 4px 0; }
+/* The runtime's models, one per line, the default marked. */
+.rt-models { list-style: none; margin: 0; padding: 0 12px; display: flex; flex-direction: column; gap: 6px; }
+.rt-models li { display: flex; align-items: center; gap: 8px; }
+/* The runtime's model list: a fixed height that scrolls, so a gateway's fifty models do not push Storage off the page. */
+.rt-models { max-height: 360px; overflow-y: auto; font-size: .92em; }
+.rt-models code { font-size: var(--code-fs); }
+/* The panel's themed scrollbar on the page's own scrolling lists: thin, no track, a thumb in the panel's grey. */
+.rt-models, .tp-list { scrollbar-width: thin; scrollbar-color: var(--panel-2) transparent; }
+.rt-models::-webkit-scrollbar, .tp-list::-webkit-scrollbar { width: 8px; }
+.rt-models::-webkit-scrollbar-track, .tp-list::-webkit-scrollbar-track { background: transparent; }
+.rt-models::-webkit-scrollbar-thumb, .tp-list::-webkit-scrollbar-thumb { background: var(--panel-2); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+.rt-models::-webkit-scrollbar-thumb:hover, .tp-list::-webkit-scrollbar-thumb:hover { background: var(--panel-2-hover); background-clip: padding-box; }
+/* The filter over it, inset like the list. */
+.rt-filter { margin: 0 12px 8px; width: calc(100% - 24px); }
+/* How many models, beside the heading. */
+.rt-count { margin-left: 8px; color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+/* ⓘ: the runtime's model access filter is on (what it hid is in the tip; the filter itself is never sent). */
+.rt-filtered { margin-left: 8px; color: var(--fg-faint); cursor: help; }
+.rt-filtered:hover, .rt-filtered:focus-visible { color: var(--fg); }
+/* Where a model runs: a pill (the page's chip). Local, the common case, stays the chip's grey; cloud is tinted. */
+.rt-where { flex: 0 0 auto; font-size: .76em; }
+.rt-where.cloud { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+/* "No model matches". */
+.rt-none { color: var(--fg-faint); }
+/* A model's kinds (completion, tools, vision…), dim after its id. */
+.rt-kinds { color: var(--fg-faint); font-size: .84em; }
+/* The sheet itself; the Storage view inside it takes the rows' inset. */
+.rt-sheet .stor { padding: 0 12px; }
+@media (prefers-reduced-motion: reduce) { .tp-group-caret, .tp-grp-body, .tp-grp::before { transition: none; } }

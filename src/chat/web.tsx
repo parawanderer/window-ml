@@ -11,9 +11,12 @@ import { demoHost } from "./demo-world";
 import { hostServices } from "./host-services";
 import { webPlatform } from "./platform";
 import { installViewPrefs } from "./view-mode";
+import { installPageTheme } from "./page-theme";
 import { ChatApp } from "./chat-app";
 
-const host = demoHost();
+// `__chatFakeLatencyMs`, set by a spec's init script before load, slows every answer: how a spec sees what the page
+// draws while it waits (a first list, a placeholder), which an instant demo host never shows.
+const host = demoHost(Date.now(), { latencyMs: Number((globalThis as { __chatFakeLatencyMs?: unknown }).__chatFakeLatencyMs) || 0 });
 // Scripting handle for the specs and for poking at the page by hand: emit events, restart a runtime, change grants.
 (globalThis as { __chatFake?: unknown }).__chatFake = host;
 const store = new ChatStore(host);
@@ -21,6 +24,7 @@ installServices(hostServices(store, webPlatform));
 initThemeStyle();
 applyCodePrefs();
 installViewPrefs(webPlatform.prefs);
+installPageTheme();
 try { installTooltipLayer(document); } catch { /* no DOM */ }
 store.start();
-render(<ChatApp store={store} />, document.getElementById("root") || document.body);
+render(<ChatApp store={store} platform={webPlatform} />, document.getElementById("root") || document.body);

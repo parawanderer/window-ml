@@ -13,6 +13,10 @@ import { clearHighlight, highlightEl } from "./ui-kit";
 import { UsageBar } from "./usage";
 import { RunStatsBar } from "./agent-detail";
 
+/** How tall a multiline composer may grow before it scrolls instead: a box that can take the whole
+ *  viewport is one you cannot send from. */
+const COMPOSER_MAX_H = 180;
+
 // The session composer: drive a live createAgent session from the sidebar. Sending routes to the page
 // (via the parent shell/panel) → the handle by hash: STEER a running loop (say) or start a new turn (run),
 // the page deciding from the handle's live state. Claude-Code touch: while a run is IN FLIGHT and the box
@@ -79,7 +83,7 @@ export function ElementPill({ ctx, onRemove }: { ctx: ElementContext; onRemove: 
 /** THE COMPOSER — where you send the next message into a session: the text box, pasted images, an
  *  element you picked off the page, the model/vision toggles and the run controls. Sending INTO a run is
  *  the one thing that needs a reverse channel, so the DevTools panel routes it through the background. */
-export function Composer({ s }: { s: Session }) {
+export function Composer({ s, multiline }: { s: Session; multiline?: boolean }) {
     const r = rev.value;   // subscribe: `s.status` is mutated in place (same ref), so without a signal read this
                            // stateful child won't re-render when the run goes pending/idle → the Stop button.
     const [text, setText] = useState("");
@@ -99,25 +103,48 @@ export function Composer({ s }: { s: Session }) {
         setText(""); att.clear();
     };
     const act = () => (stop ? cancel() : send());
+    // Grow to fit, to a cap — measured from `scrollHeight`, which needs the height reset first or it only ever
+    // reports the height it already has.
+    const area = useRef<HTMLTextAreaElement>(null);
+    const grow = (el: HTMLTextAreaElement | null): void => {
+        if (!el) return;
+        el.style.height = "auto";
+        el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_H)}px`;
+    };
+    // Sending empties the box, and an emptied box has to come back to one line on its own.
+    useEffect(() => { if (multiline) grow(area.current); }, [text, multiline]);
     // Enter SENDS only — it must NEVER cancel a run (pressing Enter with an empty box while a run is in
     // flight used to hit the Stop path and kill the run out of nowhere). Cancelling is the Stop BUTTON only.
     const onKey = (e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey && !empty) { e.preventDefault(); send(); } };
     const placeholder = running ? (agent ? "Steer this run, or send to queue a follow-up…" : "Sending… or stop this turn")
-        : "Send a message (or paste a screenshot) to continue…";
+        : "Send a message (or paste an image) to continue…";
     return (
         <div class="composer" data-rev={r}>
             <ThumbStrip imgs={att.imgs} loading={att.loading} onRemove={att.remove} />
             <div class="composer-row">
                 <input ref={att.fileRef} type="file" accept="image/*" multiple style="display:none"
                     onChange={e => { att.addFiles((e.target as HTMLInputElement).files); (e.target as HTMLInputElement).value = ""; }} />
-                <button class="tt cbtn" onClick={() => att.fileRef.current?.click()} aria-label="Attach an image">＋<span class="tt-pop left above" role="tooltip">Attach an image (or paste a screenshot into the box)</span></button>
-                <input class="cinput" type="text" value={text} onInput={e => setText((e.target as HTMLInputElement).value)} onKeyDown={onKey} onPaste={att.onPaste}
-                    placeholder={placeholder} />
+                <button class="tt cbtn" onClick={() => att.fileRef.current?.click()} aria-label="Attach an image">＋<span class="tt-pop left above" role="tooltip">Attach an image (or paste one into the box)</span></button>
+                {/* A PAGE's composer is a box you can write a paragraph in; a panel's is one line, because a
+                    drawer beside a page has no room for more. Enter still sends and Shift+Enter still makes a
+                    line — that was already true of the key handler, and the single-line `input` was simply
+                    unable to show the second line it made. It grows with what is typed, to a cap, and then
+                    scrolls: a composer that can take the whole viewport is one you cannot send from. */}
+                {multiline
+                    ? <textarea ref={area} class="cinput" rows={1} value={text} onKeyDown={onKey} onPaste={att.onPaste} placeholder={placeholder}
+                        onInput={(e) => { setText((e.target as HTMLTextAreaElement).value); grow(e.target as HTMLTextAreaElement); }} />
+                    : <input class="cinput" type="text" value={text} onInput={e => setText((e.target as HTMLInputElement).value)} onKeyDown={onKey} onPaste={att.onPaste}
+                        placeholder={placeholder} />}
                 <button class={`tt cbtn ${stop ? "cstop" : "csend"}`} onClick={act} disabled={!stop && empty} aria-label={stop ? "Stop the run" : "Send"}>
                     {stop ? <IconStop /> : <IconSend />}<span class="tt-pop above" role="tooltip">{stop ? "Stop (cancel)" : running ? "Steer the run" : "Send"}</span>
                 </button>
             </div>
             <div class="composer-foot">
+                {/* Said once, where it is needed: a box you can write a paragraph in has to say how to send it,
+                    and it stops saying so the moment you start typing — by then you have either pressed Enter or
+                    you have not. It FADES rather than leaving: the line it stands on holds the box above it up, and
+                    removing it dropped the whole composer a line on the first keystroke. */}
+                {multiline ? <span class={`chint${text ? " gone" : ""}`} aria-hidden={text ? true : undefined}>Enter to send · Shift+Enter for a new line</span> : null}
                 <RunStatsBar s={s} />
                 <span class="sp" />
                 <UsageBar s={s} />

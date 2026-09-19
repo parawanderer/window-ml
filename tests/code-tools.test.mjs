@@ -142,9 +142,10 @@ test("python offers the bench, javascript offers a copy", async () => {
     assert.match(py.querySelector(".code-tools").textContent, /bench/);
     reset();
     const js = await mount({ type: "code", text: "const x = 1;\nreturn x;", lang: "javascript" });
-    const tools = js.querySelector(".code-tools").textContent;
-    assert.match(tools, /copy/);
-    assert.doesNotMatch(tools, /bench/);
+    // By its accessible NAME: the copy is an icon (the same glyph the raw view uses), so its label is the thing
+    // to assert — what a screen reader and a keyboard user get, rather than whatever the glyph renders as.
+    assert.ok(js.querySelector('.code-tool[aria-label="Copy this code"]'), "the JS path offers a copy");
+    assert.doesNotMatch(js.querySelector(".code-tools").textContent, /bench/);
 });
 
 test("the bench button hands over the script and opens the DRAWER, keeping you where you are", async () => {
@@ -188,7 +189,7 @@ test("the HOST decides: a host with no side calls and no bench disables explain 
         const host = await mount(PY);
         const [explain, second] = host.querySelectorAll(".code-tool");
         assert.ok(explain.disabled, "no side calls on the session's runtime");
-        assert.match(second.textContent, /copy/, "no bench to hand the script to, so the second button copies");
+        assert.equal(second.getAttribute("aria-label"), "Copy this code", "no bench to hand the script to, so the second button copies");
         explain.click();
         await tick();
         assert.equal(sent.length, 0, "nothing reached the extension's utility model");

@@ -4,6 +4,7 @@
 // bootstrap can drive them without a cycle. The code themes themselves live in
 // code-theme-css.ts (the stylesheets) and code-themes.ts (presets + the VS Code converter).
 import katexCss from "katex/dist/katex.min.css";
+import { signal } from "@preact/signals";
 import { config, fontScale, codeWrap, codeLineNumbers, focusMode, BASE_FS, codeTheme, codeThemeCustom, codeThemeUi } from "./store";
 import { activeCodeTheme, convertStored } from "./code-theme-css";
 import { PANEL_TOKENS, VSCODE_THEME_ID, type ConvertedTheme } from "../code-themes";
@@ -16,11 +17,21 @@ export const panelThemeActive = (): ConvertedTheme | null => {
     try { return convertStored(custom); } catch { return null; }
 };
 
+/**
+ * A page's OWN theme, over the extension's Theme setting: the chat page's choice (view-mode.tsx), so a page for
+ * thinking can be light while the DevTools panel and the HUD stay dark. null follows the extension. While set, it wins
+ * over an uploaded VS Code theme colouring the panel too, since that is also the extension's choice.
+ */
+export const pageTheme = signal<"system" | "light" | "dark" | null>(null);
+
 let hljsStyleEl: HTMLStyleElement | null = null;   // holds the active code theme's stylesheet
 const themeMedia = window.matchMedia("(prefers-color-scheme: dark)");
 
 /** The theme to draw in — the explicit choice, else the OS preference. */
 export const resolveTheme = (): "dark" | "light" => {
+    const own = pageTheme.value;
+    if (own === "light" || own === "dark") return own;
+    if (own === "system") return themeMedia.matches ? "dark" : "light";
     const ui = panelThemeActive();
     if (ui) return ui.type;
     const t = config.value.theme;
@@ -46,7 +57,7 @@ themeMedia.addEventListener("change", applyTheme);
  *  which win over the light/dark palettes in sidebar.css. Every token is removed when it is off, so the panel
  *  returns to exactly its own palette. */
 const applyPanelPalette = (): void => {
-    const ui = panelThemeActive();
+    const ui = pageTheme.value ? null : panelThemeActive();
     const root = document.documentElement.style;
     for (const token of PANEL_TOKENS) {
         const v = ui?.panel[token];

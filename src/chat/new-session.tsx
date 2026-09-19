@@ -10,11 +10,14 @@
 // Rendered by capability, like everything else here: a runtime offers "new chat" only where `capabilities.chat` says
 // it can, "new agent run" only where `capabilities.agent` does, and the tab picker only where `capabilities.tabs`
 // does. A phone talking to a headless box gets a chat form and no tabs, without this file knowing what a box is.
-import { useEffect, useState } from "preact/hooks";
-import type { AgentTarget, Principal, RuntimeInfo, SessionKey, SessionSummary, TabInfo } from "../session-host";
+import type { ComponentChildren } from "preact";
+import { useEffect, useRef, useState } from "preact/hooks";
+import type { AgentTarget, Principal, RuntimeInfo, SessionKey, SessionSummary, TabGroupInfo, TabInfo } from "../session-host";
 import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
+import type { ChatExtras } from "./extras";
 import { mayCommand } from "./grants";
+import { TabPicker } from "./tab-picker";
 
 /** What a new session can be. */
 export type StartKind = "chat" | "agent";
@@ -25,34 +28,15 @@ export function startableOn(store: ChatStore, kind: StartKind): RuntimeInfo[] {
     return store.runtimes.value.filter((rt) => rt.online && !!rt.capabilities?.[kind] && mayCommand(rt, command));
 }
 
-/** The list header's `+`: what can be started, or nothing at all when no runtime offers either. */
-export function StartMenu({ store, onPick }: { store: ChatStore; onPick: (kind: StartKind) => void }) {
-    const [open, setOpen] = useState(false);
-    const kinds: StartKind[] = (["chat", "agent"] as const).filter((k) => startableOn(store, k).length > 0);
-    useEffect(() => {
-        if (!open) return;
-        const onDown = (e: Event) => { if (!(e.target as HTMLElement)?.closest?.(".chat-start")) setOpen(false); };
-        const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
-        document.addEventListener("pointerdown", onDown);
-        document.addEventListener("keydown", onKey);
-        return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); };
-    }, [open]);
+/** The compose button, in the list's header and on the rail: it opens the start page (start-page.tsx), on Agent
+ *  where some runtime can run one. Nothing at all where no runtime offers either kind. `icon` replaces the `+`. */
+export function StartMenu({ store, onPick, icon }: { store: ChatStore; onPick: (kind: StartKind) => void; icon?: ComponentChildren }) {
+    const kinds: StartKind[] = (["agent", "chat"] as const).filter((k) => startableOn(store, k).length > 0);
     if (!kinds.length) return null;
-    // One kind needs no menu: the button is that kind.
-    if (kinds.length === 1) {
-        return <button class="chat-start hbtn" aria-label={kinds[0] === "chat" ? "New chat" : "New agent run"} onClick={() => onPick(kinds[0])}>+</button>;
-    }
-    const pick = (k: StartKind) => { setOpen(false); onPick(k); };
     return (
-        <span class="chat-start menuwrap">
-            <button class={`hbtn${open ? " on" : ""}`} aria-label="New session" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>+</button>
-            {open ? (
-                <div class="menu" role="menu">
-                    <button class="menu-item" role="menuitem" onClick={() => pick("chat")}>New chat<span class="menu-hint">a conversation, no tools</span></button>
-                    <button class="menu-item" role="menuitem" onClick={() => pick("agent")}>New agent run<span class="menu-hint">on a page, with tools</span></button>
-                </div>
-            ) : null}
-        </span>
+        <button class="tt chat-start hbtn" aria-label="New session" onClick={() => onPick(kinds[0])}>
+            {icon ?? "+"}<span class="tt-pop" role="tooltip">New session</span>
+        </button>
     );
 }
 
@@ -64,35 +48,50 @@ export interface TargetPick {
     ready: boolean;
     /** the form rows, to drop into a form */
     fields: preact.JSX.Element | null;
+    /** the same choice as one compact control (and a URL box when a new tab is picked), for a composer's row */
+    inline: preact.JSX.Element | null;
 }
 
 /**
  * The WHERE half of both forms. A runtime with no tabs at all (a box) is never asked the question, and its form
  * offers no tab to run on: the tabs are the runtime's, so they are asked for per runtime and re-asked when it changes.
  */
-export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, enabled: boolean): TargetPick {
+export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, enabled: boolean, extras?: ChatExtras): TargetPick {
     const [where, setWhere] = useState<"tab" | "blank">("tab");
     const [tabId, setTabId] = useState<number | null>(null);
     const [url, setUrl] = useState("");
     const [tabs, setTabs] = useState<TabInfo[] | null>(null);
+    const [groups, setGroups] = useState<TabGroupInfo[]>([]);
+    const [withheld, setWithheld] = useState(0);
     const wantsTabs = enabled && !!rt?.capabilities?.tabs;
-    useEffect(() => {
+    // Asked when the runtime changes, and again each time the picker opens: tabs open and close while this page sits,
+    // and an icon that was still on its way the first time is there the second. A refresh keeps the list it has on
+    // screen until the new one lands, rather than flashing "Loading".
+    const seq = useRef(0);
+    const load = (fresh: boolean) => {
         if (!wantsTabs || !rt) { setTabs(null); return; }
-        let live = true;
-        setTabs(null);
+        const n = ++seq.current;
+        if (fresh) setTabs(null);
         void store.send({ type: "tabs.list", runtime: rt.id }, { quiet: true }).then((r) => {
-            if (!live) return;
+            if (n !== seq.current) return;
+            if (!r.ok && !fresh) return;   // a refresh that failed leaves the last good list
             const list = r.ok ? r.data.tabs : [];
+            setGroups(r.ok ? r.data.groups ?? [] : []);
+            setWithheld(r.ok ? r.data.withheld ?? 0 : 0);
             setTabs(list);
-            setTabId((id) => (id != null && list.some((t) => t.tabId === id) ? id : list.find((t) => t.active)?.tabId ?? list[0]?.tabId ?? null));
-            if (!list.length) setWhere("blank");
+            // The first list picks the tab showing in the first window. A refresh NEVER moves a choice: a chosen tab
+            // that has closed stays chosen and says so (`closed`), because silently switching to whichever tab is in
+            // front would start an agent on a page nobody picked.
+            setTabId((id) => (id != null && (!fresh || list.some((t) => t.tabId === id)) ? id : list.find((t) => t.active)?.tabId ?? list[0]?.tabId ?? null));
+            if (fresh && !list.length) setWhere("blank");
         });
-        return () => { live = false; };
-    }, [rt?.id, wantsTabs]);
+    };
+    useEffect(() => { load(true); return () => { seq.current++; }; }, [rt?.id, wantsTabs]);
 
+    const closed = where === "tab" && tabId != null && !!tabs && !tabs.some((t) => t.tabId === tabId);
     return {
         target: () => (where === "tab" && tabId != null ? { kind: "tab", tabId } : { kind: "blank", ...(url.trim() ? { url: url.trim() } : {}) }),
-        ready: where === "blank" || tabId != null,
+        ready: where === "blank" || (tabId != null && !closed),
         fields: enabled ? (
             <>
                 <label class="chat-new-field" data-field="where"><span>Where</span>
@@ -116,70 +115,23 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
                 )}
             </>
         ) : null,
-    };
-}
-
-/** The form. It closes itself once the runtime answers with a session, which the caller then opens. */
-export function NewSession({ store, kind, onStarted, onCancel }: {
-    store: ChatStore;
-    kind: StartKind;
-    onStarted: (key: string) => void;
-    onCancel: () => void;
-}) {
-    const runtimes = startableOn(store, kind);
-    const [runtimeId, setRuntimeId] = useState(runtimes[0]?.id ?? "");
-    const rt = runtimes.find((r) => r.id === runtimeId) ?? runtimes[0];
-    const [text, setText] = useState("");
-    const [busy, setBusy] = useState(false);
-    const pick = useTargetPick(store, rt, kind === "agent");
-
-    if (!rt) return null;
-    const ready = !!text.trim() && !busy && (kind === "chat" || pick.ready);
-
-    const start = async (): Promise<void> => {
-        if (!ready) return;
-        setBusy(true);
-        try {
-            const r = kind === "chat"
-                ? await store.send({ type: "chat.start", runtime: rt.id, text: text.trim() })
-                : await store.send({ type: "agent.start", runtime: rt.id, task: text.trim(), target: pick.target() });
-            // A refusal is already on screen as a notice (the store raises one), so the form stays as it is with
-            // what was typed still in it: the person changes the target or the wording and tries again.
-            if (r.ok) onStarted(`${r.data.session.runtime}:${r.data.session.hash}`);
-        } finally { setBusy(false); }
-    };
-    return (
-        <main class="chat-main chat-new">
-            <div class="head">
-                <b>{kind === "chat" ? "New chat" : "New agent run"}</b>
-                <span class="sp" />
-                <button class="hbtn" onClick={onCancel} aria-label="Close">×</button>
-            </div>
-            <div class="view chat-new-body">
-                {runtimes.length > 1 ? (
-                    <label class="chat-new-field" data-field="runtime"><span>On</span>
-                        <select value={runtimeId} onChange={(e: any) => setRuntimeId(e.target.value)}>
-                            {runtimes.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                        </select>
-                    </label>
+        inline: enabled ? (
+            <>
+                <TabPicker tabs={tabs} groups={groups} value={where === "tab" && tabId != null ? tabId : "blank"}
+                    onOpen={() => load(false)}
+                    runtime={rt?.id}
+                    groupsGrant={rt ? extras?.grant?.(rt.id, "tab-groups") : null}
+                    withheld={withheld}
+                    sitesGrant={rt ? extras?.grant?.(rt.id, "site-access") : null}
+                    groupsHint="Group names and colours need the browser's permission: Settings → Extension → Appearance → Tab group names, in the browser the tabs are in."
+                    onChange={(v) => { if (v === "blank") setWhere("blank"); else { setWhere("tab"); setTabId(v); } }} />
+                {where === "blank" ? (
+                    <input class="chat-pick-url" type="url" value={url} aria-label="Page to open" placeholder="https://… (optional)"
+                        onInput={(e: any) => setUrl(e.target.value)} />
                 ) : null}
-
-                {pick.fields}
-
-                <label class="chat-new-field tall" data-field="text"><span>{kind === "chat" ? "Message" : "Task"}</span>
-                    <textarea rows={4} value={text} autofocus
-                        placeholder={kind === "chat" ? "Ask anything…" : "What should it do on that page?"}
-                        onInput={(e: any) => setText(e.target.value)}
-                        onKeyDown={(e: KeyboardEvent) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void start(); }} />
-                </label>
-
-                <div class="chat-new-foot">
-                    <span class="chat-new-hint">{kind === "agent" ? "It can act on that page, and asks before anything that matters." : "A plain conversation: no tools, no page."}</span>
-                    <button class="btn primary" disabled={!ready} onClick={() => void start()}>{busy ? "Starting…" : "Start"}</button>
-                </div>
-            </div>
-        </main>
-    );
+            </>
+        ) : null,
+    };
 }
 
 /**

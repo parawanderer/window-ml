@@ -166,7 +166,7 @@ browser. Nothing new decides a gate, starts a loop or builds a request.
 | `session.continue` | only a `capped` session, through the page |
 | `session.delete` | refused while running; forgets the stored chat (`ml_session_<hash>`), the resumable snapshot and pointer store, then the index row |
 | `session.rename` | `capTitle` (session-title.ts), then `renameSession`: sets `title` and `renamed`, written to the store. Empty clears both and asks for a generated title again |
-| `models.list` | `listAvailableModels` filtered by `modelFilterAllows` (the same half `LIST_MODELS` does, so a whitelisted-out cloud model never reaches a remote client), `kinds` from `modelCapabilitiesBatch` (cached for the worker's life), `default` on `config.model`. An unreachable backend answers an empty list, not an error |
+| `models.list` | `listAvailableModels` filtered by `modelFilterAllows` (the same half `LIST_MODELS` does, so a whitelisted-out cloud model never reaches a remote client), `kinds` from `modelCapabilitiesBatch` (cached for the worker's life), `default` on `config.model`, `where` (`local`/`cloud`) from Ollama's own list when the backend has one. With a filter set, `filtered: { hidden }` says that it is on and how many it hid, never the filter. An unreachable backend answers an empty list, not an error |
 | `sessions.list` / `sessions.search` / `session.unarchive` | see `docs/dev/archive.md` § Reaching archived sessions: the index and the archive merged by `lastTs`; opening an archived session brings it back whole first |
 | `session.pin` | pinning keeps the session first (`keepSession`, so the ring reaches the store), then sets `pinned` on the row, which `planEviction` never drops and a restarted worker restores. At most `MAX_PINNED` (100); unpinning leaves it saved |
 | `page.highlight` | `ML_HL_REMOTE` to the session's tab with `anyMode`, since the shell otherwise draws remote highlights only in devtools mode |
@@ -297,20 +297,49 @@ core asks the platform rather than inferring it from the runtime.
 
 ## Starting a session from the page
 
-The list header's `+` (`src/chat/new-session.tsx`). Until it, every session in the list had been started somewhere
-else — a console call, a page script, the HUD — and the page could only answer what already existed.
+The START PAGE (`src/chat/start-page.tsx`) is what the page shows with nothing open, and what the compose button in
+the list header and on the rail opens: one pill to type in, Gemini's empty screen without the greeting, because this
+is a brainstorming tool and the first thing on it should be somewhere to put a thought. It replaced "Pick a
+session." and a separate start form. Agent is the default kind; a Chat/Agent switch appears when some runtime offers
+both. The pill's row holds what a start needs: where an agent runs (`useTargetPick`'s `inline` form: an open tab by
+title, or a new tab with an optional URL) and, with more than one, which runtime. Enter starts; what starts is saved
+(the start commands save unless told `ephemeral`), so it is in the list the moment the runtime answers. The model
+picker is the chosen runtime's `models.list`, asked once per runtime: its default first and by name ("Default ·
+qwen3:32b"), which sends no `model` so the runtime's own choice stands, and a model whose kinds include `embedding`
+left out (absent kinds mean unknown, never "cannot chat"). Both pickers are one control, `usePickerPop`
+(pop-picker.ts): a pill opening a fixed list that fits the window, a filter, arrows and Enter. The model rows are
+the Commander's (A→Z, a `cloud` tag from `where`) without its ★, which writes this browser's config and has no
+meaning for another machine. The tab list is asked again each time the picker opens, keeping the old list on screen
+until the new one lands: tabs open and close while the page sits, and an icon still on its way the first time is
+there the second. Tab group names and colours need the optional `tabGroups` permission; where groups arrive unnamed,
+the list's foot offers "Show them" on this browser's own runtime (`ChatExtras.tabGroupsGrant`), which calls
+`chrome.permissions.request` synchronously inside that click, the only place Chrome shows the prompt. It cannot be
+asked on load. A remote runtime's list says it is granted in that browser's Settings instead. A named group is one box
+with an ARM, a line in its colour from the heading's dot down beside its tabs, and its heading folds it (a grid row
+animating 1fr → 0fr; folded tabs stay drawn but `inert`, and the arrows skip them). It starts as the browser's strip
+has it (`TabGroupInfo.collapsed`), then as it was last left on this device (`view.tabGroups`, per `runtime:groupId`,
+capped, since a group's id lasts only until the browser restarts). Typing in the filter opens every group.
 
-It is rendered by capability like everything else here: a runtime offers "new chat" only where
-`capabilities.chat` says it can, "new agent run" only where `capabilities.agent` does, and the tab picker only
-where `capabilities.tabs` does, with `mayCommand` deciding whether this client may ask at all. A phone talking to
-a headless box gets a chat form and no tabs, and this file does not know what a box is. When only one runtime can
-hold the kind being started, the form does not ask which; when only one KIND can be started, `+` is that kind
-rather than a menu of one.
+**A worker restart must not redraw the page.** The browser stops an idle worker about every 30 seconds and
+`LocalHost` reconnects in a quarter of a second, but for that moment the runtime is offline, and anything gated on
+`online` unmounted and came back: the start page traded for "Pick a session." and back (typed text lost, models asked
+for again), the Extension settings tab gone. The start page holds its runtime, kinds and lists for `START_GRACE_MS`
+(`useHeldTrue`) and only disables sending ("Reconnecting…"); settings are not gated on `online` at all, since they
+read this browser's storage and need no worker.
 
-**The form is deliberately not in the URL**, unlike the open session. It holds what someone is part way through
+**Rename** (the row's `⋮`, `RenameDialog` in row-menu.tsx) sends `session.rename`; the title is the runtime's, so the
+row changes when its upsert arrives, and an empty name hands naming back to the model, which the dialog says.
+
+It is rendered by capability like everything else here: a runtime offers "chat" only where `capabilities.chat` says
+it can, "agent" only where `capabilities.agent` does, and the tab picker only where `capabilities.tabs` does, with
+`mayCommand` deciding whether this client may ask at all. A phone talking to a headless box gets a chat and no tabs,
+and this file does not know what a box is. When no runtime can start anything, the page falls back to "Pick a
+session."
+
+**The start page is deliberately not in the URL**, unlike the open session. It holds what someone is part way through
 typing, and a link to a half-written message is not a thing to share or to reload into.
 
-**A refusal leaves the form standing, with the text still in it.** The store already raises the failure as a
+**A refusal leaves the start page standing, with the text still in it.** The store already raises the failure as a
 notice, so the person changes the target or the wording and presses start again, rather than retyping a task
 because a tab had closed.
 
@@ -410,7 +439,7 @@ run has nowhere to live. It is also exactly when `session.send` would end at a c
 the composer rather than sitting beside it: two ways to continue one run is one too many, and one of them would
 always fail.
 
-The WHERE picker is one component (`useTargetPick`), shared with the start form. Resuming is a navigation from the
+The WHERE picker is one component (`useTargetPick`), shared with the start page. Resuming is a navigation from the
 agent's side, so offering it a different set of places to go than a fresh run would be a difference with nothing
 behind it. The form has no message box, because resuming takes no turn, and it says what the resume will LOSE
 before it happens rather than only reporting it in the transcript afterwards — a person deciding where to resume
@@ -440,6 +469,92 @@ fails silently, as a run that simply is not saved.
 The request reaches the worker from a page, so the pending set is bounded: a page can name a hash that never
 arrives. What it costs to claim one is a session row, which the store's budget already bounds — the same standing
 a page's own `{ save: true }` chat has always had.
+
+## This device's own views: the box's panel and the Python bench
+
+The resource panel and the bench are the extension's own UI — they talk to this browser's worker over `chrome.*`,
+which `src/chat/` may never do. So the core does not import them. It asks for them, through `ChatExtras`
+(`src/chat/extras.ts`), and the entry that has them fills it in (`src/chat-ext.tsx`); the web entry passes none and
+the bundle never sees them.
+
+**Each is asked PER RUNTIME, and that is the whole point of the argument.** A resource panel drawn from this
+browser's worker describes THIS browser's box; rendering it beside a session running on someone's lab box would be
+a lie told confidently. The extension entry answers for the runtimes its `LocalHost` reports and null for the rest,
+so a `HubHost` runtime arriving later gets nothing without a line changing here.
+
+**Both are asked twice**, which is the rule the rest of the page follows in a second place:
+
+- the RUNTIME reports the capability (`resourcePanel`, `pythonBench` in `src/sw-sessions.ts`), and
+- this DEVICE holds something to draw it with.
+
+A phone reaching the same runtime over the hub reports the same capabilities and draws neither, not because it is a
+phone but because it holds no implementation — and nothing in the page asks which it is.
+
+`pythonBench` is MEASURED, not declared: `pythonBundlePresent` (`sw-python.ts`) opens the bundle's own Pyodide core and
+the wheel of every start-up package, once per worker life, and the capability is false until it has. The wheels are
+gitignored and the build only warns without them, so a declared `true` would offer a bench on a fresh checkout that
+then fails with `ModuleNotFoundError: No module named 'numpy'`.
+
+Where they go: the panel is the first tenant of the PANE ON THE RIGHT, which is the shape the state inspector wants
+(§The state inspector in the spec), and the bench is a full-width drawer in the grid's second row, as it is in the
+sidebar — it is a workspace, not a sidecar of whatever is beside it. The panel's dragged height does not follow it
+into the pane: it carries one because in the DevTools panel it fights the session list for room, and in a pane of
+its own there is nothing to fight.
+
+Not done: `services().bench` stays false here, so a python code block in a transcript does not offer to open in the
+bench. That flag is one boolean for the whole surface, and a session on another runtime would be offered a bench
+that runs somewhere else — it wants to become a question about a session before it can be turned on.
+
+## Finding one session among many
+
+**The search page** (`search-page.tsx`) is the one place to find a session: Gemini's, in the main pane — a pill to
+type in, then EVERY session newest first with its date at the right (the time for today, the day this year, the
+year before that), drawn 40 at a time as the end scrolls into view. The list's search button, the rail's, and the
+list's "Older sessions" row all open it. It matches what a person would use to name a session out loud: the title,
+the task, the page it is on, and the runtime. It replaced an inline filter over the list and a slide-over "older"
+view, because two ways to find a session is one more than anyone remembers. The runtime is named on a row only when
+the results span more than one runtime.
+
+Past what the page holds it asks the runtimes: `sessions.list` (live and archived merged, newest first) a page at a
+time as the end scrolls into view, and, once typing pauses (250 ms), `sessions.search`, which reads every word an
+ARCHIVED session holds and answers with a snippet, drawn as text with the «match» picked out. The snapshot is still
+filtered locally, so a runtime without these commands finds by title. An archived row is marked, and opening it sends
+`session.unarchive` first. The fake host keeps a demo archive (30 sessions) so all of this runs in the web build.
+
+**A runtime's group folds**, by id, stored per device. A folded head draws no count: the list is not where a number
+of sessions helps anyone, and an open group with nothing recent says so in words.
+
+**What moved while you were elsewhere** is marked with a dot (`movedSince`). Deliberately NOT stored: it answers
+"what happened while I was here", which is the brainstorming case — you are talking in one session and the run in
+the next tab gets somewhere — and not "what is unread", which would mark every session on the device the first time
+the page is opened and teach everyone to ignore the mark. A session seen for the first time is never marked, and
+reading one IS catching up with it.
+
+**Recent and pinned** (`SessionList`, `row-menu.tsx`). The list shows the last `RECENT_DAYS` (30) of each runtime,
+under a **Pinned** group that spans runtimes, and ends in an "Older sessions" row with a count that opens the search
+page. A session that is RUNNING or WAITING is recent however long ago it started: the list never files away
+something that wants you.
+
+**A pin is held twice** (`setPin`, row-menu.tsx). This device's copy (`pinned`, `view.pinned`) orders the Pinned
+section at once; the runtime's (`session.pin`, `SessionSummary.pinned`) is the one that keeps the session from
+retention and eviction, and it reaches every device as an upsert, so a pin made on the phone shows here too
+(`isPinned` is either). A runtime past its limit answers `conflict`, said as a notice, and the device's pin is taken
+back rather than left claiming a pin the runtime refused. A runtime with no `session.pin` keeps the device's pin
+alone.
+
+**Earlier events** (`EarlierEdge`, chat-app.tsx) draw the store's `earlier` state at the top of a transcript that does
+not reach its start: an older page is fetched as the edge scrolls into view, with the reading position held from the
+bottom so the text does not jump; a failed page says the runtime's reason there with "Try again"; and TRUNCATED (the
+events are gone) is its own sentence, never drawn like "there is more".
+
+**A row's `⋮`** (Pin / Delete…) arrives with the pointer in the corner the timestamp used, shows on keyboard focus, and
+is always shown on a touch screen. Row and `⋮` are SIBLINGS in `.chat-row-wrap`, because a button cannot hold a button.
+The menu is `position: fixed` from the button's rect, because the list scrolls and clips. In calm view a row draws no
+timestamp at all: with the menu taking that corner on hover, a hover-revealed time would never be seen, while its
+invisible width cut every title short. **Delete** is offered only where `session.delete` may be sent, and goes through
+one modal confirmation (`DeleteConfirm`, focus on Cancel). The row leaves when the runtime says the session is gone,
+not when the button is pressed. **Rename is absent on purpose**: a title is the runtime's, and a rename kept on one
+device gives a session two names on two screens. It arrives with a `session.rename` command.
 
 ## Which tab a run is driving
 
@@ -490,6 +605,97 @@ Three rules it follows:
 - **Hover-reveal lives behind `@media (hover: hover) and (pointer: fine)`.** The same rules on a touch screen would
   hide the timestamps, the copy button, the counters and the hash with no gesture that brings any of them back, so
   a phone gets them dimmed and a mouse gets them on demand.
+
+**What calm does one level in**, all of it CSS over the same document:
+
+| | |
+| --- | --- |
+| a tool step | no chevron (the row is the button and its cursor says so), no `In:` / `Out:` labels, no `rendered \| raw` switch, no `Out` at all while it waits on a person, no rail while it is collapsed, room between what ran and what came back, and the pointer and the clock on one line |
+| a step opening | animates from `height: 0` to `auto` (needs `interpolate-size`), so a long body does not shove the page down in one frame. The close is not animated: the component unmounts the body, and keeping every step's body mounted for a whole run to animate its removal is an expensive way to buy a fifth of a second |
+| a dataframe | its controls appear when the pointer is on the table, bottom right — the top left is where the column names are |
+| a citation | the tip belongs to the CAPTION, not the whole embed: an embed is something you read, and a tip that fires anywhere over it explains the frame on top of the contents. The link form drops the accent colour for the citation green under ordinary text |
+| a reply | copy and the timestamp move UNDER it (they are what you want after reading, not on the first line), the status dot goes unless it is saying something other than "this worked", and the collapse control moves into the gutter |
+
+**NO HEADER BAND on the wide layout.** What a header held has gone where each part belongs, because the four
+things in it had four different scopes and only one of them was about the page:
+
+- the session's TITLE, the runtime, the model and the page are the transcript's first line (`.chat-lede`) — there
+  when you arrive, gone as soon as you scroll, which is exactly as long as they are worth the room;
+- navigation lives at the left edge: with the list hidden, a RAIL (`nav.tsx`) keeps `☰`, a new session and search
+  there, Gemini's shape, and the list's column narrows to the rail's width (`--rail-w`) instead of to nothing;
+- the view toggle, the box, the bench and Settings are the PAGE's, so they live in ONE menu behind a gear at the
+  bottom-left — of the rail, or of the list when it is open (on a phone, in the list's header). It opens as a sheet
+  of rows with a glyph each. It replaced a `⋮` floating bottom-right, which had to push the composer and a form's
+  last button out of its way; the left edge has nothing to fight. The box and the bench are asked for PER VIEW:
+  the open session's runtime where it offers one, otherwise the first online runtime that does, so reading a session
+  from a machine with no graphs does not take this browser's out of the menu (the label names whose they are).
+
+A phone keeps its header: it holds the way back, and there is no room to float anything over a 390px column.
+
+**What hides, and what does not.** Anything you go LOOKING for stays put — the toggles, the reply's copy, the
+composer's counters, quiet but present. Only what belongs to a thing you are READING arrives with the pointer: a
+table's controls, a code block's, a citation's tip. The rule exists because five separate hover-reveals turn
+finding a control into a memory game.
+
+**Panels dock to an edge** (`dock.tsx`), DevTools' way: the resource panel and the Python bench, each to the top,
+right, bottom or left of the reading column, picked from the region's `⋮` (which also maximizes, until Escape, and
+closes). Left and right run the column's height and top and bottom sit between them; the frame is the grid's second
+column, so the list and its rail keep the page's full height. Panels on one edge are TABS, and the tab bar is also
+the visible panel's header: a panel wraps its header row in `PanelHead` (sidebar/panel-head.tsx) and the dock renders
+it into the bar, so there is one bar rather than tabs over a row of controls. Elsewhere (the DevTools panel) there
+is no dock and the row renders in place. Regions resize from their inner edge down to a 64px strip, and the layout
+(edge per panel, size per edge, visible tab per edge) is a device preference (`dockLayout`). A phone draws every
+open panel as one full-screen region. Two traps: `PanelHead` portals with Preact's own `render`, never
+`preact/compat`, whose global hooks turn `onChange` into `onInput` for every text input in the bundle; and context
+does not cross that portal, so a header row reads signals and props only. Docked panels read at their own base size
+(`--panel-fs`, "Panel text size" under Settings → This page, default the DevTools panel's 12px), because they size
+everything off `--fs` and inherited the page's 15px. In a dock the resource panel's plots drop their 72px height and
+44px floor and fill the region, so a region dragged to a strip shrinks the charts before anything scrolls. Each tab
+has an ✕ that arrives with the pointer.
+
+**Code has its own size** on this page, `--code-fs` (12.5px by default, the device's "Code size" setting,
+`codeSize` in view-mode.tsx): transcript code, the Python bench's editor and what it prints. It used to be a fraction
+of the prose, and the bench, built for the panel's 12px base, inherited the page's 15px and came out a size and a half
+too big. The extension's "Panel font size" sizes the DevTools panel and the overlay, never this page, and says so.
+
+**Settings** open as a SHEET in the main pane, always, because the page's own display settings need no runtime. Its
+tabs: "This page" (device preferences), "Runtimes" (each runtime's facts, models and storage, read-only, over the
+contract), "Extension" (the extension's configuration, only where a runtime reports `localSettings`) and
+"Housekeeping" (the DevTools panel's housekeeping log, through `ChatExtras.housekeeping`, extension build only). The
+gear that opens it reads "Views & settings", because its menu also holds the view toggles and an item called
+"Settings" inside a button called "Settings" read as a loop. The sheet's head is `SheetHead`: the title with a round back button hanging in the gutter. Settings
+open as a SHEET in the main pane, the search page's shape (`settings-page.tsx`: one column, a title, a
+back arrow, Escape from anywhere via `useEscapeCloses`): the extension's own settings view (`settings.tsx`, the DevTools panel's), supplied
+through `ChatExtras.settings` and offered where the runtime reports `localSettings` — so only the extension build
+has it, and it edits the same `chrome.storage.sync` the popup and the panel do.
+
+**This page's theme** is its own (`pageThemeMode`, `view.theme`, per device): a page for thinking may want light
+while the DevTools panel and the HUD stay dark. `pageTheme` in sidebar/prefs.ts overrides the extension's Theme in
+`resolveTheme` (and an uploaded VS Code panel theme) while set; `installPageTheme` (page-theme.ts, the entries only,
+since it touches `matchMedia`) applies it and redraws on any change. "Like the extension (…)" is offered only while the
+extension's Theme is not Auto, since otherwise it means System. The chat entry loads the extension's config at start
+and follows it; it used to load only inside the Settings view, so the page drew the default theme until then.
+
+**The attention list** (`attention.ts`, `attention-page.tsx`) is what needs someone's hand before a runtime works
+fully: no model, an unreachable backend, site access on "on click", a lapsed archive folder, a build without Python's
+wheels, and two suggestions (a utility model, tab group names). It is opened from an inbox above the gear, which is
+absent when the list is empty and counts problems only, never suggestions. Nothing is stored: every item is derived,
+so fixing a thing is what removes it, and only a suggestion can be dismissed (per device, `view.dismissed`).
+
+Items are CODES, turned into sentences here. Nearly all of them are facts about a runtime rather than the viewer (a
+phone driving a laptop needs to know the laptop has no model), so a runtime is meant to report its own as
+`capabilities.attention` (#205, `sw-attention.ts`: the model, the backend, site access, the permissions, the archive
+folder), read defensively: strings of at most 64 characters, and a code this page does not know is shown in general
+words. Codes and not prose, because a remote runtime's text is untrusted and the sentence depends on where it is read.
+`ChatExtras.attention` adds only what the runtime does not report: `python-packages-missing` (`pythonBench` is
+measured, so false on this browser means the wheels are missing). It runs on load, on focus (at most every 15 s) and
+after a fix. A fix is
+offered only where this device can apply it: `ChatExtras.grant` inside the click, or Settings opened on its
+Extension tab; anywhere else the item says on which runtime it is fixed.
+
+**The page chip brings its tab to the front** with `tab.focus`, a contract command (tab and window both), so a phone
+driving this browser over a hub gets the same button. It started as a device-local `ChatExtras.focusTab` stand-in
+and was deleted when the command landed (#183).
 
 **The list pane hides** (Gemini's move): the pane stays mounted and slides, so its scroll position survives, the
 grid column animates rather than the body jumping a column's width, and `visibility: hidden` takes it out of the

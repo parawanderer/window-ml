@@ -2,6 +2,7 @@
 // polling, per-model load-state, backend-health probing, and the Python sandbox bench. A separate,
 // self-contained surface from the run views. Extracted from app.tsx.
 import type { WireFrame } from "../events-wire";
+import { PanelHead } from "./panel-head";
 import { useState, useEffect, useRef } from "preact/hooks";
 import { isBackendUnreachable } from "../contract-server";
 import { signal, effect } from "@preact/signals";
@@ -15,7 +16,7 @@ import { normModel, seenContext } from "./model";
 // The ONE predicate for "this runs somewhere else": affirmatively not a model of this server. Shared with the
 // composer rather than re-derived here, so the panel and the picker cannot disagree about what is local.
 import { isCloudModel } from "./card-state";
-import { IconWarn, IconVram, IconEye, IconEyeOff, IconBench, IconGear } from "./icons";
+import { IconWarn, IconVram, IconEye, IconEyeOff, IconBench, IconGear, IconEvictAll } from "./icons";
 import { Disclosure, TipText } from "./ui-kit";
 import { useTipPlacement } from "./use-tip";
 import { fmtAge, hhmmss } from "./timestamps";
@@ -1679,7 +1680,9 @@ export function VramPanel() {
         // three-track one on top of itself — switching views lifts the box even before you drag it.
         <div class="vram" ref={panelRef}
             style={vramH.value ? { height: `${Math.max(vramH.value, minH)}px`, minHeight: `${minH}px` } : undefined}>
-            <div class="vram-head">
+            {/* The header row goes into the dock's tab bar when the panel is docked (the chat page), so there is
+                one bar rather than tabs over a second row of controls. */}
+            <PanelHead><div class="vram-head">
                 {/* WHAT IS IN USE, not what /api/ps happened to attribute. The two are the same number almost
                     always and wildly different for the seconds of a load: ps has no runner object yet, so
                     attribution is zero while the card is already 92% full — and the header read "0 B in use"
@@ -1740,7 +1743,13 @@ export function VramPanel() {
                         </select>
                     </>
                 ) : null}
-                {rows.length ? <button class="vram-free" onClick={() => evict()}>Free VRAM</button> : null}
+                {/* An icon with its name in the tip, like the bench's controls: the word cost more of the row than
+                    anything else in it. Amber on hover, because it empties the whole box. */}
+                {rows.length ? (
+                    <button class="tt hbtn vram-free" aria-label="Free VRAM" onClick={() => evict()}>
+                        <IconEvictAll /><span class="tt-pop wrap" role="tooltip">Free VRAM: unload every model the runtime holds. The next call loads its model again.</span>
+                    </button>
+                ) : null}
                 {/* Last in the row: the picker is what you reach for, the editor is the rarer follow-up. */}
                 {capacity.value && latestSample ? (
                     /* The real gear icon, not a ⚙ text glyph: the glyph rendered thin and font-sized, so it
@@ -1751,7 +1760,7 @@ export function VramPanel() {
                         <span class="tt-pop" role="tooltip">Choose which series each track shows</span>
                     </button>
                 ) : null}
-            </div>
+            </div></PanelHead>
             {/* Kept MOUNTED so it can animate both ways: unmounting on close would snap it out of existence,
                 and a collapse has nothing to animate if the content is already gone. */}
             {latestSample ? <div class={`rc-editor-wrap${editorOpen.value ? " open" : ""}`}

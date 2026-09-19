@@ -75,7 +75,8 @@ function manualTimers() {
     return {
         setTimeout: (fn, ms) => { const t = { fn, ms }; queue.push(t); return t; },
         clearTimeout: (t) => { const i = queue.indexOf(t); if (i >= 0) queue.splice(i, 1); },
-        fire: () => { const t = queue.shift(); t?.fn(); return t; },
+        // The shortest delay first, as a clock moving forward would (a reconnect at 250 ms before a 3 s grace).
+        fire: () => { const t = [...queue].sort((a, b) => a.ms - b.ms)[0]; if (t) { queue.splice(queue.indexOf(t), 1); t.fn(); } return t; },
         pending: () => queue.length,
     };
 }
@@ -147,8 +148,10 @@ test("the port dropping with the worker still alive: reconnect and resume, sendi
     world.ports[0].kill();
     assert.deepEqual(await inFlight, { ok: false, error: { code: "unavailable", message: "the extension's worker restarted" } });
     await flush();
-    assert.equal(store.status.value.state, "offline");
-    assert.equal(store.runtimes.value[0].online, false);
+    // A drop the port recovers from quickly is not shown: saying "offline" for a quarter of a second redrew every
+    // view keyed on it, which read as the page reloading. Only the command in flight failed.
+    assert.equal(store.status.value.state, "online");
+    assert.equal(store.runtimes.value[0].online, true);
     assert.equal(w.server.connections, 0);
 
     w.server.ingest(step("aaaa0001", 2), { tabId: TAB, trusted: true });
@@ -159,6 +162,36 @@ test("the port dropping with the worker still alive: reconnect and resume, sendi
     const resent = world.streamed.slice(before);
     assert.deepEqual(resent.map((m) => (m.type === "event" ? m.event.kind : m.type)), ["agent-step", "backfilled"], "only the step it missed, no reset");
     assert.equal(sessionMap.get("local:aaaa0001")?.steps?.length, 2);
+    // The grace was cancelled by the reconnect: nothing is left to say "offline" later.
+    assert.equal(timers.pending(), 0);
+    store.dispose();
+    host.dispose();
+});
+
+test("a worker that stays down past the grace is shown offline, and back online when it answers", T, async () => {
+    const { world, timers, host } = setup();
+    const store = new ChatStore(host);
+    store.start();
+    await flush();
+    const w = world.current;
+    // The next connection attempts fail: the worker is not coming back yet.
+    world.ports[0].kill();
+    const failing = world.current;
+    world.current = { server: { attach: (port) => queueMicrotask(() => port.disconnect?.()) } };
+    assert.equal(timers.fire().ms, 250);   // a reconnect that fails
+    await flush();
+    assert.equal(store.status.value.state, "online", "still inside the grace");
+    // Time moves on past the grace: now it is said.
+    let t;
+    while ((t = timers.fire()) && t.ms !== 3000) await flush();
+    await flush();
+    assert.equal(store.status.value.state, "offline");
+    assert.equal(store.runtimes.value[0].online, false);
+    world.current = failing;
+    while (store.status.value.state !== "online" && timers.fire()) await flush();
+    assert.equal(store.status.value.state, "online");
+    assert.equal(store.runtimes.value[0].online, true);
+    assert.equal(w, failing);
     store.dispose();
     host.dispose();
 });

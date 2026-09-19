@@ -454,7 +454,7 @@ export const pythonTool = function(this: MlApi): MlTool {
 export const chatMetaTool = function(this: MlApi): MlTool {
     return {
         name: "chat_metadata",
-        description: "Report metadata about THIS conversation: the model you're running on, its context window and how much of it is used, how many tokens you've generated this run, the number of messages and images so far, and which features the model supports (tools/vision/thinking). Call it when the user asks about your model, context, or token usage. Read-only; costs nothing.",
+        description: "Report metadata about THIS conversation: the model you're running on, its context window and how much of it is used, how many tokens you've generated this run, the number of messages and images so far, which features the model supports (tools/vision/thinking), and where the user is when they are NOT on your page (a \"user focus\" line; no such line means they are on it). Call it when the user asks about your model, context, or token usage, or before relying on them seeing the page. Read-only; costs nothing.",
         parameters: { type: "object", properties: {}, additionalProperties: false },
         requiresApproval: false,
         capabilities: ["meta"],
