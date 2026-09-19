@@ -568,13 +568,15 @@ button.chat-page-go:hover { color: var(--fg); }
    step's body mounted for the whole of a run — tables, highlighted source, screenshots — to animate its removal
    would be an expensive way to buy a fifth of a second. */
 .chat.calm { interpolate-size: allow-keywords; }
+/* The body's PADDING goes with its height: a box cannot be shorter than its padding, so `height: 0` alone left 16px
+   standing at the end of a close, which then vanished in one frame when the body unmounted. */
 @keyframes chat-step-open {
-    from { height: 0; opacity: .3; overflow: hidden; }
+    from { height: 0; padding-top: 0; padding-bottom: 0; opacity: .3; overflow: hidden; }
     to { height: auto; opacity: 1; overflow: hidden; }
 }
 @keyframes chat-step-close {
     from { height: auto; opacity: 1; overflow: hidden; }
-    to { height: 0; opacity: .3; overflow: hidden; }
+    to { height: 0; padding-top: 0; padding-bottom: 0; opacity: .3; overflow: hidden; }
 }
 /* `--astep-close-ms` is how this surface tells the component how long to keep the body mounted on the way out —
    the component reads it and waits, and a surface that sets nothing closes in the same tick it always has. */
@@ -601,8 +603,12 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat.calm .aturn { margin-bottom: 26px; }
 /* COLLAPSED steps are a LIST — one line each, and a list is read as a group, so they sit close together. An OPEN
    one is a thing you are reading, and it gets the room that goes with that. */
-.chat.calm .astep.tool { margin: 3px 0; }
+.chat.calm .astep.tool { margin: 3px 0; transition: margin .2s cubic-bezier(.4, 0, .2, 1), padding .2s cubic-bezier(.4, 0, .2, 1); }
 .chat.calm .astep.tool.open { margin: 16px 0; padding-bottom: 4px; }
+/* CLOSING takes the collapsed spacing at once, so it shrinks alongside the body instead of snapping after it: the
+   step stays `.open` until its body unmounts, and its 16px margins used to drop to 3px in that last frame. */
+.chat.calm .astep.tool.open.closing { margin: 3px 0; padding-bottom: 0; }
+@media (prefers-reduced-motion: reduce) { .chat.calm .astep.tool { transition: none; } }
 .chat.calm .astep-body { padding: 6px 0 10px 4px; }
 .chat.calm .aturn-prose { margin: 6px 0 14px; }
 .chat.calm .msg.user { margin-bottom: 22px; }
@@ -1053,8 +1059,9 @@ button.chat-page-go:hover { color: var(--fg); }
 .tp-warn-text { min-width: 0; }
 /* The pill when the chosen tab has closed: said in the warning colour, since starting waits for another pick. */
 .tp-gone { color: var(--warn); }
-/* The tab picker's foot: a sentence under the list, e.g. how to get group names and colours. */
-.tp-foot { flex: 0 1 auto; min-height: 0; overflow: hidden; margin: 4px 6px 0; padding: 8px 4px 2px; border-top: 1px solid var(--border); color: var(--fg-faint); font-size: 12px; line-height: 1.4; }
+/* The tab picker's foot: a sentence under the list, e.g. how to get group names and colours. It never shrinks: a foot
+   that did was cut off mid-word in a short window, and the LIST is what scrolls, so the list gives up the room. */
+.tp-foot { flex: 0 0 auto; margin: 4px 6px 0; padding: 8px 4px 2px; border-top: 1px solid var(--border); color: var(--fg-faint); font-size: 12px; line-height: 1.4; }
 /* The full address in the host's cursor tip: broken anywhere, since a URL has no spaces to wrap at. */
 .tp-url { word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
 /* The cursor tip over the page's own popovers (the tab picker's list sits at 60). */

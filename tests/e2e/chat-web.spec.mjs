@@ -821,6 +821,30 @@ test("this page's theme: chosen from the gear, applied at once, kept per device,
     await page.close();
 });
 
+test("closing a step eases to a stop: nothing under it snaps once the body has gone", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(WAITING)}`);
+    const step = page.locator(".astep.tool", { hasText: "exec" }).first();
+    await step.waitFor();
+    if (!/\bopen\b/.test(await step.getAttribute("class"))) { await step.locator(".astep-head").click(); await page.waitForTimeout(400); }
+    // What sits under the step, frame by frame through the close. The body kept 16px of padding at `height: 0`, and the
+    // step kept its open margins until the body unmounted, so the last frame jumped ~22px after an easing that had
+    // slowed to 3px a frame.
+    const ys = await step.evaluate(async (el) => {
+        const next = el.nextElementSibling || el.parentElement.nextElementSibling;
+        const out = [];
+        el.querySelector(".astep-head").click();
+        const t0 = performance.now();
+        while (performance.now() - t0 < 450) { await new Promise(requestAnimationFrame); out.push(next.getBoundingClientRect().top); }
+        return out;
+    });
+    const moves = ys.slice(1).map((y, i) => y - ys[i]).filter((d) => Math.abs(d) > 0.05);
+    expect(moves.length, "it animated over several frames").toBeGreaterThan(4);
+    const biggest = Math.max(...moves.map(Math.abs));
+    expect(Math.abs(moves.at(-1)), `the last frame's move (${moves.map((d) => d.toFixed(1)).join(" ")})`).toBeLessThan(Math.max(4, biggest * 0.25));
+    await expect(step).not.toHaveClass(/\bopen\b/);
+    expect(errors).toEqual([]);
+});
+
 /** Settings → Devices, opened fresh (the panel reads the membership when it mounts). */
 async function openDevices(page) {
     if (!(await page.getByRole("tab", { name: "Devices" }).count())) {
