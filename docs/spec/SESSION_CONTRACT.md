@@ -99,8 +99,9 @@ A `RuntimeInfo` carries three things a client renders from:
 
 - **`capabilities`**: what the runtime can do (`chat`, `agent`, `tabs`, `screenshots`, `highlight`, `persistence`,
   `sideCalls`, `pythonBench`, `resourcePanel`, `localSettings`, `devices`, and the reserved `headless` and `lineage`), which
-  `boxes` it uses, and the session `archive` with its folder's state (present only while the archive is on). **Absent
-  means no.** A client renders by capability and never assumes a browser.
+  `boxes` it uses, the session `archive` with its folder's state (present only while the archive is on), and
+  `attention`: what needs someone's hand on the runtime (`no-model`, `backend-unreachable`, `site-access`, …), as
+  codes a client words itself, since a runtime's text is untrusted. **Absent means no.** A client renders by capability and never assumes a browser.
 - **`grants`**: what THIS client may do there, as scopes (`view`, `drive`, `approve`, `screen`, `desktop`, `admin`), each
   optionally narrowed to `started` sessions (and their descendants, §Agent to agent), a list of sessions, or an expiry. The local host holds every scope.
 - **`clockOffsetMs`**: the estimated offset of the runtime's clock, since every timestamp in its index and events is

@@ -19,6 +19,7 @@ import { bgRuns, trackRun, untrackRun } from "./sw-runs";
 import { fetchLLM, getConfig, listAvailableModels, modelCapabilitiesBatch } from "./sw-llm";
 import { recordHousekeeping } from "./sw-housekeeping";
 import { archiveCall, lastFolderReport, onFolderChange, scheduleFolderSync } from "./sw-archive";
+import { attentionCodes, recomputeAttention, refreshBackendAttention, watchAttention } from "./sw-attention";
 import { appendSnapshot, measureEvents, summarizeStore, type StorageReport, type StorageSnapshot, type StoreBytes } from "./session-storage-stats";
 
 /**
@@ -68,7 +69,7 @@ const TAB_READY_MS = 15_000, TAB_POLL_MS = 250;
 function localRuntime(): RuntimeInfo {
     return {
         id: localRuntimeId(), name: "This browser", kind: "browser", online: true, contractVersion: SESSION_CONTRACT_VERSION,
-        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, ...archiveCapability() },
+        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, ...archiveCapability(), ...(attentionCodes().length ? { attention: attentionCodes() } : {}) },
         // This browser's own pages hold every scope.
         grants: [{ scope: "view" }, { scope: "drive" }, { scope: "approve" }, { scope: "screen" }],
     };
@@ -85,6 +86,7 @@ function archiveCapability(): { archive?: ArchiveCapability } {
  *  through `onFolderChange`. Switched off, the capability goes now. */
 function archiveToggled(): void {
     sessionServer.runtimeChanged();
+    recomputeAttention();
     if (archiveOn) void archiveCall("folder").catch(() => { /* no OPFS: the capability stays "none" */ });
 }
 
@@ -338,7 +340,8 @@ export const sessionServer = new SessionServer(new SessionIndex({ runtime: local
 /** The worker's session settings, read once at startup whether or not there is a store: titling needs them too. */
 const settingsRead = readSessionSettings();
 // The folder's state rides the runtime's description, so every change to it is one to that.
-onFolderChange(() => sessionServer.runtimeChanged());
+onFolderChange(() => { sessionServer.runtimeChanged(); recomputeAttention(); });
+watchAttention({ archiveOn: () => archiveOn, onChange: () => sessionServer.runtimeChanged() });
 // A lapsed grant shows only after a restart, which is also when this runs.
 void settingsRead.then(() => { if (archiveOn) archiveToggled(); });
 if (sessionStore) {
@@ -616,6 +619,7 @@ export function serveSessionsPort(port: chrome.runtime.Port): void {
         return;
     }
     sessionServer.attach(port);
+    refreshBackendAttention();
 }
 
 // The storage history's clock. An alarm, not a timer: a timer is what would keep the worker alive to wait for it.
