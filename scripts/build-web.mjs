@@ -38,7 +38,7 @@ export const webBuildOptions = (outdir) => ({
 });
 
 /** Build dist-web/ (staged, swapped in on success, like the extension build). Throws on a `chrome` reference. */
-export async function buildWeb({ outdir = "dist-web" } = {}) {
+export async function buildWeb({ outdir = "dist-web", appdir = outdir === "dist-web" ? "dist-app" : null } = {}) {
     const out = path.resolve(ROOT, outdir);
     const stage = `${out}.stage`;
     rmSync(stage, { recursive: true, force: true });
@@ -66,6 +66,21 @@ export async function buildWeb({ outdir = "dist-web" } = {}) {
         throw err;
     }
     console.log(`built ${outdir}/ (the chat page, no extension)`);
+    if (appdir) buildApp(out, path.resolve(ROOT, appdir));
+}
+
+/**
+ * THE APP'S WEB DIRECTORY (`dist-app/`, Capacitor's `webDir`): the standalone client as the start page and nothing of
+ * the demo. The app loads `index.html`, and `dist-web/`'s is the demo world the specs drive, so the app gets its own
+ * directory rather than the demo moving out of the specs' way.
+ */
+function buildApp(web, app) {
+    rmSync(app, { recursive: true, force: true });
+    mkdirSync(app, { recursive: true });
+    for (const f of ["client.js", "sidebar.css", "chat.css"]) cpSync(path.join(web, f), path.join(app, f));
+    cpSync(path.join(web, "client.html"), path.join(app, "index.html"));
+    if (existsSync(path.join(web, "fonts"))) cpSync(path.join(web, "fonts"), path.join(app, "fonts"), { recursive: true });
+    console.log(`built ${path.relative(ROOT, app)}/ (the phone app's pages: the standalone client)`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

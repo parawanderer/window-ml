@@ -15,7 +15,9 @@ const config: CapacitorConfig = {
     // once, here, rather than being whatever a scaffold generated.
     appId: "dev.wander.windowml",
     appName: "window.ml",
-    webDir: "dist-web",
+    // The standalone client (src/chat/client.tsx) as the start page, built by scripts/build-web.mjs. Not `dist-web/`,
+    // whose start page is the demo world the specs drive.
+    webDir: "dist-app",
     // The page holds no secrets of its own — a hub connection is authenticated by a key in the app's own storage —
     // but a cleartext origin would let anything on the network rewrite the page that then uses that key.
     server: { androidScheme: "https" },

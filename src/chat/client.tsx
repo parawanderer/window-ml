@@ -7,11 +7,11 @@
 // the chat page over `HubHost`. Creating, joining or leaving reloads the page, which is the simplest honest way to
 // start over with a different identity.
 //
-// RECONNECTING is a reload with a growing delay for now: `HubHost` is built over one connection and has no way to be
-// handed another. A connection that can be resumed in place belongs to the hub transport, and is asked for.
+// RECONNECTING is the host's own (`HubHost.reconnecting`): it reopens the connection whenever it drops and keeps every
+// subscription the page holds, so a phone that slept or a hub that restarted comes back to the same open session. The
+// page's status chip says `connecting…` or `offline` meanwhile, and waking or coming back online tries at once.
 
 import { render } from "preact";
-import { useEffect, useState } from "preact/hooks";
 import { Keyring } from "../hub/keyring";
 import { principalId } from "../hub/keys";
 import { ChannelKey } from "../hub/seal";
@@ -41,17 +41,6 @@ function deviceLabel(): string {
     return brand && ua?.platform ? `${brand} on ${ua.platform}` : "Web client";
 }
 
-/** How long to wait before the Nth reconnect: 2 s, doubling, at most a minute. Kept across the reload in the session. */
-function retryDelayMs(): number {
-    let n = 0;
-    try { n = Number(sessionStorage.getItem("wml-client-retry")) || 0; sessionStorage.setItem("wml-client-retry", String(n + 1)); } catch { /* unavailable */ }
-    return Math.min(60_000, 2000 * 2 ** n);
-}
-/** A connection that came up resets the delay. */
-function connectedOnce(): void {
-    try { sessionStorage.removeItem("wml-client-retry"); } catch { /* unavailable */ }
-}
-
 /** The page's settings that belong to the device, whichever screen is drawn. */
 function installDevice(): void {
     initThemeStyle();
@@ -72,36 +61,20 @@ function FirstRun({ platform }: { platform: ClientPlatform }) {
     );
 }
 
-/** The hub could not be reached (or the connection dropped): where it is, and when it is tried again. */
-function Unreachable({ hubUrl, reason, retryMs }: { hubUrl: string; reason: string; retryMs: number }) {
-    const [left, setLeft] = useState(Math.round(retryMs / 1000));
-    useEffect(() => {
-        const t = setInterval(() => setLeft((s) => Math.max(0, s - 1)), 1000);
-        const go = setTimeout(() => location.reload(), retryMs);
-        return () => { clearInterval(t); clearTimeout(go); };
-    }, [retryMs]);
-    return (
-        <main class="client-first" aria-label="Not connected">
-            <h1 class="client-title">Not connected</h1>
-            <p class="client-lede">The hub at <code>{hubUrl}</code> did not answer: {reason}. Trying again in {left} s.</p>
-            <div class="pair-actions client-actions"><button class="btn primary" onClick={() => location.reload()}>Try now</button></div>
-        </main>
-    );
-}
-
-/** Start: read the keyring, then draw the account panel, the chat page over the hub, or why it could not connect. */
+/** Start: read the keyring, then draw the account panel, or the chat page over a host that keeps itself connected. */
 async function main(): Promise<void> {
     installDevice();
     const root = document.getElementById("root") || document.body;
     const ring = await Keyring.open();
     const me = await ring.load();
-    let conn: HubConnection | null = null;
+    let host: HubHost | null = null;
     const platform: ClientPlatform = {
         ...webPlatform,
         kind: native ? "native" : "web",
         pairing: clientPairing({
             keyring: async () => ring,
-            client: () => conn?.hubClient ?? null,
+            // Pairing goes over the host's connection: the hub refuses a second one from this principal.
+            client: () => host?.connection?.hubClient ?? null,
             defaultLabel: deviceLabel(),
             rootKeptIn: native ? "this app's storage on this phone" : "this site's data in this browser",
             onChanged: () => location.reload(),
@@ -109,22 +82,18 @@ async function main(): Promise<void> {
     };
     const m = me?.membership;
     if (!me || !m) { render(<FirstRun platform={platform} />, root); return; }
-    try {
-        conn = await HubConnection.open({
-            url: m.hubUrl, hubName: m.hubName, identity: me.identity, agreement: me.agreement, chain: m.chain,
-            accountRoot: m.accountRoot, role: Role.ROLE_CLIENT,
-        });
-    } catch (err) {
-        render(<Unreachable hubUrl={m.hubUrl} reason={err instanceof Error ? err.message : String(err)} retryMs={retryDelayMs()} />, root);
-        return;
-    }
-    connectedOnce();
     const id = [...await principalId(me.identity.publicKey)].map((b) => b.toString(16).padStart(2, "0")).join("");
-    const host = new HubHost(conn, await ChannelKey.fromBytes(m.channelKey), { id, kind: "device", name: deviceLabel() });
+    const open = () => HubConnection.open({
+        url: m.hubUrl, hubName: m.hubName, identity: me.identity, agreement: me.agreement, chain: m.chain,
+        accountRoot: m.accountRoot, role: Role.ROLE_CLIENT,
+    });
+    host = HubHost.reconnecting(open, await ChannelKey.fromBytes(m.channelKey), { id, kind: "device", name: deviceLabel() });
+    // Waking (a phone unlocked, a tab brought back) or the network returning: try now rather than wait out the backoff.
+    const now = () => host?.reconnect();
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") now(); });
+    addEventListener("online", now);
     const store = new ChatStore(host);
     installServices(hostServices(store, platform));
-    // A dropped connection: say so and come back, rather than leave a page that quietly stopped updating.
-    conn.onClose((reason) => render(<Unreachable hubUrl={m.hubUrl} reason={reason || "the connection closed"} retryMs={retryDelayMs()} />, root));
     store.start();
     render(<ChatApp store={store} platform={platform} />, root);
 }

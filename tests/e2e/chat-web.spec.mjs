@@ -1026,3 +1026,22 @@ test("addresses: a link opens a view and its tab, the address follows what is on
     expect(errors).toEqual([]);
     await page.close();
 });
+
+test("the phone app's start page is the standalone client, not the demo", async () => {
+    // Capacitor loads dist-app/index.html. The demo world (window.__chatFake) must not be what a phone opens.
+    const { serveStatic } = await import("./static-server.mjs");
+    const app = await serveStatic("dist-app");
+    const page = await browser.newPage({ viewport: PHONE });
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    try {
+        await page.goto(app.url);
+        await expect(page.locator(".pair-h").first()).toHaveText("This device is in no account");
+        await expect(page.getByRole("button", { name: "Create an account" })).toBeVisible();
+        expect(await page.evaluate(() => typeof globalThis.__chatFake)).toBe("undefined");
+        expect(errors).toEqual([]);
+    } finally {
+        await page.close();
+        await app.close();
+    }
+});
