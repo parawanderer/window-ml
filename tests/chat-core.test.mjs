@@ -486,3 +486,23 @@ test("view prefs: a pin is this device's, survives a reload, and a delete from h
     dropPin("laptop:never");   // not pinned: nothing happens
     assert.deepEqual([...pinned.value], []);
 });
+
+// The tab picker's order (src/chat/tab-tree.ts): the browser's, window by window, groups gathered under a heading.
+test("tabTree: browser order per window, a group's run of tabs under its heading, and no window heading for one window", async () => {
+    const { tabTree, faviconSrc, tabMatches } = await import("../src/chat/tab-tree.ts");
+    const t = (tabId, index, groupId, windowId = 1) => ({ tabId, url: `https://s${tabId}.example/`, title: `T${tabId}`, active: false, windowId, index, groupId });
+    // Arrival order is not strip order: `index` wins.
+    const one = tabTree([t(3, 2, -1), t(1, 0, -1), t(2, 1, 7), t(4, 3, 7), t(5, 4, 7)], [{ id: 7, title: "Research", color: "blue" }]);
+    assert.deepEqual(one.map((i) => i.kind === "tab" ? `${i.indent ? "  " : ""}${i.tab.tabId}` : i.kind === "group" ? `[${i.group.title}:${i.count}]` : `W${i.windowId}`),
+        ["1", "[Research:1]", "  2", "3", "[Research:2]", "  4", "  5"]);
+    // Two windows: a heading each, in the order their tabs arrived.
+    const two = tabTree([t(9, 0, -1, 2), t(1, 0, -1, 1)]);
+    assert.deepEqual(two.map((i) => i.kind === "window" ? `W${i.windowId}:${i.count}` : `${i.tab.tabId}`), ["W2:1", "9", "W1:1", "1"]);
+    // A group the runtime did not describe still gets a heading; a runtime that reports no index keeps arrival order.
+    assert.deepEqual(tabTree([{ ...t(1), index: undefined, groupId: 4 }]).map((i) => i.kind), ["group", "tab"]);
+    // Only a runtime-made data URL is ever drawn: a site's own favicon URL would be a fetch to that site.
+    assert.equal(faviconSrc({ ...t(1), favicon: "data:image/png;base64,AAAA" }), "data:image/png;base64,AAAA");
+    assert.equal(faviconSrc({ ...t(1), favicon: "https://evil.example/f.ico" }), null);
+    assert.equal(faviconSrc({ ...t(1), favicon: "javascript:alert(1)" }), null);
+    assert.ok(tabMatches(t(1), "s1.EXAMPLE") && !tabMatches(t(1), "nope"));
+});

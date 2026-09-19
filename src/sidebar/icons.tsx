@@ -281,3 +281,10 @@ export const IconEvictAll = () => (
         <path d="M12 8.6l3 3.4H9z" fill="currentColor" stroke-width="1.2" /><path d="M9 15h6" />
     </svg>
 );
+
+/** A plus: add, or "a new one" (the tab picker's "New tab"). */
+export const IconPlus = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+        <path d="M12 5v14M5 12h14" />
+    </svg>
+);

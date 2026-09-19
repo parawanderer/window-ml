@@ -197,7 +197,7 @@ test("phone: starting a chat from the list, and the start page asks only what it
     // One runtime can hold a chat here — the lab box has `agent` and no `chat`, the old Mac is offline — so there is
     // nothing to choose between and the page does not ask; a chat has no "where" either.
     await expect(page.locator(".chat-pick-rt")).toHaveCount(0);
-    await expect(page.locator(".chat-pick-where")).toHaveCount(0);
+    await expect(page.locator(".tp-pill")).toHaveCount(0);
 
     await box.fill("what is a shared worker?");
     await box.press("Enter");
@@ -216,11 +216,27 @@ test("desktop: with nothing open the page is a start box; an agent run picks a t
     const box = page.locator(".chat-start-box textarea");
     await expect(box).toBeVisible();
 
-    // The tab picker is filled from the runtime's own `tabs.list`, so the titles are the runtime's.
-    const where = page.locator(".chat-pick-where");
-    await expect(where.locator("option").first()).toHaveText("The front page");
+    // The tab picker is filled from the runtime's own `tabs.list`, so the titles are the runtime's, and it starts on
+    // the tab showing in the first window.
+    const pill = page.locator(".tp-pill");
+    await expect(pill).toContainText("The front page");
+    await pill.click();
+    const list = page.getByRole("listbox", { name: "Where it runs" });
+    // "New tab" first, then a rule, then the tabs window by window, in the browser's order.
+    const options = list.getByRole("option");
+    await expect(options.first()).toHaveText("New tab");
+    await expect(list.locator(".tp-rule")).toHaveCount(1);
+    await expect(options).toHaveText([/New tab/, /The front page.*news\.example/, /Tables — API reference/, /Inbox \(3\)/, /Flights AMS → LIS/]);
+    await expect(list.locator(".tp-window")).toHaveCount(3);
+    // The keyboard walks it: Escape closes without leaving the start page.
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Escape");
+    await expect(list).toHaveCount(0);
+    await expect(page.locator(".chat-start-box")).toBeVisible();
     // Choosing a new tab adds a URL box, because a tab that does not exist has no title to choose.
-    await where.selectOption("blank");
+    await pill.click();
+    await list.getByRole("option", { name: "New tab" }).click();
+    await expect(pill).toContainText("New tab");
     await expect(page.locator(".chat-pick-url")).toBeVisible();
 
     await box.fill("summarise the front page");

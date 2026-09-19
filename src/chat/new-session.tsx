@@ -16,6 +16,7 @@ import type { AgentTarget, Principal, RuntimeInfo, SessionKey, SessionSummary, T
 import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
 import { mayCommand } from "./grants";
+import { TabPicker } from "./tab-picker";
 
 /** What a new session can be. */
 export type StartKind = "chat" | "agent";
@@ -102,12 +103,8 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
         ) : null,
         inline: enabled ? (
             <>
-                <select class="chat-pick-where" aria-label="Where it runs" value={where === "tab" && tabId != null ? String(tabId) : "blank"}
-                    onChange={(e: any) => { const v = e.target.value; if (v === "blank") setWhere("blank"); else { setWhere("tab"); setTabId(Number(v)); } }}>
-                    {tabs === null ? <option value="">Loading tabs…</option>
-                        : tabs.map((t) => <option key={t.tabId} value={String(t.tabId)}>{truncate(t.title || t.url, 48)}</option>)}
-                    <option value="blank">A new tab</option>
-                </select>
+                <TabPicker tabs={tabs} value={where === "tab" && tabId != null ? tabId : "blank"}
+                    onChange={(v) => { if (v === "blank") setWhere("blank"); else { setWhere("tab"); setTabId(v); } }} />
                 {where === "blank" ? (
                     <input class="chat-pick-url" type="url" value={url} aria-label="Page to open" placeholder="https://… (optional)"
                         onInput={(e: any) => setUrl(e.target.value)} />
