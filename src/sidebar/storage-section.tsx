@@ -50,14 +50,18 @@ function HistoryChart({ history }: { history: StorageSnapshot[] }) {
     );
 }
 
-/** The Storage section's body. `load` fetches the report; injectable so a test needs no worker. */
-export function StorageBody({ load, measure }: { load: () => Promise<StorageReport | null>; measure: () => Promise<StoreBytes | null> }) {
+/**
+ * The Storage section's body. `load` fetches the report; injectable so a test needs no worker. `measure` reads every
+ * saved session from disk, which only this browser can do, so without it (a remote runtime) there is no button.
+ * `emptyText` is what a null report says, for a runtime that is not this browser.
+ */
+export function StorageBody({ load, measure, emptyText = "This browser keeps no saved sessions." }: { load: () => Promise<StorageReport | null>; measure?: () => Promise<StoreBytes | null>; emptyText?: string }) {
     const [report, setReport] = useState<StorageReport | null | undefined>(undefined);
     const [exact, setExact] = useState<StoreBytes | null | "loading">(null);
     const [err, setErr] = useState("");
     useEffect(() => { load().then(setReport, (e) => { setErr(String(e?.message || e)); setReport(null); }); }, []);
     if (report === undefined) return <div class="set-hint">Reading…</div>;
-    if (!report) return <div class="set-hint">{err || "This browser keeps no saved sessions."}</div>;
+    if (!report) return <div class="set-hint">{err || emptyText}</div>;
     const s = report.now;
     const tools = Object.entries(s.byTool).sort((a, b) => b[1] - a[1]).slice(0, 8);
     const toolMax = Math.max(1, ...tools.map(([, v]) => v));
@@ -69,7 +73,7 @@ export function StorageBody({ load, measure }: { load: () => Promise<StorageRepo
             <SplitBar s={s} />
             <div class="stor-legend">{PARTS.map((p) => (part(s, p.key) > 0 ? <span key={p.key}><i class={p.cls} />{p.label} {formatBytes(part(s, p.key))}</span> : null))}</div>
             {report.archive ? <div class="set-hint">Archive: {report.archive.sessions} session{report.archive.sessions === 1 ? "" : "s"}, {formatBytes(report.archive.bytes)} as they were stored here, images {formatBytes(report.archive.imageBytes)} ({report.archive.images}, each stored once).</div> : null}
-            {s.unmeasured > 0 ? <div class="set-hint">Sessions saved before this was recorded are not yet measured. They shrink out of the picture as retention removes them, or use "Measure exactly" below.</div> : null}
+            {s.unmeasured > 0 ? <div class="set-hint">Sessions saved before this was recorded are not yet measured. They shrink out of the picture as retention removes them{measure ? <>, or use "Measure exactly" below</> : null}.</div> : null}
 
             <div class="stor-sub">Over time</div>
             <HistoryChart history={report.history} />
@@ -88,13 +92,13 @@ export function StorageBody({ load, measure }: { load: () => Promise<StorageRepo
                 ))}</div>
             </> : null}
 
-            <div class="set-field">
+            {measure ? <div class="set-field">
                 <button class="test-btn" disabled={exact === "loading"} onClick={() => { setExact("loading"); measure().then(setExact, () => setExact(null)); }}>
                     {exact === "loading" ? "Measuring…" : "Measure exactly"}
                 </button>
                 <div class="set-hint">Reads every saved session from disk once. Also says how much storing each image once would save.</div>
                 {exact && exact !== "loading" ? <div>{formatBytes(exact.total)} measured: images {formatBytes(exact.images)} ({exact.imageCount}), {formatBytes(exact.imagesIfDeduplicated)} if each were stored once; tool output {formatBytes(exact.toolOutput)}; everything else {formatBytes(exact.other)}.</div> : null}
-            </div>
+            </div> : null}
         </div>
     );
 }

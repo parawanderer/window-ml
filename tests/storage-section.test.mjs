@@ -21,10 +21,10 @@ before(async () => {
 /** Until the report has been drawn: effects run after a paint frame, so a fixed sleep is a guess about that frame. */
 const drawn = async (host) => { for (let i = 0; i < 200 && (!host.textContent || /Reading/.test(host.textContent)); i++) await new Promise((r) => setTimeout(r, 5)); };
 const snap = (t, over = {}) => ({ t, total: 1000, images: 600, imageCount: 2, toolOutput: 300, other: 100, byTool: { exec: 250, python_exec: 50 }, sessions: 3, events: 40, pinned: 1, unmeasured: 0, ...over });
-const mount = async (report) => {
+const mount = async (report, props = { measure: async () => null }) => {
     const host = doc.getElementById("root");
     render(null, host);
-    render(h(StorageBody, { load: async () => report, measure: async () => null }), host);
+    render(h(StorageBody, { load: async () => report, ...props }), host);
     await drawn(host);
     return host;
 };
@@ -44,4 +44,12 @@ test("today's picture, the tools, the largest sessions, and a chart only once th
 test("a browser that keeps nothing says so", async () => {
     const host = await mount(null);
     assert.match(host.textContent, /keeps no saved sessions/);
+});
+
+test("a remote runtime: its own empty text, and no measuring from here", async () => {
+    const empty = await mount(null, { emptyText: "Lab box keeps no saved sessions." });
+    assert.match(empty.textContent, /Lab box keeps no saved sessions/);
+    const host = await mount({ history: [snap(1)], now: snap(2, { unmeasured: 400 }), largest: [] }, {});
+    assert.equal(host.querySelector("button"), null);
+    assert.doesNotMatch(host.textContent, /Measure exactly/);
 });

@@ -53,6 +53,13 @@ here instead. Decided with Shane on 2026-09-19; the design and the probe behind 
   overlay (a frame in someone's site) the browser refuses the picker and the prompt, so the section says to open
   Settings in the chat page instead.
 
+- **The state is on the contract**, as `capabilities.archive` (`ArchiveCapability`: `folder`, `pending`, `lastSync`),
+  present only while `sessionArchive` is on. `sw-archive.ts` keeps the last `FolderReport` any operation returned and
+  the session server re-sends the runtime's description when it changes, so a client never polls. It is read once at
+  worker start, which is when a lapsed "Allow this time" grant first shows. `unsupported` is decided in the offscreen
+  document: no worker can pick a folder, so the archive worker answers `none` and the document, a page, corrects it.
+  A `needs-grant` is fixed only by a click in that runtime's own Settings, so a remote client can say so and no more.
+
 ## Reaching archived sessions
 
 - **`sessions.list` / `sessions.search`** merge the live index and the archive by `lastTs`, asking each for a page

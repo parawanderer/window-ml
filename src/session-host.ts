@@ -10,6 +10,7 @@ import type { JsonSchema } from "./contract";
 import type { ElementContext } from "./contract-run";
 import type { NeutralMessage, TokenUsage } from "./contract-chat";
 import type { MlDebugEvent } from "./contract-debug";
+import type { FolderState } from "./archive-folder";
 
 /* ------------------------------ versioning ------------------------------ */
 
@@ -125,6 +126,27 @@ export interface RuntimeCapabilities {
     lineage?: boolean;
     /** the boxes this runtime uses */
     boxes?: BoxRef[];
+    /** the long-term session archive, present while it is switched on (`sessionArchive`). Reachable through
+     *  `sessions.list` / `sessions.search` / `session.unarchive`; this says where its folder copy stands. */
+    archive?: ArchiveCapability;
+}
+
+/** Where a runtime's session archive and its folder copy stand. Sent again whenever it changes (a pick, a re-grant,
+ *  a sync), so a client reads it from the runtime's description and never polls. */
+export interface ArchiveCapability {
+    /**
+     * The folder the archive is copied into, one SQLite file per month, which survives a wiped browser profile.
+     * `none`: no folder picked (the archive still works, inside the browser only). `connected`: being written.
+     * `needs-grant`: picked, but the browser's permission lapsed (a restart after "Allow this time"), so nothing is
+     * written until someone re-grants it with a click in THAT runtime's Settings; no command can, from anywhere.
+     * `unsupported`: this browser cannot pick a folder (Brave with its File System Access flag off).
+     * OPEN on the wire: read a state you do not know as `none`.
+     */
+    folder: FolderState;
+    /** months changed since the last write to the folder; written at the next sync while it is `connected` */
+    pending?: number;
+    /** epoch ms, the RUNTIME's clock, of the last completed write to the folder */
+    lastSync?: number;
 }
 
 /** A runtime as a client sees it. */
@@ -591,6 +613,7 @@ export interface TabGroupInfo {
 }
 
 export type { StorageReport, StorageSnapshot } from "./session-storage-stats";
+export type { FolderState } from "./archive-folder";
 import type { StorageReport } from "./session-storage-stats";
 
 /** A session as a paged list or a search shows it: its index row, marked when it is in the long-term archive. */

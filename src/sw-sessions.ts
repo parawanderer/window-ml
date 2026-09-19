@@ -7,7 +7,7 @@ import { type MlDebugEvent } from "./contract-debug";
 import { createCommandHandler, type CommandDeps, type PageOutcome } from "./session-commands";
 import { cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat, sendBackgroundChat, startBackgroundChat } from "./sw-chat";
 import { type StoredSession } from "./contract-messages";
-import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type RuntimeInfo, type SessionSummary, type TabGroupInfo, type TabInfo } from "./session-host";
+import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type ArchiveCapability, type RuntimeInfo, type SessionSummary, type TabGroupInfo, type TabInfo } from "./session-host";
 import { FaviconCache, stripOrder } from "./tab-favicons";
 import { SessionIndex, type IngestSource } from "./session-index";
 import { SESSIONS_PORT, SessionServer } from "./session-server";
@@ -19,7 +19,7 @@ import { bgRuns, trackRun, untrackRun } from "./sw-runs";
 import { fetchLLM, getConfig, listAvailableModels, modelCapabilitiesBatch } from "./sw-llm";
 import { pythonBundlePresent } from "./sw-python";
 import { recordHousekeeping } from "./sw-housekeeping";
-import { archiveCall, scheduleFolderSync } from "./sw-archive";
+import { archiveCall, lastFolderReport, onFolderChange, scheduleFolderSync } from "./sw-archive";
 import { appendSnapshot, measureEvents, summarizeStore, type StorageReport, type StorageSnapshot, type StoreBytes } from "./session-storage-stats";
 
 /**
@@ -79,10 +79,24 @@ function localRuntime(): RuntimeInfo {
         // backend behind it); `pythonBench` is MEASURED, because a checkout without the wheels builds a bundle whose
         // bench would fail at run time. `localSettings`: this browser's pages may edit its settings, which only the
         // extension's own pages can (a phone over the hub reports the capability and holds nothing to edit with).
-        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled, localSettings: true },
+        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled, localSettings: true, ...archiveCapability() },
         // This browser's own pages hold every scope.
         grants: [{ scope: "view" }, { scope: "drive" }, { scope: "approve" }, { scope: "screen" }],
     };
+}
+
+/** The archive's entry in the capabilities: absent while it is off, and "none" until its folder was first read. */
+function archiveCapability(): { archive?: ArchiveCapability } {
+    if (!archiveOn || !sessionStore) return {};
+    const f = lastFolderReport();
+    return { archive: { folder: f?.state ?? "none", ...(f?.pending ? { pending: f.pending } : {}), ...(f?.lastSync ? { lastSync: f.lastSync } : {}) } };
+}
+
+/** The archive was switched on, or the worker started with it on: read the folder's state, which announces itself
+ *  through `onFolderChange`. Switched off, the capability goes now. */
+function archiveToggled(): void {
+    sessionServer.runtimeChanged();
+    if (archiveOn) void archiveCall("folder").catch(() => { /* no OPFS: the capability stays "none" */ });
 }
 
 /** What only background.ts can do, because it owns the runs: set once at startup by `configureSessionCommands`. */
@@ -341,6 +355,10 @@ export const sessionServer = new SessionServer(new SessionIndex({ runtime: local
 // and then removed; which needs the setting first.
 /** The worker's session settings, read once at startup whether or not there is a store: titling needs them too. */
 const settingsRead = readSessionSettings();
+// The folder's state rides the runtime's description, so every change to it is one to that.
+onFolderChange(() => sessionServer.runtimeChanged());
+// A lapsed grant shows only after a restart, which is also when this runs.
+void settingsRead.then(() => { if (archiveOn) archiveToggled(); });
 if (sessionStore) {
     const store = sessionStore;
     void settingsRead
@@ -390,7 +408,7 @@ try {
         if (area !== "sync") return;
         if (changes.agentStartPage) agentStartPage = String(changes.agentStartPage.newValue ?? "").trim();
         if (changes.autoTitles) autoTitles = changes.autoTitles.newValue !== false;
-        if (changes.sessionArchive) archiveOn = changes.sessionArchive.newValue === true;
+        if (changes.sessionArchive) { archiveOn = changes.sessionArchive.newValue === true; archiveToggled(); }
         // A shorter retention applies now, not on the next write: someone who just lowered it expects the list to
         // shrink while they watch.
         if (changes.sessionRetentionDays || changes.sessionStoreBudgetMB) {
