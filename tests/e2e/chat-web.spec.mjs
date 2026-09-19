@@ -774,3 +774,30 @@ test("tabs the runtime could not list are counted in a warning at the top of the
     expect(errors).toEqual([]);
     await page.close();
 });
+
+test("this page's theme: chosen from the gear, applied at once, kept per device, and the same choice in Settings", async () => {
+    const page = await browser.newPage({ viewport: DESKTOP, colorScheme: "dark" });
+    await page.goto(server.url);
+    await page.locator(".chat").waitFor();
+    const theme = () => page.evaluate(() => document.documentElement.getAttribute("data-theme"));
+    expect(await theme()).toBe("dark");   // the system's, as the extension's Auto means
+    await page.locator(".chat-list-foot .chat-gear-btn").click();
+    await page.getByRole("menuitem", { name: /Theme for this page/ }).click();
+    const menu = page.getByRole("menu", { name: "Page menu" });
+    // The extension is on Auto here, so following it would mean the same as System: no fourth choice.
+    await expect(menu.getByRole("menuitemradio")).toHaveText(["System", "Light", "Dark"]);
+    await expect(menu.getByRole("menuitemradio", { name: "System" })).toHaveAttribute("aria-checked", "true");
+    await menu.getByRole("menuitemradio", { name: "Light" }).click();
+    expect(await theme()).toBe("light");
+    await expect(menu.getByRole("menuitem", { name: /Theme for this page/ })).toContainText("Light");
+    await page.reload();
+    await page.locator(".chat").waitFor();
+    expect(await theme()).toBe("light");
+    await page.locator(".chat-list-foot .chat-gear-btn").click();
+    await page.getByRole("menuitem", { name: "Settings" }).click();
+    const seg = page.getByRole("radiogroup", { name: "Theme" });
+    await expect(seg.getByRole("radio", { name: "Light" })).toHaveAttribute("aria-checked", "true");
+    await seg.getByRole("radio", { name: "System" }).click();
+    expect(await theme()).toBe("dark");
+    await page.close();
+});

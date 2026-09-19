@@ -36,6 +36,13 @@ export const IconChevron = () => (
     </svg>
 );
 /** Settings. */
+// A half-filled circle: light and dark, the page's theme.
+export const IconTheme = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+        <circle cx="12" cy="12" r="8.25" />
+        <path d="M12 3.75a8.25 8.25 0 0 1 0 16.5Z" fill="currentColor" stroke="none" />
+    </svg>
+);
 // An inbox tray: what needs someone's hand (the chat page's attention list).
 export const IconInbox = () => (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

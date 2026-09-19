@@ -11,6 +11,7 @@ import { demoHost } from "./demo-world";
 import { hostServices } from "./host-services";
 import { webPlatform } from "./platform";
 import { installViewPrefs } from "./view-mode";
+import { installPageTheme } from "./page-theme";
 import { ChatApp } from "./chat-app";
 
 // `__chatFakeLatencyMs`, set by a spec's init script before load, slows every answer: how a spec sees what the page
@@ -23,6 +24,7 @@ installServices(hostServices(store, webPlatform));
 initThemeStyle();
 applyCodePrefs();
 installViewPrefs(webPlatform.prefs);
+installPageTheme();
 try { installTooltipLayer(document); } catch { /* no DOM */ }
 store.start();
 render(<ChatApp store={store} platform={webPlatform} />, document.getElementById("root") || document.body);

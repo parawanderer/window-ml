@@ -669,6 +669,13 @@ back arrow, Escape from anywhere via `useEscapeCloses`): the extension's own set
 through `ChatExtras.settings` and offered where the runtime reports `localSettings` — so only the extension build
 has it, and it edits the same `chrome.storage.sync` the popup and the panel do.
 
+**This page's theme** is its own (`pageThemeMode`, `view.theme`, per device): a page for thinking may want light
+while the DevTools panel and the HUD stay dark. `pageTheme` in sidebar/prefs.ts overrides the extension's Theme in
+`resolveTheme` (and an uploaded VS Code panel theme) while set; `installPageTheme` (page-theme.ts, the entries only,
+since it touches `matchMedia`) applies it and redraws on any change. "Like the extension (…)" is offered only while the
+extension's Theme is not Auto, since otherwise it means System. The chat entry loads the extension's config at start
+and follows it; it used to load only inside the Settings view, so the page drew the default theme until then.
+
 **The attention list** (`attention.ts`, `attention-page.tsx`) is what needs someone's hand before a runtime works
 fully: no model, an unreachable backend, site access on "on click", a lapsed archive folder, a build without Python's
 wheels, and two suggestions (a utility model, tab group names). It is opened from an inbox above the gear, which is

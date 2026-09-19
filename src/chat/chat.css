@@ -772,6 +772,13 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-menu-ico svg { width: 18px; height: 18px; }
 .chat-menu-label { flex: 1 1 auto; }
 .chat-menu-on { display: inline-flex; color: var(--fg); }
+/* A menu row's current value, dim at its right (the theme row: "Dark"), and its caret, turned down while open. */
+.chat-menu-val { margin-left: auto; color: var(--fg-faint); font-size: .92em; }
+.chat-menu-caret { display: inline-flex; color: var(--fg-faint); transition: transform .15s ease; }
+.chat-menu-caret svg { width: 12px; height: 12px; }
+.chat-menu-caret.open { transform: rotate(90deg); }
+/* A choice under an opened row, indented past the icons. */
+.chat-menu-item.chat-menu-sub { padding-left: 40px; }
 @media (prefers-reduced-motion: reduce) { .chat-menu { animation: none; } }
 
 /* The gear's menu rises from the gear, with room for its longer rows. */

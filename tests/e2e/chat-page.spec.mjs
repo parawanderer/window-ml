@@ -335,3 +335,29 @@ test("a worker restart does not redraw Settings: Runtimes keeps its scroll and n
         expect(errors).toEqual([]);
     } finally { await ext.context.close(); await fake.stop(); }
 });
+
+test("the page follows the extension's Theme from the start, and offers to keep following it or choose its own", async () => {
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { theme: "dark" });
+        const { page: chat, errors } = await openChatPage(ext);
+        await chat.emulateMedia({ colorScheme: "light" });
+        const theme = () => chat.evaluate(() => document.documentElement.getAttribute("data-theme"));
+        // Without opening Settings: the extension's config is loaded at the page's start (it used to wait for Settings).
+        await expect.poll(theme).toBe("dark");
+        await chat.locator(".chat-gear-btn").first().click();
+        await chat.getByRole("menuitem", { name: /Theme for this page/ }).click();
+        const menu = chat.getByRole("menu", { name: "Page menu" });
+        await expect(menu.getByRole("menuitemradio")).toHaveText(["Like the extension (Dark)", "System", "Light", "Dark"]);
+        await menu.getByRole("menuitemradio", { name: "Light" }).click();
+        expect(await theme()).toBe("light");
+        // Its own choice holds when the extension's changes; following the extension tracks it.
+        await configureExtension(ext.sw, { theme: "dark" });
+        expect(await theme()).toBe("light");
+        await menu.getByRole("menuitemradio", { name: /Like the extension/ }).click();
+        expect(await theme()).toBe("dark");
+        await ext.sw.evaluate(() => chrome.storage.sync.set({ theme: "light" }));
+        await expect.poll(theme).toBe("light");
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); }
+});

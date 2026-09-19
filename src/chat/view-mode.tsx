@@ -17,7 +17,7 @@ import { IconBrain, IconMenu } from "../sidebar/icons";
 import type { PlatformPrefs } from "./platform";
 
 /** Preference keys, under the platform's own namespace. */
-export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", CODE_KEY = "view.codeSize", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups";
+export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", CODE_KEY = "view.codeSize", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups", THEME_KEY = "view.theme";
 
 /** Is the page in calm view? Read it in a render to re-render when it changes. */
 export const calm = signal(true);
@@ -146,12 +146,27 @@ export function installViewPrefs(prefs: PlatformPrefs): void {
     panelSize.value = PANEL_SIZES.some((x) => x.px === ps) ? ps! : PANEL_FS_DEFAULT;
     const cs = prefs.get<number>(CODE_KEY);
     codeSize.value = CODE_SIZES.some((x) => x.px === cs) ? cs! : CODE_DEFAULT;
+    const th = prefs.get<string>(THEME_KEY);
+    pageThemeMode.value = (PAGE_THEMES as readonly string[]).includes(th ?? "") ? th as PageThemeMode : "extension";
     const tg = prefs.get<Record<string, boolean>>(TAB_GROUPS_KEY);
     groupFolds.value = tg && typeof tg === "object" && !Array.isArray(tg)
         ? Object.fromEntries(Object.entries(tg).filter(([, v]) => typeof v === "boolean")) : {};
     const d = prefs.get<string[]>(DISMISSED_KEY);
     dismissed.value = new Set(Array.isArray(d) ? d.filter((x) => typeof x === "string") : []);
     applyCalm();
+}
+
+/** This page's theme: the extension's setting (the default), the system's, or one of its own. */
+export const PAGE_THEMES = ["extension", "system", "light", "dark"] as const;
+/** One of `PAGE_THEMES`: how this page picks light or dark. */
+export type PageThemeMode = typeof PAGE_THEMES[number];
+/** This page's theme choice, per device. The entry applies it (`pageTheme` in sidebar/prefs.ts). */
+export const pageThemeMode = signal<PageThemeMode>("extension");
+
+/** Choose this page's theme. */
+export function setPageThemeMode(m: PageThemeMode): void {
+    pageThemeMode.value = m;
+    store?.set(THEME_KEY, m);
 }
 
 /**

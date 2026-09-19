@@ -4,6 +4,7 @@
 //
 // It replaced a band across the top and, after that, a `⋮` floating bottom-right: the page's tools now live in ONE
 // place, the edge where navigation lives on every product that does this well, and the canvas is left to the words.
+import { ThemeMenu } from "./theme-pick";
 import { signal } from "@preact/signals";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
@@ -86,6 +87,7 @@ export function GearMenu({ graphsRt, benchRt, labelled }: {
                     <MenuItem icon={<IconBrain />} label="Calm view" on={calm.value} onPick={pick(() => setCalm(!calm.value))} />
                     {graphsRt ? <MenuItem icon={<IconVram />} label={`What ${graphsRt.name} is running`} on={pane.value === "resource"} onPick={pick(() => setPane(pane.value === "resource" ? null : "resource"))} /> : null}
                     {benchRt ? <MenuItem icon={<IconBench />} label="Python bench" on={benchOpen.value} onPick={pick(() => (benchOpen.value ? (benchOpen.value = false) : openBench()))} /> : null}
+                    <ThemeMenu />
                     <MenuItem icon={<IconGear />} label="Settings" onPick={pick(() => { mainView.value = "settings"; })} />
                 </div>
             ) : null}

@@ -18,6 +18,7 @@ import { installServices } from "./sidebar/services";
 import { applyCodePrefs, initThemeStyle } from "./sidebar/prefs";
 import { installTooltipLayer } from "./sidebar/tooltip-layer";
 import { installViewPrefs } from "./chat/view-mode";
+import { installPageTheme } from "./chat/page-theme";
 import { VRAM_POLL_MS } from "./sidebar/panel-state";
 import { BACKEND_HEALTH_MS, VramPanel, connectResourceStream, fetchModels, pollBackendHealth, pollPs } from "./sidebar/vram";
 import { PythonBench } from "./sidebar/vram-bench";
@@ -67,21 +68,9 @@ const runtimeInfo = new Map<RuntimeId, RuntimeInfo>();
 /**
  * The extension's own settings view, in the page's main pane. It reads and writes `chrome.storage.sync` itself
  * (settings.tsx), which is what the popup and the DevTools panel read too, so an edit here is the same edit there.
- * The page does not otherwise load the config, so the view loads it when it opens and follows changes made
- * elsewhere while it is open.
+ * The config it edits is loaded at the page's start and followed from then on (below).
  */
 function SettingsPane() {
-    useEffect(() => {
-        chrome.storage.sync.get(DEFAULT_CONFIG as never, (cfg: unknown) => { config.value = cfg as MlConfig; });
-        const onChange = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
-            if (area !== "sync") return;
-            const patch: Record<string, unknown> = {};
-            for (const k in changes) patch[k] = changes[k].newValue;
-            config.value = { ...config.value, ...patch } as MlConfig;
-        };
-        chrome.storage.onChanged.addListener(onChange);
-        return () => chrome.storage.onChanged.removeListener(onChange);
-    }, []);
     return <Settings />;
 }
 
@@ -131,6 +120,17 @@ applyCodePrefs();
 // This page reads its OWN view preference rather than the panel's `focusMode`: the two surfaces share an origin,
 // and a reading choice made in a tab must not quietly reconfigure the DevTools panel beside a page.
 installViewPrefs(extensionPlatform.prefs);
+installPageTheme();
+// The extension's config, loaded for the page's life and followed as it changes: its Theme is what "Like the
+// extension" means, and the Settings view edits the same copy. It used to load only while Settings was open, so the
+// page drew the default theme until someone opened it.
+chrome.storage.sync.get(DEFAULT_CONFIG as never, (cfg: unknown) => { config.value = cfg as MlConfig; });
+chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "sync") return;
+    const patch: Record<string, unknown> = {};
+    for (const k in changes) patch[k] = changes[k].newValue;
+    config.value = { ...config.value, ...patch } as MlConfig;
+});
 try { installTooltipLayer(document); } catch { /* no DOM */ }
 store.start();
 render(<ChatApp store={store} platform={extensionPlatform} extras={extras} />, document.getElementById("root") || document.body);

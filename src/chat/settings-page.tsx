@@ -13,6 +13,7 @@ import { IconBack } from "../sidebar/icons";
 import { mainView, useEscapeCloses } from "./nav";
 import type { ChatStore } from "./chat-store";
 import { RuntimeSheet } from "./runtime-sheet";
+import { ThemeSeg } from "./theme-pick";
 import { CODE_SIZES, PANEL_SIZES, codeSize, panelSize, setCodeSize, setPanelSize } from "./view-mode";
 
 /** Which half of the settings is showing. Not stored: the sheet opens on this page's own, which is the half that is
@@ -52,6 +53,13 @@ export function SettingsPage({ browser, housekeeping, store }: { browser?: Compo
                     </div>
                     {shown === "page" ? (
                         <section class="chat-set-group" aria-label="This page">
+                            <div class="chat-set-row">
+                                <div class="chat-set-label">
+                                    <span>Theme</span>
+                                    <span class="chat-set-hint">This page only. The DevTools panel and the HUD keep the extension's Theme setting.</span>
+                                </div>
+                                <ThemeSeg />
+                            </div>
                             <div class="chat-set-row">
                                 <div class="chat-set-label">
                                     <span>Code size</span>
