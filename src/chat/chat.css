@@ -58,9 +58,6 @@ html, body, #root { height: 100%; }
 .chat-rt.off .chat-rt-name { color: var(--fg-dim); }
 .chat-rt-note { color: var(--fg-faint); }
 .chat-rt-empty { color: var(--fg-faint); padding: 2px 2px 6px; font-size: .92em; }
-/* A small label chip in the chat page's own chrome (view only, connecting…). */
-.chat-chip { font-size: .8em; padding: 1px 7px; border-radius: 999px; background: var(--panel-2); color: var(--fg-dim); white-space: nowrap; }
-.chat-chip.warn { color: var(--warn); }
 
 /* A session row: the panel's `.row`, two lines tall, with the open one marked. */
 .chat-row { align-items: flex-start; }

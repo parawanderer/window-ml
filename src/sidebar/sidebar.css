@@ -3395,3 +3395,11 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 /* The pairing QR code: dark on white whatever the theme (a camera reads contrast), square, and big enough to scan
    from arm's length. */
 .pair-qr { width: 200px; height: 200px; align-self: flex-start; border-radius: 10px; }
+/* A small label chip (a pill): "view only", "connecting…", what a runtime offers, what a device may do. Here rather
+   than in chat.css so the pairing screens, which any surface may draw, use the same one as the chat page. */
+.chat-chip { font-size: .8em; padding: 1px 7px; border-radius: 999px; background: var(--panel-2); color: var(--fg-dim); white-space: nowrap; }
+.chat-chip.warn { color: var(--warn); }
+/* A device's scopes, as pills in a row that wraps. */
+.pair-scopes { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0; }
+/* "Seen" and its time at one size: the stamp's own smaller, fainter `.time` is for dense lists, not this. */
+.pair-dev-seen .time { font-size: inherit; color: inherit; }
