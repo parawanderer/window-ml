@@ -9,8 +9,8 @@
 //
 // The hub is PINNED to a tag (`HUB_TAG`), and the binary is built from YOUR OWN clone of it:
 //
-//   git clone --branch v0.1.0 git@github.com:parawanderer/window-ml-hub.git ../window-ml-hub-v0.1.0
-//   cd ../window-ml-hub-v0.1.0 && cargo build --release -p wmlhub
+//   git clone --branch v0.2.0 git@github.com:parawanderer/window-ml-hub.git ../window-ml-hub-v0.2.0
+//   cd ../window-ml-hub-v0.2.0 && cargo build --release -p wmlhub
 //
 // or point WMLHUB_BIN at one. The default deliberately does NOT look in a plain `../window-ml-hub`: that is somebody's
 // WORKING TREE, on whatever branch they are on this hour, so a test here could pass or fail because of what they are
@@ -22,6 +22,9 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+// ONE pin for every test that runs the hub, in the shared harness: two copies of the tag that must agree is exactly the
+// drift the pins exist to prevent.
+import { HUB_TAG } from "./fixtures/hub-harness.mjs";
 
 const { generateAgreementKey } = await import("../src/hub/hpke.ts");
 const { generateIdentity, issueCertificate, principalId, verifyChain, SCOPE } = await import("../src/hub/keys.ts");
@@ -30,9 +33,6 @@ const { HubClient, ConnectError } = await import("../src/hub/client.ts");
 const { Kind, Role } = await import("../src/hub/wire.ts");
 
 const HUB = "hub.test";
-/** The hub release this client is checked against. Both changes coming to the hub are additive, so a client pinned
- *  here keeps working against a later one; move this when a later tag is needed, not when one exists. */
-const HUB_TAG = "v0.2.0";
 const BIN =
     process.env.WMLHUB_BIN ??
     [`../../window-ml-hub-${HUB_TAG}/target/release/wmlhub`, `../../window-ml-hub-${HUB_TAG}/target/debug/wmlhub`]
