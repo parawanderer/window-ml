@@ -219,8 +219,22 @@ export function demoHost(now = Date.now(), opts: { latencyMs?: number } = {}): F
         return { summary: summary(`laptop:${hash}`, { kind: "chat", status: "done", createdTs: ts, lastTs: ts + 4000, title, model: "qwen3:32b" }), events };
     });
 
+    // THE ARCHIVE: older chats that only the runtime's archive holds, so the search page has something past the list to
+    // page into and words inside sessions to find. Each answer is its body, searched by `sessions.search`.
+    const archived = Array.from({ length: 30 }, (_, i) => {
+        const [title, answer] = OLD_TOPICS[(i + 5) % OLD_TOPICS.length];
+        const hash = `a7c${(0x10000 + i * 6271).toString(16).slice(-5)}`;
+        const ts = now - (220 + i * 6) * 24 * 60 * min;
+        const events: MlDebugEvent[] = [
+            { ...chatStart(0, ts, title), id: `${hash}-0`, session: { hash, turn: 0 } } as MlDebugEvent,
+            { ...base(hash, ts + 4000, 0), kind: "chat-result", model: "qwen3:32b", extend: null, reasoning: null, sources: null, structured: false, usage: null, content: answer } as MlDebugEvent,
+        ];
+        return { summary: summary(`laptop:${hash}`, { kind: "chat", status: "done", createdTs: ts, lastTs: ts + 4000, title: `${title} (again)`, model: "qwen3:32b" }), events };
+    });
+
     return new FakeHost({
         runtimes,
+        archived,
         latencyMs: opts.latencyMs,
         sessions: [
             ...history,

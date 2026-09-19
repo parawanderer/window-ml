@@ -9,7 +9,7 @@ import type { MlDebugEvent } from "../contract-debug";
 import {
     COMMAND_SCOPE, SESSION_CONTRACT_VERSION, sessionKey,
     type Command, type CommandResult, type HostStatus, type ModelChoice, type Principal, type RuntimeId, type RuntimeInfo, type SessionHost,
-    type SessionId, type SessionIndexUpdate, type SessionKey, type SessionStreamMessage, type SessionSummary, type StreamPosition, type TabGroupInfo, type TabInfo, type Unsubscribe,
+    type SessionId, type SessionIndexUpdate, type SessionKey, type SessionStreamMessage, type SessionSummary, type StreamPosition, type TabGroupInfo, type TabInfo, type Unsubscribe, type ListedSession,
 } from "../session-host";
 import { capTitle } from "../session-title";
 import { holds } from "./grants";
@@ -90,11 +90,36 @@ export class FakeHost implements SessionHost {
     private indexL = new Set<{ fn: (u: SessionIndexUpdate) => void; runtime?: RuntimeId }>();
     private subs = new Set<Sub>();
 
-    constructor(opts: { self?: Principal; runtimes: RuntimeInfo[]; sessions?: { summary: SessionSummary; events?: MlDebugEvent[] }[]; latencyMs?: number }) {
+    constructor(opts: { self?: Principal; runtimes: RuntimeInfo[]; sessions?: { summary: SessionSummary; events?: MlDebugEvent[] }[]; archived?: { summary: SessionSummary; events?: MlDebugEvent[] }[]; latencyMs?: number }) {
         this.self = opts.self ?? { id: "fake-device", kind: "device", name: "This device" };
         this._runtimes = opts.runtimes;
         this.latencyMs = opts.latencyMs ?? 0;
         for (const s of opts.sessions ?? []) this.addSession(s.summary, s.events);
+        for (const a of opts.archived ?? []) this.archive.set(sessionKey(a.summary.id), { summary: a.summary, events: a.events ?? [] });
+    }
+
+    /** Sessions only the ARCHIVE holds: not in the index, found by `sessions.list` / `sessions.search`, and brought
+     *  back into it by `session.unarchive`, the way the runtime's SQLite archive behaves. */
+    archive = new Map<SessionKey, { summary: SessionSummary; events: MlDebugEvent[] }>();
+
+    /** A page of `sessions.list` or `sessions.search` rows for one runtime: live and archived merged, newest first,
+     *  strictly older than `before`. `match` decides a row and may return its snippet. */
+    private listPage(runtime: RuntimeId, before: number | undefined, limit: number | undefined,
+        match: (s: SessionSummary, events: MlDebugEvent[] | null) => { snippet?: string } | null): { sessions: ListedSession[]; more: boolean } {
+        const rows: ListedSession[] = [];
+        for (const h of this.held.values()) {
+            if (h.summary.id.runtime !== runtime) continue;
+            const m = match(h.summary, null);
+            if (m) rows.push({ ...h.summary, ...(m.snippet ? { match: { snippet: m.snippet } } : {}) });
+        }
+        for (const a of this.archive.values()) {
+            if (a.summary.id.runtime !== runtime) continue;
+            const m = match(a.summary, a.events);
+            if (m) rows.push({ ...a.summary, archived: true, ...(m.snippet ? { match: { snippet: m.snippet } } : {}) });
+        }
+        const n = Math.min(Math.max(1, limit ?? 40), 200);
+        const older = rows.filter((r) => before == null || r.lastTs < before).sort((a, b) => b.lastTs - a.lastTs);
+        return { sessions: older.slice(0, n), more: older.length > n };
     }
 
     /** delay before every delivery and command result, to see loading states */
@@ -315,6 +340,26 @@ export class FakeHost implements SessionHost {
                 const from = Math.max(0, end - Math.min(c.limit ?? 40, 40));
                 return ok({ session: h.summary.id, epoch: h.epoch, events: h.log.slice(from, end).map((e) => e.event), from, more: from > 0, truncated: from === 0 && h.lostBefore > 0 });
             }
+            case "sessions.list":
+                return ok(this.listPage(c.runtime, c.before, c.limit, (s) => (c.archived === true && !this.archive.has(sessionKey(s.id))) || (c.archived === false && this.archive.has(sessionKey(s.id))) ? null : {}));
+            case "sessions.search": {
+                const q = c.query.trim().toLowerCase();
+                if (!q) return fail("invalid", "an empty search");
+                // Live sessions by title, task and page title; archived ones by every word they hold, with a snippet.
+                return ok(this.listPage(c.runtime, c.before, c.limit, (s, events) => {
+                    if ([s.title, s.task, s.page?.title].some((v) => v?.toLowerCase().includes(q))) return {};
+                    if (!events) return null;
+                    for (const e of events) {
+                        const text = (e as { content?: unknown; task?: unknown; text?: unknown }).content ?? (e as { task?: unknown }).task ?? (e as { text?: unknown }).text;
+                        if (typeof text !== "string") continue;
+                        const at = text.toLowerCase().indexOf(q);
+                        if (at < 0) continue;
+                        const from = Math.max(0, at - 40), to = Math.min(text.length, at + q.length + 60);
+                        return { snippet: `${from > 0 ? "…" : ""}${text.slice(from, at)}«${text.slice(at, at + q.length)}»${text.slice(at + q.length, to)}${to < text.length ? "…" : ""}` };
+                    }
+                    return null;
+                }));
+            }
             case "models.list":
                 return ok({ models: this.models });
             case "runtime.info":
@@ -345,6 +390,14 @@ export class FakeHost implements SessionHost {
                 this.emit(key, { id: hash, ts: Date.now(), save: !c.ephemeral, session: { hash, turn: 0 }, kind: "agent", task: c.task, model: c.model ?? "fake", maxSteps: c.maxSteps ?? 10, config: undefined as never } as MlDebugEvent);
                 return ok({ session: { runtime: rt.id, hash } });
             }
+        }
+        // Unarchiving is the one session command about a session the index does NOT hold: the archive has it.
+        if (c.type === "session.unarchive" && key) {
+            const a = this.archive.get(key);
+            if (!a) return h ? ok({ session: c.session }) : fail("not-found", "no such session");
+            this.archive.delete(key);
+            this.addSession(a.summary, a.events);
+            return ok({ session: c.session });
         }
         if (!("session" in c) || !h || !key) return key ? fail("not-found", "no such session") : fail("unsupported", `the fake host does not do ${c.type}`);
         const now = Date.now();

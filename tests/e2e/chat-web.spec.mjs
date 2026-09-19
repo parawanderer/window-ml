@@ -538,14 +538,29 @@ test("desktop: the list shows the last month, and the search page holds every se
     await expect(search.locator("input")).toBeFocused();
     await expect(search.locator(".chat-search-row")).toHaveCount(40);
     await expect(search.locator(".chat-search-row").first().locator(".chat-search-date")).toHaveText(/\S/);
-    await search.locator(".chat-sheet-scroll").evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    const toEnd = () => search.locator(".chat-sheet-scroll").evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    await toEnd();
     await expect(search.locator(".chat-search-row")).toHaveCount(54);
+    // Past what the page holds, the runtime's ARCHIVE: asked for a page at a time, and each of its rows marked.
+    await expect(async () => { await toEnd(); expect(await search.locator(".chat-search-row").count()).toBe(84); }).toPass();
+    await expect(search.locator(".chat-search-arch")).toHaveCount(30);
+    expect((await commands(page)).some((c) => c.type === "sessions.list")).toBe(true);
 
     // A search matches the PAGE a run is on, not only its title, and reaches months back.
     await search.locator("input").fill("flights");
     await expect(search.locator(".chat-search-row")).toHaveCount(3);
+    // …and into the archive, once typing pauses: 4 listed, 3 archived.
     await search.locator("input").fill("tokyo");
-    await expect(search.locator(".chat-search-row")).toHaveCount(4);
+    await expect(search.locator(".chat-search-row")).toHaveCount(7);
+    // A word only an archived session's ANSWER holds is found by the runtime, with the snippet that says why.
+    await search.locator("input").fill("gluten");
+    await expect(search.locator(".chat-search-row")).toHaveCount(2);
+    await expect(search.locator(".chat-search-snip mark").first()).toHaveText("gluten");
+    // Opening an archived row brings it back first, and then it is an ordinary session.
+    await search.locator(".chat-search-row").first().click();
+    await expect.poll(async () => (await commands(page)).some((c) => c.type === "session.unarchive")).toBe(true);
+    await expect(page.locator(".chat-lede-title")).toHaveText("Why does my sourdough collapse? (again)");
+    await page.getByRole("button", { name: "Search sessions" }).first().click();
     // Escape closes it from anywhere on the page, not only from inside the box.
     await search.locator(".chat-search-label").click();
     await page.keyboard.press("Escape");

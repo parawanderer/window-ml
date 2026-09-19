@@ -496,8 +496,14 @@ the task, the page it is on, and the runtime. It replaced an inline filter over 
 view, because two ways to find a session is one more than anyone remembers. The runtime is named on a row only when
 the results span more than one runtime.
 
-**A runtime's group folds**, by id, stored per device. A folded head says how many sessions it is holding, because
-folding one should not be the same as forgetting it.
+Past what the page holds it asks the runtimes: `sessions.list` (live and archived merged, newest first) a page at a
+time as the end scrolls into view, and, once typing pauses (250 ms), `sessions.search`, which reads every word an
+ARCHIVED session holds and answers with a snippet, drawn as text with the «match» picked out. The snapshot is still
+filtered locally, so a runtime without these commands finds by title. An archived row is marked, and opening it sends
+`session.unarchive` first. The fake host keeps a demo archive (30 sessions) so all of this runs in the web build.
+
+**A runtime's group folds**, by id, stored per device. A folded head draws no count: the list is not where a number
+of sessions helps anyone, and an open group with nothing recent says so in words.
 
 **What moved while you were elsewhere** is marked with a dot (`movedSince`). Deliberately NOT stored: it answers
 "what happened while I was here", which is the brainstorming case — you are talking in one session and the run in

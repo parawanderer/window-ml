@@ -946,3 +946,11 @@ button.chat-page-go:hover { color: var(--fg); }
 }
 .chat-dialog-field:focus { border-color: var(--fg-dim); }
 .chat-dialog-hint { margin: 0 0 12px; color: var(--fg-faint); font-size: .9em; }
+
+/* A search row's title with, under it, why it matched: the runtime's snippet, the match picked out. */
+.chat-search-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.chat-search-main > .chat-search-title { flex: none; }
+.chat-search-snip { color: var(--fg-dim); font-size: .9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-search-snip mark { background: none; color: var(--fg); font-weight: 600; }
+/* An archived row is marked, since opening it brings it back first. */
+.chat-search-arch { flex: 0 0 auto; align-self: center; }

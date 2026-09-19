@@ -4,12 +4,19 @@
 //
 // It replaced two things that each did half of this — a filter that slid open over the list, and an "older sessions"
 // view that slid in beside it — because two ways to find a session is one more than anyone can remember.
+//
+// PAST THE LIST. What the page already holds (the index snapshot) is drawn first; past it, each runtime is asked for
+// more with `sessions.list` (live and archived merged, newest first), a page at a time as the end scrolls into view.
+// Typing asks each runtime `sessions.search` too, which reads every word an ARCHIVED session holds and answers with a
+// snippet; the snapshot is still filtered here, so a runtime without search still finds by title. An archived row is
+// marked, and opening it sends `session.unarchive` first, which brings it back into the live store.
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { RuntimeInfo, SessionSummary } from "../session-host";
+import type { ListedSession, RuntimeId, RuntimeInfo, SessionSummary } from "../session-host";
 import { IconBack, IconSearch } from "../sidebar/icons";
 import { truncate } from "../sidebar/format";
 import { view } from "../sidebar/store";
 import type { ChatStore } from "./chat-store";
+import { mayCommand } from "./grants";
 import { mainView, useEscapeCloses } from "./nav";
 
 /** How many sessions are drawn at a time; scrolling to the end of them draws the next page. */
@@ -29,6 +36,17 @@ export function shortDate(ts: number, now = Date.now()): string {
     return d.toLocaleDateString(undefined, d.getFullYear() === n.getFullYear() ? { day: "numeric", month: "short" } : { day: "numeric", month: "short", year: "numeric" });
 }
 
+/** A search snippet as text, with the runtime's «guillemet»-marked match picked out. Never markup: it is the session's
+ *  own words, which may hold anything. */
+export function Snippet({ text }: { text: string }) {
+    const parts = text.split(/«|»/);
+    return <span class="chat-search-snip">{parts.map((p, i) => (i % 2 ? <mark key={i}>{p}</mark> : p))}</span>;
+}
+
+/** One runtime's paging state: where the next page starts (a `lastTs`, exclusive), whether there is one, and whether
+ *  it has been asked for. */
+interface Cursor { before?: number; more: boolean; loading: boolean }
+
 /** The search page. `narrow` gives it a back arrow, since on a phone it is a screen of its own. */
 export function SearchPage({ store, narrow }: { store: ChatStore; narrow: boolean }) {
     const [query, setQuery] = useState("");
@@ -38,20 +56,73 @@ export function SearchPage({ store, narrow }: { store: ChatStore; narrow: boolea
     const runtimes = store.runtimes.value;
     const rtOf = new Map(runtimes.map((rt) => [rt.id, rt]));
     const q = query.trim().toLowerCase();
-    const all = store.listed().filter((s) => rtOf.has(s.id.runtime) && matches(s, rtOf.get(s.id.runtime), q));
+    // What the runtimes answered past the snapshot, by session key, and each runtime's cursor. Reset when the query
+    // changes; a search waits for typing to pause, so every keystroke is not a round trip.
+    const [fetched, setFetched] = useState<ReadonlyMap<string, ListedSession>>(new Map());
+    const [cursors, setCursors] = useState<ReadonlyMap<RuntimeId, Cursor>>(new Map());
+    const [settledQ, setSettledQ] = useState("");
+    const gen = useRef(0);
+    useEffect(() => { const t = setTimeout(() => setSettledQ(q), q ? 250 : 0); return () => clearTimeout(t); }, [q]);
+    const command = settledQ ? "sessions.search" : "sessions.list";
+    const askable = runtimes.filter((rt) => rt.online && mayCommand(rt, command));
+    useEffect(() => {
+        gen.current++;
+        setFetched(new Map());
+        setCursors(new Map(askable.map((rt) => [rt.id, { more: true, loading: false }])));
+    }, [settledQ, askable.map((r) => r.id).join(",")]);
+    const loadMore = () => {
+        const g = gen.current;
+        for (const [id, cur] of cursors) {
+            if (!cur.more || cur.loading) continue;
+            setCursors((m) => new Map(m).set(id, { ...cur, loading: true }));
+            const ask = settledQ
+                ? store.send({ type: "sessions.search", runtime: id, query: settledQ, before: cur.before, limit: PAGE }, { quiet: true })
+                : store.send({ type: "sessions.list", runtime: id, before: cur.before, limit: PAGE }, { quiet: true });
+            void ask.then((r) => {
+                if (g !== gen.current) return;   // the query changed while this page was on its way
+                if (!r.ok) { setCursors((m) => new Map(m).set(id, { ...cur, more: false, loading: false })); return; }
+                const rows = r.data.sessions;
+                setFetched((m) => { const n = new Map(m); for (const row of rows) n.set(`${row.id.runtime}:${row.id.hash}`, row); return n; });
+                setCursors((m) => new Map(m).set(id, { before: rows.at(-1)?.lastTs ?? cur.before, more: r.data.more && rows.length > 0, loading: false }));
+            });
+        }
+    };
+    // The snapshot, filtered here, then whatever the runtimes answered: a fetched row wins, since it knows whether the
+    // session is archived and why it matched. Newest first across every runtime.
+    const merged = new Map<string, ListedSession>();
+    for (const s of store.listed()) if (rtOf.has(s.id.runtime) && matches(s, rtOf.get(s.id.runtime), q)) merged.set(`${s.id.runtime}:${s.id.hash}`, s);
+    if (settledQ === q) for (const [k, row] of fetched) if (rtOf.has(row.id.runtime)) merged.set(k, row);
+    const all = [...merged.values()].sort((a, b) => b.lastTs - a.lastTs);
+    const anyMore = [...cursors.values()].some((c) => c.more);
+    const loading = [...cursors.values()].some((c) => c.loading);
     // Name the runtime only when the results span more than one: otherwise it is the same word on every row.
     const many = new Set(all.map((s) => s.id.runtime)).size > 1;
     useEffect(() => { box.current?.focus(); }, []);
     useEscapeCloses(box);
     useEffect(() => { setShown(PAGE); }, [q]);
+    // The end of the list in view: draw the next page of what is held, and once everything held is drawn, ask the
+    // runtimes for their next page.
     useEffect(() => {
         const el = sentinel.current;
         if (!el || typeof IntersectionObserver !== "function") return;
-        const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) setShown((n) => n + PAGE); });
+        const io = new IntersectionObserver((es) => {
+            if (!es.some((e) => e.isIntersecting)) return;
+            if (shown < all.length) setShown((n) => n + PAGE); else loadMore();
+        });
         io.observe(el);
         return () => io.disconnect();
-    }, [shown, all.length]);
-    const open = (key: string) => { mainView.value = null; view.value = { name: "detail", hash: key }; };
+    }, [shown, all.length, cursors]);
+    // An archived session is brought back into the live store before it is opened: from then on it is an ordinary one.
+    const [opening, setOpening] = useState<string | null>(null);
+    const open = async (key: string, row: ListedSession) => {
+        if (row.archived) {
+            setOpening(key);
+            const r = await store.send({ type: "session.unarchive", session: row.id });
+            setOpening(null);
+            if (!r.ok) return;   // said as a notice by the store
+        }
+        mainView.value = null; view.value = { name: "detail", hash: key };
+    };
     return (
         <main class="chat-main chat-search" aria-label="Search sessions">
             <div class="view chat-sheet-scroll">
@@ -65,16 +136,21 @@ export function SearchPage({ store, narrow }: { store: ChatStore; narrow: boolea
                             onInput={(e: any) => setQuery(e.target.value)}
                             onKeyDown={(e: KeyboardEvent) => { if (e.key === "Escape") { if (query) setQuery(""); else mainView.value = null; } }} />
                     </label>
-                    <div class="chat-search-label">{q ? `${all.length} match${all.length === 1 ? "" : "es"}` : "Recent"}</div>
-                    {q && !all.length ? <div class="chat-search-empty">Nothing matches “{truncate(query.trim(), 40)}”.</div> : null}
+                    <div class="chat-search-label">{q ? `${all.length}${anyMore ? "+" : ""} match${all.length === 1 && !anyMore ? "" : "es"}` : "Recent"}</div>
+                    {q && !all.length && !loading && settledQ === q ? <div class="chat-search-empty">Nothing matches “{truncate(query.trim(), 40)}”.</div> : null}
                     <ul class="chat-search-list">
                         {all.slice(0, shown).map((s) => {
                             const key = `${s.id.runtime}:${s.id.hash}`;
                             const rt = rtOf.get(s.id.runtime);
                             return (
                                 <li key={key}>
-                                    <button class="chat-search-row" data-session={key} onClick={() => open(key)}>
-                                        <span class="chat-search-title">{truncate(s.title || s.task || "(untitled)", 140)}</span>
+                                    <button class={`chat-search-row${s.match ? " has-snip" : ""}`} data-session={key} aria-busy={opening === key}
+                                        onClick={() => void open(key, s)}>
+                                        <span class="chat-search-main">
+                                            <span class="chat-search-title">{truncate(s.title || s.task || "(untitled)", 140)}</span>
+                                            {s.match ? <Snippet text={s.match.snippet} /> : null}
+                                        </span>
+                                        {s.archived ? <span class="chat-chip chat-search-arch">{opening === key ? "restoring…" : "archived"}</span> : null}
                                         {many ? <span class="chat-search-rt">{rt?.name}</span> : null}
                                         <span class="chat-search-date">{shortDate(s.lastTs - (rt?.clockOffsetMs ?? 0))}</span>
                                     </button>
@@ -82,7 +158,8 @@ export function SearchPage({ store, narrow }: { store: ChatStore; narrow: boolea
                             );
                         })}
                     </ul>
-                    {shown < all.length ? <div ref={sentinel} class="chat-search-more" aria-hidden="true" /> : null}
+                    {shown < all.length || anyMore ? <div ref={sentinel} class="chat-search-more" aria-hidden="true" /> : null}
+                    {loading ? <div class="chat-search-empty">Looking further back…</div> : null}
                 </div>
             </div>
         </main>
