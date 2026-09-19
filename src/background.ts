@@ -15,8 +15,8 @@ import { fetchUrlContent, fetchRenderedContent, fetchSheetCsv, SHEET_URL_OK, she
 import { executeServerTool } from "./sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw-events";
-import { configureSessionCommands, ingestSessionEvent, keepSession, saveChatSession, senderPage, serveSessionsPort, sessionServer } from "./sw-sessions";   // the cross-tab session index the chat page reads
-import { housekeeping, handleHousekeepingReport, handleHousekeepingDump } from "./sw-housekeeping";
+import { configureSessionCommands, ingestSessionEvent, keepSession, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats } from "./sw-sessions";   // the cross-tab session index the chat page reads
+import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, senderOrigin } from "./sw-housekeeping";
 import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, pendingGrants, takeCredFetch } from "./sw-consent";
 import { runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, deleteRun, releaseSessionTokens, tabPageUrl } from "./sw-runs";
@@ -796,6 +796,13 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     } else if (message.type === "DUMP_HOUSEKEEPING") {
         // `ml.__housekeeping()` and the DevTools panel. A page sees another tab's events without their key/detail.
         handleHousekeepingDump(message.payload, sender).then(sendResponse, (e) => sendResponse({ error: String((e as Error)?.message || e) }));
+        return true;
+
+    } else if (message.type === "SESSION_STORAGE_STATS") {
+        // Extension pages only. The answer lists session hashes, and a saved session is readable by any page that
+        // knows its hash, so a page must never be able to ask for the list.
+        if (senderOrigin(sender) === "page") { sendResponse({ error: "Refused: session storage stats are for extension pages." }); return; }
+        sessionStorageStats().then((data) => sendResponse({ data }), (e) => sendResponse({ error: String((e as Error)?.message || e) }));
         return true;
 
     } else if (message.type === "DUMP_LOADS") {

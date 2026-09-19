@@ -203,6 +203,9 @@ test("session.cancel on a background run blocked at its gate ends it cancelled",
 /** Read a saved session's row straight out of the fake IndexedDB, once the store's debounced write has landed. */
 async function storedRow(idb, hash, tries = 30) {
     for (let i = 0; i < tries; i++) {
+        // Never OPEN a database the worker has not created: opening one at version 1 creates it EMPTY, the worker's
+        // own open then runs no upgrade, and its object stores never exist. Tests passed only by winning that race.
+        if (!(await idb.databases()).some((d) => d.name === "ml-saved-sessions")) { await new Promise((r) => setTimeout(r, 50)); continue; }
         const row = await new Promise((resolve, reject) => {
             const open = idb.open("ml-saved-sessions", 1);
             open.onerror = () => reject(open.error);
@@ -363,4 +366,23 @@ test("every event of a saved session reaches the store, not only the ones that c
     let row = null;
     for (let i = 0; i < 100 && !(row?.count >= 7); i++) { await new Promise((r) => setTimeout(r, 20)); row = await storedRow(idb, "cccc0001", 1); }
     assert.equal(row?.count, 7);
+});
+
+test("session storage stats answer an extension page and refuse a page", T, async () => {
+    const { IDBFactory } = require("fake-indexeddb");
+    const idb = new IDBFactory();
+    const bg = loadBackground({ config, indexedDB: idb });
+    void bg.send({ type: "ML_KEEP_SESSION", hash: "ffff0001" }, tab(7));
+    void bg.send({ type: "ML_DEBUG_EVENT", event: start("ffff0001") }, tab(7));
+    void bg.send({ type: "ML_DEBUG_EVENT", event: ev("ffff0001", "agent-step", { step: 1, seq: 1, tool: "exec", result: "r".repeat(300) }) }, tab(7));
+    for (let i = 0; i < 100 && !((await storedRow(idb, "ffff0001", 1))?.count >= 2); i++) await new Promise((r) => setTimeout(r, 20));
+
+    const refused = await bg.send({ type: "SESSION_STORAGE_STATS" }, tab(7));
+    assert.match(refused.error, /Refused/);
+    const reply = await bg.send({ type: "SESSION_STORAGE_STATS" }, { url: "chrome-extension://test/chat.html" });
+    const { data } = reply;
+    assert.equal(data.sessions, 1);
+    assert.equal(data.events, 2);
+    assert.ok(data.toolOutput >= 300);
+    assert.equal(data.top[0].hash, "ffff0001");
 });

@@ -14,6 +14,7 @@ import { SessionStore, indexedDbBackend, type SessionHistory } from "./session-s
 import { bgRuns, trackRun, untrackRun } from "./sw-runs";
 import { fetchLLM } from "./sw-llm";
 import { recordHousekeeping } from "./sw-housekeeping";
+import { measureEvents, summarizeStore, type StoreBytes } from "./session-storage-stats";
 
 /**
  * What this browser is called before it has a key to derive an id from (docs/spec/SESSION_CONTRACT.md), and the
@@ -314,6 +315,21 @@ export function keepSession(hash: string): void {
     const already = sessionServer.markSaved(hash);
     if (!sessionStore) return;
     for (const event of already) sessionStore.put({ ...summary, saved: true }, event);
+}
+
+/**
+ * Where the saved-session store's bytes go (session-storage-stats.ts). Reads every session from disk one at a time,
+ * so it is for a person asking, never for anything on a timer. Null when this worker has no store.
+ */
+export async function sessionStorageStats(): Promise<StoreBytes | null> {
+    if (!sessionStore) return null;
+    const seen = new Map<string, number>();
+    const rows = [];
+    for (const row of await sessionStore.open()) {
+        const events = await sessionStore.read(row.hash);
+        rows.push({ hash: row.hash, ...(row.summary.title ? { title: row.summary.title } : {}), events: events.length, ...measureEvents(events, seen) });
+    }
+    return summarizeStore(rows, seen);
 }
 
 /**
