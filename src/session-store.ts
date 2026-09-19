@@ -22,6 +22,8 @@ export const STORE_MAX_SESSIONS = 500;
 /** Events are written in batches this often, rather than one transaction per event: a streaming run emits one every
  *  ~100 ms, and a transaction each would spend more time in IndexedDB than in the model. */
 export const FLUSH_MS = 400;
+/** How long a session whose move to the archive failed is left alone before the next attempt. */
+export const ARCHIVE_RETRY_MS = 60 * 60 * 1000;
 
 const DB_NAME = "ml-saved-sessions";
 const DB_VERSION = 1;
@@ -99,7 +101,7 @@ export function planEviction(rows: readonly StoredSessionRow[], o: { budgetBytes
 
 /** Why a saved session left the store. `"archived"` is reserved for when an archive folder exists: expiring a
  *  session will then move it there rather than delete it, and the record already has the word for it. */
-export type StoreEviction = { hash: string; reason: "budget" | "retention"; outcome: "deleted"; bytes: number; idleMs: number };
+export type StoreEviction = { hash: string; reason: "budget" | "retention"; outcome: "deleted" | "archived" | "kept"; bytes: number; idleMs: number; error?: string };
 
 /**
  * WHICH SAVED SESSIONS HAVE EXPIRED: idle for longer than `retainMs`, measured from the last thing they did. Pure.
@@ -135,6 +137,8 @@ export class SessionStore {
     /** rows whose own fields changed with no events to carry them: a history written between turns */
     private readonly dirty = new Set<string>();
     private timer: ReturnType<typeof setTimeout> | null = null;
+    /** sessions whose move to the archive failed, and when: kept, and not tried again for a while */
+    private readonly archiveFailed = new Map<string, number>();
     private flushing: Promise<void> = Promise.resolve();
     private ready: Promise<void> | null = null;
 
@@ -159,6 +163,12 @@ export class SessionStore {
             /** How long an unpinned session is kept after it last did something; 0 or absent keeps it. Read at every
              *  sweep, so a changed setting applies without a restart. */
             retainMs?: () => number;
+            /**
+             * Move a session to the long-term archive instead of deleting it: resolves once it is safely there. Absent,
+             * or `enabled()` false, and an eviction deletes as before. A move that fails KEEPS the session: deleting
+             * what someone asked to have archived is the one outcome here that cannot be undone.
+             */
+            archive?: { enabled(): boolean; move(row: StoredSessionRow, events: MlDebugEvent[]): Promise<void> };
             onError?: (err: unknown) => void;
         } = {},
     ) {}
@@ -202,11 +212,27 @@ export class SessionStore {
     private async drop(hashes: string[], reason: StoreEviction["reason"]): Promise<string[]> {
         if (!hashes.length) return [];
         const now = this.now();
-        const gone = hashes.map((h) => this.rows.get(h)).filter((r): r is StoredSessionRow => !!r);
-        await this.forget(hashes);
-        this.opts.onEvict?.(hashes);
-        for (const r of gone) this.opts.onEvicted?.({ hash: r.hash, reason, outcome: "deleted", bytes: r.bytes, idleMs: Math.max(0, now - r.lastTs) });
-        return hashes;
+        const rows = hashes.map((h) => this.rows.get(h)).filter((r): r is StoredSessionRow => !!r);
+        const archive = this.opts.archive?.enabled() ? this.opts.archive : null;
+        const gone: { row: StoredSessionRow; outcome: StoreEviction["outcome"] }[] = [];
+        for (const row of rows) {
+            if (!archive) { gone.push({ row, outcome: "deleted" }); continue; }
+            // A move that failed recently is not retried on every write, which would log the same failure each time.
+            if (now - (this.archiveFailed.get(row.hash) ?? -Infinity) < ARCHIVE_RETRY_MS) continue;
+            try {
+                await archive.move(row, await this.read(row.hash));
+                this.archiveFailed.delete(row.hash);
+                gone.push({ row, outcome: "archived" });
+            } catch (err) {
+                this.archiveFailed.set(row.hash, now);
+                this.opts.onEvicted?.({ hash: row.hash, reason, outcome: "kept", bytes: row.bytes, idleMs: Math.max(0, now - row.lastTs), error: String((err as Error)?.message || err).slice(0, 200) });
+            }
+        }
+        const dropped = gone.map((g) => g.row.hash);
+        await this.forget(dropped);
+        if (dropped.length) this.opts.onEvict?.(dropped);
+        for (const { row, outcome } of gone) this.opts.onEvicted?.({ hash: row.hash, reason, outcome, bytes: row.bytes, idleMs: Math.max(0, now - row.lastTs) });
+        return dropped;
     }
 
     /** The largest saved sessions, by the size their rows record. */

@@ -137,6 +137,8 @@ export interface StorageReport {
     now: StorageSnapshot;
     /** the biggest saved sessions, from their rows' sizes */
     largest: { hash: string; title?: string; bytes: number; pinned?: true }[];
+    /** the long-term archive, when it is on: its sessions, their original size, and its images stored once */
+    archive?: { sessions: number; events: number; bytes: number; images: number; imageBytes: number };
 }
 
 /** How many daily snapshots are kept: a year, a few hundred bytes each. */

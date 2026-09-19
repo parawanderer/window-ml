@@ -1166,6 +1166,12 @@ export function Settings() {
                 </Section>
 
                 <Section id="storage" title="Storage">
+                <label class="set-check">
+                    <input type="checkbox" checked={c.sessionArchive}
+                        onChange={(e: any) => setField("sessionArchive", e.target.checked)} />
+                    <span>Archive sessions instead of deleting them</span>
+                </label>
+                <div class="set-hint">A session the retention or the storage limit would delete moves to a long-term archive (SQLite, in this browser's private storage) instead, with its images stored once and every word searchable. If moving one fails, it is kept, never deleted. An archive folder on your disk, which survives a wiped browser, comes next.</div>
                 <StorageBody
                     load={() => new Promise((res, rej) => chrome.runtime.sendMessage({ type: "STORAGE_HISTORY" }, (r: any) => (r?.error ? rej(new Error(r.error)) : res(r?.data ?? null))))}
                     measure={() => new Promise((res, rej) => chrome.runtime.sendMessage({ type: "SESSION_STORAGE_STATS" }, (r: any) => (r?.error ? rej(new Error(r.error)) : res(r?.data ?? null))))} />

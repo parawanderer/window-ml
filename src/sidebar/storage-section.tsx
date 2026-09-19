@@ -68,6 +68,7 @@ export function StorageBody({ load, measure }: { load: () => Promise<StorageRepo
             </div>
             <SplitBar s={s} />
             <div class="stor-legend">{PARTS.map((p) => (part(s, p.key) > 0 ? <span key={p.key}><i class={p.cls} />{p.label} {formatBytes(part(s, p.key))}</span> : null))}</div>
+            {report.archive ? <div class="set-hint">Archive: {report.archive.sessions} session{report.archive.sessions === 1 ? "" : "s"}, {formatBytes(report.archive.bytes)} as they were stored here, images {formatBytes(report.archive.imageBytes)} ({report.archive.images}, each stored once).</div> : null}
             {s.unmeasured > 0 ? <div class="set-hint">Sessions saved before this was recorded are not yet measured. They shrink out of the picture as retention removes them, or use "Measure exactly" below.</div> : null}
 
             <div class="stor-sub">Over time</div>

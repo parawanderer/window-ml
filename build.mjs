@@ -28,6 +28,9 @@ const ENTRIES = {
     // sidebar UI responsive during a long run).
     offscreen: "src/offscreen.ts",
     "python-worker": "src/python-worker.ts",
+    // The session archive's SQLite (sqlite-wasm over OPFS), a dedicated worker the same offscreen document starts.
+    // Its sqlite3.wasm is copied next to it (copySqlite), found through `locateFile`, since this is a classic bundle.
+    "archive-worker": "src/archive-worker.ts",
     // Content-script shell (hosts the iframe) + the Preact app that runs inside
     // the sidebar.html iframe.
     "sidebar-shell": "src/sidebar/shell.ts",
@@ -112,6 +115,11 @@ function copyAssets() {
 // KaTeX web fonts → dist/fonts/. katex.min.css (bundled into sidebar-app as text, injected as a
 // <style>) references `fonts/KaTeX_*.woff2`, resolved relative to sidebar.html. Copy the woff2s
 // (modern; the css also lists woff/ttf fallbacks a modern browser never fetches). Static → copy once.
+/** The session archive's SQLite build, beside archive-worker.js. */
+function copySqlite() {
+    cpSync("node_modules/@sqlite.org/sqlite-wasm/dist/sqlite3.wasm", `${BUILD_DIR}/sqlite3.wasm`);
+}
+
 function copyKatexFonts() {
     const dir = "node_modules/katex/dist/fonts";
     if (!existsSync(dir)) { console.warn("⚠ katex not installed — math rendering disabled (npm i)."); return; }
@@ -159,7 +167,7 @@ if (watch) {
     const sidebarCtx = await esbuild.context({ ...base, entryPoints: uiEntries, minify: true, plugins: [copyPlugin] });
     await coreCtx.watch();
     await sidebarCtx.watch();
-    copyPyodide(); copyKatexFonts();   // once — static, not worth recopying on every rebuild
+    copyPyodide(); copyKatexFonts(); copySqlite();   // once — static, not worth recopying on every rebuild
     console.log(`watching… (${OUTDIR}/)`);
 } else {
     try {
@@ -173,6 +181,7 @@ if (watch) {
     copyAssets();
     copyPyodide();
     copyKatexFonts();
+    copySqlite();
     // Regenerate the standalone visual previews (gitignored build artifacts): locate's canvas
     // annotate() label placement, and the legend word-clipping "visual test" notebook (CI uploads
     // the latter so a failing legend case can be reviewed by eye). Open the HTMLs in a browser.

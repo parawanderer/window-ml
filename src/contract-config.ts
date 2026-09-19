@@ -115,6 +115,9 @@ export interface MlConfig {
     /** Disk for saved sessions, in MB. Past it the oldest unpinned session goes first. 0 removes the size and count
      *  caps, leaving retention and pins to decide. Pinned sessions count toward it and are never what pays for it. */
     sessionStoreBudgetMB: number;
+    /** Move a session the store evicts (by retention or by the budget) into the long-term SQLite archive instead of
+     *  deleting it. Off by default: it changes what "delete after N days" means. */
+    sessionArchive: boolean;
     /** The page a run started "on a blank tab" opens, when the client names no URL of its own. Empty: the client
      *  must name one, since the extension cannot run on the browser's own new-tab page. */
     agentStartPage: string;
@@ -258,6 +261,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     persistUiRuns: true,
     sessionRetentionDays: 0,
     sessionStoreBudgetMB: 256,
+    sessionArchive: false,
     agentStartPage: "",
     utilityModel: "",
     utilityNumCtx: 4096,

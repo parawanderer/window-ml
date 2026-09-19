@@ -17,6 +17,7 @@ import { cleanTitle, titleMessages } from "./session-title";
 import { bgRuns, trackRun, untrackRun } from "./sw-runs";
 import { fetchLLM, getConfig, listAvailableModels, modelCapabilitiesBatch } from "./sw-llm";
 import { recordHousekeeping } from "./sw-housekeeping";
+import { archiveCall } from "./sw-archive";
 import { appendSnapshot, measureEvents, summarizeStore, type StorageReport, type StorageSnapshot, type StoreBytes } from "./session-storage-stats";
 
 /**
@@ -135,6 +136,9 @@ export function configureSessionCommands(run: RunDeps): void {
             run.forgetRun(hash);
             forgetBackgroundChat(hash);
             await sessionStore?.forget([hash]);
+            // A session is in the live store OR the archive; deleting it means from both. Only when the archive is on:
+            // otherwise nothing was ever moved there, and asking would start SQLite for every delete.
+            if (archiveOn) await archiveCall("remove", { hash }).catch(() => { /* not archived, or the archive is unavailable */ });
             try { await chrome.storage.local.remove(`ml_session_${hash}`); } catch { /* storage unavailable */ }
         },
         keepSession,
@@ -217,6 +221,10 @@ export function configureSessionCommands(run: RunDeps): void {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** `sessionArchive`, as the store reads it: an evicted session moves to the SQLite archive rather than being deleted.
+ *  False until read, so nothing is moved on a guess. */
+let archiveOn = false;
+
 /** `sessionRetentionDays`, as the store reads it. Kept current from storage; 0 until read, which keeps everything. */
 let retentionDays = 0;
 /**
@@ -242,9 +250,15 @@ export const sessionStore = (() => {
             onEvict: (hashes) => { for (const hash of hashes) sessionServer.remove({ runtime: localRuntimeId(), hash }); },
             // Every session the store drops without being asked is a housekeeping decision, whichever rule made it.
             onEvicted: (e) => recordHousekeeping({
-                subsystem: "sessions", kind: "evict", reason: e.reason, key: e.hash, bytes: e.bytes,
-                detail: { outcome: e.outcome, idleDays: Math.floor(e.idleMs / DAY_MS) },
+                subsystem: "sessions", kind: e.outcome === "kept" ? "archive-failed" : "evict", reason: e.reason, key: e.hash, bytes: e.bytes,
+                detail: { outcome: e.outcome, idleDays: Math.floor(e.idleMs / DAY_MS), ...(e.error ? { error: e.error } : {}) },
             }),
+            archive: {
+                enabled: () => archiveOn,
+                move: async (row, events) => {
+                    await archiveCall<boolean>("put", { input: { summary: row.summary, events, history: row.history ?? null, split: row.split, bytes: row.bytes }, archivedTs: Date.now() });
+                },
+            },
             retainMs: () => Math.max(0, retentionDays) * DAY_MS,
             limits: storeLimits,
         });
@@ -283,8 +297,9 @@ if (sessionStore) {
  *  everything and titles nothing. */
 async function readSessionSettings(): Promise<void> {
     try {
-        const cfg = await chrome.storage.sync.get({ sessionRetentionDays: 0, sessionStoreBudgetMB: DEFAULT_CONFIG.sessionStoreBudgetMB, autoTitles: DEFAULT_CONFIG.autoTitles, utilityModel: "" }) as { sessionRetentionDays?: unknown; sessionStoreBudgetMB?: unknown; autoTitles?: unknown; utilityModel?: unknown };
+        const cfg = await chrome.storage.sync.get({ sessionRetentionDays: 0, sessionStoreBudgetMB: DEFAULT_CONFIG.sessionStoreBudgetMB, autoTitles: DEFAULT_CONFIG.autoTitles, utilityModel: "", sessionArchive: DEFAULT_CONFIG.sessionArchive }) as { sessionRetentionDays?: unknown; sessionStoreBudgetMB?: unknown; autoTitles?: unknown; utilityModel?: unknown; sessionArchive?: unknown };
         autoTitles = cfg?.autoTitles !== false;
+        archiveOn = cfg?.sessionArchive === true;
         // Also read by the callback below; read here too, since titling waits on this read and not on that one.
         utilityModelSet = !!String(cfg?.utilityModel ?? "").trim();
         retentionDays = Math.max(0, Number(cfg?.sessionRetentionDays) || 0);
@@ -310,6 +325,7 @@ try {
         if (area !== "sync") return;
         if (changes.agentStartPage) agentStartPage = String(changes.agentStartPage.newValue ?? "").trim();
         if (changes.autoTitles) autoTitles = changes.autoTitles.newValue !== false;
+        if (changes.sessionArchive) archiveOn = changes.sessionArchive.newValue === true;
         // A shorter retention applies now, not on the next write: someone who just lowered it expects the list to
         // shrink while they watch.
         if (changes.sessionRetentionDays || changes.sessionStoreBudgetMB) {
@@ -380,7 +396,9 @@ export async function recordStorageSnapshot(): Promise<void> {
 export async function storageReport(): Promise<StorageReport> {
     const store = sessionStore!;
     const [history, now, largest] = await Promise.all([storageHistory(), store.snapshot(), store.largest()]);
-    return { history, now, largest };
+    // Only when it is on: asking would start SQLite for a page that has never used the archive.
+    const archive = archiveOn ? await archiveCall<NonNullable<StorageReport["archive"]>>("stats").catch(() => undefined) : undefined;
+    return { history, now, largest, ...(archive ? { archive } : {}) };
 }
 
 /**
