@@ -16,7 +16,7 @@ here instead. Decided with Shane on 2026-09-19; the design and the probe behind 
 | `sw-archive.ts` | `archiveCall(op, args)`: the worker side's messenger, with one retry when the document was torn down. |
 | `session-store.ts` | The `archive` option on eviction: move, and only then forget. |
 | `archive-folder.ts` | The picked folder: its handle in IndexedDB (`ml-archive-folder`), its `FolderState`, picking and re-granting (a page, in a click), and reading and writing `YYYY-MM.sqlite`. chrome-free: the page and the worker both use it. |
-| `sidebar/archive-section.tsx` | Settings → Archive folder. `ArchiveFolderBody` is pure (report + actions as props) so a remote runtime's view can render it; `LocalArchiveFolder` wires it to this browser. |
+| `sidebar/archive-section.tsx` | The archive folder, in Settings → Storage under "Archive sessions instead of deleting them" (shown only while that is on). `ArchiveFolderBody` is pure (report + actions as props) so a remote runtime's view can render it; `LocalArchiveFolder` wires it to this browser. |
 
 ## Why it is built this way
 

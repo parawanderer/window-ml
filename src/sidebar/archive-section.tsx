@@ -34,7 +34,7 @@ export function ArchiveFolderBody(p: {
     if (!r) return <div class="set-hint">{p.message || "Reading…"}</div>;
     const pending = r.pending ? <div class="set-hint">{r.pending} month file{r.pending === 1 ? "" : "s"} wait to be written. Nothing is lost meanwhile.</div> : null;
     const note = p.message ? <div class="set-hint arch-msg">{p.message}</div> : null;
-    const off = !p.archiveOn ? <div class="set-warn">Sessions reach the folder only with "Archive sessions instead of deleting them" on (above).</div> : null;
+    const off = !p.archiveOn ? <div class="set-warn">Sessions reach the folder only while "Archive sessions instead of deleting them" is on.</div> : null;
     const btn = (label: string, busyLabel: string, key: string, on: () => void, primary = false) => (
         <button class={`test-btn${primary ? " arch-primary" : ""}`} disabled={!!p.busy} onClick={on}>{p.busy === key ? busyLabel : label}</button>
     );
@@ -55,7 +55,7 @@ export function ArchiveFolderBody(p: {
 
     if (r.state === "none") return (
         <div class="arch">
-            <div class="set-hint">Pick a folder and the archive copies itself there as one SQLite file per month (<code>2026-09.sqlite</code>). Any SQLite tool opens them, they survive a wiped browser, and a sync tool (Syncthing, a NAS, git) is safe on them: a file is replaced only once it is completely written.</div>
+            <div class="set-hint">Pick a folder and the archive copies itself there as one SQLite file per month (<code>2026-09.sqlite</code>). Any SQLite tool opens them, they survive a wiped browser, and a sync tool (Syncthing, a NAS, git) is safe on them: a file is replaced only once it is completely written. The picker opens in Documents; a new folder there, say <i>window.ml archive</i>, is a good home.</div>
             {asks("Pick a folder…", "Picking…", "pick", p.onPick, true)}
             {off}{note}
         </div>

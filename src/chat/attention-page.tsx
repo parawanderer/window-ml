@@ -1,11 +1,11 @@
 // attention-page.tsx — the ATTENTION LIST: what needs someone's hand before a runtime works fully, as a sheet like
-// Search and Settings, opened from an inbox above the gear. Nothing is stored: every item is derived from what the
-// runtimes report and what this device checks (attention.ts), so fixing a thing is what removes it.
+// Search and Settings, opened from an inbox above the gear. Nothing is stored: every item is derived from the codes the
+// runtimes report (attention.ts), so fixing a thing is what removes it.
 //
 // The button shows only when there is something in the list, and its count only for problems, never suggestions, so
-// a page that is set up stays as quiet as it was. A fix is offered only where THIS device can apply it (a grant inside
-// the click, or the extension's Settings it holds); elsewhere the item says on which runtime it is fixed.
-import { useEffect, useRef, useState } from "preact/hooks";
+// a page that is set up stays as quiet as it was. A fix is offered only where THIS device can apply it (one click,
+// `ChatExtras.fix`, or the extension's Settings it holds); elsewhere the item says on which runtime it is fixed.
+import { useState } from "preact/hooks";
 import type { RuntimeInfo } from "../session-host";
 import { IconInbox } from "../sidebar/icons";
 import { attentionCount, attentionItems, type AttentionFix, type AttentionItem } from "./attention";
@@ -15,30 +15,17 @@ import { mainView, useEscapeCloses } from "./nav";
 import { SheetHead, settingsTab } from "./settings-page";
 import { dismiss, dismissed } from "./view-mode";
 
-/** How often focus may re-run this device's checks: one of them asks the backend for its models. */
-const RECHECK_MS = 15_000;
+/** No codes of this device's own: every runtime reports its own now (`capabilities.attention`). */
+const NONE: ReadonlyMap<string, readonly string[]> = new Map();
 
-/** The list, kept current: this device's checks run on load, when the page regains focus, and after a fix. */
-export function useAttention(store: ChatStore, extras?: ChatExtras): { items: AttentionItem[]; recheck: () => void } {
-    const runtimes = store.runtimes.value;
-    const [local, setLocal] = useState<ReadonlyMap<string, readonly string[]>>(new Map());
-    const last = useRef(0);
-    const ids = runtimes.map((r) => `${r.id}:${r.online}`).join(",");
-    const recheck = () => {
-        last.current = Date.now();
-        const asks = runtimes.map((r) => [r.id, extras?.attention?.(r.id) ?? null] as const).filter(([, p]) => p);
-        void Promise.all(asks.map(([id, p]) => p!.then((codes) => [id, codes] as const, () => [id, [] as string[]] as const)))
-            .then((got) => setLocal(new Map(got)));
-    };
-    useEffect(() => { recheck(); }, [ids]);
-    useEffect(() => {
-        const onFocus = () => { if (Date.now() - last.current > RECHECK_MS) recheck(); };
-        window.addEventListener("focus", onFocus);
-        return () => window.removeEventListener("focus", onFocus);
-    }, [ids]);
+/**
+ * The list, from what the runtimes report. It changes when a runtime's description does, which a fix causes: the
+ * worker follows permissions and settings, so a grant clears its item without the page asking again.
+ */
+export function useAttention(store: ChatStore, extras?: ChatExtras): { items: AttentionItem[] } {
     const canFix = (rt: RuntimeInfo, fix: AttentionFix, code: string) =>
-        fix.kind === "grant" ? !!extras?.grant?.(rt.id, code) : !!rt.capabilities.localSettings && extras?.settings?.(rt.id) != null;
-    return { items: attentionItems(runtimes, local, canFix, dismissed.value), recheck };
+        fix.kind === "act" ? !!extras?.fix?.(rt.id, code) : !!rt.capabilities.localSettings && extras?.settings?.(rt.id) != null;
+    return { items: attentionItems(store.runtimes.value, NONE, canFix, dismissed.value) };
 }
 
 /** The inbox above the gear: absent with nothing to do, a count only for problems. `labelled` in the list's foot. */
@@ -60,7 +47,7 @@ export function AttentionButton({ items, labelled }: { items: AttentionItem[]; l
 }
 
 /** The sheet: problems first, then suggestions, each with its fix where this device has one. */
-export function AttentionPage({ items, extras, recheck }: { items: AttentionItem[]; extras?: ChatExtras; recheck: () => void }) {
+export function AttentionPage({ items, extras }: { items: AttentionItem[]; extras?: ChatExtras }) {
     useEscapeCloses();
     const [busy, setBusy] = useState("");
     const many = new Set(items.map((i) => i.runtime.id)).size > 1;
@@ -68,11 +55,11 @@ export function AttentionPage({ items, extras, recheck }: { items: AttentionItem
         const fix = it.fix;
         if (!fix) return;
         if (fix.kind === "settings") { settingsTab.value = "extension"; mainView.value = "settings"; return; }
-        // Called synchronously in the click: a browser shows a permission prompt only inside one.
-        const ask = extras?.grant?.(it.runtime.id, it.code);
+        // Called synchronously in the click: a browser shows a permission prompt or a folder picker only inside one.
+        const ask = extras?.fix?.(it.runtime.id, it.code);
         if (!ask) return;
         setBusy(it.key);
-        void ask().then(() => { setBusy(""); recheck(); });
+        void ask().then(() => setBusy(""));
     };
     return (
         <main class="chat-main chat-settings" aria-label="Needs attention">

@@ -76,7 +76,9 @@ export async function folderState(): Promise<{ state: FolderState; name?: string
 export async function pickFolder(): Promise<string | null> {
     const pick = (globalThis as unknown as { showDirectoryPicker(o: object): Promise<FileSystemDirectoryHandle> }).showDirectoryPicker;
     try {
-        const handle = await pick({ mode: "readwrite", id: "wml-archive" });
+        // Opens in Documents the first time (a page cannot create or preselect a path such as ~/.windowml, and the
+        // browser refuses the home folder itself); `id` makes it open where it was last used after that.
+        const handle = await pick({ mode: "readwrite", id: "wml-archive", startIn: "documents" });
         await saveFolder(handle);
         return handle.name;
     } catch (err) {

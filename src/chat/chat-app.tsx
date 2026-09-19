@@ -640,7 +640,7 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
             {(!narrow || (!key && !starting && !main)) ? <SessionList store={store} activeKey={key} narrow={narrow} onStart={start} gear={gear} gearWide={gearWide} /> : null}
             <DockFrame panels={panels} narrow={narrow}>
             {main === "search" && (!narrow || !key) ? <SearchPage store={store} narrow={narrow} />
-                : main === "attention" ? <AttentionPage items={att.items} extras={extras} recheck={att.recheck} />
+                : main === "attention" ? <AttentionPage items={att.items} extras={extras} />
                 : main === "settings" ? <SettingsPage browser={browserSettings} housekeeping={housekeeping} store={store} />
                 : (starting || (!key && !narrow)) && canStart ? (
                     <main class="chat-main chat-home">

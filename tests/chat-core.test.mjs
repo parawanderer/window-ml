@@ -516,7 +516,7 @@ test("attentionItems: reported and checked codes once each, problems first, fixe
     const here = rt("local", { localSettings: true, archive: { folder: "needs-grant" }, attention: ["no-model"] });
     const box = rt("box", { attention: ["no-utility-model", "some-future-code"] });
     const local = new Map([["local", ["no-model", "tab-groups", "site-access"]]]);
-    const canFix = (r, fix) => r.id === "local" && (fix.kind === "settings" || fix.kind === "grant");
+    const canFix = (r, fix) => r.id === "local" && (fix.kind === "settings" || fix.kind === "act");
     const items = attentionItems([here, box], local, canFix);
     assert.deepEqual(items.map((i) => i.key), [
         "local:no-model",                       // blocks: first, and once though both reported and checked

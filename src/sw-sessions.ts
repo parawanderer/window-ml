@@ -63,6 +63,8 @@ let utilityModelSet = false;
 /** Whether this build can run Python (`pythonBundlePresent`): false until the bundle has been looked at, so a client
  *  never offers a bench on a guess. */
 let pythonBundled = false;
+/** whether `pythonBundled` has been measured yet (an unmeasured build is never reported as missing its wheels) */
+let pythonMeasured = false;
 /** The page a blank agent target opens when the command names none (see the storage listener below). */
 let agentStartPage = "";
 
@@ -368,7 +370,11 @@ export const sessionServer = new SessionServer(new SessionIndex({ runtime: local
 const settingsRead = readSessionSettings();
 // The folder's state rides the runtime's description, so every change to it is one to that.
 onFolderChange(() => { sessionServer.runtimeChanged(); recomputeAttention(); });
-watchAttention({ archiveOn: () => archiveOn, onChange: () => sessionServer.runtimeChanged() });
+// `pythonMissing` reads the measured bundle check below: false until measured, so an unmeasured build is not flagged.
+let archiveKnown = false;
+watchAttention({ archiveOn: () => (archiveKnown ? archiveOn : null), onChange: () => sessionServer.runtimeChanged(), pythonMissing: () => pythonMeasured && !pythonBundled });
+// Whether the archive is on is read at start like everything else; until it is, "archive-off" would be a guess.
+void settingsRead.then(() => { archiveKnown = true; recomputeAttention(); });
 // A lapsed grant shows only after a restart, which is also when this runs.
 void settingsRead.then(() => { if (archiveOn) archiveToggled(); });
 if (sessionStore) {
@@ -406,7 +412,11 @@ function parseBudget(v: unknown): number {
 }
 
 // The bundle is looked at once; a client already connected hears the answer as a runtime update.
-void pythonBundlePresent().then((ok) => { if (ok !== pythonBundled) { pythonBundled = ok; sessionServer.runtimeChanged(); } });
+void pythonBundlePresent().then((ok) => {
+    pythonMeasured = true;
+    if (ok !== pythonBundled) { pythonBundled = ok; sessionServer.runtimeChanged(); }
+    recomputeAttention();
+});
 
 // Kept current from storage: `side.call` needs a utility model, and the runtime's capabilities say whether it has one.
 // After `sessionServer` exists, since a storage callback may run synchronously.

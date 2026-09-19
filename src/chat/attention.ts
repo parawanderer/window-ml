@@ -4,9 +4,8 @@
 //
 // Almost everything here is a fact about a RUNTIME, not about whoever is looking: a phone driving a laptop needs to
 // know the laptop has no model as much as the laptop's own page does. So a runtime reports its own codes on the contract
-// (`capabilities.attention`, sw-attention.ts in the extension), and this device adds only what that does not cover
-// (`ChatExtras.attention`: a build without Python's wheels). The archive folder's state is read as a code too, for a
-// runtime that reports the folder but not yet the codes. Codes, not prose: a remote runtime's text is untrusted, and the sentence depends on where it is
+// (`capabilities.attention`, sw-attention.ts in the extension). The archive folder's state is read as a code too, for
+// a runtime that reports the folder but not yet the codes. Codes, not prose: a remote runtime's text is untrusted, and the sentence depends on where it is
 // read (a button on the laptop, "on Work laptop" on a phone). An unknown code is still counted, in general words.
 import type { RuntimeInfo } from "../session-host";
 
@@ -16,10 +15,11 @@ export type AttentionLevel = "blocks" | "limits" | "suggests";
 /** One code a runtime (or this device, for it) reports. OPEN: a code this page does not know is shown generally. */
 export type AttentionCode =
     | "no-model" | "backend-unreachable" | "site-access" | "tab-groups" | "no-utility-model"
-    | "archive-folder-lapsed" | "archive-folder-unsupported" | "python-packages-missing";
+    | "archive-folder-lapsed" | "archive-folder-unsupported" | "python-packages-missing"
+    | "archive-off" | "archive-folder-none";
 
-/** How it is fixed from here, when it can be: a grant inside the click, or the extension's Settings. */
-export type AttentionFix = { kind: "grant"; label: string } | { kind: "settings"; label: string; where: string };
+/** How it is fixed from here, when it can be: one click (`ChatExtras.fix`), or the extension's Settings. */
+export type AttentionFix = { kind: "act"; label: string } | { kind: "settings"; label: string; where: string };
 
 /** One line of the list. `key` is `runtime:code`, what a dismissal remembers. */
 export interface AttentionItem {
@@ -48,12 +48,12 @@ const KNOWN: Record<AttentionCode, { level: AttentionLevel; title: string; detai
     "site-access": {
         level: "limits", title: "Site access is limited",
         detail: "The extension may only reach sites you click it on, so the agent cannot fetch other pages and tabs show no icons.",
-        fix: { kind: "grant", label: "Allow all sites" },
+        fix: { kind: "act", label: "Allow all sites" },
     },
     "archive-folder-lapsed": {
         level: "limits", title: "The archive folder needs reconnecting",
         detail: "It lost the browser's permission, so old sessions are no longer copied into it. They are still kept and searchable in the browser.",
-        fix: { kind: "settings", label: "Reconnect", where: "Extension → Appearance → Archive folder" },
+        fix: { kind: "act", label: "Reconnect" },
     },
     "archive-folder-unsupported": {
         level: "limits", title: "This browser cannot keep an archive folder",
@@ -71,7 +71,17 @@ const KNOWN: Record<AttentionCode, { level: AttentionLevel; title: string; detai
     "tab-groups": {
         level: "suggests", title: "Tab groups show without names",
         detail: "The tab picker groups tabs either way; their names and colours need the browser's permission.",
-        fix: { kind: "grant", label: "Show them" },
+        fix: { kind: "act", label: "Show them" },
+    },
+    "archive-off": {
+        level: "suggests", title: "Old sessions are deleted, not kept",
+        detail: "Retention deletes a session for good once it is old enough or storage runs out. The archive keeps them instead, in the browser's own storage, every word searchable.",
+        fix: { kind: "act", label: "Keep them" },
+    },
+    "archive-folder-none": {
+        level: "suggests", title: "Keep a copy of the archive on disk",
+        detail: "Pick a folder and the archive copies itself there as one SQLite file per month: it survives a wiped browser, any SQLite tool opens it, and a sync tool can carry it. A new folder in Documents, say \"window.ml archive\", is a good home; the picker can make one.",
+        fix: { kind: "act", label: "Pick a folder" },
     },
 };
 
@@ -79,7 +89,7 @@ const RANK: Record<AttentionLevel, number> = { blocks: 0, limits: 1, suggests: 2
 
 /**
  * The list, most urgent first. `local` is this device's own codes per runtime (null for a runtime it cannot check);
- * `canFix(runtime, fix)` says whether this device can apply a fix there (the grant or the Settings it holds); `hidden`
+ * `canFix(runtime, fix)` says whether this device can apply a fix there (one click, or the Settings it holds); `hidden`
  * is the dismissed suggestions. A code both reported and checked appears once.
  */
 export function attentionItems(

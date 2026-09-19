@@ -553,17 +553,22 @@ test("capabilities.attention: what needs a hand on this runtime, as codes, sent 
     const port = bg.connect("ml-sessions", PAGE);
     const attention = () => port.messages.filter((m) => m.type === "runtime").at(-1)?.runtime.capabilities.attention;
     const until = async (want) => { for (let i = 0; i < 100 && JSON.stringify(attention()) !== JSON.stringify(want); i++) await new Promise((r) => setTimeout(r, 20)); assert.deepEqual(attention(), want); };
-    await until(["tab-groups", "no-utility-model"]);
+    // With the archive off (the default) retention deletes for good, a suggestion; the harness has no Python wheels.
+    const also = ["archive-off", "python-packages-missing"];
+    await until(["tab-groups", "no-utility-model", ...also]);
 
     bg.setSync({ utilityModel: "tiny" });
-    await until(["tab-groups"]);
+    await until(["tab-groups", ...also]);
     bg.grantPermission("tabGroups");
-    await until(undefined);
+    await until(also);
+    // Turning the archive on clears the suggestion that it is off.
+    bg.setSync({ sessionArchive: true });
+    await until(["python-packages-missing"]);
 
     // The server went away and the URL was changed: asked again at once, not at the next page.
     answering = false;
     bg.setSync({ chatUrl: "http://elsewhere/api/chat/completions" });
-    await until(["backend-unreachable"]);
+    await until(["backend-unreachable", "python-packages-missing"]);
     bg.setSync({ model: "" });
-    await until(["no-model", "backend-unreachable"]);
+    await until(["no-model", "backend-unreachable", "python-packages-missing"]);
 });
