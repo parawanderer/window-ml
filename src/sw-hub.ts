@@ -11,6 +11,8 @@ import { bytes } from "./hub/hpke";
 import { Keyring } from "./hub/keyring";
 import { Role } from "./hub/wire";
 import { HubRuntime, type HubRuntimeStatus } from "./hub-runtime";
+import { DeviceRegistry, type DeviceState } from "./hub-devices";
+import type { DeviceInfo } from "./session-host";
 import { LOCAL_RUNTIME, localRuntimeId, runSessionCommand, sessionServer } from "./sw-sessions";
 
 /** Where this browser stands with a hub, for Settings. `unpaired` is the usual state and not an error. */
@@ -22,6 +24,7 @@ const ALARM = "ml-hub-keepalive";
 let runtime: HubRuntime | null = null;
 let status: HubState = { state: "unpaired" };
 let starting: Promise<void> | null = null;
+let devices: DeviceRegistry | null = null;
 
 /** Where the connection stands now. */
 export function hubState(): HubState {
@@ -46,8 +49,16 @@ export function ensureHubRuntime(): Promise<void> {
             const leaf = CertificateBody.decode(m.chain[0].body);
             if (leaf.role !== Role.ROLE_RUNTIME) { unpaired(); return; }
             const where = { hubUrl: m.hubUrl, hubName: m.hubName };
+            // The allowlist lives beside the keys. Each write opens the keyring for itself: the worker may outlive
+            // many of them, and a database held open for the worker's life blocks an upgrade from another context.
+            devices = await DeviceRegistry.open(
+                () => ring!.record<DeviceState>("devices"),
+                async (st) => { const w = await Keyring.open(); try { await w.putRecord("devices", st); } finally { w.close(); } },
+            );
             const r = new HubRuntime({
                 membership: m,
+                devices,
+                signer: me.identity,
                 side: {
                     localIds: [localRuntimeId(), LOCAL_RUNTIME],
                     list: () => sessionServer.index.list(),
@@ -81,10 +92,22 @@ function unpaired(): void {
     try { void chrome.alarms?.clear(ALARM); } catch { /* no alarms */ }
 }
 
+/** The account's devices as this runtime lists them, for its own Settings; empty when unpaired. */
+export function hubDevices(): DeviceInfo[] {
+    return devices?.list() ?? [];
+}
+
+/** Revoke a device from this browser's own Settings: see `HubRuntime.revoke`. */
+export async function revokeHubDevice(principal: string): Promise<"revoked" | "already" | "self" | "unpaired"> {
+    await ensureHubRuntime();
+    return runtime ? runtime.revoke(principal) : "unpaired";
+}
+
 /** Stop the connection: this browser left its account, or is about to pair again. */
 export function stopHubRuntime(): void {
     runtime?.stop();
     runtime = null;
+    devices = null;
     unpaired();
 }
 

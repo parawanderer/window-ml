@@ -17,7 +17,11 @@ import type { HubClient, HubEvent } from "./hub/client";
 import { bytes, type Bytes } from "./hub/hpke";
 import { verifyChain } from "./hub/keys";
 import type { Membership } from "./hub/keyring";
+import { CertificateBody } from "./proto/wmlhub/v1/identity.gen";
 import { ChannelKey, replyTo, type Opened } from "./hub/seal";
+import { encodeRevocations } from "./hub/revocation";
+import type { Identity } from "./hub/keys";
+import type { DeviceRegistry } from "./hub-devices";
 import { Kind, Role } from "./hub/wire";
 
 /** Where the runtime's sessions come from: the worker's session server, or a test's stand-in. */
@@ -81,6 +85,12 @@ export class HubRuntime {
             connect: () => Promise<HubClient>;
             onStatus?: (status: HubRuntimeStatus) => void;
             now?: () => number;
+            /** the allowlist: devices seen, and what is revoked. Absent: no `device.*`, and nothing is refused as revoked */
+            devices?: DeviceRegistry;
+            /** this runtime's own keys, to sign the revocation list with when its leaf carries `may_revoke` */
+            signer?: Identity;
+            /** how often to check whether the list is due for its daily re-sign */
+            resignCheckMs?: number;
         },
     ) {}
 
@@ -105,6 +115,25 @@ export class HubRuntime {
         }
         this.opts.onStatus?.({ state: "stopped" });
     }
+
+    /**
+     * Revoke a device from this runtime's own Settings (`device.revoke` is the same act over the hub). The allowlist
+     * changes at once; when connected, the new list goes out and the connection restarts, which rotates every key.
+     * Offline, the rotation happens on the next connection, which starts under fresh keys anyway.
+     */
+    async revoke(principal: string): Promise<"revoked" | "already" | "self"> {
+        const reg = this.opts.devices;
+        if (!reg) throw new Error("this runtime keeps no device list");
+        const target = principal.toLowerCase();
+        if (this.client && target === hex(this.client.principal)) return "self";
+        if (!(await reg.revoke(target))) return "already";
+        const client = this.client;
+        if (client && this.publishList) { await this.publishList().catch(() => {}); client.close(); }
+        return "revoked";
+    }
+
+    /** The current connection's list publisher, for `revoke` from outside a command. */
+    private publishList: (() => Promise<void>) | null = null;
 
     /** Stop, closing the connection. */
     stop(): void {
@@ -131,21 +160,34 @@ export class HubRuntime {
             index: (u) => { void index.update(out(u)).catch(() => {}); },
             stream: (hash, m) => { void publisher.publish(hash, out(m)).catch(() => {}); },
         });
+        // The revocation list: on every connection (the ring then holds it for publishers reading while this runtime
+        // is away), and re-signed daily so a publisher's 7-day freshness floor never bites while it is up.
+        const revocations = await channels.channel("revocations", client.principal);
+        const publishList = async (): Promise<void> => {
+            if (!this.opts.devices || !this.opts.signer || !this.mayRevoke) return;
+            const list = await this.opts.devices.sign(this.opts.signer, this.opts.membership.chain, bytes(this.opts.membership.accountRoot), now());
+            client.publish(revocations, Kind.KIND_SESSION_EVENTS, encodeRevocations(list));
+        };
+        this.publishList = publishList;
+        const resign = setInterval(() => { if (this.opts.devices?.due(now())) void publishList().catch(() => {}); }, this.opts.resignCheckMs ?? 60 * 60_000);
         try {
             await index.snapshot(out(this.opts.side.list()));
+            await publishList();
             this.opts.onStatus?.({ state: "online", devices: 0 });
             for (;;) {
                 const event: HubEvent = await client.next();
                 if (event.kind === "closed") return event.reason;
                 if (event.kind === "presence") {
-                    await this.presence(event, publisher, devices, now());
+                    await this.presence(event, publisher, devices, now(), client.principal);
                     this.opts.onStatus?.({ state: "online", devices: devices.size });
                 } else if (event.kind === "command") {
-                    void this.answer(client, event.opened, local, principal);
+                    void this.answer(client, event.opened, local, principal, publishList);
                 }
                 // results (this runtime sends no commands yet), published frames, gaps: nothing to do
             }
         } finally {
+            clearInterval(resign);
+            this.publishList = null;
             stop();
         }
     }
@@ -159,16 +201,23 @@ export class HubRuntime {
         publisher: SessionPublisher,
         devices: Set<string>,
         nowMs: number,
+        self: Bytes,
     ): Promise<void> {
         const id = hex(e.principal);
-        if (!e.online || e.role !== Role.ROLE_CLIENT) {
+        if (!e.online) {
             publisher.deviceOffline(id);
             devices.delete(id);
             return;
         }
+        if (id === hex(self)) return;
         let verified;
         try { verified = await verifyChain(bytes(this.opts.membership.accountRoot), e.chain, nowMs); } catch { return; }
         if (hex(verified.principal) !== id) return;
+        // Revoked here is revoked everywhere this runtime decides: never listed again, never handed a key.
+        const reg = this.opts.devices;
+        if (reg && (reg.isRevoked(id) || (await reg.revokes(e.chain)))) return;
+        await reg?.seen(e.chain, verified, nowMs);
+        if (e.role !== Role.ROLE_CLIENT) return;
         devices.add(id);
         await publisher.deviceOnline({
             id, scopes: verified.leaf.scopes,
@@ -177,9 +226,11 @@ export class HubRuntime {
     }
 
     /** Answer one command: its declared scope must be the one its type needs, then the local handler runs it. */
-    private async answer(client: HubClient, opened: Opened, local: ReadonlySet<string>, principal: string): Promise<void> {
+    private async answer(client: HubClient, opened: Opened, local: ReadonlySet<string>, principal: string, publishList: () => Promise<void>): Promise<void> {
         let result: CommandResult<CommandType>;
         let command: Command | null = null;
+        let rotate = false;
+        const reg = this.opts.devices;
         try { command = JSON.parse(decoder.decode(opened.body)) as Command; } catch { /* below */ }
         if (!command || typeof command !== "object" || typeof command.type !== "string") {
             result = { ok: false, error: { code: "invalid", message: "not a command" } };
@@ -187,6 +238,11 @@ export class HubRuntime {
             result = { ok: false, error: { code: "unsupported", message: "this runtime does not know that command" } };
         } else if (opened.scope !== COMMAND_SCOPE[command.type as CommandType]) {
             result = { ok: false, error: { code: "forbidden", message: `${command.type} needs \`${COMMAND_SCOPE[command.type as CommandType]}\`` } };
+        } else if (reg && (reg.isRevoked(hex(opened.from)) || (await reg.revokes(opened.chain)))) {
+            // The allowlist is the authoritative revocation: immediate, and needing nothing from the hub.
+            result = { ok: false, error: { code: "forbidden", message: "this device was revoked" } };
+        } else if (command.type.startsWith("device.")) {
+            ({ result, rotate } = await this.device(command, principal));
         } else {
             const [localId] = local;
             try {
@@ -194,18 +250,48 @@ export class HubRuntime {
             } catch (e) {
                 result = { ok: false, error: { code: "failed", message: (e as Error)?.message || String(e) } };
             }
-            if (result.ok && command.type === "runtime.info") result = remoteDescription(result);
+            if (result.ok && command.type === "runtime.info") result = remoteDescription(result, !!reg);
             result = rehome(result, local, principal);
         }
         try { await client.result(replyTo(opened), opened.nonce, encoder.encode(JSON.stringify(result)) as Bytes); } catch { /* closed */ }
+        // After the answer, never before it: `device.revoke` returns once the allowlist says so. Then the new list goes
+        // out, and the connection is dropped so the next starts every stream under a fresh key, granted only to the
+        // devices that remain. That IS the rotation: nothing is re-encrypted, and a revoked device holds only old keys.
+        if (rotate) {
+            await publishList().catch(() => {});
+            client.close();
+        }
+    }
+
+    /** `device.list` and `device.revoke`, the allowlist's side. Renewal and re-scoping are not built yet. */
+    private async device(command: Command, principal: string): Promise<{ result: CommandResult<CommandType>; rotate: boolean }> {
+        const reg = this.opts.devices;
+        const fail = (code: "unsupported" | "invalid" | "conflict", message: string) => ({ result: { ok: false, error: { code, message } } as CommandResult<CommandType>, rotate: false });
+        if (!reg) return fail("unsupported", "this runtime keeps no device list");
+        if (command.type === "device.list") return { result: { ok: true, data: { devices: reg.list() } } as CommandResult<CommandType>, rotate: false };
+        if (command.type === "device.revoke") {
+            const target = String((command as { principal?: unknown }).principal ?? "").toLowerCase();
+            if (!/^[0-9a-f]{64}$/.test(target)) return fail("invalid", "a principal is 64 hex characters");
+            // This runtime signs the list; revoking itself would leave the account unable to revoke anything.
+            if (target === principal) return fail("conflict", "a runtime does not revoke itself; revoke it from another device");
+            const changed = await reg.revoke(target);
+            return { result: { ok: true, data: {} } as CommandResult<CommandType>, rotate: changed };
+        }
+        return fail("unsupported", `${command.type} is not built yet`);
+    }
+
+    /** Does this runtime's own certificate carry `may_revoke`? Only then does it sign a list. */
+    private get mayRevoke(): boolean {
+        try { return CertificateBody.decode(this.opts.membership.chain[0].body).mayRevoke; } catch { return false; }
     }
 }
 
-/** What a remote device is told about this runtime: never that its settings are editable from there. */
-function remoteDescription(result: CommandResult<CommandType>): CommandResult<CommandType> {
+/** What a remote device is told about this runtime: never that its settings are editable from there, and that it
+ *  manages the account's devices when it keeps the allowlist. */
+function remoteDescription(result: CommandResult<CommandType>, devices: boolean): CommandResult<CommandType> {
     if (!result.ok) return result;
     const data = result.data as { capabilities?: Record<string, unknown> };
     if (!data?.capabilities) return result;
     const { localSettings: _local, ...capabilities } = data.capabilities;
-    return { ok: true, data: { ...data, capabilities } as never };
+    return { ok: true, data: { ...data, capabilities: { ...capabilities, ...(devices ? { devices: true } : {}) } } as never };
 }

@@ -73,6 +73,8 @@ export const SCOPE = {
     desktop: "desktop",
     /** grant a runtime a capability that outlives the session: see `NEVER_DELEGABLE` for why only the root may */
     install: "install",
+    /** manage the account's devices through a runtime (`device.*`): list, renew, revoke, re-scope. Root-granted only */
+    admin: "admin",
 } as const;
 
 /** The DER prefix of a PKCS#8 Ed25519 private key, so a seed can be imported as a `CryptoKey`. */

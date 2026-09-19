@@ -17,7 +17,7 @@ import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelC
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw-events";
 import { configureSessionCommands, ingestSessionEvent, keepSession, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw-sessions";   // the cross-tab session index the chat page reads
 import { folderAction } from "./sw-archive";   // the session archive's folder, for Settings
-import { ensureHubRuntime, hubState, stopHubRuntime } from "./sw-hub";   // this browser as a runtime on a hub
+import { ensureHubRuntime, hubDevices, hubState, revokeHubDevice, stopHubRuntime } from "./sw-hub";   // this browser as a runtime on a hub
 import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, senderOrigin } from "./sw-housekeeping";
 import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, pendingGrants, takeCredFetch } from "./sw-consent";
@@ -833,10 +833,15 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
 
     } else if (message.type === "HUB_RUNTIME") {
         // This browser as a runtime on a hub: where it stands, or what just happened in the page that paired it
-        // (`paired`: read the keyring again; `left`: stop). Extension pages only — a page's main world must not
+        // (`paired`: read the keyring again; `left`: stop), and its allowlist (`devices`, `revoke` + `principal`). Extension pages only — a page's main world must not
         // even learn whether this browser is reachable from elsewhere.
         if (senderOrigin(sender) === "page") { sendResponse({ error: "Refused: the hub connection is for extension pages." }); return; }
-        const action = (message.payload as { action?: unknown } | undefined)?.action;
+        const { action, principal } = (message.payload ?? {}) as { action?: unknown; principal?: unknown };
+        if (action === "devices") { void ensureHubRuntime().then(() => sendResponse({ data: hubDevices() })); return true; }
+        if (action === "revoke") {
+            revokeHubDevice(String(principal ?? "")).then((data) => sendResponse({ data }), (e) => sendResponse({ error: String((e as Error)?.message || e) }));
+            return true;
+        }
         if (action === "left") stopHubRuntime();
         const ready = action === "paired" ? (stopHubRuntime(), ensureHubRuntime()) : Promise.resolve();
         ready.then(() => sendResponse({ data: hubState() }), (e) => sendResponse({ error: String((e as Error)?.message || e) }));
