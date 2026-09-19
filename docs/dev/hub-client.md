@@ -148,6 +148,11 @@ reading it (`tests/hub-runtime.test.mjs`); `sw-hub.ts` plugs it into the worker.
   worker stays up. When the browser stops it anyway, a one-minute alarm (created only while paired) starts it again.
   Pairing happens in a PAGE, which holds the offering socket while the person carries the code, then sends
   `HUB_RUNTIME { action: "paired" }`; the worker reads the keyring again.
+- **History.** Every start, state reached and reason for going offline is appended to `chrome.storage.local`
+  (`ml_hub_log`, last 200) and read by `HUB_RUNTIME { action: "log" }`. It outlives the worker, which is the point:
+  whether an idle worker stayed connected is read afterwards, not watched, since watching it keeps it alive.
+- **Until the screens exist**, `dev-hub-pair.html` offers this browser and `scripts/hub-root.mjs` is the root device
+  that confirms it (skill: `hub-pairing`).
 
 **Revocation** (`hub/revocation.ts`, `hub-devices.ts`), window-ml-hub `docs/design/revocation.md`:
 

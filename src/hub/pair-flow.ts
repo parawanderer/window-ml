@@ -88,12 +88,16 @@ export async function readHubName(url: string): Promise<string> {
  */
 export async function createAccount(
     keyring: Keyring,
-    opts: { hubUrl: string; label: string; invite?: Bytes; now?: () => number },
+    opts: {
+        hubUrl: string; label: string; invite?: Bytes; now?: () => number;
+        /** the root to use instead of a fresh non-extractable one: `scripts/hub-root.mjs` keeps its root in a file */
+        root?: Identity;
+    },
 ): Promise<Membership> {
     const now = opts.now ?? Date.now;
     const me = await keyring.keys();
     if (me.membership) throw new Error("this device already belongs to an account; leave it first");
-    const root = await generateIdentity();
+    const root = opts.root ?? await generateIdentity();
     const channelKey = crypto.getRandomValues(new Uint8Array(32));
     const t = now();
     // This device holds the root, so its own certificate says what it is (a client) and that it may pair; the root

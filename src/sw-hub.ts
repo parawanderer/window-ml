@@ -21,6 +21,26 @@ export type HubState =
     | ({ hubUrl: string; hubName: string } & HubRuntimeStatus);
 
 const ALARM = "ml-hub-keepalive";
+/** The connection's recent history, in storage so it outlives the worker: what an idle test reads afterwards. */
+const LOG_KEY = "ml_hub_log";
+const LOG_MAX = 200;
+
+/** One line of that history. */
+export interface HubLogEntry { atMs: number; event: string }
+
+let logging: Promise<void> = Promise.resolve();
+function note(event: string): void {
+    logging = logging.then(async () => {
+        const got = await chrome.storage.local.get({ [LOG_KEY]: [] });
+        const log = [...(got[LOG_KEY] as HubLogEntry[]), { atMs: Date.now(), event }].slice(-LOG_MAX);
+        await chrome.storage.local.set({ [LOG_KEY]: log });
+    }).catch(() => { /* a log line is not worth failing anything over */ });
+}
+
+/** The connection's history, oldest first: every start, every state it reached, and why it went offline. */
+export async function hubLog(): Promise<HubLogEntry[]> {
+    return ((await chrome.storage.local.get({ [LOG_KEY]: [] }))[LOG_KEY] as HubLogEntry[]);
+}
 let runtime: HubRuntime | null = null;
 let status: HubState = { state: "unpaired" };
 let starting: Promise<void> | null = null;
@@ -69,9 +89,13 @@ export function ensureHubRuntime(): Promise<void> {
                     url: m.hubUrl, hubName: m.hubName, identity: me.identity, agreement: me.agreement,
                     chain: m.chain, accountRoot: bytes(m.accountRoot), role: Role.ROLE_RUNTIME,
                 }),
-                onStatus: (s) => { status = { ...where, ...s }; },
+                onStatus: (s) => {
+                    status = { ...where, ...s };
+                    note(s.state === "offline" ? `offline: ${s.reason}` : s.state === "online" ? `online (${s.devices} devices)` : s.state);
+                },
             });
             runtime = r;
+            note(`start (${m.hubName})`);
             // Only while paired: an alarm that woke every browser's worker each minute to find nothing to do would
             // cost the ones that never pair.
             try { chrome.alarms?.create(ALARM, { periodInMinutes: 1 }); } catch { /* no alarms */ }

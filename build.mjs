@@ -49,6 +49,8 @@ const ENTRIES = {
     // The chat page as a tab of this browser, over the local runtime (src/chat-ext.tsx). The same app the web
     // build serves from src/chat/web.tsx against a fake host.
     "chat": "src/chat-ext.tsx",
+    // A development page that pairs this browser with a hub as a runtime, until Settings has the screens.
+    "dev-hub-pair": "src/dev-hub-pair.ts",
 };
 
 // [source, dist-relative dest] — copied verbatim next to the bundles.
@@ -63,6 +65,7 @@ const ASSETS = [
     ["src/offscreen.html", "offscreen.html"],
     ["src/chat/chat.html", "chat.html"],
     ["src/chat/chat.css", "chat.css"],
+    ["src/dev-hub-pair.html", "dev-hub-pair.html"],
 ];
 
 const watch = process.argv.includes("--watch");
