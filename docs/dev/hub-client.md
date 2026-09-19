@@ -169,8 +169,9 @@ reading it (`tests/hub-runtime.test.mjs`); `sw-hub.ts` plugs it into the worker.
   `max(now, last + 1)`.
 
 Not yet: envelope `pos` stamped from the store, keeping a session's start in the hub ring, pushing a changed
-description (clients re-ask `runtime.info`), `device.renew` / `device.scopes`, `DeviceInfo.rotation`, and a vector
-in the other direction (a list signed here, verified by the Rust side).
+description (clients re-ask `runtime.info`), `device.renew` / `device.scopes`, and `DeviceInfo.rotation`. No vector
+is needed in the other direction: Ed25519 is deterministic, and signing the hub vector's body here reproduces its list
+byte for byte, so a list signed here is the same bytes the Rust verifier already accepts.
 
 ## Which browsers can do this at all
 
