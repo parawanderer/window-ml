@@ -707,11 +707,14 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-gear-wide:hover, .chat-gear-wide.on { background: var(--panel); color: var(--fg); }
 .chat-gear-wide svg { width: 18px; height: 18px; }
 
-/* The search page: one column, a pill to type in, and the whole history under it with each date at the right. */
-.chat-search-scroll { padding: 0 16px; }
-.chat-search-col { max-width: 760px; margin: 0 auto; padding: 56px 0 40px; position: relative; }
-.chat.narrow .chat-search-col { padding-top: 12px; }
-.chat-search-back { margin-bottom: 8px; }
+/* A SHEET: a page of the app that is not a session — the search page and Settings. One quiet column at the reading
+   width, no band across the top, and Escape takes you back. */
+.chat-sheet-scroll { padding: 0 16px; }
+.chat-sheet-col { max-width: 760px; margin: 0 auto; padding: 56px 0 40px; position: relative; }
+.chat.narrow .chat-sheet-col { padding-top: 12px; }
+.chat-sheet-back { margin-bottom: 8px; }
+.chat-sheet-title { margin: 0 0 24px; padding: 0 12px; font-size: 1.6em; font-weight: 500; color: var(--fg); }
+/* The search page: a pill to type in, and the whole history under it with each date at the right. */
 .chat-search-box {
     display: flex; align-items: center; gap: 12px; padding: 0 20px; min-height: 56px; border-radius: 999px;
     background: var(--panel); color: var(--fg-dim); border: 1px solid transparent;
@@ -733,6 +736,5 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-search-date { flex: 0 0 auto; color: var(--fg-faint); font-size: .92em; font-variant-numeric: tabular-nums; }
 .chat-search-more { height: 1px; }
 
-/* Settings in the main pane: the extension's own settings view, given the page's reading width. */
-.chat-settings-body { padding: 16px; }
-.chat-settings-body > * { max-width: 760px; margin: 0 auto; }
+/* Settings as a sheet: the extension's own settings view, in the same column as the search page. */
+.chat-settings-body { padding: 0 12px; }

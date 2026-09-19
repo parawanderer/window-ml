@@ -397,7 +397,7 @@ test("desktop: the list shows the last month, and the search page holds every se
     await expect(search.locator("input")).toBeFocused();
     await expect(search.locator(".chat-search-row")).toHaveCount(40);
     await expect(search.locator(".chat-search-row").first().locator(".chat-search-date")).toHaveText(/\S/);
-    await search.locator(".chat-search-scroll").evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    await search.locator(".chat-sheet-scroll").evaluate((el) => { el.scrollTop = el.scrollHeight; });
     await expect(search.locator(".chat-search-row")).toHaveCount(54);
 
     // A search matches the PAGE a run is on, not only its title, and reaches months back.

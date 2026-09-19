@@ -23,6 +23,23 @@ export const mainView = signal<"search" | "settings" | null>(null);
 /** Open the search page (and close any session-level view that would sit on top of it). */
 export function openSearch(): void { mainView.value = "search"; }
 
+/**
+ * Escape closes a sheet (the search page, Settings) from ANYWHERE on it, not only from a focused input: clicking a
+ * date or the page's margin took focus away and left no key that closed it. `own` is an input that handles Escape
+ * itself first (the search box clears what was typed), and a menu or dialog open over the sheet gets the key instead.
+ */
+export function useEscapeCloses(own?: { current: Element | null }): void {
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key !== "Escape" || e.defaultPrevented || (own && e.target === own.current)) return;
+            if (document.querySelector(".chat-menu, .chat-dialog")) return;
+            mainView.value = null;
+        };
+        document.addEventListener("keydown", onKey);
+        return () => document.removeEventListener("keydown", onKey);
+    }, []);
+}
+
 /** The rail: what the list's header offers, stacked down the edge while the list itself is away. */
 export function Rail({ store, onStart, gear }: { store: ChatStore; onStart: (kind: StartKind) => void; gear: ComponentChildren }) {
     return (
@@ -44,10 +61,13 @@ export function Rail({ store, onStart, gear }: { store: ChatStore; onStart: (kin
  * The gear and its menu: everything on the page that is not a session.
  *
  * Each device view appears only where the runtime reports the capability AND this device can draw it (`ChatExtras`),
- * the same double question the rest of the page asks; Settings likewise, against `localSettings`. `rt` is the runtime
- * those views would describe — the open session's, or the first that offers any.
+ * the same double question the rest of the page asks; Settings likewise, against `localSettings`. `graphsRt` and
+ * `benchRt` are the runtimes those views would describe, already asked both questions by the caller: the open
+ * session's where it offers the view, otherwise the first that does.
  */
-export function GearMenu({ extras, rt, settingsRt, labelled }: { extras?: ChatExtras; rt?: RuntimeInfo; settingsRt?: RuntimeInfo; labelled?: boolean }) {
+export function GearMenu({ extras, graphsRt, benchRt, settingsRt, labelled }: {
+    extras?: ChatExtras; graphsRt?: RuntimeInfo; benchRt?: RuntimeInfo; settingsRt?: RuntimeInfo; labelled?: boolean;
+}) {
     const [open, setOpen] = useState(false);
     const wrap = useRef<HTMLDivElement>(null);
     useEffect(() => {
@@ -58,8 +78,6 @@ export function GearMenu({ extras, rt, settingsRt, labelled }: { extras?: ChatEx
         document.addEventListener("keydown", onKey);
         return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); };
     }, [open]);
-    const graphs = !!rt && !!rt.capabilities.resourcePanel && extras?.resourcePanel?.(rt.id) != null;
-    const bench = !!rt && !!rt.capabilities.pythonBench && extras?.bench?.(rt.id) != null;
     const settings = !!settingsRt && extras?.settings?.(settingsRt.id) != null;
     const pick = (run: () => void) => () => { setOpen(false); run(); };
     return (
@@ -67,8 +85,8 @@ export function GearMenu({ extras, rt, settingsRt, labelled }: { extras?: ChatEx
             {open ? (
                 <div class="chat-menu chat-gear-menu" role="menu" aria-label="Page menu">
                     <MenuItem icon={<IconBrain />} label="Calm view" on={calm.value} onPick={pick(() => setCalm(!calm.value))} />
-                    {graphs ? <MenuItem icon={<IconVram />} label={`What ${rt!.name} is running`} on={pane.value === "resource"} onPick={pick(() => setPane(pane.value === "resource" ? null : "resource"))} /> : null}
-                    {bench ? <MenuItem icon={<IconBench />} label="Python bench" on={benchOpen.value} onPick={pick(() => (benchOpen.value ? (benchOpen.value = false) : openBench()))} /> : null}
+                    {graphsRt ? <MenuItem icon={<IconVram />} label={`What ${graphsRt.name} is running`} on={pane.value === "resource"} onPick={pick(() => setPane(pane.value === "resource" ? null : "resource"))} /> : null}
+                    {benchRt ? <MenuItem icon={<IconBench />} label="Python bench" on={benchOpen.value} onPick={pick(() => (benchOpen.value ? (benchOpen.value = false) : openBench()))} /> : null}
                     {settings ? <MenuItem icon={<IconGear />} label="Settings" onPick={pick(() => { mainView.value = "settings"; })} /> : null}
                 </div>
             ) : null}

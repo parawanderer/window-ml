@@ -534,7 +534,9 @@ things in it had four different scopes and only one of them was about the page:
 - the view toggle, the box, the bench and Settings are the PAGE's, so they live in ONE menu behind a gear at the
   bottom-left — of the rail, or of the list when it is open (on a phone, in the list's header). It opens as a sheet
   of rows with a glyph each. It replaced a `⋮` floating bottom-right, which had to push the composer and a form's
-  last button out of its way; the left edge has nothing to fight.
+  last button out of its way; the left edge has nothing to fight. The box and the bench are asked for PER VIEW:
+  the open session's runtime where it offers one, otherwise the first online runtime that does, so reading a session
+  from a machine with no graphs does not take this browser's out of the menu (the label names whose they are).
 
 A phone keeps its header: it holds the way back, and there is no room to float anything over a 390px column.
 
@@ -543,7 +545,8 @@ composer's counters, quiet but present. Only what belongs to a thing you are REA
 table's controls, a code block's, a citation's tip. The rule exists because five separate hover-reveals turn
 finding a control into a memory game.
 
-**Settings** open in the main pane: the extension's own settings view (`settings.tsx`, the DevTools panel's), supplied
+**Settings** open as a SHEET in the main pane, the search page's shape (`settings-page.tsx`: one column, a title, a
+back arrow, Escape from anywhere via `useEscapeCloses`): the extension's own settings view (`settings.tsx`, the DevTools panel's), supplied
 through `ChatExtras.settings` and offered where the runtime reports `localSettings` — so only the extension build
 has it, and it edits the same `chrome.storage.sync` the popup and the panel do.
 

@@ -12,7 +12,7 @@ import { parseSessionKey } from "../session-host";
 import { DetailView } from "../sidebar/session-detail";
 import { Composer } from "../sidebar/composer";
 import { AgentBadge } from "../sidebar/reply";
-import { IconBack, IconBench, IconCompose, IconCamera, IconChevron, IconClose, IconHistory, IconMore, IconPin, IconSave, IconSearch, IconVram } from "../sidebar/icons";
+import { IconBench, IconCompose, IconCamera, IconChevron, IconClose, IconHistory, IconMore, IconPin, IconSave, IconSearch, IconVram } from "../sidebar/icons";
 import { services } from "../sidebar/services";
 import { ContextMenu, CursorTipLayer, Dot, Hash, Stamp, cursorTipOn } from "../sidebar/ui-kit";
 import { benchOpen, openBench, rev, sessionMap, view, type Status } from "../sidebar/store";
@@ -25,6 +25,7 @@ import { ListToggle, ViewToggle, calm, foldedRuntimes, listOpen, pane, pinned, s
 import { DeleteConfirm, RowMenu } from "./row-menu";
 import { GearMenu, Rail, mainView, openSearch } from "./nav";
 import { SearchPage } from "./search-page";
+import { SettingsPage } from "./settings-page";
 import type { ChatExtras } from "./extras";
 import { lightboxSrc, type ClientPlatform } from "./platform";
 
@@ -539,9 +540,14 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
     // WHOSE box the device's own views describe: the open session's runtime, or — with nothing open — the first
     // one that offers anything. Never "the local one": that question is not asked anywhere on this page.
     const openRt = key ? store.runtime(parseSessionKey(key)?.runtime ?? "") : undefined;
-    const deviceRt = openRt ?? store.runtimes.value.find((r) => r.online && (r.capabilities.resourcePanel || r.capabilities.pythonBench));
-    const asideRt = !narrow && pane.value === "resource" && deviceRt?.capabilities.resourcePanel ? deviceRt : undefined;
-    const benchRt = !narrow && benchOpen.value && deviceRt?.capabilities.pythonBench ? deviceRt : undefined;
+    // Asked per VIEW: reading a session on a machine that has no graphs must not take the graphs of one that does out
+    // of the menu. Every label names the machine it describes, so falling back is never ambiguous about whose it is.
+    const offering = (can: (r: RuntimeInfo) => boolean): RuntimeInfo | undefined =>
+        openRt && can(openRt) ? openRt : store.runtimes.value.find((r) => r.online && can(r));
+    const graphsRt = offering((r) => !!r.capabilities.resourcePanel && extras?.resourcePanel?.(r.id) != null);
+    const benchOwner = offering((r) => !!r.capabilities.pythonBench && extras?.bench?.(r.id) != null);
+    const asideRt = !narrow && pane.value === "resource" ? graphsRt : undefined;
+    const benchRt = !narrow && benchOpen.value ? benchOwner : undefined;
     const aside = asideRt ? extras?.resourcePanel?.(asideRt.id) : null;
     const bench = benchRt ? extras?.bench?.(benchRt.id) : null;
     // The runtime whose settings this device may edit: one that reports `localSettings` and this device can draw.
@@ -551,8 +557,8 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
     useEffect(() => { if (key) store.open(key); else store.close(); }, [key]);
     useEffect(() => { if (key) { setStarting(null); mainView.value = null; } }, [key]);   // opening a session puts the form and the search page away
     const start = (k: StartKind) => { mainView.value = null; setStarting(k); };
-    const gear = <GearMenu extras={extras} rt={deviceRt} settingsRt={settingsRt} />;
-    const gearWide = <GearMenu extras={extras} rt={deviceRt} settingsRt={settingsRt} labelled />;
+    const gear = <GearMenu extras={extras} graphsRt={graphsRt} benchRt={benchOwner} settingsRt={settingsRt} />;
+    const gearWide = <GearMenu extras={extras} graphsRt={graphsRt} benchRt={benchOwner} settingsRt={settingsRt} labelled />;
     const settings = main === "settings" && settingsRt ? extras?.settings?.(settingsRt.id) : null;
     return (
         <div class={`chat${narrow ? " narrow" : ""}${calm.value ? " calm" : ""}${!narrow && !listOpen.value ? " list-hidden" : ""}${aside ? " pane-open" : ""}`}>
@@ -561,15 +567,7 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
             {!narrow && !listOpen.value ? <Rail store={store} onStart={start} gear={gear} /> : null}
             {(!narrow || (!key && !starting && !main)) ? <SessionList store={store} activeKey={key} narrow={narrow} onStart={start} gear={gear} gearWide={gearWide} /> : null}
             {main === "search" && (!narrow || !key) ? <SearchPage store={store} narrow={narrow} />
-                : settings ? (
-                    <main class="chat-main chat-settings" aria-label="Settings">
-                        <div class="head chat-head">
-                            <button class="nav" aria-label="Close settings" onClick={() => (mainView.value = null)}><IconBack /></button>
-                            <b>Settings</b>
-                        </div>
-                        <div class="view chat-settings-body">{settings}</div>
-                    </main>
-                )
+                : settings ? <SettingsPage>{settings}</SettingsPage>
                 : starting ? <NewSession store={store} kind={starting} onCancel={() => setStarting(null)}
                     onStarted={(k) => { setStarting(null); openSession(k); }} />
                     : key ? <SessionPane store={store} sessionKey={key} narrow={narrow} />
@@ -580,7 +578,7 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
                                 {calm.value ? null : (
                                     <div class="head chat-head">
                                         <span class="sp" />
-                                        <DeviceViews extras={extras} rt={deviceRt} />
+                                        <DeviceViews extras={extras} rt={graphsRt ?? benchOwner} />
                                         <ViewToggle />
                                     </div>
                                 )}

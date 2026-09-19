@@ -128,6 +128,13 @@ test("the box's panel and the Python bench are on this page, because THIS browse
         await expect(chat.locator(".chat-settings")).toBeVisible();
         await chat.getByRole("button", { name: "Close settings" }).click();
         await expect(chat.locator(".chat-settings")).toHaveCount(0);
+        // A sheet like the search page: Escape takes you back from anywhere on it.
+        await gear.click();
+        await chat.getByRole("menuitem", { name: "Settings" }).click();
+        await expect(chat.locator(".chat-settings h1")).toHaveText("Settings");
+        await chat.locator(".chat-settings h1").click();
+        await chat.keyboard.press("Escape");
+        await expect(chat.locator(".chat-settings")).toHaveCount(0);
 
         // The bench is not a picture of one: it runs, through this browser's own offscreen sandbox, from a page
         // that is not the panel. A drawer that opened and could not run would be worse than no drawer.

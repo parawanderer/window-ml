@@ -23,7 +23,7 @@ The page opens in CALM view (`src/chat/view-mode.tsx`), which on a wide screen h
 transcript's first line (`.chat-lede`). With the list hidden a rail (`.chat-rail`) keeps `☰`, new session and search
 at the left edge. The page's tools live in the gear's menu (`.chat-gear-btn`, bottom-left of the rail or the list):
 "Calm view" (a `menuitemcheckbox`, which hands the DevTools panel's full detail back), the box, the bench and, in the
-extension, Settings. Search and older sessions are one page in the main pane (`.chat-search`). Both view choices are stored per device, so a screenshot run or a spec that
+extension, Settings. Search and older sessions are one page in the main pane (`.chat-search`); Settings is a sheet of the same shape (`.chat-settings`, extension only). Both view choices are stored per device, so a screenshot run or a spec that
 cares about either must set or assert it rather than assume. Both are plain CSS over the same
 document — nothing is removed, so a locator still finds a quieted element and `toBeHidden()` is the assertion that
 means anything.

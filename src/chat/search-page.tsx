@@ -10,7 +10,7 @@ import { IconBack, IconSearch } from "../sidebar/icons";
 import { truncate } from "../sidebar/format";
 import { view } from "../sidebar/store";
 import type { ChatStore } from "./chat-store";
-import { mainView } from "./nav";
+import { mainView, useEscapeCloses } from "./nav";
 
 /** How many sessions are drawn at a time; scrolling to the end of them draws the next page. */
 const PAGE = 40;
@@ -42,18 +42,7 @@ export function SearchPage({ store, narrow }: { store: ChatStore; narrow: boolea
     // Name the runtime only when the results span more than one: otherwise it is the same word on every row.
     const many = new Set(all.map((s) => s.id.runtime)).size > 1;
     useEffect(() => { box.current?.focus(); }, []);
-    // Escape closes the page from ANYWHERE on it, not only from inside the box: clicking a date or the page's margin
-    // took focus out of the input and left no key that closed it. The box keeps its own first step (clear what was
-    // typed), and a menu or dialog open over the page gets the key instead.
-    useEffect(() => {
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key !== "Escape" || e.defaultPrevented || e.target === box.current) return;
-            if (document.querySelector(".chat-menu, .chat-dialog")) return;
-            mainView.value = null;
-        };
-        document.addEventListener("keydown", onKey);
-        return () => document.removeEventListener("keydown", onKey);
-    }, []);
+    useEscapeCloses(box);
     useEffect(() => { setShown(PAGE); }, [q]);
     useEffect(() => {
         const el = sentinel.current;
@@ -65,10 +54,10 @@ export function SearchPage({ store, narrow }: { store: ChatStore; narrow: boolea
     const open = (key: string) => { mainView.value = null; view.value = { name: "detail", hash: key }; };
     return (
         <main class="chat-main chat-search" aria-label="Search sessions">
-            <div class="view chat-search-scroll">
-                <div class="chat-search-col">
+            <div class="view chat-sheet-scroll">
+                <div class="chat-sheet-col">
                     {narrow ? (
-                        <button class="nav chat-search-back" aria-label="Back to sessions" onClick={() => (mainView.value = null)}><IconBack /></button>
+                        <button class="nav chat-sheet-back" aria-label="Back to sessions" onClick={() => (mainView.value = null)}><IconBack /></button>
                     ) : null}
                     <label class="chat-search-box">
                         <IconSearch />
