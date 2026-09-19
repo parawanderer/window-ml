@@ -13,7 +13,9 @@ import { webPlatform } from "./platform";
 import { installViewPrefs } from "./view-mode";
 import { ChatApp } from "./chat-app";
 
-const host = demoHost();
+// `__chatFakeLatencyMs`, set by a spec's init script before load, slows every answer: how a spec sees what the page
+// draws while it waits (a first list, a placeholder), which an instant demo host never shows.
+const host = demoHost(Date.now(), { latencyMs: Number((globalThis as { __chatFakeLatencyMs?: unknown }).__chatFakeLatencyMs) || 0 });
 // Scripting handle for the specs and for poking at the page by hand: emit events, restart a runtime, change grants.
 (globalThis as { __chatFake?: unknown }).__chatFake = host;
 const store = new ChatStore(host);

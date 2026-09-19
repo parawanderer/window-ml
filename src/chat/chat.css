@@ -927,6 +927,13 @@ button.chat-page-go:hover { color: var(--fg); }
 /* The start row's two pickers, capped so the row fits the start box on one line at its full width (42rem): the kind
    switch, both pills and the send. The text ellipsizes; the whole name is in the list. */
 .tp-pill-tab, .tp-pill.tp-pill-tab { flex: 0 1 auto; max-width: 14rem; }
+/* A pill still waiting for its list: the model pill's size, a slow shimmer across it, nothing to read. */
+.tp-pill.tp-pill-wait { width: 9rem; height: 30px; box-sizing: border-box; cursor: default; background: linear-gradient(90deg, var(--panel-2) 0%, var(--panel-2-hover) 50%, var(--panel-2) 100%); background-size: 200% 100%; animation: chat-pill-shimmer 1.2s ease-in-out infinite; }
+@keyframes chat-pill-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+/* The pill that replaces it arrives with a short fade and slide from the left. */
+.tp-pill-in { animation: chat-pill-in .22s ease-out; }
+@keyframes chat-pill-in { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .tp-pill.tp-pill-wait, .tp-pill-in { animation: none; } }
 .tp-pill-model, .tp-pill.tp-pill-model { flex: 0 1 auto; max-width: 12rem; }
 /* The pill's down caret. */
 .tp-caret { flex: 0 0 auto; opacity: .7; }

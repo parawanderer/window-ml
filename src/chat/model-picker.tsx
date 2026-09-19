@@ -10,7 +10,7 @@ import type { ModelChoice } from "../session-host";
 import { usePickerPop } from "./pop-picker";
 
 /** The pill and its list. `models` is the runtime's list with embedding models already left out. */
-export function ModelPicker({ models, value, onChange }: { models: readonly ModelChoice[]; value: string; onChange: (id: string) => void }) {
+export function ModelPicker({ models, value, onChange, arrived }: { models: readonly ModelChoice[]; value: string; onChange: (id: string) => void; arrived?: boolean }) {
     const dflt = models.find((m) => m.default);
     const others = models.filter((m) => !m.default).map((m) => m.id).sort((a, b) => a.localeCompare(b));
     const where = new Map(models.map((m) => [m.id, m.where]));
@@ -28,7 +28,7 @@ export function ModelPicker({ models, value, onChange }: { models: readonly Mode
     const name = value || (dflt ? `Default · ${dflt.id}` : "Default");
     return (
         <>
-            <button {...p.pillProps} class="tp-pill tp-pill-model" aria-label={`Model: ${name}`}>
+            <button {...p.pillProps} class={`tp-pill tp-pill-model${arrived ? " tp-pill-in" : ""}`} aria-label={`Model: ${name}`}>
                 <span class="tp-pill-text">{label}</span>
                 <svg class="tp-caret" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
             </button>

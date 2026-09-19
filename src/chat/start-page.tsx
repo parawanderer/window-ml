@@ -18,6 +18,9 @@ import { mayCommand } from "./grants";
 import { ModelPicker } from "./model-picker";
 import { startableOn, useTargetPick, type StartKind } from "./new-session";
 
+/** Each runtime's model list as last answered, for the page's life: a start page opened again draws it at once. */
+const modelCache = new Map<string, ModelChoice[]>();
+
 /** How long a runtime that dropped away still keeps the start page drawn: the extension's worker is stopped by the
  *  browser whenever it idles (about every 30 seconds) and is back within a second, and redrawing the page from
  *  nothing each time read as the page reloading on its own. */
@@ -61,17 +64,25 @@ export function StartPage({ store, onStarted, initialKind, extras }: { store: Ch
     const pick = useTargetPick(store, rt, kind === "agent", extras);
     // The chosen runtime's models, asked once per runtime (the first answer costs it a capability probe per model,
     // cached after). "" is the runtime's own default, which sends no `model` at all, so its choice stands.
-    const [models, setModels] = useState<ModelChoice[] | null>(null);
+    // The last list each runtime gave is drawn at once and refreshed behind it, so only the first open of the page
+    // waits (with a placeholder pill the real one fades into, rather than a pill that jumps into the row).
+    const [models, setModels] = useState<ModelChoice[] | null>(() => (rt ? modelCache.get(rt.id) ?? null : null));
     const [model, setModel] = useState("");
+    // Whether a placeholder was drawn: only then does the real pill animate in (a cached list is simply there).
+    const waited = useRef(false);
+    if (models === null) waited.current = true;
     const canList = !!rt && mayCommand(rt, "models.list");
     useEffect(() => {
-        setModels(null); setModel("");
+        setModels(rt ? modelCache.get(rt.id) ?? null : null); setModel("");
         if (!rt || !canList) return;
         let live = true;
-        void store.send({ type: "models.list", runtime: rt.id }, { quiet: true }).then((r) => {
+        const id = rt.id;
+        void store.send({ type: "models.list", runtime: id }, { quiet: true }).then((r) => {
             // An embedding model cannot chat or run an agent. Absent kinds mean UNKNOWN (a cloud model), never "none",
             // so only a model that says it embeds is left out.
-            if (live) setModels(r.ok ? r.data.models.filter((m) => !m.kinds?.includes("embedding")) : []);
+            const list = r.ok ? r.data.models.filter((m) => !m.kinds?.includes("embedding")) : [];
+            if (r.ok) modelCache.set(id, list);
+            if (live) setModels(list);
         });
         return () => { live = false; };
     }, [rt?.id, canList]);
@@ -117,7 +128,8 @@ export function StartPage({ store, onStarted, initialKind, extras }: { store: Ch
                             </div>
                         ) : null}
                         {pick.inline}
-                        {models && models.length ? <ModelPicker models={models} value={model} onChange={setModel} /> : null}
+                        {models && models.length ? <ModelPicker models={models} value={model} onChange={setModel} arrived={waited.current} />
+                            : models === null && canList ? <span class="tp-pill tp-pill-model tp-pill-wait" role="status" aria-label="Loading models" /> : null}
                         {!rt.online ? <span class="chat-start-wait">Reconnecting…</span> : null}
                         {runtimes.length > 1 ? (
                             <select class="chat-pick-rt" aria-label="Runtime" value={rt.id} onChange={(e: any) => setRuntimeId(e.target.value)}>

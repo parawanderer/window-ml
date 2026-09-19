@@ -722,3 +722,25 @@ test("the start row fits one line at the start box's full width, however long th
     expect(Math.max(...tops) - Math.min(...tops), `row items' centres: ${tops.join(", ")}`).toBeLessThanOrEqual(4);
     await page.close();
 });
+
+test("the model pill waits as a placeholder of its own size and slides in; a second open draws it at once", async () => {
+    const page = await browser.newPage({ viewport: DESKTOP });
+    await page.addInitScript(() => { globalThis.__chatFakeLatencyMs = 700; });
+    await page.goto(server.url);
+    const wait = page.getByRole("status", { name: "Loading models" });
+    await expect(wait).toBeVisible();
+    const rowBox = () => page.locator(".chat-start-row").boundingBox();
+    const before = await rowBox();
+    const pill = page.getByRole("button", { name: /^Model:/ });
+    await expect(pill).toBeVisible();
+    await expect(wait).toHaveCount(0);
+    await expect(pill).toHaveClass(/tp-pill-in/);
+    // The row kept its height: the placeholder held the pill's place.
+    expect(Math.abs((await rowBox()).height - before.height)).toBeLessThanOrEqual(1);
+    // Away to a session and back: the list is remembered, so no placeholder and no animation this time.
+    await page.locator(".chat-row").first().click();
+    await page.locator(".chat-list .chat-start").click();
+    await expect(pill).toBeVisible();
+    await expect(pill).not.toHaveClass(/tp-pill-in/);
+    await page.close();
+});
