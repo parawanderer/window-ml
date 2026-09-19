@@ -3247,3 +3247,9 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .stor-toolrow > :first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stor-toolbar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
 .stor-toolbar > span { display: block; height: 100%; background: var(--warn); }
+
+/* The Settings ARCHIVE FOLDER section (archive-section.tsx): one state at a time, its next step a primary button. */
+.arch { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.arch-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.arch-primary { font-weight: 600; }
+.arch-msg { color: var(--fg); }

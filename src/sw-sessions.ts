@@ -17,7 +17,7 @@ import { cleanTitle, titleMessages } from "./session-title";
 import { bgRuns, trackRun, untrackRun } from "./sw-runs";
 import { fetchLLM, getConfig, listAvailableModels, modelCapabilitiesBatch } from "./sw-llm";
 import { recordHousekeeping } from "./sw-housekeeping";
-import { archiveCall } from "./sw-archive";
+import { archiveCall, scheduleFolderSync } from "./sw-archive";
 import { appendSnapshot, measureEvents, summarizeStore, type StorageReport, type StorageSnapshot, type StoreBytes } from "./session-storage-stats";
 
 /**
@@ -138,7 +138,10 @@ export function configureSessionCommands(run: RunDeps): void {
             await sessionStore?.forget([hash]);
             // A session is in the live store OR the archive; deleting it means from both. Only when the archive is on:
             // otherwise nothing was ever moved there, and asking would start SQLite for every delete.
-            if (archiveOn) await archiveCall("remove", { hash }).catch(() => { /* not archived, or the archive is unavailable */ });
+            if (archiveOn) {
+                const removed = await archiveCall<boolean>("remove", { hash }).catch(() => false);
+                if (removed) scheduleFolderSync();   // its month's folder file is rewritten without it
+            }
             try { await chrome.storage.local.remove(`ml_session_${hash}`); } catch { /* storage unavailable */ }
         },
         keepSession,
@@ -257,6 +260,7 @@ export const sessionStore = (() => {
                 enabled: () => archiveOn,
                 move: async (row, events) => {
                     await archiveCall<boolean>("put", { input: { summary: row.summary, events, history: row.history ?? null, split: row.split, bytes: row.bytes }, archivedTs: Date.now() });
+                    scheduleFolderSync();
                 },
             },
             retainMs: () => Math.max(0, retentionDays) * DAY_MS,
@@ -542,6 +546,11 @@ export function serveSessionsPort(port: chrome.runtime.Port): void {
 
 // The storage history's clock. An alarm, not a timer: a timer is what would keep the worker alive to wait for it.
 try {
-    chrome.alarms?.onAlarm.addListener((a) => { if (a.name === SNAPSHOT_ALARM) void recordStorageSnapshot().catch(() => {}); });
+    chrome.alarms?.onAlarm.addListener((a) => {
+        if (a.name !== SNAPSHOT_ALARM) return;
+        void recordStorageSnapshot().catch(() => {});
+        // The same clock catches a folder whose grant came back (re-granted from a page since the last write).
+        if (archiveOn) void archiveCall("sync").catch(() => {});
+    });
     void chrome.alarms?.get(SNAPSHOT_ALARM).then((a) => { if (!a) void chrome.alarms.create(SNAPSHOT_ALARM, { periodInMinutes: SNAPSHOT_CHECK_MIN }); }).catch(() => {});
 } catch { /* no alarms (a test harness) */ }

@@ -50,3 +50,51 @@ test("a session goes into the OPFS archive and reads back, images restored, sear
         await ext.close();
     }
 });
+
+test("the folder: a sync writes the month's file, a delete rewrites it away, and an import restores what it holds", async () => {
+    const ext = await launchExtension();
+    try {
+        const page = await ext.context.newPage();
+        await page.goto(`chrome-extension://${ext.extensionId}/popup.html`);
+        // A native picker cannot be clicked from a test. A directory in the origin-private file system is a real,
+        // already-granted FileSystemDirectoryHandle, so it stands in for the folder a person picked.
+        await page.evaluate(async () => {
+            const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle("picked-folder", { create: true });
+            const db = await new Promise((res, rej) => { const r = indexedDB.open("ml-archive-folder", 1); r.onupgradeneeded = () => r.result.createObjectStore("h"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+            await new Promise((res) => { const t = db.transaction("h", "readwrite"); t.objectStore("h").put(dir, "dir"); t.oncomplete = res; });
+        });
+        const files = () => page.evaluate(async () => {
+            const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle("picked-folder");
+            const out = [];
+            for await (const [name] of dir.entries()) out.push(name);
+            return out.sort();
+        });
+
+        const sept = Date.UTC(2026, 8, 10);
+        const session = (hash, lastTs) => ({ summary: { id: { runtime: "local", hash }, kind: "agent", status: "done", task: `task ${hash}`, createdTs: lastTs, lastTs, pendingApprovals: 0, saved: true },
+            events: [{ kind: "agent", id: hash, ts: lastTs, session: { hash, turn: 0 }, task: `remember ${hash}` }], history: null, bytes: 100 });
+        await archive(ext, "put", { input: session("f01de001", sept), archivedTs: 1 });
+        await archive(ext, "put", { input: session("f01de002", sept + 1000), archivedTs: 1 });
+
+        const picked = await archive(ext, "resync");
+        expect(picked.result).toMatchObject({ state: "connected", written: ["2026-09"], pending: 0 });
+        expect(await files()).toEqual(["2026-09.sqlite"]);
+
+        // Both sessions deleted: the month is empty, so its file goes. A delete reaches the folder.
+        await archive(ext, "remove", { hash: "f01de001" });
+        await archive(ext, "remove", { hash: "f01de002" });
+        const emptied = await archive(ext, "sync");
+        expect(emptied.result).toMatchObject({ removed: ["2026-09"] });
+        expect(await files()).toEqual([]);
+
+        // A wiped profile: the file is in the folder, the archive is empty; import brings it back.
+        await archive(ext, "put", { input: session("f01de003", sept), archivedTs: 1 });
+        await archive(ext, "sync");
+        await archive(ext, "remove", { hash: "f01de003" });   // gone from the archive; the folder still has it (not synced)
+        const imported = await archive(ext, "import");
+        expect(imported.result.imported).toEqual({ files: 1, sessions: 1 });
+        expect((await archive(ext, "read", { hash: "f01de003" })).result.events[0].task).toBe("remember f01de003");
+    } finally {
+        await ext.close();
+    }
+});
