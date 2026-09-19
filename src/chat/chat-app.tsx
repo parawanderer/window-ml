@@ -27,7 +27,8 @@ import { ListToggle, ViewToggle, calm, codeSize, foldedRuntimes, panelSize, list
 import { DeleteConfirm, RenameDialog, RowMenu, isPinned } from "./row-menu";
 import { GearMenu, Rail, mainView, openSearch } from "./nav";
 import { SearchPage } from "./search-page";
-import { SettingsPage } from "./settings-page";
+import { SettingsPage, settingsTab } from "./settings-page";
+import { formatRoute, parseRoute } from "./route";
 import { DockFrame, type DockPanel } from "./dock";
 import type { ChatExtras } from "./extras";
 import { lightboxSrc, type ClientPlatform } from "./platform";
@@ -60,17 +61,21 @@ function useNarrow(): boolean {
  *  gesture and the button agree); a session opened from a link has no entry of ours beneath it to go back to. */
 let pushedEntry = false;
 
-/** The open session lives in the URL (`#s=<key>`), so a reload stays put and a phone's back gesture returns to the
- *  list. The view signal stays the source of truth for the shared components; this only mirrors it both ways. */
+/**
+ * The page's ADDRESS mirrors what is on screen, both ways (route.ts): the open session, or a main view and its tab. So
+ * a reload stays put, a link opens a view (`#/settings/devices`), and a phone's back gesture undoes the last step. The
+ * signals stay the source of truth for the shared components; this only mirrors them.
+ */
 function useHashRoute(): void {
     useEffect(() => {
         const read = () => {
-            const m = /^#s=(.+)$/.exec(location.hash);
-            const key = m ? decodeURIComponent(m[1]) : null;
-            const want = key && parseSessionKey(key) ? { name: "detail" as const, hash: key } : { name: "list" as const };
+            const r = parseRoute(location.hash);
+            const key = r.session && parseSessionKey(r.session) ? r.session : null;
             const v = view.value;
-            if (want.name === "list") pushedEntry = false;
-            if (want.name !== v.name || (want.name === "detail" && v.name === "detail" && want.hash !== v.hash)) view.value = want;
+            if (key) { if (v.name !== "detail" || v.hash !== key) view.value = { name: "detail", hash: key }; }
+            else if (!r.main) { pushedEntry = false; if (v.name !== "list") view.value = { name: "list" }; }
+            if (r.tab) settingsTab.value = r.tab;
+            if (mainView.value !== (r.main ?? null)) mainView.value = r.main ?? null;
         };
         read();
         addEventListener("hashchange", read);
@@ -78,13 +83,18 @@ function useHashRoute(): void {
     }, []);
     const v = view.value;
     const key = v.name === "detail" ? v.hash : null;
+    const main = mainView.value;
+    const tab = settingsTab.value;
     useEffect(() => {
-        const want = key ? `#s=${encodeURIComponent(key)}` : "";
+        const want = formatRoute({ session: key ?? undefined, main: main ?? undefined, tab: main === "settings" ? tab : undefined });
         if (location.hash === want || (!want && !location.hash)) return;
-        // Opening a session is a step you go back from; closing one is that step undone.
-        if (want) { history.pushState(null, "", want); pushedEntry = true; }
-        else { history.replaceState(null, "", location.pathname + location.search); pushedEntry = false; }
-    }, [key]);
+        const here = parseRoute(location.hash);
+        // A step you go back from is pushed; rewriting the SAME place (an old `#s=` link, another settings tab) is not.
+        const same = formatRoute(here) === want || (here.main === "settings" && main === "settings");
+        if (!want) { history.replaceState(null, "", location.pathname + location.search); pushedEntry = false; }
+        else if (same) history.replaceState(null, "", want);
+        else { history.pushState(null, "", want); pushedEntry = true; }
+    }, [key, main, tab]);
 }
 
 /** Open a session: the one navigation the page has. */
