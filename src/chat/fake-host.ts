@@ -8,7 +8,7 @@
 import type { MlDebugEvent } from "../contract-debug";
 import {
     COMMAND_SCOPE, SESSION_CONTRACT_VERSION, sessionKey,
-    type Command, type CommandResult, type HostStatus, type Principal, type RuntimeId, type RuntimeInfo, type SessionHost,
+    type Command, type CommandResult, type HostStatus, type ModelChoice, type Principal, type RuntimeId, type RuntimeInfo, type SessionHost,
     type SessionId, type SessionIndexUpdate, type SessionKey, type SessionStreamMessage, type SessionSummary, type StreamPosition, type Unsubscribe,
 } from "../session-host";
 import { capTitle } from "../session-title";
@@ -93,6 +93,13 @@ export class FakeHost implements SessionHost {
      * then says where they begin (`from`) and `session.backfill` serves the rest. Unset: the whole history, `from: 0`.
      */
     ringLimit?: number;
+    /** What `models.list` answers, on every runtime. */
+    models: ModelChoice[] = [
+        { id: "qwen3:32b", kinds: ["completion", "tools", "thinking"], default: true },
+        { id: "gemma3:27b", kinds: ["completion", "vision"] },
+        { id: "nomic-embed-text", kinds: ["embedding"] },
+    ];
+
     /** A short ring WITHOUT the session's start, as an older runtime would send it, to exercise the fallback. */
     ringDropsStart?: boolean;
 
@@ -296,6 +303,8 @@ export class FakeHost implements SessionHost {
                 const from = Math.max(0, end - Math.min(c.limit ?? 40, 40));
                 return ok({ session: h.summary.id, epoch: h.epoch, events: h.log.slice(from, end).map((e) => e.event), from, more: from > 0, truncated: from === 0 && h.lostBefore > 0 });
             }
+            case "models.list":
+                return ok({ models: this.models });
             case "runtime.info":
                 return ok({ kind: rt.kind, contractVersion: rt.contractVersion, capabilities: caps, nowMs: Date.now() });
             // Starting a session: the demo world mints one and answers the first turn, so the new-session form is

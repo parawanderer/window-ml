@@ -8,9 +8,9 @@
 import type { NeutralMessage } from "./contract-chat";
 import type { MlDebugEvent } from "./contract-debug";
 import type { SessionHistory } from "./session-store";
-import type { Command, CommandError, CommandResult, CommandType, SessionId, TabInfo } from "./session-host";
-import type { SessionIndex } from "./session-index";import { capTitle } from "./session-title";
-
+import type { Command, CommandError, CommandResult, CommandType, ModelChoice, SessionId, TabInfo } from "./session-host";
+import type { SessionIndex } from "./session-index";
+import { capTitle } from "./session-title";
 
 /** What a page said it did with a relayed session action. `no-answer`: it did not reply in time. */
 export type PageOutcome = "steer" | "turn" | "cancelled" | "continued" | "busy" | "none" | "no-answer";
@@ -55,6 +55,8 @@ export interface CommandDeps {
     hostsChat(hash: string): boolean;
     /** keep this session past the worker's life: what an absent `ephemeral` means on the command that started it */
     keepSession(hash: string): void;
+    /** the models this runtime would accept, after its whitelist, its default marked */
+    listModels(): Promise<ModelChoice[]>;
     /** pin or unpin a session this runtime holds: saved first when pinning, then the row changed and written */
     pinSession(hash: string, pinned: boolean): void;
     /** name a session (a capped, non-empty title), or with null return it to a generated title */
@@ -243,6 +245,10 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
         "runtime.info": async (c) => ownRuntime(c) ?? ok({ ...deps.describe(), nowMs: deps.now() }),
 
         "tabs.list": async (c) => ownRuntime(c) ?? ok({ tabs: await deps.listTabs() }),
+
+        // An unreachable backend is an empty list, not a failure: the picker then offers the default, which is what
+        // a start command would use anyway, rather than an error in a box someone opened to type into.
+        "models.list": async (c) => ownRuntime(c) ?? ok({ models: await deps.listModels().catch(() => []) }),
 
         // A chat with no page behind it, hosted by the worker (sw-chat.ts). It answers as soon as the first turn is
         // UNDER WAY rather than when it finishes, so the client subscribes and watches the answer arrive; a chat that

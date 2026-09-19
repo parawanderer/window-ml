@@ -51,6 +51,7 @@ function world(over = {}) {
         cancelChat: rec("cancelChat", true),
         hostsChat: rec("hostsChat", false),
         keepSession: rec("keepSession"),
+        listModels: rec("listModels", async () => [{ id: "m", default: true }]),
         pinSession: rec("pinSession", (hash, pinned) => { index.setPinned(hash, pinned); }),
         renameSession: rec("renameSession", (hash, title) => { index.setTitle(hash, title, !!title); }),
         startAgent: rec("startAgent", async () => ({ outcome: "started", hash: "ab120001" })),
@@ -145,6 +146,14 @@ test("session.continue only for a run stopped at its cap, through the page that 
         w.deps.toPage = async (_t, action, body) => { assert.deepEqual([action, body], ["continue", { hash: "aaaa0001" }]); return outcome; };
         assert.equal(code(await createCommandHandler(w.deps)({ type: "session.continue", session: sid("aaaa0001") })), expected, outcome);
     }
+});
+
+test("models.list: this runtime's list, another runtime's refused, and an unreachable backend is an empty list", async () => {
+    const { run } = world();
+    assert.deepEqual(await run({ type: "models.list", runtime: "local" }), { ok: true, data: { models: [{ id: "m", default: true }] } });
+    assert.equal(code(await run({ type: "models.list", runtime: "laptop" })), "not-found");
+    const down = world({ listModels: async () => { throw new Error("ECONNREFUSED"); } });
+    assert.deepEqual(await down.run({ type: "models.list", runtime: "local" }), { ok: true, data: { models: [] } });
 });
 
 test("session.pin: bounded, idempotent, and handed to the one pin path", async () => {

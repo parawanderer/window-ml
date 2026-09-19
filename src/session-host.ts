@@ -314,6 +314,9 @@ export type Command =
      * the session to a generated one. A renamed session is never re-titled by the runtime.
      */
     | { type: "session.rename"; session: SessionId; title: string }
+    /** The models a runtime would accept for `chat.start` / `agent.start`: after its own whitelist, so the whitelist
+     *  holds over the contract too. */
+    | { type: "models.list"; runtime: RuntimeId }
     /** Answer an open approval gate, keyed by the pending step's `seq`. Handed to the runtime's one
      *  `resolveApproval`; nothing new decides a gate. `persist` also remembers the call's egress grants, which the
      *  runtime re-derives from the call itself. */
@@ -423,6 +426,7 @@ export const COMMAND_SCOPE: { readonly [T in CommandType]: Scope } = {
     "session.delete": "drive",
     "session.pin": "drive",
     "session.rename": "drive",
+    "models.list": "view",
     "approval.answer": "approve",
     "chat.start": "drive",
     "agent.start": "drive",
@@ -550,6 +554,13 @@ export interface TabInfo {
     windowId?: number;
 }
 
+/** One model a runtime offers, for a picker. */
+export interface ModelChoice {
+    id: string;
+    kinds?: string[];
+    default?: true;
+}
+
 /** What a successful command returns, by type. */
 export interface CommandResultData {
     /** `steer`: queued into the running loop; `turn`: started the next turn */
@@ -561,6 +572,13 @@ export interface CommandResultData {
     "session.pin": Record<string, never>;
     /** the title as the runtime stored it (trimmed and capped); empty when it went back to being generated */
     "session.rename": { title: string };
+    /**
+     * Each model the runtime would accept. `kinds` are its capabilities where the backend reports them
+     * (`completion`, `tools`, `vision`, `thinking`, `embedding`), absent when unknown, which is not "none". `default`
+     * marks the one a start command gets when it names no model. Empty when the backend could not be reached: a
+     * picker then shows the default and sends no `model`.
+     */
+    "models.list": { models: ModelChoice[] };
     /** `false`: the gate was already closed (answered on another surface, or the run was cancelled). Not an error:
      *  every surface shows the outcome from the session's events either way. */
     "approval.answer": { resolved: boolean };

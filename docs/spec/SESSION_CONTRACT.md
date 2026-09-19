@@ -177,6 +177,7 @@ runtime answers a type or option it does not offer with `unsupported`.
 | `session.continue`: past the step cap | drive | | `continueRun` |
 | `session.delete` | drive | `persistence` for saved sessions | nothing |
 | `session.rename`: a person's title, trimmed and capped (80); empty returns to a generated one; the row's `title` and `renamed` change by `upsert` | drive | | nothing |
+| `models.list`: what `chat.start`/`agent.start` would accept, after the runtime's whitelist, with `kinds` and the `default` marked; empty when the backend is unreachable | view | | `LIST_MODELS` |
 | `session.pin`: keep a session whatever the caps and retention say, or stop; the row's `pinned` changes by `upsert`; bounded, `conflict` past it | drive | `persistence` | nothing |
 | `approval.answer`: by the pending step's `seq`; `persist`, `feedback` | approve | | `approval` → `SET_APPROVAL` → `resolveApproval` |
 | `chat.start` | drive | `chat` | nothing background-hosted |
