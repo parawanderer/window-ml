@@ -13,6 +13,7 @@ import { webPlatform } from "./platform";
 import { installViewPrefs } from "./view-mode";
 import { installPageTheme } from "./page-theme";
 import { ChatApp } from "./chat-app";
+import { fakePairing } from "../pairing/fake-pairing";
 
 // `__chatFakeLatencyMs`, set by a spec's init script before load, slows every answer: how a spec sees what the page
 // draws while it waits (a first list, a placeholder), which an instant demo host never shows.
@@ -27,4 +28,13 @@ installViewPrefs(webPlatform.prefs);
 installPageTheme();
 try { installTooltipLayer(document); } catch { /* no DOM */ }
 store.start();
-render(<ChatApp store={store} platform={webPlatform} />, document.getElementById("root") || document.body);
+// Pairing, faked the same way: this phone is in an account and may pair others, but pass on only what it holds, and a
+// tablet is waiting under a code. `__pairFake` answers or fails a join, and swaps the membership, for the specs.
+const pairing = fakePairing({
+    joinsAs: "client", defaultLabel: "This phone",
+    membership: { label: "Shane's phone", role: "client", hubUrl: "wss://hub.example", fingerprint: "5ab0e19c44d2", root: false, mayPair: true },
+    grantable: ["view", "drive", "screen"],
+});
+pairing.addOffer("7K3M Q9XD", { label: "Kitchen tablet", role: "client", fingerprint: "a41c9e07d3b2" });
+(globalThis as { __pairFake?: unknown }).__pairFake = pairing;
+render(<ChatApp store={store} platform={{ ...webPlatform, pairing }} />, document.getElementById("root") || document.body);

@@ -3306,3 +3306,57 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .arch-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .arch-primary { font-weight: 600; }
 .arch-msg { color: var(--fg); }
+
+/* THE PAIRING SCREENS (pairing-ui.tsx): joining an account, creating one, pairing a device. Standalone, so they carry
+   their own buttons and fields rather than borrowing a surface's; each is one card that sits in any settings pane. */
+.pair-card { display: flex; flex-direction: column; gap: 10px; max-width: 560px; padding: 0 12px; }
+/* A pairing screen's heading: what this step is, or who is asking (a label that may be long and unbroken). */
+.pair-h { margin: 0; font-size: 1.08em; font-weight: 650; overflow-wrap: anywhere; }
+/* A pairing screen's explanation, one short paragraph per thing to do. */
+.pair-p { margin: 0; color: var(--fg-dim); line-height: 1.5; }
+/* A pairing screen's small print: a field's hint, the countdown, what a grant also carries. */
+.pair-hint { color: var(--fg-dim); font-size: .92em; line-height: 1.45; }
+/* Why a pairing step failed, with what to do next (pairingProblem). */
+.pair-problem { margin: 0; color: var(--err); line-height: 1.45; }
+/* A pairing screen's buttons: right-aligned, the primary last, pill-shaped like the chat page's dialogs. */
+.pair-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.pair-card .btn {
+    padding: 7px 14px; border-radius: 999px; border: 1px solid var(--border); background: none; color: var(--fg);
+    font: inherit; cursor: pointer;
+}
+.pair-card .btn:hover { background: var(--panel-2); }
+.pair-card .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pair-card .btn.primary { background: var(--fg); border-color: var(--fg); color: var(--bg); font-weight: 600; }
+.pair-card .btn.primary:hover { filter: brightness(.92); }
+.pair-card .btn:disabled { opacity: .6; cursor: default; }
+/* A labelled text field on a pairing screen: the label above, the input the card's width, a hint under it. */
+.pair-field { display: flex; flex-direction: column; gap: 4px; }
+/* The label over a pairing field, and the left column of the account's facts. */
+.pair-field-label { color: var(--fg-dim); font-size: .92em; }
+/* The text input itself (a device's name, the hub, a code), code-faced where what is typed is an address or a code. */
+.pair-input {
+    padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit;
+}
+.pair-input:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
+/* Anything on a pairing screen set in the code face: a typed code or hub, and the hub address shown back. */
+.pair-input.mono, .pair-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* THE TWO THINGS A PERSON READS OFF ONE SCREEN AND ONTO ANOTHER: the pairing code (large, to type) and the key
+   fingerprint (to compare character by character). Both in groups of four, as `wmlbox pair` prints them, in the code
+   face with wide tracking so an 8 and a B, a 0 and a D, are told apart at a glance. */
+.pair-code, .pair-fp {
+    align-self: flex-start; justify-self: start; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em;
+    padding: 8px 14px; border-radius: 10px; background: var(--panel-2); color: var(--fg); user-select: all;
+}
+.pair-code { font-size: 1.9em; font-weight: 650; }
+/* A key fingerprint, the one thing a person compares between the two screens before anything is paired. */
+.pair-fp { font-size: 1.35em; }
+/* What a new device may do, chosen on the device pairing it: a checkbox per scope, its words beside it. */
+.pair-grant { display: flex; flex-direction: column; gap: 7px; margin: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
+.pair-grant legend { padding: 0 4px; }
+/* One scope's checkbox and its words in the grant editor. */
+.pair-check { display: flex; gap: 9px; align-items: flex-start; line-height: 1.45; cursor: pointer; }
+.pair-check input { margin-top: .25em; accent-color: var(--accent); }
+.pair-check b { font-weight: 600; }
+/* This device on its account: the hub and its fingerprint, label and value in two columns. */
+.pair-facts { display: grid; grid-template-columns: max-content 1fr; gap: 8px 14px; align-items: center; }
+.pair-facts .pair-fp { font-size: 1.05em; padding: 4px 10px; }
