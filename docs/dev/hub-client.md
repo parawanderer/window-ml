@@ -173,7 +173,14 @@ reading it (`tests/hub-runtime.test.mjs`); `sw-hub.ts` plugs it into the worker.
   never bites while this runtime is up. Only when this runtime's leaf carries `may_revoke`. Each version is
   `max(now, last + 1)`.
 
-Not yet: envelope `pos` stamped from the store, keeping a session's start in the hub ring, pushing a changed
+**Paging back past the hub's ring.** A live event of a KEPT session carries `pos`, its index in the stored history
+(`SessionStore.nextPos`, asked before the event is queued, counting what is written, in flight and queued). The chat
+page turns the first ring event's `pos` into `backfilled.from`, and pages back with `session.backfill { before }`,
+which counts the same positions, down to the session's start. So a kept session's start needs no place in the hub
+ring. An unkept session has no stored history and no `pos`: once the ring rolls past its start, that start is gone,
+and `backfilled.truncated` says so.
+
+Not yet: keeping an UNKEPT session's start reachable over the hub, pushing a changed
 description (clients re-ask `runtime.info`), `device.renew` / `device.scopes`, and `DeviceInfo.rotation`. No vector
 is needed in the other direction: Ed25519 is deterministic, and signing the hub vector's body here reproduces its list
 byte for byte, so a list signed here is the same bytes the Rust verifier already accepts.

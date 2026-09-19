@@ -144,6 +144,8 @@ export class SessionStore {
     private readonly archiveFailed = new Map<string, number>();
     private flushing: Promise<void> = Promise.resolve();
     private ready: Promise<void> | null = null;
+    /** the rows on disk have been read, so a row's `count` is its real length */
+    private loaded = false;
 
     constructor(
         private readonly backend: SessionStoreBackend,
@@ -180,6 +182,7 @@ export class SessionStore {
     async open(): Promise<StoredSessionRow[]> {
         this.ready ??= (async () => {
             for (const row of await this.backend.rows()) this.rows.set(row.hash, row);
+            this.loaded = true;
         })();
         await this.ready;
         return [...this.rows.values()].sort((a, b) => b.lastTs - a.lastTs);
@@ -254,6 +257,16 @@ export class SessionStore {
     /** Is this session saved here? */
     has(hash: string): boolean {
         return this.rows.has(hash);
+    }
+
+    /**
+     * Where the next event queued for `hash` will sit in its stored history, counted as `session.backfill` counts it:
+     * what is written, in flight and queued. Undefined until the rows have been read, since a row created before then
+     * starts at 0 and `open` replaces it with the one on disk.
+     */
+    nextPos(hash: string): number | undefined {
+        if (!this.loaded) return undefined;
+        return (this.rows.get(hash)?.count ?? 0) + (this.pending.get(hash)?.length ?? 0);
     }
 
     /** Queue one event. Returns at once; the write happens on the next flush. */
@@ -370,6 +383,9 @@ export class SessionStore {
         // turn is readable and not continuable until something else happens to it.
         for (const hash of this.dirty) if (!batches.some(([h]) => h === hash)) batches.push([hash, []]);
         this.dirty.clear();
+        // Counted for every batch BEFORE any is written: `pending` is already empty, so a batch not yet counted would be
+        // in neither, and `nextPos` would hand a live event a position an earlier one is about to take.
+        const writes: [StoredSessionRow, number, MlDebugEvent[]][] = [];
         for (const [hash, events] of batches) {
             const row = this.rows.get(hash);
             // `forget` clears a session's queue as well as its row, so this is the second line of defence rather
@@ -385,8 +401,9 @@ export class SessionStore {
             // Only a session measured from its first event has a breakdown that means anything; an older one stays
             // unmeasured rather than claiming its newest events are all of it.
             if (row.split || from === 0) row.split = addBytes(row.split ?? emptyBytes(), m);
-            await this.backend.append({ ...row }, from, events);
+            writes.push([{ ...row }, from, events]);
         }
+        for (const [row, from, events] of writes) await this.backend.append(row, from, events);
         await this.evict();
     }
 
