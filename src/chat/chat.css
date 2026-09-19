@@ -130,7 +130,7 @@ html, body, #root { height: 100%; }
 .chat.narrow .head { padding: 8px 10px; min-height: 52px; }
 /* A narrow header's icons (the ⋮ beside the round back button) match it at any pointer: a mouse on a narrow window
    saw a 22px ⋮ beside a 36px back. */
-.chat.narrow .chat-head .hbtn { min-width: 36px; min-height: 36px; border-radius: 50%; }
+@media not (pointer: coarse) { .chat.narrow .chat-head .hbtn { min-width: 36px; min-height: 36px; border-radius: 50%; } }
 .chat.narrow .chat-row { padding: 10px 12px; min-height: 56px; }
 .chat.narrow .chat-transcript { padding: 8px 10px; }
 /* The step pill sits over a turn's first line, which a panel's wide first line leaves room for and a phone's does not:
