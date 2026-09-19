@@ -175,7 +175,9 @@ export class HubConnection {
         return () => {
             if (this.streams.get(key) !== listener) return;   // replaced by a later subscribe to the same stream
             this.streams.delete(key);
-            if (!this.stopped) this.client.unsubscribe(publisher, channel);
+            // A connection that has ended has nothing to tell the hub, which dropped the subscription with it.
+            if (this.stopped || this.closedWith !== null) return;
+            try { this.client.unsubscribe(publisher, channel); } catch { /* closed between the check and the send */ }
         };
     }
 

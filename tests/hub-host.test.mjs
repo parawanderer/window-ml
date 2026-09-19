@@ -49,7 +49,7 @@ async function world() {
     const conn = await HubConnection.open({ ...common, ...phone, role: Role.ROLE_CLIENT });
     const host = new HubHost(conn, channels, { id: hex(phone.principal), kind: "device", name: "phone" });
     const close = () => { conn.close(); rt.close(); hub.stop(); };
-    return { hub, runtime, phone, rt, pub, index, conn, host, id: hex(runtime.principal), close };
+    return { hub, root, channels, runtime, phone, rt, pub, index, conn, host, id: hex(runtime.principal), close };
 }
 
 test("the runtime is listed once it has said what it is, named by its verified label", LIVE, async () => {
@@ -111,4 +111,91 @@ test("a command reaches the runtime and its refusal comes back as a result", LIV
         assert.equal(r.ok, false);
         assert.equal(r.error.code, "unsupported", "the runtime's own answer, through the seal");
     } finally { w.close(); }
+});
+
+/** Drop a connection's socket as a sleeping phone would: the connection ends without anyone having called close(). */
+const drop = (conn) => conn.client.socket.close();
+
+/** A second client on the account, granted like the phone, for a host that opens its own connections: the hub admits
+ *  one connection per principal, and `world()` already holds the phone's. */
+async function tablet(w) {
+    const t = await device(w.root, Role.ROLE_CLIENT, [SCOPE.view, SCOPE.drive], "tablet");
+    await w.pub.deviceOnline({ id: hex(t.principal), scopes: [SCOPE.view, SCOPE.drive], recipient: { principal: t.principal, agreementKey: t.agreement.publicKey } });
+    const open = () => HubConnection.open({ url: w.hub.url, hubName: HUB, accountRoot: w.root.publicKey, ...t, role: Role.ROLE_CLIENT });
+    return { t, open, self: { id: hex(t.principal), kind: "device", name: "tablet" } };
+}
+
+test("a reconnecting host moves every subscription onto the new connection: nothing repeated, nothing lost", LIVE, async () => {
+    const w = await world();
+    const tb = await tablet(w);
+    const opened = [];
+    const host = HubHost.reconnecting(async () => {
+        const c = await tb.open();
+        opened.push(c);
+        return c;
+    }, w.channels, tb.self);
+    try {
+        const statuses = [], lists = [], index = [], got = [];
+        host.status((s) => statuses.push(s.state));
+        host.runtimes((r) => lists.push(r));
+        host.sessions((u) => index.push(u));
+        const ev = (cursor, text) => ({ type: "event", v: 1, session: { runtime: w.id, hash: "aaaa0001" }, epoch: "w1.0", cursor, event: { kind: "agent-say", id: "aaaa0001", text } });
+        const row = (hash, task) => ({ id: { runtime: w.id, hash }, kind: "agent", status: "done", createdTs: 1, lastTs: 1, pendingApprovals: 0, saved: true, task });
+        await w.pub.publish("aaaa0001", ev(1, "first"));
+        await w.pub.publish("aaaa0001", ev(2, "second"));
+        await w.index.snapshot([row("aaaa0001", "read the headline")]);
+        host.events({ runtime: w.id, hash: "aaaa0001" }, (m) => got.push(m));
+        await poll("the backfill", () => got.some((m) => m.type === "backfilled"));
+        await poll("the runtime listed", () => lists.at(-1)?.some((r) => r.id === w.id && r.online));
+        await poll("the index", () => index.length >= 1);
+
+        drop(host.connection);
+        await poll("offline, with when it will try again", () => statuses.includes("offline"));
+        // Published while the phone is away: it must arrive after the reconnect, once.
+        await w.pub.publish("aaaa0001", ev(3, "while away"));
+        await poll("a second connection", () => opened.length === 2 && statuses.at(-1) === "online", 10_000);
+        await w.pub.publish("aaaa0001", ev(4, "after"));
+        await w.index.update({ type: "upsert", session: row("aaaa0002", "after the reconnect") });
+        await poll("the live event after the reconnect", () => got.some((m) => m.type === "event" && m.cursor === 4));
+        await poll("the index update after the reconnect", () => index.some((u) => u.type === "upsert" && u.session.task === "after the reconnect"));
+
+        const events = got.filter((m) => m.type === "event").map((m) => m.event.text);
+        assert.deepEqual(events, ["first", "second", "while away", "after"], "each event exactly once, in order");
+        assert.equal(got.filter((m) => m.type === "reset").length, 1, "the reconnect resumed rather than starting again");
+        assert.deepEqual(statuses.slice(0, 2), ["connecting", "online"]);
+        assert.deepEqual(statuses.slice(statuses.indexOf("offline")), ["offline", "connecting", "online"]);
+        // The runtime never left the list while the phone was away; it only went offline.
+        const after = lists.slice(lists.findIndex((l) => l.some((r) => r.id === w.id)));
+        assert.ok(after.every((l) => l.some((r) => r.id === w.id)), "listed throughout");
+        assert.ok(after.some((l) => l.find((r) => r.id === w.id).online === false), "shown offline while the phone was");
+        await poll("online again", () => lists.at(-1).find((r) => r.id === w.id).online);
+        const r = await host.send({ type: "tabs.list", runtime: w.id });
+        assert.equal(r.error?.code, "unsupported", "commands go over the new connection");
+    } finally { host.close(); w.close(); }
+});
+
+test("a reconnecting host backs off after a failed open, and reconnect() tries at once", LIVE, async () => {
+    const w = await world();
+    const tb = await tablet(w);
+    let calls = 0;
+    const host = HubHost.reconnecting(async () => {
+        calls++;
+        if (calls === 1) throw new Error("no network");
+        return tb.open();
+    }, w.channels, tb.self);
+    try {
+        const statuses = [];
+        host.status((s) => statuses.push(s));
+        await poll("offline after the failure", () => statuses.some((s) => s.state === "offline"));
+        const off = statuses.find((s) => s.state === "offline");
+        assert.equal(off.reason, "no network");
+        assert.ok(off.retryAt > Date.now() - 100, "says when it will try again");
+        host.reconnect();
+        await poll("online without waiting out the backoff", () => statuses.at(-1).state === "online", 900);
+        assert.equal(calls, 2);
+        host.close();
+        await w.pub.publish("aaaa0001", { type: "event", v: 1, session: { runtime: w.id, hash: "aaaa0001" }, epoch: "e", cursor: 1, event: { kind: "agent-say", id: "aaaa0001", text: "x" } });
+        await new Promise((r) => setTimeout(r, 1500));
+        assert.equal(calls, 2, "a closed host never reopens");
+    } finally { host.close(); w.close(); }
 });
