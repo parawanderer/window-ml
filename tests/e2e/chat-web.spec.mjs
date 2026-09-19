@@ -883,6 +883,24 @@ test("joining an account: the code and this device's fingerprint, then the accou
     await page.getByRole("button", { name: "Get a code" }).click();
     await expect(page.locator(".pair-code")).toHaveText("7K3M Q9XD");
     await expect(page.locator(".pair-fp")).toHaveText("3f9a 0c21 b7e4");
+    // The QR carries the offer's text: what is drawn is exactly what the encoder makes of it, module for module.
+    const qr = page.getByRole("img", { name: /Pairing QR code/ });
+    await expect(qr).toBeVisible();
+    const { encode } = await import("uqr");
+    const want = encode(`WMLPAIR:1:7K3MQ9XD:3F9A0C21B7E4${"0".repeat(52)}`, { ecc: "M", border: 2 }).data.flat().filter(Boolean).length;
+    expect(Number(await qr.getAttribute("data-modules"))).toBe(want);
+    // …and it SCANS: where the browser has a barcode reader (macOS, Android; not Linux CI), the drawing decodes to it.
+    const scanned = await page.evaluate(async () => {
+        if (!("BarcodeDetector" in window)) return null;
+        const img = new Image();
+        img.src = "data:image/svg+xml;utf8," + encodeURIComponent(new XMLSerializer().serializeToString(document.querySelector(".pair-qr")));
+        await img.decode();
+        const c = document.createElement("canvas");
+        c.width = c.height = 400;
+        c.getContext("2d").drawImage(img, 0, 0, 400, 400);
+        return (await new BarcodeDetector({ formats: ["qr_code"] }).detect(c)).map((g) => g.rawValue);
+    });
+    if (scanned) expect(scanned).toEqual([`WMLPAIR:1:7K3MQ9XD:3F9A0C21B7E4${"0".repeat(52)}`]);
     await expect(page.getByRole("status")).toContainText(/works for [0-9]:[0-5][0-9]/);
 
     // The hub gave up on it: said with what to do, and the form is back for another go.

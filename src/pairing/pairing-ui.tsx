@@ -6,7 +6,8 @@
 // itself, and only a person comparing the two fingerprints notices. So there is no way past the comparison, and the
 // button that pairs is the answer to "do these match?", never a generic OK.
 
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { encode } from "uqr";
 import { ConnectionHistory, DevicesList } from "./devices-ui";
 import { groupFour, pairingProblem, roleName, SCOPES, type FoundOffer, type Grant, type HubConnectionView, type Membership, type OfferHandle, type PairingApi } from "./api";
 
@@ -18,6 +19,24 @@ export function Fingerprint({ value }: { value: string }) {
 /** A pairing code as the new device shows it: grouped, large, selectable to read out or copy. */
 function PairingCode({ code }: { code: string }) {
     return <code class="pair-code" aria-label={`Pairing code ${code.split("").join(" ")}`}>{groupFour(code)}</code>;
+}
+
+/**
+ * The offer as a QR code, drawn from the encoded matrix as SVG rects (never an HTML string). Dark modules on a light
+ * quiet zone in either theme, since a camera reads contrast, not the page's palette.
+ */
+export function PairingQr({ text }: { text: string }) {
+    const qr = useMemo(() => encode(text, { ecc: "M", border: 2 }), [text]);
+    const n = qr.size;
+    const cells: preact.JSX.Element[] = [];
+    qr.data.forEach((row, y) => row.forEach((on, x) => { if (on) cells.push(<rect key={`${x}.${y}`} x={x} y={y} width="1.02" height="1.02" />); }));
+    return (
+        <svg class="pair-qr" viewBox={`0 0 ${n} ${n}`} role="img" aria-label="Pairing QR code: scan it on the device that holds the account"
+            data-modules={cells.length} shape-rendering="crispEdges">
+            <rect width={n} height={n} fill="#fff" />
+            <g fill="#000">{cells}</g>
+        </svg>
+    );
 }
 
 /** Minutes and seconds until `at`, ticking; "0:00" once past. */
@@ -82,10 +101,11 @@ export function JoinAccount({ api, onJoined, onCancel }: { api: PairingApi; onJo
     if (offer) {
         return (
             <section class="pair-card" aria-label="Join an account">
-                <h3 class="pair-h">Type this code on a device already in your account</h3>
+                <h3 class="pair-h">{offer.qr ? "Scan this, or type the code, on a device already in your account" : "Type this code on a device already in your account"}</h3>
                 <p class="pair-p">There: Settings → Devices → Pair a device.</p>
+                {offer.qr ? <PairingQr text={offer.qr} /> : null}
                 <PairingCode code={offer.code} />
-                <p class="pair-p">It will then show a fingerprint. It must be exactly this one:</p>
+                <p class="pair-p">{offer.qr ? "Typed, it then shows a fingerprint to compare; it must be exactly this one:" : "It will then show a fingerprint. It must be exactly this one:"}</p>
                 <Fingerprint value={offer.fingerprint} />
                 <p class="pair-hint" role="status">Waiting for it to be confirmed there. The code works for {left}.</p>
                 <div class="pair-actions"><button class="btn" onClick={cancel}>Cancel</button></div>

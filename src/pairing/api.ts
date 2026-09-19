@@ -42,6 +42,9 @@ export interface OfferHandle {
     code: string;
     /** 12 hex characters */
     fingerprint: string;
+    /** the text to draw as a QR code (`WMLPAIR:1:<code>:<64 hex>`), where the library gives one: scanning it checks the
+     *  WHOLE fingerprint, where typing checks the 12 characters a person compares */
+    qr?: string;
     /** epoch ms when the hub stops holding the offer */
     expiresAt: number;
     /** resolves once a device that may pair has answered it; rejects with a `PairingError`-shaped error */
