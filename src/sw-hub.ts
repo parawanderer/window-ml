@@ -1,0 +1,94 @@
+// sw-hub.ts — this browser as a runtime on a hub, in the worker: read what pairing stored in the keyring, keep the
+// connection up (hub-runtime.ts), and say where it stands. Pairing itself happens in an extension PAGE, which holds the
+// offering socket while a person carries the code (the worker could be stopped in the meantime); the page tells the
+// worker when it is done, and the worker reads the keyring again.
+//
+// The connection keeps the worker alive while it is up: the hub pings every 20 s, and a websocket's traffic extends a
+// service worker's life. When the browser stops the worker anyway, the alarm below starts it again within a minute.
+import { CertificateBody } from "./proto/wmlhub/v1/identity.gen";
+import { HubClient } from "./hub/client";
+import { bytes } from "./hub/hpke";
+import { Keyring } from "./hub/keyring";
+import { Role } from "./hub/wire";
+import { HubRuntime, type HubRuntimeStatus } from "./hub-runtime";
+import { LOCAL_RUNTIME, localRuntimeId, runSessionCommand, sessionServer } from "./sw-sessions";
+
+/** Where this browser stands with a hub, for Settings. `unpaired` is the usual state and not an error. */
+export type HubState =
+    | { state: "unpaired" }
+    | ({ hubUrl: string; hubName: string } & HubRuntimeStatus);
+
+const ALARM = "ml-hub-keepalive";
+let runtime: HubRuntime | null = null;
+let status: HubState = { state: "unpaired" };
+let starting: Promise<void> | null = null;
+
+/** Where the connection stands now. */
+export function hubState(): HubState {
+    return status;
+}
+
+/**
+ * Start the connection if the keyring says this browser is a paired RUNTIME and it is not already running. Safe to
+ * call as often as anything likes: at worker start, on the alarm, after a page finished pairing.
+ */
+export function ensureHubRuntime(): Promise<void> {
+    if (runtime) return Promise.resolve();
+    starting ??= (async () => {
+        let ring: Keyring | null = null;
+        try {
+            ring = await Keyring.open();
+            const me = await ring.load();
+            const m = me?.membership;
+            if (!me || !m) { unpaired(); return; }
+            // A browser that created the account (or was paired as a client) holds a membership too, but is not a
+            // runtime to anyone: only a leaf issued for ROLE_RUNTIME connects as one.
+            const leaf = CertificateBody.decode(m.chain[0].body);
+            if (leaf.role !== Role.ROLE_RUNTIME) { unpaired(); return; }
+            const where = { hubUrl: m.hubUrl, hubName: m.hubName };
+            const r = new HubRuntime({
+                membership: m,
+                side: {
+                    localIds: [localRuntimeId(), LOCAL_RUNTIME],
+                    list: () => sessionServer.index.list(),
+                    watch: (sink) => sessionServer.watch(sink),
+                    command: (c) => runSessionCommand(c),
+                },
+                connect: () => HubClient.connect({
+                    url: m.hubUrl, hubName: m.hubName, identity: me.identity, agreement: me.agreement,
+                    chain: m.chain, accountRoot: bytes(m.accountRoot), role: Role.ROLE_RUNTIME,
+                }),
+                onStatus: (s) => { status = { ...where, ...s }; },
+            });
+            runtime = r;
+            // Only while paired: an alarm that woke every browser's worker each minute to find nothing to do would
+            // cost the ones that never pair.
+            try { chrome.alarms?.create(ALARM, { periodInMinutes: 1 }); } catch { /* no alarms */ }
+            void r.run().finally(() => { if (runtime === r) runtime = null; });
+        } catch (e) {
+            unpaired();
+            console.warn("[window.ml] hub runtime did not start:", e);
+        } finally {
+            ring?.close();
+            starting = null;
+        }
+    })();
+    return starting;
+}
+
+function unpaired(): void {
+    status = { state: "unpaired" };
+    try { void chrome.alarms?.clear(ALARM); } catch { /* no alarms */ }
+}
+
+/** Stop the connection: this browser left its account, or is about to pair again. */
+export function stopHubRuntime(): void {
+    runtime?.stop();
+    runtime = null;
+    unpaired();
+}
+
+try {
+    chrome.alarms?.onAlarm.addListener((a) => { if (a.name === ALARM) void ensureHubRuntime(); });
+} catch { /* no alarms (a test harness) */ }
+void ensureHubRuntime();
