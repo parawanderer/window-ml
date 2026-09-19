@@ -10,7 +10,8 @@ import { type StoredSession } from "./contract-messages";
 import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type RuntimeInfo, type TabInfo } from "./session-host";
 import { SessionIndex, type IngestSource } from "./session-index";
 import { SESSIONS_PORT, SessionServer } from "./session-server";
-import { SessionStore, indexedDbBackend, type SessionHistory } from "./session-store";
+import { STORE_MAX_SESSIONS, SessionStore, indexedDbBackend, type SessionHistory } from "./session-store";
+import { DEFAULT_CONFIG } from "./contract-config";
 import { bgRuns, trackRun, untrackRun } from "./sw-runs";
 import { fetchLLM } from "./sw-llm";
 import { recordHousekeeping } from "./sw-housekeeping";
@@ -213,6 +214,17 @@ export function configureSessionCommands(run: RunDeps): void {
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** `sessionRetentionDays`, as the store reads it. Kept current from storage; 0 until read, which keeps everything. */
 let retentionDays = 0;
+/**
+ * `sessionStoreBudgetMB`, as the store reads it. NULL until read, and null means no cap: someone who set 0 may hold
+ * gigabytes, and a write landing before the setting was read must not evict them down to the default.
+ */
+let budgetMB: number | null = null;
+
+/** The store's caps from the setting: 0 is none at all, of either kind. */
+function storeLimits(): { budgetBytes: number; maxSessions: number } {
+    if (budgetMB == null || budgetMB <= 0) return { budgetBytes: Infinity, maxSessions: Infinity };
+    return { budgetBytes: budgetMB * 1024 * 1024, maxSessions: STORE_MAX_SESSIONS };
+}
 
 /** Saved sessions, which outlive this worker. A worker with no IndexedDB (a test harness) simply saves nothing.
  *  What a page is subscribed to is what someone is looking at, so that is what an eviction may never take. */
@@ -229,6 +241,7 @@ export const sessionStore = (() => {
                 detail: { outcome: e.outcome, idleDays: Math.floor(e.idleMs / DAY_MS) },
             }),
             retainMs: () => Math.max(0, retentionDays) * DAY_MS,
+            limits: storeLimits,
         });
     }
     catch { return null; }
@@ -258,12 +271,19 @@ if (sessionStore) {
         .catch(() => { /* no storage: the list is whatever this worker sees from now on */ });
 }
 
-/** Read `sessionRetentionDays` once; never rejects, since a worker without storage keeps everything. */
+/** Read the store's settings once; never rejects, since a worker without storage keeps everything. */
 async function readRetention(): Promise<void> {
     try {
-        const cfg = await chrome.storage.sync.get({ sessionRetentionDays: 0 }) as { sessionRetentionDays?: unknown };
+        const cfg = await chrome.storage.sync.get({ sessionRetentionDays: 0, sessionStoreBudgetMB: DEFAULT_CONFIG.sessionStoreBudgetMB }) as { sessionRetentionDays?: unknown; sessionStoreBudgetMB?: unknown };
         retentionDays = Math.max(0, Number(cfg?.sessionRetentionDays) || 0);
+        budgetMB = parseBudget(cfg?.sessionStoreBudgetMB);
     } catch { /* keep everything */ }
+}
+
+/** A budget from storage: a non-negative number of MB, or the default when it is not one. */
+function parseBudget(v: unknown): number {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : DEFAULT_CONFIG.sessionStoreBudgetMB;
 }
 
 // Kept current from storage: `side.call` needs a utility model, and the runtime's capabilities say whether it has one.
@@ -279,8 +299,9 @@ try {
         if (changes.agentStartPage) agentStartPage = String(changes.agentStartPage.newValue ?? "").trim();
         // A shorter retention applies now, not on the next write: someone who just lowered it expects the list to
         // shrink while they watch.
-        if (changes.sessionRetentionDays) {
-            retentionDays = Math.max(0, Number(changes.sessionRetentionDays.newValue) || 0);
+        if (changes.sessionRetentionDays || changes.sessionStoreBudgetMB) {
+            if (changes.sessionRetentionDays) retentionDays = Math.max(0, Number(changes.sessionRetentionDays.newValue) || 0);
+            if (changes.sessionStoreBudgetMB) budgetMB = parseBudget(changes.sessionStoreBudgetMB.newValue);
             void sessionStore?.sweep().catch(() => { /* storage unavailable */ });
         }
         if (!changes.utilityModel) return;
