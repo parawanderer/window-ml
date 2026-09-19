@@ -25,10 +25,14 @@ function usePolled<T>(load: (() => Promise<T>) | undefined, ms: number, key: unk
     return [v, () => setTick((n) => n + 1)];
 }
 
-/** What a device may do, in words: its scopes by their names here, unknown ones as they are. */
-function scopeWords(scopes: readonly string[]): string {
-    if (!scopes.length) return "No scopes: it drives nothing";
-    return scopes.map((id) => SCOPES.find((s) => s.id === id)?.label ?? id).join(" · ");
+/** What a device may do, as pills: its scopes by their names here, unknown ones as they are. */
+function ScopePills({ scopes }: { scopes: readonly string[] }) {
+    if (!scopes.length) return <div class="pair-hint">No scopes: it drives nothing</div>;
+    return (
+        <div class="pair-scopes" aria-label="What it may do">
+            {scopes.map((id) => <span key={id} class="chat-chip">{SCOPES.find((s) => s.id === id)?.label ?? id}</span>)}
+        </div>
+    );
 }
 
 /** The certificate's window, as when it needs renewing: a date, never a countdown to it leaving. */
@@ -72,7 +76,7 @@ function DeviceRow({ d, self, api, onChanged }: { d: DeviceInfo; self: boolean; 
                 {self ? <span class="pair-dev-self">This device</span> : null}
                 <span class="pair-dev-seen">{d.lastSeenMs ? <>Seen <Stamp ts={d.lastSeenMs} /></> : "Not seen yet"}</span>
             </div>
-            <div class="pair-hint">{scopeWords(d.scopes)}</div>
+            <ScopePills scopes={d.scopes} />
             {d.mayPair ? <div class="pair-hint">Can pair other devices, by itself.</div> : null}
             {d.mayRevoke ? <div class="pair-hint"><b>Signs revocations for this account.</b></div> : null}
             <div class="pair-hint">{validity(d.notAfterMs, now)}.</div>
