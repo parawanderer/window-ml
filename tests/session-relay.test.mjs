@@ -76,3 +76,54 @@ test("a frame that opened but is not an index message is ignored, not thrown on"
     }
     assert.equal(r.complete, false, "and none of them counts as a snapshot");
 });
+
+// --- one session's event stream ---
+
+const { eventsChannel, keysChannel, encodeStreamFrame, decodeStreamFrame, grantees } = await import("../src/session-relay.ts");
+const { ChannelKey } = await import("../src/hub/seal.ts");
+
+test("a session's channels hide its hash, and are distinct per session and per purpose", async () => {
+    const ck = await ChannelKey.generate();
+    const a = await eventsChannel(ck, "aaaa0001");
+    const b = await eventsChannel(ck, "aaaa0002");
+    const ka = await keysChannel(ck, "aaaa0001");
+    const hex = (x) => [...x].map((v) => v.toString(16).padStart(2, "0")).join("");
+
+    assert.equal(a.length, 16);
+    assert.notEqual(hex(a), hex(b), "two sessions, two channels");
+    assert.notEqual(hex(a), hex(ka), "a session's keys ride beside its events, not on them");
+    // The whole point of the HMAC: the hub routes by this and must never see the hash, which is also in `#s=`, on
+    // disk and in a box's request hints — a hash-named channel would be a join key between them.
+    assert.ok(!hex(a).includes(hex(new TextEncoder().encode("aaaa0001"))));
+    // And it is a pure function of the key and the session, so every device that holds the key names the same one.
+    assert.equal(hex(await eventsChannel(ck, "aaaa0001")), hex(a));
+});
+
+test("a stream message crosses with the contract's own epoch and cursor inside", () => {
+    const ev = { type: "event", v: 1, session: { runtime: "rt", hash: "aaaa0001" }, epoch: "w1.0", cursor: 7, event: { kind: "agent", id: "aaaa0001" } };
+    assert.deepEqual(decodeStreamFrame(encodeStreamFrame(ev)), ev);
+    for (const m of [
+        { type: "reset", session: { runtime: "rt", hash: "a" }, epoch: "w1.0" },
+        { type: "backfilled", session: { runtime: "rt", hash: "a" }, epoch: "w1.0", cursor: 3, truncated: false },
+        { type: "gone", session: { runtime: "rt", hash: "a" } },
+    ]) assert.deepEqual(decodeStreamFrame(encodeStreamFrame(m)), m, m.type);
+});
+
+test("a frame that opened but is not a stream message is ignored, not thrown on", () => {
+    const junk = (s) => new TextEncoder().encode(s);
+    for (const b of ["nope", "null", "{}", '{"type":"event"}', '{"type":"event","session":{},"epoch":"e"}', '{"type":"reset","session":{}}', '{"type":"x","session":{}}']) {
+        assert.equal(decodeStreamFrame(junk(b)), null, `ignored: ${b}`);
+    }
+});
+
+test("only a device whose verified leaf holds `view` is handed a session's key", () => {
+    // A key is not a command: a device holding one reads the stream by subscribing, with nothing further asked. So the
+    // check the runtime makes before answering a command has to be made here too.
+    const who = grantees([
+        { id: "phone", scopes: ["view", "drive"] },
+        { id: "watcher", scopes: ["view"] },
+        { id: "driver-only", scopes: ["drive"] },
+        { id: "box", scopes: [] },
+    ]).map((d) => d.id);
+    assert.deepEqual(who, ["phone", "watcher"]);
+});
