@@ -8,7 +8,7 @@
 import type { NeutralMessage } from "./contract-chat";
 import type { MlDebugEvent } from "./contract-debug";
 import type { SessionHistory } from "./session-store";
-import type { Command, CommandError, CommandResult, CommandType, ModelChoice, SessionId, StorageReport, TabGroupInfo, TabInfo } from "./session-host";
+import type { Command, CommandError, CommandResult, CommandType, ListedSession, ModelChoice, SessionId, SessionSummary, StorageReport, TabGroupInfo, TabInfo } from "./session-host";
 import type { SessionIndex } from "./session-index";
 import { capTitle } from "./session-title";
 
@@ -31,6 +31,10 @@ export interface CommandDeps {
     listTabs(): Promise<TabInfo[]>;
     /** the tab groups, named; empty where the runtime cannot say */
     listTabGroups?(): Promise<TabGroupInfo[]>;
+    /** archived sessions, a page at a time; absent when this runtime keeps no archive */
+    listArchived?(o: { before?: number; limit?: number; query?: string }): Promise<{ summary: SessionSummary; snippet?: string }[]>;
+    /** bring an archived session back into the live store; false when the archive does not hold it */
+    unarchive?(hash: string): Promise<boolean>;
     /** one tab, or null when it is gone */
     getTab(tabId: number): Promise<TabInfo | null>;
     /** relay a session action to the page in a tab and wait for what it did; rejects when nothing listens there */
@@ -255,6 +259,28 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
             return ok({ tabs, ...(groups.length ? { groups } : {}) });
         },
 
+        "sessions.list": async (c) => {
+            const not = ownRuntime(c);
+            if (not) return not;
+            return ok(await listPage(c.before, c.limit, c.archived, undefined));
+        },
+
+        "sessions.search": async (c) => {
+            const not = ownRuntime(c);
+            if (not) return not;
+            if (typeof c.query !== "string" || !c.query.trim()) return fail("invalid", "a search needs words to look for");
+            return ok(await listPage(c.before, c.limit, undefined, c.query.trim().slice(0, 200)));
+        },
+
+        "session.unarchive": async (c) => {
+            const id = c.session;
+            if (!id || typeof id.hash !== "string" || !(deps.ownsRuntime ?? ((r) => r === deps.runtime))(id.runtime)) return fail("not-found", "no such session on this runtime");
+            const session = { runtime: deps.runtime, hash: id.hash };
+            if (deps.index.get(id.hash)) return ok({ session });   // already live
+            if (!deps.unarchive) return fail("unsupported", "this runtime keeps no archive");
+            return (await deps.unarchive(id.hash)) ? ok({ session }) : fail("not-found", "no such session in the archive");
+        },
+
         // An unreachable backend is an empty list, not a failure: the picker then offers the default, which is what
         // a start command would use anyway, rather than an error in a box someone opened to type into.
         "models.list": async (c) => ownRuntime(c) ?? ok({ models: await deps.listModels().catch(() => []) }),
@@ -311,6 +337,11 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
          * is the turn, which is also why a resume of something already running is a conflict rather than a no-op.
          */
         "session.resume": async (c) => {
+            // An archived session resumes like any other: brought back into the live store first, since everything
+            // after this (its history, its page, its events) is read from there.
+            if (c.session && typeof c.session.hash === "string" && !deps.index.get(c.session.hash) && deps.unarchive) {
+                await deps.unarchive(c.session.hash).catch(() => false);
+            }
             const s = session(c);
             if (s.error) return s.error;
             const summary = deps.index.get(s.id.hash)!;
@@ -549,6 +580,32 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
             return fail("failed", `the screenshot does not fit in ${ceiling} bytes`);
         },
     };
+
+    /**
+     * One page of sessions, newest activity first, from the live index and the archive together. Each source is asked
+     * for a page past `before`; the two are merged, a session in both (moved back and not yet re-archived) shown once
+     * as its live row, and cut to the page. `more` when either source may hold another page.
+     */
+    async function listPage(before: number | undefined, limitIn: number | undefined, archived: boolean | undefined, query: string | undefined): Promise<{ sessions: ListedSession[]; more: boolean }> {
+        const limit = Math.min(Math.max(1, Math.floor(limitIn ?? 40)), 200);
+        const cut = before ?? Number.MAX_SAFE_INTEGER;
+        const q = query?.toLowerCase();
+        const live: ListedSession[] = archived === true ? [] : deps.index.list()
+            .filter((s) => s.lastTs < cut)
+            .flatMap((s) => {
+                if (!q) return [s];
+                const hit = [s.title, s.task, s.page?.title].find((t) => t?.toLowerCase().includes(q));
+                if (!hit) return [];
+                const at = hit.toLowerCase().indexOf(q);
+                return [{ ...s, match: { snippet: `${hit.slice(0, at)}«${hit.slice(at, at + q.length)}»${hit.slice(at + q.length)}`.slice(0, 200) } }];
+            });
+        const fromArchive = archived === false || !deps.listArchived ? [] : await deps.listArchived({ before: cut, limit: limit + 1, ...(query ? { query } : {}) }).catch(() => []);
+        const liveHashes = new Set(live.map((s) => s.id.hash));
+        const arch: ListedSession[] = fromArchive.filter((r) => !liveHashes.has(r.summary.id.hash))
+            .map((r) => ({ ...r.summary, id: { runtime: deps.runtime, hash: r.summary.id.hash }, archived: true as const, ...(r.snippet ? { match: { snippet: r.snippet } } : {}) }));
+        const all = [...live, ...arch].sort((a, b) => b.lastTs - a.lastTs);
+        return { sessions: all.slice(0, limit), more: all.length > limit };
+    }
 
     return async (command) => {
         const h = handlers[command.type] as ((c: Command) => Promise<CommandResult<CommandType>>) | undefined;

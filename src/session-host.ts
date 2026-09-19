@@ -317,6 +317,19 @@ export type Command =
     /** The models a runtime would accept for `chat.start` / `agent.start`: after its own whitelist, so the whitelist
      *  holds over the contract too. */
     | { type: "models.list"; runtime: RuntimeId }
+    /**
+     * Sessions a page at a time, newest activity first: those whose `lastTs` is before `before` (exclusive), so a
+     * client pages by handing back the last row's `lastTs`. Archived sessions are included, marked, unless `archived`
+     * says only them (true) or none of them (false). What the index snapshot holds is the recent part; this reaches
+     * the rest.
+     */
+    | { type: "sessions.list"; runtime: RuntimeId; before?: number; limit?: number; archived?: boolean }
+    /** Sessions matching a query, in the same rows and paging as `sessions.list`: every word an archived session's
+     *  events hold, and a live session's title, task and page title. */
+    | { type: "sessions.search"; runtime: RuntimeId; query: string; before?: number; limit?: number }
+    /** Bring an archived session back into the live store, so it can be opened, resumed, pinned or deleted like any
+     *  other. Its row then arrives by `upsert`. A session that is not archived answers ok and changes nothing. */
+    | { type: "session.unarchive"; session: SessionId }
     /** Where the runtime's saved-session storage goes, now and day by day: what the Storage page draws. */
     | { type: "storage.stats"; runtime: RuntimeId }
     /** Answer an open approval gate, keyed by the pending step's `seq`. Handed to the runtime's one
@@ -430,6 +443,9 @@ export const COMMAND_SCOPE: { readonly [T in CommandType]: Scope } = {
     "session.rename": "drive",
     "models.list": "view",
     "storage.stats": "view",
+    "sessions.list": "view",
+    "sessions.search": "view",
+    "session.unarchive": "drive",
     "approval.answer": "approve",
     "chat.start": "drive",
     "agent.start": "drive",
@@ -577,6 +593,14 @@ export interface TabGroupInfo {
 export type { StorageReport, StorageSnapshot } from "./session-storage-stats";
 import type { StorageReport } from "./session-storage-stats";
 
+/** A session as a paged list or a search shows it: its index row, marked when it is in the long-term archive. */
+export type ListedSession = SessionSummary & {
+    /** in the archive, not the live store: `session.unarchive` brings it back before it is opened */
+    archived?: true;
+    /** on a search: where it matched, plain text, the match in «guillemets» */
+    match?: { snippet: string };
+};
+
 /** One model a runtime offers, for a picker. */
 export interface ModelChoice {
     id: string;
@@ -604,6 +628,10 @@ export interface CommandResultData {
     "models.list": { models: ModelChoice[] };
     /** `unsupported` from a runtime that saves nothing. Sizes are serialized bytes, the measure the budget uses. */
     "storage.stats": StorageReport;
+    /** `more`: another page exists below this one */
+    "sessions.list": { sessions: ListedSession[]; more: boolean };
+    "sessions.search": { sessions: ListedSession[]; more: boolean };
+    "session.unarchive": { session: SessionId };
     /** `false`: the gate was already closed (answered on another surface, or the run was cancelled). Not an error:
      *  every surface shows the outcome from the session's events either way. */
     "approval.answer": { resolved: boolean };
