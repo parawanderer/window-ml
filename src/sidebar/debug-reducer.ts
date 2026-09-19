@@ -39,6 +39,21 @@ function drainOrphans(key: string, runtime?: string): void {
     for (const oev of q) onDebug(oev, runtime);
 }
 
+/**
+ * Forget everything reduced for one session: its model AND the events parked waiting for its start. Clearing only
+ * `sessionMap` leaves those parked events behind, and a later replay then drains them first, out of order. Also: is a
+ * session's start what everything else is waiting for? {@link awaitingStart} says.
+ */
+export function forgetSessionReduced(key: string): void {
+    sessionMap.delete(key);
+    orphanAgentEvents.delete(key);
+}
+
+/** Events are parked for this session because its start has not arrived: a transcript that would show nothing. */
+export function awaitingStart(key: string): boolean {
+    return !sessionMap.has(key) && !!orphanAgentEvents.get(key)?.length;
+}
+
 /** THE REDUCER: one `__mlDebug` event → the session model the whole panel reads. Must CONVERGE whatever
  *  the order — a cross-page run's replay and its live fan arrive interleaved — so it patches by `seq`
  *  rather than appending, and never recreates or re-seals a session it has already seen. */

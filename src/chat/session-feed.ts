@@ -18,9 +18,9 @@ import type { MlDebugEvent } from "../contract-debug";
 
 /** What the caller does with one stream message. */
 export type FeedAction =
-    | { type: "apply"; event: MlDebugEvent }
+    | { type: "apply"; event: MlDebugEvent; pos?: number }
     | { type: "reset" }
-    | { type: "backfilled"; truncated: boolean }
+    | { type: "backfilled"; truncated: boolean; from?: number }
     | { type: "gone" }
     | { type: "drop"; reason: "other-session" | "version" | "mislabelled" | "stale-epoch" | "duplicate" };
 
@@ -34,6 +34,12 @@ export class SessionFeed {
     private maxCursor = -Infinity;
 
     constructor(readonly session: SessionId) {}
+
+    /** The epoch this subscription is in, or null before anything arrived. A page of older events from another epoch
+     *  belongs to a different history and must not be stitched onto this one. */
+    get currentEpoch(): string | null {
+        return this.epoch;
+    }
 
     /** Where to resume from, or undefined before anything arrived. */
     get position(): StreamPosition | undefined {
@@ -53,7 +59,7 @@ export class SessionFeed {
                 if (this.applied.has(msg.cursor)) return { type: "drop", reason: "duplicate" };
                 this.applied.add(msg.cursor);
                 if (msg.cursor > this.maxCursor) this.maxCursor = msg.cursor;
-                return { type: "apply", event: msg.event };
+                return { type: "apply", event: msg.event, ...(Number.isInteger(msg.pos) && msg.pos! >= 0 ? { pos: msg.pos } : {}) };
             }
             case "reset":
                 this.epoch = msg.epoch;
@@ -69,7 +75,7 @@ export class SessionFeed {
                     this.applied.clear();
                     this.maxCursor = -Infinity;
                 }
-                return { type: "backfilled", truncated: msg.truncated };
+                return { type: "backfilled", truncated: msg.truncated, ...(Number.isInteger(msg.from) && msg.from! >= 0 ? { from: msg.from } : {}) };
             case "gone":
                 return { type: "gone" };
             default:

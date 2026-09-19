@@ -61,6 +61,18 @@ A feed outlives its subscription: reopening a session resumes from `position`, s
 The test for that counts what the host re-sent, because the reducer absorbs a repeated step by `seq` and the
 transcript alone cannot tell a resume from a full replay.
 
+**Paging back (`store.earlier`, `store.loadEarlier(key)`).** A `backfilled` with `from > 0` makes the session
+pageable: `earlier` holds `{ from, more, truncated, loading, error? }`, and `loadEarlier` asks
+`session.backfill { before: from }` quietly (a failure is kept on the state, drawn where the page would be). A page
+is applied by REPLAY, not by prepending: the store keeps the raw events it applied (with their `pos`) while the
+session can still page, and on each page clears the reduced session (`forgetSessionReduced`, which also drops events
+parked for a start) and re-applies page + held in history order. That makes the transcript the one the runtime's own
+order produces, whatever the reducer assumes about order (an `agent-say` appends and records `atStep`, so applying
+it before its steps puts it in the wrong place). A held event inside the page's range is the session's start, sent
+ahead of a short ring, and is dropped by `pos`. A page from another epoch is discarded. When the ring holds no start
+at all (`awaitingStart`), the store pages back on its own, at most `AUTO_PAGES` times, since the reducer shows
+nothing until a start arrives. `FakeHost.ringLimit` (and `ringDropsStart`) script all of this.
+
 Timestamps are moved onto this client's clock (`ts - clockOffsetMs`) on the way in, for `ts` only.
 
 ## Commands and failures

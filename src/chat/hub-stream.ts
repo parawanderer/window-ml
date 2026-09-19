@@ -73,8 +73,17 @@ export class HubStreamAdapter {
         if (epoch !== null) this.emit({ type: "reset", session: this.session, epoch });
         this.last = -1;
         for (const e of ring) { this.last = e.cursor; this.emit(e); }
-        // Truncated when the hub says its ring does not reach the start — or when a client that asked to resume could
-        // not be resumed, since then what it held and what it is now shown do not join up.
+        // Where the ring starts in the SESSION, when the runtime stamped it. Then a short ring is not a loss: the
+        // client pages back with `session.backfill { before: from }`, and the runtime, which is the one that knows,
+        // answers whether anything older still exists. `truncated` here would say "gone from the runtime" on the
+        // strength of what the HUB kept, which is a different fact.
+        const first = ring[0]?.pos;
+        if (typeof first === "number" && Number.isInteger(first) && first >= 0) {
+            this.emit({ type: "backfilled", session: this.session, epoch: epoch ?? "", cursor: Math.max(this.last, 0), truncated: false, from: first });
+            return;
+        }
+        // No position: truncated when the hub says its ring does not reach the start — or when a client that asked to
+        // resume could not be resumed, since then what it held and what it is now shown do not join up.
         this.emit({ type: "backfilled", session: this.session, epoch: epoch ?? "", cursor: Math.max(this.last, 0), truncated: hubTruncated || !!this.since });
     }
 }

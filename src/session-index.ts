@@ -422,7 +422,10 @@ export class SessionIndex {
             return [...s.ring.filter((e) => e.cursor > since.cursor).map(event), { type: "backfilled", session, epoch, cursor: Math.max(since.cursor, s.lastCursor), truncated: false }];
         }
         if (!s.ring.length) return [{ type: "backfilled", session, epoch, cursor: s.lastCursor, truncated: true }];
-        return [{ type: "reset", session, epoch }, ...s.ring.map(event), { type: "backfilled", session, epoch, cursor: s.lastCursor, truncated: s.lostThrough >= 0 }];
+        // Nothing lost: the ring starts at the session's first event, so paging back has nowhere to go. Something lost
+        // and served from here anyway: an unsaved session, which has no history to page through, so no position.
+        const lost = s.lostThrough >= 0;
+        return [{ type: "reset", session, epoch }, ...s.ring.map(event), { type: "backfilled", session, epoch, cursor: s.lastCursor, truncated: lost, ...(lost ? {} : { from: 0 }) }];
     }
 
     /**
