@@ -70,11 +70,13 @@ export function sizeOf(ev: MlDebugEvent): number {
  * policy is tested without a database.
  *
  * `protect` is never dropped — the session a page has open, and any session still running, whose events are still
- * arriving and whose row would come straight back.
+ * arriving and whose row would come straight back. Neither is a pinned session.
  */
 export function planEviction(rows: readonly StoredSessionRow[], o: { budgetBytes?: number; maxSessions?: number; incoming?: number; protect?: readonly string[] }): string[] {
     const budget = o.budgetBytes ?? STORE_BUDGET_BYTES, max = o.maxSessions ?? STORE_MAX_SESSIONS;
-    const protect = new Set(o.protect ?? []);
+    // A pinned session counts toward the budget and is never what pays for it. The number of pins is bounded by the
+    // runtime, so the budget can be exceeded by at most what the pinned sessions hold.
+    const protect = new Set([...(o.protect ?? []), ...rows.filter((r) => r.summary.pinned).map((r) => r.hash)]);
     const order = [...rows].sort((a, b) => a.lastTs - b.lastTs || a.createdTs - b.createdTs);
     let total = rows.reduce((n, r) => n + r.bytes, 0) + (o.incoming ?? 0);
     let count = rows.length;
@@ -87,6 +89,23 @@ export function planEviction(rows: readonly StoredSessionRow[], o: { budgetBytes
         count -= 1;
     }
     return out;
+}
+
+/** Why a saved session left the store. `"archived"` is reserved for when an archive folder exists: expiring a
+ *  session will then move it there rather than delete it, and the record already has the word for it. */
+export type StoreEviction = { hash: string; reason: "budget" | "retention"; outcome: "deleted"; bytes: number; idleMs: number };
+
+/**
+ * WHICH SAVED SESSIONS HAVE EXPIRED: idle for longer than `retainMs`, measured from the last thing they did. Pure.
+ *
+ * Retention is a rule about a person's history, not about space, so it ignores the budget entirely: a store that is
+ * nearly empty still forgets a session past its time. A pinned session never expires, and neither does a protected
+ * one (open on a page, or still running). `retainMs` of 0 or less keeps everything.
+ */
+export function planExpiry(rows: readonly StoredSessionRow[], o: { now: number; retainMs: number; protect?: readonly string[] }): string[] {
+    if (!(o.retainMs > 0)) return [];
+    const protect = new Set(o.protect ?? []);
+    return rows.filter((r) => !r.summary.pinned && !protect.has(r.hash) && o.now - r.lastTs > o.retainMs).map((r) => r.hash);
 }
 
 /** A place to put saved sessions. The worker's is IndexedDB; the tests' is a map. */
@@ -117,9 +136,23 @@ export class SessionStore {
         private readonly backend: SessionStoreBackend,
         private readonly opts: {
             budgetBytes?: number; maxSessions?: number; flushMs?: number;
+            /** The size and count caps, read at every eviction so a changed setting applies without a restart. Wins
+             *  over `budgetBytes`/`maxSessions`. `Infinity` for either means no cap of that kind. */
+            limits?: () => { budgetBytes: number; maxSessions: number };
             now?: () => number;
             /** hashes that must survive an eviction: what a page has open */
             protect?: () => readonly string[];
+            /**
+             * Sessions this store has just thrown away to stay inside its budget. The store is the one authority on
+             * whether a SAVED session exists, so whatever else lists sessions has to hear about it — or a session
+             * stays in the list after its history has left the disk.
+             */
+            onEvict?: (hashes: string[]) => void;
+            /** One record per session the store dropped on its own, for the housekeeping log. */
+            onEvicted?: (e: StoreEviction) => void;
+            /** How long an unpinned session is kept after it last did something; 0 or absent keeps it. Read at every
+             *  sweep, so a changed setting applies without a restart. */
+            retainMs?: () => number;
             onError?: (err: unknown) => void;
         } = {},
     ) {}
@@ -131,6 +164,43 @@ export class SessionStore {
         })();
         await this.ready;
         return [...this.rows.values()].sort((a, b) => b.lastTs - a.lastTs);
+    }
+
+    /**
+     * Apply retention and the caps now. A worker that starts and finds sessions past their time forgets them before
+     * listing them, one that has been idle for a week does the same on its next write, and a lowered setting takes
+     * effect while the person who lowered it watches. Returns what it dropped.
+     */
+    async sweep(): Promise<string[]> {
+        await this.open();
+        return this.evict();
+    }
+
+    /** Retention first: what has expired should not survive because the budget happened to have room, and what it
+     *  frees is room the budget no longer has to find. */
+    private async evict(): Promise<string[]> {
+        const expired = await this.drop(planExpiry([...this.rows.values()], { now: this.now(), retainMs: this.opts.retainMs?.() ?? 0, protect: this.protected() }), "retention");
+        const limits = this.opts.limits?.() ?? { budgetBytes: this.opts.budgetBytes ?? STORE_BUDGET_BYTES, maxSessions: this.opts.maxSessions ?? STORE_MAX_SESSIONS };
+        const over = await this.drop(planEviction([...this.rows.values()], { ...limits, protect: this.protected() }), "budget");
+        return [...expired, ...over];
+    }
+
+    private now(): number {
+        return this.opts.now?.() ?? Date.now();
+    }
+
+    private protected(): string[] {
+        return [...(this.opts.protect?.() ?? []), ...this.running()];
+    }
+
+    private async drop(hashes: string[], reason: StoreEviction["reason"]): Promise<string[]> {
+        if (!hashes.length) return [];
+        const now = this.now();
+        const gone = hashes.map((h) => this.rows.get(h)).filter((r): r is StoredSessionRow => !!r);
+        await this.forget(hashes);
+        this.opts.onEvict?.(hashes);
+        for (const r of gone) this.opts.onEvicted?.({ hash: r.hash, reason, outcome: "deleted", bytes: r.bytes, idleMs: Math.max(0, now - r.lastTs) });
+        return hashes;
     }
 
     /** Is this session saved here? */
@@ -168,6 +238,21 @@ export class SessionStore {
         const row = this.rows.get(hash);
         if (!row) return;
         row.history = history;
+        this.dirty.add(hash);
+        this.schedule();
+    }
+
+    /**
+     * A saved session's row changed with no event behind it: a pin. The row is created when the session has none yet,
+     * because a session pinned before it emitted anything worth writing still has to come back pinned.
+     */
+    putSummary(summary: SessionSummary): void {
+        if (!summary.saved) return;
+        const hash = summary.id.hash;
+        const now = this.opts.now?.() ?? Date.now();
+        const row = this.rows.get(hash) ?? { hash, summary, lastTs: summary.lastTs || now, createdTs: summary.createdTs ?? now, bytes: 0, count: 0 };
+        row.summary = summary;
+        this.rows.set(hash, row);
         this.dirty.add(hash);
         this.schedule();
     }
@@ -225,11 +310,7 @@ export class SessionStore {
             row.bytes += events.reduce((n, e) => n + sizeOf(e), 0);
             await this.backend.append({ ...row }, from, events);
         }
-        const evict = planEviction([...this.rows.values()], {
-            budgetBytes: this.opts.budgetBytes, maxSessions: this.opts.maxSessions,
-            protect: [...(this.opts.protect?.() ?? []), ...this.running()],
-        });
-        await this.forget(evict);
+        await this.evict();
     }
 
     /** A session whose events are still arriving would be evicted and immediately written again. */

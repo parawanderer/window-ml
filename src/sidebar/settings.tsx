@@ -1150,6 +1150,16 @@ export function Settings() {
                     <span>Keep runs started from this browser's own UI</span>
                 </label>
                 <div class="set-hint">A run you start from the Commander HUD is kept, so it is still here after the browser has been idle and can be read tomorrow. Runs and chats started from <code>code</code> are unaffected: they last as long as the page unless they ask to be saved.</div>
+                <label class="set-field"><span>Keep unpinned sessions for (days)</span>
+                    <input type="number" min="0" step="1" value={c.sessionRetentionDays}
+                        onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("sessionRetentionDays", Number.isFinite(n) && n >= 0 ? n : DEFAULT_CONFIG.sessionRetentionDays); }} />
+                </label>
+                <div class="set-hint">A saved session that has done nothing for this many days is deleted, unless it is pinned or open somewhere. Counted from its last activity, not from when it started. 0 keeps every session until the store runs out of room, when the oldest unpinned ones go first. Each deletion is written to the housekeeping log.</div>
+                <label class="set-field"><span>Saved session storage (MB)</span>
+                    <input type="number" min="0" step="64" value={c.sessionStoreBudgetMB}
+                        onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("sessionStoreBudgetMB", Number.isFinite(n) && n >= 0 ? n : DEFAULT_CONFIG.sessionStoreBudgetMB); }} />
+                </label>
+                <div class="set-hint">Disk for saved sessions. Past it, the oldest unpinned session is deleted first (and logged). 0 sets no size limit, so only the retention above and your pins decide what is kept. Pinned sessions count toward this and are never what makes room, so many large pins can hold it over. The browser does not clear this storage when the disk runs low.</div>
                 <label class="set-field"><span>Blank-tab start page</span>
                     <input type="url" placeholder="https://example.com" value={c.agentStartPage}
                         onChange={(e: any) => setField("agentStartPage", e.target.value.trim())} />

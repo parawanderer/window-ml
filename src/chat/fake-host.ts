@@ -89,6 +89,14 @@ export class FakeHost implements SessionHost {
     /** delay before every delivery and command result, to see loading states */
     latencyMs: number;
 
+    /**
+     * How many events a fresh subscription delivers, the newest ones, the way a hub's short ring does; `backfilled`
+     * then says where they begin (`from`) and `session.backfill` serves the rest. Unset: the whole history, `from: 0`.
+     */
+    ringLimit?: number;
+    /** A short ring WITHOUT the session's start, as an older runtime would send it, to exercise the fallback. */
+    ringDropsStart?: boolean;
+
     /** Deliver later, in order, never synchronously. */
     private later(fn: () => void): void {
         if (this.latencyMs > 0) setTimeout(fn, this.latencyMs);
@@ -222,7 +230,7 @@ export class FakeHost implements SessionHost {
     /* ------------------------------ internals ------------------------------ */
 
     private envelope(h: Held, e: Logged): SessionStreamMessage {
-        return { type: "event", v: SESSION_CONTRACT_VERSION, session: h.summary.id, epoch: h.epoch, cursor: e.cursor, event: e.event };
+        return { type: "event", v: SESSION_CONTRACT_VERSION, session: h.summary.id, epoch: h.epoch, cursor: e.cursor, pos: h.log.indexOf(e), event: e.event };
     }
 
     private upsertIndex(summary: SessionSummary): void {
@@ -236,9 +244,14 @@ export class FakeHost implements SessionHost {
         const resumable = !!since && since.epoch === epoch && since.cursor >= h.lostBefore - 1;
         const out: SessionStreamMessage[] = [];
         if (h.log.length && (rebuilt || (since && !resumable))) out.push({ type: "reset", session: h.summary.id, epoch });
-        const from = resumable ? since!.cursor : -Infinity;
-        for (const e of h.log) if (e.cursor > from) out.push(this.envelope(h, e));
-        out.push({ type: "backfilled", session: h.summary.id, epoch, cursor: h.log.at(-1)?.cursor ?? 0, truncated: h.lostBefore > 0 && !resumable });
+        const after = resumable ? since!.cursor : -Infinity;
+        // A fresh start sends the ring's worth, newest last; a resume sends what the client lacks, whatever its size.
+        const start = resumable || this.ringLimit == null ? 0 : Math.max(0, h.log.length - this.ringLimit);
+        // The session's first event rides along with a short ring, as a runtime keeps it: `from` still names where
+        // the contiguous tail begins.
+        if (start > 0 && !this.ringDropsStart && h.log[0].cursor > after) out.push(this.envelope(h, h.log[0]));
+        for (const e of h.log.slice(start)) if (e.cursor > after) out.push(this.envelope(h, e));
+        out.push({ type: "backfilled", session: h.summary.id, epoch, cursor: h.log.at(-1)?.cursor ?? 0, truncated: h.lostBefore > 0 && !resumable, ...(resumable ? {} : { from: start }) });
         for (const m of out) this.later(() => { if (sub.live) sub.listener(m); });
     }
 
@@ -277,6 +290,13 @@ export class FakeHost implements SessionHost {
             case "tab.focus":
                 if (!caps.tabs) return fail("unsupported", "this runtime has no tabs");
                 return DEMO_TABS.some((t) => t.tabId === c.tabId) ? ok({}) : fail("not-found", "no such tab");
+            case "session.backfill": {
+                if (!h) return fail("not-found", "no such session");
+                if (c.before != null && (!Number.isInteger(c.before) || c.before < 0)) return fail("invalid", "before must be a position in this session's history");
+                const end = c.before == null ? h.log.length : Math.min(c.before, h.log.length);
+                const from = Math.max(0, end - Math.min(c.limit ?? 40, 40));
+                return ok({ session: h.summary.id, epoch: h.epoch, events: h.log.slice(from, end).map((e) => e.event), from, more: from > 0, truncated: from === 0 && h.lostBefore > 0 });
+            }
             case "runtime.info":
                 return ok({ kind: rt.kind, contractVersion: rt.contractVersion, capabilities: caps, nowMs: Date.now() });
             // Starting a session: the demo world mints one and answers the first turn, so the new-session form is
@@ -367,6 +387,10 @@ export class FakeHost implements SessionHost {
             }
             case "session.delete":
                 this.deleteSession(key);
+                return ok({});
+            case "session.pin":
+                if (!key || !h) return fail("not-found", "no such session");
+                this.updateSummary(key, c.pinned ? { pinned: true, saved: true } : { pinned: undefined });
                 return ok({});
             default:
                 return fail("unsupported", `the fake host does not do ${(c as Command).type}`);

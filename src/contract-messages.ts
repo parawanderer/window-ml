@@ -50,6 +50,7 @@ export type BackgroundMessageType =
     | "DUMP_EVENTS"   // ml.__events(): the raw inputs the resource panel derives its timeline from
     | "DUMP_LOADS"   // ml.__loads(): one record per model load, collected for tuning the VRAM predictor
     | "DUMP_HOUSEKEEPING"   // ml.__housekeeping() + the DevTools panel: the housekeeping log (housekeeping.ts)
+    | "SESSION_STORAGE_STATS"   // extension pages only: where the saved-session store's bytes go (session-storage-stats.ts)
     | "HOUSEKEEPING_REPORT"   // another context reporting what it decided; origin is stamped from the sender
     | "PYTHON_PREWARM"   // start Pyodide ahead of a run (run start with python_exec, or the Commander opening)
     | "SAVE_SESSION" | "GET_SESSION" | "PYTHON_EXEC" | "FETCH_SHEET" | "FETCH_SHEET_TITLE" | "FETCH_URL"

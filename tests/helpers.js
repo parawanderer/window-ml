@@ -130,6 +130,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const connectListeners = [];
     const tabRemovedListeners = [];   // chrome.tabs.onRemoved listeners; fired by bg.closeTab(id)
     const stored = { ...config };
+    const syncListeners = [];
     const localStore = { ...local };   // seed chrome.storage.local (e.g. ml_bgrun_* snapshots for durable-resume tests)
     const sessionStore = { ...session };   // seed chrome.storage.session (e.g. a housekeeping heartbeat left by an "earlier" worker)
     let offscreenDoc = false;
@@ -151,7 +152,11 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         Blob,              // the value store keeps a fetched body as a Blob
         // The value store's database. Absent by default, as in any realm with no IndexedDB, which leaves the store off;
         // a test that exercises it passes a `fake-indexeddb` IDBFactory.
-        ...(indexedDB ? { indexedDB } : {}),
+        // A key range is how the store deletes a session's events, so a worker given a database needs it too: without
+        // it every eviction threw, and nothing noticed until retention was the first test to evict through a worker. It
+        // is the CommonJS build's, so a test that evicts must take its IDBFactory from `require("fake-indexeddb")` too:
+        // the ESM build's database refuses the other build's key range.
+        ...(indexedDB ? { indexedDB, IDBKeyRange: require("fake-indexeddb").IDBKeyRange } : {}),
         fetch: async (url, opts = {}) => {
             // The extension's own files: this harness has no bundle, and Chrome REJECTS a missing extension resource
             // rather than answering 404. Not a call to the backend, so never recorded or handed to `onFetch`.
@@ -170,6 +175,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                     get: async (defaults) => ({ ...defaults, ...stored }),
                     set: async (obj) => { Object.assign(stored, obj); }
                 },
+                onChanged: { addListener: (fn) => syncListeners.push(fn) },
                 local: {
                     get: async (key) => {
                         if (key == null) return { ...localStore };   // get(null) → ALL keys (hydratePersistedRuns/purgeAllBgRuns)
@@ -271,6 +277,12 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         debuggerEventListeners,
         /** Fire a CDP event at every listener the SW registered (e.g. Runtime.bindingCalled). */
         emitDebuggerEvent: (target, method, params) => { [...debuggerEventListeners].forEach(fn => fn(target, method, params)); },
+        /** Change synced settings the way the settings panel does: stored, then storage.onChanged with area "sync". */
+        setSync: (obj) => {
+            const changes = Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, { oldValue: stored[k], newValue: v }]));
+            Object.assign(stored, obj);
+            for (const fn of syncListeners) fn(changes, "sync");
+        },
         stored,
         localStore,   // chrome.storage.local contents — tests assert a snapshot was kept/removed
         sessionStore,   // chrome.storage.session contents — the housekeeping log lives here

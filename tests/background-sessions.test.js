@@ -206,6 +206,9 @@ test("session.cancel on a background run blocked at its gate ends it cancelled",
 /** Read a saved session's row straight out of the fake IndexedDB, once the store's debounced write has landed. */
 async function storedRow(idb, hash, tries = 30) {
     for (let i = 0; i < tries; i++) {
+        // Never OPEN a database the worker has not created: opening one at version 1 creates it EMPTY, the worker's
+        // own open then runs no upgrade, and its object stores never exist. Tests passed only by winning that race.
+        if (!(await idb.databases()).some((d) => d.name === "ml-saved-sessions")) { await new Promise((r) => setTimeout(r, 50)); continue; }
         const row = await new Promise((resolve, reject) => {
             const open = idb.open("ml-saved-sessions", 1);
             open.onerror = () => reject(open.error);
@@ -275,4 +278,139 @@ test("a run's history is kept for a session the store holds, and dropped for one
     await run("run00011");
     await flush();
     assert.equal(await storedRow(idb, "run00011", 3), null);
+});
+
+test("session.pin keeps an unsaved session, writes the pin, and a restarted worker lists it pinned", T, async () => {
+    const { IDBFactory } = await import("fake-indexeddb");
+    const idb = new IDBFactory();
+    const bg = loadBackground({ config, indexedDB: idb });
+    const page = openPage(bg);
+    void bg.send({ type: "ML_DEBUG_EVENT", event: start("eeee0001") }, tab(7));
+    void bg.send({ type: "ML_DEBUG_EVENT", event: ev("eeee0001", "agent-result", { answer: "done", steps: 1, status: "done" }) }, tab(7));
+    await flush();
+    assert.equal(page.rows().get("eeee0001").saved, false, "a page script's session, not kept");
+
+    page.port.send({ type: "cmd", id: 1, command: { type: "session.pin", session: { runtime: "local", hash: "eeee0001" }, pinned: true } });
+    await flush();
+    assert.deepEqual(page.port.messages.find((m) => m.type === "result" && m.id === 1)?.result, { ok: true, data: {} });
+    const row = page.rows().get("eeee0001");
+    assert.equal(row.pinned, true);
+    assert.equal(row.saved, true, "a pin on something that dies with the worker would keep nothing");
+
+    // What a restart reads: the stored row carries the pin, and the events the session had before it was pinned.
+    const stored = await storedRow(idb, "eeee0001");
+    assert.equal(stored?.summary?.pinned, true);
+    assert.ok(stored.count >= 2, "the ring reached the store with the pin");
+
+    const next = loadBackground({ config, indexedDB: idb });
+    const again = openPage(next);
+    let restored;
+    for (let i = 0; i < 30 && !restored; i++) { await flush(); restored = again.rows().get("eeee0001"); }
+    assert.equal(restored?.pinned, true);
+});
+
+test("every command the contract defines reaches the handler through the port", T, async () => {
+    // The port kept its own list of known commands, which went stale: slice 5's commands were built and tested in the
+    // handler and answered `unsupported` from here, which is the only way the chat page reaches them.
+    const { COMMAND_SCOPE } = await import("../src/session-host.ts");
+    const bg = loadBackground({ config });
+    const page = openPage(bg);
+    const types = Object.keys(COMMAND_SCOPE);
+    types.forEach((type, i) => page.port.send({ type: "cmd", id: 100 + i, command: { type } }));
+    await flush(10);
+    for (const [i, type] of types.entries()) {
+        const reply = page.port.messages.find((m) => m.type === "result" && m.id === 100 + i);
+        assert.ok(reply, `${type} was answered`);
+        assert.notEqual(reply.result.error?.message, "this runtime does not know that command", type);
+    }
+});
+
+test("a worker starting with sessions past their retention forgets them before listing, logs it, and keeps a pin", T, async () => {
+    // `require`, not `import`: the harness hands the worker the CommonJS build's IDBKeyRange, and a key range from the
+    // other build is refused by this database, which aborts the delete.
+    const { IDBFactory } = require("fake-indexeddb");
+    const { indexedDbBackend } = await import("../src/session-store.ts");
+    const idb = new IDBFactory();
+    const DAY = 24 * 60 * 60 * 1000;
+    const be = indexedDbBackend(idb);
+    const put = (hash, idleDays, over = {}) => {
+        const lastTs = Date.now() - idleDays * DAY;
+        const summary = { id: { runtime: "local", hash }, kind: "agent", status: "done", createdTs: lastTs, lastTs, pendingApprovals: 0, saved: true, ...over };
+        return be.append({ hash, summary, lastTs, createdTs: lastTs, bytes: 10, count: 1 }, 0, [start(hash)]);
+    };
+    await put("0ld00001", 40);
+    await put("0ld00002", 40, { pinned: true });
+    await put("new00001", 3);
+
+    const bg = loadBackground({ config: { ...config, sessionRetentionDays: 30 }, indexedDB: idb });
+    const page = openPage(bg);
+    for (let i = 0; i < 100 && !page.rows().has("new00001"); i++) await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual([...page.rows().keys()].sort(), ["0ld00002", "new00001"], "never listed, not listed then removed");
+    assert.equal(await storedRow(idb, "0ld00001", 3), null, "gone from the disk too");
+
+    const { data } = await bg.send({ type: "DUMP_HOUSEKEEPING", payload: {} }, { url: "chrome-extension://test/sidebar/devtools.html" });
+    const evicted = data.filter((e) => e.subsystem === "sessions" && e.kind === "evict");
+    assert.equal(evicted.length, 1);
+    assert.equal(evicted[0].key, "0ld00001");
+    assert.equal(evicted[0].reason, "retention");
+    assert.equal(evicted[0].detail.outcome, "deleted");
+    assert.equal(evicted[0].detail.idleDays, 40);
+});
+
+test("every event of a saved session reaches the store, not only the ones that changed its row", T, async () => {
+    // Keyed on the index's `summary`, which is null when the row did not change, the write dropped most of a run: seven
+    // events in, two stored. A restarted worker and `session.backfill` both read the store.
+    const { IDBFactory } = require("fake-indexeddb");
+    const idb = new IDBFactory();
+    const bg = loadBackground({ config, indexedDB: idb });
+    void bg.send({ type: "ML_KEEP_SESSION", hash: "cccc0001" }, tab(7));
+    void bg.send({ type: "ML_DEBUG_EVENT", event: start("cccc0001") }, tab(7));
+    for (let i = 1; i <= 6; i++) void bg.send({ type: "ML_DEBUG_EVENT", event: ev("cccc0001", "agent-step", { step: i, seq: i, tool: "exec", result: `r${i}` }) }, tab(7));
+    let row = null;
+    for (let i = 0; i < 100 && !(row?.count >= 7); i++) { await new Promise((r) => setTimeout(r, 20)); row = await storedRow(idb, "cccc0001", 1); }
+    assert.equal(row?.count, 7);
+});
+
+test("session storage stats answer an extension page and refuse a page", T, async () => {
+    const { IDBFactory } = require("fake-indexeddb");
+    const idb = new IDBFactory();
+    const bg = loadBackground({ config, indexedDB: idb });
+    void bg.send({ type: "ML_KEEP_SESSION", hash: "ffff0001" }, tab(7));
+    void bg.send({ type: "ML_DEBUG_EVENT", event: start("ffff0001") }, tab(7));
+    void bg.send({ type: "ML_DEBUG_EVENT", event: ev("ffff0001", "agent-step", { step: 1, seq: 1, tool: "exec", result: "r".repeat(300) }) }, tab(7));
+    for (let i = 0; i < 100 && !((await storedRow(idb, "ffff0001", 1))?.count >= 2); i++) await new Promise((r) => setTimeout(r, 20));
+
+    const refused = await bg.send({ type: "SESSION_STORAGE_STATS" }, tab(7));
+    assert.match(refused.error, /Refused/);
+    const reply = await bg.send({ type: "SESSION_STORAGE_STATS" }, { url: "chrome-extension://test/chat.html" });
+    const { data } = reply;
+    assert.equal(data.sessions, 1);
+    assert.equal(data.events, 2);
+    assert.ok(data.toolOutput >= 300);
+    assert.equal(data.top[0].hash, "ffff0001");
+});
+
+test("the store budget: 0 caps nothing, and a lowered budget applies at once", T, async () => {
+    const { IDBFactory } = require("fake-indexeddb");
+    const { indexedDbBackend } = await import("../src/session-store.ts");
+    const idb = new IDBFactory();
+    const be = indexedDbBackend(idb);
+    const MB = 1024 * 1024;
+    // Two sessions of 200 MB each by the store's own accounting: over the default 256, under nothing.
+    for (const [hash, age] of [["big00001", 2], ["big00002", 1]]) {
+        const lastTs = Date.now() - age * 60_000;
+        const summary = { id: { runtime: "local", hash }, kind: "agent", status: "done", createdTs: lastTs, lastTs, pendingApprovals: 0, saved: true };
+        await be.append({ hash, summary, lastTs, createdTs: lastTs, bytes: 200 * MB, count: 1 }, 0, [start(hash)]);
+    }
+    const bg = loadBackground({ config: { ...config, sessionStoreBudgetMB: 0 }, indexedDB: idb });
+    const page = openPage(bg);
+    for (let i = 0; i < 100 && page.rows().size < 2; i++) await new Promise((r) => setTimeout(r, 20));
+    assert.equal(page.rows().size, 2, "0 is no cap: 400 MB kept");
+
+    // Lowered to 256 while watching: the older one goes now, not on some later write.
+    bg.setSync({ sessionStoreBudgetMB: 256 });
+    for (let i = 0; i < 100 && page.rows().has("big00001"); i++) await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual([...page.rows().keys()], ["big00002"]);
+    const { data } = await bg.send({ type: "DUMP_HOUSEKEEPING", payload: {} }, { url: "chrome-extension://test/sidebar/devtools.html" });
+    assert.deepEqual(data.filter((e) => e.subsystem === "sessions").map((e) => [e.key, e.reason]), [["big00001", "budget"]]);
 });

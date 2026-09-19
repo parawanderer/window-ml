@@ -150,6 +150,102 @@ test("store: a restart that lost history keeps what is shown, marks it truncated
     store.dispose();
 });
 
+/** A session with `n` steps and a user message after step 2, behind a ring of `ring` events. */
+function pagedWorld(n, ring) {
+    sessionMap.clear();
+    const say = (hash, at) => ({ kind: "agent-say", id: hash, ts: 1000 + at + 0.5, save: true, session: { hash, turn: at }, text: `said after ${at}` });
+    const events = [agentStart("bbbb0001")];
+    for (let i = 1; i <= n; i++) { events.push(step("bbbb0001", i)); if (i === 2) events.push(say("bbbb0001", 2)); }
+    const fake = new FakeHost({ runtimes: [runtime("laptop")], sessions: [{ summary: summary("laptop", "bbbb0001"), events }] });
+    fake.ringLimit = ring;
+    const store = new ChatStore(fake);
+    store.start();
+    return { fake, store, total: events.length };
+}
+
+test("store: a short ring says where paging starts, and each page replays into the transcript the full order makes", async () => {
+    const K = "laptop:bbbb0001";
+    const { store, total } = pagedWorld(50, 5);
+    store.open(K);
+    await flush();
+    assert.deepEqual(store.earlier.value.get(K), { from: total - 5, more: true, truncated: false, loading: false });
+    assert.equal(store.truncated.value.has(K), false, "a short ring is not a loss");
+
+    await store.loadEarlier(K);   // positions total-45 .. total-6
+    assert.deepEqual({ ...store.earlier.value.get(K) }, { from: total - 45, more: true, truncated: false, loading: false });
+    await store.loadEarlier(K);   // the rest, down to the start
+    assert.deepEqual({ ...store.earlier.value.get(K) }, { from: 0, more: false, truncated: false, loading: false });
+
+    // What the whole history, applied in order, would have shown: every step once, the one user message once and
+    // after step 2, with the start present so nothing is held as an orphan.
+    const s = sessionMap.get(K);
+    assert.deepEqual(s.steps.map((x) => x.seq), Array.from({ length: 50 }, (_, i) => i + 1));
+    assert.equal(s.says.length, 1, "the message the ring and the page both touched is not doubled");
+    assert.equal(s.says[0].atStep, 2);
+    assert.equal(s.task, "t");
+    await store.loadEarlier(K);   // nothing more to ask for: a no-op, not a request
+    store.dispose();
+});
+
+test("store: live events during paging stay, a second call while loading is ignored, and a failure is kept, not toasted", async () => {
+    const K = "laptop:bbbb0001";
+    const { fake, store } = pagedWorld(10, 3);
+    store.open(K);
+    await flush();
+    fake.emit(K, step("bbbb0001", 11));
+    await flush();
+    let calls = 0;
+    fake.handlers["session.backfill"] = () => { calls++; return undefined; };
+    const one = store.loadEarlier(K), two = store.loadEarlier(K);
+    assert.equal(store.earlier.value.get(K).loading, true);
+    await Promise.all([one, two]);
+    assert.equal(calls, 1);
+    assert.deepEqual(sessionMap.get(K).steps.map((x) => x.seq), Array.from({ length: 11 }, (_, i) => i + 1), "the live step survived the replay");
+
+    const failing = pagedWorld(10, 3);
+    failing.fake.handlers["session.backfill"] = () => ({ ok: false, error: { code: "unavailable", message: "the laptop is asleep" } });
+    failing.store.open(K);
+    await flush();
+    await failing.store.loadEarlier(K);
+    assert.equal(failing.store.earlier.value.get(K).error, "the laptop is asleep");
+    assert.equal(failing.store.earlier.value.get(K).loading, false);
+    assert.equal(failing.store.notices.value.length, 0, "shown where the page would be, not as a notice");
+    failing.store.dispose();
+    store.dispose();
+});
+
+test("store: a page from another epoch is discarded, and a whole history is never offered paging", async () => {
+    const K = "laptop:bbbb0001";
+    const { fake, store } = pagedWorld(10, 3);
+    store.open(K);
+    await flush();
+    const before = sessionMap.get(K).steps.length;
+    fake.handlers["session.backfill"] = (c) => ({ ok: true, data: { session: c.session, epoch: "another", events: [agentStart("bbbb0001")], from: 0, more: false, truncated: false } });
+    await store.loadEarlier(K);
+    assert.equal(sessionMap.get(K).steps.length, before, "nothing stitched on");
+    assert.equal(store.earlier.value.get(K).from > 0, true, "still pageable once the stream says what happened");
+    store.dispose();
+
+    const whole = pagedWorld(3, undefined);
+    whole.store.open(K);
+    await flush();
+    assert.equal(whole.store.earlier.value.has(K), false, "from 0: nothing to page");
+    whole.store.dispose();
+});
+
+test("store: a ring without the session's start pages back on its own until the transcript has one", async () => {
+    // Every step waits in the reducer for its start, so a ring that lost it would show nothing at all. An older runtime
+    // sends such a ring; the store fetches pages until the start arrives.
+    const K = "laptop:bbbb0001";
+    const { fake, store } = pagedWorld(60, 5);
+    fake.ringDropsStart = true;
+    store.open(K);
+    await flush(12);
+    assert.equal(store.earlier.value.get(K).from, 0);
+    assert.deepEqual(sessionMap.get(K).steps.map((x) => x.seq), Array.from({ length: 60 }, (_, i) => i + 1));
+    store.dispose();
+});
+
 test("store: a deleted session leaves the index and the reduced state, and the open view returns to the list", async () => {
     const { fake, store } = world();
     view.value = { name: "detail", hash: "laptop:aaaa0001" };

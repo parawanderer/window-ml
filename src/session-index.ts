@@ -45,6 +45,7 @@ export interface SessionIndexOptions {
     perSessionBytes?: number;
     /** approximate bytes kept across all sessions */
     totalBytes?: number;
+    /** how many UNSAVED sessions are kept whole. Saved ones are bounded by the store, which decides whether they exist */
     maxSessions?: number;
 }
 
@@ -362,14 +363,23 @@ export class SessionIndex {
             }
         }
         const evicted: SessionId[] = [];
-        if (this.sessions.size > this.maxSessions) {
+        // Whole-session eviction applies to sessions that exist ONLY here. A SAVED session's existence is the store's
+        // to decide: its row is small, its events are on disk (the ring above is trimmed freely and served from there),
+        // and the store bounds it with its own cap and byte budget. Evicting one here as well gave the two different
+        // answers about whether it existed — every client was told `remove`, and the next worker's `restore` put it
+        // straight back, so a saved session flickered out of the list and in again. The old sessions somebody pins
+        // are exactly the saved ones this used to drop first.
+        const unsaved = [...this.sessions.values()].filter((s) => !s.summary.saved);
+        if (unsaved.length > this.maxSessions) {
             // Forget whole sessions, finished ones first, oldest first. Never the one being written.
             const rank = (s: Indexed): number => (s.summary.status === "running" || s.summary.status === "waiting" ? 1 : 0);
-            const victims = [...this.sessions.values()].filter((s) => s !== current).sort((a, b) => rank(a) - rank(b) || a.summary.lastTs - b.summary.lastTs);
+            const victims = unsaved.filter((s) => s !== current).sort((a, b) => rank(a) - rank(b) || a.summary.lastTs - b.summary.lastTs);
+            let over = unsaved.length - this.maxSessions;
             for (const v of victims) {
-                if (this.sessions.size <= this.maxSessions) break;
+                if (over <= 0) break;
                 this.drop(v);
                 evicted.push(v.id);
+                over--;
             }
         }
         return evicted;
@@ -412,7 +422,10 @@ export class SessionIndex {
             return [...s.ring.filter((e) => e.cursor > since.cursor).map(event), { type: "backfilled", session, epoch, cursor: Math.max(since.cursor, s.lastCursor), truncated: false }];
         }
         if (!s.ring.length) return [{ type: "backfilled", session, epoch, cursor: s.lastCursor, truncated: true }];
-        return [{ type: "reset", session, epoch }, ...s.ring.map(event), { type: "backfilled", session, epoch, cursor: s.lastCursor, truncated: s.lostThrough >= 0 }];
+        // Nothing lost: the ring starts at the session's first event, so paging back has nowhere to go. Something lost
+        // and served from here anyway: an unsaved session, which has no history to page through, so no position.
+        const lost = s.lostThrough >= 0;
+        return [{ type: "reset", session, epoch }, ...s.ring.map(event), { type: "backfilled", session, epoch, cursor: s.lastCursor, truncated: lost, ...(lost ? {} : { from: 0 }) }];
     }
 
     /**
@@ -470,6 +483,29 @@ export class SessionIndex {
         // always is, so the row itself is what goes back.
         this.refreshSummary(s);
         return { summary: s.summary, events: s.ring.map((e) => e.event) };
+    }
+
+    /**
+     * Pin a session, or unpin it. Returns the changed row, or null when the session is not held or nothing changed.
+     *
+     * Pinning does not save: the caller does that first, through the same path as any other session asked to be
+     * kept, because the events already in the ring have to reach the store with it. A pinned session is saved, and
+     * the whole-session eviction here never touches a saved one, so this needs no rule of its own in `enforceCaps`.
+     */
+    setPinned(hash: string, pinned: boolean): SessionSummary | null {
+        const s = this.sessions.get(hash);
+        if (!s || !!s.summary.pinned === pinned) return null;
+        if (pinned) s.summary.pinned = true;
+        else delete s.summary.pinned;
+        this.refreshSummary(s);
+        return s.summary;
+    }
+
+    /** How many sessions are pinned, which the runtime bounds. */
+    pinnedCount(): number {
+        let n = 0;
+        for (const s of this.sessions.values()) if (s.summary.pinned) n++;
+        return n;
     }
 
     /**

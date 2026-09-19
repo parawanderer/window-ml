@@ -61,6 +61,18 @@ A feed outlives its subscription: reopening a session resumes from `position`, s
 The test for that counts what the host re-sent, because the reducer absorbs a repeated step by `seq` and the
 transcript alone cannot tell a resume from a full replay.
 
+**Paging back (`store.earlier`, `store.loadEarlier(key)`).** A `backfilled` with `from > 0` makes the session
+pageable: `earlier` holds `{ from, more, truncated, loading, error? }`, and `loadEarlier` asks
+`session.backfill { before: from }` quietly (a failure is kept on the state, drawn where the page would be). A page
+is applied by REPLAY, not by prepending: the store keeps the raw events it applied (with their `pos`) while the
+session can still page, and on each page clears the reduced session (`forgetSessionReduced`, which also drops events
+parked for a start) and re-applies page + held in history order. That makes the transcript the one the runtime's own
+order produces, whatever the reducer assumes about order (an `agent-say` appends and records `atStep`, so applying
+it before its steps puts it in the wrong place). A held event inside the page's range is the session's start, sent
+ahead of a short ring, and is dropped by `pos`. A page from another epoch is discarded. When the ring holds no start
+at all (`awaitingStart`), the store pages back on its own, at most `AUTO_PAGES` times, since the reducer shows
+nothing until a start arrives. `FakeHost.ringLimit` (and `ringDropsStart`) script all of this.
+
 Timestamps are moved onto this client's clock (`ts - clockOffsetMs`) on the way in, for `ts` only.
 
 ## Commands and failures
@@ -153,12 +165,33 @@ browser. Nothing new decides a gate, starts a loop or builds a request.
 | `session.cancel` | a background run: `cancelBackgroundRun` (the `CANCEL_RUN` body, factored out); otherwise the page |
 | `session.continue` | only a `capped` session, through the page |
 | `session.delete` | refused while running; forgets the stored chat (`ml_session_<hash>`), the resumable snapshot and pointer store, then the index row |
+| `session.pin` | pinning keeps the session first (`keepSession`, so the ring reaches the store), then sets `pinned` on the row, which `planEviction` never drops and a restarted worker restores. At most `MAX_PINNED` (100); unpinning leaves it saved |
 | `page.highlight` | `ML_HL_REMOTE` to the session's tab with `anyMode`, since the shell otherwise draws remote highlights only in devtools mode |
 | `side.call` | `fetchLLM` on the utility profile, `think: false`, `maxTokens` capped at 1024, the session on the hint; `unsupported` without a utility model, which `capabilities.sideCalls` also says (kept current from storage) |
 | `tab.screenshot` | `captureVisibleTab`, only for a tab in front in its window; PNG, then JPEG at falling quality until it fits `maxBytes` (ceiling 4 MB); size read from the image header |
 | `tabs.list` | `chrome.tabs.query`, http(s) tabs only |
 | `chat.start` | a chat the worker hosts itself: `sw-chat.ts` (below) |
 | `agent.start` | the target tab's own start path, the one the HUD composer uses (below) |
+
+**Retention** (`sessionRetentionDays`, 0 = keep): a saved, unpinned session that has done nothing for that many days
+is deleted, measured from its last activity. `planExpiry` (session-store.ts) is the rule; the store applies it at
+startup BEFORE the list is restored (so an expired session is never listed then removed), on every write, and when the
+setting changes. It ignores the budget: retention is about a person's history, not space. Every drop, by retention or
+by the caps, is a `sessions/evict` housekeeping record.
+
+**The budget** (`sessionStoreBudgetMB`, default 256): the store's size cap, with the count cap (`STORE_MAX_SESSIONS`)
+beside it; 0 removes both, leaving retention and pins. The store reads it at every eviction (`limits`), and a lowered
+value applies at once. Until the worker has READ the setting there is no cap at all, not the default: someone who set
+0 may hold gigabytes, and a write landing first must not evict them to 256 MB. The manifest asks for
+`unlimitedStorage` (no install warning), so Chrome does not drop the store under disk pressure, which would be an
+eviction nothing logs.
+
+**What fills the store** (`session-storage-stats.ts`): from any extension page's console (the chat page, the DevTools
+panel), `await chrome.runtime.sendMessage({ type: "SESSION_STORAGE_STATS" })` answers the store's bytes split into
+images (`data:image/*` wherever they sit), tool output (an agent step's `result`/`streamOutput`/`output`, images
+excluded) and the rest, with `imagesIfDeduplicated` (each distinct image once) and the ten largest sessions. A page is
+refused: the answer lists session hashes, and a saved session is readable by any page that knows its hash. It reads
+every session from disk, so it is for a person asking, never for a timer.
 
 **The page says what it did.** The composer's page path was fire-and-forget, so the result could not say whether a
 message steered a run, started a turn, or reached nothing (a reloaded page no longer holds an unsaved chat). A command

@@ -137,7 +137,8 @@ test("opening a subscription: everything with a reset, only the tail from a posi
 
     const fresh = ix.backfill(h);
     assert.deepEqual(kinds(fresh), ["reset", "agent", "agent-step", "backfilled"]);
-    assert.deepEqual(fresh.at(-1), { type: "backfilled", session: { runtime: "local", hash: h }, epoch, cursor: c2, truncated: false });
+    // `from: 0`: nothing was lost, so the stream starts at the session's first event and there is nothing to page to.
+    assert.deepEqual(fresh.at(-1), { type: "backfilled", session: { runtime: "local", hash: h }, epoch, cursor: c2, truncated: false, from: 0 });
     assert.ok(fresh.every((m) => m.type !== "event" || (m.v === 1 && m.session.hash === h && m.epoch === epoch)));
 
     const c3 = ix.ingest(result(h), bg()).cursor;
@@ -332,4 +333,47 @@ test("every event kind the index accepts has been considered for de-duplication"
         if (NO_RULE_NEEDED.has(kind)) continue;
         assert.ok(duplicate.includes(`"${kind}"`), `${kind} has no de-duplication rule and is not listed as needing none`);
     }
+});
+
+test("a SAVED session is never evicted whole: the store decides whether it exists", () => {
+    // It used to be. The index told every client `remove`, the store still held the session, and the next worker's
+    // `restore` put it straight back — a saved session flickered out of the list and in again. The old sessions
+    // somebody pins are exactly the saved ones this dropped first.
+    const ix = index({ maxSessions: 2 });
+    for (const h of ["aaaa0001", "aaaa0002", "aaaa0003"]) {
+        ix.ingest(start(h), bg());
+        ix.ingest(result(h), bg());
+        ix.markSaved(h);
+        ix.tick(10);
+    }
+    // Three saved sessions, a cap of two, and nothing was forgotten.
+    assert.deepEqual(ix.list().map((s) => s.id.hash).sort(), ["aaaa0001", "aaaa0002", "aaaa0003"]);
+
+    // Unsaved sessions still count toward the cap and are still dropped, oldest finished first — and the saved ones
+    // around them are not what makes room.
+    ix.ingest(start("bbbb0001"), bg(TAB_B)); ix.ingest(result("bbbb0001"), bg(TAB_B)); ix.tick(10);
+    ix.ingest(start("bbbb0002"), bg(TAB_B)); ix.ingest(result("bbbb0002"), bg(TAB_B)); ix.tick(10);
+    const third = ix.ingest(start("bbbb0003"), bg(TAB_B));
+    assert.deepEqual(third.evicted, [{ runtime: "local", hash: "bbbb0001" }], "the oldest UNSAVED session goes");
+    for (const h of ["aaaa0001", "aaaa0002", "aaaa0003"]) assert.ok(ix.get(h), `saved ${h} is still listed`);
+});
+
+test("a pin is a field on the row: set and cleared once, counted, and carried through a restore", () => {
+    const ix = index();
+    ix.ingest(start("aaaa0001"), bg());
+    ix.markSaved("aaaa0001");
+    assert.equal(ix.setPinned("aaaa0001", true).pinned, true);
+    assert.equal(ix.setPinned("aaaa0001", true), null, "pinning what is pinned changes nothing, so nothing is broadcast");
+    assert.equal(ix.pinnedCount(), 1);
+    assert.equal(ix.setPinned("ffff0000", true), null, "a session not held");
+
+    const row = ix.setPinned("aaaa0001", false);
+    assert.equal("pinned" in row, false, "unpinned is ABSENT, as the contract says, not false");
+    assert.equal(ix.pinnedCount(), 0);
+
+    // A restarted worker gets `pinned` back from the stored summary: nothing else remembers it.
+    ix.setPinned("aaaa0001", true);
+    const next = index();
+    next.restore([{ summary: ix.get("aaaa0001"), count: 1 }]);
+    assert.equal(next.get("aaaa0001").pinned, true);
 });

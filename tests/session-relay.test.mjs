@@ -9,7 +9,8 @@ const row = (hash, over = {}) => ({ id: { runtime: "rt", hash }, kind: "agent", 
 /** A publisher whose frames are collected in order, the way a hub's ring would retain them. */
 function publisher(every) {
     const frames = [];
-    const p = new IndexPublisher("rt", async (counter, batch) => { frames.push({ counter, update: decodeIndexFrame(batch) }); }, every);
+    let n = 0;
+    const p = new IndexPublisher("rt", async (batch) => { frames.push({ order: ++n, update: decodeIndexFrame(batch) }); }, every);
     return { p, frames };
 }
 
@@ -29,13 +30,14 @@ test("the ring always holds a complete snapshot, however many updates go by", as
     assert.ok(SNAPSHOT_EVERY < RING, "and the cadence is under the ring with room to spare");
 });
 
-test("counters are strictly increasing, even when updates are fired without waiting", async () => {
-    // A publish is asynchronous; a reader that sees counter 5 before 4 treats 4 as a replay.
+test("batches go out in the order they were made, even when updates are fired without waiting", async () => {
+    // A publish is asynchronous, and whatever seals these counts them in the order they arrive — so arriving out of
+    // order would number a later snapshot below an earlier upsert, and a reader treats the earlier one as a replay.
     const { p, frames } = publisher(4);
-    await Promise.all(Array.from({ length: 20 }, (_, i) => p.update({ type: "upsert", session: row(`c${String(i).padStart(7, "0")}`) })));
-    const counters = frames.map((f) => f.counter);
-    assert.deepEqual(counters, [...counters].sort((a, b) => a - b));
-    assert.equal(new Set(counters).size, counters.length, "and never reused");
+    const names = Array.from({ length: 20 }, (_, i) => `c${String(i).padStart(7, "0")}`);
+    await Promise.all(names.map((h) => p.update({ type: "upsert", session: row(h) })));
+    const upserted = frames.filter((f) => f.update.type === "upsert").map((f) => f.update.session.id.hash);
+    assert.deepEqual(upserted, names, "in the order they were asked for");
 });
 
 test("a re-published snapshot carries every row the publisher has said, including removals", async () => {
@@ -75,4 +77,55 @@ test("a frame that opened but is not an index message is ignored, not thrown on"
         assert.deepEqual(r.read(junk(b)), [], `ignored: ${b}`);
     }
     assert.equal(r.complete, false, "and none of them counts as a snapshot");
+});
+
+// --- one session's event stream ---
+
+const { eventsChannel, keysChannel, encodeStreamFrame, decodeStreamFrame, grantees } = await import("../src/session-relay.ts");
+const { ChannelKey } = await import("../src/hub/seal.ts");
+
+test("a session's channels hide its hash, and are distinct per session and per purpose", async () => {
+    const ck = await ChannelKey.generate();
+    const a = await eventsChannel(ck, "aaaa0001");
+    const b = await eventsChannel(ck, "aaaa0002");
+    const ka = await keysChannel(ck, "aaaa0001");
+    const hex = (x) => [...x].map((v) => v.toString(16).padStart(2, "0")).join("");
+
+    assert.equal(a.length, 16);
+    assert.notEqual(hex(a), hex(b), "two sessions, two channels");
+    assert.notEqual(hex(a), hex(ka), "a session's keys ride beside its events, not on them");
+    // The whole point of the HMAC: the hub routes by this and must never see the hash, which is also in `#s=`, on
+    // disk and in a box's request hints — a hash-named channel would be a join key between them.
+    assert.ok(!hex(a).includes(hex(new TextEncoder().encode("aaaa0001"))));
+    // And it is a pure function of the key and the session, so every device that holds the key names the same one.
+    assert.equal(hex(await eventsChannel(ck, "aaaa0001")), hex(a));
+});
+
+test("a stream message crosses with the contract's own epoch and cursor inside", () => {
+    const ev = { type: "event", v: 1, session: { runtime: "rt", hash: "aaaa0001" }, epoch: "w1.0", cursor: 7, event: { kind: "agent", id: "aaaa0001" } };
+    assert.deepEqual(decodeStreamFrame(encodeStreamFrame(ev)), ev);
+    for (const m of [
+        { type: "reset", session: { runtime: "rt", hash: "a" }, epoch: "w1.0" },
+        { type: "backfilled", session: { runtime: "rt", hash: "a" }, epoch: "w1.0", cursor: 3, truncated: false },
+        { type: "gone", session: { runtime: "rt", hash: "a" } },
+    ]) assert.deepEqual(decodeStreamFrame(encodeStreamFrame(m)), m, m.type);
+});
+
+test("a frame that opened but is not a stream message is ignored, not thrown on", () => {
+    const junk = (s) => new TextEncoder().encode(s);
+    for (const b of ["nope", "null", "{}", '{"type":"event"}', '{"type":"event","session":{},"epoch":"e"}', '{"type":"reset","session":{}}', '{"type":"x","session":{}}']) {
+        assert.equal(decodeStreamFrame(junk(b)), null, `ignored: ${b}`);
+    }
+});
+
+test("only a device whose verified leaf holds `view` is handed a session's key", () => {
+    // A key is not a command: a device holding one reads the stream by subscribing, with nothing further asked. So the
+    // check the runtime makes before answering a command has to be made here too.
+    const who = grantees([
+        { id: "phone", scopes: ["view", "drive"] },
+        { id: "watcher", scopes: ["view"] },
+        { id: "driver-only", scopes: ["drive"] },
+        { id: "box", scopes: [] },
+    ]).map((d) => d.id);
+    assert.deepEqual(who, ["phone", "watcher"]);
 });

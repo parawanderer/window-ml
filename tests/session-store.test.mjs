@@ -2,7 +2,7 @@
 // full. The IndexedDB backend is replaced by a map, so the policy is tested without a database.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SessionStore, planEviction, sizeOf, STORE_BUDGET_BYTES } from "../src/session-store.ts";
+import { SessionStore, planEviction, planExpiry, sizeOf, STORE_BUDGET_BYTES } from "../src/session-store.ts";
 
 const T = { timeout: 5000 };
 
@@ -135,6 +135,34 @@ test("planEviction: count and bytes both bound it, and it drops no more than it 
     assert.deepEqual(planEviction(rows, { budgetBytes: 300, incoming: 200 }), ["a", "b"]);
 });
 
+test("planEviction: a pinned session counts toward the budget and is never what pays for it", () => {
+    const row = (hash, lastTs, bytes, over = {}) => ({ hash, summary: summary(hash, over), lastTs, createdTs: lastTs, bytes, count: 1 });
+    const rows = [row("a", 1, 100, { pinned: true }), row("b", 2, 100), row("c", 3, 100)];
+    assert.deepEqual(planEviction(rows, { budgetBytes: 250 }), ["b"], "the oldest UNPINNED goes");
+    assert.deepEqual(planEviction(rows, { maxSessions: 1 }), ["b", "c"]);
+    // When only pins are left, the budget is exceeded rather than a pin dropped. The runtime bounds the pins.
+    assert.deepEqual(planEviction([row("a", 1, 500, { pinned: true })], { budgetBytes: 100 }), []);
+});
+
+test("putSummary writes a pin with no event behind it, and a restarted store reads it back", T, async () => {
+    const be = backend();
+    const store = new SessionStore(be, { flushMs: 5 });
+    store.put(summary("aaaa0001"), ev("aaaa0001", 0));
+    await store.flush();
+    store.putSummary(summary("aaaa0001", { pinned: true }));
+    await store.flush();
+    const again = new SessionStore(be, { flushMs: 5 });
+    const [r] = await again.open();
+    assert.equal(r.summary.pinned, true);
+    assert.equal(r.count, 1, "the pin wrote a row, not an event");
+
+    // A session pinned before anything of it was written still comes back; an unsaved summary is not a row.
+    store.putSummary(summary("aaaa0002", { pinned: true }));
+    store.putSummary(summary("aaaa0003", { saved: false, pinned: true }));
+    await store.flush();
+    assert.deepEqual([...be._rows.keys()].sort(), ["aaaa0001", "aaaa0002"]);
+});
+
 test("sizeOf survives an event that cannot be serialized", () => {
     const circular = { kind: "chat" };
     circular.self = circular;
@@ -186,4 +214,67 @@ test("a history for a session this store does not keep is dropped", T, async () 
     await store.flush();
     assert.equal(await store.history("ffff0001"), null);
     assert.equal(be._rows.size, 0, "an ephemeral session does not become saved by having a history");
+});
+
+test("an eviction is reported, so whatever lists sessions stops listing one whose history has gone", T, async () => {
+    // The store is the one authority on whether a saved session exists. It used to evict without telling anyone, so a
+    // session stayed in the list after its history had left the disk.
+    const be = backend();
+    const told = [];
+    const store = new SessionStore(be, { flushMs: 5, maxSessions: 2, onEvict: (h) => told.push(...h) });
+    for (const [i, h] of ["aaaa0001", "aaaa0002", "aaaa0003"].entries()) {
+        store.put(summary(h, { lastTs: 100 + i }), ev(h, 0));
+        await store.flush();
+    }
+    assert.deepEqual(told, ["aaaa0001"], "the oldest, and only it");
+    assert.equal(await store.history("aaaa0001"), null, "and it really is gone");
+
+    // A write that evicts nothing reports nothing: a listener is not told about a non-event.
+    const before = told.length;
+    store.put(summary("aaaa0003", { lastTs: 200 }), ev("aaaa0003", 1));
+    await store.flush();
+    assert.equal(told.length, before);
+});
+
+const DAY = 24 * 60 * 60 * 1000;
+
+test("planExpiry: idle past the limit goes, whatever the budget; pins, protected sessions and 0 keep it", () => {
+    const row = (hash, lastTs, over = {}) => ({ hash, summary: summary(hash, over), lastTs, createdTs: 0, bytes: 1, count: 1 });
+    const now = 100 * DAY;
+    const rows = [row("old", now - 31 * DAY), row("pinned", now - 90 * DAY, { pinned: true }), row("open", now - 60 * DAY), row("fresh", now - 29 * DAY)];
+    assert.deepEqual(planExpiry(rows, { now, retainMs: 30 * DAY, protect: ["open"] }), ["old"]);
+    assert.deepEqual(planExpiry(rows, { now, retainMs: 0 }), [], "0 keeps every session");
+    // Measured from the LAST activity: a session started long ago and used yesterday is not old.
+    assert.deepEqual(planExpiry([{ ...row("used", now - DAY), createdTs: 0 }], { now, retainMs: 30 * DAY }), []);
+});
+
+test("the store expires on a sweep and on a write, and records each drop with its reason", T, async () => {
+    const be = backend();
+    let now = 10 * DAY;
+    let retain = 0;
+    const records = [];
+    const removed = [];
+    const store = new SessionStore(be, { flushMs: 5, now: () => now, retainMs: () => retain, onEvicted: (e) => records.push(e), onEvict: (h) => removed.push(...h), maxSessions: 2 });
+    store.put(summary("aaaa0001", { lastTs: 1 * DAY }), ev("aaaa0001", 0, { ts: 1 * DAY }));
+    store.put(summary("aaaa0002", { lastTs: 9 * DAY }), ev("aaaa0002", 0, { ts: 9 * DAY }));
+    await store.flush();
+    assert.deepEqual(await store.sweep(), [], "retention off");
+
+    retain = 5 * DAY;
+    assert.deepEqual(await store.sweep(), ["aaaa0001"]);
+    assert.deepEqual(records, [{ hash: "aaaa0001", reason: "retention", outcome: "deleted", bytes: records[0].bytes, idleMs: 9 * DAY }]);
+    assert.deepEqual(removed, ["aaaa0001"], "whatever lists sessions hears of it");
+
+    // The count cap is the other reason, and says so.
+    now = 9.5 * DAY;
+    store.put(summary("aaaa0003", { lastTs: now }), ev("aaaa0003", 0, { ts: now }));
+    store.put(summary("aaaa0004", { lastTs: now }), ev("aaaa0004", 0, { ts: now }));
+    await store.flush();
+    assert.deepEqual(records.slice(1).map((r) => [r.hash, r.reason]), [["aaaa0002", "budget"]]);
+
+    // An idle worker's next write expires too, not only a sweep.
+    now = 20 * DAY;
+    store.put(summary("aaaa0005", { lastTs: now }), ev("aaaa0005", 0, { ts: now }));
+    await store.flush();
+    assert.deepEqual(records.slice(2).map((r) => [r.hash, r.reason]).sort(), [["aaaa0003", "retention"], ["aaaa0004", "retention"]]);
 });

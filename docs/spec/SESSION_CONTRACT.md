@@ -176,6 +176,7 @@ runtime answers a type or option it does not offer with `unsupported`.
 | `session.cancel` | drive | | `sessionCancel` → `CANCEL_RUN` |
 | `session.continue`: past the step cap | drive | | `continueRun` |
 | `session.delete` | drive | `persistence` for saved sessions | nothing |
+| `session.pin`: keep a session whatever the caps and retention say, or stop; the row's `pinned` changes by `upsert`; bounded, `conflict` past it | drive | `persistence` | nothing |
 | `approval.answer`: by the pending step's `seq`; `persist`, `feedback` | approve | | `approval` → `SET_APPROVAL` → `resolveApproval` |
 | `chat.start` | drive | `chat` | nothing background-hosted |
 | `agent.start`: on a tab, a blank tab, or (reserved) headless | drive | `agent`, `tabs`, `headless` | `startRun` → the page → `START_RUN` |
@@ -201,6 +202,19 @@ It reads UPWARDS — the page ending just before `before`, oldest-first within t
 scrolls a transcript back. `before` and `from` are positions in the SESSION'S OWN HISTORY, 0 being its first event
 ever, and deliberately not the stream cursor: a cursor counts across every session on a runtime and is not kept for
 an event once it is on disk. A client pages by handing back the `from` it was given.
+
+**Where the first page starts.** A subscription says where its events begin: `backfilled.from` is the history
+position of the contiguous run of events the stream ended with, and each event may carry its own `pos`. A client's
+first request is `before: from`, so no page overlaps what the stream delivered: events that arrive with no cursor
+cannot be deduplicated by one, and a reducer that appends (a user message) would show them twice. Locally `from` is
+0 whenever nothing was lost. Over a hub the runtime stamps `pos` and the client's adapter reads the ring's first
+one; a short ring is then not reported `truncated`, since what the HUB kept is not what the RUNTIME still holds, and
+`session.backfill` answers that. No `from`: the client offers no paging.
+
+**A short ring keeps the session's START.** A reducer hangs every step on the session's first event and parks the
+rest until it arrives, so a ring without it shows nothing. The runtime re-publishes the start so the ring holds it
+(it arrives ahead of the tail, at a position below `from`, and a client drops by `pos` what a page repeats). A client
+facing a runtime that does not pages back on its own, a bounded number of times, until the start arrives.
 
 `more` says another page exists below this one. `truncated` says one does not and never will, which is a different
 sentence: a session the runtime does not KEEP has no durable history at all, its only copy having been the ring the
@@ -503,7 +517,8 @@ display?(target: { tabId: number } | { session: SessionId } | { display: string 
 
 Display preferences and themes (client storage); the envelope, keys, pairing and encryption (hub transport); box
 telemetry (`BoxFrame`, its own feed per `RUNTIME_HUB.md` §Telemetry); settings editing beyond the `localSettings`
-flag.
+flag. That flag is local by design: the settings include where the runtime sends its traffic (the backend URL, the
+API key, `modelFilter`), which no remote client may change whatever scopes it holds.
 
 ## On the wire
 
