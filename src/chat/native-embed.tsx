@@ -13,6 +13,7 @@ import { parseSessionKey } from "../session-host";
 import { encode, parseToWeb, type BridgeAccount, type ToNative, type ToWeb } from "../native/bridge";
 import { pairingBridge, pairingInfo } from "../native/pairing-bridge";
 import { bridgeVault } from "../native/vault-bridge";
+import { bridgeStore } from "../native/store-bridge";
 import { searchBridge } from "../native/search-bridge";
 import { Keyring } from "../hub/keyring";
 import { sessionChrome } from "../native/snapshot";
@@ -42,6 +43,8 @@ const reportGate = (away: boolean) => { gateAway.value = away; };
 
 /** The vault's answers, once `keepKeysInApp` has made one; and what the app said before `runEmbed` was listening. */
 let settleVault: ((m: Extract<ToWeb, { type: "vaultResult" }>) => void) | null = null;
+/** The same for the app's plain store, which holds everything about pairing that is not a key. */
+let settleStore: ((m: Extract<ToWeb, { type: "storeResult" }>) => void) | null = null;
 const early: unknown[] = [];
 
 /**
@@ -49,12 +52,17 @@ const early: unknown[] = [];
  * is before `runEmbed`: until then only vault answers are acted on, and anything else the app sends waits for it.
  */
 export function keepKeysInApp(): void {
-    const b = bridgeVault(post);
-    settleVault = b.settle;
-    Keyring.keepSecretsIn(b.vault);
+    const v = bridgeVault(post);
+    const s = bridgeStore(post);
+    settleVault = v.settle;
+    settleStore = s.settle;
+    Keyring.keepSecretsIn(v.vault);
+    // And everything about this device's pairing that is NOT a key: the phone's WebView then stores nothing at all.
+    Keyring.keepRecordsIn(s.store);
     (globalThis as { __wmlReceive?: (raw: unknown) => void }).__wmlReceive = (raw) => {
         const m = parseToWeb(raw);
-        if (m?.type === "vaultResult") b.settle(m);
+        if (m?.type === "vaultResult") v.settle(m);
+        else if (m?.type === "storeResult") s.settle(m);
         else if (m) early.push(raw);
     };
 }
@@ -213,6 +221,7 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
     const onRaw = (raw: unknown) => {
         const m = parseToWeb(raw);
         if (m?.type === "vaultResult") settleVault?.(m);
+        else if (m?.type === "storeResult") settleStore?.(m);
         else if (m) void receive(m);
     };
     (globalThis as { __wmlReceive?: (raw: unknown) => void }).__wmlReceive = onRaw;

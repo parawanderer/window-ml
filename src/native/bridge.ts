@@ -87,6 +87,8 @@ export type ToNative =
     | { type: "pairingDone"; offer: string; ok: boolean; error?: string }
     /** A page of search results: rows to ADD to what this `id` has already answered, newest first. */
     | { type: "searchResult"; id: string; rows: ListedSession[]; more: boolean; error?: string }
+    /** What the app keeps for the page that is NOT secret (store-bridge.ts): a read, a write or a removal by name. */
+    | { type: "store"; id: string; op: "get" | "set" | "delete"; name: string; value?: string }
     /** The keyring's secrets, kept in the phone's keystore (vault-bridge.ts): a read, a write or a removal by name. */
     | { type: "vault"; id: string; op: "get" | "set" | "delete"; name: string; value?: string };
 
@@ -105,6 +107,8 @@ export type ToWeb =
     | { type: "models"; runtime: string }
     | { type: "resume" }
     | { type: "pairing"; id: string; call: PairingCall; args?: Record<string, unknown> }
+    /** The app's answer to a `store` request: `value` is what a `get` found, absent when there is nothing. */
+    | { type: "storeResult"; id: string; ok: boolean; value?: string; error?: string }
     /** The keystore's answer to a `vault` request: `value` is what a `get` found, absent when there is nothing. */
     | { type: "vaultResult"; id: string; ok: boolean; value?: string; error?: string }
     /** Bring the approval the app's bar is about on screen: the card in the transcript is what answers it. */
@@ -132,6 +136,7 @@ const TO_NATIVE: Record<ToNative["type"], Shape> = {
     pairingResult: { id: "string", ok: "boolean", error: "string?" },
     pairingDone: { offer: "string", ok: "boolean", error: "string?" },
     searchResult: { id: "string", rows: "array", more: "boolean", error: "string?" },
+    store: { id: "string", op: "string", name: "string", value: "string?" },
     vault: { id: "string", op: "string", name: "string", value: "string?" },
 };
 const TO_WEB: Record<ToWeb["type"], Shape> = {
@@ -147,6 +152,7 @@ const TO_WEB: Record<ToWeb["type"], Shape> = {
     models: { runtime: "string" },
     resume: {},
     pairing: { id: "string", call: "string", args: "object?" },
+    storeResult: { id: "string", ok: "boolean", value: "string?", error: "string?" },
     vaultResult: { id: "string", ok: "boolean", value: "string?", error: "string?" },
     showApproval: {},
     search: { id: "string", query: "string", runtime: "string?", more: "boolean?" },

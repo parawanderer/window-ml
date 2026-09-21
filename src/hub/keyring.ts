@@ -37,6 +37,17 @@ export interface SecretVault {
     delete(name: string): Promise<void>;
 }
 
+/**
+ * Where the records that are NOT secret live when IndexedDB is not the right place for them: the phone app's own
+ * files, over the bridge (src/native/store-bridge.ts). Given one, the keyring opens no database at all, so the phone's
+ * WebView persists nothing: what pairing produced is the app's to keep and to wipe.
+ */
+export interface PlainStore {
+    get(name: string): Promise<string | null>;
+    set(name: string, value: string): Promise<void>;
+    delete(name: string): Promise<void>;
+}
+
 /** What pairing handed over, and where to use it. */
 export interface Membership {
     /** `ws://` or `wss://` */
@@ -74,6 +85,8 @@ interface RootSecrets { identitySeed: Bytes; identityPublic: Bytes; channelKey: 
 
 /** The vault every `Keyring.open` uses unless it is given one: null (IndexedDB alone) until an entry point sets it. */
 let defaultVault: SecretVault | null = null;
+/** The plain store every `Keyring.open` uses unless it is given one: null (IndexedDB) until an entry point sets it. */
+let defaultRecords: PlainStore | null = null;
 /** One first generation at a time across every keyring on this page, since a vault has no transaction to race inside. */
 let generating: Promise<unknown> | null = null;
 /** The seeds of roots `Keyring.generateIdentity` made for a vaulted keyring, until `saveAccount` stores them. */
@@ -118,13 +131,20 @@ async function seededIdentity(): Promise<{ identity: Identity; seed: Bytes }> {
  * `fake-indexeddb`; `vault` defaults to what `keepSecretsIn` set.
  */
 export class Keyring {
-    private constructor(private readonly db: IDBDatabase, private readonly vault: SecretVault | null) {}
+    private constructor(private readonly db: IDBDatabase | null, private readonly vault: SecretVault | null,
+        private readonly records: PlainStore | null) {}
 
-    static open(name = "ml-hub-keyring", idb: IDBFactory = indexedDB, vault: SecretVault | null = defaultVault): Promise<Keyring> {
+    static open(name = "ml-hub-keyring", idb?: IDBFactory, vault: SecretVault | null = defaultVault,
+        records: PlainStore | null = defaultRecords): Promise<Keyring> {
+        // With a store of its own there is no database to open: every record goes to the app (see `PlainStore`). The
+        // factory is read HERE rather than as a default argument, which would want a global `indexedDB` to exist even
+        // on the path that never opens one.
+        if (records) return Promise.resolve(new Keyring(null, vault, records));
+        const factory = idb ?? indexedDB;
         return new Promise((resolve, reject) => {
-            const r = idb.open(name, 1);
+            const r = factory.open(name, 1);
             r.onupgradeneeded = () => r.result.createObjectStore(STORE);
-            r.onsuccess = () => resolve(new Keyring(r.result, vault));
+            r.onsuccess = () => resolve(new Keyring(r.result, vault, records));
             r.onerror = () => reject(r.error);
         });
     }
@@ -134,17 +154,36 @@ export class Keyring {
         defaultVault = vault;
     }
 
-    private get<T>(key: string): Promise<T | null> {
+    /** Keep every keyring's other records in `records` from now on, instead of in IndexedDB. */
+    static keepRecordsIn(records: PlainStore | null): void {
+        defaultRecords = records;
+    }
+
+    /** The database, where there is one: a keyring with a `PlainStore` keeps nothing in IndexedDB and opens none. */
+    private get database(): IDBDatabase {
+        if (!this.db) throw new Error("this keyring keeps its records in the app, not in a database");
+        return this.db;
+    }
+
+    private async get<T>(key: string): Promise<T | null> {
+        if (this.records) return decode<T>(await this.records.get(key.replace(/^record:/, "r-")));
         return new Promise((resolve, reject) => {
-            const q = this.db.transaction(STORE).objectStore(STORE).get(key);
+            const q = this.database.transaction(STORE).objectStore(STORE).get(key);
             q.onsuccess = () => resolve((q.result as T | undefined) ?? null);
             q.onerror = () => reject(q.error);
         });
     }
 
-    private put(entries: Record<string, unknown>, remove: string[] = []): Promise<void> {
+    private async put(entries: Record<string, unknown>, remove: string[] = []): Promise<void> {
+        if (this.records) {
+            const store = this.records;
+            const name = (k: string): string => k.replace(/^record:/, "r-");
+            for (const [k, v] of Object.entries(entries)) await store.set(name(k), encode(v));
+            for (const k of remove) await store.delete(name(k));
+            return;
+        }
         return new Promise((resolve, reject) => {
-            const t = this.db.transaction(STORE, "readwrite");
+            const t = this.database.transaction(STORE, "readwrite");
             const s = t.objectStore(STORE);
             for (const [k, v] of Object.entries(entries)) s.put(v, k);
             for (const k of remove) s.delete(k);
@@ -170,7 +209,7 @@ export class Keyring {
         // absent INSIDE one: two callers racing the first generation end up with ONE pair of keys, the first written.
         const self = { identity: await generateIdentity(), agreement: await generateAgreementKey() };
         await new Promise<void>((resolve, reject) => {
-            const t = this.db.transaction(STORE, "readwrite");
+            const t = this.database.transaction(STORE, "readwrite");
             const s = t.objectStore(STORE);
             const q = s.get("self");
             q.onsuccess = () => { if (q.result === undefined) s.put(self, "self"); };
@@ -233,7 +272,7 @@ export class Keyring {
     }
 
     close(): void {
-        this.db.close();
+        this.db?.close();
     }
 
     /** `load` with a vault: the keys imported from their seeds, each record joined with the secrets the vault holds. */

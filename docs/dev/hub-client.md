@@ -336,6 +336,12 @@ storage on Android, "this device only, after first unlock"). A keystore holds by
 - **New keys clear what old keys left**: generating `self` in a vault deletes any membership and root, which belonged
   to keys that are gone (a keyring from before the vault, or a keystore wiped under the app). The iOS Keychain outlives
   an uninstall while IndexedDB does not, so a reinstalled app keeps its identity and nothing else.
+- **Nothing else stays in the WebView either** (`Keyring.keepRecordsIn`, `src/native/store-bridge.ts`, `mobile/src/store.ts`):
+  the non-secret half of each record (the hub, the certificate chain, the account's public root, the device list)
+  goes to the app's own files under `Documents/store/`, and a keyring given a `PlainStore` opens no IndexedDB at
+  all. Checked on the iOS simulator after a real pairing: `membership.json` holds the chain with no channel key in
+  it, and the WebView has no IndexedDB files. Uninstalling the app takes the pairing with it; the Keychain's copy
+  of the identity outlives an uninstall, so a reinstall rejoins as the same principal.
 - **The app serves the three names and nothing else**, answers before the page's `ready` (the page needs its keys to
   get there), and only to its own `file://` page.
 
