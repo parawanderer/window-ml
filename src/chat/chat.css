@@ -1092,7 +1092,9 @@ button.chat-page-go:hover { color: var(--fg); }
 /* A group box (heading + its tabs). Its ARM is a line in the group's colour (--gc) from under the heading's dot down
    beside the tabs, ending at the last one: which tabs belong together reads at a glance, as the strip's underline does. */
 .tp-grp { position: relative; }
-.tp-grp::before { content: ""; position: absolute; left: 14px; top: 24px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--gc); opacity: .75; pointer-events: none; }
+/* `z-index: 1`: while the body below fades open, its opacity makes it a stacking context, which paints OVER a positioned
+   sibling that comes before it: the chosen row's background covered this rail for the length of the fade, a dark flash. */
+.tp-grp::before { content: ""; position: absolute; z-index: 1; left: 14px; top: 24px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--gc); opacity: .75; pointer-events: none; }
 .tp-grp.plain::before { top: 10px; opacity: 1; }
 .tp-grp.folded::before { opacity: 0; }
 .tp-grp::before { transition: opacity .2s ease; }
