@@ -15,12 +15,16 @@
 // unnecessary. The SDK is the command-line one (`brew install --cask android-commandlinetools`), not Android Studio.
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const HOME = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || "/opt/homebrew/share/android-commandlinetools";
 const API = 35;
-const IMAGE = `system-images;android-${API};google_apis;arm64-v8a`;
+/** The emulator's system image. Newer than the build's API level on purpose: an image carries the WebView it shipped with
+ *  and cannot update it (no Play Store), and API 35's is Chrome 124, which has no Ed25519 or X25519 in WebCrypto. The
+ *  hub's crypto needs both (Chrome 137+); a real phone updates its WebView from the Play Store. */
+const IMAGE_API = "37.0";
+const IMAGE = `system-images;android-${IMAGE_API};google_apis;arm64-v8a`;
 const PACKAGES = ["platform-tools", "emulator", `platforms;android-${API}`, "build-tools;35.0.0", IMAGE];
 const AVD = "wml-phone";
 const APP = "dev.wander.windowml";
@@ -55,7 +59,7 @@ function doctor() {
         ["sdkmanager", !!out("which", ["sdkmanager"]), "brew install --cask android-commandlinetools"],
         ["adb (platform-tools)", existsSync(bin.adb), "node scripts/android.mjs setup"],
         ["emulator", existsSync(bin.emulator), "node scripts/android.mjs setup"],
-        [`system image (API ${API}, arm64)`, existsSync(path.join(HOME, "system-images", `android-${API}`)), "node scripts/android.mjs setup"],
+        [`system image (API ${IMAGE_API}, arm64)`, existsSync(path.join(HOME, "system-images", `android-${IMAGE_API}`)), "node scripts/android.mjs setup"],
         [`emulator "${AVD}"`, out(bin.emulator, ["-list-avds"]).split("\n").includes(AVD), "node scripts/android.mjs setup"],
         ["Maestro (mobile.dev)", !!maestro(), "the release zip into ~/.maestro (CONTRIBUTING.md); NOT the `maestro` cask, a different app"],
     ];
@@ -67,6 +71,9 @@ function doctor() {
 function setup() {
     spawnSync("sh", ["-c", `yes | sdkmanager --licenses >/dev/null`], { env, stdio: "ignore" });
     run(bin.sdkmanager, ["--install", ...PACKAGES]);
+    // An emulator on an older image is recreated: the image decides the WebView, and the WebView decides the crypto.
+    const ini = path.join(process.env.HOME ?? "", ".android", "avd", `${AVD}.avd`, "config.ini");
+    if (existsSync(ini) && !readFileSync(ini, "utf8").includes(`android-${IMAGE_API}`)) run(bin.avdmanager, ["delete", "avd", "-n", AVD]);
     if (!out(bin.emulator, ["-list-avds"]).split("\n").includes(AVD)) {
         run(bin.avdmanager, ["create", "avd", "-n", AVD, "-k", IMAGE, "-d", "pixel_7"], { input: "no\n", stdio: ["pipe", "inherit", "inherit"] });
     }
