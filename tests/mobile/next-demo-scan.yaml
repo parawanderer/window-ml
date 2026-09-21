@@ -1,0 +1,28 @@
+# next-demo-scan.yaml — the React Native app's DEMO build (`install --next --demo`): Settings → Devices → Pair a device
+# offers "Scan its QR code" (the page says this device can check a scanned code), which asks for the camera and opens
+# the scanner full screen, and closing it goes back to the typed code. A simulator has no camera to read a code with:
+# the decode itself is the page's `lookupScanned`, tested on its own. Needs the demo world, so name it when you run `flows`.
+appId: dev.wander.windowml.next
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "KV cache size at 32k"
+    timeout: 60000
+- tapOn: "Settings"
+- tapOn: "Devices"
+- tapOn: "Pair a device"
+- tapOn: "Scan its QR code"
+# The camera permission: iOS says "Allow", Android "While using the app".
+- runFlow:
+    when:
+      visible: "While using the app|Allow"
+    commands:
+      - tapOn: "While using the app|Allow"
+- extendedWaitUntil:
+    visible: "Point at the code the new device shows."
+    timeout: 10000
+- tapOn: "Close the scanner"
+- extendedWaitUntil:
+    visible: "Its code"
+    timeout: 10000

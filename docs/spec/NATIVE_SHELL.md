@@ -6,9 +6,9 @@ lists that scroll like a document, sheets that are divs. This proposes a thin na
 that chrome, and keeps the web build for what it is good at: drawing a session.
 
 This was agreed on 2026-09-21 and the shell is built (`mobile/`, #237 onwards): the list, the session chrome, the
-composer, settings and pairing are native, and the transcript is the page. What is not there yet: scanning a QR code
-with the camera, approvals from the waiting bar, and the Capacitor app's removal. Where this spec and `mobile/AGENTS.md` disagree about a detail of the app, the code and AGENTS.md are what
-ships; this is why it is built that way.
+composer, settings and pairing are native, and the transcript is the page. What is not there yet: approvals from the
+waiting bar, and the Capacitor app's removal. Where this spec and `mobile/AGENTS.md` disagree about a detail of the app,
+the code and AGENTS.md are what ships; this is why it is built that way.
 
 It replaces the packaging half of "The phone app" in [`CHAT_PAGE.md`](CHAT_PAGE.md) (Capacitor, decided 2026-09-17).
 Everything else there stands: the hub serves no code, the app is built and signed here, pushes say only "an approval is
