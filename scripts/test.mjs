@@ -45,7 +45,7 @@ const GENRES = {
     // never reaches `chrome`. Its browser half is Playwright: `npm run test:chat` runs both.
     chat: {
         about: "the chat page (src/chat/): store, hosts, view prefs, and the web bundle's no-chrome check",
-        files: ["chat-core.test.mjs", "chat-web-bundle.test.mjs", "local-host.test.mjs"],
+        files: ["chat-core.test.mjs", "chat-web-bundle.test.mjs", "local-host.test.mjs", "drafts.test.mjs"],
     },
     python: { about: "real CPython in Pyodide (self-skips without dist/pyodide)", files: ["python.test.mjs"] },
     live: { about: "opt-in, hits the backend in .env", files: ["live.test.js"] },

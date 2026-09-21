@@ -4,6 +4,7 @@
 // element-pill chips, reused by the HUD Spotlight composer. Extracted from app.tsx.
 import { useState, useRef, useEffect } from "preact/hooks";
 import { services } from "./services";
+import { loadDraft, loadDraftImages, onDraftRestored, saveDraft, saveDraftImages, sendHeld } from "./drafts";
 import type { ElementContext } from "../contract-run";
 import { config, rev } from "./store";
 import type { Session } from "./store";
@@ -23,8 +24,8 @@ const COMPOSER_MAX_H = 180;
 // is EMPTY, the submit button becomes a STOP that cancels; type anything and it's a send again.
 // Shared image-attach state for BOTH composers (session + Spotlight): a file upload or a clipboard paste
 // becomes data URLs, with a `loading` count so the thumb strip can show spinners while FileReader decodes.
-export function useImageAttach() {
-    const [imgs, setImgs] = useState<string[]>([]);
+export function useImageAttach(initial?: () => string[]) {
+    const [imgs, setImgs] = useState<string[]>(initial ?? []);
     const [loading, setLoading] = useState(0);
     const fileRef = useRef<HTMLInputElement>(null);
     const addFiles = (files: FileList | File[] | null | undefined) => {
@@ -99,8 +100,22 @@ function useNarrowScreen(): boolean {
 export function Composer({ s, multiline }: { s: Session; multiline?: boolean }) {
     const r = rev.value;   // subscribe: `s.status` is mutated in place (same ref), so without a signal read this
                            // stateful child won't re-render when the run goes pending/idle → the Stop button.
-    const [text, setText] = useState("");
-    const att = useImageAttach();
+    // THE DRAFT (drafts.ts): what was typed is saved as it is typed and read back when the box is drawn again, and a
+    // send that fails puts its text back. Keyed by the session, so each session keeps its own.
+    const key = s.hash;
+    const [text, setText] = useState(() => loadDraft(key));
+    const att = useImageAttach(() => loadDraftImages(key));
+    const type = (t: string) => { setText(t); saveDraft(key, t); };
+    // Another session in the same box: its own draft. Not on mount, which `useState` already read: an effect runs after
+    // paint, and a keystroke landing before it would be overwritten by what was saved before that keystroke.
+    const shown = useRef(key);
+    useEffect(() => {
+        if (shown.current === key) return;
+        shown.current = key;
+        setText(loadDraft(key)); att.setImgs(loadDraftImages(key));
+    }, [key]);
+    useEffect(() => { saveDraftImages(key, att.imgs); }, [key, att.imgs]);
+    useEffect(() => onDraftRestored((k) => { if (k === key) { setText(loadDraft(key)); att.setImgs(loadDraftImages(key)); } }), [key]);
     // Every session is continuable: an AGENT session has a steerable handle in the page's registry
     // (say/run/cancel); a plain CHAT session continues via its history in the session registry (a fresh turn,
     // or the in-flight fetch aborted). The page routes `sessionSend`/`sessionCancel` to whichever it is.
@@ -112,8 +127,9 @@ export function Composer({ s, multiline }: { s: Session; multiline?: boolean }) 
     const send = () => {
         const t = text.trim();
         if (!t && !att.imgs.length) return;
-        services().sendToSession(s.hash, t, att.imgs);
+        const imgs = att.imgs;
         setText(""); att.clear();
+        void sendHeld(key, t, imgs, () => services().sendToSession(key, t, imgs));
     };
     const act = () => (stop ? cancel() : send());
     // Grow to fit, to a cap — measured from `scrollHeight`, which needs the height reset first or it only ever
@@ -149,8 +165,8 @@ export function Composer({ s, multiline }: { s: Session; multiline?: boolean }) 
                     scrolls: a composer that can take the whole viewport is one you cannot send from. */}
                 {multiline
                     ? <textarea ref={area} class="cinput" rows={1} value={text} onKeyDown={onKey} onPaste={att.onPaste} placeholder={placeholder}
-                        onInput={(e) => { setText((e.target as HTMLTextAreaElement).value); grow(e.target as HTMLTextAreaElement); }} />
-                    : <input class="cinput" type="text" value={text} onInput={e => setText((e.target as HTMLInputElement).value)} onKeyDown={onKey} onPaste={att.onPaste}
+                        onInput={(e) => { type((e.target as HTMLTextAreaElement).value); grow(e.target as HTMLTextAreaElement); }} />
+                    : <input class="cinput" type="text" value={text} onInput={e => type((e.target as HTMLInputElement).value)} onKeyDown={onKey} onPaste={att.onPaste}
                         placeholder={placeholder} />}
                 <button class={`tt cbtn ${stop ? "cstop" : "csend"}`} onClick={act} disabled={!stop && empty} aria-label={stop ? "Stop the run" : "Send"}>
                     {stop ? <IconStop /> : <IconSend />}<span class="tt-pop above" role="tooltip">{stop ? "Stop (cancel)" : running ? "Steer the run" : "Send"}</span>
