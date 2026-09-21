@@ -8,6 +8,7 @@ dist/
 dist-web/
 dist-web.stage/
 dist-app/
+dist-native/
 # The staging directory a build writes into before swapping it over dist/ — present only mid-build, or
 # left behind by a build that FAILED (which is the point: the failure did not touch dist/).
 dist.stage/

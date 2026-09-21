@@ -5,7 +5,7 @@
 // thing that keeps it that way over time is a build that refuses otherwise: a shared renderer that reaches for
 // `chrome.storage` "just this once" breaks the phone, and nothing else would say so before a person did.
 import * as esbuild from "esbuild";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -67,6 +67,50 @@ export async function buildWeb({ outdir = "dist-web", appdir = outdir === "dist-
     }
     console.log(`built ${outdir}/ (the chat page, no extension)`);
     if (appdir) buildApp(out, path.resolve(ROOT, appdir));
+    if (outdir === "dist-web") await buildNative(out, path.resolve(ROOT, "dist-native"));
+}
+
+/** The page the phone app's WebView loads, as ONE file: the JS and both stylesheets inlined, so the app can carry it as a
+ *  string and write it to its own storage (docs/spec/NATIVE_SHELL.md). `</script` inside the bundle is escaped. */
+function singleFile(js, css) {
+    return `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>window.ml</title>
+<link rel="icon" href="data:,">
+<style>${css}</style>
+</head><body><div id="root"></div>
+<script>${js.replace(/<\/script/gi, "<\\/script")}</script>
+</body></html>
+`;
+}
+
+/**
+ * THE NATIVE SHELL'S PAGE (`dist-native/`): `embed.html` over this device's account and `embed-demo.html` over the demo
+ * world, each self-contained, with the KaTeX fonts beside them (the stylesheet names them relatively). The phone app
+ * (mobile/) takes one of the two into its bundle with `mobile/scripts/sync-embed.mjs`.
+ */
+async function buildNative(web, out) {
+    const stage = `${out}.stage`;
+    rmSync(stage, { recursive: true, force: true });
+    mkdirSync(stage, { recursive: true });
+    let bundle = "dev";
+    try { bundle = (await import("node:child_process")).execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim(); } catch { /* not a checkout */ }
+    await esbuild.build({ ...webBuildOptions(stage), entryPoints: { app: "src/chat/native-embed-app.tsx", demo: "src/chat/native-embed-demo.tsx" }, define: { __BUNDLE__: JSON.stringify(bundle) } });
+    const css = ["sidebar.css", "chat.css"].map((f) => readFileSync(path.join(web, f), "utf8")).join("\n");
+    for (const [entry, name] of [["app", "embed.html"], ["demo", "embed-demo.html"]]) {
+        const js = readFileSync(path.join(stage, `${entry}.js`), "utf8");
+        const refs = chromeRefs(js);
+        if (refs.length) throw new Error(`the native embed references chrome.* ${refs.length} time(s):\n  ${refs.slice(0, 8).join("\n  ")}`);
+        writeFileSync(path.join(stage, name), singleFile(js, css));
+        rmSync(path.join(stage, `${entry}.js`));
+    }
+    if (existsSync(path.join(web, "fonts"))) cpSync(path.join(web, "fonts"), path.join(stage, "fonts"), { recursive: true });
+    rmSync(out, { recursive: true, force: true });
+    renameSync(stage, out);
+    console.log(`built ${path.relative(ROOT, out)}/ (the phone app's page: embed.html, embed-demo.html)`);
 }
 
 /**

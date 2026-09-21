@@ -16,6 +16,9 @@ html, body, #root { height: 100%; }
    behind it should still reach the edge. `env()` alone, never Capacitor's `--safe-area-inset-*` too: on an older
    Android WebView Capacitor pads the view itself and `env()` reads 0, where adding its variables would pad twice. */
 .chat { padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
+/* THE PHONE APP'S PAGE (native-embed.tsx): only the transcript, filling the WebView on calm's canvas so it meets the
+   native header and composer with no seam. The app keeps the safe areas itself, so the page takes none. */
+.chat.native-embed { height: 100vh; padding: 0 var(--safe-right, 0) 0 var(--safe-left, 0); }
 .chat {
     font-size: var(--fs); height: 100vh; height: 100dvh; display: grid;
     /* A FIXED list width, not a `minmax()` range: the pane slides, and a column that RESIZES re-wraps every title

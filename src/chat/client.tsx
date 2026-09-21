@@ -12,10 +12,6 @@
 // page's status chip says `connecting…` or `offline` meanwhile, and waking or coming back online tries at once.
 
 import { render } from "preact";
-import { Keyring } from "../hub/keyring";
-import { principalId } from "../hub/keys";
-import { ChannelKey } from "../hub/seal";
-import { Role } from "../hub/wire";
 import { clientPairing } from "../pairing/client-pairing";
 import { AccountPanel } from "../pairing/pairing-ui";
 import { installServices } from "../sidebar/services";
@@ -23,8 +19,8 @@ import { installTooltipLayer } from "../sidebar/tooltip-layer";
 import { applyCodePrefs, initThemeStyle } from "../sidebar/prefs";
 import { ChatApp } from "./chat-app";
 import { ChatStore } from "./chat-store";
-import { HubConnection } from "./hub-connection";
-import { HubHost } from "./hub-host";
+import type { HubHost } from "./hub-host";
+import { openClientHost } from "./client-host";
 import { hostServices } from "./host-services";
 import { installPageTheme } from "./page-theme";
 import { webPlatform, type ClientPlatform } from "./platform";
@@ -65,9 +61,9 @@ function FirstRun({ platform }: { platform: ClientPlatform }) {
 async function main(): Promise<void> {
     installDevice();
     const root = document.getElementById("root") || document.body;
-    const ring = await Keyring.open();
-    const me = await ring.load();
-    let host: HubHost | null = null;
+    const opened = await openClientHost(deviceLabel());
+    const { ring, me } = opened;
+    const host: HubHost | null = opened.host;
     const platform: ClientPlatform = {
         ...webPlatform,
         kind: native ? "native" : "web",
@@ -80,18 +76,7 @@ async function main(): Promise<void> {
             onChanged: () => location.reload(),
         }),
     };
-    const m = me?.membership;
-    if (!me || !m) { render(<FirstRun platform={platform} />, root); return; }
-    const id = [...await principalId(me.identity.publicKey)].map((b) => b.toString(16).padStart(2, "0")).join("");
-    const open = () => HubConnection.open({
-        url: m.hubUrl, hubName: m.hubName, identity: me.identity, agreement: me.agreement, chain: m.chain,
-        accountRoot: m.accountRoot, role: Role.ROLE_CLIENT,
-    });
-    host = HubHost.reconnecting(open, await ChannelKey.fromBytes(m.channelKey), { id, kind: "device", name: deviceLabel() });
-    // Waking (a phone unlocked, a tab brought back) or the network returning: try now rather than wait out the backoff.
-    const now = () => host?.reconnect();
-    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") now(); });
-    addEventListener("online", now);
+    if (!me?.membership || !host) { render(<FirstRun platform={platform} />, root); return; }
     const store = new ChatStore(host);
     installServices(hostServices(store, platform));
     store.start();
