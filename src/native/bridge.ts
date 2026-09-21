@@ -46,6 +46,17 @@ export interface SessionChrome {
     switchNote?: string;
 }
 
+/** One thing a runtime needs a person's hand for, as the phone lists it (src/chat/attention.ts words it). */
+export interface AttentionRow {
+    /** `runtime:code`: what dismissing a suggestion remembers */
+    key: string;
+    runtime: string;
+    runtimeName: string;
+    level: "blocks" | "limits" | "suggests";
+    title: string;
+    detail: string;
+}
+
 /** The account this device is in, as the app shows it; null before one. */
 export interface BridgeAccount { label: string; hubUrl: string; root: boolean }
 
@@ -71,6 +82,8 @@ export type ToNative =
     | { type: "ready"; bundle: string }
     | { type: "account"; account: BridgeAccount | null }
     | { type: "status"; status: HostStatus }
+    /** What the runtimes need a hand with, most urgent first; `count` is the problems only, what the inbox badge says. */
+    | { type: "attention"; items: AttentionRow[]; count: number }
     | { type: "index"; runtimes: RuntimeInfo[]; sessions: SessionSummary[] }
     | { type: "session"; chrome: SessionChrome | null }
     | { type: "models"; runtime: string; models: ModelChoice[] | null; error?: string }
@@ -123,6 +136,7 @@ const TO_NATIVE: Record<ToNative["type"], Shape> = {
     ready: { bundle: "string" },
     account: { account: "object|null" },
     status: { status: "object" },
+    attention: { items: "array", count: "number" },
     index: { runtimes: "array", sessions: "array" },
     session: { chrome: "object|null" },
     models: { runtime: "string", models: "array|null", error: "string?" },

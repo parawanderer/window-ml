@@ -13,7 +13,7 @@ import * as Haptics from "expo-haptics";
 import * as Sharing from "expo-sharing";
 import { Directory, File, Paths } from "expo-file-system";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
-import { encode, parseToNative, type BridgeAccount, type PairingCall, type PairingInfo, type SessionChrome, type ToWeb } from "../../src/native/bridge";
+import { encode, parseToNative, type AttentionRow, type BridgeAccount, type PairingCall, type PairingInfo, type SessionChrome, type ToWeb } from "../../src/native/bridge";
 import type { HostStatus, ListedSession, ModelChoice, RuntimeInfo, SessionSummary } from "../../src/session-host";
 import { EMBED } from "./generated/embed";
 import { answerStore } from "./store";
@@ -36,6 +36,8 @@ export interface EmbedState {
     demo: boolean;
     /** what this device can do about accounts; null until the page says */
     pairingInfo: PairingInfo | null;
+    /** what the runtimes need a hand with, most urgent first, and how many of those are problems (not suggestions) */
+    attention: { items: AttentionRow[]; count: number };
 }
 
 /** A pairing call's answer: its value, or the reason in the page's words. */
@@ -131,6 +133,7 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
     const ref = useRef<WebViewHandle>(null);
     const [state, setState] = useState<EmbedState>({
         ready: false, account: undefined, status: { state: "connecting" }, runtimes: [], sessions: [], chrome: null, notice: null, demo: EMBED.demo, pairingInfo: null,
+        attention: { items: [], count: 0 },
     });
     const pendingPairing = useRef(new Map<string, (a: PairingAnswer) => void>());
     const pairingDone = useRef(new Set<(d: { offer: string; ok: boolean; error?: string }) => void>());
@@ -169,6 +172,7 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
                 return;
             case "account": setState((s) => ({ ...s, account: m.account })); return;
             case "status": setState((s) => ({ ...s, status: m.status })); return;
+            case "attention": setState((s) => ({ ...s, attention: { items: m.items, count: m.count } })); return;
             case "index": setState((s) => ({ ...s, runtimes: m.runtimes, sessions: m.sessions })); return;
             case "session": setState((s) => ({ ...s, chrome: m.chrome })); return;
             case "notice": setState((s) => ({ ...s, notice: { id: Date.now(), text: m.text, tone: m.tone } })); return;

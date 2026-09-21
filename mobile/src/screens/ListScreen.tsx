@@ -7,7 +7,7 @@ import { Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from "
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { Bot, Search, Settings, SquarePen } from "lucide-react-native";
+import { Bot, Inbox, Search, Settings, SquarePen } from "lucide-react-native";
 import type { SessionSummary } from "../../../src/session-host";
 import { useEmbed } from "../embed";
 import { ago, needsYou, sections, STATUS_LABEL, STATUS_TONE } from "../format";
@@ -47,6 +47,14 @@ export function ListScreen() {
             <View style={s.bar}>
                 <Text style={[s.title, { color: p.fg }]} accessibilityRole="header">Sessions</Text>
                 <View style={{ flex: 1 }} />
+                {/* The inbox: there only when a runtime reports something, and a number only for problems, never for the
+                    suggestions, so a set-up account shows no badge (the page's rule, attention.ts). */}
+                {e.attention.items.length ? (
+                    <View>
+                        <IconButton label={e.attention.count ? `${e.attention.count} things need attention` : "Suggestions"} icon={(c) => <Inbox size={22} color={c} />} onPress={() => nav.navigate("Attention")} />
+                        {e.attention.count ? <View pointerEvents="none" style={s.inboxBadge}><Badge n={e.attention.count} label={`${e.attention.count} need attention`} /></View> : null}
+                    </View>
+                ) : null}
                 <IconButton label="Search sessions" icon={(c) => <Search size={22} color={c} />} onPress={() => nav.navigate("Search")} />
                 <IconButton label="New chat" icon={(c) => <SquarePen size={22} color={c} />} onPress={() => nav.navigate("NewChat")} />
                 <IconButton label="Settings" icon={(c) => <Settings size={22} color={c} />} onPress={() => nav.navigate("Settings")} />
@@ -143,6 +151,8 @@ const s = StyleSheet.create({
     bar: { flexDirection: "row", alignItems: "center", paddingLeft: SIZE.gutter, paddingRight: 8, height: 56 },
     // What is worth knowing at a glance, under the bar: the connection, what waits on you, demo data.
     head: { paddingHorizontal: SIZE.gutter, paddingBottom: 8 },
+    // The inbox's count, over the corner of its button.
+    inboxBadge: { position: "absolute", top: 2, right: 0 },
     // "Sessions", large.
     title: { fontSize: SIZE.title, fontWeight: "700", letterSpacing: -0.3 },
     // Connection, waiting count and the demo note, in a line under the title.

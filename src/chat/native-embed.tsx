@@ -17,7 +17,7 @@ import { bridgeStore, type PlainStore } from "../native/store-bridge";
 import type { EventCache } from "./event-cache";
 import { searchBridge } from "../native/search-bridge";
 import { Keyring } from "../hub/keyring";
-import { sessionChrome } from "../native/snapshot";
+import { attentionForApp, sessionChrome } from "../native/snapshot";
 import type { PairingApi } from "../pairing/api";
 import { installServices, services } from "../sidebar/services";
 import { installTooltipLayer } from "../sidebar/tooltip-layer";
@@ -136,6 +136,8 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
     const sendIndex = perFrame(() => post({ type: "index", runtimes: store.runtimes.value, sessions: [...store.index.value.values()] }));
     effect(() => { void store.runtimes.value; void store.index.value; sendIndex(); });
     effect(() => post({ type: "status", status: store.status.value }));
+    // What the runtimes need a hand with: the phone's inbox, worded here so the laptop's page and the phone agree.
+    effect(() => post({ type: "attention", ...attentionForApp(store.runtimes.value) }));
     const sendChrome = perFrame(() => {
         const key = open.value;
         if (!key) { post({ type: "session", chrome: null }); return; }

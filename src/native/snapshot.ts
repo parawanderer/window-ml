@@ -4,7 +4,8 @@
 
 import type { Principal, RuntimeInfo, SessionKey, SessionSummary } from "../session-host";
 import { mayCommand } from "../chat/grants";
-import type { SessionChrome } from "./bridge";
+import type { AttentionRow, SessionChrome } from "./bridge";
+import { attentionCount, attentionItems } from "../chat/attention";
 
 /** The chrome for one open session. `live` is the transcript's own view of it (a run in flight shows as `pending` there
  *  before the index says `running`); `pageOwnsModel` is true once the runtime refused a switch because a page script
@@ -42,5 +43,18 @@ export function sessionChrome(key: SessionKey, summary: SessionSummary | undefin
         running: !!live?.pending || summary.status === "running",
         canSwitchModel: !switchNote,
         ...(switchNote ? { switchNote } : {}),
+    };
+}
+
+/**
+ * What the runtimes need a hand with, for the phone's inbox, in the page's own words. Nothing is fixable FROM a phone:
+ * every fix is a click in the runtime's own browser or its Settings, so each item says which device, and the app
+ * offers no button that could not work. Dismissed suggestions are the app's to remember; it gets them all.
+ */
+export function attentionForApp(runtimes: readonly RuntimeInfo[]): { items: AttentionRow[]; count: number } {
+    const items = attentionItems(runtimes, new Map(), () => false);
+    return {
+        items: items.map((i) => ({ key: i.key, runtime: i.runtime.id, runtimeName: i.runtime.name, level: i.level, title: i.title, detail: i.detail })),
+        count: attentionCount(items),
     };
 }
