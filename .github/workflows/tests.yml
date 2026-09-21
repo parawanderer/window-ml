@@ -263,6 +263,15 @@ jobs:
       # for a window (the narrated demos, E2E_HEADFUL=1) so such a run fails on its assertion, not on DISPLAY.
       - name: Run E2E
         run: xvfb-run -a npm run test:e2e -- --shard=${{ matrix.shard }}/3
+      # What a failing test SAW: Playwright's error-context snapshot of the page, its trace and screenshots. Without it
+      # a failure that only reproduces on CI is guesswork (the addresses test failed #235 three times and passed on
+      # this Mac every time). `gh run download <run> -n e2e-results-<shard>` fetches it.
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: e2e-results-${{ matrix.shard }}
+          path: test-results/
+          retention-days: 7
 
   # ONE `e2e` status for the three shards, so a PR still has a single e2e check to read (and to require, if the
   # branch is ever protected). Skipped with the shards when no code changed; red if any shard was not green.

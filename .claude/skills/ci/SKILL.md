@@ -102,6 +102,18 @@ words, the crop box, and expected-vs-actual. The workflow also writes a pointer 
 | `e2e` | the three shards' verdict in one check: red if any shard was not green. Its own log only says which result it saw |
 | `e2e-real-model` | non-blocking, on demand / nightly only — a free hosted model, never a gate |
 
+## When an e2e shard fails: read what the page showed
+
+A failing shard uploads `test-results/` as `e2e-results-<shard>`: each failed test's `error-context.md` (the page's
+accessibility snapshot at the moment it failed), its trace and screenshots.
+
+```bash
+gh run download <run-id> -n e2e-results-1 -D /tmp/e2e-1 && find /tmp/e2e-1 -name error-context.md
+```
+
+Read that before theorising: a failure that passes locally is usually a page in a state the test did not expect, and
+the snapshot shows which.
+
 ## Known-bad, so you don't chase them
 
 Check these BEFORE assuming a failure is yours — and **re-verify the claim rather than trusting the
