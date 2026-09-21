@@ -161,14 +161,17 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
     effect(() => post({ type: "status", status: store.status.value }));
     // What the runtimes need a hand with: the phone's inbox, worded here so the laptop's page and the phone agree.
     effect(() => post({ type: "attention", ...attentionForApp(store.runtimes.value) }));
-    const sendChrome = perFrame(() => {
-        const key = open.value;
-        if (!key) { post({ type: "session", chrome: null }); return; }
+    /** The chrome for any session: the open one's, and a list row's when the app asks (`chromeFor`). */
+    const chromeOf = (key: SessionKey) => {
         const id = parseSessionKey(key);
         const rt = id ? store.runtime(id.runtime) : undefined;
         const s = sessionMap.get(key);
-        const live = { pending: s?.status === "pending", ...(s?.title ? { title: s.title } : {}), gateAway: gateAway.value };
-        post({ type: "session", chrome: sessionChrome(key, store.index.value.get(key), rt, store.host.self, s ? live : { pending: false, gateAway: gateAway.value }, pageOwned.has(key)) });
+        const live = { pending: s?.status === "pending", ...(s?.title ? { title: s.title } : {}), gateAway: key === open.value && gateAway.value };
+        return sessionChrome(key, store.index.value.get(key), rt, store.host.self, s ? live : { pending: false, gateAway: live.gateAway }, pageOwned.has(key));
+    };
+    const sendChrome = perFrame(() => {
+        const key = open.value;
+        post({ type: "session", chrome: key ? chromeOf(key) : null });
     });
     effect(() => { void open.value; void store.index.value; void store.runtimes.value; void rev.value; void gateAway.value; sendChrome(); });
     // The store's notices are the app's to show (a toast), and are dismissed here once handed over.
@@ -246,6 +249,7 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
                 post({ type: "sent", id: m.id, ok: r.ok, ...(r.ok ? {} : { error: r.error.message || r.error.code }) });
                 return;
             }
+            case "chromeFor": post({ type: "chromeOf", id: m.id, chrome: chromeOf(m.key) }); return;
             // The page's capture goes to the app as `openImage`, the same full-size view a transcript image opens in.
             case "peek": {
                 const id = parseSessionKey(m.key);
