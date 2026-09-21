@@ -65,10 +65,10 @@ html, body, #root { height: 100%; }
 .chat-row.active { border-color: var(--accent); background: var(--panel-2); }
 .chat-row-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .chat-row-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--fg-faint); font-size: .86em; }
-.chat-status.st-waiting { color: var(--warn); }
+.chat-status.st-waiting { color: var(--notice); }
 .chat-status.st-error, .chat-status.st-cancelled, .chat-status.st-interrupted { color: var(--err); }
 /* Open approvals on a session in the list: the one thing on a phone that is waiting on the person holding it. */
-.chat-appr-badge { background: var(--warn); color: #1a1400; border-radius: 999px; padding: 0 7px; font-weight: 600; }
+.chat-appr-badge { background: var(--notice); color: var(--notice-fg); border-radius: 999px; padding: 0 7px; font-weight: 600; }
 
 /* The session header: a title that ellipsizes, with the runtime and model under it. */
 .chat-head { gap: 10px; }
@@ -78,9 +78,9 @@ html, body, #root { height: 100%; }
 /* The pinned "waiting on your approval" bar: the gate may be far down a long run, and on a phone that is several screens. */
 .chat-waiting {
     display: flex; align-items: center; gap: 8px; width: 100%; border: none; border-bottom: 1px solid var(--border);
-    background: color-mix(in srgb, var(--warn) 16%, var(--bg)); color: var(--fg); padding: 8px 12px; font: inherit; cursor: pointer; text-align: left;
+    background: color-mix(in srgb, var(--notice) 14%, var(--bg)); color: var(--fg); padding: 8px 12px; font: inherit; cursor: pointer; text-align: left;
 }
-.chat-waiting-go { margin-left: auto; color: var(--warn); font-weight: 600; }
+.chat-waiting-go { margin-left: auto; color: var(--notice); font-weight: 600; }
 .chat-transcript { padding: 10px 14px; }
 .chat:not(.narrow) .chat-transcript > div { max-width: 920px; margin: 0 auto; }
 .chat-truncated, .chat-readonly { color: var(--fg-dim); font-size: .92em; }
@@ -839,10 +839,10 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-gear-wide svg { width: 18px; height: 18px; }
 
 /* THE ATTENTION LIST's button, above the gear (attention-page.tsx): absent when there is nothing to do. Its count
-   is for problems only, in the warning colour, since a suggestion is not something to be nagged about. */
+   is for problems only, in the notice colour, since a suggestion is not something to be nagged about. */
 .chat-att-btn { position: relative; }
-.chat-att-dot { position: absolute; top: 2px; right: 1px; min-width: 15px; height: 15px; padding: 0 3px; box-sizing: border-box; border-radius: 999px; background: var(--warn); color: var(--bg); font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; }
-.chat-att-n { margin-left: -4px; min-width: 18px; padding: 0 5px; border-radius: 999px; background: color-mix(in srgb, var(--warn) 22%, transparent); color: var(--warn); font-size: .8em; font-weight: 600; text-align: center; }
+.chat-att-dot { position: absolute; top: 2px; right: 1px; min-width: 15px; height: 15px; padding: 0 3px; box-sizing: border-box; border-radius: 999px; background: var(--notice); color: var(--notice-fg); font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; }
+.chat-att-n { margin-left: -4px; min-width: 18px; padding: 0 5px; border-radius: 999px; background: color-mix(in srgb, var(--notice) 22%, transparent); color: var(--notice); font-size: .8em; font-weight: 600; text-align: center; }
 /* The sheet's rows: a sentence on the left, its fix on the right; problems carry a coloured edge, suggestions none. */
 .chat-att-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .chat-att-item { display: flex; align-items: flex-start; gap: 16px; padding: 14px 16px; border-radius: 14px; background: var(--panel); box-shadow: inset 3px 0 0 transparent; }
@@ -1141,6 +1141,13 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-head-menu-title { padding: 8px 10px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--border); font-weight: 600; color: var(--fg); white-space: normal; overflow-wrap: anywhere; }
 /* The phone bar's lead: the session's model, in the code face it is written in everywhere else. */
 .chat-head-model { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; }
+
+/* ON A TOUCH SCREEN a waiting count is cyan, not the warning yellow (sidebar.css `--notice`): in a phone's small frame
+   the yellow badges read as an alarm, where at a desk they sit quietly in a wide page. */
+@media (pointer: coarse) {
+    :root { --notice: #38bdf8; --notice-fg: #082f49; }
+    :root[data-theme="light"] { --notice: #0284c7; --notice-fg: #ffffff; }
+}
 
 /* ===================== A FINGER, NOT A MOUSE =====================
    Where the pointer is coarse (a phone, a tablet), anything tapped is at least 40px: the icon buttons of the headers
