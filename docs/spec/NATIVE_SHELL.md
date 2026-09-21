@@ -1,9 +1,15 @@
-# Spec: a native shell for the phone app (proposal, 2026-09-21)
+# Spec: a native shell for the phone app (agreed and built, 2026-09-21)
 
 The phone app today is the chat page in Capacitor: every pixel is the web build, including the list, the navigation, the
 pickers and the composer. It works, and on a phone it feels like a web page: no edge swipe back, no native transitions,
 lists that scroll like a document, sheets that are divs. This proposes a thin native shell (React Native) that owns
 that chrome, and keeps the web build for what it is good at: drawing a session.
+
+This was agreed on 2026-09-21 and the shell is built (`mobile/`, #237 onwards): the list, the session chrome, the
+composer, settings and pairing are native, and the transcript is the page. What is not there yet: scanning a QR code
+with the camera, approvals from the waiting bar, images in the composer, starting an agent, and the Capacitor app's
+removal. Where this spec and `mobile/AGENTS.md` disagree about a detail of the app, the code and AGENTS.md are what
+ships; this is why it is built that way.
 
 It replaces the packaging half of "The phone app" in [`CHAT_PAGE.md`](CHAT_PAGE.md) (Capacitor, decided 2026-09-17).
 Everything else there stands: the hub serves no code, the app is built and signed here, pushes say only "an approval is
@@ -69,7 +75,9 @@ is where this shows most, since its web tabs were drawn for a desktop and only s
 
 **The client core stays in the WebView.** It already runs there in the Capacitor app, crypto included: the hub
 client uses WebCrypto for Ed25519, X25519, AES-GCM and HMAC (`src/hub/support.ts`, `seal.ts`, `hpke.ts`), and the
-keyring is IndexedDB. React Native's engine (Hermes) has no WebCrypto. Moving the core to native would mean a crypto
+keyring is IndexedDB, except for its secrets, which the app keeps in the platform keystore and hands back as bytes
+(`docs/dev/hub-client.md` §The keyring in the phone app; WebKit cannot store an X25519 key at all). React Native's
+engine (Hermes) has no WebCrypto. Moving the core to native would mean a crypto
 module (`react-native-quick-crypto`, whose X25519 / Ed25519 coverage in `subtle` is a guess to verify), the hub's test
 vectors re-run against it, and the keyring moved, all before a single screen improves. That is a later option, not
 the first step. The bridge below is the same shape either way, so the core can move without the screens noticing.
