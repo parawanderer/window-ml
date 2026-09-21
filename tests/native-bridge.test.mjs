@@ -65,6 +65,15 @@ test("the chrome of a session this device may drive: it can send and switch, and
     assert.equal(c.running, false);
     assert.equal(sessionChrome("laptop:7b21", summary({ status: "running" }), rt(), self).running, true);
     assert.equal(sessionChrome("laptop:7b21", summary(), rt(), self, { pending: true }).running, true, "the transcript knows first");
+    // What the ⋮ sheet may offer follows the grants, the same questions the page's row menu asks.
+    assert.equal(c.pinned, false);
+    const all = sessionChrome("laptop:7b21", summary({ pinned: true }), rt(), self);
+    assert.equal(all.pinned, true);
+    assert.deepEqual([all.canPin, all.canRename, all.canDelete], [true, true, true], "each needs `drive`, which this device holds");
+    const watch = sessionChrome("laptop:7b21", summary(), rt({ grants: [{ scope: "view" }] }), self);
+    assert.deepEqual([watch.canPin, watch.canRename, watch.canDelete], [false, false, false], "a device that only watches changes nothing");
+    const away = sessionChrome("laptop:7b21", summary(), rt({ online: false }), self);
+    assert.deepEqual([away.canPin, away.canRename, away.canDelete], [false, false, false], "nor does anyone, on a runtime that is offline");
     // The app's bar is for an approval the reader cannot see; while the card is on screen, the card speaks for itself.
     assert.equal(c.approvalOffscreen, false);
     assert.equal(sessionChrome("laptop:7b21", summary(), rt(), self, { pending: false, gateAway: true }).approvalOffscreen, true);
@@ -99,6 +108,9 @@ test("every message the app can send passes the page's own check", () => {
         { type: "models", runtime: "laptop" },
         { type: "resume" },
         { type: "showApproval" },
+        { type: "pin", id: "p9", key: "laptop:1", on: true },
+        { type: "rename", id: "r9", key: "laptop:1", title: "Fares to Lisbon" },
+        { type: "delete", id: "d9", key: "laptop:1" },
         { type: "search", id: "q1", query: "fare" },
         { type: "search", id: "q1", query: "fare", more: true },
     ];

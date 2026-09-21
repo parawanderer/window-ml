@@ -1,0 +1,27 @@
+# next-demo-rename.yaml — the React Native app's DEMO build (`install --next --demo`): rename a session from its ⋮ sheet
+# and see the runtime's new title in the list. Guards two bugs a sheet with a field had: the first tap on a row only
+# dismissed the keyboard (so Save seemed to do nothing), and a controlled field dropped and reordered fast typing.
+# Needs the demo world's sessions, so it fails on a real build: name it when you run `flows`.
+appId: dev.wander.windowml.next
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "KV cache size at 32k"
+    timeout: 60000
+- tapOn: "KV cache size at 32k"
+- extendedWaitUntil:
+    visible: "Model: qwen3:32b"
+    timeout: 30000
+- tapOn: "Session menu"
+- tapOn: "Rename"
+- extendedWaitUntil:
+    visible: "Rename this session"
+    timeout: 10000
+- tapOn: "Clear"
+- inputText: "KV cache sizing notes"
+- tapOn: "Save"
+- tapOn: "Back to sessions"
+- extendedWaitUntil:
+    visible: "KV cache sizing notes"
+    timeout: 15000

@@ -48,7 +48,8 @@ label is matched WHOLE, so a row reading "gemma3:27b, sees images" needs `gemma3
 accessibility tree, so a field needs a `testID` (`- tapOn: { id: "sheet-filter" }`).
 
 A flow names its app by `appId`: `first-run.yaml` is the Capacitor app (`dev.wander.windowml`), `next-join.yaml` the
-React Native one (`.next`). Name the flow for the app you installed; a bare `flows` runs both and one will fail.
+React Native one (`.next`), and `next-demo-*.yaml` the React Native DEMO build (`install --next --demo`), since they
+need the demo world's sessions. Name the flow for the app you installed; a bare `flows` runs both and one will fail.
 `next-join.yaml` joins against a hub that is not there, which exercises key generation and the keystore (the vault)
 end to end on a real WebView: on iOS it is the check that the keys survive at all.
 

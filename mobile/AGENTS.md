@@ -36,6 +36,11 @@ API from memory.** `expo-file-system` in particular is the `File` / `Directory` 
   without the module until launch, where it fails as "Cannot find native module" on a white screen. `install --next`
   fingerprints `package.json`, `app.json` and `plugins/` (`scripts/mobile-prebuild.mjs`) and re-runs `expo prebuild
   --clean` when they change; by hand, delete the platform folder.
+- **A scroll view with a field in it eats the first tap**: without `keyboardShouldPersistTaps="handled"` a tap while the
+  keyboard is up only dismisses it, so a row picked after typing (a filtered model, Save on a rename) needs two taps and
+  the first looks broken. `Sheet` sets it; any new scroller holding a field needs it too.
+- **A CONTROLLED text field drops and reorders fast typing** (a rename came out "cche… notesa"). A field whose value
+  nothing else rewrites is uncontrolled (`defaultValue`), and is cleared through its ref (`SheetFilter plain`).
 - **A bottom sheet hides everything inside it** from VoiceOver, TalkBack and Maestro: `@gorhom/bottom-sheet` makes the
   sheet ONE accessibility element ("Bottom Sheet") unless it is given `accessible={false}` (`Sheet`, `src/ui.tsx` does).
   A flow that cannot find a row that is plainly on screen is this. `maestro hierarchy` prints what the tools can see.
