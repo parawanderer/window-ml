@@ -184,6 +184,20 @@ test("the pairing messages pass the other side's check", () => {
 
 const { bridgeVault } = await import("../src/native/vault-bridge.ts");
 
+test("the store messages pass the other side's check, and a name it does not keep is refused page-side", async () => {
+    const { bridgeStore } = await import("../src/native/store-bridge.ts");
+    for (const m of [
+        { type: "store", id: "t1", op: "get", name: "membership" },
+        { type: "store", id: "t2", op: "set", name: "r-devices", value: "[]" },
+    ]) assert.deepEqual(B.parseToNative(B.encode(m)), m, m.type);
+    assert.deepEqual(B.parseToWeb(B.encode({ type: "storeResult", id: "t1", ok: true, value: "{}" })), { type: "storeResult", id: "t1", ok: true, value: "{}" });
+    const posted = [];
+    const b = bridgeStore((m) => posted.push(m), 20);
+    await assert.rejects(b.store.get("../../etc/passwd"), /not a name this store keeps/);
+    assert.equal(posted.length, 0, "nothing that shaped reaches the app");
+    await assert.rejects(b.store.get("membership"), /did not answer/);
+});
+
 test("the vault messages pass the other side's check", () => {
     for (const m of [
         { type: "vault", id: "v1", op: "get", name: "self" },

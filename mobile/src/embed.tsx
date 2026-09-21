@@ -16,6 +16,7 @@ import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { encode, parseToNative, type BridgeAccount, type PairingCall, type PairingInfo, type SessionChrome, type ToWeb } from "../../src/native/bridge";
 import type { HostStatus, ListedSession, ModelChoice, RuntimeInfo, SessionSummary } from "../../src/session-host";
 import { EMBED } from "./generated/embed";
+import { answerStore } from "./store";
 import { answerVault } from "./vault";
 
 /** What the page has reported, as the screens read it. */
@@ -150,6 +151,12 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
         const m = parseToNative(e.nativeEvent.data);
         if (!m) return;
         switch (m.type) {
+            // What the page keeps here that is not secret (its pairing bookkeeping): answered at once, for the same
+            // reason the keys are — the page cannot reach `ready` without them.
+            case "store":
+                if (!ourPage(e.nativeEvent.url)) return;
+                void answerStore(m).then((r) => ref.current?.injectJavaScript(`window.__wmlReceive && window.__wmlReceive(${JSON.stringify(encode(r))}); true;`));
+                return;
             // The keyring's secrets: answered at once, not queued behind `ready` (the page needs its keys to get there).
             case "vault":
                 if (!ourPage(e.nativeEvent.url)) return;

@@ -48,6 +48,9 @@ API from memory.** `expo-file-system` in particular is the `File` / `Directory` 
   "object" check). `tests/native-bridge.test.mjs` runs every message each side sends through the other side's check:
   add the new message there when you add one.
 
+- **The page persists NOTHING in the WebView.** Secrets go to the keystore (`vault.ts`), everything else it would have
+  put in IndexedDB goes to `Documents/store/` (`store.ts`, `src/native/store-bridge.ts`). A new thing the page must
+  keep across launches goes through one of those two, never IndexedDB or localStorage.
 - **The keyring's secrets live in the platform keystore, not the WebView** (`src/native/vault-bridge.ts` on the page,
   `src/vault.ts` here, expo-secure-store underneath): WebKit cannot keep an X25519 CryptoKey in IndexedDB at all. A
   `vault` request is answered at once, never queued behind `ready`, because the page cannot get to `ready` without its

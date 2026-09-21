@@ -29,8 +29,9 @@ async function rawIdb(idb) {
     return Object.fromEntries(keys.map((k, i) => [k, values[i]]));
 }
 
-/** True when `needle` occurs anywhere in `hay`'s bytes, or anywhere inside a structured value. */
+/** True when `needle` occurs anywhere in `hay`'s bytes, in a string, or anywhere inside a structured value. */
 function holds(value, needle) {
+    if (typeof value === "string") return value.includes(Buffer.from(needle).toString("base64"));
     if (value instanceof Uint8Array) return Buffer.from(value).includes(Buffer.from(needle));
     if (value instanceof CryptoKey) return true;
     if (value && typeof value === "object") return Object.values(value).some((v) => holds(v, needle));
@@ -145,6 +146,39 @@ test("a vault record this code cannot read is treated as none", async () => {
     vault.m.set("self", "{not json");
     const ring = await Keyring.open("k", new IDBFactory(), vault);
     assert.equal(await ring.load(), null);
+});
+
+test("with a plain store, the keyring opens no database at all and keeps its records in the app", async () => {
+    const vault = mapVault();
+    const records = mapVault();
+    // No IndexedDB is passed, and none is opened: a phone's WebView persists nothing.
+    const ring = await Keyring.open("k", undefined, vault, records);
+    const me = await ring.keys();
+    const channelKey = crypto.getRandomValues(new Uint8Array(32));
+    await ring.savePaired(membership(channelKey));
+    assert.deepEqual([...vault.m.keys()], ["self", "membership"], "the secrets went to the keystore");
+    assert.deepEqual([...records.m.keys()], ["membership"], "and the rest to the app's own store");
+    assert.equal(holds([...records.m.values()].join(""), channelKey), false);
+
+    const again = await (await Keyring.open("k", undefined, vault, records)).load();
+    assert.deepEqual(again.identity.publicKey, me.identity.publicKey);
+    assert.equal(again.membership.hubUrl, "wss://hub.test");
+    assert.deepEqual(again.membership.channelKey, channelKey);
+    assert.deepEqual(again.membership.chain[0].body, new Uint8Array([1, 2, 3]), "a certificate survives the round trip");
+
+    await ring.leave();
+    assert.equal((await ring.load()).membership, null);
+    assert.deepEqual([...records.m.keys()], [], "leaving clears what the app kept too");
+});
+
+test("a record kept beside the keys goes to the app's store as well", async () => {
+    const vault = mapVault();
+    const records = mapVault();
+    const ring = await Keyring.open("k", undefined, vault, records);
+    await ring.keys();
+    await ring.putRecord("devices", [{ label: "Work laptop" }]);
+    assert.deepEqual(await ring.record("devices"), [{ label: "Work laptop" }]);
+    assert.deepEqual([...records.m.keys()], ["r-devices"], "named as a record, not as a keyring record key");
 });
 
 test("keepSecretsIn sets the vault a plain open uses", async () => {
