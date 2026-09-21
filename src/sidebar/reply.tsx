@@ -2,6 +2,7 @@
 // agent run's final answer), the user/assistant turn pair, and the session-list row. Extracted from
 // app.tsx; a leaf view layer over ui-kit + answer-render (no agent-detail / HUD deps, so agent-detail
 // can import ReplyBubble without a cycle).
+import { SentImages, UserText } from "./user-text";
 import { services, bareHash } from "./services";
 import { useRef, useState } from "preact/hooks";
 import type { ExtendProfile } from "../contract-chat";
@@ -10,7 +11,7 @@ import type { Session, Turn, Status, AgentStep } from "./store";
 import { pretty, truncate, collapsedPreview, markdown } from "./format";
 import { annotatedConfig, turnProfile } from "./model";
 import { IconChevron } from "./icons";
-import { cursorTipOn, Dot, Stamp, Hash, TagBadge, CopyBtn, CopyModel, Code, ClickableImg } from "./ui-kit";
+import { cursorTipOn, Dot, Stamp, Hash, TagBadge, CopyBtn, CopyModel, Code } from "./ui-kit";
 import { aliasOf, AnswerBody, ResultBlock } from "./answer-render";
 import { hasTokens } from "../answer-tokens";
 
@@ -232,11 +233,11 @@ export function EmbedRunView({ s }: { s: Session }) {
 export function MessageTurn({ t, hash }: { t: Turn; hash?: string }) {
     return (
         <>
-            <div class="msg user">
+            <div class={`msg user${t.user ? "" : " no-text"}`}>
                 <div class="mrow"><span class="who">user</span><span class="sp" /><Stamp ts={t.ts} /></div>
-                <div class="utext">{t.user}</div>
-                {t.images?.length ? <div class="thumbs">{t.images.map((src, i) => <ClickableImg key={i} src={src} />)}</div> : null}
+                {t.user ? <UserText text={t.user} /> : null}
             </div>
+            <SentImages images={t.images} />
             {/* `anchorHash` is what the event lane scrolls to. A chat session gets a container bar and
                 generation spans like any other, and clicking one used to navigate here and then find nothing
                 to reach — the anchor was only set for agent answers, which is where `tokenRun` comes from. */}

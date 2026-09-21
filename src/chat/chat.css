@@ -215,6 +215,8 @@ html, body, #root { height: 100%; }
    of its own above every prompt. */
 .chat.calm .msg.user .mrow { top: auto; bottom: -1.35em; right: 6px; margin: 0; opacity: .6; }
 .chat.calm .msg.user .utext { line-height: 1.55; }
+/* Your images line up under your bubble, on your side, at its width. */
+.chat.calm .sent-tiles { justify-content: flex-end; margin: -6px 0 16px auto; max-width: min(84%, 34rem); }
 
 /* THE REPLY'S HEADER ROW — a dot, a collapse chevron, a copy button, a timestamp — is provenance, and provenance is
    what you go looking for rather than what you read. Where there is a pointer it fades in under it (see the

@@ -110,7 +110,9 @@ test("agent session: a pasted task image + a follow-up (say) image render as thu
     await w.dispatch(agentResult("imgs", "seen that too", 1));
     w.shadow.querySelector(".row").click();
     await w.tick();
-    const srcs = [...w.shadow.querySelectorAll(".msg.user img")].map(i => i.getAttribute("src"));
+    // As tiles UNDER the bubble (SentImages), each the image itself, not a copy.
+    const srcs = [...w.shadow.querySelectorAll(".sent-tiles img")].map(i => i.getAttribute("src"));
+    assert.equal(w.shadow.querySelectorAll(".msg.user img").length, 0, "the bubble holds only the text");
     assert.ok(srcs.includes(IMG1), "the pasted task image is shown in the conversation");
     assert.ok(srcs.includes(IMG2), "the follow-up (say) image is shown too");
 });

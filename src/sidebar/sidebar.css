@@ -1868,6 +1868,25 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
 .mrow { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .who { font-weight: 600; color: var(--kind); font-size: 0.92em; }
 .utext { white-space: pre-wrap; word-break: break-word; color: var(--fg); }
+/* A LONG message, folded (user-text.tsx): its first lines, fading into the bubble, and a round chevron at the text's
+   bottom right that opens it. Anchored to the TEXT, not the bubble, so it never sits on the images sent with it. */
+.utext-wrap.long { position: relative; }
+.utext.folded { max-height: calc(var(--fold-lines, 8) * 1lh); overflow: hidden;
+    -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent); mask-image: linear-gradient(to bottom, #000 55%, transparent); }
+/* The round chevron that opens a folded message (show all / show less), at its bottom right like Gemini's. */
+.utext-more { position: absolute; right: -4px; bottom: 0; width: 28px; height: 28px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid var(--border); background: var(--panel); color: var(--fg-dim); cursor: pointer; padding: 0; }
+.utext-more:hover { color: var(--fg); background: var(--panel-2); }
+.utext-more svg { width: 14px; height: 14px; transform: rotate(90deg); transition: transform .15s ease; }
+.utext-more.open svg { transform: rotate(-90deg); }
+/* Open, the chevron sits under the last line rather than on it. */
+.utext-more.open { position: static; display: flex; margin: 6px 0 0 auto; }
+@media (prefers-reduced-motion: reduce) { .utext-more svg { transition: none; } }
+/* THE IMAGES YOU SENT, as tiles under your message (`SentImages`): square, cropped to fill, rounded like a phone's
+   own photo tiles. A message that is only images keeps its time row and drops the empty bubble. */
+.sent-tiles { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.sent-tiles img { width: 96px; height: 96px; object-fit: cover; border-radius: 12px; border: 1px solid var(--border); cursor: zoom-in; display: block; }
+.msg.user.no-text { background: none; padding-top: 0; padding-bottom: 0; }
 .errtext { color: var(--err); white-space: pre-wrap; word-break: break-word; }
 /* Page-transition marker: a horizontal rule with a centred label, drawn where a run left one document and
    re-adopted the next (a cross-page/-domain nav) — the run-log analogue of a context-compaction divider. */

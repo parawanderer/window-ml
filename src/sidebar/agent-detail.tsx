@@ -3,6 +3,7 @@
 // approval / grant / host-access chrome, the JSON-tree tool-def viewer, the agent-options block, nav
 // dividers, and the run container (AgentRunView / LiveStream / PendingNote). Extracted from app.tsx; it
 // sits above ./reply (uses ReplyBubble) and the ui-kit / answer-render / render-panel / debug-reducer layers.
+import { SentImages, UserText } from "./user-text";
 import type { ComponentChildren } from "preact";
 import { services } from "./services";
 import { useState, useEffect, useRef } from "preact/hooks";
@@ -20,7 +21,7 @@ import { IconChevron, IconWarn, IconCopy, IconCheck, IconIn, IconOut } from "./i
 import { usageSamples, liveOutTokens } from "./usage";
 import { fmtDur } from "./timestamps";
 import {
-    Code, CopyBtn, SheetChip, Hash, Stamp, ClickableImg, Dot, Disclosure,
+    Code, CopyBtn, SheetChip, Hash, Stamp, Dot, Disclosure,
     decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText, cursorTipOn, PointerChip, TipText,
 } from "./ui-kit";
 import { FeedbackBlock, ReusedBlock } from "./answer-render";
@@ -640,11 +641,13 @@ export function SteerSeen({ seen }: { seen: boolean }) {
 // A user message in the conversation — the initial task, a follow-up run()'s task, or a mid-run say().
 // All render as "you"; a mid-run steer additionally carries a `steer` delivery indicator (queued/seen).
 export const UserBubble = ({ text, ts, images, steer }: { text: string; ts: number; images?: string[]; steer?: { seen?: boolean } }) => (
-    <div class="msg user">
-        <div class="mrow"><span class="who">you</span>{steer ? <SteerSeen seen={!!steer.seen} /> : null}<span class="sp" /><Stamp ts={ts} /></div>
-        {images?.length ? <div class="thumbs">{images.map((src, i) => <ClickableImg key={i} src={src} />)}</div> : null}
-        {text ? <div class="utext">{text}</div> : null}
-    </div>
+    <>
+        <div class={`msg user${text ? "" : " no-text"}`}>
+            <div class="mrow"><span class="who">you</span>{steer ? <SteerSeen seen={!!steer.seen} /> : null}<span class="sp" /><Stamp ts={ts} /></div>
+            {text ? <UserText text={text} /> : null}
+        </div>
+        <SentImages images={images} />
+    </>
 );
 
 // The absolute destination of a `navigate` step (the resolved URL the action render carries, else the raw arg).
