@@ -121,6 +121,7 @@ html, body, #root { height: 100%; }
 .chat-resume-lost { margin: 2px 0 0; color: var(--fg-faint); font-size: .92em; line-height: 1.45; }
 
 /* Notices: a stack at the bottom, above the composer's reach but never over the send button for long. */
+/* `left` is the reading column's middle, set by `Notices` from the column itself; 50% is the fallback before it has. */
 .chat-notices { position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; z-index: 50; width: min(92vw, 460px); }
 .chat-notice { display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; box-shadow: 0 6px 20px rgb(0 0 0 / .3); }
 .chat-notice.error { border-color: var(--err); }
@@ -270,6 +271,17 @@ html, body, #root { height: 100%; }
     background: var(--panel); border: 1px solid var(--border); border-radius: 24px; padding: 4px 5px;
 }
 .chat.calm .composer-row:focus-within { border-color: var(--panel-2-hover); }
+/* The model, beside send: the name in the code face, quiet, no box of its own until the pointer finds it. */
+.chat .composer-foot .chint { margin-right: 14px; }
+.composer-tools { display: flex; align-items: center; flex: 0 1 auto; min-width: 0; align-self: flex-end; }
+.tp-pill.tp-pill-model.tp-pill-quiet { background: transparent; border: none; color: var(--fg-dim); font-size: .82em; padding: 6px 8px; min-height: 0;
+    border-radius: 10px; max-width: 240px; margin-bottom: 2px; }
+.tp-pill.tp-pill-model.tp-pill-quiet:hover, .tp-pill.tp-pill-model.tp-pill-quiet[aria-expanded="true"] { background: var(--panel-2); color: var(--fg); }
+/* Where each model runs, in the model lists: a faint glyph, the sentence on hover (`WhereMark`). */
+.tp-where { display: inline-flex; flex: 0 0 auto; color: var(--fg-faint); opacity: .8; }
+.tp-where.cloud { opacity: 1; }
+/* A cut-off model name in full, in the cursor tip (`nameTip`). */
+.tp-name-tip { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
 /* ATTACHMENTS SIT ON THE BOX THEY WILL BE SENT WITH. The strip is a sibling of the field rather than a child, so
    at full width it floated off to the left of a centred pill, attached to nothing — a screenshot you had just
    pasted, apparently belonging to the page. It takes the pill's own width and rounds its bottom corners into it,
@@ -315,8 +327,10 @@ html, body, #root { height: 100%; }
 @media (hover: hover) and (pointer: fine) {
     .chat.calm .msg.user .mrow,
     .chat.calm .msg.asst > .mrow,
-    .chat.calm .composer-foot,
-    .chat.calm .block { opacity: 0; transition: opacity .15s ease; }
+    .chat.calm .composer-foot { opacity: 0; transition: opacity .15s ease; }
+    /* A block (a run's options, its raw request) is a thing you OPEN, so it stays findable at calm's faint .6 and only
+       brightens under the pointer: at 0 it was a control nobody could see until they happened to cross it. */
+    .chat.calm .block { transition: opacity .15s ease; }
     .chat.calm .msg.user:hover .mrow, .chat.calm .msg.user:focus-within .mrow { opacity: .75; }
     .chat.calm .msg.asst:hover > .mrow, .chat.calm .msg.asst:focus-within > .mrow { opacity: 1; }
     /* …but never while the row is saying something that is not provenance. */

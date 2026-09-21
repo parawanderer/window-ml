@@ -183,3 +183,39 @@ test("the layer takes the text size of the surface that raised it, not the root'
     assert.equal(w.layer().style.getPropertyValue("--fs"), "", "a trigger with no size of its own leaves the layer's");
     w.stop();
 });
+
+test("the DELAYED cursor tip waits for the pointer to rest, shows only when asked to, and a leave cancels it", async () => {
+    const dom = new JSDOM(`<body><button class="pill">a-very-long-model-name</button></body>`, { pretendToBeVisual: true });
+    const g = globalThis;
+    const saved = { window: g.window, document: g.document, MutationObserver: g.MutationObserver };
+    Object.assign(g, { window: dom.window, document: dom.window.document, MutationObserver: dom.window.MutationObserver });
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    try {
+        const { cursorTipOn, cursorTip } = await import("../src/sidebar/ui-kit.tsx");
+        const pill = dom.window.document.querySelector(".pill");
+        let cut = true;
+        const h = cursorTipOn("a-very-long-model-name", { delayMs: 40, onlyIf: () => cut });
+        const move = (x) => h.onPointerMove({ clientX: x, clientY: 5, currentTarget: pill });
+        move(5);
+        assert.equal(cursorTip.value, null, "nothing at once: a pointer crossing on its way elsewhere raises no tip");
+        move(7);
+        await sleep(70);
+        assert.equal(cursorTip.value?.text, "a-very-long-model-name", "after the rest, the full name");
+        assert.equal(cursorTip.value?.x, 7, "where the pointer last was");
+        h.onPointerLeave();
+        assert.equal(cursorTip.value, null);
+
+        // A leave before the delay cancels it: the tip never appears for a pointer that has gone.
+        move(5);
+        h.onPointerLeave();
+        await sleep(70);
+        assert.equal(cursorTip.value, null, "left before the rest: nothing later");
+
+        // `onlyIf` is asked when the delay is up: a name that fits needs no tip.
+        cut = false;
+        move(5);
+        await sleep(70);
+        assert.equal(cursorTip.value, null, "the name is not cut off, so no tip");
+        h.onPointerLeave();
+    } finally { Object.assign(g, saved); }
+});
