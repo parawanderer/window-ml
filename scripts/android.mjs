@@ -1,5 +1,5 @@
 // android.mjs — THE PHONE APP ON AN EMULATOR, from the command line: set the SDK up, boot a device, build and install
-// the app, and point Playwright or a screenshot at it. A self-tool (skill: .claude/skills/android/SKILL.md), OPTIONAL
+// the app, and point Playwright or a screenshot at it. A self-tool (skill: .claude/skills/phone/SKILL.md), OPTIONAL
 // like everything mobile: nothing in `npm test` or the chat suites needs it (CONTRIBUTING.md, "The mobile clients").
 //
 //   node scripts/android.mjs doctor          what is installed and what is missing, and the command for each

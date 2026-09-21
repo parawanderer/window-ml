@@ -688,8 +688,8 @@ thing. The parts:
   (skill: `chat-web`). Pairing with a REAL hub before the screens exist: `scripts/hub-root.mjs` (the account's
   root device on the command line) and the extension's `dev-hub-pair.html` (offers this browser, shows the
   connection's history for an idle test) (skill: `hub-pairing`). The phone app on an emulator or a plugged-in phone,
-  OPTIONAL tooling: `scripts/android.mjs` (boot, install, launch, screenshot, Maestro flows in `tests/mobile/`) (skill:
-  `android`); phone-layout Playwright tests are tagged `@mobile` (`npm run test:mobile`). Narrated demos (watched, never asserting):
+  OPTIONAL tooling: `scripts/android.mjs` and `scripts/ios.mjs`, same commands (boot, install, launch, screenshot,
+  Maestro flows in `tests/mobile/`) (skill: `phone`); phone-layout Playwright tests are tagged `@mobile` (`npm run test:mobile`). Narrated demos (watched, never asserting):
   `approval-demo`, `resource-demo` (`BOX=`), `line-map-demo`, `cursor-demo`, `panel-news-demo`, `whole-box-demo`,
   `stream-demo`, `bench-editor-demo`, `bench-completion-demo`, `table-demo` (fetching CSV/Parquet, then
   scanning, surveying and analysing them through pipe / readonly exec / full exec / python_exec; part two is the
