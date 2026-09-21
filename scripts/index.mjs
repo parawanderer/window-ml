@@ -10,6 +10,8 @@
 //   node scripts/index.mjs --exported            # module surface only (--local for the rest)
 //   node scripts/index.mjs --local --kind function    # a file's private helpers
 //   node scripts/index.mjs --stats               # how big the index is, by kind
+//   node scripts/index.mjs sheet --mobile         # …the phone app's code too (mobile/), left out unless asked for
+//   node scripts/index.mjs '' --kind style --mobile   # every documented React Native style (a StyleSheet key)
 //
 // The checks (each exits 1 on a finding, and each is run by the pre-commit hook and CI's `tools` job):
 //   node scripts/index.mjs --new [ref] [--staged]     # THE RATCHET: what this change ADDS with nothing to search on
@@ -42,6 +44,13 @@
 // keys (`API_FORMATS … keys: openai, ollama`), because that pattern IS the API surface in several files here, and
 // a class lists its method names for the same reason.
 //
+// THE PHONE APP (`mobile/`, the React Native shell: docs/spec/NATIVE_SHELL.md) is indexed and CHECKED like `src/`,
+// but a query leaves it out unless `--mobile` is passed: most work here never touches it, and its rows would crowd
+// the web ones out of a search. The checks (`--new`, `--headerless`, `--undocumented`) always cover it, because the
+// failure they prevent is the same on both sides. Its STYLES are rows of their own (`style`): a key of a module-scope
+// `StyleSheet.create({...})` is the React Native counterpart of a CSS class, and a new one needs a comment above it
+// exactly as a new class does.
+//
 // WHY THERE IS NO TYPESCRIPT PROGRAM BEHIND IT. Parsing the repo with the compiler is seconds; a column-0 scan is
 // tens of milliseconds, and module-scope declarations are unambiguous at column 0. The cost is that a declaration
 // indented inside something else is not seen, which is the scope of the tool anyway.
@@ -52,10 +61,14 @@ import path from "node:path";
 const ROOT = path.resolve(import.meta.dirname, "..");
 /** Where the cache lives. ctags-style: one flat file at the root, gitignored, rebuilt when a file's bytes change. */
 const CACHE = path.join(ROOT, ".index-cache.tsv");
-const CACHE_VERSION = "v1";
+const CACHE_VERSION = "v2";
 /** Every source tree the index covers. `src/` recursively; tests and scripts are deliberately out (a long test file
  *  is a long LIST, and indexing it by purpose would drown the modules). */
-const SRC_ROOTS = ["src"];
+const SRC_ROOTS = ["src", "mobile"];
+/** The phone app's tree: indexed and checked, but out of a query's results unless `--mobile` is passed. */
+const MOBILE = "mobile/";
+/** What under `mobile/` is not source: generated native projects, dependencies, build output. */
+const SKIP_DIRS = new Set(["node_modules", "android", "ios", ".expo", "dist", "build"]);
 /** The stylesheets whose classes are indexed and ratcheted. */
 const CSS_FILES = ["src/sidebar/sidebar.css", "src/chat/chat.css"];
 /** Generated files: indexing them is noise, and their headers are written by a generator. */
@@ -244,7 +257,26 @@ function scanSource(rel, text) {
         const trailing = /;?\s*\/\/\s*(.+)$/.exec(l);
         const doc = docAbove(lines, i) || (trailing ? `// ${trailing[1]}` : "");
         out.push({ kind, name, where: `${rel}:${i + 1}`, exported, sig: sig(signature), doc: doc ? firstSentence(doc) : "" });
+        if (/StyleSheet\.create\(\s*\{/.test(l)) out.push(...styleKeys(rel, lines, i, name));
     });
+    return out;
+}
+
+/** The keys of a module-scope `StyleSheet.create({...})` (React Native), one `style` row each, documented by the
+ *  comment directly above the key: the phone app's counterpart of a CSS class. One level deep, by indentation. */
+function styleKeys(rel, lines, i, sheet) {
+    const out = [];
+    let indent = null;
+    for (let j = i + 1; j < lines.length; j++) {
+        const l = lines[j];
+        if (/^\S/.test(l)) break;                      // back at column 0: the call has ended
+        const m = /^(\s+)([A-Za-z_$][\w$]*)\s*:/.exec(l);
+        if (!m) continue;
+        if (indent == null) indent = m[1].length;
+        if (m[1].length !== indent) continue;
+        const doc = docAbove(lines, j);
+        out.push({ kind: "style", name: m[2], where: `${rel}:${j + 1}`, exported: true, sig: `${sheet}.${m[2]}`, doc: doc ? firstSentence(doc) : "" });
+    }
     return out;
 }
 
@@ -280,12 +312,12 @@ function sourceFiles() {
     const walk = (dir) => {
         for (const e of readdirSync(dir, { withFileTypes: true })) {
             const full = path.join(dir, e.name);
-            if (e.isDirectory()) { walk(full); continue; }
+            if (e.isDirectory()) { if (!SKIP_DIRS.has(e.name)) walk(full); continue; }
             if (!/\.(ts|tsx|css)$/.test(e.name) || SKIP.test(e.name)) continue;
             out.push(path.relative(ROOT, full));
         }
     };
-    for (const r of SRC_ROOTS) walk(path.join(ROOT, r));
+    for (const r of SRC_ROOTS) if (existsSync(path.join(ROOT, r))) walk(path.join(ROOT, r));
     return out.sort();
 }
 
@@ -392,7 +424,7 @@ if (flag("new-css") || flag("new")) {
     try {
         diff = execFileSync("git", [...range, "--", ...CSS_FILES.filter((f) => existsSync(path.join(ROOT, f)))], { cwd: ROOT, encoding: "utf8" });
         // `-U0` with a file header per hunk, so an added declaration can be attributed to its file.
-        if (flag("new")) srcDiff = execFileSync("git", [...range, "--", "src"], { cwd: ROOT, encoding: "utf8" });
+        if (flag("new")) srcDiff = execFileSync("git", [...range, "--", ...SRC_ROOTS], { cwd: ROOT, encoding: "utf8" });
     }
     catch {
         // No such ref (a shallow clone, a fork with no origin/main). SKIP rather than fail: a ratchet that blocks a
@@ -407,7 +439,7 @@ if (flag("new-css") || flag("new")) {
     // says what it did not look at.
     if (!flag("staged")) {
         let pending = "";
-        try { pending = execFileSync("git", ["status", "--porcelain", "--", "src"], { cwd: ROOT, encoding: "utf8" }); }
+        try { pending = execFileSync("git", ["status", "--porcelain", "--", ...SRC_ROOTS], { cwd: ROOT, encoding: "utf8" }); }
         catch { /* not a work tree: nothing to warn about */ }
         const n = pending.split("\n").filter(Boolean).length;
         if (n) console.error(`index: ${n} uncommitted file(s) under src/ are NOT in this range (${base}...HEAD).`
@@ -427,12 +459,15 @@ if (flag("new-css") || flag("new")) {
     if (flag("new") && srcDiff) {
         const undoc = new Map();
         for (const r of records) if (r.exported && !r.doc && r.kind !== "css" && r.kind !== "file") undoc.set(`${r.where.split(":")[0]}\t${r.name}`, r);
+        // (`style` rows are in `records` as exported, so an undocumented new style key is caught here too.)
         let file = "";
         for (const line of srcDiff.split("\n")) {
             const f = /^\+\+\+ b\/(.+)$/.exec(line);
             if (f) { file = f[1]; continue; }
             if (!line.startsWith("+") || line.startsWith("+++")) continue;
-            const m = /^\+export\s+(?:default\s+)?(?:declare\s+)?(?:async\s+)?(?:function|class|interface|type|enum|const|let|var)\s+([A-Za-z_$][\w$]*)/.exec(line);
+            const m = /^\+export\s+(?:default\s+)?(?:declare\s+)?(?:async\s+)?(?:function|class|interface|type|enum|const|let|var)\s+([A-Za-z_$][\w$]*)/.exec(line)
+                // A React Native style key, indented inside a StyleSheet.create: the index knows which lines are keys.
+                ?? (file.startsWith(MOBILE) ? /^\+\s+([A-Za-z_$][\w$]*)\s*:/.exec(line) : null);
             const hit = m && undoc.get(`${file}\t${m[1]}`);
             if (hit && !bad.includes(hit)) bad.push(hit);
         }
@@ -522,7 +557,7 @@ if (flag("undocumented")) {
     process.exit(0);
 }
 
-let rows = records;
+let rows = flag("mobile") ? records : records.filter((r) => !r.where.startsWith(MOBILE));
 if (kinds) rows = rows.filter((r) => kinds.has(r.kind));
 if (wantExported) rows = rows.filter((r) => r.exported);
 if (wantLocal) rows = rows.filter((r) => !r.exported);

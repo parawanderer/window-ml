@@ -426,7 +426,9 @@ handle, and a second view-return signal, and each was one search away. Two of th
 which is why it covers the stylesheet; the same thing happens to whole MODULES, which is why a file is a row.
 Output is never column-padded, so it pipes into `grep`, `cut -f3` and `awk -F'\t'`. It replaced
 `scripts/components.mjs` (sidebar components + CSS only). Filters: `--kind file,component,hook,function,
-class,type,const,css`, `--exported`/`--local`, `--sig`.
+class,type,const,css,style`, `--exported`/`--local`, `--sig`, and `--mobile` to include the phone app (`mobile/`), which a
+query leaves out by default. The checks below cover `mobile/` always: a React Native component needs its docstring and a
+`StyleSheet` key its comment, exactly as a web export and a CSS class do.
 
 **It indexes bindings, never their innards** — module-scope declarations only, since JavaScript nests
 forever and that depth would bury the rows that mean something. One exception, one level deep and never
@@ -685,7 +687,9 @@ thing. The parts:
   (phone + desktop screenshots against the fake host, `SERVE=1` to just serve it) and `window.__chatFake` to script it
   (skill: `chat-web`). Pairing with a REAL hub before the screens exist: `scripts/hub-root.mjs` (the account's
   root device on the command line) and the extension's `dev-hub-pair.html` (offers this browser, shows the
-  connection's history for an idle test) (skill: `hub-pairing`). Narrated demos (watched, never asserting):
+  connection's history for an idle test) (skill: `hub-pairing`). The phone app on an emulator or a plugged-in phone,
+  OPTIONAL tooling: `scripts/android.mjs` (boot, install, launch, screenshot, Maestro flows in `tests/mobile/`) (skill:
+  `android`); phone-layout Playwright tests are tagged `@mobile` (`npm run test:mobile`). Narrated demos (watched, never asserting):
   `approval-demo`, `resource-demo` (`BOX=`), `line-map-demo`, `cursor-demo`, `panel-news-demo`, `whole-box-demo`,
   `stream-demo`, `bench-editor-demo`, `bench-completion-demo`, `table-demo` (fetching CSV/Parquet, then
   scanning, surveying and analysing them through pipe / readonly exec / full exec / python_exec; part two is the

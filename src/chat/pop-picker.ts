@@ -76,7 +76,11 @@ export function usePickerPop<V>({ picksFor, value, onPick, onOpen, width: [minW,
     const pillProps = {
         ref: btn, type: "button" as const, "aria-haspopup": "listbox" as const, "aria-expanded": open,
         onClick: () => (open ? close() : openIt()),
-        onKeyDown: (e: KeyboardEvent) => { if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) { e.preventDefault(); openIt(); } },
+        // Escape closes an open list from the pill too: focus stays on the pill when the list opened without taking it.
+        onKeyDown: (e: KeyboardEvent) => {
+            if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) { e.preventDefault(); openIt(); }
+            else if (open && e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); }
+        },
     };
     /** Props for the list's container: where it sits and the keys. */
     const popProps = at ? {

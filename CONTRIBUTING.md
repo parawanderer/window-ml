@@ -75,31 +75,75 @@ does not look like a missing download: the `python_exec` tool fails at RUNTIME w
 
 Fetch it if you will touch `python_exec` or want the tests that exercise real pandas.
 
-## 4b. Optional, and genuinely optional: the phone app
+## 4b. Optional: the mobile clients
 
-**You do not need this, and nothing in the test suite does.** The phone app is the chat page packaged with
-Capacitor, CI builds it on every change, and nobody working on this repo should have to install Android Studio or
-Xcode to change a page they can open in a browser. If the suite ever comes to need them, that is a bug.
+**You do not need any of this to work on the chat page, the extension or anything else in the repo, and nothing in
+`npm test` or `npm run test:chat` does.** The phone app is the chat page packaged with Capacitor (a native shell is
+proposed in `docs/spec/NATIVE_SHELL.md`), CI builds it on every change, and a page you can open in a browser must never
+need 40GB of mobile tooling to change. If the suite ever comes to need it, that is a bug.
 
-The parts that need no tooling at all work here already — `cap add` writes template files and `cap sync` copies
-`dist-web/` into them:
+**The phone LAYOUT needs no tooling either.** Every test of how the chat page behaves on a phone (its layout, touch
+targets, the keyboard, pickers, drafts) runs in desktop Chromium with a phone's viewport and touch input, and is tagged
+`@mobile`:
+
+```bash
+npm run test:mobile       # builds dist-web/, then every @mobile Playwright test (a few seconds)
+```
+
+Tag a new test `@mobile` (at the end of its title) when what it checks is specific to a phone or a finger.
+
+The parts of the native build that need no SDK work anywhere, since `cap add` writes template files and `cap sync`
+copies the standalone client (`dist-app/`) into them:
 
 ```bash
 npm run mobile:android    # scaffolds android/ (gitignored) and syncs the web build into it
 npm run mobile:ios        # the same for ios/
 ```
 
-What needs the tooling is COMPILING what those produce. If you want to run the app on a device or a simulator:
+Re-run it after any change to the chat page: the native project holds a COPY of the build, so without a sync you are
+looking at the bundle from last time. That is the one trap here, and it looks exactly like a change that did nothing.
 
-- **Android.** A JDK (21 — Capacitor's own Android library targets source release 21, and a 17 toolchain fails
-  with "invalid source release: 21") and the Android SDK, which Android Studio installs; then
-  `cd android && ./gradlew assembleDebug` for an APK, or open `android/` in Android Studio and press run.
-- **iOS.** Xcode, on a Mac; then open `ios/App` and press run. A simulator build needs no signing certificate; a
-  device build needs one, which this repo deliberately does not hold.
+### Running the app on an emulator (Android)
 
-Re-run the `mobile:` script after any change to the chat page: the native project holds a COPY of `dist-web/`, so
-without a sync you are looking at the bundle from last time. That is the one trap here, and it looks exactly like a
-change that did nothing.
+For running the real app: a device-only behaviour (the camera, being backgrounded, the system WebView's own
+performance), or checking a change the way a phone draws it. No Android Studio; the command-line SDK is enough:
+
+```bash
+brew install --cask android-commandlinetools   # sdkmanager, avdmanager
+brew install --cask temurin@21                 # gradle builds with JDK 21: Capacitor's Android library targets it
+node scripts/android.mjs setup                 # platform-tools, the emulator, an arm64 API 35 image, one device
+node scripts/android.mjs doctor                # what is there and what is missing, with the command for each
+```
+
+Then, each time:
+
+```bash
+node scripts/android.mjs boot [--window]       # headless unless --window, if you want to watch it
+node scripts/android.mjs install               # build the web app, sync, gradle assembleDebug, adb install
+node scripts/android.mjs launch
+node scripts/android.mjs shot                  # test-results/android.png
+node scripts/android.mjs stop
+```
+
+The same commands work against a real phone plugged in over USB with USB debugging on, when it is the only device adb
+sees. The app's WebView is debuggable in a debug build: `chrome://inspect` in desktop Chrome lists it.
+
+**Maestro** drives the app's screens from short YAML flows (`tests/mobile/*.yaml`, run with `node scripts/android.mjs flows`). Install
+it from its own release, NOT with `brew install --cask maestro`, which is an unrelated app of the same name:
+
+```bash
+mkdir -p ~/.maestro && cd ~/.maestro \
+  && curl -sSLf -o maestro.zip https://github.com/mobile-dev-inc/maestro/releases/latest/download/maestro.zip \
+  && unzip -qo maestro.zip && rm maestro.zip
+export PATH="$HOME/.maestro/maestro/bin:$PATH"   # in your shell profile
+```
+
+(`brew install mobile-dev-inc/tap/maestro` is the Homebrew route, and refuses to install while Xcode is out of date.)
+
+### iOS
+
+Xcode, on a Mac; then `npm run mobile:ios`, open `ios/App` and press run. A simulator build needs no signing
+certificate; a device build needs one, which this repo deliberately does not hold.
 
 ## 5. Build
 

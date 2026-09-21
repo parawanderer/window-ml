@@ -255,3 +255,40 @@ test("index: --new WARNS when uncommitted work under src/ is outside the range i
         assert.match(warned, /Pass --staged/);
     } finally { fx.stop(); }
 });
+
+test("the phone app (mobile/) is indexed and checked, but left out of a query unless --mobile is passed", () => {
+    const f = fixture({
+        "src/web.ts": "// web.ts — the web side.\n\n/** A session row on the page. */\nexport const webRow = 1;\n",
+        "mobile/src/List.tsx": `// List.tsx — the phone's session list.
+
+import { StyleSheet } from "react-native";
+
+/** A session row you tap. */
+export function SessionRow() { return null; }
+
+export function Bare() { return null; }
+
+const styles = StyleSheet.create({
+    // The row's frame: a 56px target.
+    row: { minHeight: 56, padding: { x: 1 } },
+    badge: { borderRadius: 999 },
+});
+`,
+        "mobile/node_modules/dep/index.ts": "export const notOurs = 1;\n",
+        "mobile/android/app/Gen.ts": "export const generated = 1;\n",
+    });
+    try {
+        const names = (rows) => rows.map((r) => r[1]).sort();
+        assert.deepEqual(names(f.run("row", "--kind", "const,function")), ["webRow"], "mobile/ is out of a plain query");
+        assert.deepEqual(names(f.run("row|badge", "--mobile", "--kind", "const,function,style")), ["SessionRow", "badge", "row", "webRow"]);
+        // A style is one row per KEY of the sheet, one level deep: `padding`'s inner key is not a style.
+        const styles = f.run("", "--kind", "style", "--mobile");
+        assert.deepEqual(styles.map((r) => [r[1], r[3]]), [["badge", "(undocumented)"], ["row", "The row's frame: a 56px target"]]);
+        assert.ok(!names(f.run("", "--mobile")).some((n) => n === "notOurs" || n === "generated"), "dependencies and generated projects are not source");
+        // The checks always cover it: an undocumented export and an undocumented style both fail.
+        let out = "";
+        try { f.run("--undocumented"); } catch (e) { out = String(e.stdout); }
+        assert.match(out, /Bare/);
+        assert.match(out, /style\tbadge/);
+    } finally { f.stop(); }
+});
