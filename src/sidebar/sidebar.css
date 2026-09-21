@@ -8,6 +8,9 @@
     --border: #3f3f46; --fg: #e4e4e7; --fg-dim: #a1a1aa; --fg-faint: #71717a;
     --accent: #6366f1; --accent-strong: #4f46e5; --accent-fg: #ffffff;
     --ok: #4ade80; --err: #f87171; --warn: #eab308; --err-border: #7f1d1d; --kind: #c7d2fe;
+    /* Something waiting on the person (an approval, an attention count). The warning yellow at a desk; the chat page
+       turns it cyan on a touch screen (chat.css), where a yellow badge in a small frame read as an alarm. */
+    --notice: var(--warn); --notice-fg: #1a1400;
     /* JSON-tree syntax colours, matched to the atom-one-dark code theme so the raw In tree reads like the code block. */
     --j-key: #d19a66; --j-str: #98c379; --j-lit: #56b6c2; --j-base: #abb2bf;
 }

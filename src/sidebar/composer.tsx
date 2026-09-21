@@ -80,6 +80,19 @@ export function ElementPill({ ctx, onRemove }: { ctx: ElementContext; onRemove: 
     );
 }
 
+/** Is the screen phone-narrow (560px or less)? Follows the window, so rotating a phone changes it. */
+function useNarrowScreen(): boolean {
+    const q = typeof matchMedia === "function" ? matchMedia("(max-width: 560px)") : null;
+    const [narrow, setNarrow] = useState(!!q?.matches);
+    useEffect(() => {
+        if (!q) return;
+        const on = () => setNarrow(q.matches);
+        q.addEventListener?.("change", on);
+        return () => q.removeEventListener?.("change", on);
+    }, []);
+    return narrow;
+}
+
 /** THE COMPOSER — where you send the next message into a session: the text box, pasted images, an
  *  element you picked off the page, the model/vision toggles and the run controls. Sending INTO a run is
  *  the one thing that needs a reverse channel, so the DevTools panel routes it through the background. */
@@ -116,8 +129,12 @@ export function Composer({ s, multiline }: { s: Session; multiline?: boolean }) 
     // Enter SENDS only — it must NEVER cancel a run (pressing Enter with an empty box while a run is in
     // flight used to hit the Stop path and kill the run out of nowhere). Cancelling is the Stop BUTTON only.
     const onKey = (e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey && !empty) { e.preventDefault(); send(); } };
-    const placeholder = running ? (agent ? "Steer this run, or send to queue a follow-up…" : "Sending… or stop this turn")
-        : "Send a message (or paste an image) to continue…";
+    // On a NARROW screen the long placeholders wrapped onto a second line of an empty one-line box; the short ones say the
+    // same thing a phone can fit.
+    const narrow = useNarrowScreen();
+    const placeholder = running
+        ? (agent ? (narrow ? "Steer, or queue a follow-up…" : "Steer this run, or send to queue a follow-up…") : (narrow ? "Sending…" : "Sending… or stop this turn"))
+        : narrow ? "Send a message…" : "Send a message (or paste an image) to continue…";
     return (
         <div class="composer" data-rev={r}>
             <ThumbStrip imgs={att.imgs} loading={att.loading} onRemove={att.remove} />

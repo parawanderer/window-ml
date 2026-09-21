@@ -16,6 +16,7 @@ import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
 import { mayCommand } from "./grants";
 import { ModelPicker } from "./model-picker";
+import { KindPicker } from "./kind-picker";
 import { startableOn, useTargetPick, type StartKind } from "./new-session";
 
 /** Each runtime's model list as last answered, for the page's life: a start page opened again draws it at once. */
@@ -41,7 +42,7 @@ export function useHeldTrue(on: boolean, ms: number): boolean {
 }
 
 /** The start page: a pill to type in, and the choices a start needs on one row inside it. */
-export function StartPage({ store, onStarted, initialKind, extras }: { store: ChatStore; onStarted: (key: string) => void; initialKind?: StartKind; extras?: ChatExtras }) {
+export function StartPage({ store, onStarted, initialKind, extras, narrow }: { store: ChatStore; onStarted: (key: string) => void; initialKind?: StartKind; extras?: ChatExtras; narrow?: boolean }) {
     // Kept through a reconnect like the runtime below, or the Agent/Chat switch would vanish and come back with it.
     const liveKinds = (["agent", "chat"] as const).filter((k) => startableOn(store, k).length > 0);
     const lastKinds = useRef<StartKind[]>(liveKinds);
@@ -110,7 +111,13 @@ export function StartPage({ store, onStarted, initialKind, extras }: { store: Ch
             if (r.ok) onStarted(`${r.data.session.runtime}:${r.data.session.hash}`);
         } finally { setBusy(false); }
     };
+    // THE MODEL: in the box's row where the page is wide enough to hold it, at the TOP of the page on a phone. There the
+    // row keeps only what this start needs (the kind, the tab, send) and fits on one line; the top bar has the room.
+    const modelTop = models && models.length ? <ModelPicker models={models} value={model} onChange={setModel} arrived={waited.current} />
+        : models === null && canList ? <span class="tp-pill tp-pill-model tp-pill-wait" role="status" aria-label="Loading models" /> : null;
     return (
+        <>
+        {narrow && modelTop ? <div class="chat-start-top">{modelTop}</div> : null}
         <div class="chat-start-page">
             <div class="chat-start-col">
                 <div class="chat-start-box">
@@ -119,7 +126,8 @@ export function StartPage({ store, onStarted, initialKind, extras }: { store: Ch
                         onInput={(e: any) => setText(e.target.value)}
                         onKeyDown={(e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void start(); } }} />
                     <div class="chat-start-row">
-                        {kinds.length > 1 ? (
+                        {kinds.length > 1 && narrow ? <KindPicker kinds={kinds} value={kind} onChange={setKind} />
+                            : kinds.length > 1 ? (
                             <div class="chat-seg" role="radiogroup" aria-label="Kind">
                                 {kinds.map((k) => (
                                     <button key={k} role="radio" aria-checked={k === kind} class={`chat-seg-opt${k === kind ? " on" : ""}`}
@@ -128,8 +136,7 @@ export function StartPage({ store, onStarted, initialKind, extras }: { store: Ch
                             </div>
                         ) : null}
                         {pick.inline}
-                        {models && models.length ? <ModelPicker models={models} value={model} onChange={setModel} arrived={waited.current} />
-                            : models === null && canList ? <span class="tp-pill tp-pill-model tp-pill-wait" role="status" aria-label="Loading models" /> : null}
+                        {narrow ? null : modelTop}
                         {!rt.online ? <span class="chat-start-wait">Reconnecting…</span> : null}
                         {runtimes.length > 1 ? (
                             <select class="chat-pick-rt" aria-label="Runtime" value={rt.id} onChange={(e: any) => setRuntimeId(e.target.value)}>
@@ -145,5 +152,6 @@ export function StartPage({ store, onStarted, initialKind, extras }: { store: Ch
                 <div class="chat-start-hint">Enter to start · Shift+Enter for a new line · saved to the list as it starts</div>
             </div>
         </div>
+        </>
     );
 }

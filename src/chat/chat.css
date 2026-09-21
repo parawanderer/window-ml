@@ -71,10 +71,10 @@ html, body, #root { height: 100%; }
 .chat-row.active { border-color: var(--accent); background: var(--panel-2); }
 .chat-row-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .chat-row-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--fg-faint); font-size: .86em; }
-.chat-status.st-waiting { color: var(--warn); }
+.chat-status.st-waiting { color: var(--notice); }
 .chat-status.st-error, .chat-status.st-cancelled, .chat-status.st-interrupted { color: var(--err); }
 /* Open approvals on a session in the list: the one thing on a phone that is waiting on the person holding it. */
-.chat-appr-badge { background: var(--warn); color: #1a1400; border-radius: 999px; padding: 0 7px; font-weight: 600; }
+.chat-appr-badge { background: var(--notice); color: var(--notice-fg); border-radius: 999px; padding: 0 7px; font-weight: 600; }
 
 /* The session header: a title that ellipsizes, with the runtime and model under it. */
 .chat-head { gap: 10px; }
@@ -84,9 +84,9 @@ html, body, #root { height: 100%; }
 /* The pinned "waiting on your approval" bar: the gate may be far down a long run, and on a phone that is several screens. */
 .chat-waiting {
     display: flex; align-items: center; gap: 8px; width: 100%; border: none; border-bottom: 1px solid var(--border);
-    background: color-mix(in srgb, var(--warn) 16%, var(--bg)); color: var(--fg); padding: 8px 12px; font: inherit; cursor: pointer; text-align: left;
+    background: color-mix(in srgb, var(--notice) 14%, var(--bg)); color: var(--fg); padding: 8px 12px; font: inherit; cursor: pointer; text-align: left;
 }
-.chat-waiting-go { margin-left: auto; color: var(--warn); font-weight: 600; }
+.chat-waiting-go { margin-left: auto; color: var(--notice); font-weight: 600; }
 .chat-transcript { padding: 10px 14px; }
 .chat:not(.narrow) .chat-transcript > div { max-width: 920px; margin: 0 auto; }
 .chat-truncated, .chat-readonly { color: var(--fg-dim); font-size: .92em; }
@@ -134,7 +134,9 @@ html, body, #root { height: 100%; }
 /* PHONE WIDTH: one pane, bigger touch targets, and the composer clear of the home indicator. */
 .chat.narrow { --fs: 15px; }
 .chat.narrow .head { padding: 8px 10px; min-height: 52px; }
-.chat.narrow .nav { min-width: 40px; min-height: 36px; }
+/* A narrow header's icons (the ⋮ beside the round back button) match it at any pointer: a mouse on a narrow window
+   saw a 22px ⋮ beside a 36px back. */
+@media not (pointer: coarse) { .chat.narrow .chat-head .hbtn { min-width: 36px; min-height: 36px; border-radius: 50%; } }
 .chat.narrow .chat-row { padding: 10px 12px; min-height: 56px; }
 .chat.narrow .chat-transcript { padding: 8px 10px; }
 /* The step pill sits over a turn's first line, which a panel's wide first line leaves room for and a phone's does not:
@@ -708,7 +710,9 @@ button.chat-page-go:hover { color: var(--fg); }
    row you are scanning, the menu is what you want from the one you are on, and they never need to be seen together.
    Keyboard focus shows it too; a touch screen cannot hover, so there it is always shown and the row makes room. */
 .chat-row-wrap { position: relative; }
+/* Round, like the page's other icon buttons (the rail's, the gear, back): it was the hover button's 22px rounded square. */
 .chat-row-more {
+    width: 28px; height: 28px; padding: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
     position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
     opacity: 0; transition: opacity .15s ease;
 }
@@ -828,6 +832,9 @@ button.chat-page-go:hover { color: var(--fg); }
 /* The gear's menu rises from the gear, with room for its longer rows. */
 .chat-gear { position: relative; }
 .chat-gear-menu { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 40; min-width: 240px; transform-origin: bottom left; }
+/* On a PHONE the gear is in the list's top bar, not its foot, so its menu drops DOWN from it: rising, it opened above
+   the top of the screen and nothing of it could be seen. */
+.chat.narrow .chat-list .head .chat-gear-menu { top: calc(100% + 8px); bottom: auto; left: auto; right: 0; transform-origin: top right; max-width: calc(100vw - 16px); }
 /* In the open list's foot the gear has a word beside it, Gemini's "Settings": there is room, and a lone glyph at
    the bottom of a full column reads as an ornament. */
 .chat-gear-wide {
@@ -838,10 +845,10 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-gear-wide svg { width: 18px; height: 18px; }
 
 /* THE ATTENTION LIST's button, above the gear (attention-page.tsx): absent when there is nothing to do. Its count
-   is for problems only, in the warning colour, since a suggestion is not something to be nagged about. */
+   is for problems only, in the notice colour, since a suggestion is not something to be nagged about. */
 .chat-att-btn { position: relative; }
-.chat-att-dot { position: absolute; top: 2px; right: 1px; min-width: 15px; height: 15px; padding: 0 3px; box-sizing: border-box; border-radius: 999px; background: var(--warn); color: var(--bg); font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; }
-.chat-att-n { margin-left: -4px; min-width: 18px; padding: 0 5px; border-radius: 999px; background: color-mix(in srgb, var(--warn) 22%, transparent); color: var(--warn); font-size: .8em; font-weight: 600; text-align: center; }
+.chat-att-dot { position: absolute; top: 2px; right: 1px; min-width: 15px; height: 15px; padding: 0 3px; box-sizing: border-box; border-radius: 999px; background: var(--notice); color: var(--notice-fg); font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; }
+.chat-att-n { margin-left: -4px; min-width: 18px; padding: 0 5px; border-radius: 999px; background: color-mix(in srgb, var(--notice) 22%, transparent); color: var(--notice); font-size: .8em; font-weight: 600; text-align: center; }
 /* The sheet's rows: a sentence on the left, its fix on the right; problems carry a coloured edge, suggestions none. */
 .chat-att-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .chat-att-item { display: flex; align-items: flex-start; gap: 16px; padding: 14px 16px; border-radius: 14px; background: var(--panel); box-shadow: inset 3px 0 0 transparent; }
@@ -1134,3 +1141,59 @@ button.chat-page-go:hover { color: var(--fg); }
 .client-title { margin: 0; font-size: 1.6em; font-weight: 650; }
 /* What the client is, or why it is not connected, under the title. */
 .client-lede { margin: 0 0 10px; color: var(--fg-dim); line-height: 1.5; }
+/* THE PHONE'S SESSION MENU (⋮, chat-app.tsx SessionMenu): the page's menu look, fixed under its button at the right. */
+.chat-head-menu { position: fixed; z-index: 60; max-width: min(320px, calc(100vw - 16px)); }
+/* The session's title at the top of that menu: what the bar gave up for the model, a tap away. */
+.chat-head-menu-title { padding: 8px 10px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--border); font-weight: 600; color: var(--fg); white-space: normal; overflow-wrap: anywhere; }
+/* The phone bar's lead: the session's model, in the code face it is written in everywhere else. */
+.chat-head-model { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; }
+
+/* ON A TOUCH SCREEN a waiting count is cyan, not the warning yellow (sidebar.css `--notice`): in a phone's small frame
+   the yellow badges read as an alarm, where at a desk they sit quietly in a wide page. */
+@media (pointer: coarse) {
+    :root { --notice: #38bdf8; --notice-fg: #082f49; }
+    :root[data-theme="light"] { --notice: #0284c7; --notice-fg: #ffffff; }
+}
+
+/* ===================== A FINGER, NOT A MOUSE =====================
+   Where the pointer is coarse (a phone, a tablet), anything tapped is at least 40px: the icon buttons of the headers
+   and rows were 22px, a runtime's heading 30px, "Dismiss" 23px. Measured on every view at phone size (the audit in
+   chat-web.spec.mjs); a mouse keeps the compact sizes the desktop layout was drawn for. */
+@media (pointer: coarse) {
+    .chat .hbtn { min-width: 40px; min-height: 40px; border-radius: 50%; }
+    .chat-rt { min-height: 40px; }
+    .chat-att-fix, .chat-att-dismiss, .chat-seg-opt { min-height: 40px; }
+    .chat-menu-item { min-height: 44px; }
+    .pair-history summary { padding: 10px 0; }
+    .tp-pill { min-height: 40px; }
+    /* List rows at 44px, the size a phone's own lists use. */
+    .tp-group, .tp-row { min-height: 44px; }
+    /* The list's own header held its icons at 36px with a more specific rule than the one above. */
+    .chat-list .head .hbtn, .chat-list-foot .hbtn { min-width: 40px; min-height: 40px; }
+    /* A step's head opens it: a row a finger can hit, not a line of text. */
+    .chat .astep-head, .chat .block-head { min-height: 40px; }
+    /* A reply's small tools (collapse, copy): the glyph stays small, the target does not. */
+    .chat .who-toggle, .chat .mrow .icon-btn { min-width: 40px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; }
+    .pair-card .btn { min-height: 40px; }
+    .chat-search-box input, .chat-search input[type="search"] { min-height: 40px; }
+    /* A chip inside a line of text (the run's page in a session's header): the line keeps its height, and a hidden
+       area around the chip takes the finger. */
+    .chat-page-go { position: relative; }
+    .chat-page-go::after { content: ""; position: absolute; inset: -11px -6px; }
+}
+/* A ROUND button keeps its own size wherever it lands. In a phone's column the back button was laid out in flow and
+   stretched across the whole width, a circle drawn 390px wide. */
+.chat-sheet-back { flex: 0 0 auto; align-self: flex-start; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+/* THE KIND PICKER's rows (kind-picker.tsx): the kind's name, and a line under it saying what it does. */
+.tp-row.tp-kind { align-items: flex-start; }
+/* A kind row's text column: its name above, what it does below, wrapping rather than cut. */
+.tp-kind-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; white-space: normal; }
+/* What a kind does, dim, under its name. */
+.tp-kind-detail { color: var(--fg-dim); font-size: .88em; line-height: 1.35; }
+/* THE START PAGE'S TOP BAR on a phone (start-page.tsx): the model a new session starts on, which a wide page keeps in
+   the box's row. It leaves room at the left for the round back button that sits in that corner. */
+.chat-start-top { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; min-height: 56px; padding: 8px 16px 8px 60px; }
+/* The note at the top of a session's model list while its runtime cannot switch: why picking does nothing. */
+.tp-note.tp-switch-note { margin: 2px 4px 6px; padding: 8px 10px; border-radius: 8px; background: var(--panel-2); color: var(--fg-dim); white-space: normal; }
+/* A model that cannot be picked yet: listed, readable, visibly not a choice. */
+.tp-row.off { cursor: default; opacity: .7; }

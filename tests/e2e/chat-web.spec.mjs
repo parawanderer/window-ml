@@ -66,7 +66,7 @@ test("phone: the list first, a session on its own, approve through the runtime, 
     await expect(page.locator(".chat-waiting")).toHaveCount(0);
 
     // The back button returns to the list, and the list has caught up with the index.
-    await page.locator(".chat-head .nav").click();
+    await page.getByRole("button", { name: "Back to sessions" }).click();
     await expect(page.locator(".chat-main")).toHaveCount(0);
     await expect(row(page, WAITING).locator(".chat-appr-badge")).toHaveCount(0);
     // No horizontal scroll anywhere at this width.
@@ -209,8 +209,15 @@ test("phone: starting a chat from the list, and the start page asks only what it
     await page.locator(".chat-start").click();
     const box = page.locator(".chat-start-box textarea");
     await expect(box).toBeFocused();
-    await expect(page.getByRole("radio", { name: "Agent" })).toHaveAttribute("aria-checked", "true");
-    await page.getByRole("radio", { name: "Chat" }).click();
+    // On a phone the kind is a pill like the tab and the model, not two segments: the start row fits on one line.
+    await expect(page.getByRole("radio", { name: "Agent" })).toHaveCount(0);
+    const kind = page.getByRole("button", { name: "Kind: Agent" });
+    await kind.click();
+    const kinds = page.getByRole("listbox", { name: "Kind" });
+    await expect(kinds.getByRole("option")).toHaveCount(2);
+    await expect(kinds.getByRole("option", { name: /^Chat/ })).toContainText("Just the conversation");
+    await kinds.getByRole("option", { name: /^Chat/ }).click();
+    await expect(page.getByRole("button", { name: "Kind: Chat" })).toBeVisible();
 
     // One runtime can hold a chat here — the lab box has `agent` and no `chat`, the old Mac is offline — so there is
     // nothing to choose between and the page does not ask; a chat has no "where" either.
@@ -1043,6 +1050,142 @@ test("the phone app's start page is the standalone client, not the demo", async 
     } finally {
         await page.close();
         await app.close();
+    }
+});
+
+test("a waiting count is the warning yellow under a mouse and cyan under a finger", async () => {
+    const notice = async (opts) => {
+        const ctx = await browser.newContext({ viewport: PHONE, ...opts });
+        const page = await ctx.newPage();
+        await page.goto(server.url);
+        const v = await page.evaluate(() => {
+            const probe = document.body.appendChild(Object.assign(document.createElement("span"), { className: "chat-appr-badge" }));
+            return getComputedStyle(probe).backgroundColor;
+        });
+        await ctx.close();
+        return v;
+    };
+    const touch = { hasTouch: true, isMobile: true };
+    expect(await notice({ colorScheme: "dark" })).toBe("rgb(234, 179, 8)");
+    expect(await notice({ colorScheme: "dark", ...touch })).toBe("rgb(56, 189, 248)");
+    expect(await notice({ colorScheme: "light" })).toBe("rgb(202, 138, 4)");
+    expect(await notice({ colorScheme: "light", ...touch })).toBe("rgb(2, 132, 199)");
+});
+
+test("phone (touch): the tab picker opens without raising the keyboard, and stays open when the keyboard comes", async () => {
+    // A touch phone, not a narrow desktop: a coarse pointer, touch input, and the keyboard as a window resize.
+    const ctx = await browser.newContext({ viewport: PHONE, hasTouch: true, isMobile: true });
+    const page = await ctx.newPage();
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    try {
+        await page.goto(server.url);
+        await page.locator(".chat").waitFor();
+        await page.locator(".chat-start").tap();
+        const pill = page.getByRole("button", { name: /^Where it runs/ });
+        await pill.tap();
+        const list = page.getByRole("listbox", { name: "Where it runs" });
+        await expect(list).toBeVisible();
+        // Nothing asked to type yet, so the filter does not have focus (which is what raises a phone's keyboard).
+        expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe("INPUT");
+        // Tapping the filter raises the keyboard, which reaches the page as a shorter window. The list used to close
+        // on any resize, so on Android it opened, the keyboard came up, and both were gone. Now it re-fits.
+        await list.locator("input").tap();
+        await page.setViewportSize({ width: PHONE.width, height: 480 });
+        await page.waitForTimeout(200);
+        await expect(list).toBeVisible();
+        await page.keyboard.type("docs");
+        await expect(list.getByRole("option", { name: /Tables/ })).toBeVisible();
+        const box = await list.boundingBox();
+        expect(box.y + box.height, "the list fits the window the keyboard left").toBeLessThanOrEqual(480);
+        expect(errors).toEqual([]);
+    } finally { await ctx.close(); }
+});
+
+test("phone (touch): no view scrolls sideways, and everything a finger taps is at least 40px", async () => {
+    // Measured, not eyeballed: every button, tab, option and menu row on every view, on a touch phone. Text fields and
+    // links inside a sentence are exempt (a finger taps INTO a field; a link's target is its line). What this caught
+    // the day it was written: 22px icon buttons in the headers and rows, 30px runtime headings, a 23px "Dismiss".
+    const ctx = await browser.newContext({ viewport: PHONE, hasTouch: true, isMobile: true });
+    const page = await ctx.newPage();
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    const probe = () => page.evaluate(async () => {
+        // Measured at rest: the list's rows slide in from the left as the page opens, and a row mid-slide is not a row
+        // off the screen.
+        // (Finite ones only: a loading shimmer runs forever.)
+        await Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity).map((a) => a.finished.catch(() => {})));
+        const W = innerWidth, out = [];
+        if (document.documentElement.scrollWidth > W + 1) out.push(`the page scrolls sideways (${document.documentElement.scrollWidth}px)`);
+        const name = (e) => (e.getAttribute("aria-label") || e.textContent || e.className).trim().replace(/\s+/g, " ").slice(0, 40);
+        for (const e of document.querySelectorAll("button, [role=button], [role=tab], [role=radio], [role=option], [role=menuitem], [role=menuitemradio], [role=menuitemcheckbox], summary")) {
+            const r = e.getBoundingClientRect();
+            if (!r.width || !r.height || getComputedStyle(e).visibility === "hidden" || e.closest("[inert],[aria-hidden=true]")) continue;
+            // Sideways, anything; above or below, only what floats (a menu, a list): a page's content scrolls to it.
+            const floats = e.closest("[role=menu], .chat-menu, .tp-pop");
+            // For what floats, the POPUP must be on the screen; its rows may scroll inside it.
+            const fr = floats?.getBoundingClientRect();
+            if (r.right > W + 1 || r.left < -1 || (fr && (fr.top < -1 || fr.bottom > innerHeight + 1))) out.push(`off the screen: "${name(e)}"`);
+            // A chip inside a line of text takes the finger with a hidden area around it (`::after`), so measure that.
+            if (e.hasAttribute("data-inline-target")) {
+                const a = getComputedStyle(e, "::after");
+                const grow = (v) => -parseFloat(v) || 0;
+                if (Math.min(r.width + grow(a.left) + grow(a.right), r.height + grow(a.top) + grow(a.bottom)) < 40) out.push(`${Math.round(r.width)}x${Math.round(r.height)} with no larger area: "${name(e)}"`);
+                continue;
+            }
+            // A round button is round: as wide as it is tall, not stretched across a column.
+            if (e.classList.contains("hbtn") && Math.abs(r.width - r.height) > 2) out.push(`a round button drawn ${Math.round(r.width)}x${Math.round(r.height)}: "${name(e)}"`);
+            if (Math.min(r.width, r.height) < 40) out.push(`${Math.round(r.width)}x${Math.round(r.height)}: "${name(e)}"`);
+        }
+        return out;
+    });
+    try {
+        for (const hash of ["", "#/s/laptop%3A3f9a0c21", "#/s/laptop%3A7b21d4e8", "#/settings/page", "#/settings/runtimes", "#/settings/devices", "#/search", "#/attention"]) {
+            await page.goto(server.url + hash);
+            await page.locator(".chat").waitFor();
+            await page.waitForTimeout(300);
+            expect(await probe(), `view ${hash || "(the list)"}`).toEqual([]);
+        }
+        // The gear's menu on a phone: it rose from a gear at the TOP of the screen, off the screen entirely.
+        await page.goto(server.url);
+        await page.locator(".chat").waitFor();
+        await page.locator(".chat-list .head .chat-gear-btn").tap();
+        await expect(page.getByRole("menu", { name: "Page menu" })).toBeVisible();
+        expect(await probe(), "the gear's menu, open").toEqual([]);
+        await page.goto(server.url);
+        await page.locator(".chat-start").tap();
+        expect(await probe(), "the start page").toEqual([]);
+        await page.getByRole("button", { name: /^Where it runs/ }).tap();
+        expect(await probe(), "the start page with the tab picker open").toEqual([]);
+        expect(errors).toEqual([]);
+    } finally { await ctx.close(); }
+});
+
+test("a session's model is at the top of its page, as the picker to swap it, and says when its runtime cannot yet", async () => {
+    for (const vp of [PHONE, DESKTOP]) {
+        const { page, errors } = await open(vp, `#s=${encodeURIComponent(CHAT)}`);
+        const pill = page.getByRole("button", { name: /^Model: / });
+        await expect(pill).toBeVisible();
+        await pill.click();
+        const list = page.getByRole("listbox", { name: "Model" });
+        await expect(list).toBeVisible();
+        // No runtime can switch a session's model yet: the list says so, and picking changes nothing.
+        await expect(list.getByRole("note")).toContainText("cannot switch a session's model yet");
+        await expect(list.getByRole("option").first()).toHaveAttribute("aria-disabled", "true");
+        expect(errors, `at ${vp.width}px`).toEqual([]);
+        await page.close();
+    }
+});
+
+test("the start page's model: in the box's row when the page is wide, at the top of the screen on a phone", async () => {
+    for (const [vp, where] of [[DESKTOP, ".chat-start-row"], [PHONE, ".chat-start-top"]]) {
+        const { page, errors } = await open(vp);
+        if (vp === PHONE) await page.locator(".chat-start").click();
+        const pill = page.getByRole("button", { name: /^Model: / });
+        await expect(pill).toBeVisible();
+        expect(await pill.evaluate((e, sel) => !!e.closest(sel), where), `at ${vp.width}px it sits in ${where}`).toBe(true);
+        expect(errors).toEqual([]);
+        await page.close();
     }
 });
 
