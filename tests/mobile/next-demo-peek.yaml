@@ -1,0 +1,25 @@
+# next-demo-peek.yaml — the React Native app's DEMO build (`install --next --demo`): "Look at the page" in a session's ⋮
+# sheet captures the tab its run is on, and the capture opens full size in the app's own viewer, which closes back to
+# the session. Needs the demo world's sessions, so it fails on a real build: name it when you run `flows`.
+appId: dev.wander.windowml.next
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "Fares, cited"
+    timeout: 60000
+- tapOn: "Fares, cited"
+- extendedWaitUntil:
+    visible: "Model: qwen3:32b"
+    timeout: 30000
+- tapOn: "Session menu"
+- tapOn: "Look at the page.*"
+- extendedWaitUntil:
+    visible: "Image, full size"
+    timeout: 15000
+- assertVisible: "Share image"
+- tapOn: "Close"
+- extendedWaitUntil:
+    visible: "Model: qwen3:32b"
+    timeout: 10000
+- assertNotVisible: "Image, full size"

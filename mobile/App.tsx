@@ -24,6 +24,7 @@ import { CreateScreen, JoinScreen, WelcomeScreen } from "./src/screens/AccountSc
 import { DevicesScreen, PairScreen } from "./src/screens/DeviceScreens";
 import { ThemeChoiceContext, usePalette, type ThemeChoice } from "./src/theme";
 import { Toast } from "./src/ui";
+import { ImageViewer } from "./src/viewer";
 
 const Stack = createNativeStackNavigator<Routes>();
 const THEME_KEY = "wml-theme";
@@ -93,6 +94,7 @@ function Shell() {
             </NavigationContainer>
             <SessionLayer />
             <Toast notice={e.notice} bottom={insets.bottom + 90} />
+            <ImageViewer src={e.image} onClose={e.closeImage} />
         </View>
     );
 }

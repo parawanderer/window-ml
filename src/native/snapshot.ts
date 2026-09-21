@@ -48,6 +48,8 @@ export function sessionChrome(key: SessionKey, summary: SessionSummary | undefin
         canPin: online && mayCommand(rt, "session.pin", target, self),
         canRename: online && mayCommand(rt, "session.rename", target, self),
         canDelete: online && mayCommand(rt, "session.delete", target, self),
+        // The page's own peek rule (chat-app.tsx `usePeek`): a tab still open, a runtime that captures, the grant to ask.
+        canPeek: online && summary.page?.tabId != null && !!rt?.capabilities.screenshots && mayCommand(rt, "tab.screenshot", target, self),
     };
 }
 

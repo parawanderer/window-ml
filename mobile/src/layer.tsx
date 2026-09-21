@@ -170,7 +170,7 @@ function ModelPill() {
     );
 }
 
-/** The session's menu (⋮): its title in full, where it runs, and stopping a run. */
+/** The session's menu (⋮): its title in full, where it runs, stopping a run, a look at its page, and the session's own actions. */
 function SessionMenu() {
     const e = useEmbed();
     const p = usePalette();
@@ -203,6 +203,15 @@ function SessionMenu() {
             { text: "Delete", style: "destructive", onPress: () => { close(); void e.remove(c.key).then((r) => { if (r.ok) layer.close(); }); } },
         ]);
     };
+    // The capture opens full size when it arrives; a refusal (the tab is in the background, say) is the page's notice.
+    const [peeking, setPeeking] = useState(false);
+    const peek = async () => {
+        if (!c) return;
+        setPeeking(true);
+        const r = await e.peek(c.key);
+        setPeeking(false);
+        if (r.ok) close();
+    };
     const copyId = () => {
         if (!c) return;
         close();
@@ -225,6 +234,7 @@ function SessionMenu() {
                     <Text style={[s.menuTitle, { color: p.fg }]}>{c.title}</Text>
                     <Text style={[s.menuSub, { color: p.fgDim }]}>{c.kind === "agent" ? "Agent" : "Chat"} on {c.runtimeName}{c.pinned ? " · pinned" : ""}</Text>
                     {c.running && c.canSend ? <SheetRow title="Stop this run" danger onPress={() => { close(); e.cancel(c.key); }} /> : null}
+                    {c.canPeek ? <SheetRow title={peeking ? "Capturing…" : "Look at the page"} detail="The page this run is on, as it is now" disabled={peeking} onPress={() => void peek()} /> : null}
                     {c.canPin ? <SheetRow title={c.pinned ? "Unpin" : "Pin"} detail={c.pinned ? undefined : "Kept on the runtime, never expired or evicted"} onPress={() => void pin()} /> : null}
                     {c.canRename ? <SheetRow title="Rename" onPress={() => setNaming(c.title)} /> : null}
                     <SheetRow title="Copy session id" onPress={copyId} />

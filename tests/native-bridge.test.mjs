@@ -74,6 +74,15 @@ test("the chrome of a session this device may drive: it can send and switch, and
     assert.deepEqual([watch.canPin, watch.canRename, watch.canDelete], [false, false, false], "a device that only watches changes nothing");
     const away = sessionChrome("laptop:7b21", summary(), rt({ online: false }), self);
     assert.deepEqual([away.canPin, away.canRename, away.canDelete], [false, false, false], "nor does anyone, on a runtime that is offline");
+    // Looking at the page: a tab still open, a runtime that captures, and the `screen` grant to ask. Each missing one hides it.
+    const tab = { page: { url: "https://example.com", title: "Example", tabId: 12 } };
+    const cam = (over = {}) => rt({ grants: [{ scope: "drive" }, { scope: "screen" }], capabilities: { chat: true, screenshots: true }, ...over });
+    assert.equal(sessionChrome("laptop:7b21", summary(tab), cam(), self).canPeek, true);
+    assert.equal(c.canPeek, false, "no tab: nothing to look at");
+    assert.equal(sessionChrome("laptop:7b21", summary({ page: { url: "https://example.com", title: "Example" } }), cam(), self).canPeek, false, "the run's tab has closed");
+    assert.equal(sessionChrome("laptop:7b21", summary(tab), cam({ capabilities: { chat: true } }), self).canPeek, false, "a runtime that cannot capture");
+    assert.equal(sessionChrome("laptop:7b21", summary(tab), cam({ grants: [{ scope: "drive" }] }), self).canPeek, false, "a device without the grant to ask");
+    assert.equal(sessionChrome("laptop:7b21", summary(tab), cam({ online: false }), self).canPeek, false, "a runtime that is offline");
     // The app's bar is for an approval the reader cannot see; while the card is on screen, the card speaks for itself.
     assert.equal(c.approvalOffscreen, false);
     assert.equal(sessionChrome("laptop:7b21", summary(), rt(), self, { pending: false, gateAway: true }).approvalOffscreen, true);
@@ -106,6 +115,7 @@ test("every message the app can send passes the page's own check", () => {
         { type: "answer", key: "laptop:1", seq: 4, decision: true },
         { type: "switchModel", key: "laptop:1", model: "gemma3:27b" },
         { type: "models", runtime: "laptop" },
+        { type: "peek", id: "n9", key: "laptop:1" },
         { type: "resume" },
         { type: "showApproval" },
         { type: "pin", id: "p9", key: "laptop:1", on: true },

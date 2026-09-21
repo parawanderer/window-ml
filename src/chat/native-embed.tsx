@@ -96,12 +96,35 @@ async function base64Of(blob: Blob): Promise<string> {
     return btoa(s);
 }
 
+/** An image the app's viewer can draw. React Native's `Image` cannot draw SVG, so an SVG is rasterized here, at twice
+ *  its size for a zoom, and anything that fails to rasterize is sent as it was. */
+async function drawable(src: string): Promise<string> {
+    if (!/^data:image\/svg\+xml[;,]/.test(src)) return src;
+    try {
+        const img = new Image();
+        img.src = src;
+        await img.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = (img.naturalWidth || 900) * 2;
+        canvas.height = (img.naturalHeight || 560) * 2;
+        canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+        return canvas.toDataURL("image/png");
+    } catch {
+        return src;
+    }
+}
+
+/** Show an image full size in the app's viewer. */
+function openInApp(src: string): void {
+    void drawable(src).then((d) => post({ type: "openImage", src: d }));
+}
+
 /** The device services as the app provides them: files go to its share sheet, images to its viewer, text to its
  *  clipboard. Preferences stay in the page's own storage, which lives in the app's data. */
 const nativePlatform: ClientPlatform = {
     ...webPlatform,
     kind: "native",
-    openImage: (src) => post({ type: "openImage", src }),
+    openImage: openInApp,
     saveFile: (name, data) => { void base64Of(data).then((b) => post({ type: "saveFile", name, mime: data.type || "application/octet-stream", base64: b })); },
     copyText: async (text) => { post({ type: "copyText", text }); return true; },
 };
@@ -221,6 +244,14 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
                     : m.type === "rename" ? { type: "session.rename", session: id, title: m.title.trim().slice(0, 200) }
                         : { type: "session.delete", session: id });
                 post({ type: "sent", id: m.id, ok: r.ok, ...(r.ok ? {} : { error: r.error.message || r.error.code }) });
+                return;
+            }
+            // The page's capture goes to the app as `openImage`, the same full-size view a transcript image opens in.
+            case "peek": {
+                const id = parseSessionKey(m.key);
+                const r = id ? await store.send({ type: "tab.screenshot", runtime: id.runtime, target: { session: id } }) : null;
+                if (r?.ok) openInApp(r.data.image);
+                post({ type: "sent", id: m.id, ok: !!r?.ok, ...(r?.ok ? {} : { error: r ? r.error.message || r.error.code : "That is not a session." }) });
                 return;
             }
             case "models": {
