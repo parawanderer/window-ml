@@ -26,14 +26,23 @@ natively would be a second implementation of every one, drifting from the first 
 | the session list, grouped by runtime, with approval and attention badges | the calm transcript of the open session |
 | navigation: a native stack, edge swipe / predictive back | approval cards in the transcript (they show what is asked: code, args, a page) |
 | the session header: back, the model as a pill, ⋮ | the client core: keyring, `HubHost`, `ChatStore`, hub crypto |
-| the composer: text, image attach, send / stop | the rare screens, at first: pairing, Runtimes and Devices in Settings |
+| the composer: text, image attach, send / stop, drafts that survive anything | |
 | pickers as bottom sheets: runtime, Agent / Chat, tab, model | |
 | the new-session screen, the attention list, the "waiting on you" bar | |
-| Settings that are the device's: theme, text size | |
+| Settings, all of it: theme, text size, runtimes, devices, pairing (the web tabs were drawn for a desktop) | |
 | system services: share sheet, image viewer, clipboard, haptics, notifications | |
 
 The rule for placing a new thing: if a person OPERATES it (taps, swipes, types into it), it is native; if they READ
-it, it is web.
+it, it is web. The WebView holds the transcript and nothing a person types into: the composer is native from the first
+version.
+
+**The composer never loses what was typed.** The same three rules as the web composer (`src/sidebar/drafts.ts`):
+
+- the text (and attached images) is saved per session as it is typed, in the app's own storage, and read back when the
+  session is opened again, after a restart included;
+- sending empties the box at once but HOLDS the text until the runtime's answer arrives (the bridge's `sent`). A
+  failure puts it back, in front of anything typed since, whether or not that session is on screen;
+- a send still held when the app died was never confirmed, so it comes back into the box on the next start.
 
 ## Architecture: the engine in the WebView, the chrome in native
 
@@ -86,6 +95,7 @@ recognise, so an old app and a new bundle (or the reverse) degrade instead of br
 | `openImage` | a data URL | native opens its image viewer |
 | `openLink` | url | native asks, then opens the system browser (the WebView never navigates) |
 | `copied` | none | native plays a haptic tick |
+| `sent` | the `send` or `start` id, ok / the error | answer to `send` and `start`: the composer drops or restores the held text |
 | `error` | message | a core failure native should show |
 
 **Native to web: what the person did.**
@@ -94,14 +104,13 @@ recognise, so an old app and a new bundle (or the reverse) degrade instead of br
 | --- | --- |
 | `theme` | light / dark, text size, safe-area insets, reduced motion |
 | `open` / `close` | a session key |
-| `send` | key, text, images (data URLs) |
-| `start` | runtime, kind, tab, model, text, images |
+| `send` | id, key, text, images (data URLs) |
+| `start` | id, runtime, kind, tab, model, text, images |
 | `cancel`, `continue` | key |
 | `answer` | key, seq, decision, persist (for the "waiting" bar's quick answer; the card in the transcript answers itself) |
 | `switchModel` | key, model (`session.model`, #230) |
 | `pin`, `delete`, `rename` | key |
 | `models` | runtime: ask for its list |
-| `route` | a web screen to show full screen: `settings/devices`, `settings/runtimes`, pairing |
 | `resume` | the app came back to the foreground: `host.reconnect()` now |
 
 **What never crosses:** keys, the keyring, sealed bytes. Native sees what the list shows and nothing a compromised
@@ -116,6 +125,8 @@ that one origin, `onShouldStartLoadWithRequest` refuses every navigation and tur
 A third entry in `scripts/build-web.mjs`: **`src/chat/native-embed.tsx`**, beside `web.tsx` (the demo) and `client.tsx`
 (the standalone client). It does what `client.tsx` does up to `new ChatStore(host)`, then:
 
+- answers every `send` and `start` with `sent`, from the command's own result: the only way native learns a send
+  failed, which is what the composer's drafts hang on;
 - installs a **`nativePlatform: ClientPlatform`** whose `saveFile`, `openImage` and `copyText` post to native;
 - forces calm, applies `theme` (and the insets as CSS variables), and renders only `SessionPane`'s transcript for the
   key native opened: no list, no header, no composer, no notices;
@@ -139,8 +150,9 @@ change the chat page:
 - Keyring stays in the WebView's IndexedDB for slice 1, as in the Capacitor app. Moving the ROOT key to the Keystore /
   Keychain is its own change, with its own threat note, later.
 
-Screens in the first version: list, session, new session, attention, settings (theme and text size natively; Runtimes,
-Devices and pairing as a `route` into the web screens, which are rare and already work).
+Screens in the first version: list, session, new session, attention, settings (theme, text size, runtimes, devices and
+pairing, all native: the web tabs were drawn for a desktop). Pairing's QR code and camera scan use native modules.
+Settings need bridge messages of their own (the device list, revoke, leave, the pairing steps), added with them.
 
 ## Later: islands in a native transcript
 
@@ -169,8 +181,8 @@ Not started until slice 2 has been used on a phone for a while.
 
 1. **The bridge and the embed**, web side only: `bridge.ts`, `nativeSnapshot`, `native-embed.tsx`, the stub-bridge
    Playwright spec. Mergeable on its own, no toolchain.
-2. **The shell**: `mobile/`, list, session screen with the native header and composer, the WebView, theme and insets;
-   new session and pickers; attention; settings with `route`. Side-loaded APK on your phone; the Capacitor app stays.
+2. **The shell**: `mobile/`, list, session screen with the native header and composer (drafts included), the WebView,
+   theme and insets; new session and pickers; attention; settings. Side-loaded APK on your phone; the Capacitor app stays.
 3. **Parity and the switch**: the checklist green, then remove Capacitor (`capacitor.config.ts`,
    `scripts/mobile*.mjs`, the CI job) in one change.
 4. **Later, if needed**: the native transcript with islands; the core in Hermes; the root key in the Keystore.
