@@ -306,6 +306,12 @@ learned by shipping the wrong version first.
   only an authenticated command inside its clock window can fill the replay window. Bytes reaching WebCrypto are
   `Uint8Array<ArrayBuffer>` (`bytes()` at every protobuf boundary), and the two implementations are kept honest by
   vectors in both directions, not by reading the spec twice.
+- **Transcript.** A long session is WINDOWED: only the newest `WINDOW` items are in the DOM (`transcript-window.tsx`;
+  a 1000-turn chat drew 34k nodes and 1.9 MB before it). Anything that JUMPS to a step goes through `reveal`, which
+  grows the window, pages the session back and reports `gone` — a citation that silently does nothing is the failure
+  being prevented. The window is a plain Map bumped through `rev`, NEVER a signal read during render: a component that
+  reads a signal is converted to re-render from it and stops re-rendering from the parent's `rev` cascade, which made
+  live turns stop appearing while every window assertion still passed.
 - **Chat page.** `src/chat/` never reaches `chrome`: the web build fails on a `chrome.*` reference. Events reach
   `sessionMap` only through `SessionFeed` and `onDebug`, never written by hand, and a transcript changes only when the
   runtime says so (no optimistic updates). The background's session index (`session-index.ts`) is fed where the DevTools

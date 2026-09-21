@@ -4,6 +4,7 @@
 import { AgentRunView } from "./agent-detail";
 import { EmbedRunView, OptionsBlock, MessageTurn } from "./reply";
 import { sessionMap } from "./store";
+import { EarlierInThread, tail } from "./transcript-window";
 
 /** A session's transcript by its key (`Session.hash`): the agent run view, the embed view, or a chat's turns. */
 export function DetailView({ hash }: { hash: string }) {
@@ -16,5 +17,11 @@ export function DetailView({ hash }: { hash: string }) {
     // call, and reusing the machinery costs no new event kind — but rendering it as user/assistant bubbles
     // presents a request for vectors as something somebody said, which is where the confusion starts.
     if (s.kind === "embed") return <EmbedRunView s={s} />;
-    return <><OptionsBlock s={s} />{s.turns.map(t => <MessageTurn key={t.id} t={t} hash={s.hash} />)}</>;
+    // Only the newest turns are drawn; the rest are held and one button away (transcript-window.tsx).
+    const { drawn, hidden } = tail(s.turns, s.hash);
+    return <>
+        <OptionsBlock s={s} />
+        <EarlierInThread sessionKey={s.hash} hidden={hidden} />
+        {drawn.map(t => <MessageTurn key={t.id} t={t} hash={s.hash} />)}
+    </>;
 }

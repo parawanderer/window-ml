@@ -77,6 +77,11 @@ export function hostServices(store: ChatStore, platform: ClientPlatform): Sideba
         hostAccess: null,
         sheetTitle: async () => null,
         savePref: (key, value) => platform.prefs.set(key, value),
+        // A reference into a part of the session this page has not loaded: the store pages back through the runtime.
+        loadEarlier: async (session) => {
+            await store.loadEarlier(session as SessionKey);
+            return { more: !!store.earlier.value.get(session as SessionKey)?.more };
+        },
         bench: false,
         // The values live in the runtime's own browser, which this page does not share.
         storedTable: null,
