@@ -770,7 +770,7 @@ export function AgentRunView({ s }: { s: Session }) {
             ? <ReplyBubble key={key} content="" status="err" model={s.model} profile={sessionProfile(s)} ts={a.ts} error={a.error} label="run failed"
                 retry={a.ts === lastAnswerTs && s.status !== "pending" ? { hash: s.hash } : undefined} />
             : <ReplyBubble key={key} content={a.text} status={a.status} model={s.model} profile={sessionProfile(s)} ts={a.ts} tokenRun={s} tokenScope={a.ts === lastAnswerTs ? undefined : scopeFor(i)} latest={a.ts === lastAnswerTs}
-                label={a.cancelled ? "cancelled" : a.hitCap ? "stopped (step cap)" : undefined} capped={a.hitCap || a.cancelled}
+                label={a.cancelled ? "cancelled" : a.hitCap ? "stopped at its step cap" : undefined} capped={a.hitCap || a.cancelled}
                 // Only the LATEST answer, and only a step-cap stop (not a cancel/error), offers Continue — resuming
                 // an old buried answer would be confusing, and a live run has nothing to resume.
                 resumeCap={a.hitCap && !a.cancelled && a.ts === lastAnswerTs && s.status !== "pending" ? { hash: s.hash, steps: s.maxSteps || 20 } : undefined} />;

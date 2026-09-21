@@ -43,7 +43,8 @@ test("a status says what it is in the page's words, and a tone every row can col
     assert.equal(STATUS_LABEL.waiting, "waiting on you");
     assert.equal(STATUS_LABEL.done, undefined, "a finished session says nothing: the row is the news");
     assert.equal(STATUS_TONE.running, "busy");
-    assert.equal(STATUS_TONE.capped, "err");
+    assert.equal(STATUS_TONE.capped, "stopped", "a step cap is not a failure: it can go on");
+    assert.equal(STATUS_TONE.error, "err");
 });
 
 test("how long ago, as short as a row can hold", () => {
