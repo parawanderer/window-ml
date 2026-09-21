@@ -7,7 +7,7 @@
 // the lag this app exists to get rid of. `EmbedWebView` is rendered by the session layer, which stays mounted.
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Linking, Share } from "react-native";
+import { Linking } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import * as Sharing from "expo-sharing";
@@ -38,6 +38,8 @@ export interface EmbedState {
     pairingInfo: PairingInfo | null;
     /** what the runtimes need a hand with, most urgent first, and how many of those are problems (not suggestions) */
     attention: { items: AttentionRow[]; count: number };
+    /** the image the page asked to show full size (`openImage`), or null */
+    image: string | null;
 }
 
 /** A pairing call's answer: its value, or the reason in the page's words. */
@@ -61,6 +63,10 @@ export interface EmbedApi extends EmbedState {
     rename(key: string, title: string): Promise<{ ok: boolean; error?: string }>;
     /** Delete a session on its runtime. The caller has asked the person first. */
     remove(key: string): Promise<{ ok: boolean; error?: string }>;
+    /** Capture the page the session's run is on, as it is now; the capture opens full size when it arrives. */
+    peek(key: string): Promise<{ ok: boolean; error?: string }>;
+    /** Close the full-size image. */
+    closeImage(): void;
     /** The models a runtime offers, asked of it each time. */
     models(runtime: string): Promise<ModelChoice[] | null>;
     resume(): void;
@@ -139,7 +145,7 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
     const ref = useRef<WebViewHandle>(null);
     const [state, setState] = useState<EmbedState>({
         ready: false, account: undefined, status: { state: "connecting" }, runtimes: [], sessions: [], chrome: null, notice: null, demo: EMBED.demo, pairingInfo: null,
-        attention: { items: [], count: 0 },
+        attention: { items: [], count: 0 }, image: null,
     });
     const pendingPairing = useRef(new Map<string, (a: PairingAnswer) => void>());
     const pairingDone = useRef(new Set<(d: { offer: string; ok: boolean; error?: string }) => void>());
@@ -195,7 +201,7 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
             case "pairingDone": for (const cb of pairingDone.current) cb(m); return;
             case "copyText": void Clipboard.setStringAsync(m.text).then(() => Haptics.selectionAsync()); return;
             case "openLink": void Linking.openURL(m.url); return;
-            case "openImage": void Share.share({ url: m.src }); return;
+            case "openImage": setState((s) => ({ ...s, image: m.src })); return;
             case "saveFile": {
                 const f = new File(Paths.cache, m.name);
                 if (f.exists) f.delete();
@@ -227,6 +233,8 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
         pin: (key, on) => request((id) => ({ type: "pin", id, key, on })),
         rename: (key, title) => request((id) => ({ type: "rename", id, key, title })),
         remove: (key) => request((id) => ({ type: "delete", id, key })),
+        peek: (key) => request((id) => ({ type: "peek", id, key })),
+        closeImage: () => setState((s) => ({ ...s, image: null })),
         models: (runtime) => new Promise((resolve) => {
             const list = pendingModels.current.get(runtime) ?? [];
             list.push(resolve);

@@ -47,6 +47,9 @@ API from memory.** `expo-file-system` in particular is the `File` / `Directory` 
 - **A message from the page carries no URL on Android**: `e.nativeEvent.url` is the string `"null"` for a `file://`
   page, so a check against the page's address drops every message there while passing on iOS. What confines this
   WebView is `onShouldStartLoadWithRequest`; anything else is a second look, and must treat a missing URL as nothing.
+- **React Native's `Image` draws no SVG**, and says nothing: the viewer opened on a black screen for the demo's SVG
+  capture. The page rasterizes an SVG before `openImage` (`drawable`, native-embed.tsx); anything else the app shows
+  from a data URL needs the same.
 - **An Android prop can be iOS-only in disguise**: `decelerationRate="normal"` on the WebView crashed Android at startup
   (a string where Fabric wants a number). Check a WebView prop's platform in its docs.
 - **A bridge check stricter than its sender drops real messages silently** (the model list, an array, failed an

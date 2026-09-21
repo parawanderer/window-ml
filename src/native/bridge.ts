@@ -50,6 +50,8 @@ export interface SessionChrome {
     canPin: boolean;
     canRename: boolean;
     canDelete: boolean;
+    /** the run's tab is still open and the runtime can capture it for this device: the sheet offers "Look at the page" */
+    canPeek: boolean;
 }
 
 /** One thing a runtime needs a person's hand for, as the phone lists it (src/chat/attention.ts words it). */
@@ -127,6 +129,8 @@ export type ToWeb =
     | { type: "pin"; id: string; key: string; on: boolean }
     | { type: "rename"; id: string; key: string; title: string }
     | { type: "delete"; id: string; key: string }
+    /** Capture the page the session's run is on, as it is now: the image arrives as `openImage`, the outcome as `sent`. */
+    | { type: "peek"; id: string; key: string }
     | { type: "models"; runtime: string }
     | { type: "resume" }
     | { type: "pairing"; id: string; call: PairingCall; args?: Record<string, unknown> }
@@ -176,6 +180,7 @@ const TO_WEB: Record<ToWeb["type"], Shape> = {
     pin: { id: "string", key: "string", on: "boolean" },
     rename: { id: "string", key: "string", title: "string" },
     delete: { id: "string", key: "string" },
+    peek: { id: "string", key: "string" },
     models: { runtime: "string" },
     resume: {},
     pairing: { id: "string", call: "string", args: "object?" },

@@ -109,7 +109,7 @@ recognise, so an old app and a new bundle (or the reverse) degrade instead of br
 | `session` | key, title, model, status, `canSwitchModel`, `pendingApprovals`, composer state (can send / can stop) | on change, for the open session: the header, the composer, the "waiting" bar |
 | `models` | runtime, the model list | answer to `models` |
 | `saveFile` | name, mime, base64 | a "save as CSV", an export: native opens the share sheet |
-| `openImage` | a data URL | native opens its image viewer |
+| `openImage` | a data URL, never SVG (the page rasterizes one) | native opens its image viewer (`mobile/src/viewer.tsx`: pinch, pan, double-tap, share) |
 | `openLink` | url | native asks, then opens the system browser (the WebView never navigates) |
 | `copied` | none | native plays a haptic tick |
 | `sent` | the `send` or `start` id, ok / the error | answer to `send` and `start`: the composer drops or restores the held text |
@@ -128,6 +128,7 @@ recognise, so an old app and a new bundle (or the reverse) degrade instead of br
 | `answer` | key, seq, decision, persist (for the "waiting" bar's quick answer; the card in the transcript answers itself) |
 | `switchModel` | key, model (`session.model`, #230) |
 | `pin`, `delete`, `rename` | key |
+| `peek` | key: capture the run's tab; the image arrives as `openImage`, the outcome as `sent` (offered when `chrome.canPeek`) |
 | `models` | runtime: ask for its list |
 | `search` | id, query, `more` for the next page: the page asks every runtime it may (`src/native/search-bridge.ts`) |
 | `showApproval` | bring the open session's approval card on screen; `open` carries `approval` to do it on the way in |
