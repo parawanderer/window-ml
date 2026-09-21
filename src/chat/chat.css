@@ -36,10 +36,6 @@ html, body, #root { height: 100%; }
 }
 .chat.narrow { grid-template-columns: minmax(0, 1fr); }
 .chat-list, .chat-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-/* Every scroller keeps its scrollbar's room whether or not it has anything to scroll: where a scrollbar takes space
-   (Windows, Linux, macOS set to always show them), opening a short session after a long one moved the whole column
-   sideways by the bar's width. Overlay scrollbars (phones, macOS's default) take no room, so this changes nothing there. */
-.chat .view { scrollbar-gutter: stable; }
 .chat-list { border-right: 1px solid var(--border); background: var(--bg); }
 .chat.narrow .chat-list { border-right: none; }
 .chat-pick { margin: auto; }

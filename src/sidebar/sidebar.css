@@ -953,7 +953,10 @@ textarea.cinput { resize: none; overflow-y: auto; line-height: 1.5; font: inheri
 /* The scroll area scrolls VERTICALLY only. A long unbreakable token (e.g. a huge
    generated selector in a tool result) must never widen the panel — wide content
    wraps, or scrolls inside its own box (code blocks, tables), never the page. */
-.view { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 8px; min-width: 0; }
+/* `scrollbar-gutter: stable`: the scrollbar's room is kept whether or not there is anything to scroll, so moving between
+   a view that scrolls and one that does not (two Settings tabs, a long session and a short one) never shifts the page
+   sideways by the bar's width. Overlay scrollbars (macOS's default, phones) take no room, so nothing changes there. */
+.view { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 8px; min-width: 0; scrollbar-gutter: stable; }
 /* THE BENCH IS THE ONE VIEW THAT DOES NOT SCROLL. It is a split with a draggable divider, so it has to be
    GIVEN the height — a `flex: 1` inside a scroller resolves to the content's own height, and a divider then
    has nothing to divide. Every other view is a document and keeps the scroller. */
@@ -961,7 +964,7 @@ textarea.cinput { resize: none; overflow-y: auto; line-height: 1.5; font: inheri
    the text running into the chrome; the bench is a workspace that should fill the space it was given, and the
    inset drew a frame of panel ground around a header, an editor and an output pane that each already carry
    their own edge — three nested boxes to say one thing. The drawer has never had it. */
-.view-bench { display: flex; overflow: hidden; padding: 0; }
+.view-bench { display: flex; overflow: hidden; padding: 0; scrollbar-gutter: auto; }   /* nothing scrolls here: no gutter to keep */
 .view-bench > div { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .empty { color: var(--fg-faint); padding: 16px 8px; text-align: center; }
 
