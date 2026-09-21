@@ -8,11 +8,12 @@
 // whose drafts survive a failed send (drafts.ts).
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { BackHandler, Keyboard, Platform, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from "react-native";
+import { Alert, BackHandler, Keyboard, Platform, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from "react-native";
 import Animated, { Easing, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import type { BottomSheetModal } from "@gorhom/bottom-sheet";
 import { ArrowUp, ChevronDown, ChevronLeft, EllipsisVertical, Square } from "lucide-react-native";
@@ -173,16 +174,61 @@ function ModelPill() {
 function SessionMenu() {
     const e = useEmbed();
     const p = usePalette();
+    const layer = useSessionLayer();
     const sheet = useRef<BottomSheetModal>(null);
     const c = e.chrome;
+    // Renaming happens IN the sheet, not in an alert: Alert.prompt is iOS-only, and a sheet keeps the title in view.
+    const [naming, setNaming] = useState<string | null>(null);
+    const [busy, setBusy] = useState(false);
+    const close = () => { sheet.current?.dismiss(); setNaming(null); };
+
+    const pin = async () => {
+        if (!c) return;
+        close();
+        void Haptics.selectionAsync();
+        await e.pin(c.key, !c.pinned);   // a refusal arrives as a notice from the page, in its words
+    };
+    const rename = async () => {
+        if (!c || naming == null || !naming.trim()) return;
+        setBusy(true);
+        const r = await e.rename(c.key, naming.trim());
+        setBusy(false);
+        if (r.ok) close();
+    };
+    // Deleting is asked first, in the platform's own confirmation, because it cannot be taken back from here.
+    const remove = () => {
+        if (!c) return;
+        Alert.alert("Delete this session?", `“${c.title}” is deleted on ${c.runtimeName}, for every device.`, [
+            { text: "Keep it", style: "cancel" },
+            { text: "Delete", style: "destructive", onPress: () => { close(); void e.remove(c.key).then((r) => { if (r.ok) layer.close(); }); } },
+        ]);
+    };
+    const copyId = () => {
+        if (!c) return;
+        close();
+        void Clipboard.setStringAsync(c.key).then(() => Haptics.selectionAsync());
+    };
+
     return (
         <>
             <IconButton label="Session menu" icon={(col) => <EllipsisVertical size={22} color={col} />} onPress={() => sheet.current?.present()} disabled={!c} />
             <Sheet ref={sheet}>
-                {c ? <>
+                {c && naming != null ? <>
+                    <Text style={[s.menuTitle, { color: p.fg }]}>Rename this session</Text>
+                    <Text style={[s.menuSub, { color: p.fgDim }]}>Every device shows the new title: the runtime keeps it.</Text>
+                    <View style={s.renameBox}>
+                        <SheetFilter plain value={naming} onChangeText={setNaming} placeholder="Session title" />
+                    </View>
+                    <SheetRow title={busy ? "Saving…" : "Save"} disabled={busy || !naming.trim() || naming.trim() === c.title} onPress={() => void rename()} />
+                    <SheetRow title="Cancel" onPress={() => setNaming(null)} />
+                </> : c ? <>
                     <Text style={[s.menuTitle, { color: p.fg }]}>{c.title}</Text>
-                    <Text style={[s.menuSub, { color: p.fgDim }]}>{c.kind === "agent" ? "Agent" : "Chat"} on {c.runtimeName}</Text>
-                    {c.running && c.canSend ? <SheetRow title="Stop this run" danger onPress={() => { sheet.current?.dismiss(); e.cancel(c.key); }} /> : null}
+                    <Text style={[s.menuSub, { color: p.fgDim }]}>{c.kind === "agent" ? "Agent" : "Chat"} on {c.runtimeName}{c.pinned ? " · pinned" : ""}</Text>
+                    {c.running && c.canSend ? <SheetRow title="Stop this run" danger onPress={() => { close(); e.cancel(c.key); }} /> : null}
+                    {c.canPin ? <SheetRow title={c.pinned ? "Unpin" : "Pin"} detail={c.pinned ? undefined : "Kept on the runtime, never expired or evicted"} onPress={() => void pin()} /> : null}
+                    {c.canRename ? <SheetRow title="Rename" onPress={() => setNaming(c.title)} /> : null}
+                    <SheetRow title="Copy session id" onPress={copyId} />
+                    {c.canDelete ? <SheetRow title="Delete" danger onPress={remove} /> : null}
                 </> : null}
             </Sheet>
         </>
@@ -248,6 +294,8 @@ const s = StyleSheet.create({
     modelText: { fontSize: 17, fontWeight: "700", fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), flexShrink: 1 },
     // A provider prefix in front of it, quieter and not bold.
     modelPrefix: { fontWeight: "400" },
+    // The rename field, inset like the sheet's rows.
+    renameBox: { paddingTop: 12 },
     menuTitle: { fontSize: SIZE.heading, fontWeight: "700", paddingHorizontal: 12, paddingTop: 4 },
     // Under it: what kind of session, on which runtime.
     menuSub: { fontSize: SIZE.small, paddingHorizontal: 12, paddingTop: 4, paddingBottom: 12 },

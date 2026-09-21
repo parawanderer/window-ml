@@ -55,6 +55,12 @@ export interface EmbedApi extends EmbedState {
     cancel(key: string): void;
     answer(key: string, seq: number, decision: boolean): void;
     switchModel(key: string, model: string): void;
+    /** Pin or unpin a session on its runtime; resolves with whether the runtime took it. */
+    pin(key: string, on: boolean): Promise<{ ok: boolean; error?: string }>;
+    /** Rename a session on its runtime, so every device shows the new title. */
+    rename(key: string, title: string): Promise<{ ok: boolean; error?: string }>;
+    /** Delete a session on its runtime. The caller has asked the person first. */
+    remove(key: string): Promise<{ ok: boolean; error?: string }>;
     /** The models a runtime offers, asked of it each time. */
     models(runtime: string): Promise<ModelChoice[] | null>;
     resume(): void;
@@ -218,6 +224,9 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
         cancel: (key) => post({ type: "cancel", key }),
         answer: (key, s, decision) => post({ type: "answer", key, seq: s, decision }),
         switchModel: (key, model) => post({ type: "switchModel", key, model }),
+        pin: (key, on) => request((id) => ({ type: "pin", id, key, on })),
+        rename: (key, title) => request((id) => ({ type: "rename", id, key, title })),
+        remove: (key) => request((id) => ({ type: "delete", id, key })),
         models: (runtime) => new Promise((resolve) => {
             const list = pendingModels.current.get(runtime) ?? [];
             list.push(resolve);

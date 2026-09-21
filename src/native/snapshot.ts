@@ -43,6 +43,11 @@ export function sessionChrome(key: SessionKey, summary: SessionSummary | undefin
         running: !!live?.pending || summary.status === "running",
         canSwitchModel: !switchNote,
         ...(switchNote ? { switchNote } : {}),
+        // The same questions the page's row menu asks (row-menu.tsx): reachable, and holding the grant to ask.
+        pinned: !!summary.pinned,
+        canPin: online && mayCommand(rt, "session.pin", target, self),
+        canRename: online && mayCommand(rt, "session.rename", target, self),
+        canDelete: online && mayCommand(rt, "session.delete", target, self),
     };
 }
 

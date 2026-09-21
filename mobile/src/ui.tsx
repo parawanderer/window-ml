@@ -2,7 +2,7 @@
 // pill (`.tp-pill`), a count badge (`.chat-appr-badge`), a status dot, a toast, and the bottom sheet every picker and
 // menu opens in. Each takes the palette, so light and dark come from one place (theme.ts).
 
-import { forwardRef, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { forwardRef, useEffect, useMemo, useRef, type ComponentRef, type ReactNode } from "react";
 import { ActivityIndicator, Animated, Platform, Pressable, StyleSheet, Text, TextInput, View, type PressableProps, type StyleProp, type TextInputProps, type ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
@@ -93,7 +93,9 @@ export const Sheet = forwardRef<BottomSheetModal, { title?: string; children: Re
             {title ? <Text style={[s.sheetTitle, { color: p.fg }]}>{title}</Text> : null}
             {note ? <Text style={[s.sheetNote, { color: p.fgDim, backgroundColor: p.panel }]}>{note}</Text> : null}
             {header}
-            <BottomSheetScrollView contentContainerStyle={s.sheetBody}>
+            {/* "handled": without it the FIRST tap on a row only dismisses the keyboard, so a model picked after filtering,
+                or Save after typing a title, needed two taps and the first seemed to do nothing. */}
+            <BottomSheetScrollView contentContainerStyle={s.sheetBody} keyboardShouldPersistTaps="handled">
                 {children}
             </BottomSheetScrollView>
         </BottomSheetModal>
@@ -104,17 +106,30 @@ export const Sheet = forwardRef<BottomSheetModal, { title?: string; children: Re
  * A sheet's filter field, for a list too long to scroll through (a box with fifty models). Give it to `Sheet` as its
  * `header` so it stays put while the list moves under it.
  */
-export function SheetFilter({ value, onChangeText, placeholder }: { value: string; onChangeText: (t: string) => void; placeholder: string }) {
+export function SheetFilter({ value, onChangeText, placeholder, plain }: {
+    value: string; onChangeText: (t: string) => void; placeholder: string;
+    /** a field for typing a VALUE (a new title), not a search: no magnifier, and it takes the keyboard at once */
+    plain?: boolean;
+}) {
     const p = usePalette();
+    const field = useRef<ComponentRef<typeof BottomSheetTextInput>>(null);
+    // An uncontrolled field is emptied through itself, not by handing it a value it no longer reads.
+    const clear = (): void => { field.current?.clear(); onChangeText(""); };
     return (
         <View style={[s.filter, { backgroundColor: p.panel }]}>
-            <Search size={17} color={p.fgFaint} />
+            {plain ? null : <Search size={17} color={p.fgFaint} />}
             {/* The sheet's own input, so typing in it keeps the sheet above the keyboard. */}
             {/* `testID` so a Maestro flow can reach it: a placeholder is not in the accessibility tree on either side. */}
-            <BottomSheetTextInput testID="sheet-filter" value={value} onChangeText={onChangeText} placeholder={placeholder} placeholderTextColor={p.fgFaint} autoCapitalize="none"
-                autoCorrect={false} returnKeyType="search" accessibilityLabel={placeholder} style={[s.filterInput, { color: p.fg }]} />
+            {/* A plain field is UNCONTROLLED: typing that races the round trip of its own value drops and reorders
+                characters, which is what a controlled rename field did under fast input. A filter stays controlled,
+                and its clear button empties it through its ref. */}
+            <BottomSheetTextInput ref={field} testID={plain ? "sheet-field" : "sheet-filter"} {...(plain ? { defaultValue: value } : { value })} onChangeText={onChangeText} placeholder={placeholder}
+                placeholderTextColor={p.fgFaint} autoCapitalize={plain ? "sentences" : "none"} autoCorrect={!!plain} autoFocus={!!plain}
+                // A value being replaced is usually replaced whole: typing over the selection beats erasing it first.
+                selectTextOnFocus={!!plain}
+                returnKeyType={plain ? "done" : "search"} accessibilityLabel={placeholder} style={[s.filterInput, { color: p.fg }]} />
             {value ? (
-                <Pressable accessibilityRole="button" accessibilityLabel="Clear the filter" onPress={() => onChangeText("")} hitSlop={10}>
+                <Pressable accessibilityRole="button" accessibilityLabel={plain ? "Clear" : "Clear the filter"} onPress={clear} hitSlop={10}>
                     <X size={17} color={p.fgDim} />
                 </Pressable>
             ) : null}

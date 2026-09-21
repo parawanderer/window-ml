@@ -210,6 +210,19 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
                 if (!r.ok && r.error.code === "unsupported") { pageOwned.add(m.key); sendChrome(); }
                 return;
             }
+            // What the ⋮ sheet asks of a session. Each is answered by `sent`; a refusal is also a notice from the store,
+            // in its words, so the app need not word one. A deleted session leaves the index, and the app closes it.
+            case "pin":
+            case "rename":
+            case "delete": {
+                const id = parseSessionKey(m.key);
+                if (!id) { post({ type: "sent", id: m.id, ok: false, error: "That is not a session." }); return; }
+                const r = await store.send(m.type === "pin" ? { type: "session.pin", session: id, pinned: m.on }
+                    : m.type === "rename" ? { type: "session.rename", session: id, title: m.title.trim().slice(0, 200) }
+                        : { type: "session.delete", session: id });
+                post({ type: "sent", id: m.id, ok: r.ok, ...(r.ok ? {} : { error: r.error.message || r.error.code }) });
+                return;
+            }
             case "models": {
                 const r = await store.send({ type: "models.list", runtime: m.runtime }, { quiet: true });
                 post(r.ok ? { type: "models", runtime: m.runtime, models: r.data.models } : { type: "models", runtime: m.runtime, models: null, error: r.error.message || r.error.code });

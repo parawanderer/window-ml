@@ -44,6 +44,12 @@ export interface SessionChrome {
     /** the model pill can switch it; when false, `switchNote` says why */
     canSwitchModel: boolean;
     switchNote?: string;
+    /** the runtime holds a pin on it, which keeps it from being expired or evicted */
+    pinned: boolean;
+    /** what the ⋮ sheet may offer: each is the runtime reachable AND this device holding the grant to ask */
+    canPin: boolean;
+    canRename: boolean;
+    canDelete: boolean;
 }
 
 /** One thing a runtime needs a person's hand for, as the phone lists it (src/chat/attention.ts words it). */
@@ -117,6 +123,10 @@ export type ToWeb =
     | { type: "continue"; key: string }
     | { type: "answer"; key: string; seq: number; decision: boolean; persist?: boolean }
     | { type: "switchModel"; key: string; model: string }
+    /** Pin or unpin a session on its runtime, rename it, or delete it: answered by `sent`, like `send`. */
+    | { type: "pin"; id: string; key: string; on: boolean }
+    | { type: "rename"; id: string; key: string; title: string }
+    | { type: "delete"; id: string; key: string }
     | { type: "models"; runtime: string }
     | { type: "resume" }
     | { type: "pairing"; id: string; call: PairingCall; args?: Record<string, unknown> }
@@ -163,6 +173,9 @@ const TO_WEB: Record<ToWeb["type"], Shape> = {
     continue: { key: "string" },
     answer: { key: "string", seq: "number", decision: "boolean", persist: "boolean?" },
     switchModel: { key: "string", model: "string" },
+    pin: { id: "string", key: "string", on: "boolean" },
+    rename: { id: "string", key: "string", title: "string" },
+    delete: { id: "string", key: "string" },
     models: { runtime: "string" },
     resume: {},
     pairing: { id: "string", call: "string", args: "object?" },
