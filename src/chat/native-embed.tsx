@@ -11,7 +11,9 @@ import { effect, signal } from "@preact/signals";
 import type { SessionHost, SessionKey } from "../session-host";
 import { parseSessionKey } from "../session-host";
 import { encode, parseToWeb, type BridgeAccount, type ToNative, type ToWeb } from "../native/bridge";
+import { pairingBridge, pairingInfo } from "../native/pairing-bridge";
 import { sessionChrome } from "../native/snapshot";
+import type { PairingApi } from "../pairing/api";
 import { installServices, services } from "../sidebar/services";
 import { installTooltipLayer } from "../sidebar/tooltip-layer";
 import { applyCodePrefs, applyTheme, initThemeStyle, pageTheme } from "../sidebar/prefs";
@@ -59,7 +61,7 @@ function perFrame(send: () => void): () => void {
 }
 
 /** Everything the page does, over `host`. `account` is what the app's settings show about this device. */
-export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | null; bundle: string; reconnect?: () => void }): void {
+export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | null; bundle: string; reconnect?: () => void; pairing?: PairingApi }): void {
     initThemeStyle();
     applyCodePrefs();
     installViewPrefs(webPlatform.prefs);
@@ -91,9 +93,15 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
         for (const n of store.notices.value) { post({ type: "notice", text: n.text, tone: n.tone }); queueMicrotask(() => store.dismiss(n.id)); }
     });
 
+    const pairing = opts.pairing ? pairingBridge(opts.pairing, post) : null;
+
     /** Act on one message from the app. */
     const receive = async (m: ToWeb): Promise<void> => {
         switch (m.type) {
+            case "pairing":
+                if (pairing) await pairing(m);
+                else post({ type: "pairingResult", id: m.id, ok: false, error: "This page cannot pair." });
+                return;
             case "theme":
                 // Through the page's own theme path, which also swaps the code colours: setting `data-theme` alone left
                 // light-theme syntax colours on a dark code block, the identifiers all but invisible.
@@ -148,6 +156,7 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
 
     render(<Embed store={store} open={open} />, document.getElementById("root") || document.body);
     post({ type: "account", account: opts.account });
+    if (opts.pairing) post({ type: "pairingInfo", info: pairingInfo(opts.pairing) });
     post({ type: "ready", bundle: opts.bundle });
 }
 
