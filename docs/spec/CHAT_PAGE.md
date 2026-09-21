@@ -199,7 +199,8 @@ to read and forge nothing, and whoever serves the app's code controls the keys t
 relay could be replaced by one that reads the device's key or signs commands itself. So the app's code reaches the
 phone by a route the hub has no part in, and it connects to the hub only as a client.
 
-**Packaged as a native app with Capacitor** (decided 2026-09-17). Capacitor wraps the `dist-web/` build in native iOS
+**Packaged as a native app with Capacitor** (decided 2026-09-17; a native shell around the same build is proposed in
+[`NATIVE_SHELL.md`](NATIVE_SHELL.md), and Capacitor stays until it reaches parity). Capacitor wraps the `dist-web/` build in native iOS
 and Android projects, and the same build still runs in a browser, as a plain page or a PWA:
 
 - **The native app is the real client.** Its code is the package you build and sign (an update is an install), keys

@@ -1,0 +1,184 @@
+# Spec: a native shell for the phone app (proposal, 2026-09-21)
+
+The phone app today is the chat page in Capacitor: every pixel is the web build, including the list, the navigation, the
+pickers and the composer. It works, and on a phone it feels like a web page: no edge swipe back, no native transitions,
+lists that scroll like a document, sheets that are divs. This proposes a thin native shell (React Native) that owns
+that chrome, and keeps the web build for what it is good at: drawing a session.
+
+It replaces the packaging half of "The phone app" in [`CHAT_PAGE.md`](CHAT_PAGE.md) (Capacitor, decided 2026-09-17).
+Everything else there stands: the hub serves no code, the app is built and signed here, pushes say only "an approval is
+waiting". The Capacitor app keeps shipping until this one reaches parity, then is removed.
+
+## Scope: calm only
+
+The native app draws **calm view and nothing else**. Calm is the chat page's default, and what it hides is exactly what
+a native shell would otherwise have to rebuild: the header band, the debug and raw views, token chips, the resource
+panel, the Python bench. Those stay on the extension page and the desktop client, where a mouse and a wide window are.
+
+The shell does not reimplement a session's contents either. A transcript is markdown, code, tables, math, tool steps
+and output cells: years of renderers, all of them already portable (`services()`, `ClientPlatform`). Redrawing them
+natively would be a second implementation of every one, drifting from the first on day one.
+
+## The split
+
+| Native (React Native) | Web (the existing build, in one WebView) |
+| --- | --- |
+| the session list, grouped by runtime, with approval and attention badges | the calm transcript of the open session |
+| navigation: a native stack, edge swipe / predictive back | approval cards in the transcript (they show what is asked: code, args, a page) |
+| the session header: back, the model as a pill, ⋮ | the client core: keyring, `HubHost`, `ChatStore`, hub crypto |
+| the composer: text, image attach, send / stop | the rare screens, at first: pairing, Runtimes and Devices in Settings |
+| pickers as bottom sheets: runtime, Agent / Chat, tab, model | |
+| the new-session screen, the attention list, the "waiting on you" bar | |
+| Settings that are the device's: theme, text size | |
+| system services: share sheet, image viewer, clipboard, haptics, notifications | |
+
+The rule for placing a new thing: if a person OPERATES it (taps, swipes, types into it), it is native; if they READ
+it, it is web.
+
+## Architecture: the engine in the WebView, the chrome in native
+
+```
+┌──────────────────────── React Native ────────────────────────┐
+│  List screen   Session screen   New session   Attention  …  │
+│      ▲  snapshot / events            │ commands              │
+│      │                               ▼                       │
+│  ┌──────────── WebView (one, always mounted) ─────────────┐  │
+│  │ native-embed.tsx: Keyring · HubHost · ChatStore        │  │
+│  │ renders: the open session's calm transcript, or nothing│  │
+│  └────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**The client core stays in the WebView.** It already runs there in the Capacitor app, crypto included: the hub
+client uses WebCrypto for Ed25519, X25519, AES-GCM and HMAC (`src/hub/support.ts`, `seal.ts`, `hpke.ts`), and the
+keyring is IndexedDB. React Native's engine (Hermes) has no WebCrypto. Moving the core to native would mean a crypto
+module (`react-native-quick-crypto`, whose X25519 / Ed25519 coverage in `subtle` is a guess to verify), the hub's test
+vectors re-run against it, and the keyring moved, all before a single screen improves. That is a later option, not
+the first step. The bridge below is the same shape either way, so the core can move without the screens noticing.
+
+**One WebView, mounted once, never recreated.** It sits under the navigation stack for the app's whole life. Opening a
+session is a message (`open`), not a page load, so it is as fast as switching sessions on the desktop page, and the
+connection lives as long as the app does rather than as long as a screen. When no session is open it renders nothing
+and native covers it.
+
+**The shared types are the contract's.** What the list needs (`SessionSummary`, `RuntimeInfo`, `HostStatus`, the
+attention codes) is plain data in `src/session-host.ts` and friends. The native project imports those TYPES from this
+repo, so a field added to the contract is a type error in the shell, not a silent gap.
+
+## The bridge
+
+`react-native-webview`'s `postMessage` both ways, one JSON envelope: `{ v: 1, type, ...payload }`. Both sides validate
+every message against the same TypeScript union (`src/native/bridge.ts`, pure, unit-tested) and drop what they do not
+recognise, so an old app and a new bundle (or the reverse) degrade instead of breaking.
+
+**Web to native: state, and requests for the device.**
+
+| type | payload | when |
+| --- | --- | --- |
+| `ready` | bridge version, bundle version | once, when the core has started |
+| `account` | none / membership (label, role, hub) | at start and after pairing: native shows first-run or the app |
+| `status` | `HostStatus` | on change: the "connecting…" / "offline" chip |
+| `index` | `RuntimeInfo[]`, `SessionSummary[]` | on change, debounced to a frame: the list |
+| `attention` | the attention items | on change |
+| `session` | key, title, model, status, `canSwitchModel`, `pendingApprovals`, composer state (can send / can stop) | on change, for the open session: the header, the composer, the "waiting" bar |
+| `models` | runtime, the model list | answer to `models` |
+| `saveFile` | name, mime, base64 | a "save as CSV", an export: native opens the share sheet |
+| `openImage` | a data URL | native opens its image viewer |
+| `openLink` | url | native asks, then opens the system browser (the WebView never navigates) |
+| `copied` | none | native plays a haptic tick |
+| `error` | message | a core failure native should show |
+
+**Native to web: what the person did.**
+
+| type | payload |
+| --- | --- |
+| `theme` | light / dark, text size, safe-area insets, reduced motion |
+| `open` / `close` | a session key |
+| `send` | key, text, images (data URLs) |
+| `start` | runtime, kind, tab, model, text, images |
+| `cancel`, `continue` | key |
+| `answer` | key, seq, decision, persist (for the "waiting" bar's quick answer; the card in the transcript answers itself) |
+| `switchModel` | key, model (`session.model`, #230) |
+| `pin`, `delete`, `rename` | key |
+| `models` | runtime: ask for its list |
+| `route` | a web screen to show full screen: `settings/devices`, `settings/runtimes`, pairing |
+| `resume` | the app came back to the foreground: `host.reconnect()` now |
+
+**What never crosses:** keys, the keyring, sealed bytes. Native sees what the list shows and nothing a compromised
+native layer could not already see on screen.
+
+**Hardening the WebView:** it loads the embed bundle from the app's own assets and nothing else (`originWhitelist` is
+that one origin, `onShouldStartLoadWithRequest` refuses every navigation and turns a link into `openLink`); no
+`allowFileAccessFromFileURLs`; `injectedJavaScript` is limited to installing the bridge.
+
+## The web side
+
+A third entry in `scripts/build-web.mjs`: **`src/chat/native-embed.tsx`**, beside `web.tsx` (the demo) and `client.tsx`
+(the standalone client). It does what `client.tsx` does up to `new ChatStore(host)`, then:
+
+- installs a **`nativePlatform: ClientPlatform`** whose `saveFile`, `openImage` and `copyText` post to native;
+- forces calm, applies `theme` (and the insets as CSS variables), and renders only `SessionPane`'s transcript for the
+  key native opened: no list, no header, no composer, no notices;
+- publishes `index`, `status`, `session` and `attention` from the store's signals through one `effect` each, projected
+  by a pure `nativeSnapshot(store)` that has its own unit tests;
+- turns native's commands into the calls the page's own buttons make (`services().sendToSession`, `answerApproval`,
+  the store's `open`/`close`), so a phone action and a desktop action go down the same path.
+
+Nothing in `src/chat/` learns about React Native: the embed is an entry point, like the other two.
+
+## The native side
+
+A new top-level **`mobile/`**, its own package, following the Capacitor rule that nobody needs a mobile toolchain to
+change the chat page:
+
+- **Expo with prebuild**: `android/` and `ios/` are generated from `app.config.ts` and gitignored, as they are today.
+  CI's `mobile-android` job compiles it on every change to `mobile/` or the embed; iOS nightly.
+- **`react-native-screens`** native stack (the platform's own transitions and back gesture), **FlashList** for the
+  session list, a bottom-sheet library for the pickers and ⋮ menus, **`react-native-webview`** for the one WebView.
+- The embed bundle is copied into the app's assets by the build, the way `dist-app/` is today.
+- Keyring stays in the WebView's IndexedDB for slice 1, as in the Capacitor app. Moving the ROOT key to the Keystore /
+  Keychain is its own change, with its own threat note, later.
+
+Screens in the first version: list, session, new session, attention, settings (theme and text size natively; Runtimes,
+Devices and pairing as a `route` into the web screens, which are rare and already work).
+
+## Later: islands in a native transcript
+
+If the one-WebView transcript still scrolls like a page once everything around it is native, the next step is a native
+transcript (messages, prose, thinking lines, one-line steps) with web **islands** only for heavy blocks. Calm makes this
+plausible, because what it shows is mostly rows. Two rules, from how this goes wrong elsewhere:
+
+- an island has a **fixed preview height**, measured once and capped (a few code lines, a few table rows); tapping it
+  opens the block full screen. The list never jumps and a scroll never gets caught inside one;
+- islands are **created near the viewport and recycled** after it, so a long session holds a handful of WebViews, not
+  one per block.
+
+Not started until slice 2 has been used on a phone for a while.
+
+## Testing
+
+- **The bridge**: `src/native/bridge.ts` and `nativeSnapshot` are pure, unit-tested in `core`.
+- **The embed**: Playwright loads `native-embed.html` against the `FakeHost` with a stub `ReactNativeWebView` that
+  records what the page posts, and sends it commands. That is every web-side behaviour, in CI, with no emulator.
+- **The shell**: Maestro flows (YAML: tap, type, assert) on an Android emulator, nightly and non-blocking, like the
+  real-model job. The shell holds little logic by design, so it needs few.
+- **Parity**: every action the extension page can take on a session has a row in a checklist that names its native
+  control and its bridge message; a missing row is a missing feature.
+
+## Slices
+
+1. **The bridge and the embed**, web side only: `bridge.ts`, `nativeSnapshot`, `native-embed.tsx`, the stub-bridge
+   Playwright spec. Mergeable on its own, no toolchain.
+2. **The shell**: `mobile/`, list, session screen with the native header and composer, the WebView, theme and insets;
+   new session and pickers; attention; settings with `route`. Side-loaded APK on your phone; the Capacitor app stays.
+3. **Parity and the switch**: the checklist green, then remove Capacitor (`capacitor.config.ts`,
+   `scripts/mobile*.mjs`, the CI job) in one change.
+4. **Later, if needed**: the native transcript with islands; the core in Hermes; the root key in the Keystore.
+
+## Open, to settle in slice 2
+
+- Whether a WebView covered by native screens keeps its timers and socket running on both platforms (believed yes on
+  Android while the app is foregrounded; to measure, since the connection lives there).
+- Expo against bare React Native: Expo's prebuild matches the gitignored-projects rule and its dev client makes
+  side-loading easy; bare is the fallback if a module needs it.
+- iOS text selection and long-press inside the WebView, next to native gestures on the same screen.
