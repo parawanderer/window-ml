@@ -13,7 +13,7 @@ import { Certificate, CertificateBody } from "../proto/wmlhub/v1/identity.gen";
 import { createFrameReader } from "../protostream";
 import { Bytes, bytes } from "./hpke";
 import { HubClient, PairingRefused } from "./client";
-import { ChainError, Identity, MAX_CERTIFICATE_MS, NEVER_DELEGABLE, SCOPE, generateIdentity, issueCertificate } from "./keys";
+import { ChainError, Identity, MAX_CERTIFICATE_MS, NEVER_DELEGABLE, SCOPE, issueCertificate } from "./keys";
 import { Keyring, Membership } from "./keyring";
 import {
     Offer, PAIRING_WINDOW_MS, PairingError, decodeOffer, encodeOffer, generatePairingCode, offerPairing, openPairingAnswer,
@@ -97,7 +97,7 @@ export async function createAccount(
     const now = opts.now ?? Date.now;
     const me = await keyring.keys();
     if (me.membership) throw new Error("this device already belongs to an account; leave it first");
-    const root = opts.root ?? await generateIdentity();
+    const root = opts.root ?? await keyring.generateIdentity();
     const channelKey = crypto.getRandomValues(new Uint8Array(32));
     const t = now();
     // This device holds the root, so its own certificate says what it is (a client) and that it may pair; the root

@@ -19,6 +19,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { ensurePrebuild } from "./mobile-prebuild.mjs";
 
 const HOME = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || "/opt/homebrew/share/android-commandlinetools";
 const API = 35;
@@ -105,7 +106,7 @@ async function boot(window) {
 function installNext() {
     run("node", ["scripts/build-web.mjs"]);
     run("node", ["mobile/scripts/sync-embed.mjs", ...(process.argv.includes("--demo") ? ["--demo"] : [])]);
-    if (!existsSync("mobile/android")) run("npx", ["expo", "prebuild", "--platform", "android", "--no-install"], { cwd: "mobile" });
+    ensurePrebuild("android", run);
     spawnSync("rm", ["-rf", "mobile/android/app/build/generated/assets/react/release"]);
     run("./gradlew", ["assembleRelease", "--quiet"], { cwd: "mobile/android" });
     run(bin.adb, ["install", "-r", "mobile/android/app/build/outputs/apk/release/app-release.apk"]);

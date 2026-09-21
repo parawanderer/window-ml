@@ -82,7 +82,9 @@ export type ToNative =
     /** the answer to a `pairing` call: its value, or the reason it failed in the page's words (pairingProblem) */
     | { type: "pairingResult"; id: string; ok: boolean; value?: unknown; error?: string }
     /** an offer this device made was answered (paired) or failed; `offer` is the token `beginOffer` returned */
-    | { type: "pairingDone"; offer: string; ok: boolean; error?: string };
+    | { type: "pairingDone"; offer: string; ok: boolean; error?: string }
+    /** The keyring's secrets, kept in the phone's keystore (vault-bridge.ts): a read, a write or a removal by name. */
+    | { type: "vault"; id: string; op: "get" | "set" | "delete"; name: string; value?: string };
 
 /** App → page. */
 export type ToWeb =
@@ -97,7 +99,9 @@ export type ToWeb =
     | { type: "switchModel"; key: string; model: string }
     | { type: "models"; runtime: string }
     | { type: "resume" }
-    | { type: "pairing"; id: string; call: PairingCall; args?: Record<string, unknown> };
+    | { type: "pairing"; id: string; call: PairingCall; args?: Record<string, unknown> }
+    /** The keystore's answer to a `vault` request: `value` is what a `get` found, absent when there is nothing. */
+    | { type: "vaultResult"; id: string; ok: boolean; value?: string; error?: string };
 
 type Shape = Record<string, "string" | "number" | "boolean" | "object" | "array" | "string?" | "number?" | "boolean?" | "object?" | "array?" | "object|null" | "array|null">;
 
@@ -118,6 +122,7 @@ const TO_NATIVE: Record<ToNative["type"], Shape> = {
     pairingInfo: { info: "object" },
     pairingResult: { id: "string", ok: "boolean", error: "string?" },
     pairingDone: { offer: "string", ok: "boolean", error: "string?" },
+    vault: { id: "string", op: "string", name: "string", value: "string?" },
 };
 const TO_WEB: Record<ToWeb["type"], Shape> = {
     theme: { theme: "object" },
@@ -132,6 +137,7 @@ const TO_WEB: Record<ToWeb["type"], Shape> = {
     models: { runtime: "string" },
     resume: {},
     pairing: { id: "string", call: "string", args: "object?" },
+    vaultResult: { id: "string", ok: "boolean", value: "string?", error: "string?" },
 };
 
 /** Does `v` have the kind a field spec asks for? */

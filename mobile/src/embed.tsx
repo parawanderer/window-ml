@@ -16,6 +16,7 @@ import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { encode, parseToNative, type BridgeAccount, type PairingCall, type PairingInfo, type SessionChrome, type ToWeb } from "../../src/native/bridge";
 import type { HostStatus, ModelChoice, RuntimeInfo, SessionSummary } from "../../src/session-host";
 import { EMBED } from "./generated/embed";
+import { answerVault } from "./vault";
 
 /** What the page has reported, as the screens read it. */
 export interface EmbedState {
@@ -127,6 +128,12 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
         const m = parseToNative(e.nativeEvent.data);
         if (!m) return;
         switch (m.type) {
+            // The keyring's secrets: answered at once, not queued behind `ready` (the page needs its keys to get there),
+            // and only for our own page, which is the one thing this WebView may load.
+            case "vault":
+                if (!e.nativeEvent.url.startsWith(uri.replace(/index\.html$/, ""))) return;
+                void answerVault(m).then((r) => ref.current?.injectJavaScript(`window.__wmlReceive && window.__wmlReceive(${JSON.stringify(encode(r))}); true;`));
+                return;
             case "ready":
                 readyRef.current = true;
                 for (const js of queue.current.splice(0)) ref.current?.injectJavaScript(js);

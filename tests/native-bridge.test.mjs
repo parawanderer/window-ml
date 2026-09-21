@@ -174,3 +174,54 @@ test("the pairing messages pass the other side's check", () => {
         { type: "pairing", id: "p2", call: "confirmOffer", args: { token: "f1", grant: { scopes: ["view"], mayPair: false, mayRevoke: false, validityMs: 1 } } },
     ]) assert.deepEqual(B.parseToWeb(B.encode(m)), m, m.type);
 });
+
+const { bridgeVault } = await import("../src/native/vault-bridge.ts");
+
+test("the vault messages pass the other side's check", () => {
+    for (const m of [
+        { type: "vault", id: "v1", op: "get", name: "self" },
+        { type: "vault", id: "v2", op: "set", name: "membership", value: "{}" },
+    ]) assert.deepEqual(B.parseToNative(B.encode(m)), m, m.type);
+    for (const m of [
+        { type: "vaultResult", id: "v1", ok: true, value: "{}" },
+        { type: "vaultResult", id: "v2", ok: true },
+        { type: "vaultResult", id: "v3", ok: false, error: "locked" },
+    ]) assert.deepEqual(B.parseToWeb(B.encode(m)), m, m.type);
+});
+
+test("the keyring over the bridge vault: every secret crosses as a vault request, and comes back the same", async () => {
+    const { IDBFactory } = (await import("node:module")).createRequire(import.meta.url)("fake-indexeddb");
+    const { Keyring } = await import("../src/hub/keyring.ts");
+    const store = new Map();
+    const seen = [];
+    // The app, answering each request on a later turn, through the same encode and parse as the real bridge.
+    let b;
+    b = bridgeVault((m) => {
+        const req = B.parseToNative(B.encode(m));
+        seen.push(`${req.op} ${req.name}`);
+        setTimeout(() => {
+            const r = { type: "vaultResult", id: req.id, ok: true };
+            if (req.op === "get" && store.has(req.name)) r.value = store.get(req.name);
+            if (req.op === "set") store.set(req.name, req.value);
+            if (req.op === "delete") store.delete(req.name);
+            b.settle(B.parseToWeb(B.encode(r)));
+        }, 0);
+    });
+    const idb = new IDBFactory();
+    const a = await (await Keyring.open("k", idb, b.vault)).keys();
+    const again = await (await Keyring.open("k", idb, b.vault)).load();
+    assert.deepEqual(again.identity.publicKey, a.identity.publicKey);
+    assert.ok(seen.includes("set self"));
+    assert.deepEqual([...store.keys()], ["self"]);
+});
+
+test("the bridge vault refuses a name the keyring does not use, surfaces the app's refusal, and gives up on silence", async () => {
+    const posted = [];
+    const b = bridgeVault((m) => posted.push(m), 20);
+    await assert.rejects(b.vault.get("anything"), /no vault record/);
+    assert.equal(posted.length, 0, "nothing asked of the app");
+    const p = b.vault.set("self", "x");
+    b.settle({ type: "vaultResult", id: posted[0].id, ok: false, error: "the keychain is locked" });
+    await assert.rejects(p, /keychain is locked/);
+    await assert.rejects(b.vault.get("root"), /did not answer/);
+});

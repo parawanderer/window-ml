@@ -32,12 +32,20 @@ API from memory.** `expo-file-system` in particular is the `File` / `Directory` 
 
 - **Gradle only watches `mobile/`**: a change to `src/native/` or the page leaves the old JS bundle in an incremental
   build. `node scripts/android.mjs install --next` deletes it first.
+- **A new native module needs a new native project**: `ios/` and `android/` are generated once, and an old one runs
+  without the module until launch, where it fails as "Cannot find native module" on a white screen. `install --next`
+  fingerprints `package.json`, `app.json` and `plugins/` (`scripts/mobile-prebuild.mjs`) and re-runs `expo prebuild
+  --clean` when they change; by hand, delete the platform folder.
 - **An Android prop can be iOS-only in disguise**: `decelerationRate="normal"` on the WebView crashed Android at startup
   (a string where Fabric wants a number). Check a WebView prop's platform in its docs.
 - **A bridge check stricter than its sender drops real messages silently** (the model list, an array, failed an
   "object" check). `tests/native-bridge.test.mjs` runs every message each side sends through the other side's check:
   add the new message there when you add one.
 
+- **The keyring's secrets live in the platform keystore, not the WebView** (`src/native/vault-bridge.ts` on the page,
+  `src/vault.ts` here, expo-secure-store underneath): WebKit cannot keep an X25519 CryptoKey in IndexedDB at all. A
+  `vault` request is answered at once, never queued behind `ready`, because the page cannot get to `ready` without its
+  keys. How the keyring keeps seeds instead of keys: `docs/dev/hub-client.md`, "The keyring in the phone app".
 - **iOS 27 kills an app without the scene lifecycle** at launch (`_UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`,
   SIGTRAP in the crash report under `~/Library/Logs/DiagnosticReports/`), and Expo 57's template has none.
   `plugins/with-ios-scene.js` adds it on every prebuild; if a template change breaks its AppDelegate edit, it throws

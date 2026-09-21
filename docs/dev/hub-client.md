@@ -28,7 +28,7 @@ duplicate implementation is the price.
 | `wire.ts` | hub frames on a websocket message: the writing half of `protostream.ts`, whose reader is reused unchanged |
 | `client.ts` | the handshake, subscriptions, publishing, and commands whose replies it opens on the way in |
 | `pairing.ts` | the pairing code and fingerprint, the offer a principal with no certificate leaves, and the sealed answer |
-| `keyring.ts` | this principal's keys (non-extractable, stored as CryptoKeys in IndexedDB), its membership, and the root on the first device |
+| `keyring.ts` | this principal's keys (non-extractable, stored as CryptoKeys in IndexedDB), its membership, and the root on the first device; in the phone app, the secrets as seeds in the platform keystore instead (a `SecretVault`, see below) |
 | `revocation.ts` | revocation lists: sign, verify, and whether a list revokes a chain; twin of `crates/keys/src/revocation.rs` |
 | `pair-flow.ts` | pairing as the screens drive it: create an account, offer this principal, look an offer up, confirm it with a grant |
 
@@ -311,3 +311,31 @@ point the UI offers to pair, the same way every other capability in this codebas
   therefore a deliberate choice that the hub upholds (window-ml-hub `MAX_EXACT_IN_A_DOUBLE`), not an assumption.
 - **`Bytes` is `Uint8Array<ArrayBuffer>`.** WebCrypto refuses bytes that might be backed by a `SharedArrayBuffer`, and
   protobuf decoding hands back the looser type, so decoded fields go through `bytes()` before they reach a crypto call.
+
+## The keyring in the phone app: a vault
+
+WebKit generates an X25519 key but cannot store one in IndexedDB: the record reads back as `undefined` (nested) or
+`null` (direct), while Ed25519 survives in every form. The keyring kept `{identity, agreement}` as one `self` record,
+so on iOS the whole principal vanished between two reads, and a join failed with `null is not an object (evaluating
+'r.identity')`. Android's WebView (Chromium) stores both, but a phone has a better place for a device key than a
+WebView's storage in any case.
+
+So the phone app's page calls `Keyring.keepSecretsIn(vault)` (`keepKeysInApp`, `src/chat/native-embed.tsx`) before
+anything opens a keyring, and every secret goes to the platform keystore over the bridge (`src/native/vault-bridge.ts`
+on the page, `mobile/src/vault.ts` in the app: expo-secure-store, which is the Keychain on iOS and Keystore-encrypted
+storage on Android, "this device only, after first unlock"). A keystore holds bytes, not CryptoKeys, so:
+
+- **Private keys are kept as 32-byte seeds** and imported NON-EXTRACTABLE on every `load`, through the same
+  `identityFromSeed` and `importAgreementKey` the vectors use. An identity is generated extractable only long enough
+  to read its seed out of the PKCS#8 export, then re-imported from it; `keys.ts` and `hpke.ts` are unchanged.
+- **The vault holds only secrets**: `self` (identity seed and public key, agreement scalar), `membership` (its channel
+  key), `root` (root seed and public key, the channel key). The rest of each record stays in IndexedDB, and a record
+  whose secrets the vault lacks reads as absent.
+- **A root must be made by the keyring** (`keyring.generateIdentity()`, which `createAccount` calls) so its seed is
+  known; `saveAccount` refuses a root it cannot keep rather than saving half an account.
+- **New keys clear what old keys left**: generating `self` in a vault deletes any membership and root, which belonged
+  to keys that are gone (a keyring from before the vault, or a keystore wiped under the app). The iOS Keychain outlives
+  an uninstall while IndexedDB does not, so a reinstalled app keeps its identity and nothing else.
+- **The app serves the three names and nothing else**, answers before the page's `ready` (the page needs its keys to
+  get there), and only to its own `file://` page.
+
