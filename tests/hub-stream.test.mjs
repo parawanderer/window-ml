@@ -94,3 +94,25 @@ test("a short ring whose events carry positions is not a loss: backfilled says w
     assert.equal(old.out.at(-1).truncated, true);
     assert.equal("from" in old.out.at(-1), false);
 });
+
+test("an empty ring ended by the runtime's own answer: backfilled with where the history ends, then live", () => {
+    const { a, out, shape } = adapter();
+    assert.equal(a.empty, true);
+    a.ringFromRuntime({ epoch: "w1.0", from: 5, truncated: false });
+    a.frame(ev(6));
+    assert.deepEqual(shape(), ["backfilled", 6]);
+    assert.equal(out[0].from, 5);
+    assert.equal(out[0].epoch, "w1.0");
+    a.ringDone(false);   // the hub's own marker, late: already live, so nothing
+    a.ringFromRuntime({ epoch: "w1.0", from: 9, truncated: false });
+    assert.deepEqual(shape(), ["backfilled", 6]);
+});
+
+test("a runtime that holds nothing for the session says so: truncated only when there is nothing to page", () => {
+    const none = adapter();
+    none.a.ringFromRuntime({ epoch: "e", from: 0, truncated: true });
+    assert.deepEqual(none.shape(), ["backfilled!"]);
+    const some = adapter();
+    some.a.frame(ev(1));
+    assert.equal(some.a.empty, false, "a ring that held an event is not empty");
+});

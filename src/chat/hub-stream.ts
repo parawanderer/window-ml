@@ -50,6 +50,23 @@ export class HubStreamAdapter {
         this.emit(m);
     }
 
+    /** Nothing has arrived from the ring: no event this subscription could read. */
+    get empty(): boolean {
+        return !this.live && this.ring.length === 0;
+    }
+
+    /**
+     * End an EMPTY ring with what the runtime said about the session instead (`session.backfill`): its epoch, and
+     * where its history ends, so the client pages back from there. Nothing to replace, so no `reset`.
+     */
+    ringFromRuntime(at: { epoch: string; from: number; truncated: boolean }): void {
+        if (this.live) return;
+        this.live = true;
+        this.epoch = at.epoch;
+        this.last = -1;
+        this.emit({ type: "backfilled", session: this.session, epoch: at.epoch, cursor: 0, truncated: at.truncated && at.from === 0, from: at.from });
+    }
+
     /**
      * The hub has sent everything it retained. `truncated` is the HUB's: its ring no longer reaches the start of the
      * stream. Decide here whether the client can resume or must start again, and say which.

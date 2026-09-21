@@ -258,6 +258,13 @@ export class SessionServer {
         return row;
     }
 
+    /** Record the model a session was switched to and tell every client. Returns the new row, or null when nothing changed. */
+    remodel(hash: string, model: string): SessionSummary | null {
+        const row = this.index.setModel(hash, model);
+        if (row) this.broadcastIndex({ type: "upsert", session: row });
+        return row;
+    }
+
     /** Pin or unpin a session and tell every client. Returns the new row, or null when nothing changed. */
     pin(hash: string, pinned: boolean): SessionSummary | null {
         const row = this.index.setPinned(hash, pinned);

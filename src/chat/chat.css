@@ -10,6 +10,12 @@ html, body, #root { height: 100%; }
    — so anything the panes do not cover (the main pane, which has no background of its own) showed the panel's
    lighter dark through the page's darker one. */
 .chat { background: var(--bg); }
+/* THE PHONE'S OWN EDGES: the status bar and the notch above, the rounded corners and camera cut-outs at the sides. The
+   whole frame keeps clear of them, so every header (the list's, a session's, a sheet's) sits below the status bar rather
+   than each remembering to. The bottom is each footer's to keep (the composer and the list's foot do), since the pane
+   behind it should still reach the edge. `env()` alone, never Capacitor's `--safe-area-inset-*` too: on an older
+   Android WebView Capacitor pads the view itself and `env()` reads 0, where adding its variables would pad twice. */
+.chat { padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
 .chat {
     font-size: var(--fs); height: 100vh; height: 100dvh; display: grid;
     /* A FIXED list width, not a `minmax()` range: the pane slides, and a column that RESIZES re-wraps every title
@@ -772,7 +778,7 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-rail .hbtn, .chat-list-foot .hbtn, .chat-list .head .hbtn, .chat-sheet-back { min-width: 36px; min-height: 36px; border-radius: 50%; }
 .chat-rail .sp { flex: 1 1 auto; }
 /* The rail's `+` menu opens to the RIGHT of the rail: anchored under it, it would open off the left edge. */
-.chat-list-foot { flex: 0 0 auto; padding: 8px 10px 12px; display: flex; flex-direction: column; align-items: stretch; gap: 2px; }
+.chat-list-foot { flex: 0 0 auto; padding: 8px 10px calc(12px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; align-items: stretch; gap: 2px; }
 /* In the foot each button spans the list's width, so its hover and open state read as a row, not a floating pill. */
 .chat-list-foot .chat-gear { display: flex; }
 .chat-list-foot .chat-gear-wide { flex: 1 1 auto; width: 100%; }
@@ -1130,7 +1136,7 @@ button.chat-page-go:hover { color: var(--fg); }
 
 /* THE STANDALONE CLIENT's own screen before an account (client.tsx): one column in the middle, the account panel's
    cards in it. */
-.client-first { max-width: 620px; margin: 0 auto; padding: 48px 16px; display: flex; flex-direction: column; gap: 14px; }
+.client-first { max-width: 620px; margin: 0 auto; padding: calc(48px + env(safe-area-inset-top)) 16px calc(48px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 14px; }
 /* The client's name at the top of those screens. */
 .client-title { margin: 0; font-size: 1.6em; font-weight: 650; }
 /* What the client is, or why it is not connected, under the title. */

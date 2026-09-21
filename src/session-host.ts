@@ -118,6 +118,8 @@ export interface RuntimeCapabilities {
      * traffic is not something a remote client may change, whatever scopes it holds. A remote runtime never sets it.
      */
     localSettings?: boolean;
+    /** `session.model`: a chat, or a run whose loop this runtime hosts, can be switched to another model */
+    switchModel?: boolean;
     /** `device.*`: this runtime holds paired devices and can list, renew, revoke and re-scope them */
     devices?: boolean;
     /** RESERVED: `agent.start` with a headless target. False on every runtime today. */
@@ -343,6 +345,13 @@ export type Command =
      * the session to a generated one. A renamed session is never re-titled by the runtime.
      */
     | { type: "session.rename"; session: SessionId; title: string }
+    /**
+     * Switch the model a session uses from now on: a chat's next turn, a running agent's next model call (never one
+     * already under way), a finished run's next turn. Refused like any other model choice when the runtime does not
+     * offer the model or its whitelist excludes it. A runtime that cannot switch this session (its model belongs to
+     * the page that runs it) answers `unsupported`; `capabilities.switchModel` says whether it can at all.
+     */
+    | { type: "session.model"; session: SessionId; model: string }
     /** The models a runtime would accept for `chat.start` / `agent.start`: after its own whitelist, so the whitelist
      *  holds over the contract too. */
     | { type: "models.list"; runtime: RuntimeId }
@@ -470,6 +479,7 @@ export const COMMAND_SCOPE: { readonly [T in CommandType]: Scope } = {
     "session.delete": "drive",
     "session.pin": "drive",
     "session.rename": "drive",
+    "session.model": "drive",
     "models.list": "view",
     "storage.stats": "view",
     "sessions.list": "view",
@@ -653,6 +663,8 @@ export interface CommandResultData {
     "session.pin": Record<string, never>;
     /** the title as the runtime stored it (trimmed and capped); empty when it went back to being generated */
     "session.rename": { title: string };
+    /** the model now in use, and when it takes effect: `next-step` for a run whose loop is running, else `next-turn` */
+    "session.model": { model: string; applies: "next-step" | "next-turn" };
     /**
      * Each model the runtime would accept. `kinds` are its capabilities where the backend reports them
      * (`completion`, `tools`, `vision`, `thinking`, `embedding`), absent when unknown, which is not "none". `default`

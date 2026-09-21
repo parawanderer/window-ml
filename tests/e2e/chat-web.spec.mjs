@@ -1053,6 +1053,22 @@ test("the phone app's start page is the standalone client, not the demo", async 
     }
 });
 
+test("a waiting count is the warning yellow under a mouse and cyan under a finger", async () => {
+    const notice = async (opts) => {
+        const ctx = await browser.newContext({ viewport: PHONE, ...opts });
+        const page = await ctx.newPage();
+        await page.goto(server.url);
+        const v = await page.evaluate(() => {
+            const probe = document.body.appendChild(Object.assign(document.createElement("span"), { className: "chat-appr-badge" }));
+            return getComputedStyle(probe).backgroundColor;
+        });
+        await ctx.close();
+        return v;
+    };
+    expect(await notice({})).toBe("rgb(234, 179, 8)");
+    expect(await notice({ hasTouch: true, isMobile: true })).toBe("rgb(56, 189, 248)");
+});
+
 test("phone (touch): the tab picker opens without raising the keyboard, and stays open when the keyboard comes", async () => {
     // A touch phone, not a narrow desktop: a coarse pointer, touch input, and the keyboard as a window resize.
     const ctx = await browser.newContext({ viewport: PHONE, hasTouch: true, isMobile: true });
@@ -1168,4 +1184,67 @@ test("the start page's model: in the box's row when the page is wide, at the top
         expect(errors).toEqual([]);
         await page.close();
     }
+});
+
+/** A Y4M video of one QR code, for Chromium's fake camera: raw 4:2:0 frames, the code's modules drawn black on white. */
+async function qrVideo(text) {
+    const { encode } = await import("uqr");
+    const { writeFileSync, mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const q = encode(text, { ecc: "M", border: 4 });
+    const W = 480, H = 480, cell = Math.floor(W / q.size), off = Math.floor((W - cell * q.size) / 2);
+    const y = Buffer.alloc(W * H, 255);
+    q.data.forEach((row, r) => row.forEach((on, c) => {
+        if (!on) return;
+        for (let dy = 0; dy < cell; dy++) y.fill(0, (off + r * cell + dy) * W + off + c * cell, (off + r * cell + dy) * W + off + (c + 1) * cell);
+    }));
+    const uv = Buffer.alloc((W / 2) * (H / 2), 128);
+    const frame = Buffer.concat([Buffer.from("FRAME\n"), y, uv, uv]);
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "qr-")), "qr.y4m");
+    writeFileSync(file, Buffer.concat([Buffer.from(`YUV4MPEG2 W${W} H${H} F10:1 Ip A1:1 C420jpeg\n`), ...Array(10).fill(frame)]));
+    return file;
+}
+
+/** A page whose camera films `video`, on the web build, opened at Settings → Devices → Pair a device. */
+async function pairWithCamera(video, { noNativeReader = false } = {}) {
+    const b = await chromium.launch({ channel: "chromium", args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", `--use-file-for-fake-video-capture=${video}`] });
+    const ctx = await b.newContext({ viewport: PHONE, permissions: ["camera"] });
+    // WebKit has no BarcodeDetector, so an iPhone reads with jsQR: take the browser's reader away to read the same way.
+    if (noNativeReader) await ctx.addInitScript(() => { delete globalThis.BarcodeDetector; });
+    const page = await ctx.newPage();
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto(`${server.url}#/settings/devices`);
+    await page.getByRole("button", { name: "Pair a device" }).click();
+    return { b, page, errors };
+}
+
+test("scanning the new device's QR code: a match needs no comparing, a code naming other keys is refused", async () => {
+    // The right code: the demo's waiting tablet, with its fingerprint in full.
+    const good = await pairWithCamera(await qrVideo(`WMLPAIR:1:7K3MQ9XD:A41C9E07D3B2${"0".repeat(52)}`));
+    try {
+        await good.page.getByRole("button", { name: "Scan its QR code" }).click();
+        await expect(good.page.locator(".pair-checked")).toHaveText("Scanned: the QR code named this device's keys, and they match.", { timeout: 15_000 });
+        // Nothing to compare by eye: no fingerprint, no "do these match?", just what it may do.
+        await expect(good.page.locator(".pair-card .pair-fp")).toHaveCount(0);
+        await good.page.getByRole("button", { name: "Pair it", exact: true }).click();
+        await expect(good.page.locator(".pair-h").first()).toHaveText("Paired");
+        expect(await good.page.evaluate(() => globalThis.__pairFake.confirmed.map((c) => c.label))).toEqual(["Kitchen tablet"]);
+        // The camera is off once it has read the code.
+        expect(await good.page.evaluate(() => document.querySelectorAll("video").length)).toBe(0);
+        expect(good.errors).toEqual([]);
+    } finally { await good.b.close(); }
+
+    // The same code, but a fingerprint that is not the waiting device's: refused, with no way to go on. Read by jsQR,
+    // the reader every WebKit (the iPhone app, Safari) uses.
+    const bad = await pairWithCamera(await qrVideo(`WMLPAIR:1:7K3MQ9XD:${"F".repeat(64)}`), { noNativeReader: true });
+    expect(await bad.page.evaluate(() => typeof globalThis.BarcodeDetector)).toBe("undefined");
+    try {
+        await bad.page.getByRole("button", { name: "Scan its QR code" }).click();
+        await expect(bad.page.locator(".pair-h").first()).toHaveText("Nothing was paired", { timeout: 15_000 });
+        await expect(bad.page.locator(".pair-card").first()).toContainText("named other keys");
+        await expect(bad.page.getByRole("button", { name: /pair it/i })).toHaveCount(0);
+        expect(await bad.page.evaluate(() => globalThis.__pairFake.confirmed.length)).toBe(0);
+        expect(bad.errors).toEqual([]);
+    } finally { await bad.b.close(); }
 });
