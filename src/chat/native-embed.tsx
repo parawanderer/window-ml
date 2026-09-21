@@ -34,6 +34,11 @@ function post(msg: ToNative): void {
     else (g.__nativeOut ??= []).push(data);
 }
 
+/** Whether the approval card is scrolled out of the open transcript, as the pane reports it: the app's bar says so. */
+const gateAway = signal(false);
+/** The pane's report, as one stable function, so watching it does not re-run the pane's effect every render. */
+const reportGate = (away: boolean) => { gateAway.value = away; };
+
 /** The vault's answers, once `keepKeysInApp` has made one; and what the app said before `runEmbed` was listening. */
 let settleVault: ((m: Extract<ToWeb, { type: "vaultResult" }>) => void) | null = null;
 const early: unknown[] = [];
@@ -59,6 +64,17 @@ export function keepKeysInApp(): void {
  */
 export function reportStartFailure(e: unknown): void {
     post({ type: "notice", tone: "error", text: `This phone's keys could not be read: ${e instanceof Error ? e.message : String(e)}` });
+}
+
+/**
+ * Bring the open session's approval card on screen. A session opened from the list has nothing rendered yet, so this
+ * waits for the card across frames rather than scrolling to nothing; it gives up after about a second, since a run may
+ * have been answered elsewhere in the meantime.
+ */
+function showGate(tries = 60): void {
+    const card = document.querySelector(".astep-approve");
+    if (card) { card.scrollIntoView({ block: "center", behavior: "smooth" }); return; }
+    if (tries > 0) requestAnimationFrame(() => showGate(tries - 1));
 }
 
 /** A Blob as base64, for handing a file to the app's share sheet. */
@@ -114,9 +130,10 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
         const id = parseSessionKey(key);
         const rt = id ? store.runtime(id.runtime) : undefined;
         const s = sessionMap.get(key);
-        post({ type: "session", chrome: sessionChrome(key, store.index.value.get(key), rt, store.host.self, s ? { pending: s.status === "pending", title: s.title } : undefined, pageOwned.has(key)) });
+        const live = { pending: s?.status === "pending", ...(s?.title ? { title: s.title } : {}), gateAway: gateAway.value };
+        post({ type: "session", chrome: sessionChrome(key, store.index.value.get(key), rt, store.host.self, s ? live : { pending: false, gateAway: gateAway.value }, pageOwned.has(key)) });
     });
-    effect(() => { void open.value; void store.index.value; void store.runtimes.value; void rev.value; sendChrome(); });
+    effect(() => { void open.value; void store.index.value; void store.runtimes.value; void rev.value; void gateAway.value; sendChrome(); });
     // The store's notices are the app's to show (a toast), and are dismissed here once handed over.
     effect(() => {
         for (const n of store.notices.value) { post({ type: "notice", text: n.text, tone: n.tone }); queueMicrotask(() => store.dismiss(n.id)); }
@@ -142,6 +159,7 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
             case "open":
                 open.value = m.key;
                 store.open(m.key);
+                if (m.approval) showGate();
                 return;
             case "close":
                 open.value = null;
@@ -174,6 +192,9 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
                 post(r.ok ? { type: "models", runtime: m.runtime, models: r.data.models } : { type: "models", runtime: m.runtime, models: null, error: r.error.message || r.error.code });
                 return;
             }
+            // The app's bar is about a card several screens down: bring it to the reader, which is all the app can
+            // ask. Answering stays with the card, where the arguments, the grants and the warnings are.
+            case "showApproval": showGate(); return;
             case "resume": opts.reconnect?.(); return;
         }
     };
@@ -197,7 +218,7 @@ function Embed({ store, open }: { store: ChatStore; open: { value: SessionKey | 
     const key = open.value;
     return (
         <div class="chat calm narrow native-embed">
-            {key ? <SessionPane store={store} sessionKey={key} narrow native /> : null}
+            {key ? <SessionPane store={store} sessionKey={key} narrow native onGate={reportGate} /> : null}
         </div>
     );
 }

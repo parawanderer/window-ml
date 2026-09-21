@@ -42,6 +42,15 @@ function rank(r: RuntimeInfo): number {
 /** One runtime's section of the list: the runtime, and its recent sessions newest first. */
 export interface Section { runtime: RuntimeInfo; data: SessionSummary[]; older: number }
 
+/**
+ * What is waiting on a person, newest first: the list pins these above the runtimes, because a gate on the third
+ * runtime down is the one thing you picked the phone up for, and scanning three groups to find it is the failure.
+ * They keep their place in their runtime's section too, so the list still reads as "what is on which machine".
+ */
+export function needsYou(sessions: SessionSummary[]): SessionSummary[] {
+    return sessions.filter((s) => s.pendingApprovals > 0).sort((a, b) => b.lastTs - a.lastTs);
+}
+
 /** Group the index by runtime (drivable, then watched, then offline), each newest first and cut to the recent month. */
 export function sections(runtimes: RuntimeInfo[], sessions: SessionSummary[], now = Date.now()): Section[] {
     const by = new Map<string, SessionSummary[]>();

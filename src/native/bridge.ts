@@ -34,6 +34,8 @@ export interface SessionChrome {
     runtimeName: string;
     model: string | null;
     pendingApprovals: number;
+    /** the card that answers the approval is scrolled out of the transcript: the app says so in its own bar */
+    approvalOffscreen: boolean;
     /** the composer can send to it; when false, `readOnly` says why */
     canSend: boolean;
     readOnly?: string;
@@ -89,7 +91,8 @@ export type ToNative =
 /** App → page. */
 export type ToWeb =
     | { type: "theme"; theme: BridgeTheme }
-    | { type: "open"; key: string }
+    /** Open a session; `approval` also brings its pending approval on screen (the list's "needs you" rows). */
+    | { type: "open"; key: string; approval?: boolean }
     | { type: "close" }
     | { type: "send"; id: string; key: string; text: string; images?: string[] }
     | { type: "start"; id: string; runtime: string; kind: "chat" | "agent"; text: string; model?: string }
@@ -101,7 +104,9 @@ export type ToWeb =
     | { type: "resume" }
     | { type: "pairing"; id: string; call: PairingCall; args?: Record<string, unknown> }
     /** The keystore's answer to a `vault` request: `value` is what a `get` found, absent when there is nothing. */
-    | { type: "vaultResult"; id: string; ok: boolean; value?: string; error?: string };
+    | { type: "vaultResult"; id: string; ok: boolean; value?: string; error?: string }
+    /** Bring the approval the app's bar is about on screen: the card in the transcript is what answers it. */
+    | { type: "showApproval" };
 
 type Shape = Record<string, "string" | "number" | "boolean" | "object" | "array" | "string?" | "number?" | "boolean?" | "object?" | "array?" | "object|null" | "array|null">;
 
@@ -126,7 +131,7 @@ const TO_NATIVE: Record<ToNative["type"], Shape> = {
 };
 const TO_WEB: Record<ToWeb["type"], Shape> = {
     theme: { theme: "object" },
-    open: { key: "string" },
+    open: { key: "string", approval: "boolean?" },
     close: {},
     send: { id: "string", key: "string", text: "string", images: "array?" },
     start: { id: "string", runtime: "string", kind: "string", text: "string", model: "string?" },
@@ -138,6 +143,7 @@ const TO_WEB: Record<ToWeb["type"], Shape> = {
     resume: {},
     pairing: { id: "string", call: "string", args: "object?" },
     vaultResult: { id: "string", ok: "boolean", value: "string?", error: "string?" },
+    showApproval: {},
 };
 
 /** Does `v` have the kind a field spec asks for? */

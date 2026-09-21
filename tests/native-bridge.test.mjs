@@ -65,6 +65,9 @@ test("the chrome of a session this device may drive: it can send and switch, and
     assert.equal(c.running, false);
     assert.equal(sessionChrome("laptop:7b21", summary({ status: "running" }), rt(), self).running, true);
     assert.equal(sessionChrome("laptop:7b21", summary(), rt(), self, { pending: true }).running, true, "the transcript knows first");
+    // The app's bar is for an approval the reader cannot see; while the card is on screen, the card speaks for itself.
+    assert.equal(c.approvalOffscreen, false);
+    assert.equal(sessionChrome("laptop:7b21", summary(), rt(), self, { pending: false, gateAway: true }).approvalOffscreen, true);
 });
 
 test("each reason the composer or the model pill is off says so, in the page's words", () => {
@@ -95,6 +98,7 @@ test("every message the app can send passes the page's own check", () => {
         { type: "switchModel", key: "laptop:1", model: "gemma3:27b" },
         { type: "models", runtime: "laptop" },
         { type: "resume" },
+        { type: "showApproval" },
     ];
     for (const m of sent) assert.deepEqual(B.parseToWeb(B.encode(m)), m, m.type);
 });
