@@ -311,15 +311,17 @@ test("desktop: with nothing open the page is a start box; an agent run picks a t
 
     // The model is the chosen runtime's list: its default first and by name, an embedding model left out (it
     // cannot run an agent), and picking another one sends it; the default sends no model at all.
-    // It is the tab picker's popover: a filter, the rows A→Z, a cloud model tagged as the Commander tags it.
+    // It is the tab picker's popover: a filter, the rows A→Z, and where each model runs as a quiet mark (`WhereMark`).
     const modelPill = page.getByRole("button", { name: /^Model:/ });
     await expect(modelPill).toHaveText("qwen3:32b");
     await expect(modelPill).toHaveAccessibleName("Model: Default · qwen3:32b");
     await modelPill.click();
     const models = page.getByRole("listbox", { name: "Model" });
-    await expect(models.getByRole("option")).toHaveText(["qwen3:32bdefault", "gemma3:27b", "litellm.google/gemini-flash-latestcloud"]);
+    await expect(models.getByRole("option")).toHaveText(["qwen3:32bdefault", "gemma3:27b", "litellm.google/gemini-flash-latest"]);
+    await expect(models.getByRole("option", { name: /gemini-flash-latest/ }).getByLabel("cloud model")).toHaveCount(1);
+    await expect(models.getByRole("option", { name: /gemma3:27b/ }).getByLabel("cloud model")).toHaveCount(0);
     await models.getByRole("searchbox", { name: "Filter models" }).fill("gem");
-    await expect(models.getByRole("option")).toHaveText(["gemma3:27b", "litellm.google/gemini-flash-latestcloud"]);
+    await expect(models.getByRole("option")).toHaveText(["gemma3:27b", "litellm.google/gemini-flash-latest"]);
     await page.keyboard.press("Enter");
     await expect(models).toHaveCount(0);
     await expect(modelPill).toContainText("gemma3:27b");

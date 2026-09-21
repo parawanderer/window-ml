@@ -3,6 +3,7 @@
 // start a new turn). Includes the shared image-attach hook (file/paste → data URLs) and the thumb-strip /
 // element-pill chips, reused by the HUD Spotlight composer. Extracted from app.tsx.
 import { useState, useRef, useEffect } from "preact/hooks";
+import type { ComponentChildren } from "preact";
 import { services } from "./services";
 import { loadDraft, loadDraftImages, onDraftRestored, saveDraft, saveDraftImages, sendHeld } from "./drafts";
 import type { ElementContext } from "../contract-run";
@@ -97,7 +98,7 @@ function useNarrowScreen(): boolean {
 /** THE COMPOSER — where you send the next message into a session: the text box, pasted images, an
  *  element you picked off the page, the model/vision toggles and the run controls. Sending INTO a run is
  *  the one thing that needs a reverse channel, so the DevTools panel routes it through the background. */
-export function Composer({ s, multiline }: { s: Session; multiline?: boolean }) {
+export function Composer({ s, multiline, tools }: { s: Session; multiline?: boolean; tools?: ComponentChildren }) {
     const r = rev.value;   // subscribe: `s.status` is mutated in place (same ref), so without a signal read this
                            // stateful child won't re-render when the run goes pending/idle → the Stop button.
     // THE DRAFT (drafts.ts): what was typed is saved as it is typed and read back when the box is drawn again, and a
@@ -168,6 +169,8 @@ export function Composer({ s, multiline }: { s: Session; multiline?: boolean }) 
                         onInput={(e) => { type((e.target as HTMLTextAreaElement).value); grow(e.target as HTMLTextAreaElement); }} />
                     : <input class="cinput" type="text" value={text} onInput={e => type((e.target as HTMLInputElement).value)} onKeyDown={onKey} onPaste={att.onPaste}
                         placeholder={placeholder} />}
+                {/* What the page puts beside send (the chat page's model picker): the composer draws it, never decides it. */}
+                {tools ? <span class="composer-tools">{tools}</span> : null}
                 <button class={`tt cbtn ${stop ? "cstop" : "csend"}`} onClick={act} disabled={!stop && empty} aria-label={stop ? "Stop the run" : "Send"}>
                     {stop ? <IconStop /> : <IconSend />}<span class="tt-pop above" role="tooltip">{stop ? "Stop (cancel)" : running ? "Steer the run" : "Send"}</span>
                 </button>

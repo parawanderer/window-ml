@@ -371,6 +371,9 @@ export const TipText = ({ md }: { md: string }) => <span dangerouslySetInnerHTML
 
 /** Attach the panel's cursor-following tooltip to an element.
  *
+ *  `opts.delayMs` is the DELAYED mode: the tip appears only once the pointer has rested that long, and only when
+ *  `opts.onlyIf(trigger)` is true at that moment (say, the text is cut off). The default is at once, always.
+ *
  *  TWO RENDER MODES, told apart by the TYPE of what you pass, so there is one function and no way to pick
  *  the wrong one:
  *   · a STRING is markdown TEXT — escaped, then rendered inline (`code`, *emphasis*, $math$). This is the
@@ -378,22 +381,47 @@ export const TipText = ({ md }: { md: string }) => <span dangerouslySetInnerHTML
  *     result, a model's own prose. Treating a string as markup would make that an injection.
  *   · anything else is JSX — our own authored tooltip, with whatever structure it needs. Children, never an
  *     HTML string, so there is no way to hand this something unescaped by accident. */
-export const cursorTipOn = (content: string | ComponentChildren) => ({
-    onPointerMove: (e: PointerEvent) => {
-        cursorTip.value = typeof content === "string"
-            ? { x: e.clientX, y: e.clientY, text: content }
-            : { x: e.clientX, y: e.clientY, node: content };
+export const cursorTipOn = (content: string | ComponentChildren, opts?: { delayMs?: number; onlyIf?: (el: Element) => boolean }) => {
+    const show = (el: Element | null, x: number, y: number): void => {
+        cursorTip.value = typeof content === "string" ? { x, y, text: content } : { x, y, node: content };
         // A trigger that UNMOUNTS under a still pointer raises no pointer-leave, so the tip would stay up over
         // nothing. Watched the same way the anchored layer watches its triggers.
-        const el = e.currentTarget as Element | null;
         if (el && el !== tipTrigger) {
             unwatchTip?.();
             tipTrigger = el;
             unwatchTip = watchTrigger(el, () => { if (tipTrigger === el) clearCursorTip(); });
         }
-    },
-    onPointerLeave: () => { clearCursorTip(); },
-});
+    };
+    // THE DELAYED MODE: the tip waits until the pointer has RESTED on the trigger, and appears only if `onlyIf` still
+    // holds then (a name that is actually cut off). For a control the pointer crosses on its way somewhere else,
+    // where an instant tip would flash up at every pass.
+    if (opts?.delayMs) {
+        const delay = opts.delayMs;
+        return {
+            onPointerMove: (e: PointerEvent) => {
+                const el = e.currentTarget as Element | null;
+                if (tipTrigger === el && cursorTip.value) { show(el, e.clientX, e.clientY); return; }
+                pendingAt = { x: e.clientX, y: e.clientY };
+                if (pendingEl === el) return;
+                clearTimeout(pendingTimer);
+                pendingEl = el;
+                pendingTimer = setTimeout(() => {
+                    if (pendingEl !== el || !el?.isConnected || (opts.onlyIf && !opts.onlyIf(el))) return;
+                    show(el, pendingAt.x, pendingAt.y);
+                }, delay);
+            },
+            onPointerLeave: () => { clearTimeout(pendingTimer); pendingEl = null; clearCursorTip(); },
+        };
+    }
+    return {
+        onPointerMove: (e: PointerEvent) => show(e.currentTarget as Element | null, e.clientX, e.clientY),
+        onPointerLeave: () => { clearCursorTip(); },
+    };
+};
+/** The delayed mode's one pending tip: its trigger, its timer, and where the pointer last was over it. */
+let pendingEl: Element | null = null;
+let pendingTimer: ReturnType<typeof setTimeout> | undefined;
+let pendingAt = { x: 0, y: 0 };
 let tipTrigger: Element | null = null;
 let unwatchTip: (() => void) | null = null;
 /** Take the cursor tip down, and stop watching whatever summoned it. */

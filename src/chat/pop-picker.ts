@@ -11,12 +11,15 @@ export interface PopPlace { left: number; top?: number; bottom?: number; width: 
  * A picker's popover state. `picksFor(q)` is what the arrows walk for filter text `q`, in the order drawn; `onOpen` runs
  * each time it opens (to ask for a fresh list). Rows mark themselves with `.tp-row.hot` for the arrows to scroll to.
  */
-export function usePickerPop<V>({ picksFor, value, onPick, onOpen, width: [minW, maxW] = [320, 460] }: {
+export function usePickerPop<V>({ picksFor, value, onPick, onOpen, width: [minW, maxW] = [320, 460], align = "start" }: {
     picksFor: (q: string) => readonly V[];
     value: V;
     onPick: (v: V) => void;
     onOpen?: () => void;
     width?: [number, number];
+    /** which edge of the button the list lines up with: its left (a pill in a header), or its right (a button at
+     *  the end of a composer, whose list would otherwise hang out past the box) */
+    align?: "start" | "end";
 }) {
     const [open, setOpen] = useState(false);
     const [q, setQ] = useState("");
@@ -31,7 +34,7 @@ export function usePickerPop<V>({ picksFor, value, onPick, onOpen, width: [minW,
         const r = btn.current?.getBoundingClientRect();
         if (!r) return;
         const width = Math.min(maxW, Math.max(r.width, minW), window.innerWidth - 16);
-        const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
+        const left = Math.max(8, Math.min(align === "end" ? r.right - width : r.left, window.innerWidth - width - 8));
         // Below when there is room, otherwise above, and never past the window's edge: the list's height is capped by
         // the room on the side it opens, so a short window gets a shorter list that scrolls rather than one whose
         // bottom rows are off the page. A fixed cap alone did that whenever the room was between the two numbers.

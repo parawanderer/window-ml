@@ -202,7 +202,7 @@ const pageOwnsModel = signal<ReadonlySet<SessionKey>>(new Set());
  * cannot switch where the runtime does not offer it, where this device lacks `drive`, and on a session whose runtime
  * refused because a page script runs it; each says which.
  */
-function ModelTop({ store, rt, model, sessionKey, summary }: { store: ChatStore; rt: RuntimeInfo; model: string; sessionKey: SessionKey; summary?: SessionSummary }) {
+function ModelTop({ store, rt, model, sessionKey, summary, quiet }: { store: ChatStore; rt: RuntimeInfo; model: string; sessionKey: SessionKey; summary?: SessionSummary; quiet?: boolean }) {
     const id = parseSessionKey(sessionKey);
     const owned = pageOwnsModel.value.has(sessionKey);
     const offered = !!rt.capabilities.switchModel;
@@ -217,7 +217,7 @@ function ModelTop({ store, rt, model, sessionKey, summary }: { store: ChatStore;
             if (!r.ok && r.error.code === "unsupported") pageOwnsModel.value = new Set([...pageOwnsModel.value, sessionKey]);
         });
     };
-    return <SessionModelPicker store={store} rt={rt} current={model} canSwitch={!note} note={note} onSwitch={onSwitch} />;
+    return <SessionModelPicker store={store} rt={rt} current={model} canSwitch={!note} note={note} onSwitch={onSwitch} quiet={quiet} />;
 }
 
 /** The camera button in a wide header. */
@@ -529,6 +529,10 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     // phone keeps the bar: it holds the way back, and there is no room for a rail beside a 390px column.
     const bare = native || (calm.value && !narrow);
     const peek = usePeek(store, id ?? null, rt, sessionKey, summary);
+    // ON A WIDE PAGE THE MODEL SITS IN THE COMPOSER, beside send: it is what the NEXT message goes to, so it belongs
+    // where that message is written, and a pill in a header read as a stray control. A phone keeps it in its bar
+    // (there is no room in a 390px box), and so does a session with no composer, where it is only information.
+    const modelBelow = !narrow && !native && !!summary?.model && !!rt && canDrive && !canResume;
     return (
         <main class="chat-main" data-rev={r} data-session={sessionKey}>
             {bare
@@ -546,7 +550,7 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
                         </span>
                     </span>
                     <span class="sp" />
-                    {!narrow && summary?.model && rt ? <ModelTop store={store} rt={rt} model={summary.model} sessionKey={sessionKey} summary={summary} /> : null}
+                    {!narrow && !modelBelow && summary?.model && rt ? <ModelTop store={store} rt={rt} model={summary.model} sessionKey={sessionKey} summary={summary} /> : null}
                     {narrow ? <SessionMenu peek={peek} hash={id?.hash} title={summary?.model ? title : undefined} /> : <>
                         <PagePeek peek={peek} />
                         <DeviceViews extras={extras} rt={rt} />
@@ -557,7 +561,7 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
             {!native && waiting && (gateAway || !calm.value) ? <button class="chat-waiting" onClick={jumpToApproval}>Waiting on your approval<span class="chat-waiting-go">Review ›</span></button> : null}
             <div class="view chat-transcript" ref={scroller} onScroll={onScroll}>
                 <div ref={content}>
-                    {bare ? <Lede title={title} rt={rt} summary={summary} id={id} store={store} sessionKey={sessionKey} native={native} /> : null}
+                    {bare ? <Lede title={title} rt={rt} summary={summary} id={id} store={store} sessionKey={sessionKey} native={native || modelBelow} /> : null}
                     <EarlierEdge store={store} sessionKey={sessionKey} scroller={scroller} rtName={rt?.name} truncated={truncated} />
                     {s ? <DetailView hash={sessionKey} />
                         : !summary && !rt ? <div class="empty">Session not found.</div>
@@ -574,7 +578,8 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
                     : <button class="chat-resume" onClick={() => setResuming(true)}>
                         <span class="chat-resume-what">The tab this run worked in has closed.</span><span class="chat-resume-go">Resume on a page</span>
                     </button>
-            ) : s && canDrive ? <Composer s={s} multiline />
+            ) : s && canDrive ? <Composer s={s} multiline
+                tools={modelBelow && summary?.model && rt ? <ModelTop store={store} rt={rt} model={summary.model} sessionKey={sessionKey} summary={summary} quiet /> : undefined} />
                 : s && rt ? <div class="chat-readonly">{!rt.online ? `${rt.name} is offline. You can read this session, and send to it once it is back.` : `This device may watch sessions on ${rt.name}, not drive them.`}</div>
                     : null}
         </main>
@@ -620,7 +625,7 @@ function DeviceViews({ extras, rt }: { extras?: ChatExtras; rt?: RuntimeInfo }) 
  */
 function Lede({ title, rt, summary, id, store, sessionKey, native }: {
     title: string; rt?: RuntimeInfo; summary?: SessionSummary; id: SessionId | null; store: ChatStore; sessionKey: SessionKey;
-    /** in the phone app, whose header already holds the model */
+    /** the model is shown elsewhere: the phone app's header, or a wide page's composer */
     native?: boolean;
 }) {
     const show = tabFocus(store, rt, summary);
@@ -647,9 +652,23 @@ function Notices({ store }: { store: ChatStore }) {
         const t = setTimeout(() => store.dismiss(oldest.id), 6000);
         return () => clearTimeout(t);
     }, [list]);
+    // Centred on the column being read, not the window: beside a session list (and a dock) the window's middle is
+    // off to one side of the thread. The column is measured, because the list folds and the dock opens.
+    const [mid, setMid] = useState<number | null>(null);
+    useEffect(() => {
+        if (!list.length) return;
+        const main = document.querySelector<HTMLElement>(".chat-main");
+        if (!main) { setMid(null); return; }
+        const place = () => { const r = main.getBoundingClientRect(); setMid(r.left + r.width / 2); };
+        place();
+        const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(place);
+        ro?.observe(main);
+        addEventListener("resize", place);
+        return () => { ro?.disconnect(); removeEventListener("resize", place); };
+    }, [list.length > 0]);
     if (!list.length) return null;
     return (
-        <div class="chat-notices" role="status" aria-live="polite">
+        <div class="chat-notices" role="status" aria-live="polite" style={mid == null ? undefined : `left:${mid}px`}>
             {list.map((n) => (
                 <div class={`chat-notice ${n.tone}`} key={n.id}>
                     <span>{n.text}</span>
