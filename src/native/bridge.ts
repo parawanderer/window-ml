@@ -9,7 +9,7 @@
 // one feature instead of misreading each other. Every message carries the bridge version `v`; a different major is
 // refused whole.
 
-import type { HostStatus, ModelChoice, RuntimeInfo, SessionKind, SessionStatus, SessionSummary } from "../session-host";
+import type { HostStatus, ListedSession, ModelChoice, RuntimeInfo, SessionKind, SessionStatus, SessionSummary } from "../session-host";
 
 /** The bridge's version. Bump it when a message changes shape in a way an older peer would misread. */
 export const BRIDGE_VERSION = 1;
@@ -85,6 +85,8 @@ export type ToNative =
     | { type: "pairingResult"; id: string; ok: boolean; value?: unknown; error?: string }
     /** an offer this device made was answered (paired) or failed; `offer` is the token `beginOffer` returned */
     | { type: "pairingDone"; offer: string; ok: boolean; error?: string }
+    /** A page of search results: rows to ADD to what this `id` has already answered, newest first. */
+    | { type: "searchResult"; id: string; rows: ListedSession[]; more: boolean; error?: string }
     /** The keyring's secrets, kept in the phone's keystore (vault-bridge.ts): a read, a write or a removal by name. */
     | { type: "vault"; id: string; op: "get" | "set" | "delete"; name: string; value?: string };
 
@@ -106,7 +108,9 @@ export type ToWeb =
     /** The keystore's answer to a `vault` request: `value` is what a `get` found, absent when there is nothing. */
     | { type: "vaultResult"; id: string; ok: boolean; value?: string; error?: string }
     /** Bring the approval the app's bar is about on screen: the card in the transcript is what answers it. */
-    | { type: "showApproval" };
+    | { type: "showApproval" }
+    /** Search history, on one runtime or on all of them; `more` asks for the next page of the search `id` already asked. */
+    | { type: "search"; id: string; query: string; runtime?: string; more?: boolean };
 
 type Shape = Record<string, "string" | "number" | "boolean" | "object" | "array" | "string?" | "number?" | "boolean?" | "object?" | "array?" | "object|null" | "array|null">;
 
@@ -127,6 +131,7 @@ const TO_NATIVE: Record<ToNative["type"], Shape> = {
     pairingInfo: { info: "object" },
     pairingResult: { id: "string", ok: "boolean", error: "string?" },
     pairingDone: { offer: "string", ok: "boolean", error: "string?" },
+    searchResult: { id: "string", rows: "array", more: "boolean", error: "string?" },
     vault: { id: "string", op: "string", name: "string", value: "string?" },
 };
 const TO_WEB: Record<ToWeb["type"], Shape> = {
@@ -144,6 +149,7 @@ const TO_WEB: Record<ToWeb["type"], Shape> = {
     pairing: { id: "string", call: "string", args: "object?" },
     vaultResult: { id: "string", ok: "boolean", value: "string?", error: "string?" },
     showApproval: {},
+    search: { id: "string", query: "string", runtime: "string?", more: "boolean?" },
 };
 
 /** Does `v` have the kind a field spec asks for? */

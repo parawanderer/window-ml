@@ -13,6 +13,7 @@ import { parseSessionKey } from "../session-host";
 import { encode, parseToWeb, type BridgeAccount, type ToNative, type ToWeb } from "../native/bridge";
 import { pairingBridge, pairingInfo } from "../native/pairing-bridge";
 import { bridgeVault } from "../native/vault-bridge";
+import { searchBridge } from "../native/search-bridge";
 import { Keyring } from "../hub/keyring";
 import { sessionChrome } from "../native/snapshot";
 import type { PairingApi } from "../pairing/api";
@@ -139,6 +140,7 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
         for (const n of store.notices.value) { post({ type: "notice", text: n.text, tone: n.tone }); queueMicrotask(() => store.dismiss(n.id)); }
     });
 
+    const search = searchBridge(store, post);
     const pairing = opts.pairing ? pairingBridge(opts.pairing, post) : null;
 
     /** Act on one message from the app. */
@@ -156,11 +158,19 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
                 document.documentElement.style.setProperty("--safe-left", `${m.theme.insets.left}px`);
                 document.documentElement.style.setProperty("--safe-right", `${m.theme.insets.right}px`);
                 return;
-            case "open":
+            case "open": {
+                // A row found by search may be ARCHIVED: bring it back into the live store first, or the transcript
+                // opens on a session the store does not have. The app never hears about archives.
+                const found = search.memory.row(m.key);
+                if (found?.archived) {
+                    const r = await store.send({ type: "session.unarchive", session: found.id });
+                    if (!r.ok) return;   // the store says why, as a notice
+                }
                 open.value = m.key;
                 store.open(m.key);
                 if (m.approval) showGate();
                 return;
+            }
             case "close":
                 open.value = null;
                 store.close();
@@ -195,6 +205,7 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
             // The app's bar is about a card several screens down: bring it to the reader, which is all the app can
             // ask. Answering stays with the card, where the arguments, the grants and the warnings are.
             case "showApproval": showGate(); return;
+            case "search": await search.handle(m); return;
             case "resume": opts.reconnect?.(); return;
         }
     };

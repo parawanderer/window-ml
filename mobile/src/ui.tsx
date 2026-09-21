@@ -122,6 +122,17 @@ export function SheetFilter({ value, onChangeText, placeholder }: { value: strin
     );
 }
 
+/** One of a row of choices (which device a search is narrowed to): a small pill that is either on or off. */
+export function Chip({ text, on, onPress }: { text: string; on: boolean; onPress: () => void }) {
+    const p = usePalette();
+    return (
+        <Pressable accessibilityRole="button" accessibilityState={{ selected: on }} onPress={onPress}
+            style={({ pressed }) => [s.chip, { backgroundColor: on ? p.accent : pressed ? p.panel2 : p.panel }]}>
+            <Text numberOfLines={1} style={[s.chipText, { color: on ? "#fff" : p.fgDim }]}>{text}</Text>
+        </Pressable>
+    );
+}
+
 /** One row of a sheet: a title, an optional line under it, and a check when it is the chosen one. */
 export function SheetRow({ title, detail, chosen, disabled, onPress, mono, danger }: {
     title: string; detail?: string; chosen?: boolean; disabled?: boolean; onPress?: () => void; mono?: boolean; danger?: boolean;
@@ -196,6 +207,10 @@ const s = StyleSheet.create({
     toast: { position: "absolute", left: SIZE.gutter, right: SIZE.gutter, paddingVertical: 12, paddingHorizontal: 16, borderRadius: SIZE.radius, alignSelf: "center" },
     // What a sheet holds, with room under the last row for the home bar.
     sheetBody: { paddingHorizontal: 8, paddingBottom: 36 },
+    // A choice in a row of them: a small pill, filled when it is the chosen one.
+    chip: { justifyContent: "center", minHeight: 36, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999 },
+    // Its label, with room for the descenders a tight chip clips.
+    chipText: { fontSize: 13.5, lineHeight: 19, fontWeight: "600" },
     // The filter field above a sheet's list: an icon, the field, and a clear button.
     filter: { flexDirection: "row", alignItems: "center", gap: 8, marginHorizontal: 12, marginBottom: 8, paddingHorizontal: 12, borderRadius: 12 },
     // The field itself, tall enough to tap.
