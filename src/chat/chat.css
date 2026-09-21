@@ -276,6 +276,8 @@ html, body, #root { height: 100%; }
 /* Where each model runs, in the model lists: a faint glyph, the sentence on hover (`WhereMark`). */
 .tp-where { display: inline-flex; flex: 0 0 auto; color: var(--fg-faint); opacity: .8; }
 .tp-where.cloud { opacity: 1; }
+/* "default" on the runtime's default model: a word that has to be read whole, so the NAME beside it is what gets cut. */
+.tp-host.tp-default { flex: 0 0 auto; max-width: none; }
 /* A cut-off model name in full, in the cursor tip (`nameTip`). */
 .tp-name-tip { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
 /* ATTACHMENTS SIT ON THE BOX THEY WILL BE SENT WITH. The strip is a sibling of the field rather than a child, so

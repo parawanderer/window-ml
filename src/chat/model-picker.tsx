@@ -77,9 +77,9 @@ export function ModelPicker({ models, value, onChange, arrived }: { models: read
                     <input {...p.filterProps} placeholder="Filter models" aria-label="Filter models" />
                     {defaultShown(q) ? (
                         <>
-                            <button type="button" role="option" aria-selected={value === ""} {...p.row("")}>
+                            <button type="button" role="option" aria-selected={value === ""} {...p.row("")} {...(dflt ? nameTip(dflt.id) : {})}>
                                 <span class="tp-title">{dflt ? dflt.id : "The runtime's default"}</span>
-                                <span class="tp-host">default</span>
+                                <span class="tp-host tp-default">default</span>
                                 <WhereMark where={dflt?.where} />
                                 {value === "" ? <span class="tp-check" aria-hidden="true"><IconCheck /></span> : null}
                             </button>
