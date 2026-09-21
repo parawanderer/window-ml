@@ -9,7 +9,7 @@ import { CompositeHost } from "../src/chat/composite-host.ts";
 import { FakeHost } from "../src/chat/fake-host.ts";
 import { hostServices } from "../src/chat/host-services.ts";
 import { holds, mayCommand } from "../src/chat/grants.ts";
-import { resumableHere } from "../src/chat/new-session.tsx";
+import { resumableHere } from "../src/chat/grants.js";
 import { CALM_KEY, LIST_KEY, PINNED_KEY, calm, dropPin, installViewPrefs, listOpen, pinned, setCalm, setListOpen, togglePin } from "../src/chat/view-mode.tsx";
 import { sessionMap, view } from "../src/sidebar/store.ts";
 import { SESSION_CONTRACT_VERSION } from "../src/session-host.ts";

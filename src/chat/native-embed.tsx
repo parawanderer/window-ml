@@ -270,6 +270,20 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
                     : { type: "tabsResult", id: m.id, tabs: null, groups: [], withheld: 0, error: r.error.message || r.error.code });
                 return;
             }
+            // The same check as a new agent's target: a run is picked up only on a page the app named properly.
+            case "resumeRun": {
+                const id = parseSessionKey(m.key);
+                const target = agentTarget(m.target);
+                if (!id || !target) {
+                    const error = !id ? "That is not a session." : "A new tab opens a web page: give an address starting https://, or leave it empty.";
+                    post({ type: "notice", text: error, tone: "error" });
+                    post({ type: "sent", id: m.id, ok: false, error });
+                    return;
+                }
+                const r = await store.send({ type: "session.resume", session: id, target });
+                post({ type: "sent", id: m.id, ok: r.ok, ...(r.ok ? {} : { error: r.error.message || r.error.code }) });
+                return;
+            }
             case "chromeFor": post({ type: "chromeOf", id: m.id, chrome: chromeOf(m.key) }); return;
             // The page's capture goes to the app as `openImage`, the same full-size view a transcript image opens in.
             case "peek": {

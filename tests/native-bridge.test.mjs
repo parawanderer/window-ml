@@ -87,6 +87,13 @@ test("the chrome of a session this device may drive: it can send and switch, and
     assert.equal(sessionChrome("laptop:7b21", summary(tab), cam({ capabilities: { chat: true } }), self).canPeek, false, "a runtime that cannot capture");
     assert.equal(sessionChrome("laptop:7b21", summary(tab), cam({ grants: [{ scope: "drive" }] }), self).canPeek, false, "a device without the grant to ask");
     assert.equal(sessionChrome("laptop:7b21", summary(tab), cam({ online: false }), self).canPeek, false, "a runtime that is offline");
+    // Resuming: a saved agent run whose tab has closed, not going, and the grant to ask. The page's own rule.
+    const ended = { kind: "agent", status: "done", saved: true, page: { url: "https://example.com", title: "Example" } };
+    assert.equal(sessionChrome("laptop:7b21", summary(ended), rt(), self).canResume, true);
+    assert.equal(sessionChrome("laptop:7b21", summary({ ...ended, page: { ...ended.page, tabId: 3 } }), rt(), self).canResume, false, "its tab is still open: the composer reaches it");
+    assert.equal(sessionChrome("laptop:7b21", summary({ ...ended, status: "running" }), rt(), self).canResume, false, "still going");
+    assert.equal(sessionChrome("laptop:7b21", summary({ ...ended, kind: "chat" }), rt(), self).canResume, false, "a chat has no page");
+    assert.equal(sessionChrome("laptop:7b21", summary(ended), rt({ grants: [{ scope: "view" }] }), self).canResume, false, "a watcher");
     // The app's bar is for an approval the reader cannot see; while the card is on screen, the card speaks for itself.
     assert.equal(c.approvalOffscreen, false);
     assert.equal(sessionChrome("laptop:7b21", summary(), rt(), self, { pending: false, gateAway: true }).approvalOffscreen, true);
@@ -123,6 +130,7 @@ test("every message the app can send passes the page's own check", () => {
         { type: "peek", id: "n9", key: "laptop:1" },
         { type: "chromeFor", id: "n10", key: "laptop:1" },
         { type: "tabs", id: "n11", runtime: "laptop" },
+        { type: "resumeRun", id: "n14", key: "laptop:1", target: { kind: "blank" } },
         { type: "start", id: "n12", runtime: "laptop", kind: "agent", text: "summarise this", target: { kind: "tab", tabId: 41 } },
         { type: "start", id: "n13", runtime: "laptop", kind: "agent", text: "find a flight", target: { kind: "blank", url: "https://flights.example" } },
         { type: "resume" },

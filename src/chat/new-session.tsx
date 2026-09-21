@@ -12,11 +12,11 @@
 // does. A phone talking to a headless box gets a chat form and no tabs, without this file knowing what a box is.
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { AgentTarget, Principal, RuntimeInfo, SessionKey, SessionSummary, TabGroupInfo, TabInfo } from "../session-host";
+import type { AgentTarget, RuntimeInfo, TabGroupInfo, TabInfo } from "../session-host";
 import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
-import { mayCommand, mayStart } from "./grants";
+import { mayStart } from "./grants";
 import { TabPicker } from "./tab-picker";
 
 /** What a new session can be. */
@@ -131,19 +131,6 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
             </>
         ) : null,
     };
-}
-
-/**
- * May this session be picked up on a page from here? A run, saved, not going, and this client allowed to ask.
- *
- * `page.tabId` absent is the tell that the tab it ran on has closed: that is when the composer cannot reach it, and
- * offering a resume beside a composer that already works would be two ways to do one thing.
- */
-export function resumableHere(rt: RuntimeInfo | undefined, key: SessionKey, summary: SessionSummary | undefined, self?: Principal): boolean {
-    if (!rt?.online || !summary || summary.kind !== "agent" || !summary.saved) return false;
-    if (summary.status === "running" || summary.status === "waiting") return false;
-    if (summary.page?.tabId != null) return false;
-    return mayCommand(rt, "session.resume", { key, summary }, self);
 }
 
 /**

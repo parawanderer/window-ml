@@ -30,3 +30,16 @@ export const speaksOurContract = (runtime: RuntimeInfo): boolean => runtime.cont
  *  one rule the page's start form and the phone's new-session screen both follow. */
 export const mayStart = (runtime: RuntimeInfo, kind: "chat" | "agent"): boolean =>
     runtime.online && !!runtime.capabilities?.[kind] && mayCommand(runtime, kind === "chat" ? "chat.start" : "agent.start");
+
+/**
+ * May this session be picked up on a page from here? A run, saved, not going, and this client allowed to ask.
+ *
+ * `page.tabId` absent is the tell that the tab it ran on has closed: that is when the composer cannot reach it, and
+ * offering a resume beside a composer that already works would be two ways to do one thing.
+ */
+export function resumableHere(rt: RuntimeInfo | undefined, key: SessionKey, summary: SessionSummary | undefined, self?: Principal): boolean {
+    if (!rt?.online || !summary || summary.kind !== "agent" || !summary.saved) return false;
+    if (summary.status === "running" || summary.status === "waiting") return false;
+    if (summary.page?.tabId != null) return false;
+    return mayCommand(rt, "session.resume", { key, summary }, self);
+}

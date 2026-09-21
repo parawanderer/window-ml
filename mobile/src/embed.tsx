@@ -59,6 +59,8 @@ export interface EmbedApi extends EmbedState {
     send(key: string, text: string, images?: string[]): Promise<{ ok: boolean; error?: string }>;
     /** Start a chat, or an agent on `target`; resolves with the new session's key, or the reason it did not start. */
     start(o: { runtime: string; kind: "chat" | "agent"; text: string; model?: string; images?: string[]; target?: AgentTargetPick }): Promise<{ ok: boolean; error?: string; session?: string }>;
+    /** Pick a saved run back up on a page: resolves with whether the runtime took it. */
+    resumeRun(key: string, target: AgentTargetPick): Promise<{ ok: boolean; error?: string }>;
     /** A runtime's open tabs, for an agent's target; `tabs` is null when it would not say. */
     tabs(runtime: string): Promise<{ tabs: TabInfo[] | null; groups: TabGroupInfo[]; withheld: number; error?: string }>;
     cancel(key: string): void;
@@ -244,6 +246,7 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
         close: () => post({ type: "close" }),
         send: (key, text, images) => request((id) => ({ type: "send", id, key, text, ...(images?.length ? { images } : {}) })),
         start: (o) => request((id) => ({ type: "start", id, runtime: o.runtime, kind: o.kind, text: o.text, ...(o.model ? { model: o.model } : {}), ...(o.images?.length ? { images: o.images } : {}), ...(o.target ? { target: o.target } : {}) })),
+        resumeRun: (key, target) => request((id) => ({ type: "resumeRun", id, key, target })),
         tabs: (runtime) => new Promise((resolve) => {
             const id = nextId();
             const timer = setTimeout(() => { pendingTabs.current.delete(id); resolve({ tabs: null, groups: [], withheld: 0, error: "No answer from the runtime." }); }, 20_000);

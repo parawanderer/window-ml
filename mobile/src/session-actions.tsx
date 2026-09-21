@@ -18,10 +18,11 @@ export interface SessionActionsHandle { present(): void }
 
 /**
  * The session's actions sheet. `chrome` is the page's word on what this device may do with it; `onOpen` adds "Open"
- * (the list's sheet: the session is not open yet); `onDeleted` runs once the runtime has deleted it.
+ * (the list's sheet: the session is not open yet); `onDeleted` runs once the runtime has deleted it; `onResume` adds
+ * "Resume on a page" where the page says the run can be.
  */
-export const SessionActions = forwardRef<SessionActionsHandle, { chrome: SessionChrome | null; onOpen?: () => void; onDeleted?: () => void }>(
-    function SessionActions({ chrome: c, onOpen, onDeleted }, ref) {
+export const SessionActions = forwardRef<SessionActionsHandle, { chrome: SessionChrome | null; onOpen?: () => void; onDeleted?: () => void; onResume?: () => void }>(
+    function SessionActions({ chrome: c, onOpen, onDeleted, onResume }, ref) {
         const e = useEmbed();
         const p = usePalette();
         const sheet = useRef<BottomSheetModal>(null);
@@ -82,6 +83,7 @@ export const SessionActions = forwardRef<SessionActionsHandle, { chrome: Session
                     <Text style={[s.sub, { color: p.fgDim }]}>{c.kind === "agent" ? "Agent" : "Chat"} on {c.runtimeName}{c.pinned ? " · pinned" : ""}</Text>
                     {onOpen ? <SheetRow title="Open" onPress={() => { close(); onOpen(); }} /> : null}
                     {c.running && c.canSend ? <SheetRow title="Stop this run" danger onPress={() => { close(); e.cancel(c.key); }} /> : null}
+                    {c.canResume && onResume ? <SheetRow title="Resume on a page" detail="Its tab has closed: pick the run back up on another" onPress={() => { close(); onResume(); }} /> : null}
                     {c.canPeek ? <SheetRow title={peeking ? "Capturing…" : "Look at the page"} detail="The page this run is on, as it is now" disabled={peeking} onPress={() => void peek()} /> : null}
                     {c.canPin ? <SheetRow title={c.pinned ? "Unpin" : "Pin"} detail={c.pinned ? undefined : "Kept on the runtime, never expired or evicted"} onPress={() => void pin()} /> : null}
                     {c.canRename ? <SheetRow title="Rename" onPress={() => setNaming(c.title)} /> : null}
