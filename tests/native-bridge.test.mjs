@@ -98,3 +98,79 @@ test("every message the app can send passes the page's own check", () => {
     ];
     for (const m of sent) assert.deepEqual(B.parseToWeb(B.encode(m)), m, m.type);
 });
+
+const { pairingBridge, pairingInfo } = await import("../src/native/pairing-bridge.ts");
+const { fakePairing } = await import("../src/pairing/fake-pairing.ts");
+
+/** A bridge over a fake pairing, collecting what it posts; `call` sends one message and resolves once it is answered. */
+function pairingRig(fake) {
+    const out = [];
+    const handle = pairingBridge(fake, (m) => out.push(m));
+    let n = 0;
+    const call = async (call, args) => {
+        const id = `p${++n}`;
+        await handle({ type: "pairing", id, call, ...(args ? { args } : {}) });
+        return out.find((m) => m.type === "pairingResult" && m.id === id);
+    };
+    return { out, call };
+}
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
+test("pairing over the bridge: joining shows a code, and the other device's answer arrives as pairingDone", async () => {
+    const fake = fakePairing({ joinsAs: "client", defaultLabel: "Phone", membership: null });
+    const { out, call } = pairingRig(fake);
+    assert.equal((await call("load")).value, null);
+    const r = await call("beginOffer", { hubUrl: "wss://hub", label: "Phone" });
+    assert.equal(r.ok, true);
+    assert.match(r.value.offer, /^o\d+$/);
+    assert.equal(r.value.code, fake.waiting.code, "the code the other device types");
+    assert.equal(r.value.fingerprint, fake.waiting.fingerprint);
+    fake.answer("Phone");
+    await tick(); await tick();
+    assert.deepEqual(out.filter((m) => m.type === "pairingDone"), [{ type: "pairingDone", offer: r.value.offer, ok: true }]);
+    // A join that fails says why, in the page's words.
+    const r2 = await call("beginOffer", { hubUrl: "wss://hub", label: "Phone" });
+    fake.fail("timed-out");
+    await tick(); await tick();
+    assert.deepEqual(out.filter((m) => m.type === "pairingDone").at(-1), { type: "pairingDone", offer: r2.value.offer, ok: false, error: "Nobody answered the code in time. Start again for a new code." });
+});
+
+test("pairing another device: look its code up, confirm by token, and nothing library-internal crosses", async () => {
+    const fake = fakePairing({ membership: { label: "Phone", role: "client", hubUrl: "wss://hub", fingerprint: "5ab0e19c44d2", root: true, mayPair: true }, grantable: null });
+    fake.addOffer("7K3M Q9XD", { label: "Kitchen tablet", role: "client", fingerprint: "a41c9e07d3b2", ref: { secret: "library object" } });
+    const { call } = pairingRig(fake);
+    const missing = await call("lookupOffer", { code: "ZZZZ ZZZZ" });
+    assert.equal(missing.ok, false);
+    assert.match(missing.error, /No device is waiting under that code/);
+    const f = await call("lookupOffer", { code: "7k3m-q9xd" });
+    assert.equal(f.ok, true);
+    assert.equal(f.value.label, "Kitchen tablet");
+    assert.equal("ref" in f.value, false, "the library's reference stays on the page");
+    assert.match(f.value.token, /^f\d+$/);
+    const bad = await call("confirmOffer", { token: f.value.token, grant: { scopes: "view", mayPair: false, mayRevoke: false, validityMs: 1 } });
+    assert.equal(bad.ok, false);
+    assert.match(bad.error, /not one this page can give/);
+    const ok = await call("confirmOffer", { token: f.value.token, grant: { ...f.value.grant, scopes: ["view"] } });
+    assert.equal(ok.ok, true);
+    assert.deepEqual(fake.confirmed.map((c) => [c.label, c.grant.scopes]), [["Kitchen tablet", ["view"]]]);
+    const again = await call("confirmOffer", { token: f.value.token, grant: f.value.grant });
+    assert.match(again.error, /no longer waiting/, "a token is used once");
+});
+
+test("what the app is told this device can do about accounts", () => {
+    const info = pairingInfo(fakePairing({ joinsAs: "client", defaultLabel: "Phone", defaultHubUrl: "wss://hub", rootKeptIn: "this app", devices: [] }));
+    assert.deepEqual(info, { canCreate: true, joinsAs: "client", defaultLabel: "Phone", defaultHubUrl: "wss://hub", rootKeptIn: "this app", canScan: true, devices: true });
+});
+
+test("the pairing messages pass the other side's check", () => {
+    for (const m of [
+        { type: "pairingInfo", info: { canCreate: true, joinsAs: "client", defaultLabel: "Phone", defaultHubUrl: "wss://hub", canScan: true, devices: true } },
+        { type: "pairingResult", id: "p1", ok: true, value: { offer: "o1" } },
+        { type: "pairingResult", id: "p2", ok: false, error: "No device is waiting under that code." },
+        { type: "pairingDone", offer: "o1", ok: true },
+    ]) assert.deepEqual(B.parseToNative(B.encode(m)), m, m.type);
+    for (const m of [
+        { type: "pairing", id: "p1", call: "load" },
+        { type: "pairing", id: "p2", call: "confirmOffer", args: { token: "f1", grant: { scopes: ["view"], mayPair: false, mayRevoke: false, validityMs: 1 } } },
+    ]) assert.deepEqual(B.parseToWeb(B.encode(m)), m, m.type);
+});

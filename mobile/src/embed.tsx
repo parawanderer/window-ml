@@ -13,7 +13,7 @@ import * as Haptics from "expo-haptics";
 import * as Sharing from "expo-sharing";
 import { Directory, File, Paths } from "expo-file-system";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
-import { encode, parseToNative, type BridgeAccount, type SessionChrome, type ToWeb } from "../../src/native/bridge";
+import { encode, parseToNative, type BridgeAccount, type PairingCall, type PairingInfo, type SessionChrome, type ToWeb } from "../../src/native/bridge";
 import type { HostStatus, ModelChoice, RuntimeInfo, SessionSummary } from "../../src/session-host";
 import { EMBED } from "./generated/embed";
 
@@ -32,7 +32,12 @@ export interface EmbedState {
     notice: { id: number; text: string; tone: "error" | "info" } | null;
     /** the page is the demo world (a fake host), not this device's account */
     demo: boolean;
+    /** what this device can do about accounts; null until the page says */
+    pairingInfo: PairingInfo | null;
 }
+
+/** A pairing call's answer: its value, or the reason in the page's words. */
+export type PairingAnswer<T = unknown> = { ok: true; value: T } | { ok: false; error: string };
 
 /** What the screens can do. */
 export interface EmbedApi extends EmbedState {
@@ -50,6 +55,10 @@ export interface EmbedApi extends EmbedState {
     resume(): void;
     /** Tell the page the theme and insets. */
     theme(msg: Extract<ToWeb, { type: "theme" }>["theme"]): void;
+    /** Call one of the page's pairing methods (src/native/pairing-bridge.ts). */
+    pairing<T = unknown>(call: PairingCall, args?: Record<string, unknown>): Promise<PairingAnswer<T>>;
+    /** Hear when an offer this device made is answered or fails. Returns the unsubscribe. */
+    onPairingDone(cb: (d: { offer: string; ok: boolean; error?: string }) => void): () => void;
 }
 
 const EmbedContext = createContext<EmbedApi | null>(null);
@@ -98,8 +107,10 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
     const uri = useMemo(writePage, []);
     const ref = useRef<WebViewHandle>(null);
     const [state, setState] = useState<EmbedState>({
-        ready: false, account: undefined, status: { state: "connecting" }, runtimes: [], sessions: [], chrome: null, notice: null, demo: EMBED.demo,
+        ready: false, account: undefined, status: { state: "connecting" }, runtimes: [], sessions: [], chrome: null, notice: null, demo: EMBED.demo, pairingInfo: null,
     });
+    const pendingPairing = useRef(new Map<string, (a: PairingAnswer) => void>());
+    const pairingDone = useRef(new Set<(d: { offer: string; ok: boolean; error?: string }) => void>());
     const pendingSent = useRef(new Map<string, (r: { ok: boolean; error?: string; session?: string }) => void>());
     const pendingModels = useRef(new Map<string, ((m: ModelChoice[] | null) => void)[]>());
     const queue = useRef<string[]>([]);
@@ -128,6 +139,14 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
             case "notice": setState((s) => ({ ...s, notice: { id: Date.now(), text: m.text, tone: m.tone } })); return;
             case "sent": { const r = pendingSent.current.get(m.id); pendingSent.current.delete(m.id); r?.(m); return; }
             case "models": { const rs = pendingModels.current.get(m.runtime) ?? []; pendingModels.current.delete(m.runtime); rs.forEach((r) => r(m.models)); return; }
+            case "pairingInfo": setState((s) => ({ ...s, pairingInfo: m.info })); return;
+            case "pairingResult": {
+                const r = pendingPairing.current.get(m.id);
+                pendingPairing.current.delete(m.id);
+                r?.(m.ok ? { ok: true, value: m.value } : { ok: false, error: m.error ?? "It did not complete. Try again." });
+                return;
+            }
+            case "pairingDone": for (const cb of pairingDone.current) cb(m); return;
             case "copyText": void Clipboard.setStringAsync(m.text).then(() => Haptics.selectionAsync()); return;
             case "openLink": void Linking.openURL(m.url); return;
             case "openImage": void Share.share({ url: m.src }); return;
@@ -167,6 +186,14 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
         }),
         resume: () => post({ type: "resume" }),
         theme: (theme) => post({ type: "theme", theme }),
+        pairing: <T,>(call: PairingCall, args?: Record<string, unknown>) => new Promise<PairingAnswer<T>>((resolve) => {
+            const id = nextId();
+            // A join's lookups and confirmations talk to the hub: a minute is generous, and a screen never waits forever.
+            const timer = setTimeout(() => { pendingPairing.current.delete(id); resolve({ ok: false, error: "No answer from the page in a minute. Try again." }); }, 60_000);
+            pendingPairing.current.set(id, (a) => { clearTimeout(timer); resolve(a as PairingAnswer<T>); });
+            post({ type: "pairing", id, call, ...(args ? { args } : {}) });
+        }),
+        onPairingDone: (cb) => { pairingDone.current.add(cb); return () => { pairingDone.current.delete(cb); }; },
     }), [state, post, request]);
 
     return (

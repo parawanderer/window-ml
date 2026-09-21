@@ -47,6 +47,23 @@ export interface SessionChrome {
 /** The account this device is in, as the app shows it; null before one. */
 export interface BridgeAccount { label: string; hubUrl: string; root: boolean }
 
+/** The pairing calls the app can make, one per method of the page's `PairingApi` (src/pairing/api.ts), plus cancelling an
+ *  offer. What crosses is plain data: a found offer and an offer in progress stay on the page, and cross as tokens. */
+export type PairingCall = "load" | "createAccount" | "beginOffer" | "cancelOffer" | "lookupOffer" | "lookupScanned" | "confirmOffer" | "devices" | "revoke" | "leave";
+
+/** What this device can do about accounts, from its `PairingApi`: shown by the app's first-run and pairing screens. */
+export interface PairingInfo {
+    canCreate: boolean;
+    joinsAs: string;
+    defaultLabel: string;
+    defaultHubUrl: string;
+    rootKeptIn?: string;
+    /** a scanned QR code can be checked (`lookupScanned`) */
+    canScan: boolean;
+    /** the device list, revoking and leaving are offered */
+    devices: boolean;
+}
+
 /** Page → app. */
 export type ToNative =
     | { type: "ready"; bundle: string }
@@ -60,7 +77,12 @@ export type ToNative =
     | { type: "saveFile"; name: string; mime: string; base64: string }
     | { type: "openImage"; src: string }
     | { type: "openLink"; url: string }
-    | { type: "copyText"; text: string };
+    | { type: "copyText"; text: string }
+    | { type: "pairingInfo"; info: PairingInfo }
+    /** the answer to a `pairing` call: its value, or the reason it failed in the page's words (pairingProblem) */
+    | { type: "pairingResult"; id: string; ok: boolean; value?: unknown; error?: string }
+    /** an offer this device made was answered (paired) or failed; `offer` is the token `beginOffer` returned */
+    | { type: "pairingDone"; offer: string; ok: boolean; error?: string };
 
 /** App → page. */
 export type ToWeb =
@@ -74,7 +96,8 @@ export type ToWeb =
     | { type: "answer"; key: string; seq: number; decision: boolean; persist?: boolean }
     | { type: "switchModel"; key: string; model: string }
     | { type: "models"; runtime: string }
-    | { type: "resume" };
+    | { type: "resume" }
+    | { type: "pairing"; id: string; call: PairingCall; args?: Record<string, unknown> };
 
 type Shape = Record<string, "string" | "number" | "boolean" | "object" | "array" | "string?" | "number?" | "boolean?" | "object?" | "array?" | "object|null" | "array|null">;
 
@@ -92,6 +115,9 @@ const TO_NATIVE: Record<ToNative["type"], Shape> = {
     openImage: { src: "string" },
     openLink: { url: "string" },
     copyText: { text: "string" },
+    pairingInfo: { info: "object" },
+    pairingResult: { id: "string", ok: "boolean", error: "string?" },
+    pairingDone: { offer: "string", ok: "boolean", error: "string?" },
 };
 const TO_WEB: Record<ToWeb["type"], Shape> = {
     theme: { theme: "object" },
@@ -105,6 +131,7 @@ const TO_WEB: Record<ToWeb["type"], Shape> = {
     switchModel: { key: "string", model: "string" },
     models: { runtime: "string" },
     resume: {},
+    pairing: { id: "string", call: "string", args: "object?" },
 };
 
 /** Does `v` have the kind a field spec asks for? */

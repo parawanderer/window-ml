@@ -3,7 +3,7 @@
 // choice before the first frame, and tells the page the theme whenever it changes.
 
 import { useEffect, useMemo, useState } from "react";
-import { StatusBar, Text, View } from "react-native";
+import { StatusBar, View } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
@@ -18,7 +18,9 @@ import type { Routes } from "./src/routes";
 import { ListScreen } from "./src/screens/ListScreen";
 import { NewChatScreen } from "./src/screens/NewChatScreen";
 import { SettingsScreen } from "./src/screens/SettingsScreen";
-import { SIZE, ThemeChoiceContext, usePalette, type ThemeChoice } from "./src/theme";
+import { CreateScreen, JoinScreen, WelcomeScreen } from "./src/screens/AccountScreens";
+import { DevicesScreen, PairScreen } from "./src/screens/DeviceScreens";
+import { ThemeChoiceContext, usePalette, type ThemeChoice } from "./src/theme";
 import { Toast } from "./src/ui";
 
 const Stack = createNativeStackNavigator<Routes>();
@@ -68,32 +70,25 @@ function Shell() {
     return (
         <View style={{ flex: 1, backgroundColor: p.bg }}>
             <StatusBar barStyle={p.scheme === "dark" ? "light-content" : "dark-content"} />
-            {firstRun ? <FirstRun /> : (
-                <NavigationContainer theme={{ ...nav, colors: { ...nav.colors, background: p.bg, card: p.bg, text: p.fg, border: p.border, primary: p.accent } }}>
-                    <Stack.Navigator screenOptions={{ headerShown: false, animation: "default" }}>
+            <NavigationContainer theme={{ ...nav, colors: { ...nav.colors, background: p.bg, card: p.bg, text: p.fg, border: p.border, primary: p.accent } }}>
+                {/* Before an account, only the ways into one; once the page reports an account, the app. Switching the set
+                    of screens (not navigating) is what makes a join land on the list with no way back to "Join". */}
+                <Stack.Navigator screenOptions={{ headerShown: false, animation: "default" }}>
+                    {firstRun ? <>
+                        <Stack.Screen name="Welcome" component={WelcomeScreen} />
+                        <Stack.Screen name="Join" component={JoinScreen} />
+                        <Stack.Screen name="Create" component={CreateScreen} />
+                    </> : <>
                         <Stack.Screen name="List" component={ListScreen} />
                         <Stack.Screen name="NewChat" component={NewChatScreen} />
                         <Stack.Screen name="Settings" component={SettingsScreen} />
-                    </Stack.Navigator>
-                </NavigationContainer>
-            )}
+                        <Stack.Screen name="Devices" component={DevicesScreen} />
+                        <Stack.Screen name="Pair" component={PairScreen} />
+                    </>}
+                </Stack.Navigator>
+            </NavigationContainer>
             <SessionLayer />
             <Toast notice={e.notice} bottom={insets.bottom + 90} />
-        </View>
-    );
-}
-
-/** Before an account: what this app is. Pairing this phone arrives as its own screens. */
-function FirstRun() {
-    const p = usePalette();
-    const insets = useSafeAreaInsets();
-    return (
-        <View style={{ flex: 1, paddingTop: insets.top + 48, paddingHorizontal: SIZE.gutter + 8 }}>
-            <Text style={{ fontSize: 32, fontWeight: "700", color: p.fg, letterSpacing: -0.4 }}>window.ml</Text>
-            <Text style={{ fontSize: 17, lineHeight: 25, color: p.fgDim, marginTop: 12 }}>
-                A remote for your browsers: their sessions, their runs, their approvals, from here. Nothing runs on this device.
-            </Text>
-            <Text style={{ fontSize: 15, lineHeight: 22, color: p.fgFaint, marginTop: 28 }}>This phone is in no account yet.</Text>
         </View>
     );
 }

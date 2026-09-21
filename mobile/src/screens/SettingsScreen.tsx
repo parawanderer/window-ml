@@ -3,10 +3,12 @@
 // it may do on each. Pairing and the device list arrive as screens of their own.
 
 import { useContext } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
-import { Check, ChevronLeft } from "lucide-react-native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { Check, ChevronLeft, ChevronRight } from "lucide-react-native";
+import type { Routes } from "../routes";
 import { useEmbed } from "../embed";
 import { SIZE, ThemeChoiceContext, usePalette, type ThemeChoice } from "../theme";
 import { Dot, IconButton } from "../ui";
@@ -28,9 +30,12 @@ function access(scopes: string[]): string {
 export function SettingsScreen() {
     const p = usePalette();
     const insets = useSafeAreaInsets();
-    const nav = useNavigation();
+    const nav = useNavigation<NativeStackNavigationProp<Routes>>();
     const e = useEmbed();
     const { choice, setChoice } = useContext(ThemeChoiceContext);
+    // Leaving forgets this phone's membership (never a root: a phone holding one keeps it) and starts over at Welcome.
+    const leave = () => Alert.alert("Leave the account?", "This phone stops reaching your browsers. To come back, pair it again from a device in the account.",
+        [{ text: "Stay", style: "cancel" }, { text: "Leave", style: "destructive", onPress: () => { void e.pairing("leave"); } }]);
     return (
         <View style={[s.screen, { backgroundColor: p.scheme === "dark" ? p.bg : p.panel, paddingTop: insets.top }]}>
             <View style={s.bar}>
@@ -59,6 +64,19 @@ export function SettingsScreen() {
                         <Text style={[s.rowText, { color: p.fg }]}>Hub</Text>
                         <Text style={{ color: p.fgDim, fontSize: SIZE.small }}>{e.status.state === "online" ? "connected" : e.status.state === "connecting" ? "connecting…" : "offline"}</Text>
                     </View>
+                    {e.pairingInfo?.devices ? (
+                        <Pressable accessibilityRole="button" onPress={() => nav.navigate("Devices")}
+                            style={({ pressed }) => [s.row, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: p.border }, pressed && { backgroundColor: p.panel2 }]}>
+                            <Text style={[s.rowText, { color: p.fg }]}>Devices</Text>
+                            <ChevronRight size={20} color={p.fgFaint} />
+                        </Pressable>
+                    ) : null}
+                    {e.account && !e.account.root && !e.demo ? (
+                        <Pressable accessibilityRole="button" onPress={leave}
+                            style={({ pressed }) => [s.row, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: p.border }, pressed && { backgroundColor: p.panel2 }]}>
+                            <Text style={[s.rowText, { color: p.err }]}>Leave the account</Text>
+                        </Pressable>
+                    ) : null}
                 </View>
 
                 <Text style={[s.group, { color: p.fgDim }]}>Runtimes</Text>

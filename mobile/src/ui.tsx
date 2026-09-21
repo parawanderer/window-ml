@@ -3,7 +3,7 @@
 // menu opens in. Each takes the palette, so light and dark come from one place (theme.ts).
 
 import { forwardRef, useEffect, useMemo, useRef, type ReactNode } from "react";
-import { Animated, Platform, Pressable, StyleSheet, Text, View, type PressableProps, type StyleProp, type ViewStyle } from "react-native";
+import { ActivityIndicator, Animated, Platform, Pressable, StyleSheet, Text, TextInput, View, type PressableProps, type StyleProp, type TextInputProps, type ViewStyle } from "react-native";
 import * as Haptics from "expo-haptics";
 import { BottomSheetBackdrop, BottomSheetModal, BottomSheetScrollView, type BottomSheetBackdropProps } from "@gorhom/bottom-sheet";
 import { Check, ChevronDown } from "lucide-react-native";
@@ -107,6 +107,39 @@ export function SheetRow({ title, detail, chosen, disabled, onPress, mono, dange
     );
 }
 
+/** A text button in the page's pill shape (`.pair-card .btn`): `primary` is filled, the rest outlined. `busy` shows a
+ *  spinner and refuses taps, so an action that talks to the hub cannot be sent twice. */
+export function Button({ title, onPress, primary, danger, disabled, busy, small }: { title: string; onPress?: () => void; primary?: boolean; danger?: boolean; disabled?: boolean; busy?: boolean; small?: boolean }) {
+    const p = usePalette();
+    const off = disabled || busy;
+    const fg = primary ? p.bg : danger ? p.err : p.fg;
+    return (
+        <Pressable accessibilityRole="button" accessibilityState={{ disabled: !!off, busy: !!busy }} disabled={off} onPress={onPress}
+            style={({ pressed }) => [s.button, small && s.buttonSmall, primary ? { backgroundColor: off ? p.fgFaint : p.fg } : { borderColor: p.border, borderWidth: 1 }, pressed && { opacity: 0.8 }]}>
+            {busy ? <ActivityIndicator size="small" color={fg} /> : <Text style={[s.buttonText, small && s.buttonTextSmall, { color: fg }]}>{title}</Text>}
+        </Pressable>
+    );
+}
+
+/** A labelled text field: the label above, the box a raised panel, a hint under it when there is one. */
+export function Field({ label, hint, mono, ...input }: { label: string; hint?: string; mono?: boolean } & TextInputProps) {
+    const p = usePalette();
+    return (
+        <View style={s.field}>
+            <Text style={[s.fieldLabel, { color: p.fgDim }]}>{label}</Text>
+            <TextInput placeholderTextColor={p.fgFaint} autoCorrect={false} {...input} accessibilityLabel={label}
+                style={[s.fieldInput, { color: p.fg, backgroundColor: p.panel, borderColor: p.border }, mono && s.mono]} />
+            {hint ? <Text style={[s.fieldHint, { color: p.fgFaint }]}>{hint}</Text> : null}
+        </View>
+    );
+}
+
+/** A rounded card grouping what belongs together (`.pair-box` on the page). */
+export function Card({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
+    const p = usePalette();
+    return <View style={[s.card, { backgroundColor: p.scheme === "dark" ? p.panel : p.bg, borderColor: p.border }, style]}>{children}</View>;
+}
+
 /** A thin rule between groups. */
 export function Rule({ p }: { p: Palette }) {
     return <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: p.border, marginVertical: 6 }} />;
@@ -141,4 +174,22 @@ const s = StyleSheet.create({
     sheetRowTitle: { fontSize: SIZE.text },
     // A row's second line.
     sheetRowDetail: { fontSize: SIZE.small, marginTop: 2, lineHeight: 18 },
+    // A text button: a 48pt capsule, its text centred.
+    button: { height: 48, borderRadius: 24, paddingHorizontal: 22, alignItems: "center", justifyContent: "center" },
+    // A button's text.
+    buttonText: { fontSize: SIZE.text, fontWeight: "600" },
+    // A small button: an action beside something, not the point of the screen. Still a 36pt target.
+    buttonSmall: { height: 36, borderRadius: 18, paddingHorizontal: 16 },
+    // A small button's text.
+    buttonTextSmall: { fontSize: 14 },
+    // A field: its label, box and hint stacked.
+    field: { gap: 6 },
+    // A field's label, above the box.
+    fieldLabel: { fontSize: SIZE.small, fontWeight: "600" },
+    // A field's box: 48pt, rounded, raised out of the canvas.
+    fieldInput: { minHeight: 48, borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: 14, fontSize: SIZE.text },
+    // What to put in a field, under it.
+    fieldHint: { fontSize: 12.5, lineHeight: 17 },
+    // A card: a rounded box with a hairline edge, padded.
+    card: { borderRadius: SIZE.radius + 2, borderWidth: StyleSheet.hairlineWidth, padding: SIZE.gutter, gap: 14 },
 });
