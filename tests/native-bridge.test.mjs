@@ -99,6 +99,8 @@ test("every message the app can send passes the page's own check", () => {
         { type: "models", runtime: "laptop" },
         { type: "resume" },
         { type: "showApproval" },
+        { type: "search", id: "q1", query: "fare" },
+        { type: "search", id: "q1", query: "fare", more: true },
     ];
     for (const m of sent) assert.deepEqual(B.parseToWeb(B.encode(m)), m, m.type);
 });
@@ -172,6 +174,7 @@ test("the pairing messages pass the other side's check", () => {
         { type: "pairingResult", id: "p1", ok: true, value: { offer: "o1" } },
         { type: "pairingResult", id: "p2", ok: false, error: "No device is waiting under that code." },
         { type: "pairingDone", offer: "o1", ok: true },
+        { type: "searchResult", id: "q1", rows: [], more: false },
     ]) assert.deepEqual(B.parseToNative(B.encode(m)), m, m.type);
     for (const m of [
         { type: "pairing", id: "p1", call: "load" },

@@ -7,7 +7,7 @@ import { Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from "
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { Bot, Settings, SquarePen } from "lucide-react-native";
+import { Bot, Search, Settings, SquarePen } from "lucide-react-native";
 import type { SessionSummary } from "../../../src/session-host";
 import { useEmbed } from "../embed";
 import { ago, needsYou, sections, STATUS_LABEL, STATUS_TONE } from "../format";
@@ -16,6 +16,8 @@ import { SIZE, usePalette } from "../theme";
 import { Badge, Dot, IconButton } from "../ui";
 import type { Routes } from "../routes";
 
+// The list reaches back a month; everything older is on the search screen, which the footer row under each runtime
+// opens with nothing typed. That row used to be plain text, which named what you could not get to.
 /** The home screen. */
 export function ListScreen() {
     const p = usePalette();
@@ -45,6 +47,7 @@ export function ListScreen() {
             <View style={s.bar}>
                 <Text style={[s.title, { color: p.fg }]} accessibilityRole="header">Sessions</Text>
                 <View style={{ flex: 1 }} />
+                <IconButton label="Search sessions" icon={(c) => <Search size={22} color={c} />} onPress={() => nav.navigate("Search")} />
                 <IconButton label="New chat" icon={(c) => <SquarePen size={22} color={c} />} onPress={() => nav.navigate("NewChat")} />
                 <IconButton label="Settings" icon={(c) => <Settings size={22} color={c} />} onPress={() => nav.navigate("Settings")} />
             </View>
@@ -76,8 +79,12 @@ export function ListScreen() {
                         {!section.runtime.online ? <Text style={{ color: p.fgFaint, fontSize: 12.5 }}>offline</Text> : null}
                     </Pressable>
                 )}
-                renderSectionFooter={({ section }) => section.runtime && section.older && !folded.has(section.runtime.id)
-                    ? <Text style={[s.older, { color: p.fgFaint }]}>{section.older} older on this runtime</Text> : null}
+                renderSectionFooter={({ section }) => section.runtime && section.older && !folded.has(section.runtime.id) ? (
+                    <Pressable accessibilityRole="button" onPress={() => nav.navigate("Search")}
+                        style={({ pressed }) => [pressed && { backgroundColor: p.panel }]}>
+                        <Text style={[s.older, { color: p.fgDim }]}>{section.older} older on this runtime</Text>
+                    </Pressable>
+                ) : null}
                 renderItem={({ item, section }) => (
                     // A pinned row opens ON its approval: that is what it is pinned for. It also names its runtime,
                     // since up here it is out of its machine's section.

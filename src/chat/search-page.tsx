@@ -50,6 +50,9 @@ interface Cursor { before?: number; more: boolean; loading: boolean }
 /** The search page. `narrow` gives it a back arrow, since on a phone it is a screen of its own. */
 export function SearchPage({ store, narrow }: { store: ChatStore; narrow: boolean }) {
     const [query, setQuery] = useState("");
+    // Which device to look on. Typing a runtime's name narrows too (`matches` reads it), but only by accident: a
+    // session called "laptop benchmark" answers to it as well, and nothing says which devices there are to choose from.
+    const [device, setDevice] = useState<RuntimeId | null>(null);
     const [shown, setShown] = useState(PAGE);
     const box = useRef<HTMLInputElement>(null);
     const sentinel = useRef<HTMLDivElement>(null);
@@ -64,12 +67,12 @@ export function SearchPage({ store, narrow }: { store: ChatStore; narrow: boolea
     const gen = useRef(0);
     useEffect(() => { const t = setTimeout(() => setSettledQ(q), q ? 250 : 0); return () => clearTimeout(t); }, [q]);
     const command = settledQ ? "sessions.search" : "sessions.list";
-    const askable = runtimes.filter((rt) => rt.online && mayCommand(rt, command));
+    const askable = runtimes.filter((rt) => rt.online && (!device || rt.id === device) && mayCommand(rt, command));
     useEffect(() => {
         gen.current++;
         setFetched(new Map());
         setCursors(new Map(askable.map((rt) => [rt.id, { more: true, loading: false }])));
-    }, [settledQ, askable.map((r) => r.id).join(",")]);
+    }, [settledQ, device, askable.map((r) => r.id).join(",")]);
     const loadMore = () => {
         const g = gen.current;
         for (const [id, cur] of cursors) {
@@ -90,8 +93,8 @@ export function SearchPage({ store, narrow }: { store: ChatStore; narrow: boolea
     // The snapshot, filtered here, then whatever the runtimes answered: a fetched row wins, since it knows whether the
     // session is archived and why it matched. Newest first across every runtime.
     const merged = new Map<string, ListedSession>();
-    for (const s of store.listed()) if (rtOf.has(s.id.runtime) && matches(s, rtOf.get(s.id.runtime), q)) merged.set(`${s.id.runtime}:${s.id.hash}`, s);
-    if (settledQ === q) for (const [k, row] of fetched) if (rtOf.has(row.id.runtime)) merged.set(k, row);
+    for (const s of store.listed()) if (rtOf.has(s.id.runtime) && (!device || s.id.runtime === device) && matches(s, rtOf.get(s.id.runtime), q)) merged.set(`${s.id.runtime}:${s.id.hash}`, s);
+    if (settledQ === q) for (const [k, row] of fetched) if (rtOf.has(row.id.runtime) && (!device || row.id.runtime === device)) merged.set(k, row);
     const all = [...merged.values()].sort((a, b) => b.lastTs - a.lastTs);
     const anyMore = [...cursors.values()].some((c) => c.more);
     const loading = [...cursors.values()].some((c) => c.loading);
@@ -136,8 +139,18 @@ export function SearchPage({ store, narrow }: { store: ChatStore; narrow: boolea
                             onInput={(e: any) => setQuery(e.target.value)}
                             onKeyDown={(e: KeyboardEvent) => { if (e.key === "Escape") { if (query) setQuery(""); else mainView.value = null; } }} />
                     </label>
+                    {runtimes.length > 1 ? (
+                        <div class="chat-search-devices" role="group" aria-label="Which device to search">
+                            <button class={`chat-chip${device === null ? " on" : ""}`} aria-pressed={device === null} onClick={() => setDevice(null)}>All devices</button>
+                            {runtimes.map((rt) => (
+                                <button key={rt.id} class={`chat-chip${device === rt.id ? " on" : ""}`} aria-pressed={device === rt.id} onClick={() => setDevice(rt.id)}>{rt.name}</button>
+                            ))}
+                        </div>
+                    ) : null}
                     <div class="chat-search-label">{q ? `${all.length}${anyMore ? "+" : ""} match${all.length === 1 && !anyMore ? "" : "es"}` : "Recent"}</div>
-                    {q && !all.length && !loading && settledQ === q ? <div class="chat-search-empty">Nothing matches “{truncate(query.trim(), 40)}”.</div> : null}
+                    {q && !all.length && !loading && settledQ === q
+                        ? <div class="chat-search-empty">Nothing{device ? ` on ${rtOf.get(device)?.name ?? "that device"}` : ""} matches “{truncate(query.trim(), 40)}”.</div>
+                        : null}
                     <ul class="chat-search-list">
                         {all.slice(0, shown).map((s) => {
                             const key = `${s.id.runtime}:${s.id.hash}`;
@@ -151,7 +164,7 @@ export function SearchPage({ store, narrow }: { store: ChatStore; narrow: boolea
                                             {s.match ? <Snippet text={s.match.snippet} /> : null}
                                         </span>
                                         {s.archived ? <span class="chat-chip chat-search-arch">{opening === key ? "restoring…" : "archived"}</span> : null}
-                                        {many ? <span class="chat-search-rt">{rt?.name}</span> : null}
+                                        {many && !device ? <span class="chat-search-rt">{rt?.name}</span> : null}
                                         <span class="chat-search-date">{shortDate(s.lastTs - (rt?.clockOffsetMs ?? 0))}</span>
                                     </button>
                                 </li>

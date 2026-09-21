@@ -14,7 +14,7 @@ import * as Sharing from "expo-sharing";
 import { Directory, File, Paths } from "expo-file-system";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { encode, parseToNative, type BridgeAccount, type PairingCall, type PairingInfo, type SessionChrome, type ToWeb } from "../../src/native/bridge";
-import type { HostStatus, ModelChoice, RuntimeInfo, SessionSummary } from "../../src/session-host";
+import type { HostStatus, ListedSession, ModelChoice, RuntimeInfo, SessionSummary } from "../../src/session-host";
 import { EMBED } from "./generated/embed";
 import { answerVault } from "./vault";
 
@@ -57,6 +57,12 @@ export interface EmbedApi extends EmbedState {
     resume(): void;
     /** Bring the open session's pending approval on screen: the card in the transcript is what answers it. */
     showApproval(): void;
+    /**
+     * Search history, on one runtime or (null) on all of them. `onPage` is called with each page as it arrives (what
+     * the page already holds comes first, then what the runtimes answer); `more()` asks for the next page, and `stop()`
+     * ends it. An empty query lists everything, newest first, which is how the list's older sessions are reached.
+     */
+    search(query: string, runtime: string | null, onPage: (rows: ListedSession[], more: boolean, error?: string) => void): { more(): void; stop(): void };
     /** Tell the page the theme and insets. */
     theme(msg: Extract<ToWeb, { type: "theme" }>["theme"]): void;
     /** Call one of the page's pairing methods (src/native/pairing-bridge.ts). */
@@ -129,6 +135,7 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
     const pairingDone = useRef(new Set<(d: { offer: string; ok: boolean; error?: string }) => void>());
     const pendingSent = useRef(new Map<string, (r: { ok: boolean; error?: string; session?: string }) => void>());
     const pendingModels = useRef(new Map<string, ((m: ModelChoice[] | null) => void)[]>());
+    const searches = useRef(new Map<string, (rows: ListedSession[], more: boolean, error?: string) => void>());
     const queue = useRef<string[]>([]);
     const readyRef = useRef(false);
 
@@ -160,6 +167,7 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
             case "notice": setState((s) => ({ ...s, notice: { id: Date.now(), text: m.text, tone: m.tone } })); return;
             case "sent": { const r = pendingSent.current.get(m.id); pendingSent.current.delete(m.id); r?.(m); return; }
             case "models": { const rs = pendingModels.current.get(m.runtime) ?? []; pendingModels.current.delete(m.runtime); rs.forEach((r) => r(m.models)); return; }
+            case "searchResult": { searches.current.get(m.id)?.(m.rows, m.more, m.error); return; }
             case "pairingInfo": setState((s) => ({ ...s, pairingInfo: m.info })); return;
             case "pairingResult": {
                 const r = pendingPairing.current.get(m.id);
@@ -207,6 +215,16 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
         }),
         resume: () => post({ type: "resume" }),
         showApproval: () => post({ type: "showApproval" }),
+        search: (query, runtime, onPage) => {
+            const id = nextId();
+            searches.current.set(id, onPage);
+            const where = runtime ? { runtime } : {};
+            post({ type: "search", id, query, ...where });
+            return {
+                more: () => post({ type: "search", id, query, ...where, more: true }),
+                stop: () => { searches.current.delete(id); },
+            };
+        },
         theme: (theme) => post({ type: "theme", theme }),
         pairing: <T,>(call: PairingCall, args?: Record<string, unknown>) => new Promise<PairingAnswer<T>>((resolve) => {
             const id = nextId();

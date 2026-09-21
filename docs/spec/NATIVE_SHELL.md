@@ -113,6 +113,7 @@ recognise, so an old app and a new bundle (or the reverse) degrade instead of br
 | `openLink` | url | native asks, then opens the system browser (the WebView never navigates) |
 | `copied` | none | native plays a haptic tick |
 | `sent` | the `send` or `start` id, ok / the error | answer to `send` and `start`: the composer drops or restores the held text |
+| `searchResult` | the search's id, a page of rows, whether more follow | answer to `search`: the search screen appends them |
 | `error` | message | a core failure native should show |
 
 **Native to web: what the person did.**
@@ -128,9 +129,15 @@ recognise, so an old app and a new bundle (or the reverse) degrade instead of br
 | `switchModel` | key, model (`session.model`, #230) |
 | `pin`, `delete`, `rename` | key |
 | `models` | runtime: ask for its list |
+| `search` | id, query, `more` for the next page: the page asks every runtime it may (`src/native/search-bridge.ts`) |
+| `showApproval` | bring the open session's approval card on screen; `open` carries `approval` to do it on the way in |
 | `resume` | the app came back to the foreground: `host.reconnect()` now |
 
-**What never crosses:** keys, the keyring, sealed bytes. Native sees what the list shows and nothing a compromised
+The keyring's secrets are the one exception, and they cross the OTHER way: the app holds them in the platform keystore
+and answers the page's `vault` requests with bytes (`docs/dev/hub-client.md` §The keyring in the phone app), because
+WebKit cannot keep an X25519 key in IndexedDB and a phone has a better place for a device key than a WebView.
+
+**What never crosses:** private keys as keys, sealed bytes. Native sees what the list shows and nothing a compromised
 native layer could not already see on screen.
 
 **Hardening the WebView:** it loads the embed bundle from the app's own assets and nothing else (`originWhitelist` is
