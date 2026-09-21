@@ -451,7 +451,12 @@ function EarlierEdge({ store, sessionKey, scroller, rtName, truncated }: {
 }
 
 /** One session: its header, the transcript and, where this device may drive it, the composer. */
-function SessionPane({ store, sessionKey, narrow, extras }: { store: ChatStore; sessionKey: SessionKey; narrow: boolean; extras?: ChatExtras }) {
+/**
+ * One open session: its header, the transcript, and the composer (or why there is none). With `native`, only the
+ * transcript: the phone app's shell draws the header, the waiting bar and the composer itself (src/chat/native-embed.tsx,
+ * docs/spec/NATIVE_SHELL.md), and the title leads the transcript as it does on a wide calm page.
+ */
+export function SessionPane({ store, sessionKey, narrow, extras, native }: { store: ChatStore; sessionKey: SessionKey; narrow: boolean; extras?: ChatExtras; native?: boolean }) {
     const r = rev.value;   // subscribe: the transcript changes by rev, and this pane must re-render with it
     const id = parseSessionKey(sessionKey);
     const summary = store.index.value.get(sessionKey);
@@ -513,7 +518,7 @@ function SessionPane({ store, sessionKey, narrow, extras }: { store: ChatStore; 
     // NO HEADER BAND on a wide calm page: what it held has gone where each part belongs — the title into the
     // transcript (`Lede`), navigation and the page's tools to the left edge (the rail and the gear, `nav.tsx`). A
     // phone keeps the bar: it holds the way back, and there is no room for a rail beside a 390px column.
-    const bare = calm.value && !narrow;
+    const bare = native || (calm.value && !narrow);
     const peek = usePeek(store, id ?? null, rt, sessionKey, summary);
     return (
         <main class="chat-main" data-rev={r} data-session={sessionKey}>
@@ -540,10 +545,10 @@ function SessionPane({ store, sessionKey, narrow, extras }: { store: ChatStore; 
                         {id ? <Hash hash={id.hash} /> : null}
                     </>}
                 </div>}
-            {waiting && (gateAway || !calm.value) ? <button class="chat-waiting" onClick={jumpToApproval}>Waiting on your approval<span class="chat-waiting-go">Review ›</span></button> : null}
+            {!native && waiting && (gateAway || !calm.value) ? <button class="chat-waiting" onClick={jumpToApproval}>Waiting on your approval<span class="chat-waiting-go">Review ›</span></button> : null}
             <div class="view chat-transcript" ref={scroller} onScroll={onScroll}>
                 <div ref={content}>
-                    {bare ? <Lede title={title} rt={rt} summary={summary} id={id} store={store} sessionKey={sessionKey} /> : null}
+                    {bare ? <Lede title={title} rt={rt} summary={summary} id={id} store={store} sessionKey={sessionKey} native={native} /> : null}
                     <EarlierEdge store={store} sessionKey={sessionKey} scroller={scroller} rtName={rt?.name} truncated={truncated} />
                     {s ? <DetailView hash={sessionKey} />
                         : !summary && !rt ? <div class="empty">Session not found.</div>
@@ -553,7 +558,7 @@ function SessionPane({ store, sessionKey, narrow, extras }: { store: ChatStore; 
             {/* A run whose page is gone cannot be sent to, so the composer is replaced by the one thing that WOULD
                 work: picking it up somewhere else. `canResume` is false while its tab is still open, so the two
                 never both offer to continue the same run. */}
-            {canResume && id && rt ? (
+            {native ? null : canResume && id && rt ? (
                 resuming
                     ? <ResumeSession store={store} rt={rt} session={{ runtime: id.runtime, hash: id.hash }}
                         onResumed={() => setResuming(false)} onCancel={() => setResuming(false)} />
@@ -604,15 +609,17 @@ function DeviceViews({ extras, rt }: { extras?: ChatExtras; rt?: RuntimeInfo }) 
  * read. Here it is the transcript's first line, so it is there when you land on the session and gone the moment
  * you scroll, which is exactly how long it is worth the room.
  */
-function Lede({ title, rt, summary, id, store, sessionKey }: {
+function Lede({ title, rt, summary, id, store, sessionKey, native }: {
     title: string; rt?: RuntimeInfo; summary?: SessionSummary; id: SessionId | null; store: ChatStore; sessionKey: SessionKey;
+    /** in the phone app, whose header already holds the model */
+    native?: boolean;
 }) {
     const show = tabFocus(store, rt, summary);
     const peek = usePeek(store, id, rt, sessionKey, summary);
     return (
         <div class="chat-lede">
             <b class="chat-lede-title">{truncate(title, 120)}</b>
-            {summary?.model && rt ? <ModelTop store={store} rt={rt} model={summary.model} sessionKey={sessionKey} summary={summary} /> : null}
+            {!native && summary?.model && rt ? <ModelTop store={store} rt={rt} model={summary.model} sessionKey={sessionKey} summary={summary} /> : null}
             <span class="chat-lede-sub">
                 {rt?.name ?? id?.runtime}
                 {summary?.page ? <> · <PageChip page={summary.page} onShow={show} /></> : null}

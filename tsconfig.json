@@ -38,5 +38,7 @@
     // tests/ is INCLUDED (not type-checked — checkJs is false) purely so the
     // language service indexes it: that's what lets go-to-definition and
     // find-references cross between a test and the .ts source it imports.
-    "exclude": ["node_modules", "dist"]
+    // mobile/ is the React Native shell, with its own tsconfig (React, not Preact); it imports src/ types, never the
+    // reverse. Checked by `npx tsc --noEmit -p mobile`.
+    "exclude": ["node_modules", "dist", "mobile"]
 }

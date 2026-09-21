@@ -30,6 +30,21 @@ node scripts/ios.mjs launch; node scripts/ios.mjs shot; node scripts/ios.mjs flo
 The simulator is the newest iPhone on the newest iOS runtime, or `IOS_DEVICE=<name or UDID>`. No signing, no CocoaPods
 (Capacitor's iOS project uses Swift Package Manager).
 
+## The React Native app (mobile/)
+
+```bash
+node scripts/android.mjs install --next --demo   # page built + synced (demo world), release APK, installed
+node scripts/android.mjs launch --next           # dev.wander.windowml.next
+node scripts/ios.mjs install --next --demo       # the same on the iOS simulator (Release build, pods on first run)
+node scripts/ios.mjs launch --next
+```
+
+On iOS the simulator takes no taps from the command line: drive it with a Maestro flow (`node scripts/ios.mjs flows
+<file>`), tapping by visible text or by accessible name (a pill's is `Model: <id>`, not its text).
+
+Drop `--demo` for the real page (this device's account over the hub). It is a release build: the JS is bundled in, so
+no Metro server is involved and what you see is what ships.
+
 ## Which test layer to reach for
 
 | You want to check | Use |
@@ -53,6 +68,9 @@ Prefer the `@mobile` Playwright layer: it is fast and in CI. The emulator is for
   processes start; the page has rendered by then (the DOM is there). Relaunch and screenshot again before debugging.
   To see the page's console on iOS: `xcrun simctl launch --console-pty booted dev.wander.windowml` prints Capacitor's
   `⚡️ [log]` lines. For an engine question, Playwright's `webkit` runs the same bundle on the desktop.
+- **Gradle only watches `mobile/`.** A change to `src/native/` (the bridge) or the page is invisible to it, and an
+  incremental build reuses the old JS bundle. `install --next` deletes the bundle first; building by hand, delete
+  `mobile/android/app/build/generated/assets/react/release` yourself or the fix "does nothing".
 - **`launch` uses `am start -n dev.wander.windowml/.MainActivity`**: `monkey` exits 251 on a fresh image.
 - **Maestro reads the WebView through Android's accessibility tree**, so assert on visible TEXT, not selectors.
 - **A plugged-in phone works the same**, when it is the only device adb sees (USB debugging on); skip `boot`.

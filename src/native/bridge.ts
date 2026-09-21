@@ -1,0 +1,141 @@
+// bridge.ts — THE NATIVE SHELL'S BRIDGE: every message between the phone app (React Native, `mobile/`) and the page in
+// its WebView (`src/chat/native-embed.tsx`), one union each way, and the check both sides run on whatever arrives
+// (docs/spec/NATIVE_SHELL.md). Pure and dependency-free apart from contract TYPES, so the app imports it as it is.
+//
+// The page OWNS the client (keyring, hub connection, store) and says what there is to show; the app draws everything
+// a person operates and says what they did. Keys and sealed bytes never cross: the app sees what its screens show.
+//
+// A message that fails the check is DROPPED, never half-used: an older app and a newer page (or the reverse) then lose
+// one feature instead of misreading each other. Every message carries the bridge version `v`; a different major is
+// refused whole.
+
+import type { HostStatus, ModelChoice, RuntimeInfo, SessionKind, SessionStatus, SessionSummary } from "../session-host";
+
+/** The bridge's version. Bump it when a message changes shape in a way an older peer would misread. */
+export const BRIDGE_VERSION = 1;
+
+/** A theme the page draws in, as the app's system settings say. */
+export interface BridgeTheme {
+    scheme: "light" | "dark";
+    /** the system text size, 1 = default */
+    fontScale: number;
+    /** safe-area insets the page must keep clear of, in CSS pixels */
+    insets: { top: number; bottom: number; left: number; right: number };
+    reducedMotion: boolean;
+}
+
+/** What the open session's native chrome (header, composer, waiting bar) needs, and nothing the transcript draws. */
+export interface SessionChrome {
+    key: string;
+    kind: SessionKind;
+    title: string;
+    status: SessionStatus;
+    runtime: string;
+    runtimeName: string;
+    model: string | null;
+    pendingApprovals: number;
+    /** the composer can send to it; when false, `readOnly` says why */
+    canSend: boolean;
+    readOnly?: string;
+    /** a run in flight: the composer's button stops it while the box is empty */
+    running: boolean;
+    /** the model pill can switch it; when false, `switchNote` says why */
+    canSwitchModel: boolean;
+    switchNote?: string;
+}
+
+/** The account this device is in, as the app shows it; null before one. */
+export interface BridgeAccount { label: string; hubUrl: string; root: boolean }
+
+/** Page → app. */
+export type ToNative =
+    | { type: "ready"; bundle: string }
+    | { type: "account"; account: BridgeAccount | null }
+    | { type: "status"; status: HostStatus }
+    | { type: "index"; runtimes: RuntimeInfo[]; sessions: SessionSummary[] }
+    | { type: "session"; chrome: SessionChrome | null }
+    | { type: "models"; runtime: string; models: ModelChoice[] | null; error?: string }
+    | { type: "sent"; id: string; ok: boolean; error?: string; session?: string }
+    | { type: "notice"; text: string; tone: "error" | "info" }
+    | { type: "saveFile"; name: string; mime: string; base64: string }
+    | { type: "openImage"; src: string }
+    | { type: "openLink"; url: string }
+    | { type: "copyText"; text: string };
+
+/** App → page. */
+export type ToWeb =
+    | { type: "theme"; theme: BridgeTheme }
+    | { type: "open"; key: string }
+    | { type: "close" }
+    | { type: "send"; id: string; key: string; text: string; images?: string[] }
+    | { type: "start"; id: string; runtime: string; kind: "chat" | "agent"; text: string; model?: string }
+    | { type: "cancel"; key: string }
+    | { type: "continue"; key: string }
+    | { type: "answer"; key: string; seq: number; decision: boolean; persist?: boolean }
+    | { type: "switchModel"; key: string; model: string }
+    | { type: "models"; runtime: string }
+    | { type: "resume" };
+
+type Shape = Record<string, "string" | "number" | "boolean" | "object" | "array" | "string?" | "number?" | "boolean?" | "object?" | "array?" | "object|null" | "array|null">;
+
+/** The fields each message must carry, by type. What is not listed is not checked, and is passed through. */
+const TO_NATIVE: Record<ToNative["type"], Shape> = {
+    ready: { bundle: "string" },
+    account: { account: "object|null" },
+    status: { status: "object" },
+    index: { runtimes: "array", sessions: "array" },
+    session: { chrome: "object|null" },
+    models: { runtime: "string", models: "array|null", error: "string?" },
+    sent: { id: "string", ok: "boolean", error: "string?", session: "string?" },
+    notice: { text: "string", tone: "string" },
+    saveFile: { name: "string", mime: "string", base64: "string" },
+    openImage: { src: "string" },
+    openLink: { url: "string" },
+    copyText: { text: "string" },
+};
+const TO_WEB: Record<ToWeb["type"], Shape> = {
+    theme: { theme: "object" },
+    open: { key: "string" },
+    close: {},
+    send: { id: "string", key: "string", text: "string", images: "array?" },
+    start: { id: "string", runtime: "string", kind: "string", text: "string", model: "string?" },
+    cancel: { key: "string" },
+    continue: { key: "string" },
+    answer: { key: "string", seq: "number", decision: "boolean", persist: "boolean?" },
+    switchModel: { key: "string", model: "string" },
+    models: { runtime: "string" },
+    resume: {},
+};
+
+/** Does `v` have the kind a field spec asks for? */
+function fits(v: unknown, spec: Shape[string]): boolean {
+    const optional = spec.endsWith("?");
+    if (v === undefined) return optional;
+    const base = spec.replace("?", "");
+    if (base === "object|null") return v === null || (typeof v === "object" && !Array.isArray(v));
+    if (base === "array|null") return v === null || Array.isArray(v);
+    if (base === "array") return Array.isArray(v);
+    if (base === "object") return typeof v === "object" && v !== null && !Array.isArray(v);
+    return typeof v === base;
+}
+
+/** Parse and check one raw message against a table: the message, or null for anything malformed or unknown. */
+function parse<T extends { type: string }>(raw: unknown, table: Record<string, Shape>): T | null {
+    let m: unknown = raw;
+    if (typeof raw === "string") { try { m = JSON.parse(raw); } catch { return null; } }
+    if (typeof m !== "object" || m === null) return null;
+    const o = m as Record<string, unknown>;
+    if (o.v !== BRIDGE_VERSION || typeof o.type !== "string" || !Object.hasOwn(table, o.type)) return null;
+    const shape = table[o.type];
+    for (const [k, spec] of Object.entries(shape)) if (!fits(o[k], spec)) return null;
+    const { v: _v, ...msg } = o;
+    return msg as T;
+}
+
+/** A page → app message, checked; null when it is malformed, unknown, or from another bridge version. */
+export const parseToNative = (raw: unknown): ToNative | null => parse<ToNative>(raw, TO_NATIVE);
+/** An app → page message, checked; null when it is malformed, unknown, or from another bridge version. */
+export const parseToWeb = (raw: unknown): ToWeb | null => parse<ToWeb>(raw, TO_WEB);
+
+/** A message as it crosses: JSON with the bridge version stamped on. */
+export const encode = (msg: ToNative | ToWeb): string => JSON.stringify({ v: BRIDGE_VERSION, ...msg });

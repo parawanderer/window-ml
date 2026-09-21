@@ -9,6 +9,7 @@
 //   node scripts/ios.mjs shot [file]     a screenshot (default test-results/ios.png)
 //   node scripts/ios.mjs flows [file…]   the Maestro flows (default every tests/mobile/*.yaml) against the simulator
 //   node scripts/ios.mjs stop            shut the simulator down
+//   … install --next [--demo] / launch --next   the same for the React Native app in mobile/ (docs/spec/NATIVE_SHELL.md)
 //
 // The simulator is the newest iPhone on the newest iOS runtime installed, or `IOS_DEVICE=<name or UDID>`. No signing
 // certificate is needed for a simulator build; the project uses Swift Package Manager, so no CocoaPods either.
@@ -17,8 +18,10 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 
-const APP = "dev.wander.windowml";
+const NEXT = process.argv.includes("--next");
+const APP = NEXT ? "dev.wander.windowml.next" : "dev.wander.windowml";
 const BUILT = "ios/build/Build/Products/Debug-iphonesimulator/App.app";
+const BUILT_NEXT = "mobile/ios/build/Build/Products/Release-iphonesimulator/windowml.app";
 
 /** Run a command to completion, inheriting the terminal; exit with its status when it fails. */
 function run(cmd, args, opts = {}) {
@@ -78,7 +81,22 @@ function boot(window) {
     console.log(`✓ booted ${d.name}`);
 }
 
+/** The React Native app: the page built and synced into it, the native project generated (with the UIScene plugin iOS 27
+ *  needs) and its pods installed when missing, a Release build (the JS bundled in, no Metro), installed. */
+function installNext() {
+    const d = need();
+    run("node", ["scripts/build-web.mjs"]);
+    run("node", ["mobile/scripts/sync-embed.mjs", ...(process.argv.includes("--demo") ? ["--demo"] : [])]);
+    if (!existsSync("mobile/ios")) run("npx", ["expo", "prebuild", "--platform", "ios", "--no-install"], { cwd: "mobile" });
+    if (!existsSync("mobile/ios/Pods")) run("pod", ["install"], { cwd: "mobile/ios" });
+    run("xcodebuild", ["-workspace", "windowml.xcworkspace", "-scheme", "windowml", "-configuration", "Release", "-sdk", "iphonesimulator",
+        "-destination", `id=${d.udid}`, "-derivedDataPath", "build", "-quiet", "build"], { cwd: "mobile/ios" });
+    run("xcrun", ["simctl", "install", d.udid, BUILT_NEXT]);
+    console.log(`✓ installed ${APP} on ${d.name}`);
+}
+
 function install() {
+    if (NEXT) return installNext();
     const d = need();
     run("node", ["scripts/build-web.mjs"]);
     run("node", ["scripts/mobile.mjs", "ios"]);

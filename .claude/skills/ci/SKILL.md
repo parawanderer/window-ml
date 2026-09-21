@@ -135,6 +135,11 @@ gh run list --branch main --limit 3             # does MAIN fail it too? then it
   reports as *failed*. Unconfirmed lead: the test seeds only the event stream, so the fake box's `/api/ps`
   reports nothing resident, and a poll landing in the 150ms window disagrees with the stream.
 
+- **`cross-page.spec.mjs` › `cross-domain (HUD card): a RESUME that navigates cross-origin still shows the card on
+  the destination origin`** — failed #235 (2026-09-21) on both its tries, a diff of two scripts and docs that touches
+  no extension code; a rerun of the shard passed. Treat a single failure as flaky, rerun the shard
+  (`gh run rerun <id> --failed`), and look properly only if it fails twice running on the same branch.
+
 Recently removed, recorded so nobody re-adds them from memory:
 
 - ~~`tool-tokens.spec.mjs` › `res.outputs` (2D matrix)~~ — **fixed.** It hardcoded `@tool:([0-9a-f]{6})`
