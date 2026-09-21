@@ -121,7 +121,8 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
                         <span class={`tri${collapsed ? "" : " open"}`} aria-hidden="true"><IconChevron /></span>
                       </button>
                     : null}
-                {streaming ? <span class="live-dot" aria-hidden="true" /> : <Dot status={status} />}
+                {streaming ? <span class="live-dot" aria-hidden="true" />
+                    : <Dot status={status} warn={capped ? (label === "cancelled" ? "Cancelled before it finished." : "Stopped at its step cap before it finished. Continue gives it more steps.") : undefined} />}
                 {label ? <span class="who">{label}</span> : null}
                 {/* The model that produced this reply + its (default)/(utility) profile. */}
                 {hasReply && model ? <CopyModel model={model} /> : null}

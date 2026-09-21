@@ -8,9 +8,9 @@ export const STATUS_LABEL: Partial<Record<SessionStatus, string>> = {
     waiting: "waiting on you", capped: "stopped at its step cap", cancelled: "cancelled", interrupted: "interrupted", error: "failed",
 };
 
-/** A status as a tone: working, finished, or stopped short. */
-export const STATUS_TONE: Record<SessionStatus, "busy" | "ok" | "err"> = {
-    running: "busy", waiting: "busy", done: "ok", capped: "err", error: "err", cancelled: "err", interrupted: "err",
+/** A status as a tone: working, finished, stopped short without failing (a step cap: amber, it can go on), or failed. */
+export const STATUS_TONE: Record<SessionStatus, "busy" | "ok" | "stopped" | "err"> = {
+    running: "busy", waiting: "busy", done: "ok", capped: "stopped", error: "err", cancelled: "err", interrupted: "err",
 };
 
 /** "now", "5m", "3h", "Tue", "12 Sep": when something last moved, as short as a list row can hold. */

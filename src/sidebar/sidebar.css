@@ -1160,7 +1160,9 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
    not hue. */
 .acard-you .who, .acard-ans .who { color: var(--fg); font-weight: 700; white-space: nowrap; flex: 0 0 auto; }
 .astep.tool { border-left: 2px solid var(--border); padding-left: 8px; margin: 4px 0; }
-.astep-head { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: none; padding: 3px 0; cursor: pointer; text-align: left; color: inherit; }
+/* `font: inherit`: the head is a <button>, which takes the browser's control font instead of the page's (11px in
+   WebKit, 13.3px in Chrome), and drew every tool name smaller than the text around it — tiniest on an iPhone. */
+.astep-head { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: none; padding: 3px 0; cursor: pointer; text-align: left; color: inherit; font: inherit; }
 .astep-head:hover .tri { color: var(--fg); }
 .astep-head .dot { flex: 0 0 auto; }
 .astep-head .tt { flex: 0 0 auto; }   /* the badge/dot tooltip wrappers must not shrink (they'd clip under the preview) */
@@ -1742,6 +1744,7 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
 .dot.pending { background: var(--warn); animation: pulse 1s infinite; }
 .dot.ok { background: var(--ok); }
 .dot.err { background: var(--err); }
+.dot.warn { background: var(--warn); }   /* stopped short without failing: a step cap, a cancel */
 /* model-load states (header status circle) */
 .dot.loaded { background: var(--ok); }                                  /* resident in VRAM */
 .dot.inflight { background: var(--warn); animation: pulse 1s infinite; } /* loading or generating */

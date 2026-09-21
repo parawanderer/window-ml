@@ -23,11 +23,12 @@ export const DOT_TIP: Record<Status, string> = {
 };
 /** A status DOT — pending / ok / err — with the tooltip that says which. The one status indicator: a
  *  session row, a step header and a model's residency all use it, so the three cannot drift into three
- *  colours meaning the same thing. */
-export const Dot = ({ status }: { status: Status }) => (
+ *  colours meaning the same thing. `warn` is for a run that stopped short without failing (its step cap, a cancel):
+ *  amber, and the sentence given is its tooltip, since "Failed" would be wrong about it. */
+export const Dot = ({ status, warn }: { status: Status; warn?: string }) => (
     <span class="tt">
-        <span class={`dot ${status}`} />
-        <span class="tt-pop left" role="tooltip">{DOT_TIP[status]}</span>
+        <span class={`dot ${warn ? "warn" : status}`} />
+        <span class="tt-pop left" role="tooltip">{warn ?? DOT_TIP[status]}</span>
     </span>
 );
 

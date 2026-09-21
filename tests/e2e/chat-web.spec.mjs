@@ -510,7 +510,7 @@ test("desktop: a run whose page has gone offers a resume instead of a composer, 
 
     // The capped run has no open tab, so sending to it would end at a tab that is closed. The page offers the one
     // thing that would work instead, and not both.
-    await expect(page.locator(".chat-resume")).toContainText("The page this run was on is gone");
+    await expect(page.locator(".chat-resume")).toContainText("The tab this run worked in has closed");
     await expect(page.locator(".composer")).toHaveCount(0);
 
     await page.locator(".chat-resume").click();

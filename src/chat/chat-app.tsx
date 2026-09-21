@@ -39,8 +39,8 @@ import { lightboxSrc, type ClientPlatform } from "./platform";
 /** Below this width the page shows one pane at a time. */
 export const NARROW_PX = 760;
 
-/** The index's status as the panel's status dot draws it: a run stopped at its cap is `err` there too (the reducer marks
- *  an answer `err` on `hitCap`), so the list and the transcript agree. */
+/** The index's status as the panel's status dot draws it. A run stopped at its cap is `err` underneath (the reducer marks
+ *  an answer `err` on `hitCap`), and is DRAWN amber, in the list and the transcript alike: it did not fail. */
 const DOT: Record<SessionStatus, Status> = { running: "pending", waiting: "pending", done: "ok", capped: "err", error: "err", cancelled: "err", interrupted: "err" };
 
 /** What each status says in a list, where the dot alone would not tell a waiting run from a working one. */
@@ -299,7 +299,7 @@ function IndexRow({ store, s, rt, active, moved, showRuntime }: { store: ChatSto
     return (
         <div class={`chat-row-wrap${active ? " active" : ""}`}>
             <button class={`row chat-row${active ? " active" : ""}`} data-session={key} onClick={() => openSession(key)}>
-                <Dot status={DOT[s.status] ?? "pending"} />
+                <Dot status={DOT[s.status] ?? "pending"} warn={s.status === "capped" ? "Stopped at its step cap. Open it to give it more steps." : undefined} />
                 <span class="chat-row-body">
                     <b class="row-title">{truncate(title, 90)}</b>
                     <span class="chat-row-meta">
@@ -573,7 +573,7 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
                     ? <ResumeSession store={store} rt={rt} session={{ runtime: id.runtime, hash: id.hash }}
                         onResumed={() => setResuming(false)} onCancel={() => setResuming(false)} />
                     : <button class="chat-resume" onClick={() => setResuming(true)}>
-                        The page this run was on is gone<span class="chat-resume-go">Resume it somewhere ›</span>
+                        <span class="chat-resume-what">The tab this run worked in has closed.</span><span class="chat-resume-go">Resume on a page</span>
                     </button>
             ) : s && canDrive ? <Composer s={s} multiline />
                 : s && rt ? <div class="chat-readonly">{!rt.online ? `${rt.name} is offline. You can read this session, and send to it once it is back.` : `This device may watch sessions on ${rt.name}, not drive them.`}</div>

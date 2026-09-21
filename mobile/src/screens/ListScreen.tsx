@@ -132,14 +132,14 @@ function Row({ s: x, runtimeName, onPress, onLongPress }: { s: SessionSummary; r
         <Pressable accessibilityRole="button" accessibilityLabel={title} accessibilityHint="Long press for this session's actions" onPress={onPress} onLongPress={onLongPress}
             accessibilityActions={[{ name: "longpress", label: "Session actions" }]} onAccessibilityAction={(ev) => { if (ev.nativeEvent.actionName === "longpress") onLongPress(); }}
             style={({ pressed }) => [s.row, pressed && { backgroundColor: p.panel }]}>
-            <View style={[s.rowDot, { backgroundColor: tone === "busy" ? p.notice : tone === "err" ? p.err : "transparent" }]} />
+            <View style={[s.rowDot, { backgroundColor: tone === "busy" ? p.notice : tone === "err" ? p.err : tone === "stopped" ? p.warn : "transparent" }]} />
             <View style={s.rowBody}>
                 <Text numberOfLines={1} style={[s.rowTitle, { color: p.fg }]}>{title}</Text>
                 {/* WHERE IT STANDS COMES FIRST on this line, so it is in the same place on every row: a status that
                     trails a page host of any length is one the eye has to find again each time. It never shrinks;
                     the host does. */}
                 <View style={s.rowMeta}>
-                    {label ? <Text style={[s.rowState, { color: x.status === "waiting" ? p.notice : tone === "err" ? p.err : p.fgDim }]}>{label}</Text> : null}
+                    {label ? <Text style={[s.rowState, { color: x.status === "waiting" ? p.notice : tone === "err" ? p.err : tone === "stopped" ? p.warn : p.fgDim }]}>{label}</Text> : null}
                     {x.kind === "agent" ? <View style={s.kind}><Bot size={13} color={p.fgFaint} /><Text style={[s.metaText, { color: p.fgFaint }]}>agent</Text></View> : null}
                     {/* Out of its runtime's section, the machine is what the row is missing; the page host is what
                         it can spare, since the transcript says that on the next tap. */}

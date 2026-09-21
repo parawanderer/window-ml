@@ -36,6 +36,10 @@ html, body, #root { height: 100%; }
 }
 .chat.narrow { grid-template-columns: minmax(0, 1fr); }
 .chat-list, .chat-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+/* Every scroller keeps its scrollbar's room whether or not it has anything to scroll: where a scrollbar takes space
+   (Windows, Linux, macOS set to always show them), opening a short session after a long one moved the whole column
+   sideways by the bar's width. Overlay scrollbars (phones, macOS's default) take no room, so this changes nothing there. */
+.chat .view { scrollbar-gutter: stable; }
 .chat-list { border-right: 1px solid var(--border); background: var(--bg); }
 .chat.narrow .chat-list { border-right: none; }
 .chat-pick { margin: auto; }
@@ -101,12 +105,18 @@ html, body, #root { height: 100%; }
    sends into nothing. Sits at the bottom like the composer it replaces, not at the top like the approval bar, because
    it is an action on this run and not news about it. */
 .chat-resume {
-    display: flex; align-items: center; gap: 8px; width: 100%; border: none; border-top: 1px solid var(--border);
-    background: var(--panel); color: var(--fg-dim); font: inherit; cursor: pointer; text-align: left;
-    padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+    display: flex; align-items: center; gap: 12px; font: inherit; cursor: pointer; text-align: left; color: var(--fg-dim);
+    /* The composer's own shape (its rounded field on the canvas), so it reads as that box saying why it cannot take a
+       message, not as a bar of another kind of UI. */
+    width: calc(100% - 28px); margin: 4px 14px calc(14px + env(safe-area-inset-bottom));
+    background: var(--panel); border: 1px solid var(--border); border-radius: 24px; padding: 11px 8px 11px 18px;
 }
-.chat-resume:hover { color: var(--fg); }
-.chat-resume-go { margin-left: auto; color: var(--accent); font-weight: 600; }
+.chat-resume:hover { border-color: var(--panel-2-hover); color: var(--fg); }
+.chat-resume-what { flex: 1; min-width: 0; }
+/* The action as the composer's send button would sit: at the right end, a pill in the accent. */
+.chat-resume-go { flex: 0 0 auto; color: var(--accent); font-weight: 600; padding: 6px 14px; border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.chat-resume:hover .chat-resume-go { background: color-mix(in srgb, var(--accent) 20%, transparent); }
 /* What a resume will NOT carry over, said in the form BEFORE it happens rather than in the transcript after. */
 .chat-resume-lost { margin: 2px 0 0; color: var(--fg-faint); font-size: .92em; line-height: 1.45; }
 
@@ -215,6 +225,24 @@ html, body, #root { height: 100%; }
    affordance that only a mouse can summon is one a phone does not have at all. */
 .chat.calm .msg.asst > .mrow { opacity: .55; margin-bottom: 1px; }
 .chat.calm .msg.asst { padding: 0; margin-bottom: 18px; }
+/* A run that stopped at its step cap (or was cancelled) is ONE LINE of news, not a reply: an amber dot, what happened,
+   and Continue beside it. The reply's machinery goes: no rail, no fold chevron, no model chip, no empty body. When the
+   run did leave a summary, it follows on its own line and the chevron stays to fold it. */
+.chat.calm .msg.asst.capped { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 14px; border-left: none; padding: 0 0 0 10px; margin: 12px 0 20px; }
+/* 10px in: level with the tool steps' dots above it (their rail and its padding), so the run reads as one column. */
+/* The line reads first here: a reply's provenance moves under it (below), but this row IS the news. */
+.chat.calm .msg.asst.capped > .mrow { order: 0; margin: 0; gap: 8px; opacity: 1; }
+.chat.calm .msg.asst.capped > .continue-run { order: 1; }
+.chat.calm .msg.asst.capped .who { color: var(--fg-dim); font-weight: 500; font-size: 1em; }
+.chat.calm .msg.asst.capped .mrow .tt:has(> .model-name),
+.chat.calm .msg.asst.capped .mrow .sp { display: none; }
+.chat.calm .msg.asst.capped .mrow .time { color: var(--fg-faint); font-size: .85em; }
+.chat.calm .msg.asst.capped:has(.asst-body > .md:empty) .who-toggle,
+.chat.calm .msg.asst.capped .asst-body:has(> .md:empty) { display: none; }
+.chat.calm .msg.asst.capped .asst-body { flex-basis: 100%; order: 2; }
+.chat.calm .msg.asst.capped .continue-run { margin: 0; padding: 4px 13px; font-size: .9em; background: transparent;
+    border-color: var(--border); color: var(--accent); }
+.chat.calm .msg.asst.capped .continue-run:hover { background: var(--panel); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 .chat.calm .msg.asst .asst-body > .md { padding: 0; }
 
 /* An agent turn's box: the border earns its keep in a 360px panel, where a turn and its steps need telling apart at
@@ -258,7 +286,8 @@ html, body, #root { height: 100%; }
 .chat.calm .cinput:focus { outline: none; }
 .chat.calm .cbtn { border-radius: 50%; }
 .chat.calm .composer-foot { max-width: var(--read); width: 100%; margin: 5px auto 0; opacity: .5; }
-.chat.calm .chat-readonly, .chat.calm .chat-resume { max-width: calc(var(--read) + 36px); margin: 0 auto; width: 100%; }
+.chat.calm .chat-readonly { max-width: calc(var(--read) + 36px); margin: 0 auto; width: 100%; }
+.chat.calm .chat-resume { max-width: var(--read); margin: 4px auto calc(16px + env(safe-area-inset-bottom)); width: calc(100% - 36px); }
 
 /* The list: rows are a table of contents, so the page draws the one you are pointing at and the one you are on,
    and nothing else. A finished session's green dot is the row's loudest mark and says the least — it goes, and the
@@ -1180,6 +1209,8 @@ button.chat-page-go:hover { color: var(--fg); }
     /* A reply's small tools (collapse, copy): the glyph stays small, the target does not. */
     .chat .who-toggle, .chat .mrow .icon-btn { min-width: 40px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; }
     .pair-card .btn { min-height: 40px; }
+    /* Continue after a step cap: the run's one way forward, not a footnote. */
+    .chat .continue-run, .chat.calm .msg.asst.capped .continue-run { min-height: 40px; padding: 6px 18px; font-size: 1em; }
     .chat-search-box input, .chat-search input[type="search"] { min-height: 40px; }
     /* A chip inside a line of text (the run's page in a session's header): the line keeps its height, and a hidden
        area around the chip takes the finger. */

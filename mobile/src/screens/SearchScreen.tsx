@@ -111,7 +111,7 @@ export function SearchScreen() {
                             <View style={{ flex: 1, minWidth: 0 }}>
                                 <Text numberOfLines={1} style={[s.title, { color: p.fg }]}>{item.title || item.task || "(untitled)"}</Text>
                                 <View style={s.meta}>
-                                    {label ? <Text style={[s.state, { color: item.status === "waiting" ? p.notice : tone === "err" ? p.err : p.fgDim }]}>{label}</Text> : null}
+                                    {label ? <Text style={[s.state, { color: item.status === "waiting" ? p.notice : tone === "err" ? p.err : tone === "stopped" ? p.warn : p.fgDim }]}>{label}</Text> : null}
                                     {item.kind === "agent" ? <Bot size={13} color={p.fgFaint} /> : null}
                                     <Text numberOfLines={1} style={[s.metaText, { color: p.fgFaint, flexShrink: 1 }]}>{names.get(item.id.runtime) ?? item.id.runtime}</Text>
                                     {/* An archived session is brought back by the page when it is opened; saying so here
