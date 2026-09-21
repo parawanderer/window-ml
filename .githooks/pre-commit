@@ -17,6 +17,11 @@ set -e
 staged=$(git diff --cached --name-only --diff-filter=ACMR)
 [ -z "$staged" ] && exit 0
 
+# 0. A disk that is nearly full: silent unless free space is under WML_DISK_WARN_GB (default 20), and then a list of
+#    what this work leaves lying around, with the command to clear each. Advice only, never a failure, and nothing is
+#    deleted. A full disk fails builds, the emulator and tests with errors that never say "disk".
+node scripts/check-disk.mjs || true
+
 # A git WORKTREE does not get node_modules, and this repo is often worked in several at once — so a
 # missing install is a normal state, not an error. Without this the hook died on `tsc: command not found`
 # and blamed the typecheck, which is a confusing way to learn you needed `npm ci`. (Found by the hook
