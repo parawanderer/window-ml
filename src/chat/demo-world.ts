@@ -3,7 +3,7 @@
 // this device may only watch, and a runtime that is offline. The web build opens on it until `HubHost` exists, the
 // e2e specs drive it, and it is the live mockup of both layouts.
 import type { MlDebugEvent } from "../contract-debug";
-import { SESSION_CONTRACT_VERSION, type Grant, type RuntimeInfo, type SessionSummary } from "../session-host";
+import { SESSION_CONTRACT_VERSION, type Grant, type ModelChoice, type RuntimeInfo, type SessionSummary } from "../session-host";
 import { FakeHost } from "./fake-host";
 
 const EVERY: Grant[] = [{ scope: "view" }, { scope: "drive" }, { scope: "approve" }, { scope: "screen" }];
@@ -19,6 +19,33 @@ export const DEMO = {
 } as const;
 
 /** Build the demo host. `now` pins the clock, so a screenshot does not change between runs. */
+/**
+ * What the demo box offers to run: a real one has dozens, which is what the model sheet's filter is for. The three the
+ * demo's sessions name (`qwen3:32b`, `gemma3:27b`, the cloud one) are in here, so switching in the demo still works.
+ */
+const DEMO_MODELS: ModelChoice[] = [
+    { id: "qwen3:32b", kinds: ["completion", "tools", "thinking"], default: true, where: "local" },
+    { id: "qwen3:14b", kinds: ["completion", "tools", "thinking"], where: "local" },
+    { id: "qwen3:8b", kinds: ["completion", "tools", "thinking"], where: "local" },
+    { id: "qwen3-coder:30b", kinds: ["completion", "tools"], where: "local" },
+    { id: "gemma3:27b", kinds: ["completion", "vision"], where: "local" },
+    { id: "gemma3:12b", kinds: ["completion", "vision"], where: "local" },
+    { id: "gemma3:4b", kinds: ["completion", "vision"], where: "local" },
+    { id: "llama3.3:70b", kinds: ["completion", "tools"], where: "local" },
+    { id: "llama3.2-vision:11b", kinds: ["completion", "vision"], where: "local" },
+    { id: "mistral-small3.2:24b", kinds: ["completion", "tools", "vision"], where: "local" },
+    { id: "devstral:24b", kinds: ["completion", "tools"], where: "local" },
+    { id: "deepseek-r1:32b", kinds: ["completion", "thinking"], where: "local" },
+    { id: "phi4:14b", kinds: ["completion"], where: "local" },
+    { id: "granite3.3:8b", kinds: ["completion", "tools"], where: "local" },
+    { id: "minicpm-v:8b", kinds: ["completion", "vision"], where: "local" },
+    { id: "nomic-embed-text", kinds: ["embedding"], where: "local" },
+    { id: "mxbai-embed-large", kinds: ["embedding"], where: "local" },
+    { id: "litellm.google/gemini-flash-latest", where: "cloud" },
+    { id: "litellm.anthropic/claude-haiku-latest", where: "cloud" },
+    { id: "litellm.openai/gpt-5-mini", where: "cloud" },
+];
+
 export function demoHost(now = Date.now(), opts: { latencyMs?: number } = {}): FakeHost {
     const min = 60_000;
     const runtimes: RuntimeInfo[] = [
@@ -236,7 +263,7 @@ export function demoHost(now = Date.now(), opts: { latencyMs?: number } = {}): F
         return { summary: summary(`laptop:${hash}`, { kind: "chat", status: "done", createdTs: ts, lastTs: ts + 4000, title: `${title} (again)`, model: "qwen3:32b" }), events };
     });
 
-    return new FakeHost({
+    const host = new FakeHost({
         runtimes,
         archived,
         latencyMs: opts.latencyMs,
@@ -252,4 +279,6 @@ export function demoHost(now = Date.now(), opts: { latencyMs?: number } = {}): F
             { summary: summary(DEMO.offline, { kind: "chat", status: "done", createdTs: now - 26 * 60 * min, lastTs: now - 26 * 60 * min + 5000, title: "Invoice reminder" }), events: offline },
         ],
     });
+    host.models = DEMO_MODELS;
+    return host;
 }

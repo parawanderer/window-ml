@@ -456,7 +456,7 @@ function EarlierEdge({ store, sessionKey, scroller, rtName, truncated }: {
  * transcript: the phone app's shell draws the header, the waiting bar and the composer itself (src/chat/native-embed.tsx,
  * docs/spec/NATIVE_SHELL.md), and the title leads the transcript as it does on a wide calm page.
  */
-export function SessionPane({ store, sessionKey, narrow, extras, native }: { store: ChatStore; sessionKey: SessionKey; narrow: boolean; extras?: ChatExtras; native?: boolean }) {
+export function SessionPane({ store, sessionKey, narrow, extras, native, onGate }: { store: ChatStore; sessionKey: SessionKey; narrow: boolean; extras?: ChatExtras; native?: boolean; onGate?: (away: boolean) => void }) {
     const r = rev.value;   // subscribe: the transcript changes by rev, and this pane must re-render with it
     const id = parseSessionKey(sessionKey);
     const summary = store.index.value.get(sessionKey);
@@ -514,6 +514,8 @@ export function SessionPane({ store, sessionKey, narrow, extras, native }: { sto
         io.observe(card);
         return () => io.disconnect();
     }, [waiting, sessionKey, r]);
+    // The phone app draws its own bar, from the same reading: it is chrome, and chrome up there is native.
+    useEffect(() => onGate?.(waiting && gateAway), [onGate, waiting, gateAway]);
 
     // NO HEADER BAND on a wide calm page: what it held has gone where each part belongs — the title into the
     // transcript (`Lede`), navigation and the page's tools to the left edge (the rail and the gear, `nav.tsx`). A

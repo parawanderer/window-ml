@@ -10,7 +10,7 @@ import type { SessionChrome } from "./bridge";
  *  before the index says `running`); `pageOwnsModel` is true once the runtime refused a switch because a page script
  *  runs the session. Null when the session is not in the index. */
 export function sessionChrome(key: SessionKey, summary: SessionSummary | undefined, rt: RuntimeInfo | undefined,
-    self: Principal | undefined, live?: { pending: boolean; title?: string }, pageOwnsModel = false): SessionChrome | null {
+    self: Principal | undefined, live?: { pending: boolean; title?: string; gateAway?: boolean }, pageOwnsModel = false): SessionChrome | null {
     if (!summary) return null;
     const target = { key, summary };
     const drive = !!rt && mayCommand(rt, "session.send", target, self);
@@ -35,6 +35,8 @@ export function sessionChrome(key: SessionKey, summary: SessionSummary | undefin
         runtimeName: rt?.name ?? summary.id.runtime,
         model: summary.model ?? null,
         pendingApprovals: rt && mayCommand(rt, "approval.answer", target, self) ? summary.pendingApprovals : 0,
+        // The transcript says whether the card that answers is on screen; the app's bar is for when it is not.
+        approvalOffscreen: !!live?.gateAway,
         canSend,
         ...(readOnly ? { readOnly } : {}),
         running: !!live?.pending || summary.status === "running",

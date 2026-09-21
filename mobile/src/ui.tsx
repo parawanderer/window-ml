@@ -4,9 +4,10 @@
 
 import { forwardRef, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { ActivityIndicator, Animated, Platform, Pressable, StyleSheet, Text, TextInput, View, type PressableProps, type StyleProp, type TextInputProps, type ViewStyle } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
-import { BottomSheetBackdrop, BottomSheetModal, BottomSheetScrollView, type BottomSheetBackdropProps } from "@gorhom/bottom-sheet";
-import { Check, ChevronDown } from "lucide-react-native";
+import { BottomSheetBackdrop, BottomSheetModal, BottomSheetScrollView, BottomSheetTextInput, type BottomSheetBackdropProps } from "@gorhom/bottom-sheet";
+import { Check, ChevronDown, Search, X } from "lucide-react-native";
 import { SIZE, usePalette, type Palette } from "./theme";
 
 /** A round icon-only button, 44pt: the page's header buttons. `label` is its accessible name. */
@@ -75,20 +76,51 @@ export function Toast({ notice, bottom }: { notice: { id: number; text: string; 
 }
 
 /** A bottom sheet: the page's picker lists, as a phone opens them. Present it with `ref.current?.present()`. */
-export const Sheet = forwardRef<BottomSheetModal, { title?: string; children: ReactNode; note?: string }>(function Sheet({ title, children, note }, ref) {
+export const Sheet = forwardRef<BottomSheetModal, { title?: string; children: ReactNode; note?: string; header?: ReactNode; tall?: boolean }>(function Sheet({ title, children, note, header, tall }, ref) {
     const p = usePalette();
+    const insets = useSafeAreaInsets();
     const backdrop = useMemo(() => (props: BottomSheetBackdropProps) => <BottomSheetBackdrop {...props} appearsOnIndex={0} disappearsOnIndex={-1} opacity={0.35} />, []);
     return (
-        <BottomSheetModal ref={ref} enableDynamicSizing maxDynamicContentSize={560} backdropComponent={backdrop}
+        // `accessible={false}`: the library makes the sheet ONE accessibility element ("Bottom Sheet") by default,
+        // which hides every row inside it from VoiceOver, TalkBack and anything that drives the app by name.
+        // `tall`: a sheet with a filter takes a fixed, tall height instead of hugging its content, so the results stay
+        // on screen while the keyboard is up and the list does not resize under the thumb on every keystroke.
+        <BottomSheetModal ref={ref} accessible={false} enableDynamicSizing={!tall} maxDynamicContentSize={560}
+            snapPoints={tall ? ["88%"] : undefined} topInset={insets.top + 8} keyboardBehavior="interactive" keyboardBlurBehavior="restore" backdropComponent={backdrop}
             backgroundStyle={{ backgroundColor: p.bg }} handleIndicatorStyle={{ backgroundColor: p.panel2, width: 40 }}>
+            {/* The title and anything sticky (a filter) sit ABOVE the scroller, so a long list scrolls under them
+                rather than carrying them away. */}
+            {title ? <Text style={[s.sheetTitle, { color: p.fg }]}>{title}</Text> : null}
+            {note ? <Text style={[s.sheetNote, { color: p.fgDim, backgroundColor: p.panel }]}>{note}</Text> : null}
+            {header}
             <BottomSheetScrollView contentContainerStyle={s.sheetBody}>
-                {title ? <Text style={[s.sheetTitle, { color: p.fg }]}>{title}</Text> : null}
-                {note ? <Text style={[s.sheetNote, { color: p.fgDim, backgroundColor: p.panel }]}>{note}</Text> : null}
                 {children}
             </BottomSheetScrollView>
         </BottomSheetModal>
     );
 });
+
+/**
+ * A sheet's filter field, for a list too long to scroll through (a box with fifty models). Give it to `Sheet` as its
+ * `header` so it stays put while the list moves under it.
+ */
+export function SheetFilter({ value, onChangeText, placeholder }: { value: string; onChangeText: (t: string) => void; placeholder: string }) {
+    const p = usePalette();
+    return (
+        <View style={[s.filter, { backgroundColor: p.panel }]}>
+            <Search size={17} color={p.fgFaint} />
+            {/* The sheet's own input, so typing in it keeps the sheet above the keyboard. */}
+            {/* `testID` so a Maestro flow can reach it: a placeholder is not in the accessibility tree on either side. */}
+            <BottomSheetTextInput testID="sheet-filter" value={value} onChangeText={onChangeText} placeholder={placeholder} placeholderTextColor={p.fgFaint} autoCapitalize="none"
+                autoCorrect={false} returnKeyType="search" accessibilityLabel={placeholder} style={[s.filterInput, { color: p.fg }]} />
+            {value ? (
+                <Pressable accessibilityRole="button" accessibilityLabel="Clear the filter" onPress={() => onChangeText("")} hitSlop={10}>
+                    <X size={17} color={p.fgDim} />
+                </Pressable>
+            ) : null}
+        </View>
+    );
+}
 
 /** One row of a sheet: a title, an optional line under it, and a check when it is the chosen one. */
 export function SheetRow({ title, detail, chosen, disabled, onPress, mono, danger }: {
@@ -164,6 +196,10 @@ const s = StyleSheet.create({
     toast: { position: "absolute", left: SIZE.gutter, right: SIZE.gutter, paddingVertical: 12, paddingHorizontal: 16, borderRadius: SIZE.radius, alignSelf: "center" },
     // What a sheet holds, with room under the last row for the home bar.
     sheetBody: { paddingHorizontal: 8, paddingBottom: 36 },
+    // The filter field above a sheet's list: an icon, the field, and a clear button.
+    filter: { flexDirection: "row", alignItems: "center", gap: 8, marginHorizontal: 12, marginBottom: 8, paddingHorizontal: 12, borderRadius: 12 },
+    // The field itself, tall enough to tap.
+    filterInput: { flex: 1, fontSize: SIZE.text, paddingVertical: 11 },
     // A sheet's heading, left-aligned with its rows.
     sheetTitle: { fontSize: SIZE.heading, fontWeight: "700", paddingHorizontal: 12, paddingTop: 4, paddingBottom: 10 },
     // Why a sheet's rows cannot be chosen, above them.

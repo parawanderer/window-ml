@@ -42,7 +42,8 @@ export type PairingAnswer<T = unknown> = { ok: true; value: T } | { ok: false; e
 
 /** What the screens can do. */
 export interface EmbedApi extends EmbedState {
-    open(key: string): void;
+    /** Open a session; `approval` also brings its pending approval on screen. */
+    open(key: string, approval?: boolean): void;
     close(): void;
     /** Send to a session; resolves with whether the runtime took it (the composer's drafts hang on this). */
     send(key: string, text: string, images?: string[]): Promise<{ ok: boolean; error?: string }>;
@@ -54,6 +55,8 @@ export interface EmbedApi extends EmbedState {
     /** The models a runtime offers, asked of it each time. */
     models(runtime: string): Promise<ModelChoice[] | null>;
     resume(): void;
+    /** Bring the open session's pending approval on screen: the card in the transcript is what answers it. */
+    showApproval(): void;
     /** Tell the page the theme and insets. */
     theme(msg: Extract<ToWeb, { type: "theme" }>["theme"]): void;
     /** Call one of the page's pairing methods (src/native/pairing-bridge.ts). */
@@ -189,7 +192,7 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
 
     const api = useMemo<EmbedApi>(() => ({
         ...state,
-        open: (key) => post({ type: "open", key }),
+        open: (key, approval) => post({ type: "open", key, ...(approval ? { approval } : {}) }),
         close: () => post({ type: "close" }),
         send: (key, text, images) => request((id) => ({ type: "send", id, key, text, ...(images?.length ? { images } : {}) })),
         start: (runtime, text, model) => request((id) => ({ type: "start", id, runtime, kind: "chat", text, ...(model ? { model } : {}) })),
@@ -203,6 +206,7 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
             if (list.length === 1) post({ type: "models", runtime });
         }),
         resume: () => post({ type: "resume" }),
+        showApproval: () => post({ type: "showApproval" }),
         theme: (theme) => post({ type: "theme", theme }),
         pairing: <T,>(call: PairingCall, args?: Record<string, unknown>) => new Promise<PairingAnswer<T>>((resolve) => {
             const id = nextId();

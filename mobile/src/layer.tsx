@@ -8,22 +8,22 @@
 // whose drafts survive a failed send (drafts.ts).
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { BackHandler, Keyboard, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from "react-native";
+import { BackHandler, Keyboard, Platform, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from "react-native";
 import Animated, { Easing, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import type { BottomSheetModal } from "@gorhom/bottom-sheet";
-import { ArrowUp, ChevronLeft, EllipsisVertical, Square } from "lucide-react-native";
+import { ArrowUp, ChevronDown, ChevronLeft, EllipsisVertical, Square } from "lucide-react-native";
 import type { ModelChoice } from "../../src/session-host";
 import { draftOf, onDraftRestored, saveDraft, sendHeld } from "./drafts";
 import { EmbedWebView, useEmbed } from "./embed";
 import { SIZE, usePalette } from "./theme";
-import { IconButton, Pill, Sheet, SheetRow } from "./ui";
+import { IconButton, Sheet, SheetFilter, SheetRow } from "./ui";
 
 /** Opening and closing the session layer, from any screen. */
-interface LayerApi { key: string | null; open(key: string): void; close(): void }
+interface LayerApi { key: string | null; open(key: string, approval?: boolean): void; close(): void }
 const LayerContext = createContext<LayerApi>({ key: null, open: () => {}, close: () => {} });
 
 /** The layer's controls, for a screen that opens a session. */
@@ -35,7 +35,7 @@ export function SessionLayerProvider({ children }: { children: ReactNode }) {
     const e = useEmbed();
     const api = useMemo<LayerApi>(() => ({
         key,
-        open: (k) => { setKey(k); e.open(k); },
+        open: (k, approval) => { setKey(k); e.open(k, approval); },
         close: () => { setKey(null); Keyboard.dismiss(); },
     }), [key, e]);
     return <LayerContext.Provider value={api}>{children}</LayerContext.Provider>;
@@ -93,10 +93,16 @@ export function SessionLayer() {
                             <View style={{ flex: 1 }} />
                             <SessionMenu />
                         </View>
-                        {chrome && chrome.pendingApprovals > 0 ? (
-                            <View style={[s.waiting, { backgroundColor: p.scheme === "dark" ? "#0c2a3a" : "#e0f2fe" }]}>
-                                <Text style={{ color: p.fg, fontSize: SIZE.small, flex: 1 }}>Waiting on your approval: the card is in the transcript.</Text>
-                            </View>
+                        {/* The bar is for a gate several screens down: while the card is on screen it says, louder,
+                            what the card right there already says with buttons. */}
+                        {chrome && chrome.pendingApprovals > 0 && chrome.approvalOffscreen ? (
+                            <Pressable accessibilityRole="button" accessibilityLabel="Show what is waiting on your approval" onPress={() => e.showApproval()}
+                                style={({ pressed }) => [s.waiting, { backgroundColor: p.scheme === "dark" ? "#0c2a3a" : "#e0f2fe", opacity: pressed ? 0.7 : 1 }]}>
+                                <Text style={[s.waitingText, { color: p.fg }]} numberOfLines={1}>
+                                    {chrome.pendingApprovals > 1 ? `${chrome.pendingApprovals} things are waiting on you` : "Waiting on your approval"}
+                                </Text>
+                                <Text style={[s.waitingGo, { color: p.accent }]}>Show me</Text>
+                            </Pressable>
                         ) : null}
                         <View style={{ flex: 1 }}>
                             <EmbedWebView backgroundColor={p.bg} />
@@ -109,11 +115,30 @@ export function SessionLayer() {
     );
 }
 
+/**
+ * The session's model in the header: the name itself, bold, with a provider prefix (`litellm.google/`) dimmed in front
+ * of it, because the part that says which model this is comes last. No pill: the name IS the heading of this screen.
+ */
+function ModelName({ id, onPress }: { id: string; onPress?: () => void }) {
+    const p = usePalette();
+    const cut = id.lastIndexOf("/");
+    return (
+        <Pressable accessibilityRole="button" accessibilityLabel={`Model: ${id}`} onPress={onPress} disabled={!onPress} hitSlop={8}
+            style={({ pressed }) => [s.model, pressed && { opacity: 0.55 }]}>
+            <Text numberOfLines={1} style={[s.modelText, { color: p.fg }]}>
+                {cut > 0 ? <Text style={[s.modelPrefix, { color: p.fgFaint }]}>{id.slice(0, cut + 1)}</Text> : null}{cut > 0 ? id.slice(cut + 1) : id}
+            </Text>
+            {onPress ? <ChevronDown size={16} color={p.fgDim} /> : null}
+        </Pressable>
+    );
+}
+
 /** The session's model, as a pill: tap for the runtime's models, and switch to one. */
 function ModelPill() {
     const e = useEmbed();
     const sheet = useRef<BottomSheetModal>(null);
     const [models, setModels] = useState<ModelChoice[] | null | undefined>(undefined);
+    const [q, setQ] = useState("");
     const c = e.chrome!;
     const show = () => {
         sheet.current?.present();
@@ -123,14 +148,18 @@ function ModelPill() {
         sheet.current?.dismiss();
         if (id !== c.model && c.canSwitchModel) { void Haptics.selectionAsync(); e.switchModel(c.key, id); }
     };
-    const list = (models ?? []).filter((m) => !m.kinds?.includes("embedding")).sort((a, b) => a.id.localeCompare(b.id));
+    const all = (models ?? []).filter((m) => !m.kinds?.includes("embedding")).sort((a, b) => a.id.localeCompare(b.id));
+    // A box can offer fifty models, which is a lot of thumb: filter once there are more than a screenful.
+    const filtered = q.trim() ? all.filter((m) => m.id.toLowerCase().includes(q.trim().toLowerCase())) : all;
     return (
         <>
-            <Pill text={c.model ?? ""} mono label={`Model: ${c.model}`} onPress={show} />
-            <Sheet ref={sheet} title="Model" note={c.switchNote}>
+            <ModelName id={c.model ?? ""} onPress={show} />
+            <Sheet ref={sheet} title="Model" note={c.switchNote} tall={all.length > 8}
+                header={all.length > 8 ? <SheetFilter value={q} onChangeText={setQ} placeholder="Filter models" /> : undefined}>
                 {models === undefined ? <SheetRow title="Asking…" disabled />
                     : models === null ? <SheetRow title="The runtime did not list its models." disabled />
-                    : list.map((m) => (
+                    : filtered.length === 0 ? <SheetRow title={`No model here matches “${q.trim()}”.`} disabled />
+                    : filtered.map((m) => (
                         <SheetRow key={m.id} title={m.id} mono chosen={m.id === c.model} disabled={!c.canSwitchModel}
                             detail={[m.where === "cloud" ? "cloud" : null, m.kinds?.includes("vision") ? "sees images" : null, m.kinds?.includes("thinking") ? "thinks" : null].filter(Boolean).join(" · ") || undefined}
                             onPress={() => pick(m.id)} />
@@ -207,8 +236,18 @@ const s = StyleSheet.create({
     // The header: back, the model pill (or the title), the menu; the status bar's inset above it.
     header: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 6, paddingBottom: 6 },
     // "Waiting on your approval": a band under the header in the notice colour's tint.
-    waiting: { paddingHorizontal: SIZE.gutter, paddingVertical: 10 },
+    waiting: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: SIZE.gutter, paddingVertical: 10 },
+    // What waits on you, in the bar under the header.
+    waitingText: { fontSize: SIZE.small, flexShrink: 1 },
+    // "Show me": the way to the card that answers it.
+    waitingGo: { fontSize: SIZE.small, fontWeight: "700" },
     // The menu's first line: the session's title in full.
+    // The model in the header: the name and its chevron, no box around them.
+    model: { flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 1, paddingVertical: 6, paddingHorizontal: 4 },
+    // The model's name: bold, in the code face an id belongs in.
+    modelText: { fontSize: 17, fontWeight: "700", fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), flexShrink: 1 },
+    // A provider prefix in front of it, quieter and not bold.
+    modelPrefix: { fontWeight: "400" },
     menuTitle: { fontSize: SIZE.heading, fontWeight: "700", paddingHorizontal: 12, paddingTop: 4 },
     // Under it: what kind of session, on which runtime.
     menuSub: { fontSize: SIZE.small, paddingHorizontal: 12, paddingTop: 4, paddingBottom: 12 },

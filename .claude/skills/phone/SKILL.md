@@ -42,6 +42,11 @@ node scripts/ios.mjs launch --next
 On iOS the simulator takes no taps from the command line: drive it with a Maestro flow (`node scripts/ios.mjs flows
 <file>`), tapping by visible text or by accessible name (a pill's is `Model: <id>`, not its text).
 
+When a flow cannot find something that is plainly on the screen, print what the tools can actually see:
+`~/.maestro/maestro/bin/maestro --device <udid> hierarchy` (iOS) or `maestro hierarchy` with one device attached. A
+label is matched WHOLE, so a row reading "gemma3:27b, sees images" needs `gemma3:27b.*`; a placeholder is in no
+accessibility tree, so a field needs a `testID` (`- tapOn: { id: "sheet-filter" }`).
+
 A flow names its app by `appId`: `first-run.yaml` is the Capacitor app (`dev.wander.windowml`), `next-join.yaml` the
 React Native one (`.next`). Name the flow for the app you installed; a bare `flows` runs both and one will fail.
 `next-join.yaml` joins against a hub that is not there, which exercises key generation and the keystore (the vault)

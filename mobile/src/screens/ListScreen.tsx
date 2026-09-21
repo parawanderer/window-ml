@@ -10,7 +10,7 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Bot, Settings, SquarePen } from "lucide-react-native";
 import type { SessionSummary } from "../../../src/session-host";
 import { useEmbed } from "../embed";
-import { ago, sections, STATUS_LABEL, STATUS_TONE } from "../format";
+import { ago, needsYou, sections, STATUS_LABEL, STATUS_TONE } from "../format";
 import { useSessionLayer } from "../layer";
 import { SIZE, usePalette } from "../theme";
 import { Badge, Dot, IconButton } from "../ui";
@@ -25,8 +25,18 @@ export function ListScreen() {
     const layer = useSessionLayer();
     const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
     const [refreshing, setRefreshing] = useState(false);
-    const data = useMemo(() => sections(e.runtimes, e.sessions).map((s) => ({ ...s, data: folded.has(s.runtime.id) ? [] : s.data })), [e.runtimes, e.sessions, folded]);
-    const waiting = e.sessions.reduce((n, s) => n + s.pendingApprovals, 0);
+    // What waits on you is pinned above the runtimes, and LEAVES its own section while it is up there: the same row
+    // twice within a screen reads as a bug, and the pinned row names the machine it is on.
+    const data = useMemo(() => {
+        const mine = needsYou(e.sessions);
+        const pinned = new Set(mine.map((x) => `${x.id.runtime}:${x.id.hash}`));
+        const byRuntime = sections(e.runtimes, e.sessions).map((x) => ({
+            id: x.runtime.id, runtime: x.runtime, older: x.older,
+            data: folded.has(x.runtime.id) ? [] : x.data.filter((y) => !pinned.has(`${y.id.runtime}:${y.id.hash}`)),
+        }));
+        return mine.length ? [{ id: "needs-you", runtime: null, older: 0, data: mine }, ...byRuntime] : byRuntime;
+    }, [e.runtimes, e.sessions, folded]);
+    const names = useMemo(() => new Map(e.runtimes.map((r) => [r.id, r.name])), [e.runtimes]);
     const refresh = useCallback(() => { setRefreshing(true); e.resume(); setTimeout(() => setRefreshing(false), 700); }, [e]);
     const status = e.status.state === "online" ? null : e.status.state === "connecting" ? "Connecting…" : "Offline, retrying";
 
@@ -40,7 +50,7 @@ export function ListScreen() {
             </View>
             <SectionList
                 sections={data}
-                keyExtractor={(x) => `${x.id.runtime}:${x.id.hash}`}
+                keyExtractor={(x, i) => `${x.id.runtime}:${x.id.hash}:${i}`}
                 stickySectionHeadersEnabled={false}
                 contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={p.fgFaint} />}
@@ -48,14 +58,17 @@ export function ListScreen() {
                     <View style={s.head}>
                         <View style={s.headMeta}>
                             {status ? <Text style={{ color: p.fgDim, fontSize: SIZE.small }}>{status}</Text> : null}
-                            {waiting ? <Text style={{ color: p.notice, fontSize: SIZE.small, fontWeight: "600" }}>{waiting} waiting on you</Text> : null}
                             {e.demo ? <Text style={{ color: p.fgFaint, fontSize: SIZE.small }}>Demo data</Text> : null}
                         </View>
                     </View>
                 }
-                renderSectionHeader={({ section }) => (
+                renderSectionHeader={({ section }) => section.runtime === null ? (
+                    <View style={[s.section, s.needsHead]}>
+                        <Text style={[s.sectionName, { color: p.notice }]}>Needs you</Text>
+                    </View>
+                ) : (
                     <Pressable accessibilityRole="button" accessibilityState={{ expanded: !folded.has(section.runtime.id) }}
-                        onPress={() => setFolded((f) => { const n = new Set(f); n.has(section.runtime.id) ? n.delete(section.runtime.id) : n.add(section.runtime.id); return n; })}
+                        onPress={() => setFolded((f) => { const n = new Set(f); n.has(section.runtime!.id) ? n.delete(section.runtime!.id) : n.add(section.runtime!.id); return n; })}
                         style={s.section}>
                         <Dot tone={section.runtime.online ? "ok" : "off"} />
                         <Text style={[s.sectionName, { color: p.fgDim }]}>{section.runtime.name}</Text>
@@ -63,17 +76,23 @@ export function ListScreen() {
                         {!section.runtime.online ? <Text style={{ color: p.fgFaint, fontSize: 12.5 }}>offline</Text> : null}
                     </Pressable>
                 )}
-                renderSectionFooter={({ section }) => section.older && !folded.has(section.runtime.id)
+                renderSectionFooter={({ section }) => section.runtime && section.older && !folded.has(section.runtime.id)
                     ? <Text style={[s.older, { color: p.fgFaint }]}>{section.older} older on this runtime</Text> : null}
-                renderItem={({ item }) => <Row s={item} onPress={() => layer.open(`${item.id.runtime}:${item.id.hash}`)} />}
+                renderItem={({ item, section }) => (
+                    // A pinned row opens ON its approval: that is what it is pinned for. It also names its runtime,
+                    // since up here it is out of its machine's section.
+                    <Row s={item} runtimeName={section.runtime === null ? names.get(item.id.runtime) : undefined}
+                        onPress={() => layer.open(`${item.id.runtime}:${item.id.hash}`, section.runtime === null)} />
+                )}
                 ListEmptyComponent={e.ready ? <Text style={[s.empty, { color: p.fgDim }]}>No runtimes yet. Pair a browser from Settings to see its sessions here.</Text> : null}
             />
         </View>
     );
 }
 
-/** One session in the list: its title, what kind it is and where it stands, and when it last moved. */
-function Row({ s: x, onPress }: { s: SessionSummary; onPress: () => void }) {
+/** One session in the list: its title, where it stands, and when it last moved. `runtimeName` for a row out of its
+ *  runtime's section (the pinned "needs you" group). */
+function Row({ s: x, runtimeName, onPress }: { s: SessionSummary; runtimeName?: string; onPress: () => void }) {
     const p = usePalette();
     const title = x.title || x.task || "(untitled)";
     const label = STATUS_LABEL[x.status];
@@ -84,10 +103,17 @@ function Row({ s: x, onPress }: { s: SessionSummary; onPress: () => void }) {
             <View style={[s.rowDot, { backgroundColor: tone === "busy" ? p.notice : tone === "err" ? p.err : "transparent" }]} />
             <View style={s.rowBody}>
                 <Text numberOfLines={1} style={[s.rowTitle, { color: p.fg }]}>{title}</Text>
+                {/* WHERE IT STANDS COMES FIRST on this line, so it is in the same place on every row: a status that
+                    trails a page host of any length is one the eye has to find again each time. It never shrinks;
+                    the host does. */}
                 <View style={s.rowMeta}>
+                    {label ? <Text style={[s.rowState, { color: x.status === "waiting" ? p.notice : tone === "err" ? p.err : p.fgDim }]}>{label}</Text> : null}
                     {x.kind === "agent" ? <View style={s.kind}><Bot size={13} color={p.fgFaint} /><Text style={[s.metaText, { color: p.fgFaint }]}>agent</Text></View> : null}
-                    {x.page ? <Text numberOfLines={1} style={[s.metaText, { color: p.fgFaint, flexShrink: 1 }]}>{hostOf(x.page.url)}</Text> : null}
-                    {label ? <Text style={[s.metaText, { color: x.status === "waiting" ? p.notice : tone === "err" ? p.err : p.fgFaint }]}>{label}</Text> : null}
+                    {/* Out of its runtime's section, the machine is what the row is missing; the page host is what
+                        it can spare, since the transcript says that on the next tap. */}
+                    {runtimeName
+                        ? <Text numberOfLines={1} style={[s.metaText, { color: p.fgFaint, flexShrink: 1 }]}>{runtimeName}</Text>
+                        : x.page ? <Text numberOfLines={1} style={[s.metaText, { color: p.fgFaint, flexShrink: 1 }]}>{hostOf(x.page.url)}</Text> : null}
                 </View>
             </View>
             <View style={s.rowEnd}>
@@ -114,6 +140,8 @@ const s = StyleSheet.create({
     title: { fontSize: SIZE.title, fontWeight: "700", letterSpacing: -0.3 },
     // Connection, waiting count and the demo note, in a line under the title.
     headMeta: { flexDirection: "row", gap: 12, minHeight: 18 },
+    // The pinned group's heading, which folds nothing and so has no dot to tap.
+    needsHead: { paddingTop: 14 },
     // A runtime's heading: its dot, name and tags; tapping folds it.
     section: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: SIZE.gutter, paddingTop: 22, paddingBottom: 8 },
     // The runtime's name, as a small uppercase label.
@@ -128,8 +156,10 @@ const s = StyleSheet.create({
     rowDot: { width: 6, height: 6, borderRadius: 3, marginRight: 10 },
     // Title and meta, taking the row's width.
     rowBody: { flex: 1, minWidth: 0 },
-    // The session's title, one line.
-    rowTitle: { fontSize: SIZE.text, fontWeight: "500" },
+    // The session's title, one line, the heaviest thing in the row.
+    rowTitle: { fontSize: SIZE.text, fontWeight: "600" },
+    // Where the session stands, first on the meta line and never shrunk: the row's one fixed landmark.
+    rowState: { fontSize: 13, fontWeight: "600" },
     // Kind, page, status: the second line.
     rowMeta: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 3 },
     // "agent", with its icon.
