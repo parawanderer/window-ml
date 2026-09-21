@@ -4841,3 +4841,108 @@ test("resource panel: a card's facts say what decode achieves; a model's row say
         expect(await frame.locator(".vram-row .vram-expect").first().getAttribute("class")).toContain("quiet");
     } finally { await ext.close(); await fake.stop(); }
 });
+
+// A TRACKPAD SWIPE never takes the window off the strip. A swipe is dozens of wheel events with large deltas, far
+// more travel than the session has in either direction; every one of them must leave the window ON the track, with
+// a width. Swiped over each surface that scrubs: the strip, the plot and the lane.
+test("resource panel: a long trackpad swipe parks the window at the end of the strip, never off it", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_window: 6, ml_lane_scope: false, ml_res_sections: { lane: true, models: true } }));
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-scrub").count(), { timeout: 30000 }).toBe(1);
+        // Something in the lane, or the lane is not drawn and a third of this test runs over nothing.
+        await page.evaluate(() => window.postMessage({ __mlDebug: {
+            kind: "agent", id: "sw1", ts: Date.now() - 4000, save: false,
+            session: { hash: "sw1", turn: 0 }, task: "a task", model: "fake-model", maxSteps: 4, config: null,
+        } }, "*"));
+        await sleep(14000);   // the session outgrows the 6 s window, so there is somewhere to scroll to
+
+        // Where the window box sits on its track, in the track's own pixels.
+        const placed = () => frame.locator(".rc-scrub-win").evaluate((w) => {
+            const t = w.closest(".rc-scrub-track").getBoundingClientRect(), b = w.getBoundingClientRect();
+            return { left: b.left - t.left, right: t.right - b.right, width: b.width, shown: getComputedStyle(w).display !== "none" };
+        });
+        const swipe = (sel, dx, n) => frame.locator(sel).first().evaluate((el, [dx, n]) => {
+            const r = el.getBoundingClientRect();
+            for (let i = 0; i < n; i++) el.dispatchEvent(new WheelEvent("wheel", { deltaX: dx, deltaY: dx / 10, bubbles: true, cancelable: true,
+                clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+        }, [dx, n]);
+        for (const sel of [".rc-scrub-track", ".rc", ".rc-lane-rows"]) {
+            for (const dx of [-400, 400, -400]) {
+                await swipe(sel, dx, 40);
+                await sleep(300);
+                const p = await placed();
+                expect(p.shown, `${sel} ${dx}: the window is still drawn`).toBe(true);
+                expect(p.width, `${sel} ${dx}: it has a width`).toBeGreaterThan(2);
+                expect(p.left, `${sel} ${dx}: not past the left end`).toBeGreaterThan(-1);
+                expect(p.right, `${sel} ${dx}: not past the right end`).toBeGreaterThan(-1);
+            }
+        }
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// SCOPED TO ONE SESSION, a swipe stays within that session. The scoped view's window is the run's own stretch of the
+// box's history; the wheel used to clamp to the WHOLE history instead, so a long swipe carried the window off the run
+// and the lane (which holds only that run's events) went blank: the timeline "disappeared".
+test("resource panel: swiping the window back and forth keeps its width, and it never leaves the strip", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_window: 4, ml_res_sections: { lane: true, models: true } }));
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-scrub").count(), { timeout: 30000 }).toBe(1);
+        await sleep(6000);
+        // A short FINISHED run in the middle of a longer history: history before it, and after.
+        await page.evaluate(() => {
+            const now = Date.now(), hash = "e2e-swipe";
+            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            post({ kind: "agent", id: hash, ts: now - 3000, save: false, session: { hash, turn: 0 }, task: "a short run", model: "gemma4:31b", maxSteps: 5, config: null });
+            for (let i = 1; i <= 3; i++) post({ kind: "agent-step", id: hash, ts: now - 3000 + i * 600, save: false, session: { hash, turn: i },
+                step: i, seq: i, tool: "exec", toolMs: 200, arguments: { js: `s${i}` }, result: "ok", usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, genMs: 200 } });
+            post({ kind: "agent-result", id: hash, ts: now - 1000, save: false, session: { hash, turn: 4 }, answer: "done", steps: 3 });
+        });
+        // Open the run from the session list: the lane then scopes to it (its default).
+        await frame.locator(".row", { hasText: "a short run" }).first().click();
+        await frame.getByRole("button", { name: /^full/ }).click();
+        await expect.poll(() => frame.locator(".rc-ev").count(), { timeout: 15000 }).toBeGreaterThan(0);
+        await sleep(6000);   // more history after the run ends
+        const placed = () => frame.locator(".rc-scrub-win").evaluate((w) => {
+            const t = w.closest(".rc-scrub-track").getBoundingClientRect(), b = w.getBoundingClientRect();
+            return { left: Math.round(b.left - t.left), right: Math.round(t.right - b.right), width: Math.round(b.width), style: w.getAttribute("style") };
+        }).catch(() => null);
+
+        const swipe = (sel, dx, n) => frame.locator(sel).first().evaluate((el, [dx, n]) => {
+            const r = el.getBoundingClientRect();
+            for (let i = 0; i < n; i++) el.dispatchEvent(new WheelEvent("wheel", { deltaX: dx, deltaY: dx / 10, bubbles: true, cancelable: true,
+                clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+        }, [dx, n]);
+        const seconds = () => ext.sw.evaluate(() => new Promise((r) => chrome.storage.local.get({ ml_res_window: 0 }, (d) => r(d.ml_res_window))));
+        for (const sel of [".rc-lane-rows", ".rc", ".rc-scrub-track", ".rc-scrub-track", ".rc-scrub-track"]) {
+            for (const dx of [-400, 400]) {
+                await swipe(sel, dx, 40);
+                await sleep(400);
+                const p = await placed();
+                expect(p, `${sel} ${dx}: the window box is still drawn`).not.toBeNull();
+                expect(p.width, `${sel} ${dx}: it has a width`).toBeGreaterThan(2);
+                expect(p.left, `${sel} ${dx}: not past the left end`).toBeGreaterThan(-2);
+                expect(p.right, `${sel} ${dx}: not past the right end`).toBeGreaterThan(-2);
+            }
+            // Back at live after each round trip: at the width it started with, not a little narrower.
+            expect(await seconds(), `${sel}: a round trip kept the window's width`).toBeGreaterThanOrEqual(4);
+        }
+    } finally { await ext.close(); await fake.stop(); }
+});

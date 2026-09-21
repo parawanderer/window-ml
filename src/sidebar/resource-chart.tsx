@@ -1993,7 +1993,15 @@ function settleScrub(next: { from: number; to: number }, ex: { from: number; to:
     }, 400);
 }
 
-function ScrubStrip({ samples, window: win, events = [], follows }: { samples: ResourceSample[]; window: { from: number; to: number } | null; events?: ResourceEvent[]; follows: boolean }) {
+function ScrubStrip({ samples, window: win, pan, events = [], follows }: {
+    samples: ResourceSample[]; window: { from: number; to: number } | null;
+    /** The window at its REAL width, for a pan. `window` is clipped to the last reading while it fills, which is right
+     *  for drawing it and for a resize (narrowing means fewer seconds than the history), and wrong for a pan: moving
+     *  the clipped one and rejoining live stored the clipped width, so every swipe to the tail and back shrank the
+     *  window by the unread gap, until it was a sliver and then nothing. */
+    pan?: { from: number; to: number } | null;
+    events?: ResourceEvent[]; follows: boolean;
+}) {
     const wrapRef = useRef<HTMLDivElement>(null);
     const trackRef = useRef<HTMLDivElement>(null);
     // Where the TRACK sits inside the strip, as percentages of the strip — the connector below is drawn in
@@ -2039,7 +2047,7 @@ function ScrubStrip({ samples, window: win, events = [], follows }: { samples: R
             held = true;
             landed = zone === "from" || zone === "to"
                 ? scrubResize(ex, start, zone, at(ev.clientX))
-                : scrubTo(ex, win, at(ev.clientX));
+                : scrubTo(ex, pan ?? win, at(ev.clientX));
             zoomRange.value = landed;
         };
         const up = () => {
@@ -2088,7 +2096,7 @@ function ScrubStrip({ samples, window: win, events = [], follows }: { samples: R
                     }
                     const by = wheelScrubFraction(ev.deltaX, ev.deltaY, ev.deltaMode, b.width);
                     if (!by) return;
-                    settleScrub(scrubNudge({ from: ex.from, to: ex.to }, win, by), ex, follows);
+                    settleScrub(scrubNudge({ from: ex.from, to: ex.to }, pan ?? win, by), ex, follows);
                     ev.preventDefault();
                     ev.stopPropagation();
                 }}
@@ -2512,7 +2520,7 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
                 ahead of the last reading, see `chartWindow`) it is given the window clipped to that reading: a drag
                 on its left edge then means "fewer seconds than the history", which is what narrowing is. */}
             <ScrubStrip samples={samples} window={window_ && samples.length && window_.to > samples[samples.length - 1].t
-                ? { from: window_.from, to: samples[samples.length - 1].t } : window_} events={stripEvents} follows={follows} />
+                ? { from: window_.from, to: samples[samples.length - 1].t } : window_} pan={window_} events={stripEvents} follows={follows} />
             {/* And below that, sharing the tracks' x-axis: what happened, against what memory was doing. The
                 connector says the second is the first opened out — see ZoomLink. */}
             {/* Drawn unless the track editor's "event lane" is off — `laneEnabled` is that switch and takes
