@@ -1036,6 +1036,22 @@ test("the devices on the account: which is this one, when each was seen, and rem
     expect(errors).toEqual([]);
 });
 
+test("opening the page at an address writes no history: the hash is never wiped and pushed back", async () => {
+    const page = await browser.newPage({ viewport: DESKTOP });
+    await page.addInitScript(() => {
+        globalThis.__historyWrites = [];
+        for (const f of ["pushState", "replaceState"]) { const o = history[f].bind(history); history[f] = (a, b, u) => { globalThis.__historyWrites.push(`${f} ${u}`); return o(a, b, u); }; }
+    });
+    for (const hash of [`#/s/${encodeURIComponent(CHAT)}`, "#/settings/devices", "#/search"]) {
+        await page.goto(`${server.url}${hash}`);
+        await expect(page.locator(".chat")).toBeVisible();
+        await page.waitForTimeout(300);
+        expect(await page.evaluate(() => globalThis.__historyWrites), hash).toEqual([]);
+        expect(new URL(page.url()).hash).toBe(hash);
+    }
+    await page.close();
+});
+
 test("addresses: a link opens a view and its tab, the address follows what is on screen, and back undoes a step", async () => {
     // A path, as someone would type or paste it; the server sends it to its hash, where the page routes.
     const page = await browser.newPage({ viewport: DESKTOP });
