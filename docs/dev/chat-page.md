@@ -721,3 +721,26 @@ one, because a control that moves when nothing is open is a control you hunt for
 - `CompositeHost.events` attaches to the host that owns a runtime when it subscribes, and does not move if a
   higher-priority host reports that runtime later.
 - The panel's tooltips (`cursorTipOn`) are pointer-only, so on a touch screen their prose is unreachable.
+
+## The phone's cache of seen sessions
+
+`src/chat/event-cache.ts`. A phone whose app the OS killed would otherwise refetch every session it reopens, so the
+store (given an `EventCache`, which only the phone's page passes) keeps, per session, the events its SUBSCRIPTION
+delivered and the feed's position (`SessionFeed.snapshot`). On a later launch it replays the copy and then subscribes
+FROM that position: the runtime sends only what is new, or `reset` if the history changed while the app was closed,
+which clears the copy through the store's ordinary reset path. No new rule was needed for correctness; the contract's
+resume and reset already are the reconciliation.
+
+- **Never the truth.** A copy of what the runtime said, replaced whenever the runtime says otherwise. It does not
+  contradict "a transcript changes only when the runtime says so": everything replayed, the runtime said.
+- **What is saved is the subscription's history, not `applied`.** A page of older events REWRITES `applied`, and a
+  copy saved from it would claim a history the saved position does not start at. `seen` records only what the
+  subscription delivered, and where that history began (`earlier`), which older pages never move.
+- **Bounded.** A session over `CACHE_MAX_BYTES` is not kept at all, since half a session is worse than none, and
+  past `CACHE_SESSIONS` the least recently saved goes. A screenshot-heavy agent run simply refetches.
+- **A slow cache is an empty cache.** An open waits at most `CACHE_LOAD_MS` for the copy, then opens normally: the
+  page outside the app, where nothing answers the store, used to sit on "Loading…" for the store's 15 s timeout.
+- **Where the phone keeps it:** the app's CACHE directory (`mobile/src/store.ts`, names starting `ev`), out of
+  backups and purgeable by the OS. Joining or leaving an account clears it (`native-embed-app.tsx`), so a device
+  never replays the last account's sessions. Checked on the iOS simulator: two opened sessions land in
+  `Library/Caches/events/`, and a relaunch reopens one through the reset path with exactly one copy of each turn.

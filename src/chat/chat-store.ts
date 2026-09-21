@@ -9,11 +9,15 @@
 //
 // No `chrome` and no DOM: the local host, the hub host and the fake host all come through here unchanged.
 import { signal, type ReadonlySignal } from "@preact/signals";
-import type { Command, CommandError, CommandResult, HostStatus, RuntimeId, RuntimeInfo, SessionHost, SessionIndexUpdate, SessionKey, SessionSummary, Unsubscribe } from "../session-host";
+import type { Command, CommandError, CommandResult, HostStatus, RuntimeId, RuntimeInfo, SessionHost, SessionId, SessionIndexUpdate, SessionKey, SessionSummary, Unsubscribe } from "../session-host";
 import { parseSessionKey, sessionKey } from "../session-host";
 import { awaitingStart, forgetSessionReduced, onDebug, titleTried } from "../sidebar/debug-reducer";
 import { rev, sessionMap, view } from "../sidebar/store";
 import { SessionFeed } from "./session-feed";
+import type { CachedSession, EventCache } from "./event-cache";
+
+/** How long an open waits for the phone's copy of a session before opening it the ordinary way. */
+const CACHE_LOAD_MS = 1500;
 import { speaksOurContract } from "./grants";
 import type { MlDebugEvent } from "../contract-debug";
 
@@ -73,7 +77,18 @@ export class ChatStore {
     private offs: Unsubscribe[] = [];
     private eventsOff: Unsubscribe | null = null;
 
-    constructor(readonly host: SessionHost) {}
+    /**
+     * What the phone keeps of a session past this launch (event-cache.ts), and, per session, the events the SUBSCRIPTION
+     * delivered in history order with where that history began. Kept apart from `applied`, which a page of older events
+     * rewrites: a copy saved from it would claim a history the saved position does not start at. Only with a cache.
+     */
+    private readonly cache: EventCache | null;
+    private readonly seen = new Map<SessionKey, { events: { pos?: number; event: MlDebugEvent }[]; earlier: { from: number } | null; truncated: boolean }>();
+    private readonly saving = new Map<SessionKey, ReturnType<typeof setTimeout>>();
+
+    constructor(readonly host: SessionHost, opts: { cache?: EventCache } = {}) {
+        this.cache = opts.cache ?? null;
+    }
 
     get status(): ReadonlySignal<HostStatus> { return this._status; }
     get runtimes(): ReadonlySignal<RuntimeInfo[]> { return this._runtimes; }
@@ -109,11 +124,63 @@ export class ChatStore {
         this.close();
         const id = parseSessionKey(key);
         if (!id) return;
-        let feed = this.feeds.get(key);
-        if (!feed) { feed = new SessionFeed(id); this.feeds.set(key, feed); }
-        const f = feed;
         this.openKey.value = key;
+        const feed = this.feeds.get(key);
+        // Not seen this launch, and there is a cache: replay what the phone kept, THEN subscribe from where it left off.
+        if (!feed && this.cache) { void this.openFromCache(key, id); return; }
+        this.subscribe(key, id, feed ?? this.newFeed(key, id));
+    }
+
+    /** A fresh feed for a session, remembered so a reopen this launch resumes from it. */
+    private newFeed(key: SessionKey, id: SessionId): SessionFeed {
+        const f = new SessionFeed(id);
+        this.feeds.set(key, f);
+        return f;
+    }
+
+    /**
+     * Open a session from the phone's copy of it, then subscribe from the copy's position. With no copy, or one that
+     * does not read, it is an ordinary open. A different session opened while the copy loads wins: the copy is dropped
+     * unread rather than drawn under the wrong session.
+     */
+    private async openFromCache(key: SessionKey, id: SessionId): Promise<void> {
+        // A cache is an optimisation: one that does not answer promptly is treated as empty rather than holding the
+        // session on "Loading…" (the page outside the app, where nothing answers the store, waited 15 s for its timeout).
+        let c: CachedSession | null = null;
+        try {
+            c = await Promise.race([this.cache!.load(key), new Promise<null>((r) => setTimeout(() => r(null), CACHE_LOAD_MS))]);
+        } catch { c = null; }
+        if (this.openKey.value !== key || this.eventsOff || this.feeds.has(key)) return;
+        if (!c) { this.subscribe(key, id, this.newFeed(key, id)); return; }
+        const f = SessionFeed.restore(id, c.feed);
+        this.feeds.set(key, f);
+        for (const e of c.events) this.reduce(id.runtime, e.event);
+        this.seen.set(key, { events: [...c.events], earlier: c.earlier, truncated: c.truncated });
+        if (c.earlier) {
+            this.applied.set(key, [...c.events]);
+            this.setEarlier(key, { from: c.earlier.from, more: true, truncated: false, loading: false });
+        }
+        this.setTruncated(key, c.truncated);
+        this.subscribe(key, id, f);
+    }
+
+    /** Keep a session's copy a moment after it last changed, rather than on every event of a streaming run. */
+    private saveSoon(key: SessionKey): void {
+        if (!this.cache) return;
+        clearTimeout(this.saving.get(key));
+        this.saving.set(key, setTimeout(() => {
+            this.saving.delete(key);
+            const feed = this.feeds.get(key)?.snapshot();
+            const s = this.seen.get(key);
+            if (!feed || !s) return;
+            void this.cache!.save({ v: 1, key, feed, events: s.events, earlier: s.earlier, truncated: s.truncated }).catch(() => undefined);
+        }, 800));
+    }
+
+    /** Subscribe to a session's events through its feed, resuming from the feed's position when it has one. */
+    private subscribe(key: SessionKey, id: SessionId, f: SessionFeed): void {
         const since = f.position;
+        if (this.cache && !this.seen.has(key)) this.seen.set(key, { events: [], earlier: null, truncated: false });
         // A fresh subscription collects from its first event: `backfilled`, which says whether paging is possible,
         // arrives after the events it would have to replay. A resume adds to what is already held, if anything.
         if (!since) this.applied.set(key, []);
@@ -123,14 +190,25 @@ export class ChatStore {
                 case "apply":
                     this.reduce(id.runtime, act.event);
                     this.applied.get(key)?.push({ pos: act.pos, event: act.event });
+                    this.seen.get(key)?.events.push({ pos: act.pos, event: act.event });
+                    this.saveSoon(key);
                     break;
                 case "reset":
                     this.forgetReduced(key);
                     this.applied.set(key, []);
                     this.setEarlier(key, null);
+                    // The history the copy held is not this one any more: start the copy over with what follows.
+                    if (this.seen.has(key)) this.seen.set(key, { events: [], earlier: null, truncated: false });
                     break;
-                case "backfilled":
+                case "backfilled": {
                     this.setTruncated(key, act.truncated);
+                    const s = this.seen.get(key);
+                    if (s) {
+                        s.truncated = act.truncated;
+                        // Where the SUBSCRIPTION's history began: never moved by a later page of older events.
+                        if (act.from != null) s.earlier = act.from > 0 ? { from: act.from } : null;
+                        this.saveSoon(key);
+                    }
                     // A position greater than 0 is something to page to; 0 or none is not, and the events kept for a
                     // replay would only cost memory.
                     if (act.from != null && act.from > 0) {
@@ -143,13 +221,24 @@ export class ChatStore {
                         this.setEarlier(key, null);
                     }
                     break;
+                }
                 case "gone":
                     this.removeSession(key, true);
+                    this.seen.delete(key);
+                    void this.cache?.drop(key).catch(() => undefined);
                     break;
                 case "drop":
                     break;
             }
         }, since ? { since } : undefined);
+    }
+
+    /** Forget every session the phone kept: joining or leaving an account must not replay the last one's sessions. */
+    async forgetCache(): Promise<void> {
+        this.seen.clear();
+        for (const t of this.saving.values()) clearTimeout(t);
+        this.saving.clear();
+        await this.cache?.clear();
     }
 
     /**

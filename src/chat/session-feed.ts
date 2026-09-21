@@ -24,6 +24,9 @@ export type FeedAction =
     | { type: "gone" }
     | { type: "drop"; reason: "other-session" | "version" | "mislabelled" | "stale-epoch" | "duplicate" };
 
+/** What a feed needs to resume in a LATER LAUNCH (event-cache.ts): its epoch and every cursor it applied. */
+export interface FeedSnapshot { epoch: string; cursors: number[] }
+
 /** The stream state of one session subscription: its epoch and which cursors it has applied. Kept across
  *  re-subscriptions, so a reopened session resumes from {@link SessionFeed.position} instead of from nothing. */
 export class SessionFeed {
@@ -34,6 +37,26 @@ export class SessionFeed {
     private maxCursor = -Infinity;
 
     constructor(readonly session: SessionId) {}
+
+    /** The state worth keeping past this launch, or null before anything arrived. */
+    snapshot(): FeedSnapshot | null {
+        return this.epoch == null ? null : { epoch: this.epoch, cursors: [...this.applied] };
+    }
+
+    /**
+     * A feed that picks up where a saved one left off: the same epoch and the same applied cursors, so the runtime's
+     * resume sends only what is new, and anything it re-sends is dropped as a duplicate. If the history changed while
+     * the app was closed, the runtime answers with `reset`, and the rules above clear what was restored.
+     */
+    static restore(session: SessionId, snap: FeedSnapshot): SessionFeed {
+        const f = new SessionFeed(session);
+        f.epoch = snap.epoch;
+        for (const c of snap.cursors) {
+            f.applied.add(c);
+            if (c > f.maxCursor) f.maxCursor = c;
+        }
+        return f;
+    }
 
     /** The epoch this subscription is in, or null before anything arrived. A page of older events from another epoch
      *  belongs to a different history and must not be stitched onto this one. */

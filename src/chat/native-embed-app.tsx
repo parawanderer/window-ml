@@ -6,6 +6,7 @@ import { clientPairing } from "../pairing/client-pairing";
 import { FakeHost } from "./fake-host";
 import { openClientHost } from "./client-host";
 import { keepKeysInApp, reportStartFailure, runEmbed } from "./native-embed";
+import { storeCache } from "./event-cache";
 
 declare const __BUNDLE__: string;
 
@@ -13,7 +14,9 @@ declare const __BUNDLE__: string;
  *  app draws the first-run screens itself and the page only has to say `account: null`. */
 async function main(): Promise<void> {
     // The keys live in the phone's keystore, not the WebView's storage (WebKit cannot even store an X25519 key there).
-    keepKeysInApp();
+    const kept = keepKeysInApp();
+    // What this phone has already seen of each session, so reopening one after the OS killed the app is not a refetch.
+    const cache = storeCache(kept);
     const { ring, me, host } = await openClientHost("Phone");
     const m = me?.membership;
     // Joining, creating or leaving changes who this device is: the page starts over as the new identity. After a moment,
@@ -24,13 +27,15 @@ async function main(): Promise<void> {
         client: () => host?.connection?.hubClient ?? null,
         defaultLabel: "Phone",
         rootKeptIn: "this phone's keystore",
-        onChanged: () => { setTimeout(() => location.reload(), 400); },
+        // A device that joins or leaves an account replays nothing of the last one's sessions.
+        onChanged: () => { void cache.clear().catch(() => undefined).finally(() => setTimeout(() => location.reload(), 400)); },
     });
     runEmbed(host ?? new FakeHost({ runtimes: [] }), {
         account: m ? { label: "This phone", hubUrl: m.hubUrl, root: !!me?.root } : null,
         bundle: typeof __BUNDLE__ === "string" ? __BUNDLE__ : "dev",
         ...(host ? { reconnect: () => host.reconnect() } : {}),
         pairing,
+        ...(host ? { cache } : {}),
     });
 }
 
