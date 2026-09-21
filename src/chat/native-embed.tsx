@@ -221,7 +221,7 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
             }
             case "start": {
                 if (m.kind === "agent") { post({ type: "sent", id: m.id, ok: false, error: "Starting an agent from the phone comes with the tab picker." }); return; }
-                const r = await store.send({ type: "chat.start", runtime: m.runtime, text: m.text, ...(m.model ? { model: m.model } : {}) });
+                const r = await store.send({ type: "chat.start", runtime: m.runtime, text: m.text, ...(m.model ? { model: m.model } : {}), ...(m.images?.length ? { images: m.images.filter((i) => i.startsWith("data:image/")) } : {}) });
                 post(r.ok ? { type: "sent", id: m.id, ok: true, session: `${r.data.session.runtime}:${r.data.session.hash}` }
                     : { type: "sent", id: m.id, ok: false, error: r.error.message || r.error.code });
                 return;

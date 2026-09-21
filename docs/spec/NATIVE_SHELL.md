@@ -7,8 +7,7 @@ that chrome, and keeps the web build for what it is good at: drawing a session.
 
 This was agreed on 2026-09-21 and the shell is built (`mobile/`, #237 onwards): the list, the session chrome, the
 composer, settings and pairing are native, and the transcript is the page. What is not there yet: scanning a QR code
-with the camera, approvals from the waiting bar, images in the composer, starting an agent, and the Capacitor app's
-removal. Where this spec and `mobile/AGENTS.md` disagree about a detail of the app, the code and AGENTS.md are what
+with the camera, approvals from the waiting bar, starting an agent, and the Capacitor app's removal. Where this spec and `mobile/AGENTS.md` disagree about a detail of the app, the code and AGENTS.md are what
 ships; this is why it is built that way.
 
 It replaces the packaging half of "The phone app" in [`CHAT_PAGE.md`](CHAT_PAGE.md) (Capacitor, decided 2026-09-17).
@@ -44,11 +43,17 @@ version.
 
 **The composer never loses what was typed.** The same three rules as the web composer (`src/sidebar/drafts.ts`):
 
-- the text (and attached images) is saved per session as it is typed, in the app's own storage, and read back when the
-  session is opened again, after a restart included;
+- the text is saved per session as it is typed, in the app's own storage, and read back when the session is opened
+  again, after a restart included. Attached images are kept per session in MEMORY only (several hundred KB each is too
+  much for AsyncStorage): they survive leaving the session and a failed send, not the app's death;
 - sending empties the box at once but HOLDS the text until the runtime's answer arrives (the bridge's `sent`). A
   failure puts it back, in front of anything typed since, whether or not that session is on screen;
 - a send still held when the app died was never confirmed, so it comes back into the box on the next start.
+
+**Images travel over the hub, so they are shrunk on the phone** (`mobile/src/attach.ts`, `image-budget.ts`). A sealed
+command is at most 1 MiB, a phone photo is several MB: each image is resized (1568 px on its long edge, JPEG, stepping
+down to 768 px) until it fits an even share of a 640 KB budget for all of a message's images, at most four of them. One
+that cannot fit is refused with a sentence rather than failing at the hub.
 
 **What it looks like.** The phone-width chat page, as it is now: the same list, header, model pill, composer, badges and
 spacing, in the same theme tokens. It is not a redesign. What changes is that each screen is BUILT for a phone rather than

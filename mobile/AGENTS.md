@@ -47,6 +47,8 @@ API from memory.** `expo-file-system` in particular is the `File` / `Directory` 
 - **A message from the page carries no URL on Android**: `e.nativeEvent.url` is the string `"null"` for a `file://`
   page, so a check against the page's address drops every message there while passing on iOS. What confines this
   WebView is `onShouldStartLoadWithRequest`; anything else is a second look, and must treat a missing URL as nothing.
+- **Anything the app sends rides one sealed hub command, at most 1 MiB** (`src/hub/seal.ts`), base64 and JSON included.
+  A phone photo alone is several times that: images are shrunk to `image-budget.ts`'s budget before they are attached.
 - **React Native's `Image` draws no SVG**, and says nothing: the viewer opened on a black screen for the demo's SVG
   capture. The page rasterizes an SVG before `openImage` (`drawable`, native-embed.tsx); anything else the app shows
   from a data URL needs the same.

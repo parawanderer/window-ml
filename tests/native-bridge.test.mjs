@@ -111,6 +111,7 @@ test("every message the app can send passes the page's own check", () => {
         { type: "send", id: "n1", key: "laptop:1", text: "hi" },
         { type: "send", id: "n2", key: "laptop:1", text: "look", images: ["data:image/png;base64,AA=="] },
         { type: "start", id: "n3", runtime: "laptop", kind: "chat", text: "hello", model: "qwen3:32b" },
+        { type: "start", id: "n4", runtime: "laptop", kind: "chat", text: "what is this?", images: ["data:image/jpeg;base64,AA=="] },
         { type: "cancel", key: "laptop:1" },
         { type: "continue", key: "laptop:1" },
         { type: "answer", key: "laptop:1", seq: 4, decision: true },
