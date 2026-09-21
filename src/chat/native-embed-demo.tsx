@@ -5,7 +5,8 @@
 import type { ModelChoice } from "../session-host";
 import { fakePairing } from "../pairing/fake-pairing";
 import { demoHost } from "./demo-world";
-import { runEmbed } from "./native-embed";
+import { keepKeysInApp, runEmbed } from "./native-embed";
+import { storeCache } from "./event-cache";
 
 /**
  * What THIS demo's box offers to run: a real one has dozens, which is what the app's model filter is for, and the web
@@ -53,4 +54,9 @@ const pairing = fakePairing({
 });
 pairing.addOffer("7K3M Q9XD", { label: "Living-room tablet", role: "client", fingerprint: "a41c9e07d3b2" });
 (globalThis as { __pairFake?: unknown }).__pairFake = pairing;
-runEmbed(host, { account: { label: "Demo phone", hubUrl: "demo", root: false }, bundle: "demo", pairing });
+// The same cache the real app keeps, over the same bridge: the demo exercises it end to end on a device. Its fake runtime
+// starts a new history on every launch, so a reopened session is also the RESET path, which is worth seeing work.
+// Only inside the app: a page opened on its own (the specs) has no store to keep anything in.
+const inApp = !!(globalThis as { ReactNativeWebView?: unknown }).ReactNativeWebView;
+const cache = inApp ? storeCache(keepKeysInApp()) : undefined;
+runEmbed(host, { account: { label: "Demo phone", hubUrl: "demo", root: false }, bundle: "demo", pairing, ...(cache ? { cache } : {}) });

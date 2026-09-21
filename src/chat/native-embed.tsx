@@ -13,7 +13,8 @@ import { parseSessionKey } from "../session-host";
 import { encode, parseToWeb, type BridgeAccount, type ToNative, type ToWeb } from "../native/bridge";
 import { pairingBridge, pairingInfo } from "../native/pairing-bridge";
 import { bridgeVault } from "../native/vault-bridge";
-import { bridgeStore } from "../native/store-bridge";
+import { bridgeStore, type PlainStore } from "../native/store-bridge";
+import type { EventCache } from "./event-cache";
 import { searchBridge } from "../native/search-bridge";
 import { Keyring } from "../hub/keyring";
 import { sessionChrome } from "../native/snapshot";
@@ -51,7 +52,7 @@ const early: unknown[] = [];
  * Keep the keyring's secrets in the app's keystore (vault-bridge.ts). Called before the keyring is first opened, which
  * is before `runEmbed`: until then only vault answers are acted on, and anything else the app sends waits for it.
  */
-export function keepKeysInApp(): void {
+export function keepKeysInApp(): PlainStore {
     const v = bridgeVault(post);
     const s = bridgeStore(post);
     settleVault = v.settle;
@@ -65,6 +66,7 @@ export function keepKeysInApp(): void {
         else if (m?.type === "storeResult") s.settle(m);
         else if (m) early.push(raw);
     };
+    return s.store;
 }
 
 /**
@@ -115,7 +117,7 @@ function perFrame(send: () => void): () => void {
 }
 
 /** Everything the page does, over `host`. `account` is what the app's settings show about this device. */
-export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | null; bundle: string; reconnect?: () => void; pairing?: PairingApi }): void {
+export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | null; bundle: string; reconnect?: () => void; pairing?: PairingApi; cache?: EventCache }): void {
     initThemeStyle();
     applyCodePrefs();
     installViewPrefs(webPlatform.prefs);
@@ -123,7 +125,8 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
     document.documentElement.toggleAttribute("data-focus", true);
     try { installTooltipLayer(document); } catch { /* no DOM */ }
 
-    const store = new ChatStore(host);
+    // With a cache (the real app, not the demo), a session seen in an earlier launch replays from the phone at once.
+    const store = new ChatStore(host, opts.cache ? { cache: opts.cache } : {});
     installServices(hostServices(store, nativePlatform));
     store.start();
     const open = signal<SessionKey | null>(null);

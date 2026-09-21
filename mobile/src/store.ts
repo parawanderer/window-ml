@@ -9,15 +9,17 @@ import { Directory, File, Paths } from "expo-file-system";
 import type { ToNative, ToWeb } from "../../src/native/bridge";
 import { STORE_NAME } from "../../src/native/store-bridge";
 
-/** The folder the page's records live in. */
-const dir = (): Directory => {
-    const d = new Directory(Paths.document, "store");
+/** The folder a record lives in. The page's copies of sessions (`ev…`, src/chat/event-cache.ts) go to the CACHE
+ *  directory: out of backups, and the OS may purge it under pressure, which is what a cache promises. Pairing records
+ *  go to documents, where the app keeps what it must not lose. */
+const dirFor = (name: string): Directory => {
+    const d = name.startsWith("ev") ? new Directory(Paths.cache, "events") : new Directory(Paths.document, "store");
     if (!d.exists) d.create({ intermediates: true });
     return d;
 };
 
 /** One record's file. `:` is not a path character everywhere, so a name's colon becomes a dash on disk. */
-const fileFor = (name: string): File => new File(dir(), `${name.replace(/:/g, "-")}.json`);
+const fileFor = (name: string): File => new File(dirFor(name), `${name.replace(/:/g, "-")}.json`);
 
 /** Answer one `store` request. A name the page has no business writing is refused rather than turned into a path. */
 export async function answerStore(m: Extract<ToNative, { type: "store" }>): Promise<Extract<ToWeb, { type: "storeResult" }>> {
