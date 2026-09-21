@@ -76,7 +76,7 @@ export type ToWeb =
     | { type: "models"; runtime: string }
     | { type: "resume" };
 
-type Shape = Record<string, "string" | "number" | "boolean" | "object" | "array" | "string?" | "number?" | "boolean?" | "object?" | "array?" | "object|null">;
+type Shape = Record<string, "string" | "number" | "boolean" | "object" | "array" | "string?" | "number?" | "boolean?" | "object?" | "array?" | "object|null" | "array|null">;
 
 /** The fields each message must carry, by type. What is not listed is not checked, and is passed through. */
 const TO_NATIVE: Record<ToNative["type"], Shape> = {
@@ -85,7 +85,7 @@ const TO_NATIVE: Record<ToNative["type"], Shape> = {
     status: { status: "object" },
     index: { runtimes: "array", sessions: "array" },
     session: { chrome: "object|null" },
-    models: { runtime: "string", models: "object|null", error: "string?" },
+    models: { runtime: "string", models: "array|null", error: "string?" },
     sent: { id: "string", ok: "boolean", error: "string?", session: "string?" },
     notice: { text: "string", tone: "string" },
     saveFile: { name: "string", mime: "string", base64: "string" },
@@ -113,6 +113,7 @@ function fits(v: unknown, spec: Shape[string]): boolean {
     if (v === undefined) return optional;
     const base = spec.replace("?", "");
     if (base === "object|null") return v === null || (typeof v === "object" && !Array.isArray(v));
+    if (base === "array|null") return v === null || Array.isArray(v);
     if (base === "array") return Array.isArray(v);
     if (base === "object") return typeof v === "object" && v !== null && !Array.isArray(v);
     return typeof v === base;

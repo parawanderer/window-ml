@@ -7,6 +7,8 @@
 //   node scripts/android.mjs boot [--window] start the emulator (headless unless --window) and wait for it to boot
 //   node scripts/android.mjs install         build the web app, sync it into android/, build the APK, install it
 //   node scripts/android.mjs launch          start the app (cold: it is stopped first)
+//   … install --next [--demo] / launch --next   the same for the React Native app in mobile/ (docs/spec/NATIVE_SHELL.md),
+//                                            `--demo` carrying the fake-host demo page instead of this device's account
 //   node scripts/android.mjs shot [file]     a screenshot of the device (default test-results/android.png)
 //   node scripts/android.mjs flows [file…]   run Maestro flows (default: every tests/mobile/*.yaml) against the device
 //   node scripts/android.mjs stop            shut the emulator down
@@ -27,7 +29,8 @@ const IMAGE_API = "37.0";
 const IMAGE = `system-images;android-${IMAGE_API};google_apis;arm64-v8a`;
 const PACKAGES = ["platform-tools", "emulator", `platforms;android-${API}`, "build-tools;35.0.0", IMAGE];
 const AVD = "wml-phone";
-const APP = "dev.wander.windowml";
+const NEXT = process.argv.includes("--next");
+const APP = NEXT ? "dev.wander.windowml.next" : "dev.wander.windowml";
 
 /** The JDK gradle is run with: 21, because Capacitor's Android library targets it and a newer default can break gradle. */
 function javaHome() {
@@ -94,7 +97,23 @@ async function boot(window) {
     process.exit(1);
 }
 
+/**
+ * The React Native app: the page built and synced into it, then a release APK (the JS bundled in, so no Metro) and
+ * installed. The previous JS bundle is deleted first: gradle tracks only files under mobile/, so a change to the shared
+ * src/native/ would otherwise leave the old bundle in place and the build would look like it did nothing.
+ */
+function installNext() {
+    run("node", ["scripts/build-web.mjs"]);
+    run("node", ["mobile/scripts/sync-embed.mjs", ...(process.argv.includes("--demo") ? ["--demo"] : [])]);
+    if (!existsSync("mobile/android")) run("npx", ["expo", "prebuild", "--platform", "android", "--no-install"], { cwd: "mobile" });
+    spawnSync("rm", ["-rf", "mobile/android/app/build/generated/assets/react/release"]);
+    run("./gradlew", ["assembleRelease", "--quiet"], { cwd: "mobile/android" });
+    run(bin.adb, ["install", "-r", "mobile/android/app/build/outputs/apk/release/app-release.apk"]);
+    console.log(`✓ installed ${APP}`);
+}
+
 function install() {
+    if (NEXT) return installNext();
     run("node", ["scripts/build-web.mjs"]);
     run("node", ["scripts/mobile.mjs", "android"]);
     run("./gradlew", ["assembleDebug", "--quiet"], { cwd: "android" });

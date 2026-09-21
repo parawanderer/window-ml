@@ -14,7 +14,7 @@ import { encode, parseToWeb, type BridgeAccount, type ToNative, type ToWeb } fro
 import { sessionChrome } from "../native/snapshot";
 import { installServices, services } from "../sidebar/services";
 import { installTooltipLayer } from "../sidebar/tooltip-layer";
-import { applyCodePrefs, initThemeStyle } from "../sidebar/prefs";
+import { applyCodePrefs, applyTheme, initThemeStyle, pageTheme } from "../sidebar/prefs";
 import { rev, sessionMap } from "../sidebar/store";
 import { SessionPane } from "./chat-app";
 import { ChatStore } from "./chat-store";
@@ -95,7 +95,10 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
     const receive = async (m: ToWeb): Promise<void> => {
         switch (m.type) {
             case "theme":
-                document.documentElement.setAttribute("data-theme", m.theme.scheme);
+                // Through the page's own theme path, which also swaps the code colours: setting `data-theme` alone left
+                // light-theme syntax colours on a dark code block, the identifiers all but invisible.
+                pageTheme.value = m.theme.scheme;
+                applyTheme();
                 document.documentElement.style.setProperty("--safe-left", `${m.theme.insets.left}px`);
                 document.documentElement.style.setProperty("--safe-right", `${m.theme.insets.right}px`);
                 return;

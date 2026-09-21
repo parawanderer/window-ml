@@ -82,13 +82,22 @@ test("the app's theme, a model list, a chat started from the app, and a malforme
     const { page, errors } = await open();
     await tell(page, { type: "theme", theme: { scheme: "dark", fontScale: 1, insets: { top: 0, bottom: 0, left: 0, right: 0 }, reducedMotion: false } });
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    // The code colours follow: an identifier in a code block is light on the dark block, not the light theme's grey.
+    await tell(page, { type: "open", key: CHAT });
+    const ident = page.locator(".chat-transcript pre code").first();
+    await expect(ident).toBeVisible();
+    const lum = await ident.evaluate((el) => { const [r, g, b] = getComputedStyle(el).color.match(/\d+/g).map(Number); return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255; });
+    expect(lum, "code text reads light on a dark theme").toBeGreaterThan(0.5);
     await tell(page, { type: "models", runtime: "laptop" });
     await expect.poll(async () => (await last(page, "models"))?.models?.map((m) => m.id)).toContain("qwen3:32b");
     await tell(page, { type: "start", id: "st1", runtime: "laptop", kind: "chat", text: "hello from the phone" });
     await expect.poll(async () => (await out(page)).find((m) => m.type === "sent" && m.id === "st1")).toMatchObject({ ok: true, session: expect.stringMatching(/^laptop:/) });
-    const before = (await out(page)).length;
+    // Malformed messages are dropped: no answer comes back for either.
+    const answers = async () => (await out(page)).filter((m) => m.type === "sent").length;
+    const before = await answers();
     await page.evaluate(() => { globalThis.__wmlReceive("{not json"); globalThis.__wmlReceive(JSON.stringify({ v: 1, type: "send", id: 5 })); });
-    expect((await out(page)).length).toBe(before);
+    await page.waitForTimeout(200);
+    expect(await answers()).toBe(before);
     expect(errors).toEqual([]);
     await page.close();
 });
