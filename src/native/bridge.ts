@@ -9,7 +9,7 @@
 // one feature instead of misreading each other. Every message carries the bridge version `v`; a different major is
 // refused whole.
 
-import type { HostStatus, ListedSession, ModelChoice, RuntimeInfo, SessionKind, SessionStatus, SessionSummary } from "../session-host";
+import type { HostStatus, ListedSession, ModelChoice, RuntimeInfo, SessionKind, SessionStatus, SessionSummary, TabGroupInfo, TabInfo } from "../session-host";
 
 /** The bridge's version. Bump it when a message changes shape in a way an older peer would misread. */
 export const BRIDGE_VERSION = 1;
@@ -92,8 +92,11 @@ export type ToNative =
     | { type: "status"; status: HostStatus }
     /** What the runtimes need a hand with, most urgent first; `count` is the problems only, what the inbox badge says. */
     | { type: "attention"; items: AttentionRow[]; count: number }
-    | { type: "index"; runtimes: RuntimeInfo[]; sessions: SessionSummary[] }
+    /** `startable`: the runtimes this device may start each kind of session on, by the page's rule (grants.ts `mayStart`). */
+    | { type: "index"; runtimes: RuntimeInfo[]; sessions: SessionSummary[]; startable?: { chat: string[]; agent: string[] } }
     | { type: "session"; chrome: SessionChrome | null }
+    /** The answer to `tabs`: a runtime's open tabs (null when it would not say, and `error` why), for an agent's target. */
+    | { type: "tabsResult"; id: string; tabs: TabInfo[] | null; groups: TabGroupInfo[]; withheld: number; error?: string }
     /** The answer to `chromeFor`: that session's chrome, or null when it is not in the index. */
     | { type: "chromeOf"; id: string; chrome: SessionChrome | null }
     | { type: "models"; runtime: string; models: ModelChoice[] | null; error?: string }
@@ -122,7 +125,10 @@ export type ToWeb =
     | { type: "open"; key: string; approval?: boolean }
     | { type: "close" }
     | { type: "send"; id: string; key: string; text: string; images?: string[] }
-    | { type: "start"; id: string; runtime: string; kind: "chat" | "agent"; text: string; model?: string; images?: string[] }
+    /** Start a session. An agent's `target` is where it runs: an open tab, or a new one (at `url`, or the runtime's start page). */
+    | { type: "start"; id: string; runtime: string; kind: "chat" | "agent"; text: string; model?: string; images?: string[]; target?: { kind: "tab"; tabId: number } | { kind: "blank"; url?: string } }
+    /** The runtime's open tabs, for an agent's target: answered by `tabsResult`. */
+    | { type: "tabs"; id: string; runtime: string }
     | { type: "cancel"; key: string }
     | { type: "continue"; key: string }
     | { type: "answer"; key: string; seq: number; decision: boolean; persist?: boolean }
@@ -155,9 +161,10 @@ const TO_NATIVE: Record<ToNative["type"], Shape> = {
     account: { account: "object|null" },
     status: { status: "object" },
     attention: { items: "array", count: "number" },
-    index: { runtimes: "array", sessions: "array" },
+    index: { runtimes: "array", sessions: "array", startable: "object?" },
     session: { chrome: "object|null" },
     chromeOf: { id: "string", chrome: "object|null" },
+    tabsResult: { id: "string", tabs: "array|null", groups: "array", withheld: "number", error: "string?" },
     models: { runtime: "string", models: "array|null", error: "string?" },
     sent: { id: "string", ok: "boolean", error: "string?", session: "string?" },
     notice: { text: "string", tone: "string" },
@@ -177,7 +184,8 @@ const TO_WEB: Record<ToWeb["type"], Shape> = {
     open: { key: "string", approval: "boolean?" },
     close: {},
     send: { id: "string", key: "string", text: "string", images: "array?" },
-    start: { id: "string", runtime: "string", kind: "string", text: "string", model: "string?", images: "array?" },
+    start: { id: "string", runtime: "string", kind: "string", text: "string", model: "string?", images: "array?", target: "object?" },
+    tabs: { id: "string", runtime: "string" },
     cancel: { key: "string" },
     continue: { key: "string" },
     answer: { key: "string", seq: "number", decision: "boolean", persist: "boolean?" },

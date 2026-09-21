@@ -2,8 +2,8 @@
 // composer and waiting bar (`SessionChrome`), in the same words the web page uses. Pure, so the rules are unit-tested
 // without a WebView, and the app never re-derives a grant or a status on its own (docs/spec/NATIVE_SHELL.md).
 
-import type { Principal, RuntimeInfo, SessionKey, SessionSummary } from "../session-host";
-import { mayCommand } from "../chat/grants";
+import type { AgentTarget, Principal, RuntimeInfo, SessionKey, SessionSummary } from "../session-host";
+import { mayCommand, mayStart } from "../chat/grants";
 import type { AttentionRow, SessionChrome } from "./bridge";
 import { attentionCount, attentionItems } from "../chat/attention";
 
@@ -64,4 +64,29 @@ export function attentionForApp(runtimes: readonly RuntimeInfo[]): { items: Atte
         items: items.map((i) => ({ key: i.key, runtime: i.runtime.id, runtimeName: i.runtime.name, level: i.level, title: i.title, detail: i.detail })),
         count: attentionCount(items),
     };
+}
+
+/** The runtimes this device may start each kind of session on, for the app's new-session screen: the page's rule, so
+ *  the app never filters grants itself. */
+export function startableFor(runtimes: readonly RuntimeInfo[]): { chat: string[]; agent: string[] } {
+    return { chat: runtimes.filter((r) => mayStart(r, "chat")).map((r) => r.id), agent: runtimes.filter((r) => mayStart(r, "agent")).map((r) => r.id) };
+}
+
+/**
+ * An agent's target as the app sent it, checked: a tab by a whole-number id, or a new tab at an http(s) page or at the
+ * runtime's own start page. Anything else is null, and the start is refused rather than guessed at.
+ */
+export function agentTarget(t: unknown): AgentTarget | null {
+    if (!t || typeof t !== "object") return null;
+    const o = t as { kind?: unknown; tabId?: unknown; url?: unknown };
+    if (o.kind === "tab") return Number.isInteger(o.tabId) ? { kind: "tab", tabId: o.tabId as number } : null;
+    if (o.kind !== "blank") return null;
+    if (o.url === undefined || o.url === "") return { kind: "blank" };
+    if (typeof o.url !== "string") return null;
+    try {
+        const u = new URL(o.url);
+        return u.protocol === "https:" || u.protocol === "http:" ? { kind: "blank", url: u.href } : null;
+    } catch {
+        return null;
+    }
 }

@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 const B = await import("../src/native/bridge.ts");
-const { sessionChrome } = await import("../src/native/snapshot.ts");
+const { sessionChrome, startableFor, agentTarget } = await import("../src/native/snapshot.ts");
 
 test("a message round-trips with its version, and each side accepts only its own direction", () => {
     const wire = B.encode({ type: "send", id: "a1", key: "laptop:7b21", text: "hi" });
@@ -40,6 +40,9 @@ test("every message the page can post passes the app's own check", () => {
         { type: "index", runtimes: [], sessions: [] },
         { type: "session", chrome: null },
         { type: "chromeOf", id: "n10", chrome: null },
+        { type: "index", runtimes: [], sessions: [], startable: { chat: ["laptop"], agent: [] } },
+        { type: "tabsResult", id: "n11", tabs: [{ tabId: 41, url: "https://flights.example", title: "Flights", active: true }], groups: [], withheld: 0 },
+        { type: "tabsResult", id: "n11", tabs: null, groups: [], withheld: 0, error: "offline" },
         { type: "models", runtime: "laptop", models: [{ id: "qwen3:32b" }] },
         { type: "models", runtime: "laptop", models: null, error: "unreachable" },
         { type: "sent", id: "s1", ok: true, session: "laptop:1" },
@@ -119,6 +122,9 @@ test("every message the app can send passes the page's own check", () => {
         { type: "models", runtime: "laptop" },
         { type: "peek", id: "n9", key: "laptop:1" },
         { type: "chromeFor", id: "n10", key: "laptop:1" },
+        { type: "tabs", id: "n11", runtime: "laptop" },
+        { type: "start", id: "n12", runtime: "laptop", kind: "agent", text: "summarise this", target: { kind: "tab", tabId: 41 } },
+        { type: "start", id: "n13", runtime: "laptop", kind: "agent", text: "find a flight", target: { kind: "blank", url: "https://flights.example" } },
         { type: "resume" },
         { type: "showApproval" },
         { type: "pin", id: "p9", key: "laptop:1", on: true },
@@ -292,4 +298,32 @@ test("the phone's inbox: the page's words, the problems counted, the suggestions
     // A phone applies no fix, so none is sent: the app has nothing to draw a button from.
     assert.ok(items.every((i) => !("fix" in i)));
     assert.deepEqual(B.parseToNative(B.encode({ type: "attention", items, count })), { type: "attention", items, count });
+});
+
+test("the runtimes the app may start on are the page's rule: online, offering the kind, holding the grant", () => {
+    const rts = [
+        rt({ id: "both", capabilities: { chat: true, agent: true } }),
+        rt({ id: "chat-only", capabilities: { chat: true } }),
+        rt({ id: "watch", capabilities: { chat: true, agent: true }, grants: [{ scope: "view" }] }),
+        rt({ id: "away", capabilities: { chat: true, agent: true }, online: false }),
+    ];
+    assert.deepEqual(startableFor(rts), { chat: ["both", "chat-only"], agent: ["both"] });
+});
+
+test("an agent's target from the app is checked: a tab by id, or a new tab at an http(s) page, nothing else", () => {
+    assert.deepEqual(agentTarget({ kind: "tab", tabId: 41 }), { kind: "tab", tabId: 41 });
+    assert.deepEqual(agentTarget({ kind: "blank" }), { kind: "blank" });
+    assert.deepEqual(agentTarget({ kind: "blank", url: "" }), { kind: "blank" }, "an empty box is the runtime's start page");
+    assert.deepEqual(agentTarget({ kind: "blank", url: "https://flights.example/x?y=1" }), { kind: "blank", url: "https://flights.example/x?y=1" });
+    const refused = [
+        null, "tab", 41, [], {},
+        { kind: "tab" }, { kind: "tab", tabId: "41" }, { kind: "tab", tabId: 4.5 },
+        { kind: "headless" },                                   // reserved, and never offered by the app
+        { kind: "blank", url: "javascript:alert(1)" },          // a page the agent would run as script
+        { kind: "blank", url: "file:///etc/passwd" },           // a local file on the runtime's machine
+        { kind: "blank", url: "chrome://settings" },            // the browser's own pages
+        { kind: "blank", url: "not a url" },
+        { kind: "blank", url: 5 },
+    ];
+    for (const t of refused) assert.equal(agentTarget(t), null, JSON.stringify(t));
 });

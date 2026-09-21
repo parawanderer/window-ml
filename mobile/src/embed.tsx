@@ -14,7 +14,7 @@ import * as Sharing from "expo-sharing";
 import { Directory, File, Paths } from "expo-file-system";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { encode, parseToNative, type AttentionRow, type BridgeAccount, type PairingCall, type PairingInfo, type SessionChrome, type ToWeb } from "../../src/native/bridge";
-import type { HostStatus, ListedSession, ModelChoice, RuntimeInfo, SessionSummary } from "../../src/session-host";
+import type { HostStatus, ListedSession, ModelChoice, RuntimeInfo, SessionSummary, TabGroupInfo, TabInfo } from "../../src/session-host";
 import { EMBED } from "./generated/embed";
 import { answerStore } from "./store";
 import { answerVault } from "./vault";
@@ -38,9 +38,14 @@ export interface EmbedState {
     pairingInfo: PairingInfo | null;
     /** what the runtimes need a hand with, most urgent first, and how many of those are problems (not suggestions) */
     attention: { items: AttentionRow[]; count: number };
+    /** the runtimes this device may start each kind of session on (the page's rule) */
+    startable: { chat: string[]; agent: string[] };
     /** the image the page asked to show full size (`openImage`), or null */
     image: string | null;
 }
+
+/** Where an agent runs: an open tab, or a new one. */
+export type AgentTargetPick = { kind: "tab"; tabId: number } | { kind: "blank"; url?: string };
 
 /** A pairing call's answer: its value, or the reason in the page's words. */
 export type PairingAnswer<T = unknown> = { ok: true; value: T } | { ok: false; error: string };
@@ -52,8 +57,10 @@ export interface EmbedApi extends EmbedState {
     close(): void;
     /** Send to a session; resolves with whether the runtime took it (the composer's drafts hang on this). */
     send(key: string, text: string, images?: string[]): Promise<{ ok: boolean; error?: string }>;
-    /** Start a chat; resolves with the new session's key, or the reason it did not start. */
-    start(runtime: string, text: string, model?: string, images?: string[]): Promise<{ ok: boolean; error?: string; session?: string }>;
+    /** Start a chat, or an agent on `target`; resolves with the new session's key, or the reason it did not start. */
+    start(o: { runtime: string; kind: "chat" | "agent"; text: string; model?: string; images?: string[]; target?: AgentTargetPick }): Promise<{ ok: boolean; error?: string; session?: string }>;
+    /** A runtime's open tabs, for an agent's target; `tabs` is null when it would not say. */
+    tabs(runtime: string): Promise<{ tabs: TabInfo[] | null; groups: TabGroupInfo[]; withheld: number; error?: string }>;
     cancel(key: string): void;
     answer(key: string, seq: number, decision: boolean): void;
     switchModel(key: string, model: string): void;
@@ -151,12 +158,13 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
     const ref = useRef<WebViewHandle>(null);
     const [state, setState] = useState<EmbedState>({
         ready: false, account: undefined, status: { state: "connecting" }, runtimes: [], sessions: [], chrome: null, notice: null, demo: EMBED.demo, pairingInfo: null,
-        attention: { items: [], count: 0 }, image: null,
+        attention: { items: [], count: 0 }, image: null, startable: { chat: [], agent: [] },
     });
     const pendingPairing = useRef(new Map<string, (a: PairingAnswer) => void>());
     const pairingDone = useRef(new Set<(d: { offer: string; ok: boolean; error?: string }) => void>());
     const pendingSent = useRef(new Map<string, (r: { ok: boolean; error?: string; session?: string }) => void>());
     const pendingModels = useRef(new Map<string, ((m: ModelChoice[] | null) => void)[]>());
+    const pendingTabs = useRef(new Map<string, (r: { tabs: TabInfo[] | null; groups: TabGroupInfo[]; withheld: number; error?: string }) => void>());
     const pendingChrome = useRef(new Map<string, (c: SessionChrome | null) => void>());
     const searches = useRef(new Map<string, (rows: ListedSession[], more: boolean, error?: string) => void>());
     const queue = useRef<string[]>([]);
@@ -192,7 +200,8 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
             case "account": setState((s) => ({ ...s, account: m.account })); return;
             case "status": setState((s) => ({ ...s, status: m.status })); return;
             case "attention": setState((s) => ({ ...s, attention: { items: m.items, count: m.count } })); return;
-            case "index": setState((s) => ({ ...s, runtimes: m.runtimes, sessions: m.sessions })); return;
+            case "index": setState((s) => ({ ...s, runtimes: m.runtimes, sessions: m.sessions, ...(m.startable ? { startable: m.startable } : {}) })); return;
+            case "tabsResult": { const r = pendingTabs.current.get(m.id); pendingTabs.current.delete(m.id); r?.(m); return; }
             case "session": setState((s) => ({ ...s, chrome: m.chrome })); return;
             case "chromeOf": { const r = pendingChrome.current.get(m.id); pendingChrome.current.delete(m.id); r?.(m.chrome); return; }
             case "notice": setState((s) => ({ ...s, notice: { id: Date.now(), text: m.text, tone: m.tone } })); return;
@@ -234,7 +243,13 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
         open: (key, approval) => post({ type: "open", key, ...(approval ? { approval } : {}) }),
         close: () => post({ type: "close" }),
         send: (key, text, images) => request((id) => ({ type: "send", id, key, text, ...(images?.length ? { images } : {}) })),
-        start: (runtime, text, model, images) => request((id) => ({ type: "start", id, runtime, kind: "chat", text, ...(model ? { model } : {}), ...(images?.length ? { images } : {}) })),
+        start: (o) => request((id) => ({ type: "start", id, runtime: o.runtime, kind: o.kind, text: o.text, ...(o.model ? { model: o.model } : {}), ...(o.images?.length ? { images: o.images } : {}), ...(o.target ? { target: o.target } : {}) })),
+        tabs: (runtime) => new Promise((resolve) => {
+            const id = nextId();
+            const timer = setTimeout(() => { pendingTabs.current.delete(id); resolve({ tabs: null, groups: [], withheld: 0, error: "No answer from the runtime." }); }, 20_000);
+            pendingTabs.current.set(id, (r) => { clearTimeout(timer); resolve(r); });
+            post({ type: "tabs", id, runtime });
+        }),
         cancel: (key) => post({ type: "cancel", key }),
         answer: (key, s, decision) => post({ type: "answer", key, seq: s, decision }),
         switchModel: (key, model) => post({ type: "switchModel", key, model }),

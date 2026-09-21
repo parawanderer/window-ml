@@ -1,10 +1,11 @@
-// NewChatScreen.tsx — STARTING A CHAT: which runtime, which model, and the first message. The chat page's start page
-// (src/chat/start-page.tsx) as a phone screen: the runtime and the model as pills at the top, the box filling the rest,
-// and what was typed kept until a start succeeds (drafts.ts, under `start`). An agent run needs the tab picker and
-// arrives with it.
+// NewChatScreen.tsx — STARTING A SESSION: a chat or an agent run, on which runtime, with which model, and (an agent) on
+// which tab. The chat page's start page (src/chat/start-page.tsx) as a phone screen: Chat / Agent at the top where both
+// can start somewhere, the runtime, model and tab as pills, the box filling the rest, and what was typed kept until a
+// start succeeds (drafts.ts, under `start`). Which runtimes can start what is the PAGE's answer (`startable`), never a
+// grant this app reads for itself.
 
 import { useEffect, useRef, useState } from "react";
-import { Keyboard, StyleSheet, Text, TextInput, View } from "react-native";
+import { Keyboard, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
@@ -17,15 +18,20 @@ import { useSessionLayer } from "../layer";
 import { SIZE, usePalette } from "../theme";
 import { IconButton, Pill, Sheet, SheetRow } from "../ui";
 import { AttachButton, AttachedStrip, AttachSheet, useAttachments } from "../attach-ui";
+import { TabSheet, type TabChoice, type TabList } from "../tab-sheet";
+import { tabHost } from "../../../src/chat/tab-tree";
 
-/** The new-chat screen. */
+/** The new-session screen. */
 export function NewChatScreen() {
     const p = usePalette();
     const insets = useSafeAreaInsets();
     const nav = useNavigation();
     const e = useEmbed();
     const layer = useSessionLayer();
-    const startable = e.runtimes.filter((r) => r.online && r.capabilities.chat && r.grants.some((g) => g.scope !== "view"));
+    const kinds = (["chat", "agent"] as const).filter((k) => e.startable[k].length > 0);
+    const [kindPick, setKind] = useState<"chat" | "agent">("chat");
+    const kind = kinds.includes(kindPick) ? kindPick : kinds[0] ?? "chat";
+    const startable = e.runtimes.filter((r) => e.startable[kind].includes(r.id));
     const [runtimeId, setRuntimeId] = useState(startable[0]?.id ?? "");
     const rt = startable.find((r) => r.id === runtimeId) ?? startable[0];
     const [models, setModels] = useState<ModelChoice[] | null | undefined>(undefined);
@@ -35,6 +41,25 @@ export function NewChatScreen() {
     const att = useAttachments("start");
     const rtSheet = useRef<BottomSheetModal>(null);
     const modelSheet = useRef<BottomSheetModal>(null);
+    const tabSheet = useRef<BottomSheetModal>(null);
+    // An agent's tab: the runtime's own list, asked when the runtime changes and again when the picker opens.
+    const [tabs, setTabs] = useState<TabList>({ tabs: null, groups: [], withheld: 0 });
+    const [where, setWhere] = useState<TabChoice | null>(null);
+    const [url, setUrl] = useState("");
+    const asked = useRef(0);
+    const loadTabs = (fresh: boolean) => {
+        if (!rt || kind !== "agent") return;
+        const n = ++asked.current;
+        if (fresh) setTabs({ tabs: null, groups: [], withheld: 0 });
+        void e.tabs(rt.id).then((r) => {
+            if (n !== asked.current || (!fresh && !r.tabs)) return;   // a refresh that failed keeps the list on screen
+            setTabs(r);
+            // The first list picks the tab in front. A refresh never moves a choice: starting an agent on a tab nobody
+            // picked is the failure to avoid, so a chosen tab that closed stays chosen and says so.
+            setWhere((w) => (w != null && !fresh ? w : r.tabs?.find((t) => t.active)?.tabId ?? (r.tabs?.[0]?.tabId ?? "blank")));
+        });
+    };
+    useEffect(() => { setWhere(null); loadTabs(true); }, [rt?.id, kind]);
 
     useEffect(() => {
         if (!rt) return;
@@ -46,49 +71,74 @@ export function NewChatScreen() {
         });
     }, [rt?.id]);
 
+    const chosenTab = typeof where === "number" ? tabs.tabs?.find((t) => t.tabId === where) : undefined;
+    const closed = typeof where === "number" && !!tabs.tabs && !chosenTab;
+    const ready = kind === "chat" || where === "blank" || (typeof where === "number" && !closed);
     const start = async () => {
-        if (!rt || !text.trim() || busy) return;
+        if (!rt || !text.trim() || busy || !ready) return;
         setBusy(true);
-        // The images leave the box only once the chat has started: a refusal leaves everything where it was.
-        const r = await e.start(rt.id, text.trim(), model || undefined, att.imgs);
+        // The images leave the box only once the session has started: a refusal leaves everything where it was.
+        const target = kind === "agent" ? (where === "blank" ? { kind: "blank" as const, ...(url.trim() ? { url: url.trim() } : {}) } : { kind: "tab" as const, tabId: where as number }) : undefined;
+        const r = await e.start({ runtime: rt.id, kind, text: text.trim(), model: model || undefined, images: att.imgs, target });
         setBusy(false);
         if (r.ok && r.session) { saveDraft("start", ""); setText(""); att.take(); Keyboard.dismiss(); nav.goBack(); layer.open(r.session); }
     };
+    // The box has the keyboard from the start: a sheet opened over it would sit under the keys, taking the taps meant for it.
+    const show = (ref: { current: BottomSheetModal | null }) => { Keyboard.dismiss(); ref.current?.present(); };
     const usable = (models ?? []).filter((x) => !x.kinds?.includes("embedding")).sort((a, b) => a.id.localeCompare(b.id));
+    const whereText = where === "blank" ? "A new tab" : closed ? "That tab has closed" : chosenTab ? chosenTab.title || tabHost(chosenTab.url) : tabs.tabs === null ? "…" : "Pick a tab";
 
     return (
         <KeyboardAvoidingView behavior="padding" style={[s.screen, { backgroundColor: p.bg, paddingTop: insets.top }]}>
             <View style={s.bar}>
                 <IconButton label="Back" icon={(c) => <ChevronLeft size={26} color={c} />} onPress={() => nav.goBack()} />
-                <Text style={[s.barTitle, { color: p.fg }]}>New chat</Text>
+                <Text style={[s.barTitle, { color: p.fg }]}>{kind === "agent" ? "New agent run" : "New chat"}</Text>
+                <View style={{ flex: 1 }} />
+                {kinds.length > 1 ? (
+                    <View style={[s.kinds, { backgroundColor: p.panel }]} accessibilityRole="tablist">
+                        {kinds.map((k) => (
+                            <Pressable key={k} accessibilityRole="tab" accessibilityState={{ selected: k === kind }} onPress={() => setKind(k)}
+                                style={[s.kind, k === kind && { backgroundColor: p.bg }]}>
+                                <Text style={[s.kindText, { color: k === kind ? p.fg : p.fgDim }]}>{k === "chat" ? "Chat" : "Agent"}</Text>
+                            </Pressable>
+                        ))}
+                    </View>
+                ) : null}
             </View>
             {rt ? (
                 <>
                     <View style={s.pills}>
-                        <Pill text={rt.name} label={`Runtime: ${rt.name}`} onPress={startable.length > 1 ? () => rtSheet.current?.present() : undefined} />
-                        {model ? <Pill text={model} mono label={`Model: ${model}`} onPress={() => modelSheet.current?.present()} /> : models === undefined ? <Pill text="…" label="Loading models" /> : null}
+                        <Pill text={rt.name} label={`Runtime: ${rt.name}`} onPress={startable.length > 1 ? () => show(rtSheet) : undefined} />
+                        {model ? <Pill text={model} mono label={`Model: ${model}`} onPress={() => show(modelSheet)} /> : models === undefined ? <Pill text="…" label="Loading models" /> : null}
+                        {kind === "agent" ? <Pill text={whereText} label={`Runs on: ${whereText}`} onPress={() => { loadTabs(false); show(tabSheet); }} /> : null}
                     </View>
+                    {kind === "agent" && where === "blank" ? (
+                        <TextInput value={url} onChangeText={setUrl} placeholder="https://… (optional: the runtime's start page)" placeholderTextColor={p.fgFaint}
+                            autoCapitalize="none" autoCorrect={false} keyboardType="url" style={[s.url, { color: p.fg, borderColor: p.border }]} accessibilityLabel="Page to open" />
+                    ) : null}
                     <TextInput
                         value={text}
                         onChangeText={(t) => { setText(t); saveDraft("start", t); }}
-                        placeholder="Start a chat"
+                        placeholder={kind === "agent" ? "What should the agent do?" : "Start a chat"}
                         placeholderTextColor={p.fgFaint}
                         multiline
                         autoFocus
                         style={[s.input, { color: p.fg }]}
                         accessibilityLabel="Message"
+                        testID="start-field"
                     />
                     <View style={s.strip}><AttachedStrip att={att} /></View>
                     <View style={[s.foot, { paddingBottom: Math.max(insets.bottom, 12) }]}>
                         <AttachButton att={att} style={s.attach} />
-                        <IconButton label="Start" filled disabled={!text.trim() || busy || att.picking} onPress={start}
+                        <IconButton label="Start" filled disabled={!text.trim() || busy || att.picking || !ready} onPress={start}
                             icon={(c) => <ArrowUp size={20} color={c} strokeWidth={2.5} />} style={s.send} />
                     </View>
                 </>
             ) : (
-                <Text style={[s.none, { color: p.fgDim }]}>No runtime this device may start a chat on is online.</Text>
+                <Text style={[s.none, { color: p.fgDim }]}>No runtime this device may start a session on is online.</Text>
             )}
             <AttachSheet att={att} />
+            <TabSheet ref={tabSheet} list={tabs} value={where ?? "blank"} onPick={(c) => { setWhere(c); tabSheet.current?.dismiss(); }} />
             <Sheet ref={rtSheet} title="Runtime">
                 {startable.map((r) => <SheetRow key={r.id} title={r.name} chosen={r.id === rt?.id} onPress={() => { setRuntimeId(r.id); rtSheet.current?.dismiss(); }} />)}
             </Sheet>
@@ -122,6 +172,14 @@ const s = StyleSheet.create({
     attach: { width: 48, height: 48, borderRadius: 24 },
     // The start button: a filled circle.
     send: { width: 48, height: 48, borderRadius: 24 },
+    // Chat / Agent, a small segmented control at the bar's right.
+    kinds: { flexDirection: "row", borderRadius: 18, padding: 3, marginRight: 8 },
+    // One of the two.
+    kind: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 15 },
+    // Its word.
+    kindText: { fontSize: SIZE.small, fontWeight: "600" },
+    // The page a new tab opens at, under the pills.
+    url: { marginHorizontal: SIZE.gutter, marginTop: 4, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, fontSize: SIZE.small },
     // Nothing to start on: why.
     none: { padding: SIZE.gutter, fontSize: SIZE.text, lineHeight: 22 },
 });

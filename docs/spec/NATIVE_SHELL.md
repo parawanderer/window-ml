@@ -7,7 +7,7 @@ that chrome, and keeps the web build for what it is good at: drawing a session.
 
 This was agreed on 2026-09-21 and the shell is built (`mobile/`, #237 onwards): the list, the session chrome, the
 composer, settings and pairing are native, and the transcript is the page. What is not there yet: scanning a QR code
-with the camera, approvals from the waiting bar, starting an agent, and the Capacitor app's removal. Where this spec and `mobile/AGENTS.md` disagree about a detail of the app, the code and AGENTS.md are what
+with the camera, approvals from the waiting bar, and the Capacitor app's removal. Where this spec and `mobile/AGENTS.md` disagree about a detail of the app, the code and AGENTS.md are what
 ships; this is why it is built that way.
 
 It replaces the packaging half of "The phone app" in [`CHAT_PAGE.md`](CHAT_PAGE.md) (Capacitor, decided 2026-09-17).
@@ -109,7 +109,7 @@ recognise, so an old app and a new bundle (or the reverse) degrade instead of br
 | `ready` | bridge version, bundle version | once, when the core has started |
 | `account` | none / membership (label, role, hub) | at start and after pairing: native shows first-run or the app |
 | `status` | `HostStatus` | on change: the "connecting…" / "offline" chip |
-| `index` | `RuntimeInfo[]`, `SessionSummary[]` | on change, debounced to a frame: the list |
+| `index` | `RuntimeInfo[]`, `SessionSummary[]`, `startable` (runtime ids by kind, grants.ts `mayStart`) | on change, debounced to a frame: the list, and what the new-session screen offers |
 | `attention` | the items (`AttentionRow`: runtime, level, the page's title and detail) and the count of problems | on change: the inbox in the list's header and its screen. No fix is sent: a phone applies none, so each item names the device it is fixed on |
 | `session` | key, title, model, status, `canSwitchModel`, `pendingApprovals`, composer state (can send / can stop) | on change, for the open session: the header, the composer, the "waiting" bar |
 | `models` | runtime, the model list | answer to `models` |
@@ -128,7 +128,8 @@ recognise, so an old app and a new bundle (or the reverse) degrade instead of br
 | `theme` | light / dark, text size, safe-area insets, reduced motion |
 | `open` / `close` | a session key |
 | `send` | id, key, text, images (data URLs) |
-| `start` | id, runtime, kind, tab, model, text, images |
+| `start` | id, runtime, kind, model, text, images, and an agent's `target` (`{kind:"tab",tabId}` or `{kind:"blank",url?}`, checked page-side by `agentTarget`: http(s) only) |
+| `tabs` | id, runtime: its open tabs for an agent's target, answered by `tabsResult` (tabs, groups, withheld) |
 | `cancel`, `continue` | key |
 | `answer` | key, seq, decision, persist (for the "waiting" bar's quick answer; the card in the transcript answers itself) |
 | `switchModel` | key, model (`session.model`, #230) |
