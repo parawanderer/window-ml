@@ -196,7 +196,6 @@ export function EmbedWebView({ backgroundColor }: { backgroundColor: string }) {
             hideKeyboardAccessoryView
             keyboardDisplayRequiresUserAction={false}
             overScrollMode="never"
-            decelerationRate="normal"
             style={{ flex: 1, backgroundColor }}
             containerStyle={{ backgroundColor }}
         />

@@ -27,15 +27,21 @@ export function ago(ts: number, now = Date.now()): string {
 /** How far back the list reaches; a session running or waiting on you is recent however old it is. */
 const RECENT_MS = 30 * 86_400_000;
 
+/** Where a runtime sits in the list: those you can drive, then those you only watch, then those offline. */
+function rank(r: RuntimeInfo): number {
+    if (!r.online) return 2;
+    return r.grants.some((g) => g.scope !== "view") ? 0 : 1;
+}
+
 /** One runtime's section of the list: the runtime, and its recent sessions newest first. */
 export interface Section { runtime: RuntimeInfo; data: SessionSummary[]; older: number }
 
-/** Group the index by runtime, online runtimes first, each section newest first and cut to the recent month. */
+/** Group the index by runtime (drivable, then watched, then offline), each newest first and cut to the recent month. */
 export function sections(runtimes: RuntimeInfo[], sessions: SessionSummary[], now = Date.now()): Section[] {
     const by = new Map<string, SessionSummary[]>();
     for (const s of sessions) (by.get(s.id.runtime) ?? by.set(s.id.runtime, []).get(s.id.runtime)!).push(s);
     return [...runtimes]
-        .sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name))
+        .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
         .map((runtime) => {
             const all = (by.get(runtime.id) ?? []).sort((a, b) => b.lastTs - a.lastTs);
             const recent = all.filter((s) => s.status === "running" || s.status === "waiting" || now - s.lastTs < RECENT_MS);

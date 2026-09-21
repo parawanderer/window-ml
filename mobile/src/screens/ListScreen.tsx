@@ -33,6 +33,7 @@ export function ListScreen() {
     return (
         <View style={[s.screen, { backgroundColor: p.bg, paddingTop: insets.top }]}>
             <View style={s.bar}>
+                <Text style={[s.title, { color: p.fg }]} accessibilityRole="header">Sessions</Text>
                 <View style={{ flex: 1 }} />
                 <IconButton label="New chat" icon={(c) => <SquarePen size={22} color={c} />} onPress={() => nav.navigate("NewChat")} />
                 <IconButton label="Settings" icon={(c) => <Settings size={22} color={c} />} onPress={() => nav.navigate("Settings")} />
@@ -45,7 +46,6 @@ export function ListScreen() {
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={p.fgFaint} />}
                 ListHeaderComponent={
                     <View style={s.head}>
-                        <Text style={[s.title, { color: p.fg }]} accessibilityRole="header">Sessions</Text>
                         <View style={s.headMeta}>
                             {status ? <Text style={{ color: p.fgDim, fontSize: SIZE.small }}>{status}</Text> : null}
                             {waiting ? <Text style={{ color: p.notice, fontSize: SIZE.small, fontWeight: "600" }}>{waiting} waiting on you</Text> : null}
@@ -106,14 +106,14 @@ function hostOf(url: string): string {
 const s = StyleSheet.create({
     // The whole screen, under the status bar.
     screen: { flex: 1 },
-    // The top bar: the buttons at the right, the large title scrolls under it.
-    bar: { flexDirection: "row", alignItems: "center", paddingHorizontal: 8, height: 52 },
-    // The large title and what is worth knowing at a glance under it.
+    // The top bar: the large title at the left, the buttons at the right.
+    bar: { flexDirection: "row", alignItems: "center", paddingLeft: SIZE.gutter, paddingRight: 8, height: 56 },
+    // What is worth knowing at a glance, under the bar: the connection, what waits on you, demo data.
     head: { paddingHorizontal: SIZE.gutter, paddingBottom: 8 },
     // "Sessions", large.
     title: { fontSize: SIZE.title, fontWeight: "700", letterSpacing: -0.3 },
     // Connection, waiting count and the demo note, in a line under the title.
-    headMeta: { flexDirection: "row", gap: 12, marginTop: 4, minHeight: 18 },
+    headMeta: { flexDirection: "row", gap: 12, minHeight: 18 },
     // A runtime's heading: its dot, name and tags; tapping folds it.
     section: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: SIZE.gutter, paddingTop: 22, paddingBottom: 8 },
     // The runtime's name, as a small uppercase label.

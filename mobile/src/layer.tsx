@@ -88,7 +88,8 @@ export function SessionLayer() {
                     <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
                         <View style={[s.header, { paddingTop: insets.top, backgroundColor: p.bg }]}>
                             <IconButton label="Back to sessions" icon={(c) => <ChevronLeft size={26} color={c} />} onPress={layer.close} />
-                            {chrome?.model ? <ModelPill key={chrome.key} /> : <Text numberOfLines={1} style={[s.headerTitle, { color: p.fg }]}>{chrome?.title ?? ""}</Text>}
+                            {/* The model, or nothing: the title leads the transcript right under this bar. */}
+                            {chrome?.model ? <ModelPill key={chrome.key} /> : null}
                             <View style={{ flex: 1 }} />
                             <SessionMenu />
                         </View>
@@ -205,8 +206,6 @@ function Composer({ bottom }: { bottom: number }) {
 const s = StyleSheet.create({
     // The header: back, the model pill (or the title), the menu; the status bar's inset above it.
     header: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 6, paddingBottom: 6 },
-    // The title, when the session has no model to show.
-    headerTitle: { fontSize: SIZE.heading, fontWeight: "600", flexShrink: 1 },
     // "Waiting on your approval": a band under the header in the notice colour's tint.
     waiting: { paddingHorizontal: SIZE.gutter, paddingVertical: 10 },
     // The menu's first line: the session's title in full.

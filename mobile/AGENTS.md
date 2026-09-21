@@ -28,7 +28,17 @@ API from memory.** `expo-file-system` in particular is the `File` / `Directory` 
   function, a comment above every `StyleSheet.create` key. The code index checks it (`node scripts/index.mjs --mobile`
   from the repo root) and so does the pre-commit hook. Search the index before writing a new component.
 
+## Traps
+
+- **Gradle only watches `mobile/`**: a change to `src/native/` or the page leaves the old JS bundle in an incremental
+  build. `node scripts/android.mjs install --next` deletes it first.
+- **An Android prop can be iOS-only in disguise**: `decelerationRate="normal"` on the WebView crashed Android at startup
+  (a string where Fabric wants a number). Check a WebView prop's platform in its docs.
+- **A bridge check stricter than its sender drops real messages silently** (the model list, an array, failed an
+  "object" check). `tests/native-bridge.test.mjs` runs every message each side sends through the other side's check:
+  add the new message there when you add one.
+
 ## Running it
 
-From the repo root: `node scripts/android.mjs` / `node scripts/ios.mjs` (skill `phone`) for the emulator and the
-simulator. This app's id is `dev.wander.windowml.next` while it sits beside the Capacitor app.
+From the repo root: `node scripts/android.mjs install --next [--demo]` then `launch --next` builds, installs and
+starts this app on the emulator (skill `phone`). This app's id is `dev.wander.windowml.next` while it sits beside the Capacitor app.

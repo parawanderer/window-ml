@@ -3,7 +3,7 @@
 // menu opens in. Each takes the palette, so light and dark come from one place (theme.ts).
 
 import { forwardRef, useEffect, useMemo, useRef, type ReactNode } from "react";
-import { Animated, Pressable, StyleSheet, Text, View, type PressableProps, type StyleProp, type ViewStyle } from "react-native";
+import { Animated, Platform, Pressable, StyleSheet, Text, View, type PressableProps, type StyleProp, type ViewStyle } from "react-native";
 import * as Haptics from "expo-haptics";
 import { BottomSheetBackdrop, BottomSheetModal, BottomSheetScrollView, type BottomSheetBackdropProps } from "@gorhom/bottom-sheet";
 import { Check, ChevronDown } from "lucide-react-native";
@@ -120,7 +120,7 @@ const s = StyleSheet.create({
     // The pill's value, shrinking before the caret does.
     pillText: { fontSize: 15, fontWeight: "600", flexShrink: 1 },
     // A model name or an identifier: the code face, as the page sets it.
-    mono: { fontFamily: "Menlo", fontSize: 14 },
+    mono: { fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), fontSize: 14 },
     // A count: a capsule at least as wide as it is tall.
     badge: { minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 6, alignItems: "center", justifyContent: "center" },
     // The count's figure.

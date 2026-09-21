@@ -4,7 +4,7 @@
 // arrives with it.
 
 import { useEffect, useRef, useState } from "react";
-import { StyleSheet, Text, TextInput, View } from "react-native";
+import { Keyboard, StyleSheet, Text, TextInput, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
@@ -49,7 +49,7 @@ export function NewChatScreen() {
         setBusy(true);
         const r = await e.start(rt.id, text.trim(), model || undefined);
         setBusy(false);
-        if (r.ok && r.session) { saveDraft("start", ""); setText(""); nav.goBack(); layer.open(r.session); }
+        if (r.ok && r.session) { saveDraft("start", ""); setText(""); Keyboard.dismiss(); nav.goBack(); layer.open(r.session); }
     };
     const usable = (models ?? []).filter((x) => !x.kinds?.includes("embedding")).sort((a, b) => a.id.localeCompare(b.id));
 
