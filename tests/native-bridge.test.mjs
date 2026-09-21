@@ -246,3 +246,25 @@ test("the bridge vault refuses a name the keyring does not use, surfaces the app
     await assert.rejects(p, /keychain is locked/);
     await assert.rejects(b.vault.get("root"), /did not answer/);
 });
+
+const { attentionForApp } = await import("../src/native/snapshot.ts");
+
+test("the phone's inbox: the page's words, the problems counted, the suggestions not, and nothing offered as fixable here", () => {
+    const runtimes = [
+        rt({ id: "laptop", name: "Work laptop", capabilities: { chat: true, attention: ["no-model", "tab-groups"] } }),
+        rt({ id: "box", name: "Lab box", capabilities: { agent: true, archive: { folder: "needs-grant" }, attention: ["gpu-driver-old"] } }),
+    ];
+    const { items, count } = attentionForApp(runtimes);
+    // Most urgent first, and each names the device the fix is on.
+    assert.equal(items[0].level, "blocks");
+    assert.equal(items[0].runtimeName, "Work laptop");
+    assert.ok(items.every((i) => typeof i.title === "string" && i.title && i.detail));
+    assert.ok(items.some((i) => i.key === "box:archive-folder-lapsed"), "a lapsed archive folder is read from the runtime's own state");
+    // A code this page does not know is still listed, in general words, rather than dropped.
+    assert.ok(items.some((i) => i.key === "box:gpu-driver-old" && /does not know/.test(i.detail)));
+    // The badge counts problems only: a suggestion never makes a number.
+    assert.equal(count, items.filter((i) => i.level !== "suggests").length);
+    // A phone applies no fix, so none is sent: the app has nothing to draw a button from.
+    assert.ok(items.every((i) => !("fix" in i)));
+    assert.deepEqual(B.parseToNative(B.encode({ type: "attention", items, count })), { type: "attention", items, count });
+});

@@ -105,7 +105,7 @@ recognise, so an old app and a new bundle (or the reverse) degrade instead of br
 | `account` | none / membership (label, role, hub) | at start and after pairing: native shows first-run or the app |
 | `status` | `HostStatus` | on change: the "connecting…" / "offline" chip |
 | `index` | `RuntimeInfo[]`, `SessionSummary[]` | on change, debounced to a frame: the list |
-| `attention` | the attention items | on change |
+| `attention` | the items (`AttentionRow`: runtime, level, the page's title and detail) and the count of problems | on change: the inbox in the list's header and its screen. No fix is sent: a phone applies none, so each item names the device it is fixed on |
 | `session` | key, title, model, status, `canSwitchModel`, `pendingApprovals`, composer state (can send / can stop) | on change, for the open session: the header, the composer, the "waiting" bar |
 | `models` | runtime, the model list | answer to `models` |
 | `saveFile` | name, mime, base64 | a "save as CSV", an export: native opens the share sheet |

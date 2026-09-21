@@ -18,6 +18,7 @@ import type { Routes } from "./src/routes";
 import { ListScreen } from "./src/screens/ListScreen";
 import { NewChatScreen } from "./src/screens/NewChatScreen";
 import { SearchScreen } from "./src/screens/SearchScreen";
+import { AttentionScreen } from "./src/screens/AttentionScreen";
 import { SettingsScreen } from "./src/screens/SettingsScreen";
 import { CreateScreen, JoinScreen, WelcomeScreen } from "./src/screens/AccountScreens";
 import { DevicesScreen, PairScreen } from "./src/screens/DeviceScreens";
@@ -83,6 +84,7 @@ function Shell() {
                         <Stack.Screen name="List" component={ListScreen} />
                         <Stack.Screen name="NewChat" component={NewChatScreen} />
                         <Stack.Screen name="Search" component={SearchScreen} />
+                        <Stack.Screen name="Attention" component={AttentionScreen} />
                         <Stack.Screen name="Settings" component={SettingsScreen} />
                         <Stack.Screen name="Devices" component={DevicesScreen} />
                         <Stack.Screen name="Pair" component={PairScreen} />
