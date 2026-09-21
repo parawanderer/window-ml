@@ -94,6 +94,8 @@ export type ToNative =
     | { type: "attention"; items: AttentionRow[]; count: number }
     | { type: "index"; runtimes: RuntimeInfo[]; sessions: SessionSummary[] }
     | { type: "session"; chrome: SessionChrome | null }
+    /** The answer to `chromeFor`: that session's chrome, or null when it is not in the index. */
+    | { type: "chromeOf"; id: string; chrome: SessionChrome | null }
     | { type: "models"; runtime: string; models: ModelChoice[] | null; error?: string }
     | { type: "sent"; id: string; ok: boolean; error?: string; session?: string }
     | { type: "notice"; text: string; tone: "error" | "info" }
@@ -129,6 +131,8 @@ export type ToWeb =
     | { type: "pin"; id: string; key: string; on: boolean }
     | { type: "rename"; id: string; key: string; title: string }
     | { type: "delete"; id: string; key: string }
+    /** What may be done with a session that is NOT open (a long press on its row): answered by `chromeOf`. */
+    | { type: "chromeFor"; id: string; key: string }
     /** Capture the page the session's run is on, as it is now: the image arrives as `openImage`, the outcome as `sent`. */
     | { type: "peek"; id: string; key: string }
     | { type: "models"; runtime: string }
@@ -153,6 +157,7 @@ const TO_NATIVE: Record<ToNative["type"], Shape> = {
     attention: { items: "array", count: "number" },
     index: { runtimes: "array", sessions: "array" },
     session: { chrome: "object|null" },
+    chromeOf: { id: "string", chrome: "object|null" },
     models: { runtime: "string", models: "array|null", error: "string?" },
     sent: { id: "string", ok: "boolean", error: "string?", session: "string?" },
     notice: { text: "string", tone: "string" },
@@ -181,6 +186,7 @@ const TO_WEB: Record<ToWeb["type"], Shape> = {
     rename: { id: "string", key: "string", title: "string" },
     delete: { id: "string", key: "string" },
     peek: { id: "string", key: "string" },
+    chromeFor: { id: "string", key: "string" },
     models: { runtime: "string" },
     resume: {},
     pairing: { id: "string", call: "string", args: "object?" },

@@ -1,20 +1,24 @@
 // ListScreen.tsx — THE SESSION LIST, the app's home: every runtime this device can see, each with its recent sessions,
 // newest first, and what is waiting on you badged. The chat page's phone list (src/chat/chat-app.tsx `SessionList`)
-// drawn as a native list: a large title, round buttons for a new chat and settings, a section per runtime, rows you tap.
+// drawn as a native list: a large title, round buttons for a new chat and settings, a section per runtime, rows you tap
+// (and long-press for a session's actions, session-actions.tsx).
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Bot, Inbox, Search, Settings, SquarePen } from "lucide-react-native";
+import * as Haptics from "expo-haptics";
 import type { SessionSummary } from "../../../src/session-host";
+import type { SessionChrome } from "../../../src/native/bridge";
 import { useEmbed } from "../embed";
 import { ago, needsYou, sections, STATUS_LABEL, STATUS_TONE } from "../format";
 import { useSessionLayer } from "../layer";
 import { SIZE, usePalette } from "../theme";
 import { Badge, Dot, IconButton } from "../ui";
 import type { Routes } from "../routes";
+import { SessionActions, type SessionActionsHandle } from "../session-actions";
 
 // The list reaches back a month; everything older is on the search screen, which the footer row under each runtime
 // opens with nothing typed. That row used to be plain text, which named what you could not get to.
@@ -40,6 +44,16 @@ export function ListScreen() {
     }, [e.runtimes, e.sessions, folded]);
     const names = useMemo(() => new Map(e.runtimes.map((r) => [r.id, r.name])), [e.runtimes]);
     const refresh = useCallback(() => { setRefreshing(true); e.resume(); setTimeout(() => setRefreshing(false), 700); }, [e]);
+    // A long press shows the session's actions without opening it, as the page words them for that session.
+    const actions = useRef<SessionActionsHandle>(null);
+    const [acting, setActing] = useState<{ chrome: SessionChrome; approval: boolean } | null>(null);
+    const actOn = async (key: string, approval: boolean) => {
+        const chrome = await e.chromeFor(key);
+        if (!chrome) return;
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        setActing({ chrome, approval });
+        actions.current?.present();
+    };
     const status = e.status.state === "online" ? null : e.status.state === "connecting" ? "Connecting…" : "Offline, retrying";
 
     return (
@@ -97,23 +111,26 @@ export function ListScreen() {
                     // A pinned row opens ON its approval: that is what it is pinned for. It also names its runtime,
                     // since up here it is out of its machine's section.
                     <Row s={item} runtimeName={section.runtime === null ? names.get(item.id.runtime) : undefined}
-                        onPress={() => layer.open(`${item.id.runtime}:${item.id.hash}`, section.runtime === null)} />
+                        onPress={() => layer.open(`${item.id.runtime}:${item.id.hash}`, section.runtime === null)}
+                        onLongPress={() => void actOn(`${item.id.runtime}:${item.id.hash}`, section.runtime === null)} />
                 )}
                 ListEmptyComponent={e.ready ? <Text style={[s.empty, { color: p.fgDim }]}>No runtimes yet. Pair a browser from Settings to see its sessions here.</Text> : null}
             />
+            <SessionActions ref={actions} chrome={acting?.chrome ?? null} onOpen={acting ? () => layer.open(acting.chrome.key, acting.approval) : undefined} />
         </View>
     );
 }
 
 /** One session in the list: its title, where it stands, and when it last moved. `runtimeName` for a row out of its
  *  runtime's section (the pinned "needs you" group). */
-function Row({ s: x, runtimeName, onPress }: { s: SessionSummary; runtimeName?: string; onPress: () => void }) {
+function Row({ s: x, runtimeName, onPress, onLongPress }: { s: SessionSummary; runtimeName?: string; onPress: () => void; onLongPress: () => void }) {
     const p = usePalette();
     const title = x.title || x.task || "(untitled)";
     const label = STATUS_LABEL[x.status];
     const tone = STATUS_TONE[x.status];
     return (
-        <Pressable accessibilityRole="button" accessibilityLabel={title} onPress={onPress}
+        <Pressable accessibilityRole="button" accessibilityLabel={title} accessibilityHint="Long press for this session's actions" onPress={onPress} onLongPress={onLongPress}
+            accessibilityActions={[{ name: "longpress", label: "Session actions" }]} onAccessibilityAction={(ev) => { if (ev.nativeEvent.actionName === "longpress") onLongPress(); }}
             style={({ pressed }) => [s.row, pressed && { backgroundColor: p.panel }]}>
             <View style={[s.rowDot, { backgroundColor: tone === "busy" ? p.notice : tone === "err" ? p.err : "transparent" }]} />
             <View style={s.rowBody}>

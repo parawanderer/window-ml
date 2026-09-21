@@ -1,0 +1,27 @@
+# next-demo-row-actions.yaml — the React Native app's DEMO build (`install --next --demo`): a long press on a list row
+# shows that session's actions without opening it (the same sheet as the open session's ⋮), and a rename made there
+# reaches the list. Needs the demo world's sessions, so it fails on a real build: name it when you run `flows`.
+appId: dev.wander.windowml.next
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "KV cache size at 32k"
+    timeout: 60000
+- longPressOn: "KV cache size at 32k"
+- extendedWaitUntil:
+    visible: "Open"
+    timeout: 10000
+- assertVisible: "Copy session id"
+- assertNotVisible: "Model: qwen3:32b"
+- tapOn: "Rename"
+- extendedWaitUntil:
+    visible: "Rename this session"
+    timeout: 10000
+- tapOn: "Clear"
+- inputText: "KV cache, from the list"
+- tapOn: "Save"
+- extendedWaitUntil:
+    visible: "KV cache, from the list"
+    timeout: 15000
+- assertNotVisible: "Model: qwen3:32b"

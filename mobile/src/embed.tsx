@@ -65,6 +65,8 @@ export interface EmbedApi extends EmbedState {
     remove(key: string): Promise<{ ok: boolean; error?: string }>;
     /** Capture the page the session's run is on, as it is now; the capture opens full size when it arrives. */
     peek(key: string): Promise<{ ok: boolean; error?: string }>;
+    /** What may be done with a session that is not open (the list's long press): the page's chrome for it. */
+    chromeFor(key: string): Promise<SessionChrome | null>;
     /** Close the full-size image. */
     closeImage(): void;
     /** The models a runtime offers, asked of it each time. */
@@ -151,6 +153,7 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
     const pairingDone = useRef(new Set<(d: { offer: string; ok: boolean; error?: string }) => void>());
     const pendingSent = useRef(new Map<string, (r: { ok: boolean; error?: string; session?: string }) => void>());
     const pendingModels = useRef(new Map<string, ((m: ModelChoice[] | null) => void)[]>());
+    const pendingChrome = useRef(new Map<string, (c: SessionChrome | null) => void>());
     const searches = useRef(new Map<string, (rows: ListedSession[], more: boolean, error?: string) => void>());
     const queue = useRef<string[]>([]);
     const readyRef = useRef(false);
@@ -187,6 +190,7 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
             case "attention": setState((s) => ({ ...s, attention: { items: m.items, count: m.count } })); return;
             case "index": setState((s) => ({ ...s, runtimes: m.runtimes, sessions: m.sessions })); return;
             case "session": setState((s) => ({ ...s, chrome: m.chrome })); return;
+            case "chromeOf": { const r = pendingChrome.current.get(m.id); pendingChrome.current.delete(m.id); r?.(m.chrome); return; }
             case "notice": setState((s) => ({ ...s, notice: { id: Date.now(), text: m.text, tone: m.tone } })); return;
             case "sent": { const r = pendingSent.current.get(m.id); pendingSent.current.delete(m.id); r?.(m); return; }
             case "models": { const rs = pendingModels.current.get(m.runtime) ?? []; pendingModels.current.delete(m.runtime); rs.forEach((r) => r(m.models)); return; }
@@ -234,6 +238,13 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
         rename: (key, title) => request((id) => ({ type: "rename", id, key, title })),
         remove: (key) => request((id) => ({ type: "delete", id, key })),
         peek: (key) => request((id) => ({ type: "peek", id, key })),
+        chromeFor: (key) => new Promise((resolve) => {
+            const id = nextId();
+            // The page answers from what it holds, at once; a page that never answers is treated as "nothing to offer".
+            const timer = setTimeout(() => { pendingChrome.current.delete(id); resolve(null); }, 5_000);
+            pendingChrome.current.set(id, (c) => { clearTimeout(timer); resolve(c); });
+            post({ type: "chromeFor", id, key });
+        }),
         closeImage: () => setState((s) => ({ ...s, image: null })),
         models: (runtime) => new Promise((resolve) => {
             const list = pendingModels.current.get(runtime) ?? [];

@@ -129,6 +129,7 @@ recognise, so an old app and a new bundle (or the reverse) degrade instead of br
 | `switchModel` | key, model (`session.model`, #230) |
 | `pin`, `delete`, `rename` | key |
 | `peek` | key: capture the run's tab; the image arrives as `openImage`, the outcome as `sent` (offered when `chrome.canPeek`) |
+| `chromeFor` | id, key: a session's chrome WITHOUT opening it (a long press on a list row), answered by `chromeOf` |
 | `models` | runtime: ask for its list |
 | `search` | id, query, `more` for the next page: the page asks every runtime it may (`src/native/search-bridge.ts`) |
 | `showApproval` | bring the open session's approval card on screen; `open` carries `approval` to do it on the way in |
