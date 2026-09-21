@@ -42,7 +42,8 @@ node scripts/index.mjs '' --local | cut -f2 | sort | uniq -d   # helper names us
 
 | Flag | Effect |
 | --- | --- |
-| `--kind a,b` | `file`, `component`, `hook`, `function`, `class`, `type`, `enum`, `const`, `css` |
+| `--kind a,b` | `file`, `component`, `hook`, `function`, `class`, `type`, `enum`, `const`, `css`, `style` (a React Native `StyleSheet.create` key, `mobile/` only) |
+| `--mobile` | include the phone app (`mobile/`), which a query leaves out by default; the checks always cover it |
 | `--word` | anchor the whole pattern, so `table` stops matching "persi**stable**" |
 | `--exported` / `--local` | module surface vs. a file's private declarations |
 | `--sig` | include the signature column (and search it) |

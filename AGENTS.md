@@ -426,7 +426,9 @@ handle, and a second view-return signal, and each was one search away. Two of th
 which is why it covers the stylesheet; the same thing happens to whole MODULES, which is why a file is a row.
 Output is never column-padded, so it pipes into `grep`, `cut -f3` and `awk -F'\t'`. It replaced
 `scripts/components.mjs` (sidebar components + CSS only). Filters: `--kind file,component,hook,function,
-class,type,const,css`, `--exported`/`--local`, `--sig`.
+class,type,const,css,style`, `--exported`/`--local`, `--sig`, and `--mobile` to include the phone app (`mobile/`), which a
+query leaves out by default. The checks below cover `mobile/` always: a React Native component needs its docstring and a
+`StyleSheet` key its comment, exactly as a web export and a CSS class do.
 
 **It indexes bindings, never their innards** — module-scope declarations only, since JavaScript nests
 forever and that depth would bury the rows that mean something. One exception, one level deep and never
