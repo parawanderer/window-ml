@@ -53,6 +53,10 @@ need the demo world's sessions. Name the flow for the app you installed; a bare 
 `next-join.yaml` joins against a hub that is not there, which exercises key generation and the keystore (the vault)
 end to end on a real WebView: on iOS it is the check that the keys survive at all.
 
+On Android `install --next` builds for the connected device's ABI only (`ro.product.cpu.abi`, passed as
+`-PreactNativeArchitectures`); a release built by hand gets `app.json`'s `buildArchs`, arm64-v8a alone (50 MB, down from
+128 MB with all four). A phone that is not arm64 needs its ABI added there.
+
 `install --next` regenerates the native project (`expo prebuild --clean`, then `pod install` on iOS) whenever
 `mobile/package.json`, `app.json` or `plugins/` changed since the last one (`scripts/mobile-prebuild.mjs`), so a new
 native module is linked rather than failing at launch as "Cannot find native module". That rebuild is from scratch and
