@@ -4,7 +4,7 @@
 // calls go to the page's `PairingApi` over the bridge, and its sentences are the page's.
 
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
+import { Alert, Keyboard, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
@@ -18,6 +18,7 @@ import type { Routes } from "../routes";
 import { SIZE, usePalette } from "../theme";
 import { Button, Card, Field } from "../ui";
 import { Bar } from "./AccountScreens";
+import { QrScanner } from "../scanner";
 
 /** A scope's name in words, or the id itself for one this app does not know. */
 const scopeLabel = (id: string) => SCOPES.find((x) => x.id === id)?.label ?? id;
@@ -106,6 +107,18 @@ export function PairScreen() {
     const [error, setError] = useState<string | null>(null);
     const [paired, setPaired] = useState<string | null>(null);
 
+    // A scanned code is checked by the page against the fingerprint it carries; a typed one is compared by eye below.
+    const [scanning, setScanning] = useState(false);
+    const scanned = async (text: string) => {
+        setScanning(false);
+        setError(null);
+        setBusy(true);
+        const r = await e.pairing<Found>("lookupScanned", { text });
+        setBusy(false);
+        if (!r.ok) { setError(r.error); return; }
+        setFound(r.value);
+        setScopes(r.value.grant.scopes);
+    };
     const lookup = async () => {
         setError(null);
         setBusy(true);
@@ -165,13 +178,15 @@ export function PairScreen() {
                     </Card>
                 ) : (
                     <Card>
-                        <Text style={[s.body, { color: p.fgDim }]}>On the new device, choose Join an account. It shows a code: type it here.</Text>
-                        <Field label="Its code" value={code} onChangeText={setCode} placeholder="7K3M Q9XD" autoCapitalize="characters" mono autoFocus />
+                        <Text style={[s.body, { color: p.fgDim }]}>{e.pairingInfo?.canScan ? "On the new device, choose Join an account. It shows a QR code and a typed code: scan the first, or type the second here." : "On the new device, choose Join an account. It shows a code: type it here."}</Text>
+                        {e.pairingInfo?.canScan ? <Button primary title="Scan its QR code" busy={busy && scanning} onPress={() => { Keyboard.dismiss(); setScanning(true); }} /> : null}
+                        <Field label="Its code" value={code} onChangeText={setCode} placeholder="7K3M Q9XD" autoCapitalize="characters" mono autoFocus={!e.pairingInfo?.canScan} />
                         {error ? <Text style={[s.error, { color: p.err }]}>{error}</Text> : null}
-                        <Button primary title="Find it" busy={busy} disabled={code.replace(/[\s-]/g, "").length < 4} onPress={lookup} />
+                        <Button primary={!e.pairingInfo?.canScan} title="Find it" busy={busy} disabled={code.replace(/[\s-]/g, "").length < 4} onPress={lookup} />
                     </Card>
                 )}
             </ScrollView>
+            <QrScanner open={scanning} onScanned={(t) => void scanned(t)} onClose={() => setScanning(false)} />
         </KeyboardAvoidingView>
     );
 }

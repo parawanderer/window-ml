@@ -29,10 +29,18 @@
       "./plugins/with-ios-scene",
       "expo-secure-store",
       [
+        "expo-camera",
+        {
+          "cameraPermission": "Scan a device's pairing code, and take photos to attach to a message.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ],
+      [
         "expo-image-picker",
         {
           "photosPermission": "Attach photos to a message you send to a session.",
-          "cameraPermission": "Take a photo to attach to a message you send to a session."
+          "cameraPermission": "Scan a device's pairing code, and take photos to attach to a message."
         }
       ]
     ]
