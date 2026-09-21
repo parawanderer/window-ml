@@ -440,6 +440,12 @@ export class FakeHost implements SessionHost {
                 this.emit(key, { ...t, ts: now + 1, kind: "chat-result", content: `You said: ${c.text}`, sources: null, structured: false, model: "fake", extend: null, reasoning: null, usage: null });
                 return ok({ mode: "turn" });
             }
+            case "session.model": {
+                if (!caps.switchModel) return fail("unsupported", "this runtime cannot switch a session's model");
+                if (!this.models.some((m) => m.id === c.model)) return fail("invalid", `${c.model} is not offered on ${rt.name}`);
+                this.updateSummary(key, { model: c.model });
+                return ok({ model: c.model, applies: h.summary.status === "running" ? "next-step" : "next-turn" });
+            }
             case "session.cancel":
                 if (h.summary.kind === "agent") this.emit(key, { ...base, kind: "agent-result", summary: "", steps: 0, hitCap: false, cancelled: true });
                 this.updateSummary(key, { status: "cancelled", pendingApprovals: 0 });

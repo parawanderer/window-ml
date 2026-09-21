@@ -70,8 +70,11 @@ export function ModelPicker({ models, value, onChange, arrived }: { models: read
  * tmp/chat-page-switch-model-asks-2026-09-19.md); until it does, the list says so and picking changes nothing, rather
  * than a control that quietly does nothing. The list is the runtime's own, asked for when the pill first opens.
  */
-export function SessionModelPicker({ store, rt, current, canSwitch, onSwitch }: {
-    store: ChatStore; rt: RuntimeInfo; current: string; canSwitch: boolean; onSwitch?: (id: string) => void;
+export function SessionModelPicker({ store, rt, current, canSwitch, note, onSwitch }: {
+    store: ChatStore; rt: RuntimeInfo; current: string; canSwitch: boolean;
+    /** why the list cannot switch, shown above it when `canSwitch` is false */
+    note?: string;
+    onSwitch?: (id: string) => void;
 }) {
     const [models, setModels] = useState<string[] | null>(null);
     const may = rt.online && mayCommand(rt, "models.list");
@@ -97,7 +100,7 @@ export function SessionModelPicker({ store, rt, current, canSwitch, onSwitch }: 
             </button>
             {p.open && p.popProps ? (
                 <div {...p.popProps} class="chat-menu tp-pop" aria-label="Model">
-                    {canSwitch ? null : <div class="tp-note tp-switch-note" role="note">This runtime cannot switch a session's model yet. A new session can start on any of these.</div>}
+                    {canSwitch || !note ? null : <div class="tp-note tp-switch-note" role="note">{note}</div>}
                     <input {...p.filterProps} placeholder="Filter models" aria-label="Filter models" />
                     <div class="tp-list">
                         {models === null ? <div class="tp-note">{may ? "Asking…" : "This device may not list its models."}</div>

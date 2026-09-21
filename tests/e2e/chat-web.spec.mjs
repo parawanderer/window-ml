@@ -43,7 +43,7 @@ test("it runs with no extension: no chrome global, and the bundle loaded nothing
     await page.close();
 });
 
-test("phone: the list first, a session on its own, approve through the runtime, and back", async () => {
+test("phone: the list first, a session on its own, approve through the runtime, and back @mobile", async () => {
     const { page, errors } = await open(PHONE);
     // One pane: the list, grouped by runtime, with the open approval badged.
     await expect(page.locator(".chat-main")).toHaveCount(0);
@@ -75,7 +75,7 @@ test("phone: the list first, a session on its own, approve through the runtime, 
     await page.close();
 });
 
-test("phone: a runtime this device may only watch gets no composer, and says why", async () => {
+test("phone: a runtime this device may only watch gets no composer, and says why @mobile", async () => {
     const { page } = await open(PHONE, `#s=${encodeURIComponent(WATCHED)}`);
     await expect(page.locator(".chat-readonly")).toContainText("watch sessions on Lab box");
     await expect(page.locator(".composer")).toHaveCount(0);
@@ -104,7 +104,7 @@ test("desktop: both panes, a message becomes a turn from the runtime, and a refu
     await page.close();
 });
 
-test("phone: what was typed survives leaving the session, a reload, and a send that fails", async () => {
+test("phone: what was typed survives leaving the session, a reload, and a send that fails @mobile", async () => {
     const { page, errors } = await open(PHONE, `#/s/${encodeURIComponent(CHAT)}`);
     const box = page.locator(".composer .cinput");
     await box.fill("half a thought");
@@ -236,7 +236,7 @@ test("a reload keeps the open session", async () => {
     await page.close();
 });
 
-test("phone: starting a chat from the list, and the start page asks only what it must", async () => {
+test("phone: starting a chat from the list, and the start page asks only what it must @mobile", async () => {
     const { page, errors } = await open(PHONE);
     // The compose button opens the start page, on Agent: a run on a page is what this page is for.
     await page.locator(".chat-start").click();
@@ -1067,7 +1067,7 @@ test("addresses: a link opens a view and its tab, the address follows what is on
     await page.close();
 });
 
-test("the phone app's start page is the standalone client, not the demo", async () => {
+test("the phone app's start page is the standalone client, not the demo @mobile", async () => {
     // Capacitor loads dist-app/index.html. The demo world (window.__chatFake) must not be what a phone opens.
     const { serveStatic } = await import("./static-server.mjs");
     const app = await serveStatic("dist-app");
@@ -1086,7 +1086,7 @@ test("the phone app's start page is the standalone client, not the demo", async 
     }
 });
 
-test("a waiting count is the warning yellow under a mouse and cyan under a finger", async () => {
+test("a waiting count is the warning yellow under a mouse and cyan under a finger @mobile", async () => {
     const notice = async (opts) => {
         const ctx = await browser.newContext({ viewport: PHONE, ...opts });
         const page = await ctx.newPage();
@@ -1105,7 +1105,7 @@ test("a waiting count is the warning yellow under a mouse and cyan under a finge
     expect(await notice({ colorScheme: "light", ...touch })).toBe("rgb(2, 132, 199)");
 });
 
-test("phone (touch): the tab picker opens without raising the keyboard, and stays open when the keyboard comes", async () => {
+test("phone (touch): the tab picker opens without raising the keyboard, and stays open when the keyboard comes @mobile", async () => {
     // A touch phone, not a narrow desktop: a coarse pointer, touch input, and the keyboard as a window resize.
     const ctx = await browser.newContext({ viewport: PHONE, hasTouch: true, isMobile: true });
     const page = await ctx.newPage();
@@ -1135,7 +1135,7 @@ test("phone (touch): the tab picker opens without raising the keyboard, and stay
     } finally { await ctx.close(); }
 });
 
-test("phone (touch): no view scrolls sideways, and everything a finger taps is at least 40px", async () => {
+test("phone (touch): no view scrolls sideways, and everything a finger taps is at least 40px @mobile", async () => {
     // Measured, not eyeballed: every button, tab, option and menu row on every view, on a touch phone. Text fields and
     // links inside a sentence are exempt (a finger taps INTO a field; a link's target is its line). What this caught
     // the day it was written: 22px icon buttons in the headers and rows, 30px runtime headings, a 23px "Dismiss".
@@ -1194,23 +1194,41 @@ test("phone (touch): no view scrolls sideways, and everything a finger taps is a
     } finally { await ctx.close(); }
 });
 
-test("a session's model is at the top of its page, as the picker to swap it, and says when its runtime cannot yet", async () => {
+test("a session's model is at the top of its page and switches it; a runtime or session that cannot says why", async () => {
     for (const vp of [PHONE, DESKTOP]) {
         const { page, errors } = await open(vp, `#s=${encodeURIComponent(CHAT)}`);
-        const pill = page.getByRole("button", { name: /^Model: / });
-        await expect(pill).toBeVisible();
-        await pill.click();
+        const pill = () => page.getByRole("button", { name: /^Model: / });
         const list = page.getByRole("listbox", { name: "Model" });
-        await expect(list).toBeVisible();
-        // No runtime can switch a session's model yet: the list says so, and picking changes nothing.
-        await expect(list.getByRole("note")).toContainText("cannot switch a session's model yet");
+        await expect(pill()).toBeVisible();
+
+        // The laptop switches: the pill shows what the runtime's index now says.
+        await pill().click();
+        await list.getByRole("option", { name: "gemma3:27b" }).click();
+        await expect(pill()).toHaveAccessibleName("Model: gemma3:27b");
+        const sent = (await commands(page)).filter((c) => c.type === "session.model");
+        expect(sent.map((c) => c.model)).toEqual(["gemma3:27b"]);
+
+        // A session whose loop is in a page: the runtime refuses, and the list says whose the model is from then on.
+        await page.evaluate(() => { globalThis.__chatFake.handlers["session.model"] = () => ({ ok: false, error: { code: "unsupported", message: "the page script owns this session's model" } }); });
+        await pill().click();
+        await list.getByRole("option", { name: "qwen3:32b" }).click();
+        await expect(page.locator(".chat-notice.error")).toContainText("the page script owns");
+        await pill().click();
+        await expect(list.getByRole("note")).toContainText("belongs to the page script");
         await expect(list.getByRole("option").first()).toHaveAttribute("aria-disabled", "true");
+        await page.keyboard.press("Escape");
+        await expect(list).toBeHidden();
+
+        // A runtime that cannot switch at all: the same list, disabled, saying so.
+        await page.evaluate(() => globalThis.__chatFake.setRuntime("laptop", { capabilities: { chat: true, agent: true } }));
+        await pill().click();
+        await expect(list.getByRole("note")).toContainText("cannot switch a session's model");
         expect(errors, `at ${vp.width}px`).toEqual([]);
         await page.close();
     }
 });
 
-test("the start page's model: in the box's row when the page is wide, at the top of the screen on a phone", async () => {
+test("the start page's model: in the box's row when the page is wide, at the top of the screen on a phone @mobile", async () => {
     for (const [vp, where] of [[DESKTOP, ".chat-start-row"], [PHONE, ".chat-start-top"]]) {
         const { page, errors } = await open(vp);
         if (vp === PHONE) await page.locator(".chat-start").click();
@@ -1255,7 +1273,7 @@ async function pairWithCamera(video, { noNativeReader = false } = {}) {
     return { b, page, errors };
 }
 
-test("scanning the new device's QR code: a match needs no comparing, a code naming other keys is refused", async () => {
+test("scanning the new device's QR code: a match needs no comparing, a code naming other keys is refused @mobile", async () => {
     // The right code: the demo's waiting tablet, with its fingerprint in full.
     const good = await pairWithCamera(await qrVideo(`WMLPAIR:1:7K3MQ9XD:A41C9E07D3B2${"0".repeat(52)}`));
     try {

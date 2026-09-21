@@ -188,11 +188,31 @@ function usePeek(store: ChatStore, id: SessionId | null, rt: RuntimeInfo | undef
     return { busy, peek };
 }
 
-/** The session's model at the top of its page, as a picker (model-picker.tsx). Switching waits on the runtime saying it
- *  can (`capabilities.switchModel`), which no runtime does yet. */
-function ModelTop({ store, rt, model }: { store: ChatStore; rt: RuntimeInfo; model: string }) {
-    const canSwitch = !!(rt.capabilities as { switchModel?: boolean }).switchModel;
-    return <SessionModelPicker store={store} rt={rt} current={model} canSwitch={canSwitch} />;
+/** Sessions whose runtime answered `unsupported` to a switch: their loop runs in a page, whose script owns the model. */
+const pageOwnsModel = signal<ReadonlySet<SessionKey>>(new Set());
+
+/**
+ * The session's model at the top of its page, as a picker (model-picker.tsx) that switches it (`session.model`). The
+ * pill shows the index's model, which the runtime changes at once, so nothing here is optimistic. It is drawn but
+ * cannot switch where the runtime does not offer it, where this device lacks `drive`, and on a session whose runtime
+ * refused because a page script runs it; each says which.
+ */
+function ModelTop({ store, rt, model, sessionKey, summary }: { store: ChatStore; rt: RuntimeInfo; model: string; sessionKey: SessionKey; summary?: SessionSummary }) {
+    const id = parseSessionKey(sessionKey);
+    const owned = pageOwnsModel.value.has(sessionKey);
+    const offered = !!rt.capabilities.switchModel;
+    const may = rt.online && mayCommand(rt, "session.model", { key: sessionKey, summary }, store.host.self);
+    const note = !offered ? "This runtime cannot switch a session's model. A new session can start on any of these."
+        : owned ? "This session's model belongs to the page script that runs it, so it cannot be switched from here."
+        : !rt.online ? `${rt.name} is offline.`
+        : !may ? "This device may not switch this session's model." : undefined;
+    const onSwitch = (m: string): void => {
+        if (!id) return;
+        void store.send({ type: "session.model", session: id, model: m }).then((r) => {
+            if (!r.ok && r.error.code === "unsupported") pageOwnsModel.value = new Set([...pageOwnsModel.value, sessionKey]);
+        });
+    };
+    return <SessionModelPicker store={store} rt={rt} current={model} canSwitch={!note} note={note} onSwitch={onSwitch} />;
 }
 
 /** The camera button in a wide header. */
@@ -500,14 +520,14 @@ function SessionPane({ store, sessionKey, narrow, extras }: { store: ChatStore; 
                         spent on it again says nothing new, where the model is what the next reply comes from. The
                         title is still one tap away, at the top of the ⋮ menu. */}
                     <span class="chat-head-title">
-                        {narrow && summary?.model && rt ? <ModelTop store={store} rt={rt} model={summary.model} /> : <b>{truncate(title, 120)}</b>}
+                        {narrow && summary?.model && rt ? <ModelTop store={store} rt={rt} model={summary.model} sessionKey={sessionKey} summary={summary} /> : <b>{truncate(title, 120)}</b>}
                         <span class="chat-head-sub">
                             {rt?.name ?? id?.runtime}
                             {summary?.page ? <> · <PageChip page={summary.page} onShow={tabFocus(store, rt, summary)} /></> : null}
                         </span>
                     </span>
                     <span class="sp" />
-                    {!narrow && summary?.model && rt ? <ModelTop store={store} rt={rt} model={summary.model} /> : null}
+                    {!narrow && summary?.model && rt ? <ModelTop store={store} rt={rt} model={summary.model} sessionKey={sessionKey} summary={summary} /> : null}
                     {narrow ? <SessionMenu peek={peek} hash={id?.hash} title={summary?.model ? title : undefined} /> : <>
                         <PagePeek peek={peek} />
                         <DeviceViews extras={extras} rt={rt} />
@@ -587,7 +607,7 @@ function Lede({ title, rt, summary, id, store, sessionKey }: {
     return (
         <div class="chat-lede">
             <b class="chat-lede-title">{truncate(title, 120)}</b>
-            {summary?.model && rt ? <ModelTop store={store} rt={rt} model={summary.model} /> : null}
+            {summary?.model && rt ? <ModelTop store={store} rt={rt} model={summary.model} sessionKey={sessionKey} summary={summary} /> : null}
             <span class="chat-lede-sub">
                 {rt?.name ?? id?.runtime}
                 {summary?.page ? <> · <PageChip page={summary.page} onShow={show} /></> : null}
