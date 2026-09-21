@@ -140,10 +140,22 @@ export PATH="$HOME/.maestro/maestro/bin:$PATH"   # in your shell profile
 
 (`brew install mobile-dev-inc/tap/maestro` is the Homebrew route, and refuses to install while Xcode is out of date.)
 
-### iOS
+### Running the app on a simulator (iOS, macOS only)
 
-Xcode, on a Mac; then `npm run mobile:ios`, open `ios/App` and press run. A simulator build needs no signing
-certificate; a device build needs one, which this repo deliberately does not hold.
+Xcode from the App Store, then once:
+
+```bash
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+sudo xcodebuild -license accept
+xcodebuild -runFirstLaunch
+xcodebuild -downloadPlatform iOS                # the simulator runtime
+node scripts/ios.mjs doctor
+```
+
+Then the same commands as Android: `node scripts/ios.mjs boot | install | launch | shot | flows | stop`. The same
+Maestro flows run on both. A simulator build needs no signing certificate and no CocoaPods; a device build needs a
+certificate, which this repo deliberately does not hold. The first launch on a freshly booted simulator can stay white
+for twenty seconds or so while WebKit starts.
 
 ## 5. Build
 

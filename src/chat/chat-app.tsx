@@ -89,7 +89,12 @@ function useHashRoute(): void {
     const key = v.name === "detail" ? v.hash : null;
     const main = mainView.value;
     const tab = settingsTab.value;
+    // The FIRST run is skipped: it sees the render before `read` above applied the address, so it would write the list's
+    // address over the one the page was opened at, then push that one back once the state caught up. That wiped the hash
+    // on every load and left a spurious history entry, which a quick back or a hash change then raced.
+    const first = useRef(true);
     useEffect(() => {
+        if (first.current) { first.current = false; return; }
         const want = formatRoute({ session: key ?? undefined, main: main ?? undefined, tab: main === "settings" ? tab : undefined });
         if (location.hash === want || (!want && !location.hash)) return;
         const here = parseRoute(location.hash);

@@ -1,11 +1,13 @@
 ---
-name: android
-description: Run the phone app on an Android emulator (or a plugged-in phone) and test it — boot, build and install the APK, launch, screenshot, and run Maestro flows. Use when a change to the chat page or the mobile shell needs checking the way a phone actually draws it, or for anything only a device has (the system WebView, the camera, being backgrounded). Optional tooling: never needed for `npm test` or `npm run test:chat`.
+name: phone
+description: Run the phone app on an Android emulator, an iOS simulator, or a plugged-in Android phone, and test it — boot, build and install, launch, screenshot, and run the same Maestro flows on both platforms. Use when a change to the chat page or the mobile shell needs checking the way a phone actually draws it, or for anything only a device has (the system WebView, the camera, being backgrounded). Optional tooling: never needed for `npm test` or `npm run test:chat`.
 ---
 
-# The phone app on an emulator
+# The phone app on an emulator or a simulator
 
-`scripts/android.mjs` wraps the command-line Android SDK. No Android Studio.
+`scripts/android.mjs` wraps the command-line Android SDK (no Android Studio); `scripts/ios.mjs` wraps Xcode's
+`xcodebuild` and `simctl` (macOS only). They take the SAME commands, so everything below reads for either: swap the
+script name.
 
 ```bash
 node scripts/android.mjs doctor          # what is installed and missing, with the command for each; lists devices
@@ -17,6 +19,26 @@ node scripts/android.mjs shot [file]     # PNG, default test-results/android.png
 node scripts/android.mjs flows [file…]   # Maestro: every tests/mobile/*.yaml, or the ones named
 node scripts/android.mjs stop
 ```
+
+```bash
+node scripts/ios.mjs doctor              # Xcode, an iPhone simulator, Maestro; the simulator it will use
+node scripts/ios.mjs boot                # --window opens Simulator.app to watch
+node scripts/ios.mjs install             # build-web → mobile.mjs ios (cap sync) → xcodebuild (simulator) → simctl install
+node scripts/ios.mjs launch; node scripts/ios.mjs shot; node scripts/ios.mjs flows; node scripts/ios.mjs stop
+```
+
+The simulator is the newest iPhone on the newest iOS runtime, or `IOS_DEVICE=<name or UDID>`. No signing, no CocoaPods
+(Capacitor's iOS project uses Swift Package Manager).
+
+## The React Native app (mobile/)
+
+```bash
+node scripts/android.mjs install --next --demo   # page built + synced (demo world), release APK, installed
+node scripts/android.mjs launch --next           # dev.wander.windowml.next
+```
+
+Drop `--demo` for the real page (this device's account over the hub). It is a release build: the JS is bundled in, so
+no Metro server is involved and what you see is what ships.
 
 ## Which test layer to reach for
 
@@ -37,6 +59,13 @@ Prefer the `@mobile` Playwright layer: it is fast and in CI. The emulator is for
 - **Maestro is mobile.dev's CLI**, in `~/.maestro/maestro/bin` from its release zip. `brew install --cask maestro` is
   an unrelated app with the same name; the tap formula refuses while Xcode is out of date. The script finds the CLI
   on the PATH or in `~/.maestro`, and turns its analytics prompt off (its first-run banner failed the first run).
+- **The first launch on a freshly booted iOS simulator can stay WHITE for 20 seconds or more** while WebKit's
+  processes start; the page has rendered by then (the DOM is there). Relaunch and screenshot again before debugging.
+  To see the page's console on iOS: `xcrun simctl launch --console-pty booted dev.wander.windowml` prints Capacitor's
+  `⚡️ [log]` lines. For an engine question, Playwright's `webkit` runs the same bundle on the desktop.
+- **Gradle only watches `mobile/`.** A change to `src/native/` (the bridge) or the page is invisible to it, and an
+  incremental build reuses the old JS bundle. `install --next` deletes the bundle first; building by hand, delete
+  `mobile/android/app/build/generated/assets/react/release` yourself or the fix "does nothing".
 - **`launch` uses `am start -n dev.wander.windowml/.MainActivity`**: `monkey` exits 251 on a fresh image.
 - **Maestro reads the WebView through Android's accessibility tree**, so assert on visible TEXT, not selectors.
 - **A plugged-in phone works the same**, when it is the only device adb sees (USB debugging on); skip `boot`.
