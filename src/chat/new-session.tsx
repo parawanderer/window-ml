@@ -16,7 +16,7 @@ import type { AgentTarget, Principal, RuntimeInfo, SessionKey, SessionSummary, T
 import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
-import { mayCommand } from "./grants";
+import { mayCommand, mayStart } from "./grants";
 import { TabPicker } from "./tab-picker";
 
 /** What a new session can be. */
@@ -24,8 +24,7 @@ export type StartKind = "chat" | "agent";
 
 /** The runtimes this device may start `kind` on: it can, and this client is allowed to ask. */
 export function startableOn(store: ChatStore, kind: StartKind): RuntimeInfo[] {
-    const command = kind === "chat" ? "chat.start" : "agent.start";
-    return store.runtimes.value.filter((rt) => rt.online && !!rt.capabilities?.[kind] && mayCommand(rt, command));
+    return store.runtimes.value.filter((rt) => mayStart(rt, kind));
 }
 
 /** The compose button, in the list's header and on the rail: it opens the start page (start-page.tsx), on Agent

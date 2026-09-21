@@ -17,7 +17,7 @@ import { bridgeStore, type PlainStore } from "../native/store-bridge";
 import type { EventCache } from "./event-cache";
 import { searchBridge } from "../native/search-bridge";
 import { Keyring } from "../hub/keyring";
-import { attentionForApp, sessionChrome } from "../native/snapshot";
+import { agentTarget, attentionForApp, sessionChrome, startableFor } from "../native/snapshot";
 import type { PairingApi } from "../pairing/api";
 import { installServices, services } from "../sidebar/services";
 import { installTooltipLayer } from "../sidebar/tooltip-layer";
@@ -156,7 +156,7 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
     /** Sessions whose runtime refused a model switch because a page script runs them. */
     const pageOwned = new Set<SessionKey>();
 
-    const sendIndex = perFrame(() => post({ type: "index", runtimes: store.runtimes.value, sessions: [...store.index.value.values()] }));
+    const sendIndex = perFrame(() => post({ type: "index", runtimes: store.runtimes.value, sessions: [...store.index.value.values()], startable: startableFor(store.runtimes.value) }));
     effect(() => { void store.runtimes.value; void store.index.value; sendIndex(); });
     effect(() => post({ type: "status", status: store.status.value }));
     // What the runtimes need a hand with: the phone's inbox, worded here so the laptop's page and the phone agree.
@@ -220,8 +220,22 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
                 return;
             }
             case "start": {
-                if (m.kind === "agent") { post({ type: "sent", id: m.id, ok: false, error: "Starting an agent from the phone comes with the tab picker." }); return; }
-                const r = await store.send({ type: "chat.start", runtime: m.runtime, text: m.text, ...(m.model ? { model: m.model } : {}), ...(m.images?.length ? { images: m.images.filter((i) => i.startsWith("data:image/")) } : {}) });
+                const images = m.images?.filter((i) => i.startsWith("data:image/")) ?? [];
+                const extra = { ...(m.model ? { model: m.model } : {}), ...(images.length ? { images } : {}) };
+                let r;
+                if (m.kind === "agent") {
+                    const target = agentTarget(m.target);
+                    if (!target) {
+                        // Said as a notice too: the store says its own refusals, and this one never reached it.
+                        const error = (m.target as { kind?: unknown } | undefined)?.kind === "blank" ? "A new tab opens a web page: give an address starting https://, or leave it empty." : "Pick a tab for the agent, or a new one.";
+                        post({ type: "notice", text: error, tone: "error" });
+                        post({ type: "sent", id: m.id, ok: false, error });
+                        return;
+                    }
+                    r = await store.send({ type: "agent.start", runtime: m.runtime, task: m.text, target, ...extra });
+                } else {
+                    r = await store.send({ type: "chat.start", runtime: m.runtime, text: m.text, ...extra });
+                }
                 post(r.ok ? { type: "sent", id: m.id, ok: true, session: `${r.data.session.runtime}:${r.data.session.hash}` }
                     : { type: "sent", id: m.id, ok: false, error: r.error.message || r.error.code });
                 return;
@@ -247,6 +261,13 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
                     : m.type === "rename" ? { type: "session.rename", session: id, title: m.title.trim().slice(0, 200) }
                         : { type: "session.delete", session: id });
                 post({ type: "sent", id: m.id, ok: r.ok, ...(r.ok ? {} : { error: r.error.message || r.error.code }) });
+                return;
+            }
+            // An agent's target is picked from the runtime's own tabs, asked each time the picker opens.
+            case "tabs": {
+                const r = await store.send({ type: "tabs.list", runtime: m.runtime }, { quiet: true });
+                post(r.ok ? { type: "tabsResult", id: m.id, tabs: r.data.tabs, groups: r.data.groups ?? [], withheld: r.data.withheld ?? 0 }
+                    : { type: "tabsResult", id: m.id, tabs: null, groups: [], withheld: 0, error: r.error.message || r.error.code });
                 return;
             }
             case "chromeFor": post({ type: "chromeOf", id: m.id, chrome: chromeOf(m.key) }); return;

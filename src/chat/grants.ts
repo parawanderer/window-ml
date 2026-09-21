@@ -25,3 +25,8 @@ export const mayCommand = (runtime: RuntimeInfo | undefined, type: CommandType, 
 /** A runtime this client can render: it speaks a contract major version the client knows. Anything else is listed
  *  and explained, never rendered half-understood. */
 export const speaksOurContract = (runtime: RuntimeInfo): boolean => runtime.contractVersion === SESSION_CONTRACT_VERSION;
+
+/** May this device start a `kind` session on `runtime`? Online, offering that kind, and holding the grant to ask. The
+ *  one rule the page's start form and the phone's new-session screen both follow. */
+export const mayStart = (runtime: RuntimeInfo, kind: "chat" | "agent"): boolean =>
+    runtime.online && !!runtime.capabilities?.[kind] && mayCommand(runtime, kind === "chat" ? "chat.start" : "agent.start");

@@ -70,7 +70,7 @@ export function ListScreen() {
                     </View>
                 ) : null}
                 <IconButton label="Search sessions" icon={(c) => <Search size={22} color={c} />} onPress={() => nav.navigate("Search")} />
-                <IconButton label="New chat" icon={(c) => <SquarePen size={22} color={c} />} onPress={() => nav.navigate("NewChat")} />
+                <IconButton label="New session" icon={(c) => <SquarePen size={22} color={c} />} onPress={() => nav.navigate("NewChat")} />
                 <IconButton label="Settings" icon={(c) => <Settings size={22} color={c} />} onPress={() => nav.navigate("Settings")} />
             </View>
             <SectionList

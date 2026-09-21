@@ -1,0 +1,32 @@
+# next-demo-agent.yaml — the React Native app's DEMO build (`install --next --demo`): start an agent run from the phone.
+# The new-session screen switches to Agent, the "Runs on" pill opens the runtime's tabs (window by window, groups
+# named), a tab is picked, and the run opens on its session. Needs the demo world's runtimes and tabs, so it fails on a
+# real build: name it when you run `flows`.
+appId: dev.wander.windowml.next
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "KV cache size at 32k"
+    timeout: 60000
+- tapOn: "New session"
+- tapOn: "Agent"
+- extendedWaitUntil:
+    visible: "New agent run"
+    timeout: 10000
+- tapOn: "Runs on: .*"
+- extendedWaitUntil:
+    visible: "Where the agent runs"
+    timeout: 10000
+- assertVisible: "A new tab"
+- assertVisible: "Research"
+- tapOn: "Your cart"
+- assertVisible: "Runs on: Your cart"
+- tapOn:
+    id: "start-field"
+- inputText: "Check the cart total"
+- tapOn: "Start"
+- extendedWaitUntil:
+    visible: "Session menu"
+    timeout: 20000
+- assertVisible: "Check the cart total"
