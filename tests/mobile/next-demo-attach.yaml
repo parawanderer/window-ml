@@ -1,0 +1,40 @@
+# next-demo-attach.yaml — the React Native app's DEMO build (`install --next --demo`): attach two photos from the library
+# to a message, see them as thumbnails above the box, and send them with text: the box empties and the runtime answers. The photo picker
+# is the system's, driven by position, so the simulator's library needs photos (iOS ships its sample set). Needs the
+# demo world's sessions, so it fails on a real build: name it when you run `flows`.
+appId: dev.wander.windowml.next
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "KV cache size at 32k"
+    timeout: 60000
+- tapOn: "KV cache size at 32k"
+- extendedWaitUntil:
+    visible: "Model: qwen3:32b"
+    timeout: 30000
+- tapOn: "Attach an image"
+- tapOn: "Photo library"
+- extendedWaitUntil:
+    visible: "Select up to 4 photos."
+    timeout: 15000
+- tapOn:
+    point: "50%,27%"
+- tapOn:
+    point: "83%,27%"
+- tapOn:
+    point: "90%,15%"
+- extendedWaitUntil:
+    visible: "Attached image 2"
+    timeout: 20000
+- tapOn:
+    id: "composer-field"
+- inputText: "What are these?"
+- tapOn: "Send"
+- extendedWaitUntil:
+    notVisible: "Attached image 1"
+    timeout: 15000
+# The runtime took it: the demo answers the text, and the transcript draws the images with it.
+- extendedWaitUntil:
+    visible: "You said: What are these\\?"
+    timeout: 15000

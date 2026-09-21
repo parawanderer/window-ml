@@ -122,7 +122,7 @@ export type ToWeb =
     | { type: "open"; key: string; approval?: boolean }
     | { type: "close" }
     | { type: "send"; id: string; key: string; text: string; images?: string[] }
-    | { type: "start"; id: string; runtime: string; kind: "chat" | "agent"; text: string; model?: string }
+    | { type: "start"; id: string; runtime: string; kind: "chat" | "agent"; text: string; model?: string; images?: string[] }
     | { type: "cancel"; key: string }
     | { type: "continue"; key: string }
     | { type: "answer"; key: string; seq: number; decision: boolean; persist?: boolean }
@@ -177,7 +177,7 @@ const TO_WEB: Record<ToWeb["type"], Shape> = {
     open: { key: "string", approval: "boolean?" },
     close: {},
     send: { id: "string", key: "string", text: "string", images: "array?" },
-    start: { id: "string", runtime: "string", kind: "string", text: "string", model: "string?" },
+    start: { id: "string", runtime: "string", kind: "string", text: "string", model: "string?", images: "array?" },
     cancel: { key: "string" },
     continue: { key: "string" },
     answer: { key: "string", seq: "number", decision: "boolean", persist: "boolean?" },

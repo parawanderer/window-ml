@@ -22,6 +22,7 @@ import { EmbedWebView, useEmbed } from "./embed";
 import { SIZE, usePalette } from "./theme";
 import { IconButton, Sheet, SheetFilter, SheetRow } from "./ui";
 import { SessionActions, type SessionActionsHandle } from "./session-actions";
+import { AttachButton, AttachedStrip, AttachSheet, useAttachments } from "./attach-ui";
 
 /** Opening and closing the session layer, from any screen. */
 interface LayerApi { key: string | null; open(key: string, approval?: boolean): void; close(): void }
@@ -183,32 +184,40 @@ function SessionMenu() {
     );
 }
 
-/** The composer: a box that grows to a cap, and the send button, which stops a run while the box is empty. What was typed
- *  is kept per session and survives a failed send (drafts.ts). A session this device may only watch says why instead. */
+/** The composer: a box that grows to a cap, the images attached to it (attach-ui.tsx), and the send button, which stops
+ *  a run while the box is empty. What was typed is kept per session and survives a failed send (drafts.ts); so do the
+ *  images, in memory. A session this device may only watch says why instead. */
 function Composer({ bottom }: { bottom: number }) {
     const e = useEmbed();
     const p = usePalette();
     const c = e.chrome!;
     const [text, setText] = useState(() => draftOf(c.key));
+    const att = useAttachments(c.key);
     const [sending, setSending] = useState(0);
     useEffect(() => onDraftRestored((k) => { if (k === c.key) setText(draftOf(k)); }), [c.key]);
     if (!c.canSend) {
         return <Text style={[s.readOnly, { color: p.fgDim, paddingBottom: bottom + 12, borderTopColor: p.border }]}>{c.readOnly}</Text>;
     }
-    const empty = !text.trim();
+    const empty = !text.trim() && !att.imgs.length;
     const stop = c.running && empty;
     const act = () => {
         if (stop) { void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); e.cancel(c.key); return; }
-        if (empty) return;
+        if (empty || att.picking) return;
         const t = text.trim();
+        const sent = att.take();
         setText("");
         setSending((n) => n + 1);
         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        void sendHeld(c.key, t, () => e.send(c.key, t)).finally(() => setSending((n) => n - 1));
+        void sendHeld(c.key, t, () => e.send(c.key, t, sent))
+            // The text comes back through drafts.ts; the images come back here, in front of any attached since.
+            .then((r) => { if (!r.ok) att.restore(sent); })
+            .finally(() => setSending((n) => n - 1));
     };
     return (
         <View style={[s.composer, { paddingBottom: Math.max(bottom, 10) }]}>
+            <AttachedStrip att={att} />
             <View style={[s.box, { backgroundColor: p.panel, borderColor: p.border }]}>
+                <AttachButton att={att} style={s.attach} />
                 <TextInput
                     value={text}
                     onChangeText={(t) => { setText(t); saveDraft(c.key, t); }}
@@ -217,11 +226,13 @@ function Composer({ bottom }: { bottom: number }) {
                     multiline
                     style={[s.input, { color: p.fg }]}
                     accessibilityLabel="Message"
+                    testID="composer-field"
                 />
-                <IconButton label={stop ? "Stop the run" : "Send"} filled disabled={!stop && (empty || sending > 3)}
+                <IconButton label={stop ? "Stop the run" : "Send"} filled disabled={!stop && (empty || att.picking || sending > 3)}
                     icon={(col) => stop ? <Square size={16} color={col} fill={col} /> : <ArrowUp size={20} color={col} strokeWidth={2.5} />}
                     onPress={act} style={s.send} />
             </View>
+            <AttachSheet att={att} />
         </View>
     );
 }
@@ -246,9 +257,11 @@ const s = StyleSheet.create({
     // The composer's strip, above the home bar.
     composer: { paddingHorizontal: 10, paddingTop: 6 },
     // The rounded box holding the text and the button, raised out of the canvas.
-    box: { flexDirection: "row", alignItems: "flex-end", borderRadius: 24, borderWidth: StyleSheet.hairlineWidth, paddingLeft: 16, paddingRight: 4, paddingVertical: 4, minHeight: 52 },
+    box: { flexDirection: "row", alignItems: "flex-end", borderRadius: 24, borderWidth: StyleSheet.hairlineWidth, paddingLeft: 2, paddingRight: 4, paddingVertical: 4, minHeight: 52 },
     // The text: grows with what is typed, to a cap, then scrolls.
     input: { flex: 1, fontSize: SIZE.text, lineHeight: 22, maxHeight: 140, paddingTop: 11, paddingBottom: 11 },
     // The send button, a filled circle at the box's end.
     send: { width: 40, height: 40, borderRadius: 20, marginBottom: 2 },
+    // The attach button, at the box's left, level with the send button.
+    attach: { width: 40, height: 40, borderRadius: 20, marginBottom: 2 },
 });

@@ -16,6 +16,7 @@ import { useEmbed } from "../embed";
 import { useSessionLayer } from "../layer";
 import { SIZE, usePalette } from "../theme";
 import { IconButton, Pill, Sheet, SheetRow } from "../ui";
+import { AttachButton, AttachedStrip, AttachSheet, useAttachments } from "../attach-ui";
 
 /** The new-chat screen. */
 export function NewChatScreen() {
@@ -31,6 +32,7 @@ export function NewChatScreen() {
     const [model, setModel] = useState("");
     const [text, setText] = useState(() => draftOf("start"));
     const [busy, setBusy] = useState(false);
+    const att = useAttachments("start");
     const rtSheet = useRef<BottomSheetModal>(null);
     const modelSheet = useRef<BottomSheetModal>(null);
 
@@ -47,9 +49,10 @@ export function NewChatScreen() {
     const start = async () => {
         if (!rt || !text.trim() || busy) return;
         setBusy(true);
-        const r = await e.start(rt.id, text.trim(), model || undefined);
+        // The images leave the box only once the chat has started: a refusal leaves everything where it was.
+        const r = await e.start(rt.id, text.trim(), model || undefined, att.imgs);
         setBusy(false);
-        if (r.ok && r.session) { saveDraft("start", ""); setText(""); Keyboard.dismiss(); nav.goBack(); layer.open(r.session); }
+        if (r.ok && r.session) { saveDraft("start", ""); setText(""); att.take(); Keyboard.dismiss(); nav.goBack(); layer.open(r.session); }
     };
     const usable = (models ?? []).filter((x) => !x.kinds?.includes("embedding")).sort((a, b) => a.id.localeCompare(b.id));
 
@@ -75,14 +78,17 @@ export function NewChatScreen() {
                         style={[s.input, { color: p.fg }]}
                         accessibilityLabel="Message"
                     />
+                    <View style={s.strip}><AttachedStrip att={att} /></View>
                     <View style={[s.foot, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-                        <IconButton label="Start" filled disabled={!text.trim() || busy} onPress={start}
+                        <AttachButton att={att} style={s.attach} />
+                        <IconButton label="Start" filled disabled={!text.trim() || busy || att.picking} onPress={start}
                             icon={(c) => <ArrowUp size={20} color={c} strokeWidth={2.5} />} style={s.send} />
                     </View>
                 </>
             ) : (
                 <Text style={[s.none, { color: p.fgDim }]}>No runtime this device may start a chat on is online.</Text>
             )}
+            <AttachSheet att={att} />
             <Sheet ref={rtSheet} title="Runtime">
                 {startable.map((r) => <SheetRow key={r.id} title={r.name} chosen={r.id === rt?.id} onPress={() => { setRuntimeId(r.id); rtSheet.current?.dismiss(); }} />)}
             </Sheet>
@@ -108,8 +114,12 @@ const s = StyleSheet.create({
     pills: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingHorizontal: SIZE.gutter, paddingVertical: 8 },
     // The first message: the rest of the screen, large.
     input: { flex: 1, fontSize: 20, lineHeight: 28, paddingHorizontal: SIZE.gutter, paddingTop: 12, textAlignVertical: "top" },
-    // The start button's strip, at the bottom right.
-    foot: { flexDirection: "row", justifyContent: "flex-end", paddingHorizontal: 12, paddingTop: 8 },
+    // The attached images, above the buttons.
+    strip: { paddingHorizontal: 12 },
+    // The attach button at the left, the start button at the right.
+    foot: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 12, paddingTop: 8 },
+    // The attach button: a plain circle.
+    attach: { width: 48, height: 48, borderRadius: 24 },
     // The start button: a filled circle.
     send: { width: 48, height: 48, borderRadius: 24 },
     // Nothing to start on: why.

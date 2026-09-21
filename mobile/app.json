@@ -27,7 +27,14 @@
       "expo-asset",
       "expo-sharing",
       "./plugins/with-ios-scene",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Attach photos to a message you send to a session.",
+          "cameraPermission": "Take a photo to attach to a message you send to a session."
+        }
+      ]
     ]
   }
 }

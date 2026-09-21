@@ -53,7 +53,7 @@ export interface EmbedApi extends EmbedState {
     /** Send to a session; resolves with whether the runtime took it (the composer's drafts hang on this). */
     send(key: string, text: string, images?: string[]): Promise<{ ok: boolean; error?: string }>;
     /** Start a chat; resolves with the new session's key, or the reason it did not start. */
-    start(runtime: string, text: string, model?: string): Promise<{ ok: boolean; error?: string; session?: string }>;
+    start(runtime: string, text: string, model?: string, images?: string[]): Promise<{ ok: boolean; error?: string; session?: string }>;
     cancel(key: string): void;
     answer(key: string, seq: number, decision: boolean): void;
     switchModel(key: string, model: string): void;
@@ -67,8 +67,12 @@ export interface EmbedApi extends EmbedState {
     peek(key: string): Promise<{ ok: boolean; error?: string }>;
     /** What may be done with a session that is not open (the list's long press): the page's chrome for it. */
     chromeFor(key: string): Promise<SessionChrome | null>;
+    /** Show an image full size (an attachment, before it is sent). */
+    openImage(src: string): void;
     /** Close the full-size image. */
     closeImage(): void;
+    /** A toast of the app's own (a photo that will not fit, a permission that is off), beside the page's notices. */
+    say(text: string, tone?: "error" | "info"): void;
     /** The models a runtime offers, asked of it each time. */
     models(runtime: string): Promise<ModelChoice[] | null>;
     resume(): void;
@@ -230,7 +234,7 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
         open: (key, approval) => post({ type: "open", key, ...(approval ? { approval } : {}) }),
         close: () => post({ type: "close" }),
         send: (key, text, images) => request((id) => ({ type: "send", id, key, text, ...(images?.length ? { images } : {}) })),
-        start: (runtime, text, model) => request((id) => ({ type: "start", id, runtime, kind: "chat", text, ...(model ? { model } : {}) })),
+        start: (runtime, text, model, images) => request((id) => ({ type: "start", id, runtime, kind: "chat", text, ...(model ? { model } : {}), ...(images?.length ? { images } : {}) })),
         cancel: (key) => post({ type: "cancel", key }),
         answer: (key, s, decision) => post({ type: "answer", key, seq: s, decision }),
         switchModel: (key, model) => post({ type: "switchModel", key, model }),
@@ -245,7 +249,9 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
             pendingChrome.current.set(id, (c) => { clearTimeout(timer); resolve(c); });
             post({ type: "chromeFor", id, key });
         }),
+        openImage: (src) => setState((s) => ({ ...s, image: src })),
         closeImage: () => setState((s) => ({ ...s, image: null })),
+        say: (text, tone = "error") => setState((s) => ({ ...s, notice: { id: Date.now(), text, tone } })),
         models: (runtime) => new Promise((resolve) => {
             const list = pendingModels.current.get(runtime) ?? [];
             list.push(resolve);
