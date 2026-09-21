@@ -24,6 +24,12 @@ export function ago(ts: number, now = Date.now()): string {
     return d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 
+/** "seen just now", "seen 5m ago", "seen Fri", "seen 12 Sep": when a device was last seen, in words that read. */
+export function seen(ts: number, now = Date.now()): string {
+    const a = ago(ts, now);
+    return a === "now" ? "seen just now" : /^\d+[mh]$/.test(a) ? `seen ${a} ago` : `seen ${a}`;
+}
+
 /** How far back the list reaches; a session running or waiting on you is recent however old it is. */
 const RECENT_MS = 30 * 86_400_000;
 

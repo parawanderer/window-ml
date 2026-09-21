@@ -6,4 +6,9 @@ export type Routes = {
     List: undefined;
     NewChat: undefined;
     Settings: undefined;
+    Devices: undefined;
+    Pair: undefined;
+    Welcome: undefined;
+    Join: undefined;
+    Create: undefined;
 };
