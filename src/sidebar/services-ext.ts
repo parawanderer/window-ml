@@ -42,7 +42,8 @@ export const extensionServices: SidebarServices = {
     bench: true,
     // The shell forwards it to the background as SET_APPROVAL, having checked it came from this iframe.
     answerApproval: (hash, seq, decision, persist) => toParent({ __mlSidebarApp: "approval", hash, seq, decision, persist }),
-    sendToSession: (hash, text, images) => toParent({ __mlSidebarApp: "sessionSend", hash, text, images }),
+    // A post to the page, which answers nothing: what goes wrong from there shows in the run itself.
+    sendToSession: async (hash, text, images) => { toParent({ __mlSidebarApp: "sessionSend", hash, text, images }); return { ok: true }; },
     cancelSession: (hash) => toParent({ __mlSidebarApp: "sessionCancel", hash }),
     continueSession: (hash) => toParent({ __mlSidebarApp: "continueRun", hash }),
     highlight: (ref) => toParent({ __mlHighlight: ref }),

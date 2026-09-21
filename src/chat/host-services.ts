@@ -47,9 +47,11 @@ export function hostServices(store: ChatStore, platform: ClientPlatform): Sideba
             const id = idOf(key);
             if (id) void store.send({ type: "approval.answer", session: id, seq, decision: decision ? "approve" : "deny", ...(persist ? { persist } : {}) });
         },
-        sendToSession: (key, text, images) => {
+        sendToSession: async (key, text, images) => {
             const id = idOf(key);
-            if (id) void store.send({ type: "session.send", session: id, text, ...(images?.length ? { images } : {}) });
+            if (!id) return { ok: false, error: "no such session here" };
+            const r = await store.send({ type: "session.send", session: id, text, ...(images?.length ? { images } : {}) });
+            return r.ok ? { ok: true } : { ok: false, error: r.error.message || r.error.code };
         },
         cancelSession: (key) => {
             const id = idOf(key);

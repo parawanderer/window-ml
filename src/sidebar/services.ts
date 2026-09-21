@@ -11,6 +11,8 @@
 // Session identifiers are the session's KEY in this client (`Session.hash`): the bare hash for the sidebar's own
 // sessions, `runtime:hash` in the chat page. An implementation that needs the bare hash takes it with `bareHash`.
 
+import type { SendOutcome } from "./drafts";
+
 /** A small utility-model call the UI makes about a session: its title, a block summary, `explain` notes, an
  *  approval gloss. Mirrors the contract's `side.call`: the caller supplies the messages, the host always uses its
  *  utility profile. */
@@ -40,8 +42,9 @@ export interface SidebarServices {
     bench: boolean;
     /** answer an approval gate by the pending step's `seq` */
     answerApproval(session: string, seq: number, decision: boolean, persist: boolean): void;
-    /** a message to a session: steers a running agent, or starts its next turn */
-    sendToSession(session: string, text: string, images?: string[]): void;
+    /** A message to a session: steers a running agent, or starts its next turn. Resolves when the host knows whether it
+     *  was taken, so the composer can put the text back on a failure (drafts.ts); never rejects. */
+    sendToSession(session: string, text: string, images?: string[]): Promise<SendOutcome>;
     cancelSession(session: string): void;
     /** continue a run stopped at its step cap, or retry a failed one */
     continueSession(session: string): void;
@@ -81,7 +84,7 @@ const UNAVAILABLE: SidebarServices = {
     sideCalls: () => false,
     bench: false,
     answerApproval() {},
-    sendToSession() {},
+    sendToSession: async () => ({ ok: false, error: "no host is installed" }),
     cancelSession() {},
     continueSession() {},
     highlight() {},

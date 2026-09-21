@@ -104,6 +104,39 @@ test("desktop: both panes, a message becomes a turn from the runtime, and a refu
     await page.close();
 });
 
+test("phone: what was typed survives leaving the session, a reload, and a send that fails", async () => {
+    const { page, errors } = await open(PHONE, `#/s/${encodeURIComponent(CHAT)}`);
+    const box = page.locator(".composer .cinput");
+    await box.fill("half a thought");
+    // Back to the list and in again, then a reload: the draft is still there.
+    await page.locator(".chat-sheet-back").click();
+    await row(page, CHAT).click();
+    await expect(box).toHaveValue("half a thought");
+    // The address follows after the paint; reloading before it would land on the list.
+    await expect(page).toHaveURL(/#\/s\//);
+    await page.reload();
+    await expect(box).toHaveValue("half a thought");
+
+    // The network fails the send: the box empties at once, then the message comes back, with the notice.
+    await page.evaluate(() => { globalThis.__chatFake.handlers["session.send"] = () => ({ ok: false, error: { code: "unavailable", message: "network down" } }); });
+    await box.fill("a long message I do not want to type twice");
+    await box.press("Enter");
+    await expect(page.locator(".chat-notice.error")).toContainText("network down");
+    await expect(box).toHaveValue("a long message I do not want to type twice");
+    // And it is saved, not just shown: a reload keeps it.
+    await page.reload();
+    await expect(box).toHaveValue("a long message I do not want to type twice");
+
+    // Once it goes through, it is gone from the box and from storage.
+    await box.press("Enter");
+    await expect(page.locator(".chat-transcript")).toContainText("You said: a long message I do not want to type twice");
+    await expect(box).toHaveValue("");
+    await page.reload();
+    await expect(box).toHaveValue("");
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 test("desktop: a runtime that lost a session's history keeps what is shown and says so; a deleted one closes", async () => {
     const { page } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
     await expect(page.locator(".chat-transcript")).toContainText("Quantising the cache");

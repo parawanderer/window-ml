@@ -11,6 +11,7 @@
 // only on a runtime with tabs, and nothing at all (the old sentence) when nothing can be started.
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ModelChoice, RuntimeInfo } from "../session-host";
+import { loadDraft, saveDraft } from "../sidebar/drafts";
 import { IconSend } from "../sidebar/icons";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
@@ -60,7 +61,8 @@ export function StartPage({ store, onStarted, initialKind, extras, narrow }: { s
     const kept = useHeldTrue(!!live, START_GRACE_MS);
     const rt: RuntimeInfo | undefined = live ?? (kept ? store.runtimes.value.find((r) => r.id === last.current) : undefined);
     if (live) last.current = live.id;
-    const [text, setText] = useState("");
+    // Saved as typed (drafts.ts) and kept until a start succeeds: leaving the page or losing the app loses nothing.
+    const [text, setText] = useState(() => loadDraft("start"));
     const [busy, setBusy] = useState(false);
     const pick = useTargetPick(store, rt, kind === "agent", extras);
     // The chosen runtime's models, asked once per runtime (the first answer costs it a capability probe per model,
@@ -108,7 +110,7 @@ export function StartPage({ store, onStarted, initialKind, extras, narrow }: { s
                 ? await store.send({ type: "chat.start", runtime: rt.id, text: text.trim(), ...(model ? { model } : {}) })
                 : await store.send({ type: "agent.start", runtime: rt.id, task: text.trim(), target: pick.target(), ...(model ? { model } : {}) });
             // A refusal is already a notice; what was typed stays, to be changed and tried again.
-            if (r.ok) onStarted(`${r.data.session.runtime}:${r.data.session.hash}`);
+            if (r.ok) { saveDraft("start", ""); onStarted(`${r.data.session.runtime}:${r.data.session.hash}`); }
         } finally { setBusy(false); }
     };
     // THE MODEL: in the box's row where the page is wide enough to hold it, at the TOP of the page on a phone. There the
@@ -123,7 +125,7 @@ export function StartPage({ store, onStarted, initialKind, extras, narrow }: { s
                 <div class="chat-start-box">
                     <textarea ref={box} rows={1} value={text} aria-label={kind === "agent" ? "Task" : "Message"}
                         placeholder={kind === "agent" ? "What should the agent do?" : "Start a chat"}
-                        onInput={(e: any) => setText(e.target.value)}
+                        onInput={(e: any) => { setText(e.target.value); saveDraft("start", e.target.value); }}
                         onKeyDown={(e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void start(); } }} />
                     <div class="chat-start-row">
                         {kinds.length > 1 && narrow ? <KindPicker kinds={kinds} value={kind} onChange={setKind} />
