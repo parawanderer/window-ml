@@ -17,6 +17,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
+import { ensurePrebuild } from "./mobile-prebuild.mjs";
 
 const NEXT = process.argv.includes("--next");
 const APP = NEXT ? "dev.wander.windowml.next" : "dev.wander.windowml";
@@ -82,13 +83,13 @@ function boot(window) {
 }
 
 /** The React Native app: the page built and synced into it, the native project generated (with the UIScene plugin iOS 27
- *  needs) and its pods installed when missing, a Release build (the JS bundled in, no Metro), installed. */
+ *  needs, and again whenever the app's native inputs change: mobile-prebuild.mjs) and its pods installed, a Release build (the JS bundled in, no Metro), installed. */
 function installNext() {
     const d = need();
     run("node", ["scripts/build-web.mjs"]);
     run("node", ["mobile/scripts/sync-embed.mjs", ...(process.argv.includes("--demo") ? ["--demo"] : [])]);
-    if (!existsSync("mobile/ios")) run("npx", ["expo", "prebuild", "--platform", "ios", "--no-install"], { cwd: "mobile" });
-    if (!existsSync("mobile/ios/Pods")) run("pod", ["install"], { cwd: "mobile/ios" });
+    const fresh = ensurePrebuild("ios", run);
+    if (fresh || !existsSync("mobile/ios/Pods")) run("pod", ["install"], { cwd: "mobile/ios" });
     run("xcodebuild", ["-workspace", "windowml.xcworkspace", "-scheme", "windowml", "-configuration", "Release", "-sdk", "iphonesimulator",
         "-destination", `id=${d.udid}`, "-derivedDataPath", "build", "-quiet", "build"], { cwd: "mobile/ios" });
     run("xcrun", ["simctl", "install", d.udid, BUILT_NEXT]);

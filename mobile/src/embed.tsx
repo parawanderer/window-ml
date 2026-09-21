@@ -16,6 +16,7 @@ import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { encode, parseToNative, type BridgeAccount, type PairingCall, type PairingInfo, type SessionChrome, type ToWeb } from "../../src/native/bridge";
 import type { HostStatus, ModelChoice, RuntimeInfo, SessionSummary } from "../../src/session-host";
 import { EMBED } from "./generated/embed";
+import { answerVault } from "./vault";
 
 /** What the page has reported, as the screens read it. */
 export interface EmbedState {
@@ -97,6 +98,18 @@ function writePage(): string {
 let seq = 0;
 const nextId = () => `n${Date.now().toString(36)}-${++seq}`;
 
+/**
+ * Is this message from the page we wrote, rather than from anything else a WebView could be showing? What keeps that
+ * true is `onShouldStartLoadWithRequest`, which lets this WebView load nothing outside the page's own directory; this
+ * is the second look. Android reports no URL on a `file://` page's messages (the string "null"), and a missing one is
+ * therefore not evidence of anything. The path is matched by the page's own file, because Android also names the
+ * app's files `/data/data/<id>` where expo-file-system writes them as `/data/user/0/<id>`.
+ */
+function ourPage(url: string | undefined): boolean {
+    if (!url || url === "null") return true;
+    return url.startsWith("file://") && url.replace(/[?#].*$/, "").endsWith("/web/index.html");
+}
+
 /** The shared WebView's handle, set by `EmbedWebView`. */
 type WebViewHandle = { injectJavaScript(js: string): void } | null;
 
@@ -127,6 +140,11 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
         const m = parseToNative(e.nativeEvent.data);
         if (!m) return;
         switch (m.type) {
+            // The keyring's secrets: answered at once, not queued behind `ready` (the page needs its keys to get there).
+            case "vault":
+                if (!ourPage(e.nativeEvent.url)) return;
+                void answerVault(m).then((r) => ref.current?.injectJavaScript(`window.__wmlReceive && window.__wmlReceive(${JSON.stringify(encode(r))}); true;`));
+                return;
             case "ready":
                 readyRef.current = true;
                 for (const js of queue.current.splice(0)) ref.current?.injectJavaScript(js);

@@ -12,6 +12,8 @@ import type { SessionHost, SessionKey } from "../session-host";
 import { parseSessionKey } from "../session-host";
 import { encode, parseToWeb, type BridgeAccount, type ToNative, type ToWeb } from "../native/bridge";
 import { pairingBridge, pairingInfo } from "../native/pairing-bridge";
+import { bridgeVault } from "../native/vault-bridge";
+import { Keyring } from "../hub/keyring";
 import { sessionChrome } from "../native/snapshot";
 import type { PairingApi } from "../pairing/api";
 import { installServices, services } from "../sidebar/services";
@@ -30,6 +32,33 @@ function post(msg: ToNative): void {
     const data = encode(msg);
     if (g.ReactNativeWebView) g.ReactNativeWebView.postMessage(data);
     else (g.__nativeOut ??= []).push(data);
+}
+
+/** The vault's answers, once `keepKeysInApp` has made one; and what the app said before `runEmbed` was listening. */
+let settleVault: ((m: Extract<ToWeb, { type: "vaultResult" }>) => void) | null = null;
+const early: unknown[] = [];
+
+/**
+ * Keep the keyring's secrets in the app's keystore (vault-bridge.ts). Called before the keyring is first opened, which
+ * is before `runEmbed`: until then only vault answers are acted on, and anything else the app sends waits for it.
+ */
+export function keepKeysInApp(): void {
+    const b = bridgeVault(post);
+    settleVault = b.settle;
+    Keyring.keepSecretsIn(b.vault);
+    (globalThis as { __wmlReceive?: (raw: unknown) => void }).__wmlReceive = (raw) => {
+        const m = parseToWeb(raw);
+        if (m?.type === "vaultResult") b.settle(m);
+        else if (m) early.push(raw);
+    };
+}
+
+/**
+ * The page could not start (the keystore refused or never answered): say so, rather than leave the app waiting on an
+ * account that will never be reported.
+ */
+export function reportStartFailure(e: unknown): void {
+    post({ type: "notice", tone: "error", text: `This phone's keys could not be read: ${e instanceof Error ? e.message : String(e)}` });
 }
 
 /** A Blob as base64, for handing a file to the app's share sheet. */
@@ -149,10 +178,13 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
         }
     };
     // The app calls this with each message (react-native-webview's `injectJavaScript`); anything malformed is dropped.
-    (globalThis as { __wmlReceive?: (raw: unknown) => void }).__wmlReceive = (raw) => {
+    const onRaw = (raw: unknown) => {
         const m = parseToWeb(raw);
-        if (m) void receive(m);
+        if (m?.type === "vaultResult") settleVault?.(m);
+        else if (m) void receive(m);
     };
+    (globalThis as { __wmlReceive?: (raw: unknown) => void }).__wmlReceive = onRaw;
+    for (const raw of early.splice(0)) onRaw(raw);
 
     render(<Embed store={store} open={open} />, document.getElementById("root") || document.body);
     post({ type: "account", account: opts.account });

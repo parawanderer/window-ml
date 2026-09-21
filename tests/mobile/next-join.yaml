@@ -1,0 +1,22 @@
+# next-join.yaml — the React Native app (mobile/) joining an account against a hub that is not there. It gets as far
+# as generating this phone's keys, keeping them in the platform keystore, and asking the hub, which must fail with the
+# page's own words rather than a crash: on iOS this is what caught WebKit losing an X25519 key kept in IndexedDB.
+# Run with the app installed: `node scripts/ios.mjs install --next` (or android.mjs), then
+# `node scripts/ios.mjs flows tests/mobile/next-join.yaml`.
+appId: dev.wander.windowml.next
+---
+- launchApp:
+    clearState: true
+# A fresh install's first launch can sit white for a while as the WebView starts: wait for the welcome screen.
+- extendedWaitUntil:
+    visible: "Join an account"
+    timeout: 60000
+- tapOn: "Join an account"
+# The placeholder, not "Hub": the label above the field carries that text too, and a tap on it types nowhere.
+- tapOn: "wss://hub.example"
+- inputText: "ws://127.0.0.1:9"
+- hideKeyboard
+- tapOn: "Show my code"
+- extendedWaitUntil:
+    visible: "The hub refused it or could not be reached. Check its address and try again."
+    timeout: 20000

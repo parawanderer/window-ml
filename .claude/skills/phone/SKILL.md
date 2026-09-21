@@ -42,8 +42,37 @@ node scripts/ios.mjs launch --next
 On iOS the simulator takes no taps from the command line: drive it with a Maestro flow (`node scripts/ios.mjs flows
 <file>`), tapping by visible text or by accessible name (a pill's is `Model: <id>`, not its text).
 
+A flow names its app by `appId`: `first-run.yaml` is the Capacitor app (`dev.wander.windowml`), `next-join.yaml` the
+React Native one (`.next`). Name the flow for the app you installed; a bare `flows` runs both and one will fail.
+`next-join.yaml` joins against a hub that is not there, which exercises key generation and the keystore (the vault)
+end to end on a real WebView: on iOS it is the check that the keys survive at all.
+
+`install --next` regenerates the native project (`expo prebuild --clean`, then `pod install` on iOS) whenever
+`mobile/package.json`, `app.json` or `plugins/` changed since the last one (`scripts/mobile-prebuild.mjs`), so a new
+native module is linked rather than failing at launch as "Cannot find native module". That rebuild is from scratch and
+slow; nothing else triggers it. When the app shows only a white screen, read its log first:
+`xcrun simctl spawn booted log show --last 5m --predicate 'process == "windowml"' | grep -i error` (iOS) or
+`adb logcat -d | grep -i ReactNativeJS` (Android).
+
 Drop `--demo` for the real page (this device's account over the hub). It is a release build: the JS is bundled in, so
 no Metro server is involved and what you see is what ships.
+
+## A real pairing, locally
+
+The failure path (`next-join.yaml`) needs no hub. To watch a phone actually join an account, run the test hub and be
+the other device yourself:
+
+```bash
+~/git/window-ml-hub-v0.4.0/target/release/wmlhub serve --hub-name hub.local --registration open \
+    --state-dir /tmp/hubstate --listen 127.0.0.1:8799 &            # the binary tests/fixtures/hub-harness.mjs uses
+node --import tsx scripts/hub-root.mjs create ws://127.0.0.1:8799 --state /tmp/root.json   # the account's root
+# in the app: Join an account → hub ws://127.0.0.1:8799 → Show my code, then read the code off a screenshot
+echo yes | node --import tsx scripts/hub-root.mjs confirm "ZVJV FSQ0" --state /tmp/root.json
+```
+
+`confirm` asks at a prompt whether both screens show the same fingerprint, so pipe `yes` or it waits forever. The
+iOS simulator reaches `127.0.0.1` as itself; the Android emulator needs `10.0.2.2` for the host. Relaunching the app
+afterwards without `clearState` is the check that the keystore kept the keys and the membership.
 
 ## Which test layer to reach for
 
