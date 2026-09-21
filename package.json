@@ -14,6 +14,7 @@
     "test:panel": "node scripts/test.mjs panel",
     "test:ext": "node scripts/test.mjs ext",
     "test:python": "node scripts/test.mjs python",
+    "test:mobile": "node scripts/build-web.mjs && playwright test --grep @mobile",
     "test:chat": "node scripts/test.mjs chat && playwright test tests/e2e/chat-web.spec.mjs tests/e2e/chat-page.spec.mjs",
     "test:timings": "node scripts/test.mjs --timings",
     "pretest:e2e": "npm run build",

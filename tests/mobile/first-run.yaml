@@ -1,0 +1,11 @@
+# first-run.yaml — the phone app with no account: it opens on the account panel, not the demo world, and offers to
+# create or join one. Maestro reads the WebView's text through Android's accessibility tree, so this checks what a
+# person sees, not the DOM. Run: `maestro test tests/mobile/first-run.yaml` with the app installed
+# (node scripts/android.mjs install).
+appId: dev.wander.windowml
+---
+- launchApp:
+    clearState: true
+- assertVisible: "This device is in no account"
+- assertVisible: "Create an account"
+- assertNotVisible: "Work laptop"   # the demo world's runtime: the app must never ship the fake host
