@@ -57,6 +57,23 @@ slow; nothing else triggers it. When the app shows only a white screen, read its
 Drop `--demo` for the real page (this device's account over the hub). It is a release build: the JS is bundled in, so
 no Metro server is involved and what you see is what ships.
 
+## A real pairing, locally
+
+The failure path (`next-join.yaml`) needs no hub. To watch a phone actually join an account, run the test hub and be
+the other device yourself:
+
+```bash
+~/git/window-ml-hub-v0.4.0/target/release/wmlhub serve --hub-name hub.local --registration open \
+    --state-dir /tmp/hubstate --listen 127.0.0.1:8799 &            # the binary tests/fixtures/hub-harness.mjs uses
+node --import tsx scripts/hub-root.mjs create ws://127.0.0.1:8799 --state /tmp/root.json   # the account's root
+# in the app: Join an account → hub ws://127.0.0.1:8799 → Show my code, then read the code off a screenshot
+echo yes | node --import tsx scripts/hub-root.mjs confirm "ZVJV FSQ0" --state /tmp/root.json
+```
+
+`confirm` asks at a prompt whether both screens show the same fingerprint, so pipe `yes` or it waits forever. The
+iOS simulator reaches `127.0.0.1` as itself; the Android emulator needs `10.0.2.2` for the host. Relaunching the app
+afterwards without `clearState` is the check that the keystore kept the keys and the membership.
+
 ## Which test layer to reach for
 
 | You want to check | Use |
