@@ -35,7 +35,12 @@ The simulator is the newest iPhone on the newest iOS runtime, or `IOS_DEVICE=<na
 ```bash
 node scripts/android.mjs install --next --demo   # page built + synced (demo world), release APK, installed
 node scripts/android.mjs launch --next           # dev.wander.windowml.next
+node scripts/ios.mjs install --next --demo       # the same on the iOS simulator (Release build, pods on first run)
+node scripts/ios.mjs launch --next
 ```
+
+On iOS the simulator takes no taps from the command line: drive it with a Maestro flow (`node scripts/ios.mjs flows
+<file>`), tapping by visible text or by accessible name (a pill's is `Model: <id>`, not its text).
 
 Drop `--demo` for the real page (this device's account over the hub). It is a release build: the JS is bundled in, so
 no Metro server is involved and what you see is what ships.

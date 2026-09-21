@@ -25,7 +25,8 @@
     },
     "plugins": [
       "expo-asset",
-      "expo-sharing"
+      "expo-sharing",
+      "./plugins/with-ios-scene"
     ]
   }
 }

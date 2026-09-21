@@ -38,6 +38,11 @@ API from memory.** `expo-file-system` in particular is the `File` / `Directory` 
   "object" check). `tests/native-bridge.test.mjs` runs every message each side sends through the other side's check:
   add the new message there when you add one.
 
+- **iOS 27 kills an app without the scene lifecycle** at launch (`_UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`,
+  SIGTRAP in the crash report under `~/Library/Logs/DiagnosticReports/`), and Expo 57's template has none.
+  `plugins/with-ios-scene.js` adds it on every prebuild; if a template change breaks its AppDelegate edit, it throws
+  rather than building an app that dies on launch.
+
 ## Running it
 
 From the repo root: `node scripts/android.mjs install --next [--demo]` then `launch --next` builds, installs and

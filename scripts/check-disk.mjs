@@ -64,6 +64,9 @@ function candidates() {
             { dir: path.join(c, "coverage"), what: `${name}: coverage output`, clear: `rm -rf ${path.join(c, "coverage")}` },
             { dir: path.join(c, "android", "app", "build"), what: `${name}: the Android build`, clear: `rm -rf ${path.join(c, "android", "app", "build")}`, cost: "the next APK build is a full one" },
             { dir: path.join(c, "node_modules"), what: `${name}: node_modules`, clear: `rm -rf ${path.join(c, "node_modules")}`, cost: "`npm ci` before that clone works again; only for a clone you are not using" },
+            { dir: path.join(c, "mobile", "ios", "build"), what: `${name}: the phone app's iOS build`, clear: `rm -rf ${path.join(c, "mobile", "ios", "build")}`, cost: "the next iOS build is a full one (many minutes)" },
+            { dir: path.join(c, "mobile", "android", "app", "build"), what: `${name}: the phone app's Android build`, clear: `rm -rf ${path.join(c, "mobile", "android", "app", "build")}`, cost: "the next APK build is a full one" },
+            { dir: path.join(c, "mobile", "node_modules"), what: `${name}: the phone app's node_modules`, clear: `rm -rf ${path.join(c, "mobile", "node_modules")}`, cost: "`npm ci` in mobile/ before the app builds again" },
         );
     }
     const lib = path.join(HOME, "Library");
