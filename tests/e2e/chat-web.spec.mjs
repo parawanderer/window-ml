@@ -1065,8 +1065,11 @@ test("a waiting count is the warning yellow under a mouse and cyan under a finge
         await ctx.close();
         return v;
     };
-    expect(await notice({})).toBe("rgb(234, 179, 8)");
-    expect(await notice({ hasTouch: true, isMobile: true })).toBe("rgb(56, 189, 248)");
+    const touch = { hasTouch: true, isMobile: true };
+    expect(await notice({ colorScheme: "dark" })).toBe("rgb(234, 179, 8)");
+    expect(await notice({ colorScheme: "dark", ...touch })).toBe("rgb(56, 189, 248)");
+    expect(await notice({ colorScheme: "light" })).toBe("rgb(202, 138, 4)");
+    expect(await notice({ colorScheme: "light", ...touch })).toBe("rgb(2, 132, 199)");
 });
 
 test("phone (touch): the tab picker opens without raising the keyboard, and stays open when the keyboard comes", async () => {
