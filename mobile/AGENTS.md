@@ -36,6 +36,9 @@ API from memory.** `expo-file-system` in particular is the `File` / `Directory` 
   without the module until launch, where it fails as "Cannot find native module" on a white screen. `install --next`
   fingerprints `package.json`, `app.json` and `plugins/` (`scripts/mobile-prebuild.mjs`) and re-runs `expo prebuild
   --clean` when they change; by hand, delete the platform folder.
+- **A message from the page carries no URL on Android**: `e.nativeEvent.url` is the string `"null"` for a `file://`
+  page, so a check against the page's address drops every message there while passing on iOS. What confines this
+  WebView is `onShouldStartLoadWithRequest`; anything else is a second look, and must treat a missing URL as nothing.
 - **An Android prop can be iOS-only in disguise**: `decelerationRate="normal"` on the WebView crashed Android at startup
   (a string where Fabric wants a number). Check a WebView prop's platform in its docs.
 - **A bridge check stricter than its sender drops real messages silently** (the model list, an array, failed an
