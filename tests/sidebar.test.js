@@ -9052,6 +9052,15 @@ const openHousekeeping = async (w) => {
     assert.match(items[0]?.textContent || "", /^Housekeeping log/, "the housekeeping log is the menu's first panel");
     items[0].click();
     await w.flush();
+    // The log is READ on open, asynchronously: wait until it has arrived (a line, or the empty log's sentence) rather
+    // than for one flush. One flush was enough on a laptop and not on CI's runners, where the chips were still [].
+    // Bounded, so a view that never loads still fails here instead of hanging the run.
+    for (let i = 0; i < 60; i++) {
+        const v = w.shadow.querySelector(".hk-view");
+        if (v && (v.querySelector(".r-ts-line") || /Nothing recorded/.test(v.textContent || ""))) return;
+        await new Promise((r) => setTimeout(r, 25));
+        await w.flush();
+    }
 };
 
 test("housekeeping log: read on open, drawn in the output cell with a timestamp gutter, page reports marked", async () => {
