@@ -1318,3 +1318,102 @@ test("scanning the new device's QR code: a match needs no comparing, a code nami
         expect(bad.errors).toEqual([]);
     } finally { await bad.b.close(); }
 });
+
+/** A session of `turns` chat turns on the laptop, added through the fake host; answers with its key. */
+async function longThread(page, turns, hash = `long${turns}`) {
+    return page.evaluate(({ turns, hash }) => {
+        const now = Date.now();
+        const events = [];
+        for (let i = 0; i < turns; i++) {
+            const base = { id: `${hash}-${i}`, ts: now - (turns - i) * 1000, save: true, session: { hash, turn: i } };
+            events.push({ ...base, kind: "chat", streaming: false,
+                request: { model: "qwen3:32b", extend: null, messages: [{ role: "user", content: `Question ${i}` }], images: null, toolIds: null, schema: false, think: null, maxTokens: null },
+                config: { system: null, model: "qwen3:32b", think: null, schema: false, toolIds: null, maxTokens: null, save: true } });
+            events.push({ ...base, ts: base.ts + 500, kind: "chat-result", model: "qwen3:32b", extend: null, reasoning: null,
+                sources: null, structured: false, usage: null, content: `Answer ${i} to that question.` });
+        }
+        globalThis.__chatFake.addSession({ id: { runtime: "laptop", hash }, kind: "chat", status: "done",
+            createdTs: now - turns * 1000, lastTs: now, pendingApprovals: 0, title: `${turns} turns`, model: "qwen3:32b" }, events);
+        return `laptop:${hash}`;
+    }, { turns, hash });
+}
+
+test("a long transcript draws its newest turns only, and 'show earlier' draws more without losing the reader's place", async () => {
+    const { page, errors } = await open(PHONE);
+    const key = await longThread(page, 400);
+    await page.goto(`${server.url}#/s/${encodeURIComponent(key)}`);
+    await page.locator(".chat-transcript").getByText("Answer 399").waitFor();
+
+    // Bounded: a 400-turn session draws a window, not 400 turns. (Measured before this existed: 34k nodes at 1000.)
+    const drawn = () => page.locator(".chat-transcript .msg.user").count();
+    expect(await drawn()).toBeLessThan(120);
+    expect(await drawn()).toBeGreaterThan(20);
+    await expect(page.locator(".chat-window-rest")).toContainText("earlier in this session");
+    // The oldest turns are NOT in the DOM: this is a window, not a CSS trick.
+    await expect(page.locator(".chat-transcript").getByText("Answer 0", { exact: false })).toHaveCount(0);
+
+    // Growing keeps the reader where they were: the turn under the eye must not move. Read from the TOP of the
+    // window, which is where someone who is about to ask for more of the past actually is (and not following the tail).
+    const oldest = page.locator(".chat-transcript .msg.user .utext").first();
+    const text = (await oldest.textContent()).trim();   // by TEXT: after growth, "the first turn" is a different one
+    const anchor = page.locator(".chat-transcript .utext", { hasText: text }).first();
+    await anchor.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(100);
+    const before = await anchor.boundingBox();
+    const was = await drawn();
+    await page.locator(".chat-window-edge .chat-earlier-retry").click();
+    await expect.poll(drawn).toBeGreaterThan(was);
+    await page.waitForTimeout(100);
+    const after = await anchor.boundingBox();
+    expect(Math.abs(after.y - before.y)).toBeLessThan(60);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("growing the window adds to the TOP: the newest turn is still drawn, whatever was asked for", async () => {
+    const { page, errors } = await open(PHONE);
+    const key = await longThread(page, 300, "grow1");
+    await page.goto(`${server.url}#/s/${encodeURIComponent(key)}`);
+    await page.locator(".chat-transcript").getByText("Answer 299").waitFor();
+    const drawn = () => page.locator(".chat-transcript .msg.user").count();
+    const first = await drawn();
+    for (let i = 0; i < 3; i++) {
+        const was = await drawn();
+        await page.locator(".chat-window-edge .chat-earlier-retry").click();
+        await expect.poll(drawn).toBeGreaterThan(was);
+    }
+    expect(await drawn()).toBeGreaterThan(first);
+    // The end of the conversation is what a transcript is anchored to: growing it must never push the newest out.
+    await expect(page.locator(".chat-transcript").getByText("Answer 299")).toHaveCount(1);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("a citation to a step the window no longer draws brings it back, rather than doing nothing", async () => {
+    const { page, errors } = await open(DESKTOP);
+    // Pad the cited run with enough later steps that its FIRST step falls outside what the transcript draws. Emitted
+    // while the session is closed, so they are in its log when it is opened.
+    await page.evaluate(() => {
+        const key = "laptop:5e6f7a80", hash = "5e6f7a80", now = Date.now();
+        // BETWEEN the cited step (1) and the answer (at step 3), so the answer carrying the citation stays drawn
+        // while the step it names is pushed out of the window.
+        for (let i = 0; i < 140; i++) {
+            globalThis.__chatFake.emit(key, {
+                kind: "agent-step", id: `${hash}-pad${i}`, ts: now + i, save: true, session: { hash, turn: 0 },
+                step: 1 + (i + 1) / 200, seq: 100 + i, tool: "exec", arguments: { js: `${i}` }, result: `${i}`,
+            });
+        }
+    });
+    await page.goto(`${server.url}#s=laptop%3A5e6f7a80`);
+    await expect(page.locator(".tok-link")).toBeVisible();
+    // The cited step is NOT drawn: it is far enough back that the window holds it out.
+    await expect(page.locator('[data-astep-seq="1"]')).toHaveCount(0);
+    await expect(page.locator(".chat-window-rest")).toBeVisible();
+
+    // Clicking the citation is what a reader does next, and it has to land on the step it names.
+    await page.locator(".tok-link").click();
+    await expect(page.locator('[data-astep-seq="1"]')).toHaveCount(1);
+    await expect(page.locator('[data-astep-seq="1"]')).toHaveClass(/open/);
+    expect(errors).toEqual([]);
+    await page.close();
+});

@@ -63,6 +63,8 @@ export const extensionServices: SidebarServices = {
         catch { resolve(null); }
     }),
     savePref: (key, value) => { try { chrome.storage.local.set({ [key]: value }); } catch { /* no chrome in a bare render */ } },
+    // The panel holds a run's whole log in the worker's ring already: there is no earlier page to ask for.
+    loadEarlier: null,
     // Every extension frame is extension-origin, so it opens the same value store the service worker writes, and decodes
     // the bytes with the parsers the preview came from. Reads only: the budget never applies.
     storedTable: typeof indexedDB === "undefined" ? null : async (key, opts) => {

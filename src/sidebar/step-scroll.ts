@@ -9,6 +9,7 @@
 // the thing worth scrolling to is then the cell the slot is about, not the top of the step containing it.
 
 import { atBottom, cardShowWorkHash, revealSeq } from "./store";
+import { reveal } from "./transcript-window";
 
 /** Fired on `document` when a citation sends the reader to a step. A transcript that FOLLOWS its newest event
  *  has to stop following when it does: opening the step grows the content, the surface's own resize handler
@@ -17,6 +18,15 @@ import { atBottom, cardShowWorkHash, revealSeq } from "./store";
  *  seemed to work. Each surface keeps its own follow state, so this says what happened rather than reaching
  *  into any of them. */
 export const STEP_JUMP_EVENT = "ml-step-jump";
+
+/** Fired on `document` when a citation names a step nothing can produce any more: the surface says so where the reader
+ *  clicked, rather than appearing to ignore them. */
+export const STEP_GONE_EVENT = "ml-step-gone";
+
+/** Say that the step a citation named is no longer anywhere: not drawn, not loaded, and not in the session's history. */
+function announceGone(): void {
+    try { document.dispatchEvent(new CustomEvent(STEP_GONE_EVENT)); } catch { /* no DOM */ }
+}
 
 /** The anchor for a slot, chosen by what is actually ON SCREEN. Both the rendered and the raw view of a step
  *  are in the DOM at once (the rendered⇄raw toggle switches which is shown), and a collapsed disclosure keeps
@@ -134,8 +144,21 @@ export function scrollToStepSeq(seq?: number, hash?: string, slot?: "in" | "out"
     };
     // Retry across a handful of frames: expanding Show-work AND a collapsed block are async re-renders, so the
     // row may not exist on the first (or second) tick.
+    //
+    // Past those frames the step is not merely late, it is NOT DRAWN: outside the window a long transcript renders,
+    // or older than the page of events that is loaded. `reveal` grows the window and pages the session back until it
+    // exists, and says so when nothing can produce it — a citation that silently does nothing is the failure this
+    // replaces, and windowing would have made it the common case.
     let tries = 0;
-    const attempt = (): void => { if (doScroll() || tries++ > 8) { return; } requestAnimationFrame(attempt); };
+    const attempt = (): void => {
+        if (doScroll()) return;
+        if (tries++ <= 8) { requestAnimationFrame(attempt); return; }
+        if (!hash) return;
+        void reveal(hash, () => document.querySelector(`[data-astep-seq="${seq}"]`)).then((r) => {
+            if (r === "shown") doScroll();
+            else announceGone();
+        });
+    };
     attempt();
     // Release the force-open after the pulse so the user can re-collapse the block, and a RE-click of the same
     // token (same seq) re-triggers the block's open effect (a stale value would make the dep look unchanged).

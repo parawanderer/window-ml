@@ -31,6 +31,7 @@ import { RenderPanel, OutputCell, SeenSplit, RanFor, RunningFor, inLineMap, type
 import { ReplyBubble } from "./reply";
 import { CodeExplain, codeOf } from "./summaries";
 import { groupTurns } from "./debug-reducer";
+import { EarlierInThread, tail } from "./transcript-window";
 import type { AgentTurnGroup } from "./debug-reducer";
 
 // A Jupyter-style In:/Out: block: a gutter label + content, collapsible on its
@@ -795,10 +796,14 @@ export function AgentRunView({ s }: { s: Session }) {
         ...(s.answers || []).map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: answer(a, `a${i}`, i) })),
         ...(s.says || []).map((sy, i) => ({ pos: sy.atStep + 0.5, ts: sy.ts, el: <UserBubble key={`s${i}`} text={sy.text} ts={sy.ts} images={sy.images} steer={sy.id ? { seen: sy.seen } : undefined} /> })),
     ].sort((a, b) => a.pos - b.pos || a.ts - b.ts);
+    // Only the newest items are drawn: a long run costs as much DOM as it has steps, and a step with a screenshot or
+    // a table costs several times a chat turn (transcript-window.tsx).
+    const { drawn, hidden } = tail(items, s.hash);
     return (
         <>
             <AgentOptionsBlock s={s} />
-            {items.map(it => it.el)}
+            <EarlierInThread sessionKey={s.hash} hidden={hidden} />
+            {drawn.map(it => it.el)}
             {s.liveStream ? <LiveStream ls={s.liveStream} s={s} /> : null}
             {s.status === "pending" ? <PendingNote s={s} /> : null}
         </>

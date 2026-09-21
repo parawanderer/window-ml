@@ -9,6 +9,7 @@ import { splitAnswer, hasTokens, resolveTokenStep, answerWithoutShown } from "..
 import type { AnswerSegment } from "../answer-tokens";
 import type { Session, AgentStep } from "./store";
 import { pretty, markdown, inlineMarkdown } from "./format";
+import { reveal } from "./transcript-window";
 import { IconChevron, IconEye, IconCheck } from "./icons";
 import { ClickableImg, Code, SheetChip, cursorTipOn } from "./ui-kit";
 import { RenderPanel, PyDfTable, CodeRender } from "./render-panel";
@@ -33,10 +34,19 @@ import { scrollToStepSeq } from "./step-scroll";
  *  last, since a stale reference should still land somewhere real. */
 export function scrollToAnswer(hash?: string, which?: number): void {
     if (!hash) return;
-    const attempt = (tries = 0): void => {
+    const find = (): Element | null => {
         const all = document.querySelectorAll(`[data-answer-hash="${CSS.escape(hash)}"]`);
-        const el = (which != null && all[which]) || all[all.length - 1];
-        if (!el) { if (tries < 8) requestAnimationFrame(() => attempt(tries + 1)); return; }
+        return (which != null && all[which]) || all[all.length - 1] || null;
+    };
+    const attempt = (tries = 0): void => {
+        const el = find();
+        // Past a handful of frames the answer is not late, it is outside what the transcript draws (or older than
+        // what is loaded): `reveal` grows the window and pages back until it exists.
+        if (!el) {
+            if (tries < 8) { requestAnimationFrame(() => attempt(tries + 1)); return; }
+            void reveal(hash, find).then((r) => { if (r === "shown") attempt(0); });
+            return;
+        }
         el.scrollIntoView({ block: "center", behavior: "smooth" });
         el.classList.add("astep-pulse");
         setTimeout(() => el.classList.remove("astep-pulse"), 1400);

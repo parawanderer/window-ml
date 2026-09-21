@@ -58,6 +58,12 @@ export interface SidebarServices {
     sheetTitle(id: string): Promise<string | null>;
     /** persist a display preference (the bench's state, and the like) */
     savePref(key: string, value: unknown): void;
+    /**
+     * Load the page of events before the oldest one held for a session, for a reference that points further back than
+     * what is loaded (transcript-window.tsx `reveal`). Resolves with whether anything older can still be loaded. Null
+     * where the host cannot page: the extension panel holds a run's whole log already.
+     */
+    loadEarlier: ((session: string) => Promise<{ more: boolean }>) | null;
     /** Every row of a STORED table (a render's `value` key; docs/spec/POINTER_VALUES.md), as column arrays, for the table
      *  view's whole-table summary and copy. Rejects with the store's reason when the value is gone. `null` where this host
      *  cannot reach a value store: the view then works over its preview and says so. */
@@ -92,6 +98,7 @@ const UNAVAILABLE: SidebarServices = {
     hostAccess: null,
     sheetTitle: async () => null,
     savePref() {},
+    loadEarlier: null,
     storedTable: null,
 };
 

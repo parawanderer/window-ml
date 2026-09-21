@@ -29,6 +29,7 @@ import { SessionModelPicker } from "./model-picker";
 import { DeleteConfirm, RenameDialog, RowMenu, isPinned } from "./row-menu";
 import { GearMenu, Rail, mainView, openSearch } from "./nav";
 import { SearchPage } from "./search-page";
+import { STEP_GONE_EVENT } from "../sidebar/step-scroll";
 import { SettingsPage, settingsTab } from "./settings-page";
 import { formatRoute, parseRoute } from "./route";
 import { DockFrame, type DockPanel } from "./dock";
@@ -516,6 +517,13 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     }, [waiting, sessionKey, r]);
     // The phone app draws its own bar, from the same reading: it is chrome, and chrome up there is native.
     useEffect(() => onGate?.(waiting && gateAway), [onGate, waiting, gateAway]);
+    // A citation whose step nothing can produce any more (not drawn, not loaded, not in the session's history) says
+    // so: the click asked for something, and a transcript that neither moves nor speaks reads as a broken link.
+    useEffect(() => {
+        const said = (): void => store.notify("That step is no longer in this session's history.", "info");
+        document.addEventListener(STEP_GONE_EVENT, said);
+        return () => document.removeEventListener(STEP_GONE_EVENT, said);
+    }, [store]);
 
     // NO HEADER BAND on a wide calm page: what it held has gone where each part belongs — the title into the
     // transcript (`Lede`), navigation and the page's tools to the left edge (the rail and the gear, `nav.tsx`). A

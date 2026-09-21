@@ -3406,6 +3406,19 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
    than in chat.css so the pairing screens, which any surface may draw, use the same one as the chat page. */
 .chat-chip { font-size: .8em; padding: 1px 7px; border-radius: 999px; background: var(--panel-2); color: var(--fg-dim); white-space: nowrap; }
 .chat-chip.warn { color: var(--warn); }
+/* The top of a WINDOWED transcript (transcript-window.tsx): how much of the session is not drawn, and the button that
+   draws more of it. Shared by the panel and the chat page, so it lives here rather than in chat.css. */
+.chat-window-edge { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 10px; margin: 6px 0 16px; }
+/* How many items are still held back, beside the button. */
+.chat-window-rest { color: var(--fg-faint); font-size: .85em; }
+/* The panel has no `.chat-earlier-retry` of its own (that is the chat page's), so the button is styled here too. */
+.chat-window-edge .chat-earlier-retry {
+    padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--panel);
+    color: var(--fg-dim); font: inherit; font-size: .85em; cursor: pointer;
+}
+.chat-window-edge .chat-earlier-retry:hover { color: var(--fg); background: var(--panel-2); }
+@media (pointer: coarse) { .chat-window-edge .chat-earlier-retry { min-height: 40px; } }
+
 /* A chip that CHOOSES rather than labels (which device a search looks on): tappable, and filled while it is the one. */
 button.chat-chip { display: inline-flex; align-items: center; min-height: 32px; padding: 5px 11px; border: 0; font: inherit; font-size: .85em; cursor: pointer; }
 @media (pointer: coarse) { button.chat-chip { min-height: 40px; padding: 5px 14px; } }
