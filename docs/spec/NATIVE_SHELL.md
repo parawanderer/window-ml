@@ -44,6 +44,15 @@ version.
   failure puts it back, in front of anything typed since, whether or not that session is on screen;
 - a send still held when the app died was never confirmed, so it comes back into the box on the next start.
 
+**What it looks like.** The phone-width chat page, as it is now: the same list, header, model pill, composer, badges and
+spacing, in the same theme tokens. It is not a redesign. What changes is that each screen is BUILT for a phone rather than
+a desktop layout patched down to 390px: the platform's navigation stack and back gesture, lists that scroll and recycle
+like lists, bottom sheets for pickers and menus, 44pt rows, safe areas and the keyboard handled by the platform. Settings
+is where this shows most, since its web tabs were drawn for a desktop and only squeezed onto a phone.
+
+**Every component is documented**, as on the web: a docstring on each exported component and a comment on each
+`StyleSheet` key, enforced by the code index's ratchet (`node scripts/index.mjs --mobile` to search them).
+
 ## Architecture: the engine in the WebView, the chrome in native
 
 ```
