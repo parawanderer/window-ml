@@ -9,6 +9,7 @@
     "@react-navigation/native-stack": "^7.19.2",
     "expo": "~57.0.24",
     "expo-asset": "~57.0.18",
+    "expo-build-properties": "~57.0.21",
     "expo-camera": "~57.0.5",
     "expo-clipboard": "~57.0.2",
     "expo-file-system": "~57.0.7",

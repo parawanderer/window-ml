@@ -108,7 +108,10 @@ function installNext() {
     run("node", ["mobile/scripts/sync-embed.mjs", ...(process.argv.includes("--demo") ? ["--demo"] : [])]);
     ensurePrebuild("android", run);
     spawnSync("rm", ["-rf", "mobile/android/app/build/generated/assets/react/release"]);
-    run("./gradlew", ["assembleRelease", "--quiet"], { cwd: "mobile/android" });
+    // Built for the device it goes on: the release default is arm64-v8a alone (app.json, expo-build-properties), which an
+    // x86_64 emulator on an Intel Mac cannot run. One ABI is also a quarter of the native build.
+    const abi = out(bin.adb, ["shell", "getprop", "ro.product.cpu.abi"]).trim();
+    run("./gradlew", ["assembleRelease", "--quiet", ...(abi ? [`-PreactNativeArchitectures=${abi}`] : [])], { cwd: "mobile/android" });
     run(bin.adb, ["install", "-r", "mobile/android/app/build/outputs/apk/release/app-release.apk"]);
     console.log(`✓ installed ${APP}`);
 }
