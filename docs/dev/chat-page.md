@@ -445,7 +445,7 @@ for both, with the second silently dropped.
 **The index rebinds itself.** A resumed run's events reach the worker trusted and carry the new tab, and a
 background-hosted session takes its owner from a trusted event, so nothing has to move the binding by hand.
 
-**Where the page offers it.** `resumableHere` (new-session.tsx) decides, and the condition that matters is
+**Where the page offers it.** `resumableHere` (grants.ts) decides, and the condition that matters is
 `page.tabId` being absent — the index drops it when a tab closes and keeps the url, so that is the tell that the
 run has nowhere to live. It is also exactly when `session.send` would end at a closed tab, so the resume REPLACES
 the composer rather than sitting beside it: two ways to continue one run is one too many, and one of them would

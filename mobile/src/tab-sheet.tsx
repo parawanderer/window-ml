@@ -24,19 +24,20 @@ export type TabChoice = number | "blank";
 /** What the sheet shows: the runtime's tabs (null while asking, and `error` when it would not say). */
 export interface TabList { tabs: TabInfo[] | null; groups: TabGroupInfo[]; withheld: number; error?: string }
 
-/** The sheet. `onPick` gets the choice; the caller closes it. */
-export const TabSheet = forwardRef<BottomSheetModal, { list: TabList; value: TabChoice; onPick: (c: TabChoice) => void }>(
-    function TabSheet({ list, value, onPick }, ref) {
+/** The sheet. `onPick` gets the choice; the caller closes it. `title` and `lede` word it for another use (a resume). */
+export const TabSheet = forwardRef<BottomSheetModal, { list: TabList; value: TabChoice | null; onPick: (c: TabChoice) => void; title?: string; lede?: string; blankDetail?: string }>(
+    function TabSheet({ list, value, onPick, title = "Where the agent runs", lede, blankDetail = "At a page you name, or the runtime's start page" }, ref) {
         const p = usePalette();
         const [q, setQ] = useState("");
         const tabs = list.tabs ?? [];
         const long = tabs.length > 8;
         const items = tabTree(tabs.filter((t) => tabMatches(t, q.trim())), list.groups);
         return (
-            <Sheet ref={ref} title="Where the agent runs" tall={long}
+            <Sheet ref={ref} title={title} tall={long}
                 note={list.withheld ? `${list.withheld} tab${list.withheld > 1 ? "s are" : " is"} not listed: the browser gives this runtime no access to ${list.withheld > 1 ? "their sites" : "its site"}.` : undefined}
                 header={long ? <SheetFilter value={q} onChangeText={setQ} placeholder="Filter tabs" /> : undefined}>
-                <Row chosen={value === "blank"} onPress={() => onPick("blank")} title="A new tab" detail="At a page you name, or the runtime's start page"
+                {lede ? <Text style={[s.note, { color: p.fgDim }]}>{lede}</Text> : null}
+                <Row chosen={value === "blank"} onPress={() => onPick("blank")} title="A new tab" detail={blankDetail}
                     icon={<View style={[s.icon, s.letter, { backgroundColor: p.panel2 }]}><Plus size={16} color={p.fg} /></View>} />
                 <View style={[s.rule, { backgroundColor: p.border }]} />
                 {list.tabs === null ? <Text style={[s.note, { color: p.fgDim }]}>{list.error ? `The runtime did not list its tabs: ${list.error}` : "Asking for its tabs…"}</Text>

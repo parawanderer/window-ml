@@ -1,0 +1,27 @@
+# next-demo-resume.yaml — the React Native app's DEMO build (`install --next --demo`): a saved agent run whose tab has
+# closed says so above the composer, and "Resume on a page" picks it back up on one of the runtime's open tabs, after
+# saying what a resume does not carry over. Needs the demo world's runs and tabs, so name it when you run `flows`.
+appId: dev.wander.windowml.next
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "Plot the fare prices"
+    timeout: 60000
+- tapOn: "Plot the fare prices"
+- extendedWaitUntil:
+    visible: "Resume on a page: the tab this run worked in has closed"
+    timeout: 30000
+- tapOn: "Resume on a page: the tab this run worked in has closed"
+- extendedWaitUntil:
+    visible: "Resume this run on…"
+    timeout: 10000
+- assertVisible: "It carries on from what it had said.*"
+- tapOn: "The front page"
+# Resumed: the runtime took it, the sheet closes, and the run has a tab again, so there is nothing to resume.
+- extendedWaitUntil:
+    notVisible: "Resume this run on…"
+    timeout: 15000
+- extendedWaitUntil:
+    notVisible: "Resume on a page: the tab this run worked in has closed"
+    timeout: 15000

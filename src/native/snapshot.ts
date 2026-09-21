@@ -3,7 +3,7 @@
 // without a WebView, and the app never re-derives a grant or a status on its own (docs/spec/NATIVE_SHELL.md).
 
 import type { AgentTarget, Principal, RuntimeInfo, SessionKey, SessionSummary } from "../session-host";
-import { mayCommand, mayStart } from "../chat/grants";
+import { mayCommand, mayStart, resumableHere } from "../chat/grants";
 import type { AttentionRow, SessionChrome } from "./bridge";
 import { attentionCount, attentionItems } from "../chat/attention";
 
@@ -50,6 +50,7 @@ export function sessionChrome(key: SessionKey, summary: SessionSummary | undefin
         canDelete: online && mayCommand(rt, "session.delete", target, self),
         // The page's own peek rule (chat-app.tsx `usePeek`): a tab still open, a runtime that captures, the grant to ask.
         canPeek: online && summary.page?.tabId != null && !!rt?.capabilities.screenshots && mayCommand(rt, "tab.screenshot", target, self),
+        canResume: resumableHere(rt, key, summary, self),
     };
 }
 

@@ -52,6 +52,8 @@ export interface SessionChrome {
     canDelete: boolean;
     /** the run's tab is still open and the runtime can capture it for this device: the sheet offers "Look at the page" */
     canPeek: boolean;
+    /** a saved agent run whose tab has closed, which this device may pick back up on a page (`resumeRun`) */
+    canResume: boolean;
 }
 
 /** One thing a runtime needs a person's hand for, as the phone lists it (src/chat/attention.ts words it). */
@@ -127,6 +129,8 @@ export type ToWeb =
     | { type: "send"; id: string; key: string; text: string; images?: string[] }
     /** Start a session. An agent's `target` is where it runs: an open tab, or a new one (at `url`, or the runtime's start page). */
     | { type: "start"; id: string; runtime: string; kind: "chat" | "agent"; text: string; model?: string; images?: string[]; target?: { kind: "tab"; tabId: number } | { kind: "blank"; url?: string } }
+    /** Pick a saved run back up on a page (`session.resume`): the same target as a new agent's, answered by `sent`. */
+    | { type: "resumeRun"; id: string; key: string; target: { kind: "tab"; tabId: number } | { kind: "blank"; url?: string } }
     /** The runtime's open tabs, for an agent's target: answered by `tabsResult`. */
     | { type: "tabs"; id: string; runtime: string }
     | { type: "cancel"; key: string }
@@ -186,6 +190,7 @@ const TO_WEB: Record<ToWeb["type"], Shape> = {
     send: { id: "string", key: "string", text: "string", images: "array?" },
     start: { id: "string", runtime: "string", kind: "string", text: "string", model: "string?", images: "array?", target: "object?" },
     tabs: { id: "string", runtime: "string" },
+    resumeRun: { id: "string", key: "string", target: "object" },
     cancel: { key: "string" },
     continue: { key: "string" },
     answer: { key: "string", seq: "number", decision: "boolean", persist: "boolean?" },

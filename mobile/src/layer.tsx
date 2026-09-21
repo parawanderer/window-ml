@@ -22,6 +22,7 @@ import { EmbedWebView, useEmbed } from "./embed";
 import { SIZE, usePalette } from "./theme";
 import { IconButton, Sheet, SheetFilter, SheetRow } from "./ui";
 import { SessionActions, type SessionActionsHandle } from "./session-actions";
+import { ResumeSheet, type ResumeHandle } from "./resume";
 import { AttachButton, AttachedStrip, AttachSheet, useAttachments } from "./attach-ui";
 
 /** Opening and closing the session layer, from any screen. */
@@ -171,6 +172,9 @@ function ModelPill() {
     );
 }
 
+/** The open session's resume sheet (resume.tsx), shared by the ⋮ row and the strip above the composer. */
+const resumeSheet: { current: ResumeHandle | null } = { current: null };
+
 /** The session's menu (⋮): the session's actions sheet (session-actions.tsx) for the open session. */
 function SessionMenu() {
     const e = useEmbed();
@@ -179,7 +183,7 @@ function SessionMenu() {
     return (
         <>
             <IconButton label="Session menu" icon={(col) => <EllipsisVertical size={22} color={col} />} onPress={() => sheet.current?.present()} disabled={!e.chrome} />
-            <SessionActions ref={sheet} chrome={e.chrome} onDeleted={layer.close} />
+            <SessionActions ref={sheet} chrome={e.chrome} onDeleted={layer.close} onResume={() => resumeSheet.current?.present()} />
         </>
     );
 }
@@ -215,6 +219,16 @@ function Composer({ bottom }: { bottom: number }) {
     };
     return (
         <View style={[s.composer, { paddingBottom: Math.max(bottom, 10) }]}>
+            {/* The run's tab has closed: say so where a message would go, with the way to carry on. */}
+            {c.canResume ? (
+                <Pressable accessibilityRole="button" accessibilityLabel="Resume on a page: the tab this run worked in has closed" onPress={() => resumeSheet.current?.present()} style={({ pressed }) => [s.resume, { borderColor: p.border, backgroundColor: p.panel }, pressed && { opacity: 0.8 }]}>
+                    <Text style={[s.resumeText, { color: p.fgDim }]} numberOfLines={2}>The tab this run worked in has closed.</Text>
+                    <Text style={[s.resumeGo, { color: p.accent, backgroundColor: p.scheme === "dark" ? "#1e1b4b" : "#eef2ff" }]}>Resume on a page</Text>
+                </Pressable>
+            ) : null}
+            <ResumeSheet ref={(h) => { resumeSheet.current = h; }} chrome={c} />
+            {/* The strip REPLACES the box, as on the web: a message has nowhere to go until the run has a page. */}
+            {c.canResume ? null : <>
             <AttachedStrip att={att} />
             <View style={[s.box, { backgroundColor: p.panel, borderColor: p.border }]}>
                 <AttachButton att={att} style={s.attach} />
@@ -232,6 +246,7 @@ function Composer({ bottom }: { bottom: number }) {
                     icon={(col) => stop ? <Square size={16} color={col} fill={col} /> : <ArrowUp size={20} color={col} strokeWidth={2.5} />}
                     onPress={act} style={s.send} />
             </View>
+            </>}
             <AttachSheet att={att} />
         </View>
     );
@@ -262,6 +277,12 @@ const s = StyleSheet.create({
     input: { flex: 1, fontSize: SIZE.text, lineHeight: 22, maxHeight: 140, paddingTop: 11, paddingBottom: 11 },
     // The send button, a filled circle at the box's end.
     send: { width: 40, height: 40, borderRadius: 20, marginBottom: 2 },
+    // "The tab has closed", above the box, as one tappable strip.
+    resume: { flexDirection: "row", alignItems: "center", gap: 10, borderWidth: StyleSheet.hairlineWidth, borderRadius: 24, paddingLeft: 16, paddingRight: 6, paddingVertical: 6, marginBottom: 8 },
+    // Its sentence.
+    resumeText: { flex: 1, fontSize: SIZE.small },
+    // Its action, a pill in the accent's tint at the right end, where the composer's send button sits (as on the web).
+    resumeGo: { fontSize: SIZE.small, fontWeight: "700", paddingHorizontal: 14, paddingVertical: 9, borderRadius: 999, overflow: "hidden" },
     // The attach button, at the box's left, level with the send button.
     attach: { width: 40, height: 40, borderRadius: 20, marginBottom: 2 },
 });
