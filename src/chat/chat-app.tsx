@@ -23,6 +23,8 @@ import { mayCommand, speaksOurContract, resumableHere } from "./grants";
 import { ResumeSession, StartMenu, startableOn, type StartKind } from "./new-session";
 import { START_GRACE_MS, StartPage, useHeldTrue } from "./start-page";
 import { AttentionButton, AttentionPage, useAttention } from "./attention-page";
+import { attentionCount } from "./attention";
+import { setAppBadge } from "./app-badge";
 import { ListToggle, ViewToggle, calm, codeSize, foldedRuntimes, panelSize, listOpen, pane, pinned, setCalm, setPane, toggleRuntime } from "./view-mode";
 import { MenuItem } from "./menu";
 import { SessionModelPicker } from "./model-picker";
@@ -783,6 +785,11 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
     // back each time the browser stops an idle worker.
     const canStart = useHeldTrue(startableOn(store, "agent").length > 0 || startableOn(store, "chat").length > 0, START_GRACE_MS);
     const att = useAttention(store, extras);
+    // THE SAME COUNT, ON THE ICON, where this page is installed as an app: the badge is what the inbox says, so a
+    // phone or an iPad on a home screen shows a run waiting without being opened. A tab and a packaged app are both
+    // left alone (app-badge.ts).
+    const attN = attentionCount(att.items);
+    useEffect(() => setAppBadge(attN), [attN]);
     const gear = <><AttentionButton items={att.items} /><GearMenu graphsRt={graphsRt} benchRt={benchOwner} /></>;
     const gearWide = <><AttentionButton items={att.items} labelled /><GearMenu graphsRt={graphsRt} benchRt={benchOwner} labelled /></>;
     // The sheet is always there: this page's own display settings need no runtime; the browser's settings join them
