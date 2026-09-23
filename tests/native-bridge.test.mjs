@@ -126,6 +126,7 @@ test("every message the app can send passes the page's own check", () => {
         { type: "start", id: "n4", runtime: "laptop", kind: "chat", text: "what is this?", images: ["data:image/jpeg;base64,AA=="] },
         { type: "cancel", key: "laptop:1" },
         { type: "continue", key: "laptop:1" },
+        { type: "continue", key: "laptop:1", maxSteps: 50 },
         { type: "answer", key: "laptop:1", seq: 4, decision: true },
         { type: "switchModel", key: "laptop:1", model: "gemma3:27b" },
         { type: "models", runtime: "laptop" },

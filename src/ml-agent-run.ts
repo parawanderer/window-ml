@@ -452,11 +452,11 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
         // again, then the background reuses the stored payload + history and appends the follow-up.
         agentRegistry.set(runHash, {
             hash: runHash,
-            resume: async (t: string): Promise<AgentResult> => {
+            resume: async (t: string, steps?: number): Promise<AgentResult> => {
                 registerRun(runHash, toolset, runModel, driverSees, runVisionModel);
                 enterAgentRun();
                 try {
-                    const res = await makeBackgroundTaskPromise<AgentResult>("RESUME_RUN_REQUEST", "RESUME_RUN_RESPONSE", { runId: runHash, task: t }, undefined, signal);
+                    const res = await makeBackgroundTaskPromise<AgentResult>("RESUME_RUN_REQUEST", "RESUME_RUN_RESPONSE", { runId: runHash, task: t, ...(steps ? { maxSteps: steps } : {}) }, undefined, signal);
                     const run = endRun(runHash);
                     const { tokenRenders, ...resClean } = res;   // loop-internal — don't leak to the caller
                     const a = run ? runAnswer(run, res.summary) : { elements: [], media: [], answer: "" };
@@ -491,7 +491,10 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
             const res = await makeBackgroundTaskPromise<AgentResult>("START_RUN_REQUEST", "START_RUN_RESPONSE", {
                 runId: runHash, task, systemPrompt, tools: descriptors,
                 model: runModel, think: (think === true || think === false) ? think : null,
-                maxSteps, autoApprovePython: autoPy, autoApproveReadonly: autoRO, autoApproveSameOriginAuth: autoSOA, autoApproveSelfSource: autoSelfSrc, labelMatch, surface: bgSurface, stream: stream || undefined, toolTokens: toolTokens || undefined,
+                // `control.maxSteps`, not the destructured option: the handle's setter is what a raised cap goes
+                // through, and a handle whose run is hosted in the BACKGROUND would otherwise send the cap it was
+                // created with and quietly ignore the new one.
+                maxSteps: control.maxSteps, autoApprovePython: autoPy, autoApproveReadonly: autoRO, autoApproveSameOriginAuth: autoSOA, autoApproveSelfSource: autoSelfSrc, labelMatch, surface: bgSurface, stream: stream || undefined, toolTokens: toolTokens || undefined,
                 images: pendingImages,   // native-vision composer attachments for this turn's user message
                 // (OCR fallback for a text-only driver is already folded into `task` above)
                 unattended: unattended || undefined, silent: silent || undefined,
@@ -824,7 +827,7 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
     };
     // Register the run so ml.agent(task, { resume }) can re-enter this turn's loop (createAgent uses
     // its own control instead). A resume continues control.messages just like a handle's run().
-    agentRegistry.set(runHash, { hash: runHash, resume: (t: string) => drive(t) });
+    agentRegistry.set(runHash, { hash: runHash, resume: (t: string, steps?: number) => { if (steps) control.maxSteps = steps; return drive(t); } });
     return drive(task);
 };
 

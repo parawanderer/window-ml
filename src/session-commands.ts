@@ -6,6 +6,7 @@
 // Pure over its dependencies (`CommandDeps`), which sw-sessions.ts and background.ts fill in with the real ones, so
 // every command's decisions are tested in Node without a browser (tests/session-commands.test.mjs).
 import type { NeutralMessage } from "./contract-chat";
+import { MAX_CONTINUE_STEPS } from "./step-budget";
 import type { MlDebugEvent } from "./contract-debug";
 import type { SessionHistory } from "./session-store";
 import type { Command, CommandError, CommandResult, CommandType, ListedSession, ModelChoice, SessionId, SessionSummary, StorageReport, TabGroupInfo, TabInfo } from "./session-host";
@@ -38,7 +39,7 @@ export interface CommandDeps {
     /** one tab, or null when it is gone */
     getTab(tabId: number): Promise<TabInfo | null>;
     /** relay a session action to the page in a tab and wait for what it did; rejects when nothing listens there */
-    toPage(tabId: number, action: "send" | "cancel" | "continue", body: { hash: string; text?: string; images?: string[]; elementContext?: unknown }): Promise<PageOutcome>;
+    toPage(tabId: number, action: "send" | "cancel" | "continue", body: { hash: string; text?: string; images?: string[]; elementContext?: unknown; maxSteps?: number }): Promise<PageOutcome>;
     /** bring a tab and its window to the front; false when the tab is gone */
     focusTab(tabId: number, windowId?: number): Promise<boolean>;
     /** outline an element or point on a tab's page (fire and forget) */
@@ -208,7 +209,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
     };
 
     /** Relay to the session's page; a page with nothing listening, or no answer, is unavailable. */
-    const viaPage = async (hash: string, action: "send" | "cancel" | "continue", body: { text?: string; images?: string[]; elementContext?: unknown } = {}): Promise<PageOutcome | CommandResult<any>> => {
+    const viaPage = async (hash: string, action: "send" | "cancel" | "continue", body: { text?: string; images?: string[]; elementContext?: unknown; maxSteps?: number } = {}): Promise<PageOutcome | CommandResult<any>> => {
         const t = tabOf(hash);
         if (t.error) return t.error;
         try {
@@ -494,9 +495,13 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
             const s = session(c);
             if (s.error) return s.error;
             if (deps.index.get(s.id.hash)!.status !== "capped") return fail("conflict", "only a run that stopped at its step limit can be continued");
-            const r = await viaPage(s.id.hash, "continue");
+            // A budget is optional, and a bad one is refused rather than rounded: a caller that meant 50 and sent
+            // "50" should hear about it, not silently get the run's old cap back.
+            if (c.maxSteps != null && (!Number.isInteger(c.maxSteps) || c.maxSteps < 1 || c.maxSteps > MAX_CONTINUE_STEPS))
+                return fail("invalid", `maxSteps must be a whole number of steps, 1 to ${MAX_CONTINUE_STEPS}`);
+            const r = await viaPage(s.id.hash, "continue", c.maxSteps != null ? { maxSteps: c.maxSteps } : {});
             if (typeof r !== "string") return r;
-            if (r === "continued") return ok({});
+            if (r === "continued") return ok(c.maxSteps != null ? { maxSteps: c.maxSteps } : {});
             if (r === "busy") return fail("conflict", "the run is already going again");
             return fail("not-found", "the page no longer holds this run (reloaded or navigated away)");
         },

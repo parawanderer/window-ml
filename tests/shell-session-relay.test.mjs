@@ -47,6 +47,19 @@ test("an unrecognised action posts nothing", () => {
     assert.equal(posted.length, 0);
 });
 
+test("a continue carries the step budget to the page, and only a real one", () => {
+    reset();
+    relaySessionToPage({ type: "ML_SESSION_TO_PAGE", action: "continue", hash: "abc12345", maxSteps: 50, reqId: "rb" }, () => {});
+    assert.equal(posted[0].__mlContinueRun.maxSteps, 50, "a chosen budget reaches the page beside the hash");
+    // Anything that is not a positive number is simply not forwarded: the run then keeps the cap it had, which is
+    // what Continue did before a budget existed. Passing it through would put junk in front of the loop.
+    for (const bad of [undefined, null, 0, -5, 2.5, NaN, "50"]) {   // "50" too: the runtime refuses a string, so this must not take one
+        reset();
+        relaySessionToPage({ type: "ML_SESSION_TO_PAGE", action: "continue", hash: "abc12345", maxSteps: bad, reqId: "rb" }, () => {});
+        assert.equal("maxSteps" in posted[0].__mlContinueRun, false, `${String(bad)} must not be forwarded`);
+    }
+});
+
 test("a page that never answers still resolves the background's call, as no-answer", async () => {
     reset();
     let replied;

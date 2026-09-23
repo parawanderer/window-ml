@@ -138,7 +138,7 @@ window.addEventListener("message", (e: MessageEvent) => {
         return;
     }
     if (d.__mlSidebarApp === "continueRun" && typeof d.hash === "string") {
-        void chrome.runtime.sendMessage({ type: "ML_SESSION_REMOTE", tabId, action: "continue", hash: d.hash }).catch(() => {});
+        void chrome.runtime.sendMessage({ type: "ML_SESSION_REMOTE", tabId, action: "continue", hash: d.hash, maxSteps: d.maxSteps }).catch(() => {});
         return;
     }
 });

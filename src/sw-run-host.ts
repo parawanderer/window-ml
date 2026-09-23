@@ -8,6 +8,7 @@ import type { ToolMeta } from "./agent-loop";
 import type { NeutralMessage, ToolCall, TokenUsage } from "./contract-chat";
 import { UI_OUT_CAP } from "./contract-chat";
 import type { ApprovalDecision } from "./contract-agent";
+import { MAX_CONTINUE_STEPS } from "./step-budget";
 import type { StartRunPayload, ResumeRunPayload } from "./contract-messages";
 import { type RequestHint, hintSession } from "./contract-run";
 import { externalSheetIds, clipOut, isCurrentPage } from "./dom";
@@ -55,12 +56,19 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
     let resumeMessages: NeutralMessage[] | undefined;
     let priorSub: import("./contract").SubcallUsage | undefined;   // a resumed session's accumulated sub-call spend
     let resumeOriginalTask: string | undefined;   // the run's ORIGINAL task (rp.task is the follow-up; empty on an auto-resume)
+    let capRaised = false;                        // this resume changed the step budget → say so, since no start event will
     if (message.type === "RESUME_RUN") {
         const rp = message.payload as ResumeRunPayload;
         const stored = bgRuns.get(rp.runId);
         if (!stored) { sendResponse({ error: `No resumable run "${rp.runId}" in the background — it may have been evicted; start a new run.` }); return; }
         if (stored.tabId !== tabId) { sendResponse({ error: `Run "${rp.runId}" belongs to another tab.` }); return; }
-        p = { ...stored.p, task: rp.task };
+        // A budget the person chose overrides the stored one, and because it goes into `p` it is what gets stored
+        // again below: raising a cap STICKS. Bounded the same way the loop is, so a bad number from a page cannot
+        // ask the worker for an unbounded run.
+        const asked = rp.maxSteps;
+        const budget = typeof asked === "number" && Number.isInteger(asked) && asked > 0 ? Math.min(asked, MAX_CONTINUE_STEPS) : undefined;
+        p = { ...stored.p, task: rp.task, ...(budget ? { maxSteps: budget } : {}) };
+        capRaised = budget != null && budget !== stored.p.maxSteps;
         resumeOriginalTask = stored.p.task;
         resumeMessages = stored.messages;
         priorSub = stored.sub;
@@ -256,6 +264,10 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
     };
     if (!resumeMessages) emitLifecycle(startEvent);
     else if (resurrected) fanEvent(startEvent);   // resurrected: no page-side caller emitted a start → fan it ourselves
+    // A plain resume emits NEITHER, so a cap raised here would reach no surface: the step pill would keep counting
+    // against the old number and the next Continue would offer the old budget back. `agent-cap` is the same event
+    // a handle's setter fans page-side, and the reducer already folds it into the session.
+    else if (capRaised) fanEvent({ kind: "agent-cap", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, maxSteps: p.maxSteps });
     runBackgroundAgent(
         { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSameOriginAuth: p.autoApproveSameOriginAuth, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, runId, seqBase, tokenStore: sessionTokens(runId), labelMatch: p.labelMatch, resumeMessages, images: p.images,
           // A resumed turn follows a PERSON (a follow-up, Continue, Retry) — except a run resurrected after the

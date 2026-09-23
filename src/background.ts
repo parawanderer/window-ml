@@ -180,7 +180,10 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     // The panel is an extension page (can chrome.runtime.sendMessage); the inspected page has no such path,
     // so it can't forge this. Same relay shape as ML_HL_REMOTE.
     if (message.type === "ML_SESSION_REMOTE" && typeof message.tabId === "number") {
-        try { void chrome.tabs.sendMessage(message.tabId, { type: "ML_SESSION_TO_PAGE", action: message.action, hash: message.hash, text: message.text, images: message.images }).catch(() => {}); } catch { /* tab gone */ }
+        // NAMED fields, not a spread: this forwards a message from an extension page to a content script, and
+        // copying the whole thing would carry anything the panel happened to put on it. The cost is that a new
+        // field must be added HERE too — a step budget added everywhere else still arrived undefined until it was.
+        try { void chrome.tabs.sendMessage(message.tabId, { type: "ML_SESSION_TO_PAGE", action: message.action, hash: message.hash, text: message.text, images: message.images, ...(typeof message.maxSteps === "number" ? { maxSteps: message.maxSteps } : {}) }).catch(() => {}); } catch { /* tab gone */ }
         return;
     }
     // PDF export prints from a REAL browser tab, not the sidebar app's own frame: window.print() is

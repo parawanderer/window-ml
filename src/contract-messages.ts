@@ -210,6 +210,8 @@ export interface CancelRunPayload {
 export interface ResumeRunPayload {
     runId: string;
     task: string;
+    /** a budget chosen for this continuation; omitted keeps the one the run was started with */
+    maxSteps?: number;
 }
 
 /** INJECT_MESSAGE payload — a.say() steering a RUNNING background run: the text is pushed into that

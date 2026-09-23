@@ -11,7 +11,8 @@ import type { Session, Turn, Status, AgentStep } from "./store";
 import { pretty, truncate, collapsedPreview, markdown } from "./format";
 import { annotatedConfig, turnProfile } from "./model";
 import { IconChevron, IconPlay } from "./icons";
-import { cursorTipOn, Dot, Stamp, Hash, TagBadge, CopyBtn, CopyModel, Code } from "./ui-kit";
+import { cursorTipOn, openCtxMenu, Dot, Stamp, Hash, TagBadge, CopyBtn, CopyModel, Code } from "./ui-kit";
+import { STEP_BUDGETS } from "../step-budget";
 import { aliasOf, AnswerBody, ResultBlock } from "./answer-render";
 import { hasTokens } from "../answer-tokens";
 
@@ -184,10 +185,7 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
             {/* A step-capped run stopped mid-task — one click resumes it with a fresh N-step budget (no need to
                 type a follow-up). Resuming re-enters the SAME run by hash from its stored state. */}
             {resumeCap && !collapsed
-                ? <button class="continue-run" title="Resume this run with more steps, continuing from where it stopped"
-                    onClick={() => services().continueSession(resumeCap.hash)}>
-                    <IconPlay />Continue <span class="continue-steps">+{resumeCap.steps} steps</span>
-                  </button>
+                ? <ContinueRun steps={resumeCap.steps} go={(n) => services().continueSession(resumeCap.hash, n)} />
                 : null}
             {sources?.length
                 ? <details class="sources"><summary>{`sources (${sources.length})`}</summary><Code text={pretty(sources)} lang="json" /></details>
@@ -286,5 +284,45 @@ export function SessionRow({ s, profile }: { s: Session; profile: "utility" | "d
                 <Hash hash={bareHash(s.hash)} stop />
             </div>
         </button>
+    );
+}
+
+/**
+ * CARRY A STEP-CAPPED RUN ON, and say what budget it gets.
+ *
+ * A split control: the button continues with the cap the run already had, the chevron beside it offers the others
+ * (`STEP_BUDGETS`). It is split because "+N steps" sat on a plain button looking exactly like a value you could
+ * set — which is the first thing anyone asks of it — while being the one thing about the control that was fixed.
+ *
+ * A chosen budget STICKS for the rest of the run: having to grant 50 steps once and then be stopped after 2 again
+ * is the same interruption twice. The runtime says so with an `agent-cap`, so the label here follows.
+ */
+export function ContinueRun({ steps, go }: {
+    /** the cap this run is carrying, which is what the plain press uses */
+    steps: number;
+    /** continue: with `maxSteps` when one was picked, else the run's own */
+    go: (maxSteps?: number) => void;
+}) {
+    const others = STEP_BUDGETS.filter((n) => n !== steps);
+    return (
+        <span class="continue-wrap">
+            <button class="continue-run" title="Resume this run with more steps, continuing from where it stopped"
+                onClick={() => go()}>
+                <IconPlay />Continue <span class="continue-steps">+{steps} steps</span>
+            </button>
+            {others.length ? (
+                <button class="continue-more" aria-label="Continue with a different step budget" aria-haspopup="menu"
+                    onClick={(e) => {
+                        // A keyboard activation is a click with no coordinates, which would open the menu in the
+                        // page's top-left corner; fall back to the button's own bottom edge.
+                        const ev = e as MouseEvent;
+                        const r = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+                        const at = ev.clientX || ev.clientY ? ev : { ...ev, clientX: r.left, clientY: r.bottom, preventDefault: () => {} } as MouseEvent;
+                        openCtxMenu(at, others.map((n) => ({ label: `+${n} steps`, run: () => go(n) })));
+                    }}>
+                    <IconChevron />
+                </button>
+            ) : null}
+        </span>
     );
 }

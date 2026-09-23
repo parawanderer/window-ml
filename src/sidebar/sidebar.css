@@ -1461,10 +1461,22 @@ details.io[open] > summary .io-preview { display: none; }
    (`.nav`, `.rc-preset`): it read as a different kind of UI rather than as this page's primary action. So it is that
    same chip, and the play glyph carries the meaning instead of the colour — FILLED, because the shared outline version
    is a hairline at this size and reads as a smudge. The +N is dimmed: it is the terms, not the offer. */
+/* Continue, as a SPLIT control: press it to carry on with the cap the run had, or take the chevron for another
+   budget. One pill with a hairline down it, not two buttons — the halves do the same thing and separating them
+   would read as a second, different action. */
+.continue-wrap { display: inline-flex; align-items: stretch; margin-top: 8px; border-radius: 999px; background: var(--panel-2); overflow: hidden; }
+.continue-wrap:has(.continue-more) .continue-run { border-radius: 999px 0 0 999px; padding-right: 10px; }
 .continue-run { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; padding: 5px 13px;
     font-size: 0.9em; font-weight: 600; cursor: pointer; border-radius: 999px;
     color: var(--fg); border: none; background: var(--panel-2); }
+.continue-wrap .continue-run { margin-top: 0; }
 .continue-run:hover { background: var(--panel-2-hover); }
+/* The chevron half. Its own hover, so it is clear which press you are about to make. */
+.continue-more { display: inline-flex; align-items: center; padding: 0 9px 0 7px; cursor: pointer;
+    border: none; border-left: 1px solid var(--bg); background: var(--panel-2); color: var(--fg-dim); }
+.continue-more:hover { background: var(--panel-2-hover); color: var(--fg); }
+/* The shared chevron points along a row; here it opens a menu downwards. */
+.continue-more svg { width: 13px; height: 13px; transform: rotate(90deg); }
 .continue-run .continue-steps { font-weight: 400; color: var(--fg-dim); }
 .continue-run svg { width: 13px; height: 13px; margin-left: -2px; fill: currentColor; }
 /* Per-reply model chip: outlined, click-to-copy (see CopyModel). */

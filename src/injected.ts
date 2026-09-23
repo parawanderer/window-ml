@@ -720,7 +720,7 @@ import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } fro
 
     window.addEventListener("message", (e: MessageEvent) => {
         if (e.source !== window || !e.data) return;
-        const d = e.data as { __mlSessionSend?: { hash: string; text: string; images?: string[]; elementContext?: import("./contract").ElementContext; reqId?: string }; __mlCancelSession?: { hash: string; reqId?: string }; __mlContinueRun?: { hash: string; reqId?: string } };
+        const d = e.data as { __mlSessionSend?: { hash: string; text: string; images?: string[]; elementContext?: import("./contract").ElementContext; reqId?: string }; __mlCancelSession?: { hash: string; reqId?: string }; __mlContinueRun?: { hash: string; maxSteps?: number; reqId?: string } };
         // A request the shell relayed from an extension page (the chat page) carries a `reqId` and wants to hear what
         // happened, so the page can say "steered", "started a turn" or "not on this page" instead of guessing.
         const reqId = d.__mlSessionSend?.reqId ?? d.__mlCancelSession?.reqId ?? d.__mlContinueRun?.reqId;
@@ -734,10 +734,16 @@ import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } fro
                 // going from its stored state with N more steps, without the user typing a follow-up. Bypasses
                 // the __mlSessionSend empty-text guard on purpose (there IS no text — it's "just keep going").
                 const hash = String(d.__mlContinueRun.hash);
+                // A budget the person picked, validated exactly as the composer's is: anything else keeps the run's.
+                const asked = Number(d.__mlContinueRun.maxSteps);
+                const budget = Number.isFinite(asked) && asked > 0 ? Math.floor(asked) : undefined;
                 const h = handleRegistry.get(hash);
-                if (h) { if (!h.running) { void h.run(""); done("continued"); } else done("busy"); return; }   // page-hosted handle: continue over prior messages
+                // The handle's `maxSteps` is read live by the loop each iteration, so setting it here governs the
+                // turn this starts — and every later one, which is the point: a run you had to give 50 steps once
+                // should not go back to stopping after 2.
+                if (h) { if (!h.running) { if (budget) h.maxSteps = budget; void h.run(""); done("continued"); } else done("busy"); return; }   // page-hosted handle: continue over prior messages
                 const bg = agentRegistry.get(hash);
-                if (bg) { void bg.resume(""); done("continued"); return; }              // background-hosted / cross-page run: RESUME_RUN, empty task
+                if (bg) { void bg.resume("", budget); done("continued"); return; }       // background-hosted / cross-page run: RESUME_RUN, empty task
                 done("none");
                 return;
             }

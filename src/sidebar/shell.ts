@@ -853,8 +853,10 @@ function onWindowMessage(e: MessageEvent): void {
         return;
     }
     if (d.__mlSidebarApp === "continueRun" && frame && e.source === frame.contentWindow && typeof d.hash === "string") {
-        // "Continue (+N steps)" on a step-capped run — resume it (fresh budget) with no follow-up text.
-        window.postMessage({ __mlContinueRun: { hash: d.hash } }, "*");
+        // "Continue (+N steps)" on a step-capped run — resume it (fresh budget) with no follow-up text. A budget
+        // the person picked rides along; anything that is not a number is simply not forwarded, as with startRun.
+        const steps = d.maxSteps;
+        window.postMessage({ __mlContinueRun: { hash: d.hash, ...(typeof steps === "number" && Number.isInteger(steps) && steps > 0 ? { maxSteps: steps } : {}) } }, "*");
         return;
     }
     if (d.__mlSidebarApp === "sessionCancel" && frame && e.source === frame.contentWindow && typeof d.hash === "string") {

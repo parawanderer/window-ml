@@ -331,8 +331,13 @@ export type Command =
      *  an idle agent or chat. Text, images, or both. */
     | { type: "session.send"; session: SessionId; text: string; images?: ImageDataUrl[]; elementContext?: ElementContext; idempotencyKey?: IdempotencyKey }
     | { type: "session.cancel"; session: SessionId }
-    /** continue an agent that stopped at its step cap, with a fresh step budget */
-    | { type: "session.continue"; session: SessionId }
+    /**
+     * Continue an agent that stopped at its step cap, with a fresh step budget. `maxSteps` is the budget the person
+     * chose for this continuation; omitted means the one the run was started with. It STICKS — a run you had to give
+     * 50 steps once does not go back to asking after 2 — which is also why the runtime announces the new cap rather
+     * than applying it quietly.
+     */
+    | { type: "session.continue"; session: SessionId; maxSteps?: number }
     | { type: "session.delete"; session: SessionId }
     /**
      * Keep a session, or stop keeping it. It is the runtime's because eviction is: a pin kept only on one device
@@ -657,7 +662,8 @@ export interface CommandResultData {
     /** `steer`: queued into the running loop; `turn`: started the next turn */
     "session.send": { mode: "steer" | "turn" };
     "session.cancel": Record<string, never>;
-    "session.continue": Record<string, never>;
+    /** the cap the run is carrying on under, which is the one asked for unless the runtime lowered it */
+    "session.continue": { maxSteps?: number };
     "session.delete": Record<string, never>;
     /** the row changes through the index, as an `upsert`, like every other change to a session */
     "session.pin": Record<string, never>;
