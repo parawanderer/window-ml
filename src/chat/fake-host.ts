@@ -358,10 +358,18 @@ export class FakeHost implements SessionHost {
                 const images = mine.reduce((n, h) => n + h.log.filter((e) => "images" in (e.event as object)).length * 90_000, 0);
                 const toolOutput = Math.round(mine.reduce((n, h) => n + size(h), 0) * 0.4);
                 const total = mine.reduce((n, h) => n + size(h), 0) + images;
+                // Every field of `SessionBytes`: the Storage view reads `byTool` and `imageCount` too, and a snapshot
+                // missing one throws in the page rather than drawing a smaller picture.
+                const byTool: Record<string, number> = {};
+                for (const h of mine) for (const e of h.log) {
+                    const tool = (e.event as { tool?: string }).tool;
+                    if (tool) byTool[tool] = (byTool[tool] ?? 0) + JSON.stringify(e.event).length;
+                }
                 const now = {
                     t: Date.now(), sessions: mine.length, events: mine.reduce((n, h) => n + h.log.length, 0),
                     pinned: mine.filter((h) => h.summary.pinned).length, unmeasured: 0,
-                    total, images, toolOutput, other: Math.max(0, total - images - toolOutput),
+                    total, images, imageCount: Math.round(images / 90_000), toolOutput, byTool,
+                    other: Math.max(0, total - images - toolOutput),
                 };
                 return ok({
                     now, history: [{ ...now, t: now.t - 86_400_000 }, now],
