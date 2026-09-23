@@ -25,11 +25,16 @@ export function IconButton({ icon, label, onPress, tint, filled, disabled, style
 }
 
 /** A pill that opens a picker: its value, and a caret. `mono` sets the value in the code face, as a model name is. */
-export function Pill({ text, onPress, mono, disabled, label }: { text: string; onPress?: () => void; mono?: boolean; disabled?: boolean; label: string }) {
+export function Pill({ text, onPress, mono, disabled, label, icon }: { text: string; onPress?: () => void; mono?: boolean; disabled?: boolean; label: string;
+    /** what KIND of thing this pill names — a device, a model, a page — drawn before the text. Three pills in a row
+     *  that differ only in their words are read as one control with three settings; the glyph is what tells them
+     *  apart at a glance, and for a tab it is the site's own icon, which is how you recognise a tab anywhere else. */
+    icon?: ReactNode }) {
     const p = usePalette();
     return (
         <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} disabled={disabled}
             style={({ pressed }) => [s.pill, { backgroundColor: pressed ? p.panel2 : p.panel }]}>
+            {icon}
             <Text numberOfLines={1} style={[s.pillText, { color: p.fg }, mono && s.mono]}>{text}</Text>
             {onPress ? <ChevronDown size={15} color={p.fgDim} /> : null}
         </Pressable>
@@ -104,6 +109,9 @@ export const Sheet = forwardRef<BottomSheetModal, { title?: string; children: Re
         </BottomSheetModal>
     );
 });
+
+/** Past this many models the list gets a filter: a cloud gateway lists dozens. Shared, so every model list agrees. */
+export const MODEL_FILTER_AT = 8;
 
 /**
  * A sheet's filter field, for a list too long to scroll through (a box with fifty models). Give it to `Sheet` as its

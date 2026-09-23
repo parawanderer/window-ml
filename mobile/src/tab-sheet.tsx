@@ -32,6 +32,8 @@ export const TabSheet = forwardRef<BottomSheetModal, { list: TabList; value: Tab
         const tabs = list.tabs ?? [];
         const long = tabs.length > 8;
         const items = tabTree(tabs.filter((t) => tabMatches(t, q.trim())), list.groups);
+        // The colour of the group the list is currently inside, carried down its rows (see the map below).
+        let rail: string | null = null;
         return (
             <Sheet ref={ref} title={title} tall={long}
                 note={list.withheld ? `${list.withheld} tab${list.withheld > 1 ? "s are" : " is"} not listed: the browser gives this runtime no access to ${list.withheld > 1 ? "their sites" : "its site"}.` : undefined}
@@ -44,11 +46,16 @@ export const TabSheet = forwardRef<BottomSheetModal, { list: TabList; value: Tab
                     : !tabs.length ? <Text style={[s.note, { color: p.fgDim }]}>No tabs are open there.</Text>
                     : !items.length ? <Text style={[s.note, { color: p.fgDim }]}>{`No tab matches “${q.trim()}”.`}</Text>
                     : items.map((it) => {
-                        if (it.kind === "window") return <Text key={`w${it.windowId}`} style={[s.head, { color: p.fgFaint }]}>{`Window · ${it.count} tab${it.count > 1 ? "s" : ""}`}</Text>;
+                        // THE GROUP'S COLOUR RUNS DOWN ITS TABS, as the page draws it (`.tp-grp`): a dot beside the
+                        // name says which colour the group is, and a line beside the rows says which rows are IN it,
+                        // which is the question a list of indented titles leaves open. `tabTree` is flat and a group
+                        // always precedes its own members, so the colour is carried forward from the heading.
+                        if (it.kind === "window") { rail = null; return <Text key={`w${it.windowId}`} style={[s.head, { color: p.fgFaint }]}>{`Window · ${it.count} tab${it.count > 1 ? "s" : ""}`}</Text>; }
                         if (it.kind === "group") {
+                            rail = GROUP_COLOR[it.group.color ?? ""] ?? p.fgFaint;
                             return (
                                 <View key={`g${it.group.id}`} style={s.group}>
-                                    <View style={[s.groupDot, { backgroundColor: GROUP_COLOR[it.group.color ?? ""] ?? p.fgFaint }]} />
+                                    <View style={[s.groupDot, { backgroundColor: rail }]} />
                                     <Text style={[s.head, s.groupName, { color: p.fgDim }]} numberOfLines={1}>{it.described ? it.group.title || "Unnamed group" : "A tab group"}</Text>
                                 </View>
                             );
@@ -61,7 +68,7 @@ export const TabSheet = forwardRef<BottomSheetModal, { list: TabList; value: Tab
                             ? <Image source={{ uri: src }} style={s.icon} />
                             : <View style={[s.icon, s.letter, { backgroundColor: p.panel2 }]}><Text style={[s.letterText, { color: p.fgDim }]}>{(host[0] ?? "?").toUpperCase()}</Text></View>;
                         return (
-                            <Row key={t.tabId} indent={it.indent} chosen={value === t.tabId} onPress={() => onPick(t.tabId)} icon={icon}
+                            <Row key={t.tabId} indent={it.indent} rail={it.indent ? rail : null} chosen={value === t.tabId} onPress={() => onPick(t.tabId)} icon={icon}
                                 title={t.title || t.url} detail={t.active ? `${host} · in front` : host} />
                         );
                     })}
@@ -71,11 +78,13 @@ export const TabSheet = forwardRef<BottomSheetModal, { list: TabList; value: Tab
 );
 
 /** One choice: its icon, its title, the line under it, and a check when chosen. */
-function Row({ title, detail, icon, chosen, indent, onPress }: { title: string; detail: string; icon: React.ReactNode; chosen: boolean; indent?: boolean; onPress: () => void }) {
+function Row({ title, detail, icon, chosen, indent, rail, onPress }: { title: string; detail: string; icon: React.ReactNode; chosen: boolean; indent?: boolean;
+    /** the colour of the group this row is in, drawn as a line down its left edge; null when it is in none */
+    rail?: string | null; onPress: () => void }) {
     const p = usePalette();
     return (
         <Pressable accessibilityRole="button" accessibilityLabel={title} accessibilityState={{ selected: chosen }} onPress={onPress}
-            style={({ pressed }) => [s.row, indent && s.indent, pressed && { backgroundColor: p.panel }]}>
+            style={({ pressed }) => [s.row, indent && s.indent, rail ? { borderLeftWidth: 2, borderLeftColor: rail } : null, pressed && { backgroundColor: p.panel }]}>
             {icon}
             <View style={{ flex: 1 }}>
                 <Text numberOfLines={1} style={[s.title, { color: p.fg }]}>{title}</Text>
