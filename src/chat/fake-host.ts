@@ -349,6 +349,27 @@ export class FakeHost implements SessionHost {
                 const from = Math.max(0, end - Math.min(c.limit ?? 40, 40));
                 return ok({ session: h.summary.id, epoch: h.epoch, events: h.log.slice(from, end).map((e) => e.event), from, more: from > 0, truncated: from === 0 && h.lostBefore > 0 });
             }
+            // What this runtime keeps, as a real one reports it: its own sessions' rows, sized from the events it holds,
+            // so the Storage view (and the phone's Runtimes screen) has something true to draw in the demo.
+            case "storage.stats": {
+                if (!caps.persistence) return fail("unsupported", "this runtime keeps nothing");
+                const mine = [...this.held.values()].filter((h) => h.summary.id.runtime === rt.id);
+                const size = (h: (typeof mine)[number]) => h.log.reduce((n, e) => n + JSON.stringify(e.event).length, 200);
+                const images = mine.reduce((n, h) => n + h.log.filter((e) => "images" in (e.event as object)).length * 90_000, 0);
+                const toolOutput = Math.round(mine.reduce((n, h) => n + size(h), 0) * 0.4);
+                const total = mine.reduce((n, h) => n + size(h), 0) + images;
+                const now = {
+                    t: Date.now(), sessions: mine.length, events: mine.reduce((n, h) => n + h.log.length, 0),
+                    pinned: mine.filter((h) => h.summary.pinned).length, unmeasured: 0,
+                    total, images, toolOutput, other: Math.max(0, total - images - toolOutput),
+                };
+                return ok({
+                    now, history: [{ ...now, t: now.t - 86_400_000 }, now],
+                    largest: mine.map((h) => ({ hash: h.summary.id.hash, title: h.summary.title, bytes: size(h), ...(h.summary.pinned ? { pinned: true as const } : {}) }))
+                        .sort((a, b) => b.bytes - a.bytes).slice(0, 5),
+                    ...(caps.archive?.folder === "connected" ? { archive: { sessions: 12, events: 400, bytes: 209_715_200, images: 30, imageBytes: 104_857_600 } } : {}),
+                });
+            }
             case "sessions.list":
                 return ok(this.listPage(c.runtime, c.before, c.limit, (s) => (c.archived === true && !this.archive.has(sessionKey(s.id))) || (c.archived === false && this.archive.has(sessionKey(s.id))) ? null : {}));
             case "sessions.search": {

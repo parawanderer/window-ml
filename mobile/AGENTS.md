@@ -39,6 +39,10 @@ API from memory.** `expo-file-system` in particular is the `File` / `Directory` 
 - **A scroll view with a field in it eats the first tap**: without `keyboardShouldPersistTaps="handled"` a tap while the
   keyboard is up only dismisses it, so a row picked after typing (a filtered model, Save on a rename) needs two taps and
   the first looks broken. `Sheet` sets it; any new scroller holding a field needs it too.
+- **A sheet's text field THROWS on a plain screen**: `BottomSheetTextInput` exists to keep its sheet above the keyboard,
+  and outside one it kills the app with "`useBottomSheetInternal` cannot be used out of the BottomSheet". `SheetFilter`
+  takes `onScreen` for that. A screen with a field also needs `KeyboardAvoidingView`, or the keyboard covers it: the
+  Runtimes screen's model filter (and its clear button) sat under the keyboard the moment it opened.
 - **A CONTROLLED text field drops and reorders fast typing** (a rename came out "cche… notesa"). A field whose value
   nothing else rewrites is uncontrolled (`defaultValue`), and is cleared through its ref (`SheetFilter plain`).
 - **A bottom sheet hides everything inside it** from VoiceOver, TalkBack and Maestro: `@gorhom/bottom-sheet` makes the

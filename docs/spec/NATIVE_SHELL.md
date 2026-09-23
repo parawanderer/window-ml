@@ -34,7 +34,7 @@ natively would be a second implementation of every one, drifting from the first 
 | the composer: text, image attach, send / stop, drafts that survive anything | |
 | pickers as bottom sheets: runtime, Agent / Chat, tab, model | |
 | the new-session screen, the attention list, the "waiting on you" bar | |
-| Settings, all of it: theme, text size, runtimes, devices, pairing (the web tabs were drawn for a desktop) | |
+| Settings, all of it: theme, text size, runtimes (each one's facts, models and storage), devices, pairing (the web tabs were drawn for a desktop) | |
 | system services: share sheet, image viewer, clipboard, haptics, notifications | |
 
 The rule for placing a new thing: if a person OPERATES it (taps, swipes, types into it), it is native; if they READ
@@ -130,6 +130,7 @@ recognise, so an old app and a new bundle (or the reverse) degrade instead of br
 | `send` | id, key, text, images (data URLs) |
 | `start` | id, runtime, kind, model, text, images, and an agent's `target` (`{kind:"tab",tabId}` or `{kind:"blank",url?}`, checked page-side by `agentTarget`: http(s) only) |
 | `tabs` | id, runtime: its open tabs for an agent's target, answered by `tabsResult` (tabs, groups, withheld) |
+| `storage` | id, runtime: what it keeps (`storage.stats`), answered by `storageResult` — figures already in WORDS (`runtimeStorage`), since sizes are binary and the page owns how one reads |
 | `cancel`, `continue` | key |
 | `answer` | key, seq, decision, persist (for the "waiting" bar's quick answer; the card in the transcript answers itself) |
 | `switchModel` | key, model (`session.model`, #230) |

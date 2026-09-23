@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { ago, needsYou, sections, seen, STATUS_LABEL, STATUS_TONE } = await import("../mobile/src/format.ts");
+const { ago, needsYou, sections, seen, when, STATUS_LABEL, STATUS_TONE } = await import("../mobile/src/format.ts");
 
 const EVERY = [{ scope: "control" }];
 const rt = (id, extra = {}) => ({ id, name: id, kind: "browser", online: true, contractVersion: 1, grants: EVERY, capabilities: {}, ...extra });
@@ -53,4 +53,15 @@ test("how long ago, as short as a row can hold", () => {
     assert.equal(ago(now - 5 * 60_000, now), "5m");
     assert.equal(ago(now - 3 * 3600_000, now), "3h");
     assert.equal(typeof seen(now - 90 * 60_000, now), "string");
+});
+
+test("when something happened reads on into the sentence after it", () => {
+    const now = Date.UTC(2026, 8, 21, 12, 0, 0);
+    assert.equal(when(now - 10_000, now), "just now");
+    assert.equal(when(now - 5 * 60_000, now), "5m ago");
+    assert.equal(when(now - 3 * 3600_000, now), "3h ago");
+    assert.match(when(now - 2 * 86_400_000, now), /^on \w+/, "a day or more reads as a date, never \"Sun ago\"");
+    // `seen` says the word itself, for a line that begins with it; `when` never does.
+    assert.match(seen(now - 5 * 60_000, now), /^seen /);
+    assert.doesNotMatch(when(now - 5 * 60_000, now), /seen/);
 });

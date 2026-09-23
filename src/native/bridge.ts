@@ -56,6 +56,21 @@ export interface SessionChrome {
     canResume: boolean;
 }
 
+/** What a runtime keeps, for the phone's Runtimes screen: figures already in WORDS, because the page owns how a size
+ *  reads (`formatBytes`, binary units) and the app draws what it is given. Null `total` means it keeps nothing. */
+export interface RuntimeStorageView {
+    /** "1.4 GiB in 32 sessions, 3 pinned", or the empty sentence */
+    summary: string;
+    /** the split of those bytes: "Images 900 MiB", … */
+    parts: { label: string; size: string }[];
+    /** the biggest sessions, largest first */
+    largest: { title: string; size: string; pinned?: boolean }[];
+    /** the archive's own line, when it is on */
+    archive?: string;
+    /** sessions saved before this was recorded */
+    note?: string;
+}
+
 /** One thing a runtime needs a person's hand for, as the phone lists it (src/chat/attention.ts words it). */
 export interface AttentionRow {
     /** `runtime:code`: what dismissing a suggestion remembers */
@@ -97,6 +112,8 @@ export type ToNative =
     /** `startable`: the runtimes this device may start each kind of session on, by the page's rule (grants.ts `mayStart`). */
     | { type: "index"; runtimes: RuntimeInfo[]; sessions: SessionSummary[]; startable?: { chat: string[]; agent: string[] } }
     | { type: "session"; chrome: SessionChrome | null }
+    /** The answer to `storage`: what that runtime keeps, in the page's words; null when it would not say (`error` why). */
+    | { type: "storageResult"; id: string; storage: RuntimeStorageView | null; error?: string }
     /** The answer to `tabs`: a runtime's open tabs (null when it would not say, and `error` why), for an agent's target. */
     | { type: "tabsResult"; id: string; tabs: TabInfo[] | null; groups: TabGroupInfo[]; withheld: number; error?: string }
     /** The answer to `chromeFor`: that session's chrome, or null when it is not in the index. */
@@ -133,6 +150,8 @@ export type ToWeb =
     | { type: "resumeRun"; id: string; key: string; target: { kind: "tab"; tabId: number } | { kind: "blank"; url?: string } }
     /** The runtime's open tabs, for an agent's target: answered by `tabsResult`. */
     | { type: "tabs"; id: string; runtime: string }
+    /** What a runtime keeps (`storage.stats`), for the Runtimes screen: answered by `storageResult`. */
+    | { type: "storage"; id: string; runtime: string }
     | { type: "cancel"; key: string }
     | { type: "continue"; key: string }
     | { type: "answer"; key: string; seq: number; decision: boolean; persist?: boolean }
@@ -169,6 +188,7 @@ const TO_NATIVE: Record<ToNative["type"], Shape> = {
     session: { chrome: "object|null" },
     chromeOf: { id: "string", chrome: "object|null" },
     tabsResult: { id: "string", tabs: "array|null", groups: "array", withheld: "number", error: "string?" },
+    storageResult: { id: "string", storage: "object|null", error: "string?" },
     models: { runtime: "string", models: "array|null", error: "string?" },
     sent: { id: "string", ok: "boolean", error: "string?", session: "string?" },
     notice: { text: "string", tone: "string" },
@@ -190,6 +210,7 @@ const TO_WEB: Record<ToWeb["type"], Shape> = {
     send: { id: "string", key: "string", text: "string", images: "array?" },
     start: { id: "string", runtime: "string", kind: "string", text: "string", model: "string?", images: "array?", target: "object?" },
     tabs: { id: "string", runtime: "string" },
+    storage: { id: "string", runtime: "string" },
     resumeRun: { id: "string", key: "string", target: "object" },
     cancel: { key: "string" },
     continue: { key: "string" },

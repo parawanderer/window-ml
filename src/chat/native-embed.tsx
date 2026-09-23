@@ -17,7 +17,7 @@ import { bridgeStore, type PlainStore } from "../native/store-bridge";
 import type { EventCache } from "./event-cache";
 import { searchBridge } from "../native/search-bridge";
 import { Keyring } from "../hub/keyring";
-import { agentTarget, attentionForApp, sessionChrome, startableFor } from "../native/snapshot";
+import { agentTarget, attentionForApp, runtimeStorage, sessionChrome, startableFor } from "../native/snapshot";
 import type { PairingApi } from "../pairing/api";
 import { installServices, services } from "../sidebar/services";
 import { installTooltipLayer } from "../sidebar/tooltip-layer";
@@ -282,6 +282,14 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
                 }
                 const r = await store.send({ type: "session.resume", session: id, target });
                 post({ type: "sent", id: m.id, ok: r.ok, ...(r.ok ? {} : { error: r.error.message || r.error.code }) });
+                return;
+            }
+            // What a runtime keeps, for the Runtimes screen: read over the contract, worded here.
+            case "storage": {
+                const rt = store.runtime(m.runtime);
+                const r = await store.send({ type: "storage.stats", runtime: m.runtime }, { quiet: true });
+                post(r.ok ? { type: "storageResult", id: m.id, storage: runtimeStorage(r.data, rt?.name ?? m.runtime) }
+                    : { type: "storageResult", id: m.id, storage: null, error: r.error.message || r.error.code });
                 return;
             }
             case "chromeFor": post({ type: "chromeOf", id: m.id, chrome: chromeOf(m.key) }); return;

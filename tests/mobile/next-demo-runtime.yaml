@@ -1,0 +1,38 @@
+# next-demo-runtime.yaml — the React Native app's DEMO build (`install --next --demo`): Settings → Runtimes → a runtime
+# opens what it IS (status, kind, contract, archive folder, what it offers), the models it lists (with a filter past a
+# screenful), and what it keeps, in the page's own words. Read-only, as the web page's Runtimes tab is.
+# Needs the demo world's runtimes, so name it when you run `flows`.
+appId: dev.wander.windowml.next
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "KV cache size at 32k"
+    timeout: 60000
+- tapOn: "Settings"
+- tapOn: "Work laptop: what it is, its models and its storage"
+- extendedWaitUntil:
+    visible: "Contract"
+    timeout: 15000
+- assertVisible: "Archive folder"
+- assertVisible: "Offers"
+# The models it lists, filtered down to one.
+- extendedWaitUntil:
+    visible: "qwen3:32b"
+    timeout: 15000
+- tapOn:
+    id: "sheet-filter"
+- inputText: "gemma"
+- extendedWaitUntil:
+    visible: "gemma3:27b"
+    timeout: 10000
+- assertNotVisible: "qwen3:32b"
+- tapOn: "Clear the filter"
+- extendedWaitUntil:
+    visible: "qwen3:32b"
+    timeout: 10000
+# …and what it keeps, worded by the page (a size is never formatted twice).
+- scrollUntilVisible:
+    element: "Largest sessions"
+    direction: DOWN
+    timeout: 20000

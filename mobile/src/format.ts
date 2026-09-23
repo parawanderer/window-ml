@@ -30,6 +30,13 @@ export function seen(ts: number, now = Date.now()): string {
     return a === "now" ? "seen just now" : /^\d+[mh]$/.test(a) ? `seen ${a} ago` : `seen ${a}`;
 }
 
+/** "just now", "5m ago", "on Sun", "on 12 Sep": WHEN something happened, for a sentence that goes on after it
+ *  ("last written on Sun"). `seen` is the same reading as a device's own line, which begins with the word. */
+export function when(ts: number, now = Date.now()): string {
+    const a = ago(ts, now);
+    return a === "now" ? "just now" : /^\d+[mh]$/.test(a) ? `${a} ago` : `on ${a}`;
+}
+
 /** How far back the list reaches; a session running or waiting on you is recent however old it is. */
 const RECENT_MS = 30 * 86_400_000;
 
