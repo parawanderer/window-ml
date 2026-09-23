@@ -984,9 +984,12 @@ textarea.cinput { resize: none; overflow-y: auto; line-height: 1.5; font: inheri
 /* THE ENVIRONMENT PANEL — a popover hanging under the header's button, not a row. In the flow it PUSHED the
    editor down, which moves the code you opened it to compare against. Bounded so a long package list scrolls
    inside it rather than covering the whole bench. */
+/* Placed by `BenchEnv` from its BUTTON's box (fixed, so no ancestor can clip it): under the button, flipped above
+   where there is more room, and clamped to the window. It was absolute at a fixed offset from the bench, which put it
+   left of the button and cut it off against the top of the screen when the bench was up there. */
 .bench-env {
-    position: absolute; top: 28px; left: 6px; z-index: 6;
-    max-width: min(420px, calc(100% - 12px)); max-height: min(60vh, 320px); overflow: auto;
+    position: fixed; z-index: 60;
+    width: min(420px, calc(100vw - 16px)); overflow: auto;
     background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
     box-shadow: 0 10px 30px rgba(0,0,0,.32); padding: 8px 10px;
 }
