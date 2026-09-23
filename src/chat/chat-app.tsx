@@ -35,6 +35,9 @@ import { DockFrame, type DockPanel } from "./dock";
 import type { ChatExtras } from "./extras";
 import { lightboxSrc, type ClientPlatform } from "./platform";
 
+/** How long after a gesture a scroll still counts as the reader's own. Covers a phone's momentum coasting. */
+const USER_SCROLL_MS = 1200;
+
 /** Below this width the page shows one pane at a time. */
 export const NARROW_PX = 760;
 
@@ -480,9 +483,20 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
         ro.observe(inner);
         return () => ro.disconnect();
     }, [sessionKey]);
+    // ONLY A PERSON'S OWN GESTURE STOPS THE TRANSCRIPT FOLLOWING THE NEWEST TURN. Reading `scroll` alone could not
+    // tell the two apart, and they look identical: content arriving under the reader moves the bottom away exactly as
+    // scrolling up does. So a session opened while its turns were still rendering would unstick itself half way
+    // through and settle in the middle of the transcript instead of at the end — intermittently, because it depended
+    // on whether an event landed between the content growing and the pin below catching up.
+    //
+    // Going back to the bottom always re-sticks, gesture or not: arriving there is unambiguous.
+    const byUser = useRef(0);
+    const markUser = () => { byUser.current = Date.now(); };
     const onScroll = () => {
         const el = scroller.current;
-        if (el) stuck.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+        if (!el) return;
+        if (el.scrollHeight - el.scrollTop - el.clientHeight < 40) stuck.current = true;
+        else if (Date.now() - byUser.current < USER_SCROLL_MS) stuck.current = false;
     };
     // A citation sending the reader UP the transcript stops it following the bottom, or the step it opens grows
     // the content, the observer above pins back down, and the jump is overwritten before it lands.
@@ -559,7 +573,8 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
                     </>}
                 </div>}
             {!native && waiting && (gateAway || !calm.value) ? <button class="chat-waiting" onClick={jumpToApproval}>Waiting on your approval<span class="chat-waiting-go">Review ›</span></button> : null}
-            <div class="view chat-transcript" ref={scroller} onScroll={onScroll}>
+            <div class="view chat-transcript" ref={scroller} onScroll={onScroll}
+                onWheel={markUser} onTouchMove={markUser} onPointerDown={markUser} onKeyDown={markUser}>
                 <div ref={content}>
                     {bare ? <Lede title={title} rt={rt} summary={summary} id={id} store={store} sessionKey={sessionKey} native={native || modelBelow} /> : null}
                     <EarlierEdge store={store} sessionKey={sessionKey} scroller={scroller} rtName={rt?.name} truncated={truncated} />
