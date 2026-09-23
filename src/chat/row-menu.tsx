@@ -11,6 +11,7 @@ import type { ArchiveCapability, RuntimeInfo, SessionSummary } from "../session-
 import { IconCompose, IconMore, IconPin, IconTrash } from "../sidebar/icons";
 import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
+import { Dialog } from "./dialog";
 import { mayCommand } from "./grants";
 import { MenuItem } from "./menu";
 import { addPin, dropPin, pinned } from "./view-mode";
@@ -125,14 +126,7 @@ export function DeleteConfirm({ store }: { store: ChatStore }) {
     const c = confirming.value;
     const [busy, setBusy] = useState(false);
     const cancel = useRef<HTMLButtonElement>(null);
-    useEffect(() => {
-        if (!c) return;
-        setBusy(false);
-        cancel.current?.focus();
-        const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") confirming.value = null; };
-        document.addEventListener("keydown", onKey);
-        return () => document.removeEventListener("keydown", onKey);
-    }, [c]);
+    useEffect(() => { if (c) setBusy(false); }, [c]);
     if (!c) return null;
     const key = `${c.s.id.runtime}:${c.s.id.hash}`;
     const folder = deleteFolderNote(c.rt.capabilities.archive);
@@ -144,16 +138,14 @@ export function DeleteConfirm({ store }: { store: ChatStore }) {
         confirming.value = null;
     };
     return (
-        <div class="chat-dialog-back" onPointerDown={(e) => { if (e.target === e.currentTarget) confirming.value = null; }}>
-            <div class="chat-dialog" role="alertdialog" aria-modal="true" aria-labelledby="chat-del-h" aria-describedby="chat-del-p">
-                <h2 id="chat-del-h">Delete this session?</h2>
-                <p id="chat-del-p"><b>{truncate(c.title, 80)}</b> and its transcript will be removed from {c.rt.name}.{folder ? ` ${folder}` : ""} This cannot be undone.</p>
-                <div class="chat-dialog-actions">
-                    <button ref={cancel} class="btn" onClick={() => (confirming.value = null)}>Cancel</button>
-                    <button class="btn primary" disabled={busy} onClick={go}>{busy ? "Deleting…" : "Delete"}</button>
-                </div>
+        <Dialog onClose={() => (confirming.value = null)} labelledBy="chat-del-h" describedBy="chat-del-p" alert initialFocus={cancel}>
+            <h2 id="chat-del-h">Delete this session?</h2>
+            <p id="chat-del-p"><b>{truncate(c.title, 80)}</b> and its transcript will be removed from {c.rt.name}.{folder ? ` ${folder}` : ""} This cannot be undone.</p>
+            <div class="chat-dialog-actions">
+                <button ref={cancel} class="btn" onClick={() => (confirming.value = null)}>Cancel</button>
+                <button class="btn primary" disabled={busy} onClick={go}>{busy ? "Deleting…" : "Delete"}</button>
             </div>
-        </div>
+        </Dialog>
     );
 }
 
@@ -172,10 +164,7 @@ export function RenameDialog({ store }: { store: ChatStore }) {
         if (!r) return;
         setBusy(false);
         setText(r.s.renamed ? r.title : "");
-        requestAnimationFrame(() => { field.current?.focus(); field.current?.select(); });
-        const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") renaming.value = null; };
-        document.addEventListener("keydown", onKey);
-        return () => document.removeEventListener("keydown", onKey);
+        requestAnimationFrame(() => field.current?.select());
     }, [r]);
     if (!r) return null;
     const go = async () => {
@@ -185,18 +174,16 @@ export function RenameDialog({ store }: { store: ChatStore }) {
         renaming.value = null;
     };
     return (
-        <div class="chat-dialog-back" onPointerDown={(e) => { if (e.target === e.currentTarget) renaming.value = null; }}>
-            <form class="chat-dialog" role="dialog" aria-modal="true" aria-labelledby="chat-ren-h"
-                onSubmit={(e) => { e.preventDefault(); if (!busy) void go(); }}>
-                <h2 id="chat-ren-h">Rename</h2>
-                <input ref={field} class="chat-dialog-field" type="text" maxLength={200} value={text} placeholder={truncate(r.title, 80)}
-                    aria-label="Session name" aria-describedby="chat-ren-p" onInput={(e: any) => setText(e.target.value)} />
-                <p id="chat-ren-p" class="chat-dialog-hint">{text.trim() ? `Shown on every device that reaches ${r.rt.name}.` : "Clear to let the model name it."}</p>
-                <div class="chat-dialog-actions">
-                    <button type="button" class="btn" onClick={() => (renaming.value = null)}>Cancel</button>
-                    <button type="submit" class="btn primary" disabled={busy}>{busy ? "Renaming…" : "Rename"}</button>
-                </div>
-            </form>
-        </div>
+        <Dialog onClose={() => (renaming.value = null)} labelledBy="chat-ren-h" initialFocus={field}
+            onSubmit={() => { if (!busy) void go(); }}>
+            <h2 id="chat-ren-h">Rename</h2>
+            <input ref={field} class="chat-dialog-field" type="text" maxLength={200} value={text} placeholder={truncate(r.title, 80)}
+                aria-label="Session name" aria-describedby="chat-ren-p" onInput={(e: any) => setText(e.target.value)} />
+            <p id="chat-ren-p" class="chat-dialog-hint">{text.trim() ? `Shown on every device that reaches ${r.rt.name}.` : "Clear to let the model name it."}</p>
+            <div class="chat-dialog-actions">
+                <button type="button" class="btn" onClick={() => (renaming.value = null)}>Cancel</button>
+                <button type="submit" class="btn primary" disabled={busy}>{busy ? "Renaming…" : "Rename"}</button>
+            </div>
+        </Dialog>
     );
 }

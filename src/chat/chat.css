@@ -102,10 +102,14 @@ html, body, #root { height: 100%; }
    it is an action on this run and not news about it. */
 .chat-resume {
     display: flex; align-items: center; gap: 12px; font: inherit; cursor: pointer; text-align: left; color: var(--fg-dim);
-    /* The composer's own shape (its rounded field on the canvas), so it reads as that box saying why it cannot take a
-       message, not as a bar of another kind of UI. */
-    width: calc(100% - 28px); margin: 4px 14px calc(14px + env(safe-area-inset-bottom));
-    background: var(--panel); border: 1px solid var(--border); border-radius: 24px; padding: 11px 8px 11px 18px;
+    /* The composer's own BOX, to the pixel: the same measure, the same centring, the same height and the same radius,
+       because this stands exactly where the composer stands and reads as that box saying why it cannot take a
+       message. Anything off — a different width, a line taller — and the transcript above appears to shift when a
+       run's tab closes. The height comes from the input's line box (15px text, 7px padding) plus the row's 4px, so
+       it is spelled as a min-height rather than left to this bar's own shorter contents. */
+    max-width: var(--read); width: 100%; margin: 4px auto calc(16px + env(safe-area-inset-bottom));
+    min-height: 47px; box-sizing: border-box; font-size: 15px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 24px; padding: 4px 9px 4px 18px;
 }
 .chat-resume:hover { border-color: var(--panel-2-hover); color: var(--fg); }
 .chat-resume-what { flex: 1; min-width: 0; }
@@ -215,7 +219,12 @@ html, body, #root { height: 100%; }
 /* Focus mode floats this row into the bubble's top-right corner, where in a bubble it would sit on the words. It
    goes UNDER instead: the stamp is the transcript's one clock, and it is worth having without being worth a line
    of its own above every prompt. */
-.chat.calm .msg.user .mrow { top: auto; bottom: -1.35em; right: 6px; margin: 0; opacity: .6; }
+/* `pointer-events` goes back to AUTO here, undoing the panel's. That `none` is right where the row floats over the
+   bubble's own words (it must not eat a click meant for the text); moved out from under them it covers nothing, and
+   leaving it transparent meant the pointer crossing the timestamp — a third of the row — counted as leaving, so the
+   copy and edit buttons beside it went out. The gap under the bubble is the row's own breathing room: at -1.35em it
+   sat against the words it belongs to. */
+.chat.calm .msg.user .mrow { top: auto; bottom: -1.55em; right: 6px; margin: 0; opacity: .6; pointer-events: auto; }
 .chat.calm .msg.user .utext { line-height: 1.55; }
 /* Your images line up under your bubble, on your side, at its width. */
 .chat.calm .sent-tiles { justify-content: flex-end; margin: -6px 0 16px auto; max-width: min(84%, 34rem); }
@@ -233,15 +242,21 @@ html, body, #root { height: 100%; }
 /* 10px in: level with the tool steps' dots above it (their rail and its padding), so the run reads as one column. */
 /* The line reads first here: a reply's provenance moves under it (below), but this row IS the news. */
 .chat.calm .msg.asst.capped > .mrow { order: 0; margin: 0; gap: 8px; opacity: 1; }
-.chat.calm .msg.asst.capped > .continue-run { order: 1; }
+/* Continue goes on its OWN line, under everything the run left behind, rather than beside the status line. It is an
+   action on the run, not a part of the sentence about how it ended, and inline it crowded that sentence and was the
+   first thing to wrap on a narrow screen. The full-width `::after` is the line break: a flex container's own
+   pseudo-elements are flex items, so ordering one between the body and the button costs no wrapper in the markup
+   (which the panel shares). */
+.chat.calm .msg.asst.capped::after { content: ""; order: 2; flex-basis: 100%; height: 0; }
+.chat.calm .msg.asst.capped > .continue-run { order: 3; }
 .chat.calm .msg.asst.capped .who { color: var(--fg-dim); font-weight: 500; font-size: 1em; }
 .chat.calm .msg.asst.capped .mrow .tt:has(> .model-name),
 .chat.calm .msg.asst.capped .mrow .sp { display: none; }
 .chat.calm .msg.asst.capped .mrow .time { color: var(--fg-faint); font-size: .85em; }
 .chat.calm .msg.asst.capped:has(.asst-body > .md:empty) .who-toggle,
 .chat.calm .msg.asst.capped .asst-body:has(> .md:empty) { display: none; }
-.chat.calm .msg.asst.capped .asst-body { flex-basis: 100%; order: 2; }
-.chat.calm .msg.asst.capped .continue-run { margin: 0; }
+.chat.calm .msg.asst.capped .asst-body { flex-basis: 100%; order: 1; }
+.chat.calm .msg.asst.capped .continue-run { margin: 2px 0 0; }
 .chat.calm .msg.asst .asst-body > .md { padding: 0; }
 
 /* An agent turn's box: the border earns its keep in a 360px panel, where a turn and its steps need telling apart at
@@ -266,7 +281,11 @@ html, body, #root { height: 100%; }
 .chat.calm .composer { border-top: none; padding: 4px 18px calc(16px + env(safe-area-inset-bottom)); }
 .chat.calm .composer-row {
     max-width: var(--read); margin: 0 auto; width: 100%; gap: 4px;
-    background: var(--panel); border: 1px solid var(--border); border-radius: 24px; padding: 4px 5px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 24px;
+    /* The ends are round, so the buttons are inset to the CURVE's centre, not to the border. The row is ~47px tall
+       against a 24px radius, which puts each cap's middle ~23px in; a 28px button sitting there wants ~9px of
+       padding. At 5px the two circles crowded the curve and read as pushed out of the pill. */
+    padding: 4px 9px;
 }
 .chat.calm .composer-row:focus-within { border-color: var(--panel-2-hover); }
 /* The model, beside send: the name in the code face, quiet, no box of its own until the pointer finds it. */
@@ -298,7 +317,17 @@ html, body, #root { height: 100%; }
 .chat.calm .cinput:focus { outline: none; }
 .chat.calm .cbtn { border-radius: 50%; }
 .chat.calm .composer-foot { max-width: var(--read); width: 100%; margin: 5px auto 0; opacity: .5; }
-.chat.calm .chat-readonly { max-width: calc(var(--read) + 36px); margin: 0 auto; width: 100%; }
+/* The third thing that can stand where the composer stands (a session this device may only WATCH). It takes the
+   composer's box like the resume bar does, so the foot of the page does not change shape depending on what you are
+   allowed to do with the session — but a shade darker and with no border, because unlike the other two it is not a
+   control: nothing here is waiting to be pressed, and a bar that looks pressable and is not is worse than a line of
+   text. `--panel-2`'s job elsewhere is exactly this, a surface that is part of the page rather than on it. */
+.chat.calm .chat-readonly {
+    max-width: var(--read); width: calc(100% - 36px); margin: 4px auto calc(16px + env(safe-area-inset-bottom));
+    display: flex; align-items: center; min-height: 47px; box-sizing: border-box;
+    background: var(--panel-2); border: none; border-radius: 24px; padding: 8px 18px;
+    color: var(--fg-faint); font-size: .95em;
+}
 .chat.calm .chat-resume { max-width: var(--read); margin: 4px auto calc(16px + env(safe-area-inset-bottom)); width: calc(100% - 36px); }
 
 /* The list: rows are a table of contents, so the page draws the one you are pointing at and the one you are on,
@@ -332,6 +361,11 @@ html, body, #root { height: 100%; }
        brightens under the pointer: at 0 it was a control nobody could see until they happened to cross it. */
     .chat.calm .block { transition: opacity .15s ease; }
     .chat.calm .msg.user:hover .mrow, .chat.calm .msg.user:focus-within .mrow { opacity: .75; }
+    /* The row hangs BELOW the bubble, outside it, so reaching the copy/edit buttons takes the pointer out of
+       `.msg.user` and faded them to nothing on the way — they stayed clickable, invisibly, which reads as the
+       buttons running away. Hovering the row is its own reason to keep it up, and fully lit: it is being used now,
+       not merely looked at. */
+    .chat.calm .msg.user .mrow:hover { opacity: 1; }
     .chat.calm .msg.asst:hover > .mrow, .chat.calm .msg.asst:focus-within > .mrow { opacity: 1; }
     /* …but never while the row is saying something that is not provenance. */
     .chat.calm .msg.asst.streaming > .mrow,
@@ -793,12 +827,33 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-dialog {
     width: min(420px, 100%); padding: 20px 20px 16px; border-radius: 16px;
     background: var(--panel); border: 1px solid var(--border); box-shadow: 0 18px 50px rgba(0, 0, 0, .45);
-    animation: chat-pop .18s cubic-bezier(.2, .7, .3, 1) both;
+    /* The entrance rises with `top`, not with a transform, and this is the whole reason it has its own keyframes.
+       A transform on this card makes it the containing block for every `position: fixed` descendant, and the
+       pickers inside place their popovers in VIEWPORT coordinates — so the list opened a card's width and height
+       away from the pill that summoned it. An identity matrix does it too, which `animation-fill-mode: both`
+       leaves behind for good, and so does a transform that is merely mid-flight, which is what a picker opened
+       during the entrance would have met. `position: relative` + `top` creates no containing block at all. The
+       0.98 scale went with it; the rise and the fade carry the entrance on their own. */
+    position: relative; animation: chat-dialog-in .18s cubic-bezier(.2, .7, .3, 1) backwards;
 }
+@keyframes chat-dialog-in { from { opacity: 0; top: 6px; } }
+/* A dialog that ASKS something rather than confirming it (resuming a run: where to). It needs the room the picker
+   rows want, and it is still the same card — a second shape would read as a different kind of thing. */
+.chat-dialog.wide { width: min(520px, 100%); }
+.chat-dialog:focus { outline: none; }
 .chat-dialog h2 { margin: 0 0 8px; font-size: 1.12em; font-weight: 600; }
 .chat-dialog p { margin: 0 0 18px; color: var(--fg-dim); line-height: 1.5; }
 .chat-dialog p b { color: var(--fg); font-weight: 600; }
-.chat-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+/* The form rows inside an asking dialog, spaced like the start page's — the same rows, in a card instead of a page. */
+.chat-dialog-form { display: flex; flex-direction: column; gap: 12px; margin-bottom: 18px; }
+/* The start page's inline pickers, which are laid out as one wrapping row there and want the same here. */
+.chat-dialog-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+/* What the pill beside it is choosing. One picker with no label is a control whose subject you infer. */
+.chat-dialog-lead { color: var(--fg-dim); }
+.chat-dialog-form > p:last-child { margin-bottom: 0; }
+.chat-dialog-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+/* A note that belongs with the buttons sits at the far left of the same row. */
+.chat-dialog-actions.spread > :first-child { margin-right: auto; }
 .chat-dialog .btn {
     padding: 7px 14px; border-radius: 999px; font: inherit; cursor: pointer;
     background: transparent; color: var(--fg); border: 1px solid var(--border);
@@ -943,9 +998,14 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-search-box input { flex: 1 1 auto; min-width: 0; border: none; background: none; outline: none; color: var(--fg); font: inherit; font-size: 1.05em; }
 .chat-search-box input::placeholder { color: var(--fg-faint); }
 .chat-search-label { margin: 34px 0 10px; padding: 0 12px; color: var(--fg-dim); font-size: .95em; }
-/* The search page's foot: what limits the search, such as an archive folder that needs reconnecting. */
-.chat-search-foot { margin-top: 18px; padding: 10px 12px 0; border-top: 1px solid var(--border); color: var(--fg-dim); font-size: .9em; line-height: 1.5; }
-.chat-search-foot p { margin: 0 0 8px; }
+/* The search page's foot: what limits the search, such as an archive folder that needs reconnecting. One CARD per
+   note, the attention inbox's shape and its "limits" stripe — this is the same kind of thing (nothing is lost, one
+   path is paused until someone clicks), so it should not read as a different class of message. */
+.chat-search-foot { display: flex; flex-direction: column; gap: 10px; margin-top: 24px; }
+.chat-search-foot p {
+    margin: 0; padding: 14px 16px; border-radius: 14px; background: var(--panel); box-shadow: inset 3px 0 0 var(--warn);
+    color: var(--fg-dim); font-size: .92em; line-height: 1.5;
+}
 /* A button that reads as a link inside a sentence (opening Settings from a note). */
 .chat-link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .chat-link:hover { color: var(--fg); }
