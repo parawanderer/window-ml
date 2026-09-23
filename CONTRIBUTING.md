@@ -103,6 +103,21 @@ npm run mobile:ios        # the same for ios/
 Re-run it after any change to the chat page: the native project holds a COPY of the build, so without a sync you are
 looking at the bundle from last time. That is the one trap here, and it looks exactly like a change that did nothing.
 
+### Using it on a device with no packaged app (an iPad, any browser)
+
+The same client, hosted: **https://parawanderer.github.io/window-ml/**. Open it, and the browser offers to install it
+(iOS: Share → Add to Home Screen). It then opens as its own app, with no browser chrome, and works offline: a service
+worker holds its files (`src/chat/pwa/`, stamped into `dist-app/` by `scripts/build-web.mjs`).
+
+This is how a device Apple will not let you install to gets one. A free Apple ID signs a build for seven days before it
+stops launching, which is no way to use something daily; the hosted client has no such clock.
+
+What it is NOT is a second implementation: it is `dist-app/`, the standalone client the phone app already runs in its
+WebView. Its keys are made in that browser and never leave it, so installing it on a new device means pairing again.
+
+Your hub must be reachable over `wss://` with a real certificate. The page is served over HTTPS, and browsers refuse a
+plain `ws://` socket from an HTTPS page with no override.
+
 ### Running the app on an emulator (Android)
 
 For running the real app: a device-only behaviour (the camera, being backgrounded, the system WebView's own

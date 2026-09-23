@@ -5,6 +5,7 @@
 // thing that keeps it that way over time is a build that refuses otherwise: a shared renderer that reaches for
 // `chrome.storage` "just this once" breaks the phone, and nothing else would say so before a person did.
 import * as esbuild from "esbuild";
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -124,7 +125,48 @@ function buildApp(web, app) {
     for (const f of ["client.js", "sidebar.css", "chat.css"]) cpSync(path.join(web, f), path.join(app, f));
     cpSync(path.join(web, "client.html"), path.join(app, "index.html"));
     if (existsSync(path.join(web, "fonts"))) cpSync(path.join(web, "fonts"), path.join(app, "fonts"), { recursive: true });
-    console.log(`built ${path.relative(ROOT, app)}/ (the phone app's pages: the standalone client)`);
+    installable(app);
+    console.log(`built ${path.relative(ROOT, app)}/ (the phone app's pages: the standalone client, installable)`);
+}
+
+/** Everything the page's own source does not carry: what a browser needs to offer to install it. */
+const PWA_DIR = path.resolve(ROOT, "src/chat/pwa");
+/** The files a fresh visit needs before the network is optional. Fonts and icons are added from what was built. */
+const SHELL = ["index.html", "client.js", "sidebar.css", "chat.css"];
+
+/**
+ * MAKE `dist-app/` INSTALLABLE: the manifest, the icons and a service worker holding the app's own files, so a phone
+ * can put it on its home screen and open it without the network.
+ *
+ * The head tags and the registration are injected HERE rather than written into `src/chat/client.html`, because that
+ * file is also the page served from `dist-web/` for the tests and the screenshots, and a worker installed by a test
+ * run outlives the run. Only the directory meant to be hosted gets one.
+ *
+ * The worker's version is a hash of the files it holds, so a deploy that changed nothing installs nothing, and one
+ * that changed a byte replaces the whole cache on the next load.
+ */
+function installable(app) {
+    for (const f of readdirSync(PWA_DIR)) if (f !== "sw.js") cpSync(path.join(PWA_DIR, f), path.join(app, f));
+    const fonts = existsSync(path.join(app, "fonts")) ? readdirSync(path.join(app, "fonts")).map((f) => `fonts/${f}`) : [];
+    const precache = [...SHELL, "app.webmanifest", "icon-192.png", "icon-512.png", "apple-touch-icon.png", ...fonts];
+    const version = createHash("sha256").update(precache.join("\n")).update(SHELL.map((f) => readFileSync(path.join(app, f))).join("")).digest("hex").slice(0, 12);
+    const sw = readFileSync(path.join(PWA_DIR, "sw.js"), "utf8")
+        .replace("__VERSION__", version)
+        .replace("__PRECACHE__", JSON.stringify(precache));
+    writeFileSync(path.join(app, "sw.js"), sw);
+
+    const head = `    <link rel="manifest" href="app.webmanifest">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png">
+    <meta name="theme-color" content="#1e1f24">
+    <!-- iOS reads the manifest's display mode now, but an older one only ever read this. -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="window.ml">
+`;
+    // Registered after load, so it never competes with the app's own first paint for the connection.
+    const reg = `<script>addEventListener("load",()=>{navigator.serviceWorker&&navigator.serviceWorker.register("sw.js").catch(()=>{})})</script>\n`;
+    const html = readFileSync(path.join(app, "index.html"), "utf8").replace("</head>", `${head}</head>`).replace("</body>", `${reg}</body>`);
+    writeFileSync(path.join(app, "index.html"), html);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

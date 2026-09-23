@@ -105,7 +105,15 @@ so `npm test` says so too. It builds two entries:
   connection (`HubConnection.hubClient`), because the hub refuses a second one from a connected principal. The host is
   `HubHost.reconnecting`, so a dropped connection comes back in place (the page keeps its open session), and waking or
   coming back online tries at once. The build also writes `dist-app/`, the client alone as `index.html`, for
-  serving it as a site of its own rather than the demo world `dist-web/` opens on.
+  serving it as a site of its own rather than the demo world `dist-web/` opens on. That directory is INSTALLABLE:
+  `installable()` (build-web.mjs) copies in the manifest and the icons from `src/chat/pwa/` and stamps that folder's
+  `sw.js` with the built file list and a hash of their contents, and injects the manifest link, the Apple head tags
+  and the registration into `index.html`. The injection happens there rather than in `src/chat/client.html` because
+  that source is also served from `dist-web/` for the specs and the screenshots, and a worker a test run installs
+  outlives the run. CI publishes the result to GitHub Pages from main, which is how a device Apple will not let you
+  install to — an iPad, where a free certificate lasts seven days — runs the client at all. The worker caches the APP
+  and nothing else: a session arrives over a WebSocket, which a service worker never sees, so there is no way for it
+  to serve a stale transcript, only a stale bundle, which the content hash replaces on the next load.
   `tests/e2e/chat-pairing.spec.mjs` runs the whole loop against a real `wmlhub`: the client creates the account, the
   extension joins as a runtime, the client pairs it by code, and lists it.
 
