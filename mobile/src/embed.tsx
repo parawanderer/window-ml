@@ -223,6 +223,12 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
             }
             case "pairingDone": for (const cb of pairingDone.current) cb(m); return;
             case "copyText": void Clipboard.setStringAsync(m.text).then(() => Haptics.selectionAsync()); return;
+            // The page's own controls, answering a finger the way the native ones around them do. Fire and forget:
+            // a tick that arrives late is worse than none, so nothing here is awaited and a refusal is ignored (a
+            // device with the system's haptics off, or none at all, simply does nothing).
+            case "tap":
+                void (m.kind === "impact" ? Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light) : Haptics.selectionAsync()).catch(() => {});
+                return;
             case "openLink": void Linking.openURL(m.url); return;
             case "openImage": setState((s) => ({ ...s, image: m.src })); return;
             case "saveFile": {

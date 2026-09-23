@@ -13,6 +13,7 @@ import { parseSessionKey } from "../session-host";
 import { encode, parseToWeb, type BridgeAccount, type ToNative, type ToWeb } from "../native/bridge";
 import { pairingBridge, pairingInfo } from "../native/pairing-bridge";
 import { bridgeVault } from "../native/vault-bridge";
+import { tapKind } from "../native/tap-feedback";
 import { bridgeStore, type PlainStore } from "../native/store-bridge";
 import type { EventCache } from "./event-cache";
 import { searchBridge } from "../native/search-bridge";
@@ -129,6 +130,37 @@ const nativePlatform: ClientPlatform = {
     copyText: async (text) => { post({ type: "copyText", text }); return true; },
 };
 
+/**
+ * THE TICK A TAP INSIDE THE WEBVIEW COULD NOT GIVE ITSELF.
+ *
+ * Native controls in the app around this page already answer a finger (`Haptics` in ui.tsx, layer.tsx); the page's
+ * own did not, and the difference is felt rather than seen — the same list, the same thumb, and half of it dead. A
+ * WebView cannot vibrate a phone, so the page says a control was pressed and the app does it.
+ *
+ * ONE delegated listener rather than a call in every handler: every control the page grows would otherwise have to
+ * remember, and the ones that forgot would be exactly the ones nobody tested on a phone.
+ *
+ * What counts is a real control — a button, a link, a role that says it is one — found by walking up from what was
+ * touched. Not the transcript, not a scroll, not a press that lands on prose, because a phone that buzzes when you
+ * put your thumb down to scroll is worse than one that never buzzes at all. `pointerdown` rather than `click`: the
+ * tick belongs to the press, and by the time a click fires the finger has already left.
+ */
+/**
+ * THE TICK A TAP INSIDE THE WEBVIEW COULD NOT GIVE ITSELF.
+ *
+ * ONE delegated listener rather than a call in every handler: every control the page grows would otherwise have to
+ * remember, and the ones that forgot would be exactly the ones nobody tested on a phone. `tapKind`
+ * (native/tap-feedback.ts) decides what counts; `pointerdown` rather than `click`, because the tick belongs to the
+ * press and by the time a click fires the finger has already left.
+ */
+function tapFeedback(): void {
+    addEventListener("pointerdown", (e) => {
+        if (e.pointerType === "mouse") return;                       // a pointer has no use for it, and may be a test
+        const kind = tapKind(e.target as Element | null);
+        if (kind) post({ type: "tap", kind });
+    }, { capture: true, passive: true });
+}
+
 /** Coalesce a stream of posts into one per frame: an index that changes ten times in a burst crosses once. */
 function perFrame(send: () => void): () => void {
     let queued = false;
@@ -147,6 +179,7 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
     calm.value = true;
     document.documentElement.toggleAttribute("data-focus", true);
     try { installTooltipLayer(document); } catch { /* no DOM */ }
+    tapFeedback();
 
     // With a cache (the real app, not the demo), a session seen in an earlier launch replays from the phone at once.
     const store = new ChatStore(host, opts.cache ? { cache: opts.cache } : {});

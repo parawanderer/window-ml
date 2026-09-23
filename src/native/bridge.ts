@@ -125,6 +125,15 @@ export type ToNative =
     | { type: "openImage"; src: string }
     | { type: "openLink"; url: string }
     | { type: "copyText"; text: string }
+    /**
+     * A control in the page was pressed, so the app can give the tick a native button would.
+     *
+     * The page cannot vibrate a phone — the WebView has no haptics — so the one thing a tap inside it could not do
+     * was feel like a tap. It says only THAT something was pressed and how firmly; which control, and what it did,
+     * stay in the page. `select` is the light tick of choosing something, `impact` the heavier one of an action
+     * starting.
+     */
+    | { type: "tap"; kind: "select" | "impact" }
     | { type: "pairingInfo"; info: PairingInfo }
     /** the answer to a `pairing` call: its value, or the reason it failed in the page's words (pairingProblem) */
     | { type: "pairingResult"; id: string; ok: boolean; value?: unknown; error?: string }
@@ -197,6 +206,7 @@ const TO_NATIVE: Record<ToNative["type"], Shape> = {
     openImage: { src: "string" },
     openLink: { url: "string" },
     copyText: { text: "string" },
+    tap: { kind: "string" },
     pairingInfo: { info: "object" },
     pairingResult: { id: "string", ok: "boolean", error: "string?" },
     pairingDone: { offer: "string", ok: "boolean", error: "string?" },
