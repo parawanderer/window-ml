@@ -110,7 +110,9 @@ function install() {
     // Built for the device it goes on: the release default is arm64-v8a alone (app.json, expo-build-properties), which an
     // x86_64 emulator on an Intel Mac cannot run. One ABI is also a quarter of the native build.
     const abi = out(bin.adb, ["shell", "getprop", "ro.product.cpu.abi"]).trim();
-    run("./gradlew", ["assembleRelease", "--quiet", ...(abi ? [`-PreactNativeArchitectures=${abi}`] : [])], { cwd: "mobile/android" });
+    // NOT `--quiet`: it hides the REASON a build failed. A resource clash printed nothing but "exited 1", and the
+    // error ("Found item Style/AppTheme more than one time") only appeared on a second, verbose run by hand.
+    run("./gradlew", ["assembleRelease", ...(abi ? [`-PreactNativeArchitectures=${abi}`] : [])], { cwd: "mobile/android" });
     run(bin.adb, ["install", "-r", "mobile/android/app/build/outputs/apk/release/app-release.apk"]);
     console.log(`✓ installed ${APP}`);
 }
