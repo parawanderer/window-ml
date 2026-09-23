@@ -103,6 +103,16 @@ npm run mobile:ios        # the same for ios/
 Re-run it after any change to the chat page: the native project holds a COPY of the build, so without a sync you are
 looking at the bundle from last time. That is the one trap here, and it looks exactly like a change that did nothing.
 
+### Putting the app on your own phone (Android)
+
+Nothing to build. Every commit on main is packaged by CI and published as the
+[`android-latest`](https://github.com/parawanderer/window-ml/releases/tag/android-latest) release: open that page on
+the phone, download `window-ml.apk`, and open it. Android asks once whether the browser may install apps.
+
+It is signed with the standard Android debug key, which is all a sideload needs, and means an app already installed
+under `dev.wander.windowml` from anywhere else has to be uninstalled first. arm64-v8a only, which is every phone made
+in the last decade.
+
 ### Running the app on an emulator (Android)
 
 For running the real app: a device-only behaviour (the camera, being backgrounded, the system WebView's own
@@ -119,7 +129,7 @@ Then, each time:
 
 ```bash
 node scripts/android.mjs boot [--window]       # headless unless --window, if you want to watch it
-node scripts/android.mjs install               # build the web app, sync, gradle assembleDebug, adb install
+node scripts/android.mjs install               # build the web app, sync it in, gradle assembleRelease, adb install
 node scripts/android.mjs launch
 node scripts/android.mjs shot                  # test-results/android.png
 node scripts/android.mjs stop

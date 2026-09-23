@@ -329,6 +329,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
+    # To re-point the rolling `android-latest` release at the APK this job just built. Every other job here reads.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -364,6 +367,39 @@ jobs:
         with:
           name: window-ml-android-debug
           path: mobile/android/app/build/outputs/apk/debug/*.apk
+      # A debug APK expects Metro to be serving the JS, so it is a packaging check and nothing you can put on a phone.
+      # The one you can is this: the JS bundled in, minified, and trimmed to arm64-v8a — every phone made in the last
+      # decade, and a quarter of the native build. It is signed with the standard Android DEBUG key that `expo
+      # prebuild` writes, which is all a sideload needs; the consequence is that it cannot replace an install under
+      # this id signed with any other key, which has to be uninstalled first.
+      #
+      # Only on main and on demand: it adds minutes to a job every PR pays for, and what a PR needs answered is
+      # whether the app still packages, which the debug build above already answers.
+      - name: Assemble the release APK
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a
+        working-directory: mobile/android
+      # Published as a RELEASE ASSET, not a build artifact: an artifact is a zip behind a GitHub login, and a phone
+      # downloading it with one tap is the whole point. One rolling tag, deleted and remade so it points at the commit
+      # the APK was actually built from rather than lying about it.
+      - name: Publish it as the rolling Android build
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mv mobile/android/app/build/outputs/apk/release/app-release.apk window-ml.apk
+          gh release delete android-latest --yes --cleanup-tag || true
+          gh release create android-latest window-ml.apk --prerelease --target "$GITHUB_SHA" \
+            --title "Android build (rolling)" --notes "$(cat <<'EOF'
+          The phone app, built from the newest commit on main. Download `window-ml.apk` on the phone and open it;
+          Android will ask whether the browser may install apps.
+
+          Signed with the standard Android debug key, so it is for trying the app out rather than for distribution.
+          An app already installed under `dev.wander.windowml` from another source has to be uninstalled first.
+
+          arm64-v8a only.
+          EOF
+          )"
 
   # iOS needs a macOS runner, which is an order of magnitude dearer per minute, and the thing it catches is a
   # packaging break rather than a behaviour one. So it runs nightly and on demand rather than on every PR, the same

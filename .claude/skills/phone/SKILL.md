@@ -13,7 +13,7 @@ script name.
 node scripts/android.mjs doctor          # what is installed and missing, with the command for each; lists devices
 node scripts/android.mjs setup           # once: platform-tools, emulator, arm64 API 35 image, the `wml-phone` device
 node scripts/android.mjs boot            # headless; --window to watch it. Returns once Android has booted
-node scripts/android.mjs install         # build-web → mobile.mjs android (cap sync) → gradle assembleDebug → adb install
+node scripts/android.mjs install         # build-web → sync-embed → expo prebuild → gradle assembleRelease → adb install
 node scripts/android.mjs launch          # cold start (force-stop first)
 node scripts/android.mjs shot [file]     # PNG, default test-results/android.png; Read it to see the screen
 node scripts/android.mjs flows [file…]   # Maestro: every tests/mobile/*.yaml, or the ones named
@@ -23,7 +23,7 @@ node scripts/android.mjs stop
 ```bash
 node scripts/ios.mjs doctor              # Xcode, an iPhone simulator, Maestro; the simulator it will use
 node scripts/ios.mjs boot                # --window opens Simulator.app to watch
-node scripts/ios.mjs install             # build-web → mobile.mjs ios (cap sync) → xcodebuild (simulator) → simctl install
+node scripts/ios.mjs install             # build-web → sync-embed → expo prebuild → xcodebuild (simulator) → simctl install
 node scripts/ios.mjs launch; node scripts/ios.mjs shot; node scripts/ios.mjs flows; node scripts/ios.mjs stop
 ```
 
@@ -38,6 +38,11 @@ node scripts/android.mjs launch                   # dev.wander.windowml
 node scripts/ios.mjs install --demo       # the same on the iOS simulator (Release build, pods on first run)
 node scripts/ios.mjs launch
 ```
+
+**Nobody needs this script to put the app on a real phone.** CI packages every commit on main and re-points the
+`android-latest` release at it (`.github/workflows/tests.yml`, the `mobile-android` job), so the phone downloads
+`window-ml.apk` from that page itself. `install` is for a device you are DRIVING from here: an emulator, or a phone
+plugged in with USB debugging on.
 
 On iOS the simulator takes no taps from the command line: drive it with a Maestro flow (`node scripts/ios.mjs flows
 <file>`), tapping by visible text or by accessible name (a pill's is `Model: <id>`, not its text).
