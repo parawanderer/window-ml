@@ -152,6 +152,29 @@ test("session.continue only for a run stopped at its cap, through the page that 
     }
 });
 
+test("session.continue carries a chosen step budget, and refuses one that is not a budget", async () => {
+    const w = world();
+    w.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    w.index.ingest(ev("aaaa0001", "agent-result", { summary: "", steps: 3, hitCap: true }), { tabId: TAB, trusted: true });
+    // A budget reaches the page beside the hash, and comes back on the result so the caller knows what was applied.
+    let seen;
+    w.deps.toPage = async (_t, _a, body) => { seen = body; return "continued"; };
+    const r = await createCommandHandler(w.deps)({ type: "session.continue", session: sid("aaaa0001"), maxSteps: 50 });
+    assert.deepEqual(seen, { hash: "aaaa0001", maxSteps: 50 });
+    assert.equal(code(r), "ok");
+    assert.equal(r.data.maxSteps, 50);
+    // Omitted is the run's own cap: nothing is invented, and the page is told nothing extra.
+    await createCommandHandler(w.deps)({ type: "session.continue", session: sid("aaaa0001") });
+    assert.deepEqual(seen, { hash: "aaaa0001" });
+    // A number that is not a whole count of steps is REFUSED rather than rounded or dropped — a caller that meant
+    // 50 and sent something else should hear about it instead of quietly getting the old cap back.
+    for (const bad of [0, -1, 2.5, 1e6, "50"]) {
+        const bodyBefore = seen;
+        assert.equal(code(await createCommandHandler(w.deps)({ type: "session.continue", session: sid("aaaa0001"), maxSteps: bad })), "invalid", String(bad));
+        assert.deepEqual(seen, bodyBefore, `${bad} must not reach the page`);
+    }
+});
+
 test("models.list: this runtime's list, another runtime's refused, and an unreachable backend is an empty list", async () => {
     const { run } = world();
     assert.deepEqual(await run({ type: "models.list", runtime: "local" }), { ok: true, data: { models: [{ id: "m", default: true }] } });

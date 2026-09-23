@@ -46,8 +46,9 @@ export interface SidebarServices {
      *  was taken, so the composer can put the text back on a failure (drafts.ts); never rejects. */
     sendToSession(session: string, text: string, images?: string[]): Promise<SendOutcome>;
     cancelSession(session: string): void;
-    /** continue a run stopped at its step cap, or retry a failed one */
-    continueSession(session: string): void;
+    /** continue a run stopped at its step cap, or retry a failed one. `maxSteps` is a budget chosen for this
+     *  continuation; omitted keeps the run's own. A retry never carries one — it is the same turn again. */
+    continueSession(session: string, maxSteps?: number): void;
     /** outline something on the session's page; `null` clears it. A host with no page does nothing. */
     highlight(ref: HighlightRef): void;
     /** show an image full-size */

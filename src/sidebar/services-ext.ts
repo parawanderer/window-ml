@@ -45,7 +45,7 @@ export const extensionServices: SidebarServices = {
     // A post to the page, which answers nothing: what goes wrong from there shows in the run itself.
     sendToSession: async (hash, text, images) => { toParent({ __mlSidebarApp: "sessionSend", hash, text, images }); return { ok: true }; },
     cancelSession: (hash) => toParent({ __mlSidebarApp: "sessionCancel", hash }),
-    continueSession: (hash) => toParent({ __mlSidebarApp: "continueRun", hash }),
+    continueSession: (hash, maxSteps) => toParent({ __mlSidebarApp: "continueRun", hash, ...(maxSteps ? { maxSteps } : {}) }),
     highlight: (ref) => toParent({ __mlHighlight: ref }),
     openLightbox: (src) => toParent({ __mlLightbox: src }),
     hostAccess: {

@@ -1066,6 +1066,29 @@ test("step-cap stop (sidebar): the answer offers 'Continue (+N steps)' → posts
     const msg = posted.find(m => m.__mlSidebarApp === "continueRun");
     assert.ok(msg, "clicking posts a continueRun message");
     assert.equal(msg.hash, "cap1");
+    assert.equal(msg.maxSteps, undefined, "a plain press carries no budget: the run keeps the cap it had");
+});
+
+test("step-cap stop (sidebar): the chevron beside Continue offers the other budgets, and sends the one picked", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("cap2", "big task", "m", 20));
+    await w.dispatch(agentResult("cap2", "Stopped at the 20-step cap without finishing.", 20, true));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const more = w.shadow.querySelector(".continue-more");
+    assert.ok(more, "a capped run offers the budget chooser");
+    more.click();
+    await w.tick();
+    const items = [...w.shadow.querySelectorAll(".ctx-item")].map(b => b.textContent);
+    // The run's OWN cap is not offered again — it is what the button beside this already does.
+    assert.deepEqual(items, ["+10 steps", "+50 steps"]);
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    [...w.shadow.querySelectorAll(".ctx-item")].find(b => b.textContent === "+50 steps").click();
+    const msg = posted.find(m => m.__mlSidebarApp === "continueRun");
+    assert.ok(msg, "picking a budget posts a continueRun message");
+    assert.equal(msg.hash, "cap2");
+    assert.equal(msg.maxSteps, 50, "the budget that was picked rides along");
 });
 
 test("step-cap stop (sidebar): a normal (non-capped) or CANCELLED answer shows NO Continue button", async () => {

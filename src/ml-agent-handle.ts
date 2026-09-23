@@ -134,11 +134,11 @@ export const _adoptRun = function(this: MlApi, runId: string, rebuild: RebuildCo
     // this a follow-up typed on the new page falls through to the chat path and is silently dropped.
     agentRegistry.set(runId, {
         hash: runId,
-        resume: async (t: string): Promise<AgentResult> => {
+        resume: async (t: string, steps?: number): Promise<AgentResult> => {
             registerRun(runId, toolset, model, driverSees, visionModel);   // endRun clears the live tools each turn
             enterAgentRun();
             try {
-                const res = await makeBackgroundTaskPromise<AgentResult>("RESUME_RUN_REQUEST", "RESUME_RUN_RESPONSE", { runId, task: t });
+                const res = await makeBackgroundTaskPromise<AgentResult>("RESUME_RUN_REQUEST", "RESUME_RUN_RESPONSE", { runId, task: t, ...(steps ? { maxSteps: steps } : {}) });
                 const run = endRun(runId);
                 const { tokenRenders, ...resClean } = res;   // loop-internal — don't leak to the caller
                 const a = run ? runAnswer(run, res.summary) : { elements: [], media: [], answer: "" };

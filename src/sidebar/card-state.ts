@@ -39,7 +39,6 @@ export const composerElement = signal<ElementContext | null>(null);   // right-c
 // open run (right-click "add to current run" → steer if it's running, follow-up if idle).
 export const composerTarget = signal<{ mode: "new" } | { mode: "append"; hash: string }>({ mode: "new" });
 export const composerMaxSteps = signal(20);         // step budget for a UI-started run (persists across opens)
-export const STEP_BUDGETS = [10, 20, 50];           // the segmented presets in the composer
 // Stream the model's thinking live for a UI-started run. ALWAYS on for the Commander: a run you start from
 // the HUD is one you are watching, so the reactive mode is the only one that makes sense there — the toggle
 // that used to sit in the composer bar had one useful setting and cost a button. Kept as a signal because it

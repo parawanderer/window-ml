@@ -122,7 +122,7 @@ export const sessionRegistry = new Map<string, MlHistory>();
  *  RESUME_RUN round-trip — the messages live in the service worker, not here.) */
 export interface AgentRunHandle {
     hash: string;
-    resume(task: string): Promise<AgentResult>;
+    resume(task: string, maxSteps?: number): Promise<AgentResult>;
 }
 export const agentRegistry = new Map<string, AgentRunHandle>();
 

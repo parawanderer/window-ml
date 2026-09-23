@@ -183,7 +183,7 @@ browser. Nothing new decides a gate, starts a loop or builds a request.
 | `approval.answer` | the one `resolveApproval`, keyed `hash:seq`; `resolved: false` when the gate already closed |
 | `session.send` | a RUNNING background loop: straight into its inbox (what a handle's `say` reaches through `INJECT_MESSAGE`), shown as an `agent-say` the loop marks seen. Anything else, or a message with images or an element: the session's page, through the composer's own handler |
 | `session.cancel` | a background run: `cancelBackgroundRun` (the `CANCEL_RUN` body, factored out); otherwise the page |
-| `session.continue` | only a `capped` session, through the page |
+| `session.continue` | only a `capped` session, through the page. A chosen `maxSteps` rides with it and replaces the run's cap from here on; a resume emits no start event, so the worker fans an `agent-cap` to say the number changed |
 | `session.delete` | refused while running; forgets the stored chat (`ml_session_<hash>`), the resumable snapshot and pointer store, then the index row |
 | `session.rename` | `capTitle` (session-title.ts), then `renameSession`: sets `title` and `renamed`, written to the store. Empty clears both and asks for a generated title again |
 | `models.list` | `listAvailableModels` filtered by `modelFilterAllows` (the same half `LIST_MODELS` does, so a whitelisted-out cloud model never reaches a remote client), `kinds` from `modelCapabilitiesBatch` (cached for the worker's life), `default` on `config.model`, `where` (`local`/`cloud`) from Ollama's own list when the backend has one. With a filter set, `filtered: { hidden }` says that it is on and how many it hid, never the filter. An unreachable backend answers an empty list, not an error |

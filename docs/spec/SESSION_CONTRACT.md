@@ -176,7 +176,7 @@ runtime answers a type or option it does not offer with `unsupported`.
 | --- | --- | --- | --- |
 | `session.send`: text, images, or both; steers a running agent or starts the next turn | drive | | `sessionSend` → `ML_SESSION_REMOTE` / the page's handle registry |
 | `session.cancel` | drive | | `sessionCancel` → `CANCEL_RUN` |
-| `session.continue`: past the step cap | drive | | `continueRun` |
+| `session.continue`: past the step cap, optionally with a `maxSteps` the person chose (a whole number, 1 to `MAX_CONTINUE_STEPS`; anything else is `invalid`, never rounded). Omitted keeps the cap the run was started with. A budget given here STICKS for the run's later turns, and the runtime announces it with an `agent-cap` so every surface counts against the same number. Answers `{ maxSteps }` when one was applied | drive | | `continueRun` |
 | `session.delete` | drive | `persistence` for saved sessions | nothing |
 | `session.rename`: a person's title, trimmed and capped (80); empty returns to a generated one; the row's `title` and `renamed` change by `upsert` | drive | | nothing |
 | `session.model`: switch the model from now on: a chat's next turn, a running agent's next model call (never one under way), a finished run's next turn; answers `{ model, applies: "next-step" \| "next-turn" }`; a model the runtime does not offer or its whitelist excludes is `invalid`; a session whose model belongs to the page running it is `unsupported`; the row's `model` changes by `upsert` at once | drive | `switchModel` | nothing |

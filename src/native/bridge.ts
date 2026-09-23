@@ -153,7 +153,8 @@ export type ToWeb =
     /** What a runtime keeps (`storage.stats`), for the Runtimes screen: answered by `storageResult`. */
     | { type: "storage"; id: string; runtime: string }
     | { type: "cancel"; key: string }
-    | { type: "continue"; key: string }
+    /** Carry a step-capped run on. `maxSteps` is a budget the person chose; omitted keeps the run's own. */
+    | { type: "continue"; key: string; maxSteps?: number }
     | { type: "answer"; key: string; seq: number; decision: boolean; persist?: boolean }
     | { type: "switchModel"; key: string; model: string }
     /** Pin or unpin a session on its runtime, rename it, or delete it: answered by `sent`, like `send`. */
@@ -213,7 +214,7 @@ const TO_WEB: Record<ToWeb["type"], Shape> = {
     storage: { id: "string", runtime: "string" },
     resumeRun: { id: "string", key: "string", target: "object" },
     cancel: { key: "string" },
-    continue: { key: "string" },
+    continue: { key: "string", maxSteps: "number?" },
     answer: { key: "string", seq: "number", decision: "boolean", persist: "boolean?" },
     switchModel: { key: "string", model: "string" },
     pin: { id: "string", key: "string", on: "boolean" },

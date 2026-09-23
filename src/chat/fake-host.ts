@@ -479,10 +479,15 @@ export class FakeHost implements SessionHost {
                 if (h.summary.kind === "agent") this.emit(key, { ...base, kind: "agent-result", summary: "", steps: 0, hitCap: false, cancelled: true });
                 this.updateSummary(key, { status: "cancelled", pendingApprovals: 0 });
                 return ok({});
-            case "session.continue":
+            case "session.continue": {
                 if (h.summary.status !== "capped") return fail("conflict", "only a run stopped at its step cap can continue");
+                if (c.maxSteps != null && (!Number.isInteger(c.maxSteps) || c.maxSteps < 1)) return fail("invalid", "maxSteps must be a whole number of steps");
+                // A chosen budget is announced the way a real runtime announces it, so the demo world exercises the
+                // event the surfaces actually read rather than only the command.
+                if (c.maxSteps != null) this.emit(key, { id: h.summary.id.hash, ts: Date.now(), save: false, session: { hash: h.summary.id.hash, turn: 0 }, kind: "agent-cap", maxSteps: c.maxSteps } as MlDebugEvent);
                 this.updateSummary(key, { status: "running" });
-                return ok({});
+                return ok(c.maxSteps != null ? { maxSteps: c.maxSteps } : {});
+            }
             case "session.resume": {
                 if (h.summary.kind !== "agent") return fail("unsupported", "only a run resumes onto a page");
                 if (h.summary.status === "running" || h.summary.status === "waiting") return fail("conflict", "that session is still going");

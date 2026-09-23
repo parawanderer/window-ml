@@ -313,6 +313,35 @@ test("continue: a step-capped run resumes with a fresh budget via __mlContinueRu
     await page.close();
 });
 
+// The same resume, with a budget the person chose. maxSteps:1 caps the run after one tool call; continuing with
+// a budget of 3 has to buy enough room for two more tool calls AND the answer, which the old cap could not fit —
+// so a run that finishes here proves the number reached the loop rather than merely crossing the wire.
+test("continue: a chosen step budget reaches the loop, not just the message", async () => {
+    const page = await ext.context.newPage();
+    const results = [];
+    await page.exposeFunction("__contB", (e) => results.push(e));
+    await page.addInitScript(() => {
+        if (window.top !== window) return;
+        window.addEventListener("message", (e) => {
+            if (e.data && e.data.__mlDebug && e.data.__mlDebug.kind === "agent-result")
+                window.__contB({ summary: e.data.__mlDebug.summary, hitCap: !!e.data.__mlDebug.hitCap, steps: e.data.__mlDebug.steps });
+        });
+    });
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    fake.setScript([
+        { tool: "findByText", args: { text: "Step" } },
+        { tool: "findByText", args: { text: "Step" } },
+        { tool: "findByText", args: { text: "Step" } },
+        { content: "Finished inside the larger budget." },
+    ]);
+    const first = await page.evaluate(() => window.ml.agent("do the thing", { env: false, maxSteps: 1 }));
+    expect(first.hitCap).toBe(true);
+    await page.evaluate((hash) => window.postMessage({ __mlContinueRun: { hash, maxSteps: 3 } }, "*"), first.hash);
+    await expect.poll(() => results.some((r) => !r.hitCap && /larger budget/.test(r.summary || "")), { timeout: 15000 }).toBe(true);
+    await page.close();
+});
+
 // Streaming (opt-in stream:true): the REAL SSE path end to end. The fake backend streams reasoning_content
 // word by word, then a tool_call (accumulated from the stream), then a streamed final answer. Proves the
 // browser's real fetch + streamAgentTurn reassemble a fragmented tool_call correctly (the loop still delegates

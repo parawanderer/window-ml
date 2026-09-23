@@ -2171,6 +2171,39 @@ test("RESUME_RUN continues a stored background run with its accumulated history 
     assert.match(ghost.error, /No resumable run/);
 });
 
+test("RESUME_RUN takes a step budget, keeps it for later turns, and bounds what it is given", async () => {
+    // Continue offers a budget, and the worker is the last thing between that number and a loop. It must apply it
+    // (or the chooser is decoration), keep it (being stopped after 2 steps again, having just granted 50, is the
+    // same interruption twice), and bound it (the number crossed a page and possibly a hub to get here).
+    const { MAX_CONTINUE_STEPS } = await import("../src/step-budget.ts");
+    const caps = [];
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => jsonResponse({ choices: [{ message: { content: "done" } }] }),
+        onTabMessage: (_tabId, msg) => { if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.kind === "agent-cap") caps.push(msg.event.maxSteps); },
+    });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "rb1", task: "t", systemPrompt: "SYS", tools: [], model: "m", think: null,
+        maxSteps: 2, autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+    } }, { tab: { id: 9 } });
+
+    await bg.send({ type: "RESUME_RUN", payload: { runId: "rb1", task: "", maxSteps: 50 } }, { tab: { id: 9 } });
+    assert.deepEqual(caps, [50], "a raised cap is ANNOUNCED — a resume emits no start event, so nothing else would say so");
+
+    // Sticky: the next resume, with no budget of its own, keeps 50 rather than falling back to the original 2.
+    await bg.send({ type: "RESUME_RUN", payload: { runId: "rb1", task: "" } }, { tab: { id: 9 } });
+    assert.deepEqual(caps, [50], "no second announcement: nothing changed, because the budget stuck");
+
+    // Bounded: an absurd number is clamped rather than honoured, and junk leaves the stored cap alone.
+    await bg.send({ type: "RESUME_RUN", payload: { runId: "rb1", task: "", maxSteps: 1e9 } }, { tab: { id: 9 } });
+    assert.equal(caps.at(-1), MAX_CONTINUE_STEPS, "clamped to the ceiling, not taken at face value");
+    caps.length = 0;
+    for (const bad of [0, -1, 2.5, "50", null]) {
+        await bg.send({ type: "RESUME_RUN", payload: { runId: "rb1", task: "", maxSteps: bad } }, { tab: { id: 9 } });
+        assert.deepEqual(caps, [], `${String(bad)} must change nothing`);
+    }
+});
+
 test("START_RUN with resumeMessages continues that history, returns the final messages, and does NOT re-announce", async () => {
     // The createAgent-handle path: the page sends its prior control.messages so the background CONTINUES it
     // (fixing 'a.messages empty' + 'run() again resets the session'). The final history rides back so the

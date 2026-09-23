@@ -248,7 +248,7 @@ html, body, #root { height: 100%; }
    pseudo-elements are flex items, so ordering one between the body and the button costs no wrapper in the markup
    (which the panel shares). */
 .chat.calm .msg.asst.capped::after { content: ""; order: 2; flex-basis: 100%; height: 0; }
-.chat.calm .msg.asst.capped > .continue-run { order: 3; }
+.chat.calm .msg.asst.capped > .continue-wrap { order: 3; }
 .chat.calm .msg.asst.capped .who { color: var(--fg-dim); font-weight: 500; font-size: 1em; }
 .chat.calm .msg.asst.capped .mrow .tt:has(> .model-name),
 .chat.calm .msg.asst.capped .mrow .sp { display: none; }
@@ -256,7 +256,7 @@ html, body, #root { height: 100%; }
 .chat.calm .msg.asst.capped:has(.asst-body > .md:empty) .who-toggle,
 .chat.calm .msg.asst.capped .asst-body:has(> .md:empty) { display: none; }
 .chat.calm .msg.asst.capped .asst-body { flex-basis: 100%; order: 1; }
-.chat.calm .msg.asst.capped .continue-run { margin: 2px 0 0; }
+.chat.calm .msg.asst.capped .continue-wrap { margin: 2px 0 0; }
 .chat.calm .msg.asst .asst-body > .md { padding: 0; }
 
 /* An agent turn's box: the border earns its keep in a 360px panel, where a turn and its steps need telling apart at
@@ -1303,6 +1303,7 @@ button.chat-page-go:hover { color: var(--fg); }
     .pair-card .btn { min-height: 40px; }
     /* Continue after a step cap: the run's one way forward, not a footnote. */
     .chat .continue-run, .chat.calm .msg.asst.capped .continue-run { min-height: 40px; padding: 6px 18px; font-size: 1em; }
+    .chat .continue-more { min-width: 40px; justify-content: center; }
     .chat-search-box input, .chat-search input[type="search"] { min-height: 40px; }
     /* A chip inside a line of text (the run's page in a session's header): the line keeps its height, and a hidden
        area around the chip takes the finger. */

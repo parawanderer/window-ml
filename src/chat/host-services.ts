@@ -57,9 +57,9 @@ export function hostServices(store: ChatStore, platform: ClientPlatform): Sideba
             const id = idOf(key);
             if (id) void store.send({ type: "session.cancel", session: id });
         },
-        continueSession: (key) => {
+        continueSession: (key, maxSteps) => {
             const id = idOf(key);
-            if (id) void store.send({ type: "session.continue", session: id });
+            if (id) void store.send({ type: "session.continue", session: id, ...(maxSteps ? { maxSteps } : {}) });
         },
         highlight: (ref) => {
             // The shared views outline things on "the session's page" without naming it, because in a panel there is

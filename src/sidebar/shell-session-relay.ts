@@ -83,7 +83,12 @@ export function relaySessionToPage(msg: Record<string, unknown>, sendResponse: (
     const ec = elementContext && typeof elementContext.selector === "string" ? elementContext : undefined;
     if (msg.action === "send") window.postMessage({ __mlSessionSend: { hash: msg.hash, text: msg.text, images: cleanImages(msg.images as string[] | undefined), ...(ec ? { elementContext: ec } : {}), reqId } }, "*");
     else if (msg.action === "cancel") window.postMessage({ __mlCancelSession: { hash: msg.hash, reqId } }, "*");
-    else if (msg.action === "continue") window.postMessage({ __mlContinueRun: { hash: msg.hash, reqId } }, "*");
+    else if (msg.action === "continue") {
+        // STRICT, not coerced: the runtime refuses a `"50"` outright (session-commands.ts), so accepting one here
+        // would mean the same value is taken on one route and rejected on the other.
+        const steps = msg.maxSteps;
+        window.postMessage({ __mlContinueRun: { hash: msg.hash, ...(typeof steps === "number" && Number.isInteger(steps) && steps > 0 ? { maxSteps: steps } : {}), reqId } }, "*");
+    }
     else return false;
     if (reqId) { awaitSessionDone(reqId, sendResponse); return true; }   // async: the page answers by window message
     return false;
