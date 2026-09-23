@@ -166,6 +166,9 @@ function resetBenchState() {
 // it. A flex header cannot contain a panel that pushes the editor down, and an absolutely-positioned
 // dropdown would be the wrong shape for something you filter and read while typing.
 const benchEnvOpen = signal(false);
+/** The environment button itself, so its panel can be placed UNDER it wherever the bench is: a drawer at the bottom,
+ *  full-page at the top, or a panel someone has dragged narrow. */
+let benchEnvBtn: HTMLElement | null = null;
 
 const benchEnvErr = signal("");
 
@@ -173,7 +176,7 @@ const benchEnvErr = signal("");
 function BenchEnvButton() {
     const open = benchEnvOpen.value;
     return (
-        <button class={`bench-env-btn${open ? " on" : ""}`} aria-expanded={open}
+        <button ref={(el) => { benchEnvBtn = el; }} class={`bench-env-btn${open ? " on" : ""}`} aria-expanded={open}
             onClick={() => { benchEnvOpen.value = !open; if (!benchEnvErr.value) loadBenchEnv((m) => (benchEnvErr.value = m)); }}>
             <span class="tri" aria-hidden="true"><IconChevron /></span>
             {/* In its own element because an ellipsis needs one. It carried the Python version too, which
@@ -189,6 +192,30 @@ function BenchEnvButton() {
 function BenchEnv() {
     const [q, setQ] = useState("");
     const open = benchEnvOpen.value, err = benchEnvErr.value;
+    // WHERE IT SITS: under its own button, clamped to the window, flipped above where there is more room there. It was
+    // absolute at a fixed offset from the bench, so it stood to the LEFT of the button, and with the bench at the top
+    // of the screen it ran off the edge and was cut off.
+    const [at, setAt] = useState<{ left: number; top?: number; bottom?: number; maxH: number } | null>(null);
+    useEffect(() => {
+        if (!open) return;
+        const place = () => {
+            const b = benchEnvBtn?.getBoundingClientRect();
+            if (!b) return;
+            const GAP = 6, EDGE = 8, width = Math.min(420, innerWidth - EDGE * 2);
+            const below = innerHeight - b.bottom - GAP - EDGE, above = b.top - GAP - EDGE;
+            const down = below >= 260 || below >= above;
+            setAt({
+                left: Math.max(EDGE, Math.min(b.left, innerWidth - width - EDGE)),
+                ...(down ? { top: b.bottom + GAP } : { bottom: innerHeight - b.top + GAP }),
+                maxH: Math.max(140, Math.min(360, down ? below : above)),
+            });
+        };
+        place();
+        addEventListener("resize", place);
+        // A scroll anywhere moves the button: the drawer's own, the page's, a panel's.
+        addEventListener("scroll", place, true);
+        return () => { removeEventListener("resize", place); removeEventListener("scroll", place, true); };
+    }, [open]);
     // A panel that opens over the editor has to close the way every other one does: click off it, or Escape.
     // Without this it could only be dismissed by finding the button again — and since it covers the code you
     // opened it to compare against, "click off it" is the FIRST thing anyone tries.
@@ -216,7 +243,8 @@ function BenchEnv() {
     // component IS the panel and a zero-height div is just something for a selector to trip over.
     if (!open) return null;
     return (
-        <div class="bench-env open">
+        // Hidden until it has been placed, so it never paints for a frame where it used to sit.
+        <div class="bench-env open" style={at ? `left:${at.left}px;${at.top != null ? `top:${at.top}px` : `bottom:${at.bottom}px`};max-height:${at.maxH}px` : "visibility:hidden"}>
             {<div class="bench-env-body">
                 {err ? <div class="bench-env-err">{err}</div>
                     : !env ? <div class="dim">reading the sandbox…</div>

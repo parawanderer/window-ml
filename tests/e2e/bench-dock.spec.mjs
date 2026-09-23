@@ -276,6 +276,24 @@ test("the environment panel is there in FULL-page mode too", async () => {
         await expect(frame.locator(".bench-env-btn")).toBeVisible();
         await frame.locator(".bench-env-btn").click();
         await expect(frame.locator(".bench-env-head")).toContainText(/Python\s+3\./, { timeout: 60000 });
+
+        // WHERE IT SITS. Full page puts the bench's header at the TOP of the screen, which is where this was
+        // wrong: the panel was absolute at a fixed offset from the bench, so it stood to the left of its button
+        // and hung off the top edge, cut off. It is placed from the button's own box now.
+        const where = await frame.evaluate(() => {
+            const b = document.querySelector(".bench-env-btn").getBoundingClientRect();
+            const p = document.querySelector(".bench-env").getBoundingClientRect();
+            return { btnLeft: b.left, btnBottom: b.bottom, left: p.left, top: p.top, right: p.right, bottom: p.bottom,
+                w: innerWidth, h: innerHeight };
+        });
+        // Its button's left edge, give or take the 8px it keeps off the window's own edge (the button sits at 4).
+        expect(Math.abs(where.left - where.btnLeft), "it lines up with the button it belongs to").toBeLessThanOrEqual(8);
+        expect(where.top, "…and hangs UNDER it, not over the header").toBeGreaterThanOrEqual(where.btnBottom);
+        // Nothing of it off any edge: this is the "cut off" the fix is about.
+        expect(where.top).toBeGreaterThan(-1);
+        expect(where.left).toBeGreaterThan(-1);
+        expect(where.right).toBeLessThanOrEqual(where.w + 1);
+        expect(where.bottom).toBeLessThanOrEqual(where.h + 1);
     } finally { await ext.context.close(); await fake.stop(); }
 });
 
