@@ -2,9 +2,10 @@
 // composer and waiting bar (`SessionChrome`), in the same words the web page uses. Pure, so the rules are unit-tested
 // without a WebView, and the app never re-derives a grant or a status on its own (docs/spec/NATIVE_SHELL.md).
 
-import type { AgentTarget, Principal, RuntimeInfo, SessionKey, SessionSummary } from "../session-host";
+import type { AgentTarget, Principal, RuntimeInfo, SessionKey, SessionSummary, StorageReport } from "../session-host";
+import { formatBytes } from "../resource-model";
 import { mayCommand, mayStart, resumableHere } from "../chat/grants";
-import type { AttentionRow, SessionChrome } from "./bridge";
+import type { AttentionRow, RuntimeStorageView, SessionChrome } from "./bridge";
 import { attentionCount, attentionItems } from "../chat/attention";
 
 /** The chrome for one open session. `live` is the transcript's own view of it (a run in flight shows as `pending` there
@@ -90,4 +91,29 @@ export function agentTarget(t: unknown): AgentTarget | null {
     } catch {
         return null;
     }
+}
+
+/** The split of a runtime's saved bytes, in the order the browser's own Storage view lists them. */
+const STORAGE_PARTS: { key: "images" | "toolOutput" | "other" | "unmeasured"; label: string }[] = [
+    { key: "images", label: "Images" }, { key: "toolOutput", label: "Tool output" },
+    { key: "other", label: "Everything else" }, { key: "unmeasured", label: "Not yet measured" },
+];
+
+/**
+ * What a runtime keeps, for the phone's Runtimes screen: the same reading as the browser's Storage section
+ * (storage-section.tsx), already in WORDS. Sizes are formatted HERE, through `formatBytes`, because they are binary
+ * and the app has no business converting them a second way.
+ */
+export function runtimeStorage(report: StorageReport, name: string): RuntimeStorageView {
+    const s = report.now;
+    const a = report.archive;
+    return {
+        summary: s.sessions
+            ? `${formatBytes(s.total)} in ${s.sessions} session${s.sessions === 1 ? "" : "s"}${s.pinned ? `, ${s.pinned} pinned` : ""}`
+            : `${name} keeps no saved sessions.`,
+        parts: STORAGE_PARTS.filter((p) => (s[p.key] ?? 0) > 0).map((p) => ({ label: p.label, size: formatBytes(s[p.key] ?? 0) })),
+        largest: report.largest.slice(0, 5).map((r) => ({ title: r.title || r.hash, size: formatBytes(r.bytes), ...(r.pinned ? { pinned: true } : {}) })),
+        ...(a ? { archive: `Archive: ${a.sessions} session${a.sessions === 1 ? "" : "s"}, ${formatBytes(a.bytes)} as they were stored there, images ${formatBytes(a.imageBytes)} (${a.images}, each stored once).` } : {}),
+        ...(s.unmeasured > 0 ? { note: "Sessions saved before this was recorded are not yet measured. They shrink out of the picture as retention removes them." } : {}),
+    };
 }

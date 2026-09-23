@@ -106,12 +106,16 @@ export const Sheet = forwardRef<BottomSheetModal, { title?: string; children: Re
  * A sheet's filter field, for a list too long to scroll through (a box with fifty models). Give it to `Sheet` as its
  * `header` so it stays put while the list moves under it.
  */
-export function SheetFilter({ value, onChangeText, placeholder, plain }: {
+export function SheetFilter({ value, onChangeText, placeholder, plain, onScreen }: {
     value: string; onChangeText: (t: string) => void; placeholder: string;
     /** a field for typing a VALUE (a new title), not a search: no magnifier, and it takes the keyboard at once */
     plain?: boolean;
+    /** on a plain SCREEN rather than in a sheet: the sheet's own input throws there ("`useBottomSheetInternal` cannot
+     *  be used out of the BottomSheet"), since it exists to keep the sheet above the keyboard */
+    onScreen?: boolean;
 }) {
     const p = usePalette();
+    const Field = onScreen ? TextInput : BottomSheetTextInput;
     const field = useRef<ComponentRef<typeof BottomSheetTextInput>>(null);
     // An uncontrolled field is emptied through itself, not by handing it a value it no longer reads.
     const clear = (): void => { field.current?.clear(); onChangeText(""); };
@@ -123,7 +127,7 @@ export function SheetFilter({ value, onChangeText, placeholder, plain }: {
             {/* A plain field is UNCONTROLLED: typing that races the round trip of its own value drops and reorders
                 characters, which is what a controlled rename field did under fast input. A filter stays controlled,
                 and its clear button empties it through its ref. */}
-            <BottomSheetTextInput ref={field} testID={plain ? "sheet-field" : "sheet-filter"} {...(plain ? { defaultValue: value } : { value })} onChangeText={onChangeText} placeholder={placeholder}
+            <Field ref={field} testID={plain ? "sheet-field" : "sheet-filter"} {...(plain ? { defaultValue: value } : { value })} onChangeText={onChangeText} placeholder={placeholder}
                 placeholderTextColor={p.fgFaint} autoCapitalize={plain ? "sentences" : "none"} autoCorrect={!!plain} autoFocus={!!plain}
                 // A value being replaced is usually replaced whole: typing over the selection beats erasing it first.
                 selectTextOnFocus={!!plain}

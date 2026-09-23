@@ -8,6 +8,8 @@ export type Routes = {
     Search: undefined;
     Attention: undefined;
     Settings: undefined;
+    /** One runtime: what it is, the models it offers, what it keeps. */
+    Runtime: { id: string };
     Devices: undefined;
     Pair: undefined;
     Welcome: undefined;

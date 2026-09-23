@@ -22,6 +22,7 @@ import { AttentionScreen } from "./src/screens/AttentionScreen";
 import { SettingsScreen } from "./src/screens/SettingsScreen";
 import { CreateScreen, JoinScreen, WelcomeScreen } from "./src/screens/AccountScreens";
 import { DevicesScreen, PairScreen } from "./src/screens/DeviceScreens";
+import { RuntimeScreen } from "./src/screens/RuntimeScreen";
 import { ThemeChoiceContext, usePalette, type ThemeChoice } from "./src/theme";
 import { Toast } from "./src/ui";
 import { ImageViewer } from "./src/viewer";
@@ -88,6 +89,7 @@ function Shell() {
                         <Stack.Screen name="Attention" component={AttentionScreen} />
                         <Stack.Screen name="Settings" component={SettingsScreen} />
                         <Stack.Screen name="Devices" component={DevicesScreen} />
+                        <Stack.Screen name="Runtime" component={RuntimeScreen} />
                         <Stack.Screen name="Pair" component={PairScreen} />
                     </>}
                 </Stack.Navigator>

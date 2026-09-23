@@ -81,14 +81,18 @@ export function SettingsScreen() {
 
                 <Text style={[s.group, { color: p.fgDim }]}>Runtimes</Text>
                 <View style={[s.card, { backgroundColor: p.scheme === "dark" ? p.panel : p.bg }]}>
+                    {/* A row OPENS that runtime: what it is, the models it offers, what it keeps (RuntimeScreen). */}
                     {e.runtimes.length ? e.runtimes.map((r, i) => (
-                        <View key={r.id} style={[s.row, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: p.border }]}>
+                        <Pressable key={r.id} accessibilityRole="button" accessibilityLabel={`${r.name}: what it is, its models and its storage`}
+                            onPress={() => nav.navigate("Runtime", { id: r.id })}
+                            style={({ pressed }) => [s.row, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: p.border }, pressed && { backgroundColor: p.panel2 }]}>
                             <Dot tone={r.online ? "ok" : "off"} />
                             <View style={{ flex: 1 }}>
                                 <Text style={[s.rowText, { color: p.fg }]}>{r.name}</Text>
                                 <Text style={{ color: p.fgDim, fontSize: SIZE.small, marginTop: 2 }}>{r.online ? "online" : "offline"} · {access(r.grants.map((g) => g.scope))}</Text>
                             </View>
-                        </View>
+                            <ChevronRight size={20} color={p.fgFaint} />
+                        </Pressable>
                     )) : <View style={s.row}><Text style={{ color: p.fgDim, fontSize: SIZE.small }}>None yet.</Text></View>}
                 </View>
             </ScrollView>

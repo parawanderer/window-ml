@@ -13,7 +13,7 @@ import * as Haptics from "expo-haptics";
 import * as Sharing from "expo-sharing";
 import { Directory, File, Paths } from "expo-file-system";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
-import { encode, parseToNative, type AttentionRow, type BridgeAccount, type PairingCall, type PairingInfo, type SessionChrome, type ToWeb } from "../../src/native/bridge";
+import { encode, parseToNative, type AttentionRow, type BridgeAccount, type PairingCall, type PairingInfo, type RuntimeStorageView, type SessionChrome, type ToWeb } from "../../src/native/bridge";
 import type { HostStatus, ListedSession, ModelChoice, RuntimeInfo, SessionSummary, TabGroupInfo, TabInfo } from "../../src/session-host";
 import { EMBED } from "./generated/embed";
 import { answerStore } from "./store";
@@ -61,6 +61,8 @@ export interface EmbedApi extends EmbedState {
     start(o: { runtime: string; kind: "chat" | "agent"; text: string; model?: string; images?: string[]; target?: AgentTargetPick }): Promise<{ ok: boolean; error?: string; session?: string }>;
     /** Pick a saved run back up on a page: resolves with whether the runtime took it. */
     resumeRun(key: string, target: AgentTargetPick): Promise<{ ok: boolean; error?: string }>;
+    /** What a runtime keeps, in the page's words; `storage` is null when it would not say (`error` why). */
+    storage(runtime: string): Promise<{ storage: RuntimeStorageView | null; error?: string }>;
     /** A runtime's open tabs, for an agent's target; `tabs` is null when it would not say. */
     tabs(runtime: string): Promise<{ tabs: TabInfo[] | null; groups: TabGroupInfo[]; withheld: number; error?: string }>;
     cancel(key: string): void;
@@ -166,6 +168,7 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
     const pairingDone = useRef(new Set<(d: { offer: string; ok: boolean; error?: string }) => void>());
     const pendingSent = useRef(new Map<string, (r: { ok: boolean; error?: string; session?: string }) => void>());
     const pendingModels = useRef(new Map<string, ((m: ModelChoice[] | null) => void)[]>());
+    const pendingStorage = useRef(new Map<string, (r: { storage: RuntimeStorageView | null; error?: string }) => void>());
     const pendingTabs = useRef(new Map<string, (r: { tabs: TabInfo[] | null; groups: TabGroupInfo[]; withheld: number; error?: string }) => void>());
     const pendingChrome = useRef(new Map<string, (c: SessionChrome | null) => void>());
     const searches = useRef(new Map<string, (rows: ListedSession[], more: boolean, error?: string) => void>());
@@ -203,6 +206,7 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
             case "status": setState((s) => ({ ...s, status: m.status })); return;
             case "attention": setState((s) => ({ ...s, attention: { items: m.items, count: m.count } })); return;
             case "index": setState((s) => ({ ...s, runtimes: m.runtimes, sessions: m.sessions, ...(m.startable ? { startable: m.startable } : {}) })); return;
+            case "storageResult": { const r = pendingStorage.current.get(m.id); pendingStorage.current.delete(m.id); r?.({ storage: m.storage, ...(m.error ? { error: m.error } : {}) }); return; }
             case "tabsResult": { const r = pendingTabs.current.get(m.id); pendingTabs.current.delete(m.id); r?.(m); return; }
             case "session": setState((s) => ({ ...s, chrome: m.chrome })); return;
             case "chromeOf": { const r = pendingChrome.current.get(m.id); pendingChrome.current.delete(m.id); r?.(m.chrome); return; }
@@ -247,6 +251,12 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
         send: (key, text, images) => request((id) => ({ type: "send", id, key, text, ...(images?.length ? { images } : {}) })),
         start: (o) => request((id) => ({ type: "start", id, runtime: o.runtime, kind: o.kind, text: o.text, ...(o.model ? { model: o.model } : {}), ...(o.images?.length ? { images: o.images } : {}), ...(o.target ? { target: o.target } : {}) })),
         resumeRun: (key, target) => request((id) => ({ type: "resumeRun", id, key, target })),
+        storage: (runtime) => new Promise((resolve) => {
+            const id = nextId();
+            const timer = setTimeout(() => { pendingStorage.current.delete(id); resolve({ storage: null, error: "No answer from the runtime." }); }, 20_000);
+            pendingStorage.current.set(id, (r) => { clearTimeout(timer); resolve(r); });
+            post({ type: "storage", id, runtime });
+        }),
         tabs: (runtime) => new Promise((resolve) => {
             const id = nextId();
             const timer = setTimeout(() => { pendingTabs.current.delete(id); resolve({ tabs: null, groups: [], withheld: 0, error: "No answer from the runtime." }); }, 20_000);

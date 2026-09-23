@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 const B = await import("../src/native/bridge.ts");
-const { sessionChrome, startableFor, agentTarget } = await import("../src/native/snapshot.ts");
+const { sessionChrome, startableFor, agentTarget, runtimeStorage } = await import("../src/native/snapshot.ts");
 
 test("a message round-trips with its version, and each side accepts only its own direction", () => {
     const wire = B.encode({ type: "send", id: "a1", key: "laptop:7b21", text: "hi" });
@@ -43,6 +43,8 @@ test("every message the page can post passes the app's own check", () => {
         { type: "index", runtimes: [], sessions: [], startable: { chat: ["laptop"], agent: [] } },
         { type: "tabsResult", id: "n11", tabs: [{ tabId: 41, url: "https://flights.example", title: "Flights", active: true }], groups: [], withheld: 0 },
         { type: "tabsResult", id: "n11", tabs: null, groups: [], withheld: 0, error: "offline" },
+        { type: "storageResult", id: "n15", storage: { summary: "1.4 GiB in 32 sessions", parts: [], largest: [] } },
+        { type: "storageResult", id: "n15", storage: null, error: "this device may not read its storage" },
         { type: "models", runtime: "laptop", models: [{ id: "qwen3:32b" }] },
         { type: "models", runtime: "laptop", models: null, error: "unreachable" },
         { type: "sent", id: "s1", ok: true, session: "laptop:1" },
@@ -130,6 +132,7 @@ test("every message the app can send passes the page's own check", () => {
         { type: "peek", id: "n9", key: "laptop:1" },
         { type: "chromeFor", id: "n10", key: "laptop:1" },
         { type: "tabs", id: "n11", runtime: "laptop" },
+        { type: "storage", id: "n15", runtime: "laptop" },
         { type: "resumeRun", id: "n14", key: "laptop:1", target: { kind: "blank" } },
         { type: "start", id: "n12", runtime: "laptop", kind: "agent", text: "summarise this", target: { kind: "tab", tabId: 41 } },
         { type: "start", id: "n13", runtime: "laptop", kind: "agent", text: "find a flight", target: { kind: "blank", url: "https://flights.example" } },
@@ -334,4 +337,29 @@ test("an agent's target from the app is checked: a tab by id, or a new tab at an
         { kind: "blank", url: 5 },
     ];
     for (const t of refused) assert.equal(agentTarget(t), null, JSON.stringify(t));
+});
+
+test("what a runtime keeps is worded PAGE-side, in binary units, so the app converts nothing", () => {
+    const now = { t: 1, sessions: 32, events: 900, pinned: 3, unmeasured: 2048, total: 1_503_238_553, images: 1_073_741_824, toolOutput: 419_430_400, other: 8_388_608 };
+    const view = runtimeStorage({
+        now, history: [],
+        largest: [{ hash: "abc123", title: "KV cache size at 32k", bytes: 52_428_800, pinned: true }, { hash: "def456", bytes: 1_048_576 }],
+        archive: { sessions: 12, events: 400, bytes: 209_715_200, images: 30, imageBytes: 104_857_600 },
+    }, "Work laptop");
+    assert.equal(view.summary, "1.40 GiB in 32 sessions, 3 pinned");
+    assert.deepEqual(view.parts, [
+        { label: "Images", size: "1.00 GiB" },
+        { label: "Tool output", size: "400.0 MiB" },   // one decimal at 100 and up: formatBytes says so, and it says so once
+        { label: "Everything else", size: "8.00 MiB" },
+        { label: "Not yet measured", size: "2.00 KiB" },
+    ]);
+    // A session with no title is named by its hash, and a pin is said.
+    assert.deepEqual(view.largest, [{ title: "KV cache size at 32k", size: "50.00 MiB", pinned: true }, { title: "def456", size: "1.00 MiB" }]);
+    assert.equal(view.archive, "Archive: 12 sessions, 200.0 MiB as they were stored there, images 100.0 MiB (30, each stored once).");
+    assert.match(view.note, /not yet measured/);
+    // Nothing kept: the runtime is named, and there is no split to draw.
+    const empty = runtimeStorage({ now: { t: 1, sessions: 0, events: 0, pinned: 0, unmeasured: 0, total: 0 }, history: [], largest: [] }, "Lab box");
+    assert.equal(empty.summary, "Lab box keeps no saved sessions.");
+    assert.deepEqual(empty.parts, []);
+    assert.equal(empty.archive, undefined);
 });
