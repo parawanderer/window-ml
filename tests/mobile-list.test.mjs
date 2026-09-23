@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { ago, needsYou, sections, seen, when, STATUS_LABEL, STATUS_TONE } = await import("../mobile/src/format.ts");
+const { ago, byPinned, needsYou, sections, seen, when, STATUS_LABEL, STATUS_TONE } = await import("../mobile/src/format.ts");
 
 const EVERY = [{ scope: "control" }];
 const rt = (id, extra = {}) => ({ id, name: id, kind: "browser", online: true, contractVersion: 1, grants: EVERY, capabilities: {}, ...extra });
@@ -67,8 +67,7 @@ test("when something happened reads on into the sentence after it", () => {
 });
 
 // The phone's model shortlist (mobile/src/pinned-models.ts). Pure, so the sort is checked without AsyncStorage.
-test("pinned models: this device's shortlist first, then the rest, each alphabetical", async () => {
-    const { byPinned } = await import("../mobile/src/pinned-models.ts");
+test("pinned models: this device's shortlist first, then the rest, each alphabetical", () => {
     const m = (id) => ({ id });
     const all = [m("qwen3:32b"), m("gemma3:27b"), m("llama3:8b")];
     const ids = (list) => list.map((x) => x.id);

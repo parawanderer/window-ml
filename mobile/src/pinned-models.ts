@@ -8,6 +8,9 @@
 //
 // Storage is AsyncStorage, read once at startup into memory (`loadPinnedModels`, beside `loadDrafts`), so a sheet
 // draws in the right order on its first frame rather than reordering under the thumb a moment later.
+//
+// The SORT itself is `byPinned` in format.ts, which imports nothing from React Native: this module cannot be loaded
+// by a test in the root program (its imports do not resolve there), and the ordering is the half worth testing.
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useSyncExternalStore } from "react";
@@ -41,15 +44,4 @@ export function togglePinnedModel(id: string): void {
 /** The pinned ids, re-rendering the caller when they change. */
 export function usePinnedModels(): ReadonlySet<string> {
     return useSyncExternalStore((cb) => { listeners.add(cb); return () => { listeners.delete(cb); }; }, snapshot, snapshot);
-}
-
-/**
- * The order a model list is drawn in: pinned first, then the rest, each alphabetical.
- *
- * Takes the pins rather than reading them, so a list sorts from the same snapshot the rows render from — and so this
- * stays a pure function a test can call.
- */
-export function byPinned<T>(items: readonly T[], id: (t: T) => string, pinned: ReadonlySet<string>): T[] {
-    return [...items].sort((a, b) =>
-        (Number(pinned.has(id(b))) - Number(pinned.has(id(a)))) || id(a).localeCompare(id(b)));
 }
