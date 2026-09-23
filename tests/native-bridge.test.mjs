@@ -54,6 +54,8 @@ test("every message the page can post passes the app's own check", () => {
         { type: "openImage", src: "data:image/png;base64,AA==" },
         { type: "openLink", url: "https://example.com" },
         { type: "copyText", text: "x" },
+        { type: "tap", kind: "select" },
+        { type: "tap", kind: "impact" },
     ];
     for (const m of posted) assert.deepEqual(B.parseToNative(B.encode(m)), m, m.type);
 });
