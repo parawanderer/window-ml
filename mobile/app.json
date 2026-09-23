@@ -26,7 +26,6 @@
       "expo-asset",
       "expo-sharing",
       "./plugins/with-ios-scene",
-      "./plugins/with-android-navbar",
       "expo-secure-store",
       [
         "expo-camera",
