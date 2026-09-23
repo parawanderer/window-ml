@@ -3,7 +3,7 @@
 // approval / grant / host-access chrome, the JSON-tree tool-def viewer, the agent-options block, nav
 // dividers, and the run container (AgentRunView / LiveStream / PendingNote). Extracted from app.tsx; it
 // sits above ./reply (uses ReplyBubble) and the ui-kit / answer-render / render-panel / debug-reducer layers.
-import { SentImages, UserText } from "./user-text";
+import { SentImages, UserActions, UserText } from "./user-text";
 import type { ComponentChildren } from "preact";
 import { services } from "./services";
 import { useState, useEffect, useRef } from "preact/hooks";
@@ -643,7 +643,7 @@ export function SteerSeen({ seen }: { seen: boolean }) {
 export const UserBubble = ({ text, ts, images, steer }: { text: string; ts: number; images?: string[]; steer?: { seen?: boolean } }) => (
     <>
         <div class={`msg user${text ? "" : " no-text"}`}>
-            <div class="mrow"><span class="who">you</span>{steer ? <SteerSeen seen={!!steer.seen} /> : null}<span class="sp" /><Stamp ts={ts} /></div>
+            <div class="mrow"><span class="who">you</span>{steer ? <SteerSeen seen={!!steer.seen} /> : null}<span class="sp" />{text ? <UserActions text={text} /> : null}<Stamp ts={ts} /></div>
             {text ? <UserText text={text} /> : null}
         </div>
         <SentImages images={images} />

@@ -1750,9 +1750,27 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
 .icon-btn {
     display: inline-flex; align-items: center; justify-content: center; line-height: 0;
     background: transparent; border: none; color: var(--fg-faint); cursor: pointer;
-    padding: 2px; border-radius: 50%;
+    padding: 5px; border-radius: 50%;
 }
 .icon-btn:hover { background: var(--panel-2); color: var(--fg); }
+/* ONE SIZE FOR EVERY GLYPH IN ONE OF THESE, whatever each icon declares for itself — `IconCopy` draws at 12 and
+   `IconCompose` at 16, so a copy button beside an edit button read as two different controls. A touch larger than
+   either, because these are deliberate actions on a message and 20px was a small thing to aim at. */
+.icon-btn svg { width: 14px; height: 14px; }
+/* Offered, not available yet: dimmed and inert, with a tip saying why. */
+.icon-btn.off { opacity: .45; cursor: default; }
+.icon-btn.off:hover { background: transparent; color: var(--fg-faint); }
+
+/* WHAT YOU CAN DO WITH A MESSAGE YOU SENT (user-text.tsx): copy it, and later edit it. Quiet until the message is
+   hovered, because two controls sitting permanently on every message you ever sent are furniture, not affordance.
+   A touch screen has no hover and reaches them by a long press instead, so there they are not drawn at all. */
+.umsg-acts { display: inline-flex; align-items: center; gap: 2px; opacity: 0; transition: opacity .12s ease; }
+.msg.user:hover .umsg-acts, .umsg-acts:focus-within { opacity: 1; }
+@media (hover: none) { .msg.user .umsg-acts { display: none; } }
+/* A menu item's glyph, before its word. */
+.ctx-icon { display: inline-flex; align-items: center; margin-right: 7px; color: var(--fg-dim); }
+.ctx-item.off { opacity: .5; cursor: default; }
+
 /* ANDROID PAINTS A BLUE SQUARE OVER ANYTHING TAPPED, on the element's bounding BOX — so a round icon button, a text
    disclosure ("agent options") and a chevron all flash as rectangles, in a colour this UI uses nowhere else. The panel
    gives its own feedback (a fill on `:active`, a pressed row), so the system's is turned off rather than left to fight
@@ -1778,7 +1796,6 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
     .hbtn:hover:not(.on) { background: transparent; color: var(--fg-dim); }
     .icon-btn:active, .hbtn:active { background: var(--panel-2); color: var(--fg); }
 }
-
 .dot { width: 0.67em; height: 0.67em; border-radius: 50%; flex: 0 0 auto; }
 .dot.pending { background: var(--warn); animation: pulse 1s infinite; }
 .dot.ok { background: var(--ok); }
