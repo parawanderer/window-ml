@@ -12,16 +12,7 @@ import type { ModelChoice, RuntimeInfo } from "../session-host";
 import type { ChatStore } from "./chat-store";
 import { mayCommand } from "./grants";
 import { usePickerPop } from "./pop-picker";
-
-/** How long the pointer rests on a cut-off model name before its full name shows. */
-const NAME_TIP_MS = 550;
-/** Is the name inside this pill or row cut off? Only then is its full name worth a tip. */
-const nameCut = (el: Element): boolean => {
-    const t = el.querySelector(".tp-pill-text, .tp-title");
-    return !!t && t.scrollWidth > t.clientWidth + 1;
-};
-/** The full model name, after a rest, where it is cut off: a JSX node, so a name is never read as markdown. */
-const nameTip = (id: string) => cursorTipOn(<code class="tp-name-tip">{id}</code>, { delayMs: NAME_TIP_MS, onlyIf: nameCut });
+import { cutTip } from "./cut-tip";
 
 /** A cloud glyph (a model the runtime reaches over the internet). */
 const IconCloud = () => (
@@ -68,7 +59,7 @@ export function ModelPicker({ models, value, onChange, arrived }: { models: read
     const name = value || (dflt ? `Default · ${dflt.id}` : "Default");
     return (
         <>
-            <button {...p.pillProps} {...nameTip(label)} class={`tp-pill tp-pill-model${arrived ? " tp-pill-in" : ""}`} aria-label={`Model: ${name}`}>
+            <button {...p.pillProps} {...cutTip(label, true)} class={`tp-pill tp-pill-model${arrived ? " tp-pill-in" : ""}`} aria-label={`Model: ${name}`}>
                 <span class="tp-pill-text">{label}</span>
                 <svg class="tp-caret" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
             </button>
@@ -77,7 +68,7 @@ export function ModelPicker({ models, value, onChange, arrived }: { models: read
                     <input {...p.filterProps} placeholder="Filter models" aria-label="Filter models" />
                     {defaultShown(q) ? (
                         <>
-                            <button type="button" role="option" aria-selected={value === ""} {...p.row("")} {...(dflt ? nameTip(dflt.id) : {})}>
+                            <button type="button" role="option" aria-selected={value === ""} {...p.row("")} {...(dflt ? cutTip(dflt.id, true) : {})}>
                                 <span class="tp-title">{dflt ? dflt.id : "The runtime's default"}</span>
                                 <span class="tp-host tp-default">default</span>
                                 <WhereMark where={dflt?.where} />
@@ -88,7 +79,7 @@ export function ModelPicker({ models, value, onChange, arrived }: { models: read
                     ) : null}
                     <div class="tp-list">
                         {list.map((id) => (
-                            <button key={id} type="button" role="option" aria-selected={value === id} {...p.row(id)} {...nameTip(id)}>
+                            <button key={id} type="button" role="option" aria-selected={value === id} {...p.row(id)} {...cutTip(id, true)}>
                                 <span class="tp-title">{id}</span>
                                 <WhereMark where={where.get(id)} />
                                 {value === id ? <span class="tp-check" aria-hidden="true"><IconCheck /></span> : null}
@@ -137,7 +128,7 @@ export function SessionModelPicker({ store, rt, current, canSwitch, note, onSwit
     const list = (models ?? []).filter((id) => !q || id.toLowerCase().includes(q.toLowerCase()));
     return (
         <>
-            <button {...p.pillProps} {...nameTip(current)} class={`tp-pill tp-pill-model ${quiet ? "tp-pill-quiet" : "chat-head-model"}`} aria-label={`Model: ${current}`}>
+            <button {...p.pillProps} {...cutTip(current, true)} class={`tp-pill tp-pill-model ${quiet ? "tp-pill-quiet" : "chat-head-model"}`} aria-label={`Model: ${current}`}>
                 <span class="tp-pill-text">{current}</span>
                 <svg class="tp-caret" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
             </button>
@@ -148,7 +139,7 @@ export function SessionModelPicker({ store, rt, current, canSwitch, note, onSwit
                     <div class="tp-list">
                         {models === null ? <div class="tp-note">{may ? "Asking…" : "This device may not list its models."}</div>
                             : list.map((id) => (
-                                <button key={id} type="button" role="option" aria-selected={current === id} aria-disabled={!canSwitch || undefined} {...p.row(id, canSwitch ? "" : " off")} {...nameTip(id)}>
+                                <button key={id} type="button" role="option" aria-selected={current === id} aria-disabled={!canSwitch || undefined} {...p.row(id, canSwitch ? "" : " off")} {...cutTip(id, true)}>
                                     <span class="tp-title">{id}</span>
                                     <WhereMark where={where.get(id)} />
                                     {current === id ? <span class="tp-check" aria-hidden="true"><IconCheck /></span> : null}

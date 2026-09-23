@@ -13,7 +13,7 @@ import { truncate, markdown } from "./format";
 import { residentNow } from "./vram";
 import { orbStatus } from "./orb-status";   // the orb's live status projection (humanized tool phase + live token count + stall heartbeat)
 import { exportSession, printSession } from "./export";
-import { IconChevron, IconWarn, IconSend } from "./icons";
+import { IconChevron, IconWarn, IconSend, IconPlay } from "./icons";
 import { cursorTipOn, AnswerMediaGallery, ContextMenu, clearHighlight, decideGate, decidedSteps, stepKey } from "./ui-kit";
 import { ReplyBubble } from "./reply";
 import { AgentTurn, ToolStep, GrantCard, hasPersistGrants, KEEP_HINT } from "./agent-detail";
@@ -564,7 +564,7 @@ export function CardApp() {
                             {run.hitCap && !run.cancelled
                                 ? <button class="continue-run" title="Resume this run with more steps, continuing from where it stopped"
                                     onClick={() => window.parent.postMessage({ __mlSidebarApp: "continueRun", hash: run.hash }, "*")}>
-                                    Continue <span class="continue-steps">+{run.maxSteps || 20} steps</span>
+                                    <IconPlay />Continue <span class="continue-steps">+{run.maxSteps || 20} steps</span>
                                   </button>
                                 : null}
                             {/* A FAILED run gets the same resume, as Retry — parity with the sidebar's failed-run

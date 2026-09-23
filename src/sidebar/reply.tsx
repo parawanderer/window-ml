@@ -10,7 +10,7 @@ import { view } from "./store";
 import type { Session, Turn, Status, AgentStep } from "./store";
 import { pretty, truncate, collapsedPreview, markdown } from "./format";
 import { annotatedConfig, turnProfile } from "./model";
-import { IconChevron } from "./icons";
+import { IconChevron, IconPlay } from "./icons";
 import { cursorTipOn, Dot, Stamp, Hash, TagBadge, CopyBtn, CopyModel, Code } from "./ui-kit";
 import { aliasOf, AnswerBody, ResultBlock } from "./answer-render";
 import { hasTokens } from "../answer-tokens";
@@ -186,7 +186,7 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
             {resumeCap && !collapsed
                 ? <button class="continue-run" title="Resume this run with more steps, continuing from where it stopped"
                     onClick={() => services().continueSession(resumeCap.hash)}>
-                    Continue <span class="continue-steps">+{resumeCap.steps} steps</span>
+                    <IconPlay />Continue <span class="continue-steps">+{resumeCap.steps} steps</span>
                   </button>
                 : null}
             {sources?.length
