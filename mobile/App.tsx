@@ -12,6 +12,7 @@ import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 import { DarkTheme, DefaultTheme, NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { loadDrafts } from "./src/drafts";
+import { loadPinnedModels } from "./src/pinned-models";
 import { EmbedProvider, useEmbed } from "./src/embed";
 import { SessionLayer, SessionLayerProvider } from "./src/layer";
 import type { Routes } from "./src/routes";
@@ -35,7 +36,7 @@ export default function App() {
     const [loaded, setLoaded] = useState(false);
     const [choice, setChoiceState] = useState<ThemeChoice>("system");
     useEffect(() => {
-        void Promise.all([loadDrafts(), AsyncStorage.getItem(THEME_KEY)]).then(([, t]) => {
+        void Promise.all([loadDrafts(), loadPinnedModels(), AsyncStorage.getItem(THEME_KEY)]).then(([, , t]) => {
             if (t === "light" || t === "dark" || t === "system") setChoiceState(t);
             setLoaded(true);
         });

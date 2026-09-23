@@ -18,6 +18,8 @@ import type { BottomSheetModal } from "@gorhom/bottom-sheet";
 import { ArrowUp, ChevronDown, ChevronLeft, EllipsisVertical, Square } from "lucide-react-native";
 import type { ModelChoice } from "../../src/session-host";
 import { draftOf, onDraftRestored, saveDraft, sendHeld } from "./drafts";
+import { byPinned } from "./format";
+import { togglePinnedModel, usePinnedModels } from "./pinned-models";
 import { EmbedWebView, useEmbed } from "./embed";
 import { SIZE, usePalette } from "./theme";
 import { IconButton, Sheet, SheetFilter, SheetRow } from "./ui";
@@ -142,6 +144,7 @@ function ModelPill() {
     const sheet = useRef<BottomSheetModal>(null);
     const [models, setModels] = useState<ModelChoice[] | null | undefined>(undefined);
     const [q, setQ] = useState("");
+    const pins = usePinnedModels();
     const c = e.chrome!;
     const show = () => {
         sheet.current?.present();
@@ -151,7 +154,8 @@ function ModelPill() {
         sheet.current?.dismiss();
         if (id !== c.model && c.canSwitchModel) { void Haptics.selectionAsync(); e.switchModel(c.key, id); }
     };
-    const all = (models ?? []).filter((m) => !m.kinds?.includes("embedding")).sort((a, b) => a.id.localeCompare(b.id));
+    // Pinned first, then alphabetical: this device's shortlist, the same rule the page's lists follow.
+    const all = byPinned((models ?? []).filter((m) => !m.kinds?.includes("embedding")), (m) => m.id, pins);
     // A box can offer fifty models, which is a lot of thumb: filter once there are more than a screenful.
     const filtered = q.trim() ? all.filter((m) => m.id.toLowerCase().includes(q.trim().toLowerCase())) : all;
     return (
@@ -165,6 +169,9 @@ function ModelPill() {
                     : filtered.map((m) => (
                         <SheetRow key={m.id} title={m.id} mono chosen={m.id === c.model} disabled={!c.canSwitchModel}
                             detail={[m.where === "cloud" ? "cloud" : null, m.kinds?.includes("vision") ? "sees images" : null, m.kinds?.includes("thinking") ? "thinks" : null].filter(Boolean).join(" · ") || undefined}
+                            /* Offered even where the runtime will not switch this session's model: the order is
+                               this device's, and the list is still a list you read. */
+                            pin={{ on: pins.has(m.id), toggle: () => togglePinnedModel(m.id) }}
                             onPress={() => pick(m.id)} />
                     ))}
             </Sheet>

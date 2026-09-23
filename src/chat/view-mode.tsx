@@ -17,7 +17,7 @@ import { IconBrain, IconMenu } from "../sidebar/icons";
 import type { PlatformPrefs } from "./platform";
 
 /** Preference keys, under the platform's own namespace. */
-export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", CODE_KEY = "view.codeSize", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups", THEME_KEY = "view.theme";
+export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", PINNED_MODELS_KEY = "view.pinnedModels", CODE_KEY = "view.codeSize", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups", THEME_KEY = "view.theme";
 
 /** Is the page in calm view? Read it in a render to re-render when it changes. */
 export const calm = signal(true);
@@ -47,6 +47,19 @@ export const foldedRuntimes = signal<ReadonlySet<string>>(new Set());
  * is gone simply draws nothing, and stays stored in case the session comes back (an offline runtime reconnecting).
  */
 export const pinned = signal<ReadonlySet<string>>(new Set());
+
+/**
+ * Models kept at the top of every model list, by id.
+ *
+ * THIS DEVICE'S, like the session pins above, and for the same reason: which models someone reaches for is a fact
+ * about how they work on this screen, not about the runtime — the box offering forty of them has no opinion, and the
+ * phone is allowed a different shortlist from the laptop. Several, not one favourite, because the question is
+ * usually "which three do I actually use" rather than "which one".
+ *
+ * A pinned id that no runtime offers draws nothing and stays stored: the model may be on a box that is offline, or
+ * unloaded, and forgetting the pin because the list is momentarily short would lose it for good.
+ */
+export const pinnedModels = signal<ReadonlySet<string>>(new Set());
 
 /**
  * The size code is set at on this page, in px: transcript code blocks, the Python bench's editor and what it prints.
@@ -141,6 +154,8 @@ export function installViewPrefs(prefs: PlatformPrefs): void {
     foldedRuntimes.value = new Set(Array.isArray(f) ? f.filter((x) => typeof x === "string") : []);
     const p = prefs.get<string[]>(PINNED_KEY);
     pinned.value = new Set(Array.isArray(p) ? p.filter((x) => typeof x === "string") : []);
+    const pm = prefs.get<string[]>(PINNED_MODELS_KEY);
+    pinnedModels.value = new Set(Array.isArray(pm) ? pm.filter((x) => typeof x === "string") : []);
     dockLayout.value = readDock(prefs.get<DockLayout>(DOCK_KEY));
     const ps = prefs.get<number>(PANEL_FS_KEY);
     panelSize.value = PANEL_SIZES.some((x) => x.px === ps) ? ps! : PANEL_FS_DEFAULT;
@@ -244,6 +259,14 @@ export function togglePin(key: string): void {
     if (!next.delete(key)) next.add(key);
     pinned.value = next;
     store?.set(PINNED_KEY, [...next]);
+}
+
+/** Keep a model at the top of the lists on this device, or stop. */
+export function togglePinnedModel(id: string): void {
+    const next = new Set(pinnedModels.value);
+    if (!next.delete(id)) next.add(id);
+    pinnedModels.value = next;
+    store?.set(PINNED_MODELS_KEY, [...next]);
 }
 
 /** Pin a session on this device (a no-op when it already is). */

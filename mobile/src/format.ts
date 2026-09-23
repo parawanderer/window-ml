@@ -70,3 +70,16 @@ export function sections(runtimes: RuntimeInfo[], sessions: SessionSummary[], no
             return { runtime, data: recent, older: all.length - recent.length };
         });
 }
+
+/**
+ * The order a model list is drawn in: this device's pinned models first, then the rest, each alphabetical.
+ *
+ * Takes the pins rather than reading them, so a list sorts from the same snapshot its rows render from — and so the
+ * rule stays a pure function, testable without a phone. The page follows the same one (`byPinned`,
+ * src/chat/model-picker.tsx): a list that reorders depending on which screen you opened it from is worse than one
+ * that never reorders. Returns a new array; the caller's list is not touched.
+ */
+export function byPinned<T>(items: readonly T[], id: (t: T) => string, pinned: ReadonlySet<string>): T[] {
+    return [...items].sort((a, b) =>
+        (Number(pinned.has(id(b))) - Number(pinned.has(id(a)))) || id(a).localeCompare(id(b)));
+}

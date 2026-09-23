@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { ago, needsYou, sections, seen, when, STATUS_LABEL, STATUS_TONE } = await import("../mobile/src/format.ts");
+const { ago, byPinned, needsYou, sections, seen, when, STATUS_LABEL, STATUS_TONE } = await import("../mobile/src/format.ts");
 
 const EVERY = [{ scope: "control" }];
 const rt = (id, extra = {}) => ({ id, name: id, kind: "browser", online: true, contractVersion: 1, grants: EVERY, capabilities: {}, ...extra });
@@ -64,4 +64,19 @@ test("when something happened reads on into the sentence after it", () => {
     // `seen` says the word itself, for a line that begins with it; `when` never does.
     assert.match(seen(now - 5 * 60_000, now), /^seen /);
     assert.doesNotMatch(when(now - 5 * 60_000, now), /seen/);
+});
+
+// The phone's model shortlist (mobile/src/pinned-models.ts). Pure, so the sort is checked without AsyncStorage.
+test("pinned models: this device's shortlist first, then the rest, each alphabetical", () => {
+    const m = (id) => ({ id });
+    const all = [m("qwen3:32b"), m("gemma3:27b"), m("llama3:8b")];
+    const ids = (list) => list.map((x) => x.id);
+    // Nothing pinned: plain alphabetical, so a device with no opinion sees no reordering.
+    assert.deepEqual(ids(byPinned(all, (x) => x.id, new Set())), ["gemma3:27b", "llama3:8b", "qwen3:32b"]);
+    // Several pins, sorted among themselves rather than by when each was pinned.
+    assert.deepEqual(ids(byPinned(all, (x) => x.id, new Set(["qwen3:32b", "llama3:8b"]))), ["llama3:8b", "qwen3:32b", "gemma3:27b"]);
+    // A pin for a model this runtime does not offer simply does not appear — it is not an error, and it is kept.
+    assert.deepEqual(ids(byPinned(all, (x) => x.id, new Set(["gone:70b"]))), ["gemma3:27b", "llama3:8b", "qwen3:32b"]);
+    // The input is not mutated: the sheet sorts a list it does not own.
+    assert.deepEqual(ids(all), ["qwen3:32b", "gemma3:27b", "llama3:8b"]);
 });

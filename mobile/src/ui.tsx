@@ -7,7 +7,7 @@ import { ActivityIndicator, Animated, Platform, Pressable, StyleSheet, Text, Tex
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import { BottomSheetBackdrop, BottomSheetModal, BottomSheetScrollView, BottomSheetTextInput, type BottomSheetBackdropProps } from "@gorhom/bottom-sheet";
-import { Check, ChevronDown, Search, X } from "lucide-react-native";
+import { Check, ChevronDown, Pin, Search, X } from "lucide-react-native";
 import { SIZE, usePalette, type Palette } from "./theme";
 
 /** A round icon-only button, 44pt: the page's header buttons. `label` is its accessible name. */
@@ -164,8 +164,10 @@ export function Chip({ text, on, onPress }: { text: string; on: boolean; onPress
 }
 
 /** One row of a sheet: a title, an optional line under it, and a check when it is the chosen one. */
-export function SheetRow({ title, detail, chosen, disabled, onPress, mono, danger }: {
+export function SheetRow({ title, detail, chosen, disabled, onPress, mono, danger, pin }: {
     title: string; detail?: string; chosen?: boolean; disabled?: boolean; onPress?: () => void; mono?: boolean; danger?: boolean;
+    /** a pin at the row's end: whether it is on, and what a tap does. Absent means the row has none */
+    pin?: { on: boolean; toggle: () => void };
 } & Pick<PressableProps, "onPress">) {
     const p = usePalette();
     return (
@@ -176,6 +178,15 @@ export function SheetRow({ title, detail, chosen, disabled, onPress, mono, dange
                 {detail ? <Text style={[s.sheetRowDetail, { color: p.fgDim }]}>{detail}</Text> : null}
             </View>
             {chosen ? <Check size={20} color={p.accent} /> : null}
+            {/* `pin` sits INSIDE the row's Pressable, so its own Pressable takes the touch first (React Native hit
+                testing goes to the deepest view) and the row's onPress never fires for a tap on the pin. */}
+            {pin ? (
+                <Pressable accessibilityRole="button" accessibilityState={{ selected: pin.on }} hitSlop={10}
+                    accessibilityLabel={pin.on ? `Unpin ${title}` : `Pin ${title} to the top`}
+                    onPress={() => { void Haptics.selectionAsync(); pin.toggle(); }} style={s.sheetRowPin}>
+                    <Pin size={17} color={pin.on ? p.accent : p.fgFaint} fill={pin.on ? p.accent : "transparent"} />
+                </Pressable>
+            ) : null}
         </Pressable>
     );
 }
@@ -252,6 +263,8 @@ const s = StyleSheet.create({
     sheetNote: { fontSize: SIZE.small, lineHeight: 19, padding: 12, borderRadius: 12, marginHorizontal: 4, marginBottom: 8 },
     // A row: 52pt, its title and detail on the left, the check on the right.
     sheetRow: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 52, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12 },
+    // The pin at a model row's end. Padded so the tap target clears the 44pt floor without the glyph growing.
+    sheetRowPin: { paddingVertical: 10, paddingHorizontal: 6, marginRight: -4 },
     // A row's title.
     sheetRowTitle: { fontSize: SIZE.text },
     // A row's second line.
