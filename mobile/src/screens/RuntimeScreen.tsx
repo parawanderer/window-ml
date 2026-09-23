@@ -19,7 +19,7 @@ import { useEmbed } from "../embed";
 import { seen, when } from "../format";
 import type { Routes } from "../routes";
 import { SIZE, usePalette } from "../theme";
-import { SheetFilter } from "../ui";
+import { MODEL_FILTER_AT, SheetFilter } from "../ui";
 import { Bar } from "./AccountScreens";
 
 /** What each capability means to a person, in the order worth reading (the page's own list and words). */
@@ -29,8 +29,6 @@ const CAPS: [keyof RuntimeCapabilities, string][] = [
     ["resourcePanel", "Resource graphs"], ["pythonBench", "Python bench"], ["headless", "Headless runs"],
 ];
 
-/** Past this many models the list gets a filter: a cloud gateway lists dozens. */
-const MODEL_FILTER_AT = 8;
 
 /** The screen. */
 export function RuntimeScreen() {
