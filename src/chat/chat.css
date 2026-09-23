@@ -1027,8 +1027,13 @@ button.chat-page-go:hover { color: var(--fg); }
    scrolls into view, or says why it cannot. Never styled like `.chat-truncated`, which says they are gone. */
 .chat-earlier { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 4px 0 18px; color: var(--fg-faint); font-size: .88em; }
 .chat-earlier.err { color: var(--fg-dim); }
+/* THE BUTTON KEEPS ITS WORDS; the sentence beside it gives way. A flex item may shrink below its content, so on a
+   phone "Try again" broke across two lines while the message beside it had room to wrap instead — a two-word button
+   folded in half reads as broken. The message is what should wrap, so it is the one allowed to shrink. */
+.chat-earlier > span { min-width: 0; }
 .chat-earlier-retry {
     border: none; border-radius: 999px; padding: 5px 12px; background: var(--panel); color: var(--fg-dim); font: inherit; cursor: pointer;
+    flex: 0 0 auto; white-space: nowrap;
 }
 .chat-earlier-retry:hover { color: var(--fg); }
 
@@ -1229,6 +1234,12 @@ button.chat-page-go:hover { color: var(--fg); }
     .chat .astep-head, .chat .block-head { min-height: 40px; }
     /* A reply's small tools (collapse, copy): the glyph stays small, the target does not. */
     .chat .who-toggle, .chat .mrow .icon-btn { min-width: 40px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; }
+    /* AND THEY SIT TOGETHER. On a wide panel the collapse chevron leads the line, beside the status dot and the
+       model chip it belongs with. Calm view hides those on a phone, which left the chevron alone at one end of the
+       row and the copy button and the time at the other — a control a screen's width from everything you would
+       reach for beside it. Reordered rather than moved in the markup, because the wide layout is right as it is. */
+    .chat .mrow > .who-toggle { order: 1; }
+    .chat .mrow > .tt:has(> .icon-btn), .chat .mrow > .raw-btn, .chat .mrow > .time { order: 2; }
     .pair-card .btn { min-height: 40px; }
     /* Continue after a step cap: the run's one way forward, not a footnote. */
     .chat .continue-run, .chat.calm .msg.asst.capped .continue-run { min-height: 40px; padding: 6px 18px; font-size: 1em; }

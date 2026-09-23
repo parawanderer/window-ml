@@ -53,7 +53,7 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .hbtn {
     display: inline-flex; align-items: center; justify-content: center; line-height: 0;
     background: transparent; border: none; color: var(--fg-dim); cursor: pointer;
-    padding: 3px; border-radius: 5px; flex: 0 0 auto;
+    padding: 3px; border-radius: 50%; flex: 0 0 auto;
 }
 .hbtn:hover, .hbtn.on { background: var(--panel-2); color: var(--fg); }
 
@@ -1744,12 +1744,28 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
                            background: var(--accent); animation: astep-live 1.2s ease-in-out infinite; }
 @keyframes astep-live { 0%, 100% { opacity: 1; } 50% { opacity: .15; } }
 
+/* A SMALL ICON BUTTON: a glyph with a fill behind it while it is being used. ROUND, because the fill is the only
+   part of it anyone sees and everything else this UI fills is round — a 4px radius drew a square behind a copy
+   button next to a pill-shaped "Copied.", which on a phone is the whole button and unmistakable. */
 .icon-btn {
     display: inline-flex; align-items: center; justify-content: center; line-height: 0;
     background: transparent; border: none; color: var(--fg-faint); cursor: pointer;
-    padding: 2px; border-radius: 4px;
+    padding: 2px; border-radius: 50%;
 }
 .icon-btn:hover { background: var(--panel-2); color: var(--fg); }
+/* A TOUCH SCREEN HAS NO POINTER TO REST. `:hover` there is simply whatever was tapped last, and it stays lit until
+   something else is tapped — so the copy button kept its fill long after it had copied, which reads as a control
+   stuck on rather than one that has finished. `:active` says the same thing for as long as the finger is down,
+   which is all the feedback a tap needs. `.on` is a STATE, not pointer feedback, so it is left alone.
+
+   It sits AFTER both `:hover` rules on purpose: the selectors weigh the same, so only source order decides, and
+   above them it was silently overridden by the very rules it exists to cancel. */
+@media (hover: none) {
+    .icon-btn:hover { background: transparent; color: var(--fg-faint); }
+    .hbtn:hover:not(.on) { background: transparent; color: var(--fg-dim); }
+    .icon-btn:active, .hbtn:active { background: var(--panel-2); color: var(--fg); }
+}
+
 .dot { width: 0.67em; height: 0.67em; border-radius: 50%; flex: 0 0 auto; }
 .dot.pending { background: var(--warn); animation: pulse 1s infinite; }
 .dot.ok { background: var(--ok); }

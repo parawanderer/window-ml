@@ -95,7 +95,10 @@ export const Sheet = forwardRef<BottomSheetModal, { title?: string; children: Re
             {header}
             {/* "handled": without it the FIRST tap on a row only dismisses the keyboard, so a model picked after filtering,
                 or Save after typing a title, needed two taps and the first seemed to do nothing. */}
-            <BottomSheetScrollView contentContainerStyle={s.sheetBody} keyboardShouldPersistTaps="handled">
+            {/* The bottom inset is the SYSTEM's, not a guess: 36 points was chosen on a phone with a gesture bar and
+                left the last row of every sheet under Android's three-button navigation, which is taller. Measured,
+                so a sheet ends above whatever that device puts there. */}
+            <BottomSheetScrollView contentContainerStyle={[s.sheetBody, { paddingBottom: insets.bottom + 28 }]} keyboardShouldPersistTaps="handled">
                 {children}
             </BottomSheetScrollView>
         </BottomSheetModal>
@@ -224,8 +227,9 @@ const s = StyleSheet.create({
     dot: { width: 8, height: 8, borderRadius: 4 },
     // The toast: a dark capsule above the bottom edge, centred, never under a finger.
     toast: { position: "absolute", left: SIZE.gutter, right: SIZE.gutter, paddingVertical: 12, paddingHorizontal: 16, borderRadius: SIZE.radius, alignSelf: "center" },
-    // What a sheet holds, with room under the last row for the home bar.
-    sheetBody: { paddingHorizontal: 8, paddingBottom: 36 },
+    // What a sheet holds. The room under the last row is added where it is drawn, from the device's own bottom inset:
+    // a constant is right on exactly one phone and hides a row behind the navigation bar on the rest.
+    sheetBody: { paddingHorizontal: 8 },
     // A choice in a row of them: a small pill, filled when it is the chosen one.
     chip: { justifyContent: "center", minHeight: 36, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999 },
     // Its label, with room for the descenders a tight chip clips.
