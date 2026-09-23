@@ -2,7 +2,7 @@
 // agent run's final answer), the user/assistant turn pair, and the session-list row. Extracted from
 // app.tsx; a leaf view layer over ui-kit + answer-render (no agent-detail / HUD deps, so agent-detail
 // can import ReplyBubble without a cycle).
-import { SentImages, UserText } from "./user-text";
+import { SentImages, UserActions, UserText } from "./user-text";
 import { services, bareHash } from "./services";
 import { useRef, useState } from "preact/hooks";
 import type { ExtendProfile } from "../contract-chat";
@@ -234,7 +234,7 @@ export function MessageTurn({ t, hash }: { t: Turn; hash?: string }) {
     return (
         <>
             <div class={`msg user${t.user ? "" : " no-text"}`}>
-                <div class="mrow"><span class="who">user</span><span class="sp" /><Stamp ts={t.ts} /></div>
+                <div class="mrow"><span class="who">user</span><span class="sp" />{t.user ? <UserActions text={t.user} /> : null}<Stamp ts={t.ts} /></div>
                 {t.user ? <UserText text={t.user} /> : null}
             </div>
             <SentImages images={t.images} />

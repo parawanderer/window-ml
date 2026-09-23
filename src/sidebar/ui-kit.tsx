@@ -186,7 +186,14 @@ export function useCopy(): { copied: boolean; copy: (text: string) => void } {
 // A lightweight custom context menu. A web-page/iframe can't invoke the native OS menu with custom
 // items (that's privileged DevTools-only), so we render our own popup at the cursor. Rendered once in
 // App; opened via openCtxMenu(e, items); dismissed on outside-click / Esc / blur / item-click.
-export interface CtxItem { label: string; run: () => void; }
+export interface CtxItem {
+    label: string;
+    run: () => void;
+    /** a glyph before the label, so the menu is read by shape as well as by word */
+    icon?: ComponentChildren;
+    /** offered but not available yet: shown, dimmed, and not clickable, rather than silently doing nothing */
+    disabled?: boolean;
+}
 /** The open right-click menu, or null. One per surface; `ContextMenu` draws it. */
 export const ctxMenu = signal<{ x: number; y: number; items: CtxItem[] } | null>(null);
 /** Open the panel's own right-click menu at the pointer, suppressing the browser's — the useful actions
@@ -211,7 +218,12 @@ export function ContextMenu() {
     return (
         <div class="ctx-backdrop" onPointerDown={() => (ctxMenu.value = null)} onContextMenu={e => { e.preventDefault(); ctxMenu.value = null; }}>
             <div class="ctx-menu" style={`left:${left}px;top:${top}px`} onPointerDown={e => e.stopPropagation()}>
-                {m.items.map((it, i) => <button class="ctx-item" key={i} onClick={() => { it.run(); ctxMenu.value = null; }}>{it.label}</button>)}
+                {m.items.map((it, i) => (
+                    <button class={`ctx-item${it.disabled ? " off" : ""}`} key={i} disabled={it.disabled}
+                        onClick={() => { if (!it.disabled) { it.run(); ctxMenu.value = null; } }}>
+                        {it.icon ? <span class="ctx-icon" aria-hidden="true">{it.icon}</span> : null}{it.label}
+                    </button>
+                ))}
             </div>
         </div>
     );
