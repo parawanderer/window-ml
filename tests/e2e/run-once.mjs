@@ -27,7 +27,8 @@ import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 import { renderMarkdownPage } from "./viewer.mjs";
-import { mkdir, writeFile, readFile } from "node:fs/promises";
+import { readDotenv } from "../../scripts/dotenv.mjs";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 /** The default fake-LLM script: read the code off the page, then answer with it. */
@@ -92,9 +93,7 @@ export async function resolveBackendFromEnv(env = process.env) {
         };
     }
     if (env.USE_ENV) {
-        const dotenv = Object.fromEntries((await readFile(path.resolve(".env"), "utf8")).split("\n")
-            .map((l) => l.trim()).filter((l) => l && !l.startsWith("#")).map((l) => { const i = l.indexOf("="); return [l.slice(0, i), l.slice(i + 1)]; }));
-        return backendFromDotenv(dotenv, env);
+        return backendFromDotenv(readDotenv(), env);
     }
     return null;   // → fake-LLM
 }
