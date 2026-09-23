@@ -31,9 +31,9 @@ API from memory.** `expo-file-system` in particular is the `File` / `Directory` 
 ## Traps
 
 - **Gradle only watches `mobile/`**: a change to `src/native/` or the page leaves the old JS bundle in an incremental
-  build. `node scripts/android.mjs install --next` deletes it first.
+  build. `node scripts/android.mjs install` deletes it first.
 - **A new native module needs a new native project**: `ios/` and `android/` are generated once, and an old one runs
-  without the module until launch, where it fails as "Cannot find native module" on a white screen. `install --next`
+  without the module until launch, where it fails as "Cannot find native module" on a white screen. `install`
   fingerprints `package.json`, `app.json` and `plugins/` (`scripts/mobile-prebuild.mjs`) and re-runs `expo prebuild
   --clean` when they change; by hand, delete the platform folder.
 - **A scroll view with a field in it eats the first tap**: without `keyboardShouldPersistTaps="handled"` a tap while the
@@ -53,7 +53,7 @@ API from memory.** `expo-file-system` in particular is the `File` / `Directory` 
   WebView is `onShouldStartLoadWithRequest`; anything else is a second look, and must treat a missing URL as nothing.
 - **Metro sees only the repo folders in `metro.config.js`'s `watchFolders`** (`src/native`, `src/pairing`, `src/chat`).
   An import from anywhere else typechecks and then fails the RELEASE build ("Unable to resolve module"), which
-  `install --next` reports only as xcodebuild exiting 65: read its log, and never chain a flow run after it with `&&`.
+  `install` reports only as xcodebuild exiting 65: read its log, and never chain a flow run after it with `&&`.
 - **Anything the app sends rides one sealed hub command, at most 1 MiB** (`src/hub/seal.ts`), base64 and JSON included.
   A phone photo alone is several times that: images are shrunk to `image-budget.ts`'s budget before they are attached.
 - **React Native's `Image` draws no SVG**, and says nothing: the viewer opened on a black screen for the demo's SVG
@@ -79,5 +79,5 @@ API from memory.** `expo-file-system` in particular is the `File` / `Directory` 
 
 ## Running it
 
-From the repo root: `node scripts/android.mjs install --next [--demo]` then `launch --next` builds, installs and
-starts this app on the emulator (skill `phone`). This app's id is `dev.wander.windowml.next` while it sits beside the Capacitor app.
+From the repo root: `node scripts/android.mjs install [--demo]` then `launch` builds, installs and starts this app on
+the emulator (skill `phone`). Its id is `dev.wander.windowml`, which it took over from the Capacitor app it replaced.

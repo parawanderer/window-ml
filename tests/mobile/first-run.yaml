@@ -1,11 +1,13 @@
-# first-run.yaml — the phone app with no account: it opens on the account panel, not the demo world, and offers to
-# create or join one. Maestro reads the WebView's text through Android's accessibility tree, so this checks what a
-# person sees, not the DOM. Run: `maestro test tests/mobile/first-run.yaml` with the app installed
-# (node scripts/android.mjs install).
+# first-run.yaml — the phone app with no account: it opens on the account screen, not the demo world, and offers to join
+# or create one. The check that matters is the last one: a real build must never carry the fake host.
+# Run with a REAL (non-demo) build installed: `node scripts/ios.mjs install` (or android.mjs), then
+# `node scripts/ios.mjs flows tests/mobile/first-run.yaml`.
 appId: dev.wander.windowml
 ---
 - launchApp:
     clearState: true
-- assertVisible: "This device is in no account"
-- assertVisible: "Create an account"
-- assertNotVisible: "Work laptop"   # the demo world's runtime: the app must never ship the fake host
+- extendedWaitUntil:
+    visible: "This phone is in no account"
+    timeout: 60000
+- assertVisible: "Join an account"
+- assertNotVisible: "Work laptop"   # the demo world's runtime: a real build must never ship the fake host

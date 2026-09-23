@@ -58,7 +58,8 @@ export function RuntimeScreen() {
 
     return (
         // The model filter sits mid-screen, so the keyboard would cover it (and its clear button) as soon as it opens.
-        <KeyboardAvoidingView behavior="padding" style={[s.screen, { backgroundColor: p.bg, paddingTop: insets.top }]}>
+        // `height` on Android: padding there left the filtered list under the keyboard, where iOS lifts it clear.
+        <KeyboardAvoidingView behavior={Platform.select({ ios: "padding", default: "height" })} style={[s.screen, { backgroundColor: p.bg, paddingTop: insets.top }]}>
             <Bar title={rt.name} />
             <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 32 }} keyboardShouldPersistTaps="handled">
                 <Text style={[s.group, { color: p.fgDim }]}>About</Text>

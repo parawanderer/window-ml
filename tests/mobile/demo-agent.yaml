@@ -1,8 +1,8 @@
-# next-demo-agent.yaml — the React Native app's DEMO build (`install --next --demo`): start an agent run from the phone.
+# demo-agent.yaml — the React Native app's DEMO build (`install --demo`): start an agent run from the phone.
 # The new-session screen switches to Agent, the "Runs on" pill opens the runtime's tabs (window by window, groups
 # named), a tab is picked, and the run opens on its session. Needs the demo world's runtimes and tabs, so it fails on a
 # real build: name it when you run `flows`.
-appId: dev.wander.windowml.next
+appId: dev.wander.windowml
 ---
 - launchApp:
     clearState: true

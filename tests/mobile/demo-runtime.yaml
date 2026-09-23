@@ -1,8 +1,8 @@
-# next-demo-runtime.yaml — the React Native app's DEMO build (`install --next --demo`): Settings → Runtimes → a runtime
+# demo-runtime.yaml — the React Native app's DEMO build (`install --demo`): Settings → Runtimes → a runtime
 # opens what it IS (status, kind, contract, archive folder, what it offers), the models it lists (with a filter past a
 # screenful), and what it keeps, in the page's own words. Read-only, as the web page's Runtimes tab is.
 # Needs the demo world's runtimes, so name it when you run `flows`.
-appId: dev.wander.windowml.next
+appId: dev.wander.windowml
 ---
 - launchApp:
     clearState: true
@@ -23,6 +23,8 @@ appId: dev.wander.windowml.next
 - tapOn:
     id: "sheet-filter"
 - inputText: "gemma"
+# The keyboard goes away before the list is read: it covers the results on a small screen.
+- hideKeyboard
 - extendedWaitUntil:
     visible: "gemma3:27b"
     timeout: 10000

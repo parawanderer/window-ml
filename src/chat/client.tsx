@@ -1,6 +1,7 @@
 // client.tsx — THE STANDALONE CLIENT: the chat page with nothing behind it but a hub. It is not a browser runtime and
 // never becomes one: no agents, no tabs, no worker. It lists the runtimes on its account and drives them through the
-// hub, exactly as the phone app does, which runs this same entry inside Capacitor.
+// hub. The PHONE APP has its own shell now (mobile/, docs/spec/NATIVE_SHELL.md) and loads native-embed.tsx rather
+// than this entry, so what runs here is always a page in a browser.
 //
 // Its state is its keyring (this origin's IndexedDB). In no account yet, it shows only the account panel: create one
 // (this device then holds the root) or join one. In an account, it connects with the keys the keyring holds and draws
@@ -26,12 +27,8 @@ import { installPageTheme } from "./page-theme";
 import { webPlatform, type ClientPlatform } from "./platform";
 import { installViewPrefs } from "./view-mode";
 
-/** Is this the phone app (Capacitor's native shell) rather than a page in a browser? */
-const native = !!(globalThis as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.();
-
-/** What this device is called by default on the account: its browser and platform, or just "Phone" in the app. */
+/** What this device is called by default on the account: its browser and platform. */
 function deviceLabel(): string {
-    if (native) return "Phone";
     const ua = (navigator as Navigator & { userAgentData?: { brands?: { brand: string }[]; platform?: string } }).userAgentData;
     const brand = ua?.brands?.map((b) => b.brand).find((b) => !/not.*brand|chromium/i.test(b));
     return brand && ua?.platform ? `${brand} on ${ua.platform}` : "Web client";
@@ -66,13 +63,13 @@ async function main(): Promise<void> {
     const host: HubHost | null = opened.host;
     const platform: ClientPlatform = {
         ...webPlatform,
-        kind: native ? "native" : "web",
+        kind: "web",
         pairing: clientPairing({
             keyring: async () => ring,
             // Pairing goes over the host's connection: the hub refuses a second one from this principal.
             client: () => host?.connection?.hubClient ?? null,
             defaultLabel: deviceLabel(),
-            rootKeptIn: native ? "this app's storage on this phone" : "this site's data in this browser",
+            rootKeptIn: "this site's data in this browser",
             onChanged: () => location.reload(),
         }),
     };

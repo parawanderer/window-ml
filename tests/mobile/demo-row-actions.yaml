@@ -1,7 +1,7 @@
-# next-demo-row-actions.yaml — the React Native app's DEMO build (`install --next --demo`): a long press on a list row
+# demo-row-actions.yaml — the React Native app's DEMO build (`install --demo`): a long press on a list row
 # shows that session's actions without opening it (the same sheet as the open session's ⋮), and a rename made there
 # reaches the list. Needs the demo world's sessions, so it fails on a real build: name it when you run `flows`.
-appId: dev.wander.windowml.next
+appId: dev.wander.windowml
 ---
 - launchApp:
     clearState: true

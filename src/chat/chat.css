@@ -13,8 +13,8 @@ html, body, #root { height: 100%; }
 /* THE PHONE'S OWN EDGES: the status bar and the notch above, the rounded corners and camera cut-outs at the sides. The
    whole frame keeps clear of them, so every header (the list's, a session's, a sheet's) sits below the status bar rather
    than each remembering to. The bottom is each footer's to keep (the composer and the list's foot do), since the pane
-   behind it should still reach the edge. `env()` alone, never Capacitor's `--safe-area-inset-*` too: on an older
-   Android WebView Capacitor pads the view itself and `env()` reads 0, where adding its variables would pad twice. */
+   behind it should still reach the edge. `env()` alone: the app's own shell keeps the WebView clear of the system bars
+   and passes the insets it holds back over the bridge, so a second set of variables here would pad twice. */
 .chat { padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
 /* THE PHONE APP'S PAGE (native-embed.tsx): only the transcript, filling the WebView on calm's canvas so it meets the
    native header and composer with no seam. The app keeps the safe areas itself, so the page takes none. */

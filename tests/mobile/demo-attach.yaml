@@ -1,8 +1,8 @@
-# next-demo-attach.yaml — the React Native app's DEMO build (`install --next --demo`): attach two photos from the library
+# demo-attach.yaml — the React Native app's DEMO build (`install --demo`): attach two photos from the library
 # to a message, see them as thumbnails above the box, and send them with text: the box empties and the runtime answers. The photo picker
 # is the system's, driven by position, so the simulator's library needs photos (iOS ships its sample set). Needs the
 # demo world's sessions, so it fails on a real build: name it when you run `flows`.
-appId: dev.wander.windowml.next
+appId: dev.wander.windowml
 ---
 - launchApp:
     clearState: true

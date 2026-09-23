@@ -78,8 +78,8 @@ Fetch it if you will touch `python_exec` or want the tests that exercise real pa
 ## 4b. Optional: the mobile clients
 
 **You do not need any of this to work on the chat page, the extension or anything else in the repo, and nothing in
-`npm test` or `npm run test:chat` does.** The phone app is the chat page packaged with Capacitor (a native shell is
-proposed in `docs/spec/NATIVE_SHELL.md`), CI builds it on every change, and a page you can open in a browser must never
+`npm test` or `npm run test:chat` does.** The phone app is a native shell around the page's transcript
+(`mobile/`, `docs/spec/NATIVE_SHELL.md`), CI builds it on every change, and a page you can open in a browser must never
 need 40GB of mobile tooling to change. If the suite ever comes to need it, that is a bug.
 
 **The phone LAYOUT needs no tooling either.** Every test of how the chat page behaves on a phone (its layout, touch
@@ -110,7 +110,7 @@ performance), or checking a change the way a phone draws it. No Android Studio; 
 
 ```bash
 brew install --cask android-commandlinetools   # sdkmanager, avdmanager
-brew install --cask temurin@21                 # gradle builds with JDK 21: Capacitor's Android library targets it
+brew install --cask temurin@17                 # gradle builds with JDK 17, which React Native's plugin targets
 node scripts/android.mjs setup                 # platform-tools, the emulator, an arm64 API 35 image, one device
 node scripts/android.mjs doctor                # what is there and what is missing, with the command for each
 ```

@@ -1,8 +1,8 @@
-# next-demo-scan.yaml — the React Native app's DEMO build (`install --next --demo`): Settings → Devices → Pair a device
+# demo-scan.yaml — the React Native app's DEMO build (`install --demo`): Settings → Devices → Pair a device
 # offers "Scan its QR code" (the page says this device can check a scanned code), which asks for the camera and opens
 # the scanner full screen, and closing it goes back to the typed code. A simulator has no camera to read a code with:
 # the decode itself is the page's `lookupScanned`, tested on its own. Needs the demo world, so name it when you run `flows`.
-appId: dev.wander.windowml.next
+appId: dev.wander.windowml
 ---
 - launchApp:
     clearState: true

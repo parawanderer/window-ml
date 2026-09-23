@@ -1,7 +1,8 @@
 // WHAT BELONGS TO THE DEVICE, not the runtime: the chat core's `ClientPlatform` (docs/spec/CHAT_PAGE.md). The contract
 // leaves these out because they are the same whichever runtime a session is on: where preferences are stored, how an
 // image is shown full size, how a file is handed over. Each place the core runs supplies one: the web adapter here,
-// the extension adapter with the extension page (slice 3), the Capacitor adapter with the phone app (slice 6).
+// the extension adapter with the extension page (slice 3), and `nativePlatform` (native-embed.tsx) in the phone app,
+// where each of these crosses the bridge to the shell (docs/spec/NATIVE_SHELL.md).
 import { signal } from "@preact/signals";
 import type { PairingApi } from "../pairing/api";
 
