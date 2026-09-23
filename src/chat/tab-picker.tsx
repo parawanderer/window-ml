@@ -8,6 +8,7 @@
 import { IconCheck, IconPlus, IconWarn } from "../sidebar/icons";
 import { truncate } from "../sidebar/format";
 import { cursorTipOn } from "../sidebar/ui-kit";
+import { cutTip } from "./cut-tip";
 import { useState } from "preact/hooks";
 import { usePickerPop } from "./pop-picker";
 import { groupFolds, setGroupFold } from "./view-mode";
@@ -93,7 +94,9 @@ export function TabPicker({ tabs, groups, value, onChange, onOpen, groupsHint, g
         return (
             <button key={t.tabId} type="button" role="option" aria-selected={value === t.tabId} {...p.row(t.tabId, indent ? " indent" : "")}>
                 <TabIcon tab={t} />
-                <span class="tp-title">{t.title || tabHost(t.url)}</span>
+                {/* On the span rather than the row: the host beside it has an instant tip of its own, and a
+                    delayed one on the whole row would replace that under a resting pointer. */}
+                <span class="tp-title" {...cutTip(t.title || tabHost(t.url))}>{t.title || tabHost(t.url)}</span>
                 {/* The whole address follows the pointer: the host is what fits, and two tabs on one site differ only
                     in the rest. A node, not a string, so the URL is text rather than markdown. */}
                 <span class="tp-host" {...cursorTipOn(<span class="tp-url">{t.url}</span>)}>{tabHost(t.url)}</span>
@@ -108,7 +111,9 @@ export function TabPicker({ tabs, groups, value, onChange, onOpen, groupsHint, g
 
     return (
         <>
-            <button {...p.pillProps} class="tp-pill tp-pill-tab" aria-label={`Where it runs: ${chosen ? chosen.title || tabHost(chosen.url) : value === "blank" ? "a new tab" : "a tab that has closed"}`}>
+            {/* Only a CHOSEN tab's title can be long enough to be cut. "New tab" and the two notices always fit, and a
+                tip with nothing in it is what attaching this unconditionally would give them. */}
+            <button {...p.pillProps} {...(chosen ? cutTip(chosen.title || tabHost(chosen.url)) : {})} class="tp-pill tp-pill-tab" aria-label={`Where it runs: ${chosen ? chosen.title || tabHost(chosen.url) : value === "blank" ? "a new tab" : "a tab that has closed"}`}>
                 {tabs === null && value !== "blank" ? <span class="tp-pill-text dim">Loading tabs…</span>
                     : value !== "blank" && !chosen ? <span class="tp-pill-text tp-gone">That tab closed · pick another</span>
                     : chosen ? <><TabIcon tab={chosen} /><span class="tp-pill-text">{chosen.title || tabHost(chosen.url)}</span></>
@@ -156,7 +161,7 @@ export function TabPicker({ tabs, groups, value, onChange, onOpen, groupsHint, g
                                                     aria-label={`${seg.group.title || "Unnamed group"}, ${seg.tabs.length} tab${seg.tabs.length === 1 ? "" : "s"}`}
                                                     onClick={() => fold(seg.group)}>
                                                     <span class="tp-group-dot" aria-hidden="true" />
-                                                    <span class="tp-group-title">{seg.group.title || "Unnamed group"}</span>
+                                                    <span class="tp-group-title" {...cutTip(seg.group.title || "Unnamed group")}>{seg.group.title || "Unnamed group"}</span>
                                                     <span class="tp-group-n">{seg.tabs.length}</span>
                                                     <svg class="tp-group-caret" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
                                                 </button>

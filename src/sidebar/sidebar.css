@@ -1453,13 +1453,17 @@ details.io[open] > summary .io-preview { display: none; }
    from the steps above. */
 .msg.asst.capped { margin-top: 6px; }
 .msg.asst.capped .who { color: var(--warn); }
-/* "Continue (+N steps)" — resume a step-capped run. A calm accent pill, not an alarm; the +N is dimmed. */
-.continue-run { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; padding: 4px 12px;
+/* "▸ Continue +N steps" — resume a step-capped run. It was an accent outline on nothing, which made the one control a
+   stopped run offers the only purple, transparent thing on a page where every other button is a filled grey chip
+   (`.nav`, `.rc-preset`): it read as a different kind of UI rather than as this page's primary action. So it is that
+   same chip, and the play glyph carries the meaning instead of the colour — FILLED, because the shared outline version
+   is a hairline at this size and reads as a smudge. The +N is dimmed: it is the terms, not the offer. */
+.continue-run { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; padding: 5px 13px;
     font-size: 0.9em; font-weight: 600; cursor: pointer; border-radius: 999px;
-    color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
-    background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.continue-run:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
-.continue-run .continue-steps { font-weight: 400; opacity: 0.75; }
+    color: var(--fg); border: none; background: var(--panel-2); }
+.continue-run:hover { background: var(--panel-2-hover); }
+.continue-run .continue-steps { font-weight: 400; color: var(--fg-dim); }
+.continue-run svg { width: 13px; height: 13px; margin-left: -2px; fill: currentColor; }
 /* Per-reply model chip: outlined, click-to-copy (see CopyModel). */
 .model-name { background: transparent; border: 1px solid var(--border); color: var(--fg-dim); border-radius: 4px; padding: 0 6px; font: 0.85em ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; }
 .model-name:hover { color: var(--fg); border-color: var(--fg-dim); }

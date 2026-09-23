@@ -633,11 +633,17 @@ function Lede({ title, rt, summary, id, store, sessionKey, native }: {
     return (
         <div class="chat-lede">
             <b class="chat-lede-title">{truncate(title, 120)}</b>
-            {!native && summary?.model && rt ? <ModelTop store={store} rt={rt} model={summary.model} sessionKey={sessionKey} summary={summary} /> : null}
+            {/* THE MODEL IS PART OF WHAT THIS SESSION IS, not a control sitting above it. On its own line it drew as a
+                filled pill under the title with nothing to do with the title, and read as a stray dropdown. Here it
+                joins the line that already says where the session runs and what page it is on, in the same quiet text
+                the composer's picker uses: still openable, no longer announcing itself. */}
             <span class="chat-lede-sub">
                 {rt?.name ?? id?.runtime}
                 {summary?.page ? <> · <PageChip page={summary.page} onShow={show} /></> : null}
                 <PagePeek peek={peek} />
+                {!native && summary?.model && rt
+                    ? <><span class="chat-lede-sep" aria-hidden="true">·</span><ModelTop store={store} rt={rt} model={summary.model} sessionKey={sessionKey} summary={summary} quiet /></>
+                    : null}
             </span>
         </div>
     );

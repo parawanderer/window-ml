@@ -109,10 +109,12 @@ html, body, #root { height: 100%; }
 }
 .chat-resume:hover { border-color: var(--panel-2-hover); color: var(--fg); }
 .chat-resume-what { flex: 1; min-width: 0; }
-/* The action as the composer's send button would sit: at the right end, a pill in the accent. */
-.chat-resume-go { flex: 0 0 auto; color: var(--accent); font-weight: 600; padding: 6px 14px; border-radius: 999px;
-    background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.chat-resume:hover .chat-resume-go { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+/* The action as the composer's send button would sit: at the right end. The same filled grey chip as a
+   step-capped run's Continue, because the two are the same offer — carry this run on — and a page that dresses
+   them differently is telling the reader they are not. */
+.chat-resume-go { flex: 0 0 auto; color: var(--fg); font-weight: 600; padding: 6px 14px; border-radius: 999px;
+    background: var(--panel-2); }
+.chat-resume:hover .chat-resume-go { background: var(--panel-2-hover); }
 /* What a resume will NOT carry over, said in the form BEFORE it happens rather than in the transcript after. */
 .chat-resume-lost { margin: 2px 0 0; color: var(--fg-faint); font-size: .92em; line-height: 1.45; }
 
@@ -239,9 +241,7 @@ html, body, #root { height: 100%; }
 .chat.calm .msg.asst.capped:has(.asst-body > .md:empty) .who-toggle,
 .chat.calm .msg.asst.capped .asst-body:has(> .md:empty) { display: none; }
 .chat.calm .msg.asst.capped .asst-body { flex-basis: 100%; order: 2; }
-.chat.calm .msg.asst.capped .continue-run { margin: 0; padding: 4px 13px; font-size: .9em; background: transparent;
-    border-color: var(--border); color: var(--accent); }
-.chat.calm .msg.asst.capped .continue-run:hover { background: var(--panel); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.chat.calm .msg.asst.capped .continue-run { margin: 0; }
 .chat.calm .msg.asst .asst-body > .md { padding: 0; }
 
 /* An agent turn's box: the border earns its keep in a 360px panel, where a turn and its steps need telling apart at
@@ -721,6 +721,11 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-lede { margin: 6px 0 26px; }
 .chat-lede-title { display: block; font-size: 1.32em; line-height: 1.3; }
 .chat-lede-sub { display: flex; align-items: center; gap: 6px; margin-top: 4px; color: var(--fg-faint); font-size: .88em; }
+/* The separator before the session's model, in the lede's own line. A span rather than a bare "·" so the flex gap
+   does not double around it, and hidden from a screen reader, which reads the parts as separate things already. */
+.chat-lede-sep { color: var(--fg-faint); opacity: .6; }
+/* The model inside that line rides its height instead of setting it: the quiet pill is sized for a composer. */
+.chat-lede-sub .tp-pill.tp-pill-model.tp-pill-quiet { margin: 0 0 0 -4px; padding: 2px 6px; font-size: 1em; max-width: 30ch; }
 .chat.calm .chat-transcript { padding-top: 26px; }
 
 /* The send hint goes at a phone's width: there Enter makes a line and the button sends, so a line explaining the
