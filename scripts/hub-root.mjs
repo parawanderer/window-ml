@@ -1,7 +1,8 @@
 // hub-root.mjs — an account's ROOT DEVICE on the command line: create an account on a real hub and confirm the pairing
 // codes other devices show, before the pairing screens exist.
 //
-//   node --import tsx scripts/hub-root.mjs create wss://hub.tailnet.ts.net [--invite wmlhub-invite-…] [--label "…"]
+//   node --import tsx scripts/hub-root.mjs create [wss://hub.tailnet.ts.net] [--invite wmlhub-invite-…] [--label "…"]
+//       the hub may be left out when WINDOWML_HUB is set, in the environment or in the repo's .env
 //   node --import tsx scripts/hub-root.mjs confirm "ABCD 1234"
 //   node --import tsx scripts/hub-root.mjs show
 //
@@ -15,6 +16,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { fromEnv } from "./dotenv.mjs";
 import { Certificate } from "../src/proto/wmlhub/v1/identity.gen.ts";
 import { Role } from "../src/hub/wire.ts";
 import { HubClient } from "../src/hub/client.ts";
@@ -101,10 +103,13 @@ async function main() {
     const ring = await openRing();
     try {
         if (command === "create") {
-            if (!arg) throw new Error("usage: create <wss://hub> [--invite <token>] [--label <name>]");
+            // The hub may be left out when `WINDOWML_HUB` says it (a real variable first, then the repo's `.env`),
+            // so the address you would otherwise paste every time lives in one place.
+            const hubUrl = arg || fromEnv("WINDOWML_HUB");
+            if (!hubUrl) throw new Error("usage: create <wss://hub> [--invite <token>] [--label <name>]\n  (or set WINDOWML_HUB in .env)");
             const invite = flag("--invite");
             const m = await createAccount(ring, {
-                hubUrl: arg, label: flag("--label") ?? "hub-root.mjs", root: await newIdentity(),
+                hubUrl, label: flag("--label") ?? "hub-root.mjs", root: await newIdentity(),
                 invite: invite ? new TextEncoder().encode(invite) : undefined,
             });
             await persist(ring);
@@ -138,7 +143,7 @@ async function main() {
             console.log(`account root ${hex(me.membership.accountRoot)} (what wmlbox prints as its Account)`);
             console.log(`this device ${hex(await principalId(me.identity.publicKey))}${me.root ? " (holds the root)" : ""}`);
         } else {
-            console.log("usage: hub-root.mjs create <wss://hub> [--invite T] [--label L] | confirm <code> | show   [--state <file>]");
+            console.log("usage: hub-root.mjs create [<wss://hub>, else $WINDOWML_HUB] [--invite T] [--label L] | confirm <code> | show   [--state <file>]");
             process.exitCode = 2;
         }
     } finally {
