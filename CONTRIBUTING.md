@@ -92,16 +92,16 @@ npm run test:mobile       # builds dist-web/, then every @mobile Playwright test
 
 Tag a new test `@mobile` (at the end of its title) when what it checks is specific to a phone or a finger.
 
-The parts of the native build that need no SDK work anywhere, since `cap add` writes template files and `cap sync`
-copies the standalone client (`dist-app/`) into them:
+The page the app draws a transcript with is built and synced into it by two commands that need no mobile SDK at all:
 
 ```bash
-npm run mobile:android    # scaffolds android/ (gitignored) and syncs the web build into it
-npm run mobile:ios        # the same for ios/
+node scripts/build-web.mjs           # dist-native/, the page the WebView loads
+node mobile/scripts/sync-embed.mjs   # that page into mobile/src/generated/embed.ts, which the app bundles
 ```
 
-Re-run it after any change to the chat page: the native project holds a COPY of the build, so without a sync you are
-looking at the bundle from last time. That is the one trap here, and it looks exactly like a change that did nothing.
+`node scripts/android.mjs install` runs both for you. Re-run them after any change to the chat page: the app carries a
+COPY of the page, so without a sync you are looking at the bundle from last time. That is the one trap here, and it
+looks exactly like a change that did nothing.
 
 ### Putting the app on your own phone (Android)
 
