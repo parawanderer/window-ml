@@ -1,9 +1,9 @@
-# next-join.yaml — the React Native app (mobile/) joining an account against a hub that is not there. It gets as far
+# join.yaml — the React Native app (mobile/) joining an account against a hub that is not there. It gets as far
 # as generating this phone's keys, keeping them in the platform keystore, and asking the hub, which must fail with the
 # page's own words rather than a crash: on iOS this is what caught WebKit losing an X25519 key kept in IndexedDB.
-# Run with the app installed: `node scripts/ios.mjs install --next` (or android.mjs), then
-# `node scripts/ios.mjs flows tests/mobile/next-join.yaml`.
-appId: dev.wander.windowml.next
+# Run with the app installed: `node scripts/ios.mjs install` (or android.mjs), then
+# `node scripts/ios.mjs flows tests/mobile/join.yaml`.
+appId: dev.wander.windowml
 ---
 - launchApp:
     clearState: true

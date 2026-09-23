@@ -27,16 +27,16 @@ node scripts/ios.mjs install             # build-web → mobile.mjs ios (cap syn
 node scripts/ios.mjs launch; node scripts/ios.mjs shot; node scripts/ios.mjs flows; node scripts/ios.mjs stop
 ```
 
-The simulator is the newest iPhone on the newest iOS runtime, or `IOS_DEVICE=<name or UDID>`. No signing, no CocoaPods
-(Capacitor's iOS project uses Swift Package Manager).
+The simulator is the newest iPhone on the newest iOS runtime, or `IOS_DEVICE=<name or UDID>`. No signing certificate is
+needed for a simulator build; `install` runs `pod install` itself whenever the native project is regenerated.
 
 ## The React Native app (mobile/)
 
 ```bash
-node scripts/android.mjs install --next --demo   # page built + synced (demo world), release APK, installed
-node scripts/android.mjs launch --next           # dev.wander.windowml.next
-node scripts/ios.mjs install --next --demo       # the same on the iOS simulator (Release build, pods on first run)
-node scripts/ios.mjs launch --next
+node scripts/android.mjs install --demo   # page built + synced (demo world), release APK, installed
+node scripts/android.mjs launch                   # dev.wander.windowml
+node scripts/ios.mjs install --demo       # the same on the iOS simulator (Release build, pods on first run)
+node scripts/ios.mjs launch
 ```
 
 On iOS the simulator takes no taps from the command line: drive it with a Maestro flow (`node scripts/ios.mjs flows
@@ -47,17 +47,23 @@ When a flow cannot find something that is plainly on the screen, print what the 
 label is matched WHOLE, so a row reading "gemma3:27b, sees images" needs `gemma3:27b.*`; a placeholder is in no
 accessibility tree, so a field needs a `testID` (`- tapOn: { id: "sheet-filter" }`).
 
-A flow names its app by `appId`: `first-run.yaml` is the Capacitor app (`dev.wander.windowml`), `next-join.yaml` the
-React Native one (`.next`), and `next-demo-*.yaml` the React Native DEMO build (`install --next --demo`), since they
-need the demo world's sessions. Name the flow for the app you installed; a bare `flows` runs both and one will fail.
-`next-join.yaml` joins against a hub that is not there, which exercises key generation and the keystore (the vault)
+A flow names its app by `appId` (`dev.wander.windowml`, the one app). `demo-*.yaml` needs the DEMO build
+(`install --demo`), since those flows drive the demo world's sessions; `first-run.yaml` and `join.yaml` need a REAL
+build, which carries no fake host. Name the flows for the build you installed; a bare `flows` runs all of them and the
+other half will fail.
+`join.yaml` joins against a hub that is not there, which exercises key generation and the keystore (the vault)
 end to end on a real WebView: on iOS it is the check that the keys survive at all.
 
-On Android `install --next` builds for the connected device's ABI only (`ro.product.cpu.abi`, passed as
+**A whole batch failing on iOS, the first flow after ~15 s and the rest in a second each, is the DRIVER, not the app.**
+Maestro's log says "Error getting main window kAXErrorServerNotFound" or "App … did not stop in time": it lost the app
+between flows, and every later flow fails instantly on the dead driver. There is no crash report and the same batch
+passes on a rerun. Rerun it, or run fewer at a time, before reading anything into it.
+
+On Android `install` builds for the connected device's ABI only (`ro.product.cpu.abi`, passed as
 `-PreactNativeArchitectures`); a release built by hand gets `app.json`'s `buildArchs`, arm64-v8a alone (50 MB, down from
 128 MB with all four). A phone that is not arm64 needs its ABI added there.
 
-`install --next` regenerates the native project (`expo prebuild --clean`, then `pod install` on iOS) whenever
+`install` regenerates the native project (`expo prebuild --clean`, then `pod install` on iOS) whenever
 `mobile/package.json`, `app.json` or `plugins/` changed since the last one (`scripts/mobile-prebuild.mjs`), so a new
 native module is linked rather than failing at launch as "Cannot find native module". That rebuild is from scratch and
 slow; nothing else triggers it. When the app shows only a white screen, read its log first:
@@ -69,7 +75,7 @@ no Metro server is involved and what you see is what ships.
 
 ## A real pairing, locally
 
-The failure path (`next-join.yaml`) needs no hub. To watch a phone actually join an account, run the test hub and be
+The failure path (`join.yaml`) needs no hub. To watch a phone actually join an account, run the test hub and be
 the other device yourself:
 
 ```bash
@@ -105,10 +111,9 @@ Prefer the `@mobile` Playwright layer: it is fast and in CI. The emulator is for
   on the PATH or in `~/.maestro`, and turns its analytics prompt off (its first-run banner failed the first run).
 - **The first launch on a freshly booted iOS simulator can stay WHITE for 20 seconds or more** while WebKit's
   processes start; the page has rendered by then (the DOM is there). Relaunch and screenshot again before debugging.
-  To see the page's console on iOS: `xcrun simctl launch --console-pty booted dev.wander.windowml` prints Capacitor's
-  `⚡️ [log]` lines. For an engine question, Playwright's `webkit` runs the same bundle on the desktop.
+  To see the app's console on iOS: `xcrun simctl launch --console-pty booted dev.wander.windowml`. For an engine question, Playwright's `webkit` runs the same bundle on the desktop.
 - **Gradle only watches `mobile/`.** A change to `src/native/` (the bridge) or the page is invisible to it, and an
-  incremental build reuses the old JS bundle. `install --next` deletes the bundle first; building by hand, delete
+  incremental build reuses the old JS bundle. `install` deletes the bundle first; building by hand, delete
   `mobile/android/app/build/generated/assets/react/release` yourself or the fix "does nothing".
 - **`launch` uses `am start -n dev.wander.windowml/.MainActivity`**: `monkey` exits 251 on a fresh image.
 - **Maestro reads the WebView through Android's accessibility tree**, so assert on visible TEXT, not selectors.

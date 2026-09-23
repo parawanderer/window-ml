@@ -1086,7 +1086,8 @@ test("addresses: a link opens a view and its tab, the address follows what is on
 });
 
 test("the phone app's start page is the standalone client, not the demo @mobile", async () => {
-    // Capacitor loads dist-app/index.html. The demo world (window.__chatFake) must not be what a phone opens.
+    // `dist-app/index.html` is the standalone client, served as a site of its own. The demo world
+    // (window.__chatFake) must never be what it opens.
     const { serveStatic } = await import("./static-server.mjs");
     const app = await serveStatic("dist-app");
     const page = await browser.newPage({ viewport: PHONE });

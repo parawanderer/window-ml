@@ -1,18 +1,19 @@
-# Spec: a native shell for the phone app (agreed and built, 2026-09-21)
+# Spec: a native shell for the phone app (agreed, built and shipped, 2026-09-21 → 2026-09-23)
 
-The phone app today is the chat page in Capacitor: every pixel is the web build, including the list, the navigation, the
-pickers and the composer. It works, and on a phone it feels like a web page: no edge swipe back, no native transitions,
-lists that scroll like a document, sheets that are divs. This proposes a thin native shell (React Native) that owns
-that chrome, and keeps the web build for what it is good at: drawing a session.
+The phone app WAS the chat page in Capacitor: every pixel was the web build, including the list, the navigation, the
+pickers and the composer. It worked, and on a phone it felt like a web page: no edge swipe back, no native transitions,
+lists that scrolled like a document, sheets that were divs. This is the thin native shell (React Native) that owns that
+chrome, and keeps the web build for what it is good at: drawing a session.
 
-This was agreed on 2026-09-21 and the shell is built (`mobile/`, #237 onwards): the list, the session chrome, the
-composer, settings and pairing are native, and the transcript is the page. What is not there yet: approvals from the
-waiting bar, and the Capacitor app's removal. Where this spec and `mobile/AGENTS.md` disagree about a detail of the app,
-the code and AGENTS.md are what ships; this is why it is built that way.
+Agreed on 2026-09-21 and built over #237-#261: the list, the session chrome, the composer, settings, the runtimes,
+pairing and the ⋮ actions are native, and the transcript is the page. It reached parity on 2026-09-23, took over the app
+id `dev.wander.windowml`, and Capacitor was removed. What is not there yet: answering an approval from the waiting bar
+(by design, the card in the transcript answers it) and push. Where this spec and `mobile/AGENTS.md` disagree about a
+detail of the app, the code and AGENTS.md are what ships; this is why it is built that way.
 
 It replaces the packaging half of "The phone app" in [`CHAT_PAGE.md`](CHAT_PAGE.md) (Capacitor, decided 2026-09-17).
 Everything else there stands: the hub serves no code, the app is built and signed here, pushes say only "an approval is
-waiting". The Capacitor app keeps shipping until this one reaches parity, then is removed.
+waiting".
 
 ## Scope: calm only
 
@@ -78,7 +79,7 @@ is where this shows most, since its web tabs were drawn for a desktop and only s
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**The client core stays in the WebView.** It already runs there in the Capacitor app, crypto included: the hub
+**The client core stays in the WebView.** It ran there in the Capacitor app too, crypto included: the hub
 client uses WebCrypto for Ed25519, X25519, AES-GCM and HMAC (`src/hub/support.ts`, `seal.ts`, `hpke.ts`), and the
 keyring is IndexedDB, except for its secrets, which the app keeps in the platform keystore and hands back as bytes
 (`docs/dev/hub-client.md` §The keyring in the phone app; WebKit cannot store an X25519 key at all). React Native's
@@ -172,16 +173,16 @@ Nothing in `src/chat/` learns about React Native: the embed is an entry point, l
 
 ## The native side
 
-A new top-level **`mobile/`**, its own package, following the Capacitor rule that nobody needs a mobile toolchain to
-change the chat page:
+A top-level **`mobile/`**, its own package, keeping the rule that nobody needs a mobile toolchain to change the chat
+page:
 
 - **Expo with prebuild**: `android/` and `ios/` are generated from `app.config.ts` and gitignored, as they are today.
   CI's `mobile-android` job compiles it on every change to `mobile/` or the embed; iOS nightly.
 - **`react-native-screens`** native stack (the platform's own transitions and back gesture), **FlashList** for the
   session list, a bottom-sheet library for the pickers and ⋮ menus, **`react-native-webview`** for the one WebView.
 - The embed bundle is copied into the app's assets by the build, the way `dist-app/` is today.
-- Keyring stays in the WebView's IndexedDB for slice 1, as in the Capacitor app. Moving the ROOT key to the Keystore /
-  Keychain is its own change, with its own threat note, later.
+- The keyring stayed in the WebView's IndexedDB for slice 1; its secrets moved to the Keystore / Keychain in #239, and
+  its other records to the app's files in #243, so the WebView now persists nothing.
 
 Screens in the first version: list, session, new session, attention, settings (theme, text size, runtimes, devices and
 pairing, all native: the web tabs were drawn for a desktop). Pairing's QR code and camera scan use native modules.
@@ -215,9 +216,9 @@ Not started until slice 2 has been used on a phone for a while.
 1. **The bridge and the embed**, web side only: `bridge.ts`, `nativeSnapshot`, `native-embed.tsx`, the stub-bridge
    Playwright spec. Mergeable on its own, no toolchain.
 2. **The shell**: `mobile/`, list, session screen with the native header and composer (drafts included), the WebView,
-   theme and insets; new session and pickers; attention; settings. Side-loaded APK on your phone; the Capacitor app stays.
-3. **Parity and the switch**: the checklist green, then remove Capacitor (`capacitor.config.ts`,
-   `scripts/mobile*.mjs`, the CI job) in one change.
+   theme and insets; new session and pickers; attention; settings. Side-loaded APK on your phone; the Capacitor app stayed.
+3. **Parity and the switch** (done, 2026-09-23): the checklist green, then Capacitor removed (`capacitor.config.ts`,
+   `scripts/mobile*.mjs`, its CI jobs, its deps and its generated projects) and this app took over its id.
 4. **Later, if needed**: the native transcript with islands; the core in Hermes; the root key in the Keystore.
 
 ## Open, to settle in slice 2

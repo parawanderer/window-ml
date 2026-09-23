@@ -1,8 +1,8 @@
-# next-demo-rename.yaml — the React Native app's DEMO build (`install --next --demo`): rename a session from its ⋮ sheet
+# demo-rename.yaml — the React Native app's DEMO build (`install --demo`): rename a session from its ⋮ sheet
 # and see the runtime's new title in the list. Guards two bugs a sheet with a field had: the first tap on a row only
 # dismissed the keyboard (so Save seemed to do nothing), and a controlled field dropped and reordered fast typing.
 # Needs the demo world's sessions, so it fails on a real build: name it when you run `flows`.
-appId: dev.wander.windowml.next
+appId: dev.wander.windowml
 ---
 - launchApp:
     clearState: true

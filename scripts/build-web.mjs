@@ -114,9 +114,9 @@ async function buildNative(web, out) {
 }
 
 /**
- * THE APP'S WEB DIRECTORY (`dist-app/`, Capacitor's `webDir`): the standalone client as the start page and nothing of
- * the demo. The app loads `index.html`, and `dist-web/`'s is the demo world the specs drive, so the app gets its own
- * directory rather than the demo moving out of the specs' way.
+ * THE STANDALONE CLIENT'S OWN DIRECTORY (`dist-app/`): the client as the start page and nothing of the demo, for
+ * serving it as a site of its own. `dist-web/`'s `index.html` is the demo world the specs drive, so the client gets its
+ * own directory rather than the demo moving out of the specs' way.
  */
 function buildApp(web, app) {
     rmSync(app, { recursive: true, force: true });

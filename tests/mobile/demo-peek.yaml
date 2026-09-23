@@ -1,7 +1,7 @@
-# next-demo-peek.yaml — the React Native app's DEMO build (`install --next --demo`): "Look at the page" in a session's ⋮
+# demo-peek.yaml — the React Native app's DEMO build (`install --demo`): "Look at the page" in a session's ⋮
 # sheet captures the tab its run is on, and the capture opens full size in the app's own viewer, which closes back to
 # the session. Needs the demo world's sessions, so it fails on a real build: name it when you run `flows`.
-appId: dev.wander.windowml.next
+appId: dev.wander.windowml
 ---
 - launchApp:
     clearState: true

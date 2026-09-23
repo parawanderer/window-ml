@@ -104,8 +104,8 @@ so `npm test` says so too. It builds two entries:
   in one it connects with `HubConnection` and draws the chat page over `HubHost`. Pairing others goes over that same
   connection (`HubConnection.hubClient`), because the hub refuses a second one from a connected principal. The host is
   `HubHost.reconnecting`, so a dropped connection comes back in place (the page keeps its open session), and waking or
-  coming back online tries at once. The build also writes `dist-app/`, the client alone as `index.html`: Capacitor's
-  `webDir`, so the phone app opens the client and never the demo.
+  coming back online tries at once. The build also writes `dist-app/`, the client alone as `index.html`, for
+  serving it as a site of its own rather than the demo world `dist-web/` opens on.
   `tests/e2e/chat-pairing.spec.mjs` runs the whole loop against a real `wmlhub`: the client creates the account, the
   extension joins as a runtime, the client pairs it by code, and lists it.
 

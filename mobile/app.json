@@ -8,7 +8,7 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "dev.wander.windowml.next"
+      "bundleIdentifier": "dev.wander.windowml"
     },
     "android": {
       "adaptiveIcon": {
@@ -18,7 +18,7 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "dev.wander.windowml.next"
+      "package": "dev.wander.windowml"
     },
     "web": {
       "favicon": "./assets/favicon.png"
