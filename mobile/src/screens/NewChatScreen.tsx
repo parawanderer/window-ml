@@ -17,6 +17,7 @@ import { useEmbed } from "../embed";
 import { useSessionLayer } from "../layer";
 import { SIZE, usePalette } from "../theme";
 import { IconButton, MODEL_FILTER_AT, Pill, Sheet, SheetFilter, SheetRow } from "../ui";
+import { byPinned, togglePinnedModel, usePinnedModels } from "../pinned-models";
 import { AttachButton, AttachedStrip, AttachSheet, useAttachments } from "../attach-ui";
 import { TabSheet, type TabChoice, type TabList } from "../tab-sheet";
 import { faviconSrc, tabHost } from "../../../src/chat/tab-tree";
@@ -38,6 +39,7 @@ export function NewChatScreen() {
     const [model, setModel] = useState("");
     /** What has been typed into the model sheet's filter. */
     const [mq, setMq] = useState("");
+    const pins = usePinnedModels();
     const [text, setText] = useState(() => draftOf("start"));
     const [busy, setBusy] = useState(false);
     const att = useAttachments("start");
@@ -90,7 +92,8 @@ export function NewChatScreen() {
     };
     // The box has the keyboard from the start: a sheet opened over it would sit under the keys, taking the taps meant for it.
     const show = (ref: { current: BottomSheetModal | null }) => { Keyboard.dismiss(); ref.current?.present(); };
-    const usable = (models ?? []).filter((x) => !x.kinds?.includes("embedding")).sort((a, b) => a.id.localeCompare(b.id));
+    // Same order as every other model list on this device: what is pinned, then the rest, each alphabetical.
+    const usable = byPinned((models ?? []).filter((x) => !x.kinds?.includes("embedding")), (x) => x.id, pins);
     const shownModels = mq.trim() ? usable.filter((m) => m.id.toLowerCase().includes(mq.trim().toLowerCase())) : usable;
     const whereText = where === "blank" ? "A new tab" : closed ? "That tab has closed" : chosenTab ? chosenTab.title || tabHost(chosenTab.url) : tabs.tabs === null ? "…" : "Pick a tab";
     // The site's icon, as the sheet draws it: an SVG becomes the plus, because React Native's Image draws no SVG.
@@ -166,6 +169,7 @@ export function NewChatScreen() {
                 {shownModels.map((m) => (
                     <SheetRow key={m.id} title={m.id} mono chosen={m.id === model}
                         detail={[m.where === "cloud" ? "cloud" : null, m.kinds?.includes("vision") ? "sees images" : null, m.kinds?.includes("thinking") ? "thinks" : null].filter(Boolean).join(" · ") || undefined}
+                        pin={{ on: pins.has(m.id), toggle: () => togglePinnedModel(m.id) }}
                         onPress={() => { setModel(m.id); modelSheet.current?.dismiss(); }} />
                 ))}
                 {usable.length && !shownModels.length ? <Text style={[s.note, { color: p.fgDim }]}>{`No model matches “${mq.trim()}”.`}</Text> : null}

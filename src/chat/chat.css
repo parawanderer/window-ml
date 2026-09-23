@@ -1135,6 +1135,24 @@ button.chat-page-go:hover { color: var(--fg); }
     background: none; color: var(--fg); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer;
 }
 .tp-row.hot { background: var(--panel-2); }
+/* A model row and its pin, side by side. The pin is a SIBLING of the row rather than a child: a button inside a
+   button is not something a keyboard or a screen reader can take apart, and the row's whole job is to pick. */
+.tp-rowwrap { display: flex; align-items: center; }
+.tp-rowwrap > .tp-row { flex: 1 1 auto; min-width: 0; }
+/* Quiet until the row is under the pointer — drawn for every row so the affordance is findable, but forty faint
+   pins down a list is a texture, not a control. A pinned one stays lit, because that is the state it reports. */
+.tp-pin { flex: 0 0 auto; display: inline-flex; padding: 5px; margin-right: 4px; border: none; border-radius: 50%;
+    background: none; color: var(--fg-faint); cursor: pointer; opacity: 0; transition: opacity .12s ease, color .12s ease; }
+.tp-pin svg { width: 14px; height: 14px; }
+.tp-pin.on { opacity: 1; color: var(--accent); }
+.tp-rowwrap:hover .tp-pin, .tp-pin:focus-visible { opacity: 1; }
+.tp-pin:hover { color: var(--fg); background: var(--panel-2-hover); }
+.tp-pin.on:hover { color: var(--accent); }
+/* The line between the shortlist and the rest. A margin rather than a rule between every row: it marks ONE
+   boundary, and only when there is something on both sides of it. */
+.tp-rowwrap.tp-after-pins { border-top: 1px solid var(--border); margin-top: 5px; padding-top: 5px; }
+/* A touch screen cannot hover, so every pin is simply there. */
+@media (hover: none) { .tp-pin { opacity: 1; } }
 .tp-row.indent { padding-left: 30px; }
 /* A row's tab title, cut with an ellipsis. */
 .tp-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

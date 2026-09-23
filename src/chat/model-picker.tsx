@@ -4,7 +4,7 @@
 // "" is the runtime's own default, which sends no `model` at all, so its choice stands; it is listed first and named
 // when the runtime says which it is. The Commander's ★ ("make this the default") is not here: it writes this
 // browser's config, and the runtime picked on this page may be another machine, whose settings stay its own.
-import { IconCheck } from "../sidebar/icons";
+import { IconCheck, IconPin } from "../sidebar/icons";
 import { truncate } from "../sidebar/format";
 import { cursorTipOn } from "../sidebar/ui-kit";
 import { useState } from "preact/hooks";
@@ -13,6 +13,7 @@ import type { ChatStore } from "./chat-store";
 import { mayCommand } from "./grants";
 import { usePickerPop } from "./pop-picker";
 import { cutTip } from "./cut-tip";
+import { pinnedModels, togglePinnedModel } from "./view-mode";
 
 /** A cloud glyph (a model the runtime reaches over the internet). */
 const IconCloud = () => (
@@ -40,10 +41,49 @@ export function WhereMark({ where }: { where?: ModelChoice["where"] }) {
     );
 }
 
+
+/**
+ * The order EVERY model list on this page is drawn in: what this device pinned, then the rest, each alphabetical.
+ *
+ * A separate function rather than a sort at each call site because the two pickers and the phone's sheet all have to
+ * agree — a list that reorders depending on which control you opened it from is worse than one that never reorders.
+ */
+export function byPinned(ids: readonly string[]): string[] {
+    const pins = pinnedModels.value;
+    return [...ids].sort((a, b) => (Number(pins.has(b)) - Number(pins.has(a))) || a.localeCompare(b));
+}
+
+
+/** True where `id` is the first UNPINNED row after a pinned one: the line between the shortlist and the rest. */
+export function afterPins(list: readonly string[], i: number): boolean {
+    const pins = pinnedModels.value;
+    return i > 0 && pins.has(list[i - 1]) && !pins.has(list[i]);
+}
+
+/**
+ * The pin beside a model in a list. It sits OUTSIDE the row's button rather than inside it — a button within a
+ * button is not something a keyboard or a screen reader can take apart — so the row still picks the model and this
+ * only ever changes the order.
+ *
+ * It is drawn for every row, not just the pinned ones: a control that appears once you already know it exists is one
+ * nobody finds. CSS keeps the unpinned ones quiet until the row is hovered.
+ */
+export function PinStar({ id }: { id: string }) {
+    const on = pinnedModels.value.has(id);
+    return (
+        <button type="button" class={`tp-pin${on ? " on" : ""}`} aria-pressed={on}
+            aria-label={on ? `Unpin ${id}` : `Pin ${id} to the top`}
+            {...cursorTipOn(on ? "Keep it at the top of this device's lists — on" : "Keep this model at the top of the lists on this device")}
+            onClick={(e) => { e.stopPropagation(); togglePinnedModel(id); }}>
+            <IconPin />
+        </button>
+    );
+}
+
 /** The pill and its list. `models` is the runtime's list with embedding models already left out. */
 export function ModelPicker({ models, value, onChange, arrived }: { models: readonly ModelChoice[]; value: string; onChange: (id: string) => void; arrived?: boolean }) {
     const dflt = models.find((m) => m.default);
-    const others = models.filter((m) => !m.default).map((m) => m.id).sort((a, b) => a.localeCompare(b));
+    const others = byPinned(models.filter((m) => !m.default).map((m) => m.id));
     const where = new Map(models.map((m) => [m.id, m.where]));
     const shownFor = (q: string) => others.filter((id) => !q || id.toLowerCase().includes(q.toLowerCase()));
     const defaultShown = (q: string) => !q || "default".includes(q.toLowerCase()) || !!dflt?.id.toLowerCase().includes(q.toLowerCase());
@@ -78,12 +118,15 @@ export function ModelPicker({ models, value, onChange, arrived }: { models: read
                         </>
                     ) : null}
                     <div class="tp-list">
-                        {list.map((id) => (
-                            <button key={id} type="button" role="option" aria-selected={value === id} {...p.row(id)} {...cutTip(id, true)}>
-                                <span class="tp-title">{id}</span>
-                                <WhereMark where={where.get(id)} />
-                                {value === id ? <span class="tp-check" aria-hidden="true"><IconCheck /></span> : null}
-                            </button>
+                        {list.map((id, i) => (
+                            <div key={id} class={`tp-rowwrap${afterPins(list, i) ? " tp-after-pins" : ""}`}>
+                                <button type="button" role="option" aria-selected={value === id} {...p.row(id)} {...cutTip(id, true)}>
+                                    <span class="tp-title">{id}</span>
+                                    <WhereMark where={where.get(id)} />
+                                    {value === id ? <span class="tp-check" aria-hidden="true"><IconCheck /></span> : null}
+                                </button>
+                                <PinStar id={id} />
+                            </div>
                         ))}
                         {!list.length && !defaultShown(q) ? <div class="tp-note">No model matches “{truncate(q, 30)}”.</div> : null}
                     </div>
@@ -112,7 +155,7 @@ export function SessionModelPicker({ store, rt, current, canSwitch, note, onSwit
     const where = new Map((choices ?? []).map((m) => [m.id, m.where]));
     const may = rt.online && mayCommand(rt, "models.list");
     const p = usePickerPop<string>({
-        picksFor: (q) => (models ?? []).filter((id) => !q || id.toLowerCase().includes(q.toLowerCase())),
+        picksFor: (q) => byPinned((models ?? []).filter((id) => !q || id.toLowerCase().includes(q.toLowerCase()))),
         value: current,
         onPick: (id) => { if (canSwitch && id !== current) onSwitch?.(id); },
         width: [280, 420],
@@ -125,7 +168,7 @@ export function SessionModelPicker({ store, rt, current, canSwitch, note, onSwit
         },
     });
     const q = p.q.trim();
-    const list = (models ?? []).filter((id) => !q || id.toLowerCase().includes(q.toLowerCase()));
+    const list = byPinned((models ?? []).filter((id) => !q || id.toLowerCase().includes(q.toLowerCase())));
     return (
         <>
             <button {...p.pillProps} {...cutTip(current, true)} class={`tp-pill tp-pill-model ${quiet ? "tp-pill-quiet" : "chat-head-model"}`} aria-label={`Model: ${current}`}>
@@ -138,12 +181,17 @@ export function SessionModelPicker({ store, rt, current, canSwitch, note, onSwit
                     <input {...p.filterProps} placeholder="Filter models" aria-label="Filter models" />
                     <div class="tp-list">
                         {models === null ? <div class="tp-note">{may ? "Asking…" : "This device may not list its models."}</div>
-                            : list.map((id) => (
-                                <button key={id} type="button" role="option" aria-selected={current === id} aria-disabled={!canSwitch || undefined} {...p.row(id, canSwitch ? "" : " off")} {...cutTip(id, true)}>
-                                    <span class="tp-title">{id}</span>
-                                    <WhereMark where={where.get(id)} />
-                                    {current === id ? <span class="tp-check" aria-hidden="true"><IconCheck /></span> : null}
-                                </button>
+                            : list.map((id, i) => (
+                                <div key={id} class={`tp-rowwrap${afterPins(list, i) ? " tp-after-pins" : ""}`}>
+                                    <button type="button" role="option" aria-selected={current === id} aria-disabled={!canSwitch || undefined} {...p.row(id, canSwitch ? "" : " off")} {...cutTip(id, true)}>
+                                        <span class="tp-title">{id}</span>
+                                        <WhereMark where={where.get(id)} />
+                                        {current === id ? <span class="tp-check" aria-hidden="true"><IconCheck /></span> : null}
+                                    </button>
+                                    {/* Pinning is this DEVICE'S ordering, so it is offered even where the runtime
+                                        will not switch the session's model: the list is still a list you read. */}
+                                    <PinStar id={id} />
+                                </div>
                             ))}
                         {models && !list.length ? <div class="tp-note">No model matches “{truncate(q, 30)}”.</div> : null}
                     </div>

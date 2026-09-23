@@ -10,7 +10,7 @@ import { FakeHost } from "../src/chat/fake-host.ts";
 import { hostServices } from "../src/chat/host-services.ts";
 import { holds, mayCommand } from "../src/chat/grants.ts";
 import { resumableHere } from "../src/chat/grants.js";
-import { CALM_KEY, LIST_KEY, PINNED_KEY, calm, dropPin, installViewPrefs, listOpen, pinned, setCalm, setListOpen, togglePin } from "../src/chat/view-mode.tsx";
+import { CALM_KEY, LIST_KEY, PINNED_KEY, PINNED_MODELS_KEY, calm, dropPin, installViewPrefs, listOpen, pinned, pinnedModels, setCalm, setListOpen, togglePin, togglePinnedModel } from "../src/chat/view-mode.tsx";
 import { sessionMap, view } from "../src/sidebar/store.ts";
 import { SESSION_CONTRACT_VERSION } from "../src/session-host.ts";
 
@@ -484,6 +484,34 @@ test("view prefs: a pin is this device's, survives a reload, and a delete from h
     assert.deepEqual([...pinned.value], ["laptop:bbbb0002"]);
     dropPin("laptop:bbbb0002");
     dropPin("laptop:never");   // not pinned: nothing happens
+    assert.deepEqual([...pinned.value], []);
+});
+
+test("view prefs: a pinned model is this device's, and every model list is drawn in the same order", async () => {
+    const { byPinned, afterPins } = await import("../src/chat/model-picker.tsx");
+    const prefs = fakePrefs();
+    installViewPrefs(prefs);
+    assert.deepEqual([...pinnedModels.value], []);
+    // With nothing pinned the order is plain alphabetical — a list nobody has an opinion about must not reorder.
+    assert.deepEqual(byPinned(["qwen3:32b", "gemma3:27b", "llama3:8b"]), ["gemma3:27b", "llama3:8b", "qwen3:32b"]);
+
+    togglePinnedModel("qwen3:32b");
+    togglePinnedModel("llama3:8b");
+    assert.deepEqual(prefs.all.get(PINNED_MODELS_KEY), ["qwen3:32b", "llama3:8b"]);
+    // SEVERAL pins, not one favourite, and they sort among themselves rather than by when they were pinned.
+    assert.deepEqual(byPinned(["qwen3:32b", "gemma3:27b", "llama3:8b"]), ["llama3:8b", "qwen3:32b", "gemma3:27b"]);
+    // The line is drawn once, between the shortlist and the rest.
+    const list = byPinned(["qwen3:32b", "gemma3:27b", "llama3:8b"]);
+    assert.deepEqual(list.map((_, i) => afterPins(list, i)), [false, false, true]);
+
+    togglePinnedModel("qwen3:32b");   // pressed again: unpinned
+    assert.deepEqual([...pinnedModels.value], ["llama3:8b"]);
+
+    // A model no runtime offers keeps its pin: the box may be offline, and forgetting it would lose it for good.
+    installViewPrefs(fakePrefs({ [PINNED_MODELS_KEY]: ["gone:70b", 7] }));   // a junk entry is dropped, not coerced
+    assert.deepEqual([...pinnedModels.value], ["gone:70b"]);
+    assert.deepEqual(byPinned(["a:1", "b:2"]), ["a:1", "b:2"]);
+    // Pins and session pins are separate keys: one does not read the other's.
     assert.deepEqual([...pinned.value], []);
 });
 
