@@ -516,15 +516,20 @@ test("desktop: a run whose page has gone offers a resume instead of a composer, 
     await expect(page.locator(".composer")).toHaveCount(0);
 
     await page.locator(".chat-resume").click();
-    // The SAME where-picker a fresh run uses, and no message box: resuming takes no turn.
-    await expect(page.locator('[data-field="tab"] option').first()).toHaveText("The front page");
+    // A DIALOG over the session, not a screen replacing it: the transcript is still behind it.
+    await expect(page.locator(".chat-dialog-back")).toBeVisible();
+    await expect(page.locator(".chat-transcript")).toBeVisible();
+    // The SAME where-picker a fresh run uses — the real one, with the page's own icon — and no message box:
+    // resuming takes no turn.
+    await expect(page.locator(".chat-dialog .tp-pill-tab")).toContainText("The front page");
     await expect(page.locator('[data-field="text"]')).toHaveCount(0);
     // What it will lose is said BEFORE it happens, not reported in the transcript after.
     await expect(page.locator('[data-field="lost"]')).toContainText("approval grants");
 
-    await page.locator('[data-field="where"] select').selectOption("blank");
-    await page.locator('[data-field="page"] input').fill("https://plots.example/");
-    await page.locator(".chat-new-foot .btn").click();
+    await page.locator(".chat-dialog .tp-pill-tab").click();
+    await page.locator(".tp-pop .tp-title", { hasText: "New tab" }).click();
+    await page.locator(".chat-dialog .chat-pick-url").fill("https://plots.example/");
+    await page.locator(".chat-dialog-actions .btn.primary").click();
 
     await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({
         type: "session.resume",
@@ -536,6 +541,48 @@ test("desktop: a run whose page has gone offers a resume instead of a composer, 
     await expect(page.locator(".resume-divider")).toContainText("resumed on plots.example");
     await expect(page.locator(".chat-resume")).toHaveCount(0);
     await expect(page.locator(".composer")).toBeVisible();
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("desktop: a picker inside a dialog opens against its own pill, not somewhere else on the page", async () => {
+    // The pickers place their popovers in VIEWPORT coordinates (position: fixed). Any ancestor with a transform —
+    // including the identity one an `animation-fill-mode: both` leaves behind after a dialog's entrance — becomes
+    // their containing block instead, and the list lands a whole card away from the pill that opened it. Nothing
+    // about that is visible in the markup, so it is asserted geometrically.
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CAPPED)}`);
+    await page.locator(".chat-resume").click();
+    const pill = page.locator(".chat-dialog .tp-pill-tab");
+    await pill.click();
+    const pop = page.locator(".tp-pop");
+    await expect(pop).toBeVisible();
+    const [p1, p2] = [await pill.boundingBox(), await pop.boundingBox()];
+    expect(Math.abs(p2.x - p1.x)).toBeLessThan(8);                       // lined up with the pill's left edge
+    expect(p2.y - (p1.y + p1.height)).toBeGreaterThanOrEqual(0);         // directly below it…
+    expect(p2.y - (p1.y + p1.height)).toBeLessThan(24);                  // …by the anchor's small gap, not a card
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("desktop: the copy button on your own prompt stays lit while you reach for it", async () => {
+    // The row holding these buttons hangs BELOW the bubble, outside it, so `:hover` on the message alone went false
+    // the moment the pointer set off towards them: they faded to nothing while staying clickable, which reads as
+    // buttons that run away. The reach is the test — hovering them is not enough, because that always worked.
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
+    const msg = page.locator(".msg.user").first();
+    const acts = msg.locator(".umsg-acts");
+    const copy = acts.locator('button[aria-label="Copy this message"]');
+    await expect(acts).toHaveCSS("opacity", "0");
+    await msg.hover();
+    await expect(acts).toHaveCSS("opacity", "1");
+    // Now leave the message for the buttons, which is where it broke.
+    await copy.hover();
+    await expect(acts).toHaveCSS("opacity", "1");
+    // The timestamp shares the row with them and is a third of it, so crossing it must not count as leaving either.
+    await msg.locator(".mrow .time").hover();
+    await expect(acts).toHaveCSS("opacity", "1");
+    await copy.click();
+    await expect(msg.locator(".umsg-acts svg")).toHaveCount(2);   // still there, and the tick swapped in
     expect(errors).toEqual([]);
     await page.close();
 });

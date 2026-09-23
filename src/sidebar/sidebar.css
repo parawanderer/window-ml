@@ -905,8 +905,11 @@ textarea.cinput { resize: none; overflow-y: auto; line-height: 1.5; font: inheri
   background: transparent; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 6px; font-size: 1.05em; line-height: 0; }
 .cbtn:hover:not(:disabled) { background: var(--panel); color: var(--fg); }
 .cbtn:disabled { cursor: not-allowed; opacity: 0.55; }
-/* Send: the accent affordance once the box has text. */
+/* Send: the accent affordance once the box has text. Hover TINTS it rather than taking the colour away — the generic
+   `.cbtn:hover` paints its icon `--fg`, which on the one button that had a colour read as the accent switching off.
+   Same shape as `.cstop` below and the bench's play button: the icon keeps its hue, the fill arrives behind it. */
 .csend:not(:disabled) { color: var(--accent, var(--fg)); border-color: var(--accent, var(--border)); }
+.csend:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent, var(--fg)); }
 /* Stop: the submit button while a run is in flight + the box is empty (cancels the run). Warm/danger. */
 .cstop { color: var(--err); border-color: var(--err); }
 .cstop:hover:not(:disabled) { background: color-mix(in srgb, var(--err) 15%, transparent); color: var(--err); }
@@ -1607,6 +1610,11 @@ html[data-focus] .astep-tokest { display: inline; }
    business occupying a line of its own to show one short number. */
 html[data-focus] .msg.user { position: relative; }
 html[data-focus] .msg.user .mrow { position: absolute; top: 4px; right: 8px; margin: 0; pointer-events: none; }
+/* …but the row is no longer only a timestamp. `pointer-events: none` is right for a label floating over a bubble —
+   it must not eat a click meant for the words underneath — and wrong for the copy/edit buttons that now sit in the
+   same row: they were drawn, they lit on hover, and every click went straight through them to the message. The
+   exemption is the smallest thing that can be actionable, so the rest of the row stays transparent. */
+html[data-focus] .msg.user .mrow .umsg-acts { pointer-events: auto; }
 html[data-focus] .msg.user .mrow .sp { display: none; }
 /* A SETTLED python step's input dataframes and its captured stdout fold away in focus mode: what a reader
    wants from a python step is the code and the answer, and the data that went in plus everything printed on
@@ -1765,7 +1773,9 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
    hovered, because two controls sitting permanently on every message you ever sent are furniture, not affordance.
    A touch screen has no hover and reaches them by a long press instead, so there they are not drawn at all. */
 .umsg-acts { display: inline-flex; align-items: center; gap: 2px; opacity: 0; transition: opacity .12s ease; }
-.msg.user:hover .umsg-acts, .umsg-acts:focus-within { opacity: 1; }
+/* `.mrow:hover` is not redundant with `.msg.user:hover`: the chat page hangs that row outside the bubble, so the
+   pointer is on the buttons and off the message at the same time. */
+.msg.user:hover .umsg-acts, .mrow:hover .umsg-acts, .umsg-acts:focus-within { opacity: 1; }
 @media (hover: none) { .msg.user .umsg-acts { display: none; } }
 /* A menu item's glyph, before its word. */
 .ctx-icon { display: inline-flex; align-items: center; margin-right: 7px; color: var(--fg-dim); }

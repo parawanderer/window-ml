@@ -15,6 +15,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { AgentTarget, RuntimeInfo, TabGroupInfo, TabInfo } from "../session-host";
 import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
+import { Dialog } from "./dialog";
 import type { ChatExtras } from "./extras";
 import { mayStart } from "./grants";
 import { TabPicker } from "./tab-picker";
@@ -137,6 +138,10 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
  * Pick a saved run back up on a page. The same WHERE the start form asks, with the message taken out: resuming takes
  * no turn, so there is nothing to type. What it will LOSE is said before it happens rather than reported after — the
  * runtime writes the same list into the transcript, and a person deciding where to resume wants it first.
+ *
+ * It is a DIALOG over the session rather than a screen replacing it: this is a question about the run you are reading,
+ * and the form used to take the transcript away to ask it — so deciding meant leaving, and changing your mind meant
+ * finding the ×. It leaves the same way every other dialog here does (Escape, the backdrop, Cancel).
  */
 export function ResumeSession({ store, rt, session, onResumed, onCancel }: {
     store: ChatStore;
@@ -157,24 +162,24 @@ export function ResumeSession({ store, rt, session, onResumed, onCancel }: {
         } finally { setBusy(false); }
     };
     return (
-        <main class="chat-main chat-new">
-            <div class="head">
-                <b>Resume this run</b>
-                <span class="sp" />
-                <button class="hbtn" onClick={onCancel} aria-label="Close">×</button>
-            </div>
-            <div class="view chat-new-body">
-                {pick.fields}
-                <p class="chat-resume-lost" data-field="lost">
-                    It carries on from what it had said, on the page you pick. It does not carry over live references
-                    to elements on the old page, that page's state, cached fetches, tools a page script defined, or
-                    approval grants: consent belongs to the tab it was given in, and is asked again.
+        <Dialog onClose={onCancel} labelledBy="chat-res-h" describedBy="chat-res-p" wide>
+            <h2 id="chat-res-h">Resume this run</h2>
+            {/* `inline`, not `fields`: the same pickers the start page uses, with the page's own icon on a tab and the
+                group rail down its list. The `fields` pair is a native `<select>` each, which reads as a different
+                product's form the moment it sits beside them. */}
+            <div class="chat-dialog-form">
+                <div class="chat-dialog-pick"><span class="chat-dialog-lead">Resume on</span>{pick.inline}</div>
+                <p id="chat-res-p" class="chat-resume-lost" data-field="lost">
+                    The same run, not a new one: it keeps its hash and its history, and carries on from what it had
+                    said, on the page you pick. It does not carry over live references to elements on the old page,
+                    that page's state, cached fetches, tools a page script defined, or approval grants: consent
+                    belongs to the tab it was given in, and is asked again.
                 </p>
-                <div class="chat-new-foot">
-                    <span class="chat-new-hint">The same run, not a new one: it keeps its hash and its history.</span>
-                    <button class="btn primary" disabled={!pick.ready || busy} onClick={() => void resume()}>{busy ? "Resuming…" : "Resume"}</button>
-                </div>
             </div>
-        </main>
+            <div class="chat-dialog-actions">
+                <button class="btn" onClick={onCancel}>Cancel</button>
+                <button class="btn primary" disabled={!pick.ready || busy} onClick={() => void resume()}>{busy ? "Resuming…" : "Resume"}</button>
+            </div>
+        </Dialog>
     );
 }
