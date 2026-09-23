@@ -691,7 +691,9 @@ thing. The parts:
   backends (never in CI): `server-tool-live.mjs`, `md-ladder-live.mjs`, `proto-stream-live.mjs`,
   `capture-frames.mjs` (records real event-stream fixtures). The chat page's web build has its own: `chat-shots.mjs`
   (phone + desktop screenshots against the fake host, `SERVE=1` to just serve it) and `window.__chatFake` to script it
-  (skill: `chat-web`). Pairing with a REAL hub before the screens exist: `scripts/hub-root.mjs` (the account's
+  (skill: `chat-web`). `dist-app/` is that client made INSTALLABLE — a manifest, icons and a service worker holding its
+  own files (`src/chat/pwa/`, stamped in by `installable()` in build-web.mjs) — and CI publishes it to GitHub Pages
+  from main, which is how a device with no packaged app (an iPad) gets one. Pairing with a REAL hub before the screens exist: `scripts/hub-root.mjs` (the account's
   root device on the command line) and the extension's `dev-hub-pair.html` (offers this browser, shows the
   connection's history for an idle test) (skill: `hub-pairing`). The phone app on an emulator or a plugged-in phone,
   OPTIONAL tooling: `scripts/android.mjs` and `scripts/ios.mjs`, same commands (boot, install, launch, screenshot,

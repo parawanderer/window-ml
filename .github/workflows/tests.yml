@@ -218,6 +218,38 @@ jobs:
         with:
           name: window-ml-extension
           path: dist/
+      # The hosted client (dist-app/): the same standalone client, with a manifest, icons and a service worker, so a
+      # phone can put it on its home screen and open it offline. It is uploaded on every run as a Pages artifact, and
+      # published by the job below only from main.
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist-app/
+
+  # THE HOSTED CLIENT, on GitHub Pages. This is how a device that cannot run the packaged app gets one — an iPad, where
+  # Apple gives a free signing certificate seven days and no more, and any desktop browser. It is the same client the
+  # phone app runs in its WebView, so there is no second implementation to drift.
+  #
+  # It serves no secrets and holds none: the keys are made in the browser that installs it and never leave it, and the
+  # page is inert until someone pairs it with a hub. What it is, therefore, is a static copy of open-source code at a
+  # stable address, which is what Pages is for.
+  pages:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    # One deployment at a time, and never cancelled: two commits landing on main together would otherwise race to
+    # publish, and the loser could be the newer one.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
 
   # End-to-end: load the BUILT extension in a real Chromium (Playwright) and drive the actual pipeline
   # (background loop → tool delegation → page) against a scripted fake-LLM — deterministic, no Ollama.
