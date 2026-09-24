@@ -73,10 +73,14 @@ export const SessionActions = forwardRef<SessionActionsHandle, { chrome: Session
             void Haptics.selectionAsync();
             void e.exportSession(c.key, format);
         };
+        // THE HASH, not the key. `key` is `runtime:hash`, which names the session to THIS client and to nothing else:
+        // pasted into `ml.resumeChat` or a `#/s/` link on the machine itself, the runtime prefix is wrong. The whole
+        // hash, too, never the eight characters a row shows — shown short, copied whole, as the page's `Hash` has it.
+        // Split on the LAST colon, because a runtime id may contain one.
         const copyId = () => {
             if (!c) return;
             close();
-            void Clipboard.setStringAsync(c.key).then(() => Haptics.selectionAsync());
+            void Clipboard.setStringAsync(c.key.slice(c.key.lastIndexOf(":") + 1)).then(() => Haptics.selectionAsync());
         };
 
         return (

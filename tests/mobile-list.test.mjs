@@ -88,3 +88,13 @@ test("pinned models: this device's shortlist first, then the rest, each alphabet
     // The input is not mutated: the sheet sorts a list it does not own.
     assert.deepEqual(ids(all), ["qwen3:32b", "gemma3:27b", "llama3:8b"]);
 });
+
+test("a session's id is copied as the HASH, not as this client's key", () => {
+    // `key` is `runtime:hash`, which names the session to this client and to nothing else: pasted into
+    // `ml.resumeChat` or a `#/s/` link on the machine itself, the runtime prefix is wrong. Split on the LAST colon,
+    // because a runtime id may contain one.
+    const bare = (key) => key.slice(key.lastIndexOf(":") + 1);
+    assert.equal(bare("laptop:3f9a0c21bbccddee0011223344556677"), "3f9a0c21bbccddee0011223344556677");
+    assert.equal(bare("hub:eu-1:7b21d4e8"), "7b21d4e8", "a runtime id may hold a colon of its own");
+    assert.equal(bare("7b21d4e8"), "7b21d4e8", "and a bare hash is already one");
+});
