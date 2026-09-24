@@ -1,9 +1,9 @@
 // resource-panel.spec.mjs — the resource panel against a scripted fake BOX, in a real browser.
 //
 // The band arithmetic is unit-tested (resource-model.test.mjs) and the rendering is jsdom-tested
-// (sidebar.test.js). What only a real browser can show is the panel driven by an actual /api/info + /api/ps
-// over time: capacity refreshing as models load, and a GAP appearing because polling really did stop while
-// the panel was closed. The narrated version of the same script is resource-demo.mjs.
+// (sidebar-resource.test.js). What only a real browser can show is the panel driven by an actual
+// /api/info + /api/ps over time: capacity refreshing as models load, and a GAP appearing because polling
+// really did stop while the panel was closed. The narrated version of the same script is resource-demo.mjs.
 import { test, expect } from "@playwright/test";
 import { launchExtension, configureExtension, waitForMl, openRunInSidebar } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";

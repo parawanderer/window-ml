@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// RUN A GENRE OF TESTS, not all of them. The suite is ~2 minutes and three files are 80% of that
-// (sidebar 53s, background 22s, cdp-stream 20s) — which is the right cost in CI, where everything runs
+// RUN A GENRE OF TESTS, not all of them. The suite is ~40s in parallel and its floor is its slowest FILE
+// (background 22s, cdp-stream 20s) — which is the right cost in CI, where everything runs
 // anyway, and the wrong one in a loop where you just changed one pure module.
 //
 //   node scripts/test.mjs                # everything (what `npm test` does)
@@ -32,7 +32,11 @@ const ALL = readdirSync(path.join(ROOT, "tests"))
 const GENRES = {
     panel: {
         about: "the sidebar UI, against a real jsdom document",
-        files: ["sidebar.test.js", "output-cell.test.mjs", "code-tools.test.mjs", "legend.test.mjs",
+        files: ["sidebar-agent-run.test.js", "sidebar-agent-step.test.js", "sidebar-answer.test.js",
+            "sidebar-approval.test.js", "sidebar-card.test.js", "sidebar-event-lane.test.js",
+            "sidebar-export.test.js", "sidebar-output.test.js", "sidebar-resource.test.js",
+            "sidebar-session.test.js", "sidebar-settings.test.js", "sidebar-vram.test.js",
+            "output-cell.test.mjs", "code-tools.test.mjs", "legend.test.mjs",
             "context-container.test.mjs", "tooltip-layer.test.mjs", "tip.test.mjs", "views.test.mjs"],
     },
     ext: {
@@ -105,9 +109,10 @@ if (args.includes("--list")) {
 }
 
 // HOW MANY FILES AT ONCE. `node --test` already gives each file its own process, so the only thing that was
-// stopping them overlapping was this being pinned to 1 — and the suite is dominated by three files
-// (sidebar 53s, background 22s, cdp-stream 20s of 130s), so overlapping them takes the wall clock down to
-// roughly the slowest one.
+// stopping them overlapping was this being pinned to 1 — and the suite is dominated by its slowest files
+// (background 22s, cdp-stream 20s), so overlapping them takes the wall clock down to
+// roughly the slowest one. That is also why a 400-test file is worth splitting: it is the floor, and while it
+// is resident it contends for memory with every file beside it (see the trap in AGENTS.md).
 //
 // NOT unbounded, and not `cores`: about ten files here drive real timers (a debounce, an easing, "stays
 // quiet for the first half second"), and those are exactly the assertions that go wrong when every core is

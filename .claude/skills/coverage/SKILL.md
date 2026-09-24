@@ -48,11 +48,13 @@ covered", which was wrong. Run it before saying something is tested.
 - **`--enable-source-maps` is not optional.** Tests run through `tsx`, so without it every line number
   describes esbuild's transformed output and the report is quietly wrong — a covered function shows as
   uncovered, and gutters land on the wrong lines. It is already in the npm script; keep it if you edit.
-- **`precoverage` builds `dist/`.** Some suites (`agent.test.js`, `background.test.js`, `sidebar.test.js`)
-  load the BUILT bundle, so a stale build measures stale code.
+- **`precoverage` builds `dist/`.** Some suites (`agent.test.js`, `background.test.js`, the
+  `sidebar-*.test.js` files) load the BUILT bundle, so a stale build measures stale code.
 - **Files no test imports are absent from the report entirely**, not listed at 0% — `coverage-lines.mjs`
   says "not in the report" for a file you name explicitly, which is itself a useful signal.
-- Tests run with `--test-concurrency=1`, matching `npm test`; some suites share module state.
+- Coverage runs with `--test-concurrency=1` — needed for one merged report, and NOT what `npm test` does
+  (`scripts/test.mjs` overlaps files). So coverage is slower than the suite, and a test that only passes
+  serially passes here and fails there.
 
 ## VSCode
 
