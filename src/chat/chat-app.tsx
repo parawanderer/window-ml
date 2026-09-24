@@ -42,6 +42,11 @@ import { lightboxSrc, type ClientPlatform } from "./platform";
 /** How long after a gesture a scroll still counts as the reader's own. Covers a phone's momentum coasting. */
 const USER_SCROLL_MS = 1200;
 
+/** How many frames the approval bar waits for the gate's card before deciding it is out of reach. Generous enough
+ *  to cover a reload (the summary arrives before the transcript's events) and short enough that a gate genuinely
+ *  further back than the transcript draws is still announced at once. */
+const GATE_WAIT_FRAMES = 30;
+
 /** Below this width the page shows one pane at a time. */
 export const NARROW_PX = 760;
 
@@ -544,11 +549,25 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     useEffect(() => {
         const root = scroller.current;
         if (!waiting || !root || typeof IntersectionObserver === "undefined") { setGateAway(false); return; }
-        const card = root.querySelector(".astep-approve");
-        if (!card) { setGateAway(true); return; }   // not rendered yet: say it until it is
-        const io = new IntersectionObserver(([e]) => setGateAway(!e.isIntersecting), { root });
-        io.observe(card);
-        return () => io.disconnect();
+        let io: IntersectionObserver | undefined, frame = 0, tries = GATE_WAIT_FRAMES;
+        // NOT RENDERED YET IS NOT THE SAME AS SCROLLED AWAY, and reading the two alike is what put a bar on screen
+        // for a few frames of every reload: the summary says an approval is pending before the transcript's events
+        // have arrived, so there is no card to find, and the bar announced a gate that was about to appear right
+        // under it. Wait a few frames for the card first. Only when it still is not there is it genuinely out of
+        // reach — a gate further back than the transcript draws (transcript-window.tsx) — and the bar is the only
+        // thing that would say so.
+        const look = (): void => {
+            const card = root.querySelector(".astep-approve");
+            if (!card) {
+                if (tries-- <= 0) { setGateAway(true); return; }
+                frame = requestAnimationFrame(look);
+                return;
+            }
+            io = new IntersectionObserver(([e]) => setGateAway(!e.isIntersecting), { root });
+            io.observe(card);
+        };
+        look();
+        return () => { cancelAnimationFrame(frame); io?.disconnect(); };
     }, [waiting, sessionKey, r]);
     // The phone app draws its own bar, from the same reading: it is chrome, and chrome up there is native.
     useEffect(() => onGate?.(waiting && gateAway), [onGate, waiting, gateAway]);

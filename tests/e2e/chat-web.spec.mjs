@@ -1607,3 +1607,31 @@ test("a session waiting on you says so once, as one badge", async () => {
     expect(errors).toEqual([]);
     await page.close();
 });
+
+// A GATE THAT HAS NOT BEEN DRAWN YET IS NOT A GATE THAT IS OUT OF REACH, and reading the two alike put the bar on
+// screen for a few frames of every reload: the summary says an approval is pending before the transcript's events
+// have arrived, so there was no card to find, and the bar announced a gate about to appear right under it.
+// Recorded with an observer rather than polled, because a flash is exactly what a poll misses.
+test("the approval bar does not flash on load when the gate is right there", async () => {
+    const page = await browser.newPage({ viewport: DESKTOP });
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.addInitScript(() => {
+        globalThis.__barSeen = 0;
+        new MutationObserver((records) => {
+            for (const r of records) for (const n of r.addedNodes) {
+                if (n.nodeType === 1 && (n.matches?.(".chat-waiting") || n.querySelector?.(".chat-waiting"))) globalThis.__barSeen++;
+            }
+        }).observe(document, { childList: true, subtree: true });
+    });
+    await page.goto(`${server.url}#/s/${encodeURIComponent(WAITING)}`);
+
+    // The gate itself lands and is on screen, so the bar has nothing to say.
+    await page.locator(".astep-approve").waitFor();
+    await expect(page.locator(".astep-approve")).toBeInViewport();
+    await page.waitForTimeout(400);
+    expect(await page.evaluate(() => globalThis.__barSeen)).toBe(0);
+    await expect(page.locator(".chat-waiting")).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await page.close();
+});
