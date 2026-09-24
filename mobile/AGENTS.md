@@ -22,8 +22,20 @@ API from memory.** `expo-file-system` in particular is the `File` / `Directory` 
 
 - **The WebView is created once and never remounted** (`EmbedWebView`, in the always-mounted session layer). A remount
   reloads the page and reconnects to the hub.
-- **Look like the phone-width chat page, built for a phone:** its tokens (`src/theme.ts`), its round icon buttons and
-  pills, native navigation, 44pt targets, safe areas, the keyboard handled by `react-native-keyboard-controller`.
+- **RULE — ONE DESIGN LANGUAGE WITH THE CALM VIEW, and a device-specific reason to depart from it.** This app and the
+  chat page's calm view are the same product on two screens, so the colours, the glyphs and the order they sit in are
+  the page's: the palette in `src/theme.ts` mirrors `sidebar.css`'s tokens, and the glyphs in `src/icons.tsx` are the
+  page's own path data (`src/sidebar/icons.tsx`) drawn through react-native-svg. A change to either side is a change to
+  both, and WHICHEVER SIDE GOT IT RIGHT is the one the other follows — the shared look is not the page's property.
+  (The app worked out that a row's status belongs FIRST on its meta line, so it is in the same place on every row;
+  the page took that from the app, not the other way round.) Anything the app draws that the page also draws — a header's buttons, a badge, a menu row, a status word — is
+  the same shape, the same colour and in the same place unless a DEVICE fact makes it wrong: a thumb needs 44pt where
+  a pointer needs 24, a sheet belongs at the bottom of a phone where a menu belongs under its button, a system back
+  gesture exists here and not there. "It was easier with the library we already had" is not one of those reasons, and
+  it is how the two drifted the first time: lucide's magnifier, a sky-blue notice against the page's indigo, and the
+  inbox first in a row where the page puts it third.
+- **Built for a phone, within that:** native navigation, 44pt targets, safe areas, the keyboard handled by
+  `react-native-keyboard-controller`.
 - **Document everything, as on the web:** a header comment on every file, a docstring on every exported component and
   function, a comment above every `StyleSheet.create` key. The code index checks it (`node scripts/index.mjs --mobile`
   from the repo root) and so does the pre-commit hook. Search the index before writing a new component.
@@ -52,8 +64,11 @@ API from memory.** `expo-file-system` in particular is the `File` / `Directory` 
   page, so a check against the page's address drops every message there while passing on iOS. What confines this
   WebView is `onShouldStartLoadWithRequest`; anything else is a second look, and must treat a missing URL as nothing.
 - **Metro sees only the repo folders in `metro.config.js`'s `watchFolders`** (`src/native`, `src/pairing`, `src/chat`).
-  An import from anywhere else typechecks and then fails the RELEASE build ("Unable to resolve module"), which
-  `install` reports only as xcodebuild exiting 65: read its log, and never chain a flow run after it with `&&`.
+  A VALUE imported from anywhere else typechecks, runs in a debug bundle, and then fails the RELEASE build ("Unable to
+  resolve module"), which `install` reports only as xcodebuild exiting 65: read its log, and never chain a flow run
+  after it with `&&`. Type-only imports are erased and may come from anywhere. `tests/mobile-imports.test.mjs` fails on
+  a value import from elsewhere, because nothing else catches it — a PR builds the DEBUG apk only, and the release one
+  runs on main.
 - **Anything the app sends rides one sealed hub command, at most 1 MiB** (`src/hub/seal.ts`), base64 and JSON included.
   A phone photo alone is several times that: images are shrunk to `image-budget.ts`'s budget before they are attached.
 - **React Native's `Image` draws no SVG**, and says nothing: the viewer opened on a black screen for the demo's SVG
