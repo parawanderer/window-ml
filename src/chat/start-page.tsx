@@ -43,7 +43,9 @@ export function useHeldTrue(on: boolean, ms: number): boolean {
 }
 
 /** The start page: a pill to type in, and the choices a start needs on one row inside it. */
-export function StartPage({ store, onStarted, initialKind, extras, narrow }: { store: ChatStore; onStarted: (key: string) => void; initialKind?: StartKind; extras?: ChatExtras; narrow?: boolean }) {
+export function StartPage({ store, onStarted, initialKind, extras, narrow, back }: { store: ChatStore; onStarted: (key: string) => void; initialKind?: StartKind; extras?: ChatExtras; narrow?: boolean;
+    /** the way back, on a phone: drawn as the first thing in the top bar, beside the model */
+    back?: preact.ComponentChildren }) {
     // Kept through a reconnect like the runtime below, or the Agent/Chat switch would vanish and come back with it.
     const liveKinds = (["agent", "chat"] as const).filter((k) => startableOn(store, k).length > 0);
     const lastKinds = useRef<StartKind[]>(liveKinds);
@@ -119,7 +121,10 @@ export function StartPage({ store, onStarted, initialKind, extras, narrow }: { s
         : models === null && canList ? <span class="tp-pill tp-pill-model tp-pill-wait" role="status" aria-label="Loading models" /> : null;
     return (
         <>
-        {narrow && modelTop ? <div class="chat-start-top">{modelTop}</div> : null}
+        {/* ONE ROW, not a button floating over a bar that was padded to dodge it. The back button and the model are
+            the same kind of thing here — where you came from, and what this will run on — and a session's own header
+            already reads `‹ <model>`, so a new one that reads differently is a second grammar for the same bar. */}
+        {narrow && (back || modelTop) ? <div class="chat-start-top">{back}{modelTop}</div> : null}
         <div class="chat-start-page">
             <div class="chat-start-col">
                 <div class="chat-start-box">
