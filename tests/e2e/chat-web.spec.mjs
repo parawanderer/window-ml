@@ -1863,6 +1863,28 @@ test("resuming a run picks its budget and carries it on in one press", async () 
     await page.close();
 });
 
+// One corner, two buttons, two different primitives: the copy is an icon button and its neighbour is a code-block
+// tool. The box had been copied across once and the metrics had not, so they stood 20px and 18px side by side, on a
+// text baseline rather than a line of their own.
+test("the buttons in an output cell's corner are one set, not two", async () => {
+    const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(WAITING)}`);
+    await page.locator(".astep", { hasText: "exec" }).first().locator("button").first().click();
+    const corner = page.locator(".r-outcorner").first();
+    await expect(corner.locator("button")).toHaveCount(2);
+
+    const boxes = await corner.locator("button").evaluateAll((els) => els.map((e) => {
+        const r = e.getBoundingClientRect();
+        return { h: Math.round(r.height), top: Math.round(r.top), right: Math.round(r.right) };
+    }));
+    expect(new Set(boxes.map((b) => b.h)).size, `heights differed: ${boxes.map((b) => b.h)}`).toBe(1);
+    expect(new Set(boxes.map((b) => b.top)).size, `tops differed: ${boxes.map((b) => b.top)}`).toBe(1);
+    // Side by side in one row, close together — not scattered across the corner.
+    const gaps = boxes.slice(1).map((b, i) => b.right - b.h - boxes[i].right);
+    for (const g of gaps) expect(Math.abs(g)).toBeLessThan(30);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 // A step that CANNOT close has nothing to animate, and the guard for that said `awaiting` — but a gated step in calm
 // closes like any other, because the intent line above it says what is being asked. So the one step you are most
 // likely to be poking at snapped shut while every step beside it eased.
