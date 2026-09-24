@@ -1,22 +1,22 @@
 ---
 name: test-genres
-description: Run a subset of the test suite by genre (core/panel/ext/python/live) instead of all ~2 minutes of it. Reach for this while iterating; run the full suite before committing.
+description: Run a subset of the test suite by genre (core/panel/ext/python/live) instead of all ~40s of it. Reach for this while iterating; run the full suite before committing.
 ---
 
 # Test genres
 
-`npm test` is ~2 minutes. Three files are 80% of that — `sidebar.test.js` (53s), `background.test.js`
-(22s), `cdp-stream.test.mjs` (20s) — and none of them are usually what you just changed.
+`npm test` is ~40s in parallel, and its floor is its slowest FILE — `background.test.js` (22s),
+`cdp-stream.test.mjs` (20s) — neither of which is usually what you just changed.
 
 ```bash
-npm run test:core      # ~8s, 978 tests — pure modules. The default while iterating.
-npm run test:panel     # the sidebar UI against jsdom
+npm run test:core      # ~8s, 1,394 tests — pure modules. The default while iterating.
+npm run test:panel     # ~19s, the sidebar UI against jsdom (twelve sidebar-*.test.js files)
 npm run test:ext       # background / relay / CDP / the page loop
 npm run test:python    # real CPython (self-skips without dist/pyodide)
 npm test               # everything. Before you commit.
 
 node scripts/test.mjs --list      # what each genre holds
-node scripts/test.mjs --timings   # per-file durations, slowest first
+node scripts/test.mjs --timings   # per-file durations, slowest first. SERIAL: the total is a sum, not a wall clock
 node scripts/test.mjs panel ext   # more than one
 ```
 
