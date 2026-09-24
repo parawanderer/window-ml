@@ -3473,8 +3473,16 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .stor-chart { margin: 0 4px; }
 .stor-chart svg { width: 100%; height: 90px; display: block; }
 .stor-axis { display: flex; justify-content: space-between; font-size: 0.8em; color: var(--fg-faint); }
-.stor-tools, .stor-largest { display: flex; flex-direction: column; gap: 3px; margin: 0 4px; font-size: 0.85em; }
-.stor-toolrow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+/* THE GRID IS THE LIST, not the row. Each row used to be its own grid, so its third column was sized by its own
+   value — "3.70 KiB" and "468 B" are different widths, and the bars between them ended at different places, which
+   is the one thing a row of bars is for. One grid over the whole list gives every row the same three columns. */
+.stor-tools, .stor-largest {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    gap: 3px 8px; align-items: center; margin: 0 4px; font-size: 0.85em;
+}
+.stor-toolrow { display: contents; }
+/* Figures line up under each other: a size column read down is a comparison. */
+.stor-toolrow > :last-child { text-align: right; font-variant-numeric: tabular-nums; }
 .stor-toolrow > :first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stor-toolbar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
 .stor-toolbar > span { display: block; height: 100%; background: var(--warn); }

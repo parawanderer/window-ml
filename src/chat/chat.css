@@ -142,12 +142,16 @@ html, body, #root { height: 100%; }
 .fade-edges::before { display: none; top: calc((var(--pt, 0px) + var(--over, 12px)) * -1); margin-bottom: calc((var(--fade, 28px) + var(--over, 12px)) * -1); background: linear-gradient(to bottom, var(--fade-stops)); }
 .chat-list-scroll.fade-edges::before, .chat.narrow .chat-transcript.fade-edges::before { display: block; }
 .fade-edges::after { bottom: calc((var(--pb, 0px) + var(--over, 12px)) * -1); margin-top: auto; background: linear-gradient(to top, var(--fade-stops)); }
-/* AND ONLY WHERE THE DOCUMENT ACTUALLY CONTINUES (`fade-edges.ts` marks the ends). A fade says "there is more this
-   way"; sitting at the top of a list it says it about nothing, and dimming the first line with clear space above it
-   reads as exactly the cut-off document the fade was added to soften. A scroller with nothing to scroll is at both
-   ends, so a short list fades neither. It dissolves rather than switching, or the first pixel of a scroll pops. */
-.fade-edges::before, .fade-edges::after { opacity: 1; transition: opacity .12s linear; }
-.fade-edges.at-top::before, .fade-edges.at-end::after { opacity: 0; }
+/* AND ONLY WHERE THE DOCUMENT ACTUALLY CONTINUES (`fade-edges.ts` marks it). A fade says "there is more this way";
+   sitting at the top of a list it says it about nothing, and dimming the first line with clear space above it reads
+   as exactly the cut-off document the fade was added to soften. A scroller with nothing to scroll carries neither
+   mark and fades neither end. It dissolves rather than switching, or the first pixel of a scroll pops.
+
+   BARE IS THE DEFAULT and the marks only ever ADD a fade, which is what keeps it off the first painted frame. The
+   other way round — fade by default, a mark to remove it — every session opened at its start showed a fade that the
+   next frame took away, and you watched it go. A fade you have not earned yet must not be on screen at all. */
+.fade-edges::before, .fade-edges::after { opacity: 0; transition: opacity .12s linear; }
+.fade-edges.more-up::before, .fade-edges.more-down::after { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .fade-edges::before, .fade-edges::after { transition: none; } }
 .chat:not(.narrow) .chat-transcript > div { max-width: 920px; margin: 0 auto; }
 .chat-truncated, .chat-readonly { color: var(--fg-dim); font-size: .92em; }
@@ -1117,6 +1121,12 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-set-tabs { margin: 0 12px 24px; }
 .chat-set-lede { margin: 0 0 16px; padding: 0 12px; color: var(--fg-faint); font-size: .92em; }
 .chat-set-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 10px 12px; }
+/* A row whose VALUE is a list rather than a word: the label on its own line, the value under it across the full
+   width. Right-aligning a wrapping set into a narrow column is what made Offers read as ragged. */
+.chat-set-row.stack { flex-direction: column; align-items: stretch; gap: 8px; }
+/* The label's `flex: 1 1 240px` is a basis on the MAIN axis, which stacking turns from width into HEIGHT — it drew
+   a 240px-tall label with the chips marooned at the bottom of it. */
+.chat-set-row.stack .chat-set-label { flex: 0 0 auto; }
 .chat-set-label { flex: 1 1 240px; display: flex; flex-direction: column; gap: 3px; }
 .chat-set-hint { color: var(--fg-faint); font-size: .88em; }
 .chat-set-sample { margin: 4px 12px 0; }
@@ -1327,7 +1337,10 @@ button.chat-page-go:hover { color: var(--fg); }
 /* A fact's value, on the row's right. */
 .rt-val { color: var(--fg-dim); }
 /* What the runtime offers, as chips. */
-.rt-caps { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; max-width: 60%; }
+/* A WRAPPING LIST, left-aligned and across the full width, in a row that stacks (`.chat-set-row.stack`). It used to
+   right-align inside 60%, which is right for a one-word value and wrong for a set: the lines ended at different
+   places and read as ragged rather than as a list. */
+.rt-caps { display: flex; flex-wrap: wrap; gap: 6px; }
 /* A line in place of a part: asking, offline, not offered. */
 .rt-note { padding: 0 12px; margin: 4px 0; }
 /* The runtime's models, one per line, the default marked. */
