@@ -1093,6 +1093,17 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-att-fix:hover { opacity: .88; }
 .chat-att-fix:disabled { opacity: .5; cursor: default; }
 .chat-att-dismiss { padding: 2px 6px; border: none; background: none; color: var(--fg-faint); font: inherit; font-size: .85em; cursor: pointer; }
+/* WHY A CARD WITH NO BUTTONS STAYS PUT (attention-page.tsx). In the title's corner, dim until you go for it: the
+   answer matters once, and a line saying it on every card would be the loudest thing in a list of problems. */
+.chat-att-why {
+    margin-left: 6px; padding: 0 2px; font: inherit; line-height: 1; cursor: pointer;
+    background: none; border: none; color: var(--fg-faint);
+}
+.chat-att-why:hover, .chat-att-why[aria-expanded="true"] { color: var(--fg-dim); }
+.chat-att-why:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+/* The tapped answer, under the card's own words rather than over them: a tooltip is hidden by the same pointerdown
+   a tap begins with, so a touch screen needs the sentence IN the card. */
+.chat-att-why-note { margin-top: 6px; color: var(--fg-dim); font-size: .92em; line-height: 1.45; }
 .chat-att-dismiss:hover { color: var(--fg); }
 .chat.narrow .chat-att-item { flex-direction: column; gap: 10px; }
 .chat.narrow .chat-att-acts { flex-direction: row; align-items: center; }
@@ -1487,6 +1498,10 @@ button.chat-page-go:hover { color: var(--fg); }
        area around the chip takes the finger. */
     .chat-page-go { position: relative; }
     .chat-page-go::after { content: ""; position: absolute; inset: -11px -6px; }
+    /* The same for the `ⓘ` in an attention card's title: a glyph that size cannot grow to a thumb without pushing
+       the title around, so the finger gets a box the eye never sees. */
+    .chat-att-why { position: relative; }
+    .chat-att-why::after { content: ""; position: absolute; inset: -14px -14px; }
 }
 /* A ROUND button keeps its own size wherever it lands. In a phone's column the back button was laid out in flow and
    stretched across the whole width, a circle drawn 390px wide. */

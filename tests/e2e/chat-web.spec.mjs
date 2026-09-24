@@ -1647,6 +1647,29 @@ test("the approval bar does not flash on load when the gate is right there", asy
     await page.close();
 });
 
+// A card with neither a fix nor a Dismiss reads as a message that ignored you. The answer — it clears when the
+// machine it is about is put right, and not before — belongs in a corner, not on every card.
+test("a card that cannot be dismissed says why, by pointer and by tap", async () => {
+    const { page, errors } = await open(DESKTOP, "#/attention");
+    const cards = page.locator(".chat-att-item");
+    const stuck = cards.filter({ hasText: "archive folder needs reconnecting" });
+    const dismissable = cards.filter({ hasText: "No utility model" });
+
+    // Only where there is nothing to press: a card you CAN dismiss has no question to answer.
+    await expect(stuck.locator(".chat-att-why")).toHaveCount(1);
+    await expect(dismissable.locator(".chat-att-dismiss")).toHaveCount(1);
+    await expect(dismissable.locator(".chat-att-why")).toHaveCount(0);
+
+    // Tapping says it IN the card. The panel's tooltip cannot: a touch tap begins with the pointerdown that hides it.
+    await expect(stuck.locator(".chat-att-why-note")).toHaveCount(0);
+    await stuck.locator(".chat-att-why").click();
+    await expect(stuck.locator(".chat-att-why-note")).toContainText("until it is put right on Work laptop");
+    await stuck.locator(".chat-att-why").click();
+    await expect(stuck.locator(".chat-att-why-note")).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 // The notes sit UNDER the results, so one about a machine the filter has excluded reads as being about the results
 // above it: picking Lab box and being told to reconnect Work laptop's folder looks like Lab box is the one at fault.
 test("the archive-folder note follows the device filter, rather than speaking for every machine", async () => {
