@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { ago, byPinned, needsYou, sections, seen, when, STATUS_LABEL, STATUS_TONE } = await import("../mobile/src/format.ts");
+const { ago, approvalsPending, byPinned, needsYou, sections, seen, when, STATUS_LABEL, STATUS_TONE } = await import("../mobile/src/format.ts");
 
 const EVERY = [{ scope: "control" }];
 const rt = (id, extra = {}) => ({ id, name: id, kind: "browser", online: true, contractVersion: 1, grants: EVERY, capabilities: {}, ...extra });
@@ -45,6 +45,14 @@ test("a status says what it is in the page's words, and a tone every row can col
     assert.equal(STATUS_TONE.running, "busy");
     assert.equal(STATUS_TONE.capped, "stopped", "a step cap is not a failure: it can go on");
     assert.equal(STATUS_TONE.error, "err");
+});
+
+test("a row waiting on you says so once, in the badge, worded as the web list words it", () => {
+    // Not "1 approval pending": the badge's colour and its place in a list of runs already say what is pending,
+    // and a phone's row has no width for the word. Kept in step with src/chat/chat-app.tsx by hand, like the
+    // labels above, so the two lists read as the same list.
+    assert.equal(approvalsPending(1), "1 pending");
+    assert.equal(approvalsPending(3), "3 pending", "no plural to get wrong");
 });
 
 test("how long ago, as short as a row can hold", () => {
