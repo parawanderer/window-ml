@@ -34,7 +34,9 @@ async function open(viewport, hash = "") {
     await page.locator(".chat").waitFor();
     return { page, errors };
 }
-const row = (page, key) => page.locator(`.chat-row[data-session="${key}"]`);
+// The row in the session's OWN runtime group. A session waiting on you is also listed in "Needs you" at the top, so
+// this matches twice; `.last()` is the one where it lives, which is the one every assertion here means.
+const row = (page, key) => page.locator(`.chat-row[data-session="${key}"]`).last();
 const commands = (page) => page.evaluate(() => globalThis.__chatFake.commands);
 
 test("it runs with no extension: no chrome global, and the bundle loaded nothing that needs one", async () => {
@@ -448,14 +450,17 @@ test("desktop: the list folds a runtime away, and marks what moved while you wer
     await expect.poll(opacity).toBe("1");
 
     await head.click();
-    await expect(rows).toHaveCount(2);
+    // Three, not two: folding a machine tidies its group away, and the "Needs you" row survives it. Folding is about
+    // what you want to look at; a gate is about what has stopped until you come back to it, and one you have hidden
+    // is one you forget. The phone computes its own needs-you list from every session, with no fold filter either.
+    await expect(rows).toHaveCount(3);
     await expect(tri).not.toHaveClass(/open/);
     await page.mouse.move(0, 0);
     await expect.poll(opacity).toBe("0");
     await expect(page.locator(".chat-rt[data-runtime='laptop']")).toHaveAttribute("aria-expanded", "false");
     // …and it is this device's choice, so it survives a reload.
     await page.reload();
-    await expect(rows).toHaveCount(2);
+    await expect(rows).toHaveCount(3);
     await page.locator(".chat-rt[data-runtime='laptop']").click();
     await expect(rows).toHaveCount(7);
 
@@ -476,7 +481,10 @@ test("desktop: a run says which tab it is driving, and peeks at it", async () =>
     const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(WAITING)}`);
     // The header names the page, not only the machine and the model.
     await expect(page.locator(".chat-lede-sub .chat-page")).toHaveText("flights.example");
-    await expect(row(page, WAITING).locator(".chat-page")).toHaveText("flights.example");
+    // In the LIST, on a row in its own runtime group. WAITING is not one: it sits in "Needs you", where a row names
+    // the machine instead, because out of its group that is the thing it has lost.
+    await expect(row(page, CAPPED).locator(".chat-page")).toHaveText("flights.example");
+    await expect(row(page, WAITING).locator(".chat-row-rt")).toHaveText("Work laptop");
     // A plain chat is on no page at all, and says nothing rather than something empty.
     await expect(row(page, CHAT).locator(".chat-page")).toHaveCount(0);
     // The chip asks the RUNTIME to bring the tab forward, so it works the same over a hub.
@@ -1729,6 +1737,49 @@ test("the runtime panel's lists read as lists: chips left and full width, bars e
     const rights = await page.locator(".stor-tools .stor-toolbar").evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().right)));
     expect(rights.length).toBeGreaterThan(1);
     expect(new Set(rights).size, `bars ended at ${rights.join(", ")}`).toBe(1);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// The list and the phone's list are the same list. Four things had drifted: the status sat LAST, after a hostname of
+// a different width on every row; the agent marker was a panel badge at 0.75em inside a .86em line, so it read at
+// about two-thirds of the words beside it; the meta line wrapped; and what needs you was only findable by knowing
+// which machine it was on.
+test("the session list reads as the phone's: status first, one line, and what needs you at the top", async () => {
+    const { page, errors } = await open(DESKTOP);
+    const row = page.locator(`.chat-list .chat-row[data-session="${WAITING}"]`).last();
+    const meta = row.locator(".chat-row-meta");
+    const x = async (sel) => (await meta.locator(sel).boundingBox()).x;
+
+    // WHERE IT STANDS, then WHAT IT IS, then WHERE IT LIVES.
+    expect(await x(".chat-appr-badge")).toBeLessThan(await x(".agent-badge"));
+    expect(await x(".agent-badge")).toBeLessThan(await x(".chat-page, .chat-row-rt"));
+
+    // One line, whatever is on it — a status that drops to a second row is in a different place on every row.
+    for (const h of await page.locator(".chat-list .chat-row-meta").evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height))) {
+        expect(h).toBeLessThan(20);
+    }
+
+    // The agent marker is the line's own size, and it carries the glyph the phone has always drawn.
+    const sizes = await meta.evaluate((m) => {
+        const px = (s) => parseFloat(getComputedStyle(m.querySelector(s)).fontSize);
+        return { agent: px(".agent-badge"), host: px(".chat-page, .chat-row-rt") };
+    });
+    expect(sizes.agent).toBeCloseTo(sizes.host, 1);
+    await expect(meta.locator(".agent-badge svg")).toHaveCount(1);
+
+    // And what is waiting on you is the first group, however many machines there are — and it LEAVES its own group
+    // while it is up there: the same row twice within one screen reads as a bug.
+    const groups = page.locator(".chat-list .chat-group");
+    await expect(groups.first()).toHaveClass(/chat-needs-you/);
+    await expect(groups.first().locator(".chat-row")).toHaveCount(1);
+    await expect(page.locator(`.chat-list .chat-row[data-session="${WAITING}"]`)).toHaveCount(1);
+
+    // Pinning from up here cannot move the row, so it says so instead: the press did something.
+    await expect(groups.first().locator(".chat-row-pin")).toHaveCount(0);
+    await page.locator(".chat-needs-you .chat-row-wrap").getByRole("button", { name: /options/i }).click();
+    await page.getByRole("menuitem", { name: /^Pin to the top/ }).click();
+    await expect(groups.first().locator(".chat-row-pin")).toHaveCount(1);
     expect(errors).toEqual([]);
     await page.close();
 });
