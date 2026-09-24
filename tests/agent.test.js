@@ -1454,6 +1454,38 @@ test("resumeAgent: re-acquires a run's handle by hash → read messages + contin
     assert.throws(() => world.ml.resumeAgent("deadbeef"), /No resumable agent handle/, "unknown hash throws a clear error");
 });
 
+test("resumeAgent: a PREFIX names a run, several matches is an error, and a short one is not a prefix at all", async () => {
+    // Ids are 32 hex characters and nobody retypes one — they copy it and paste the part they can see. `git`'s rule:
+    // the start of an id names it while that start belongs to one thing.
+    //
+    // Against the MODULE rather than the page world: this is entirely about the handle registry, and registering two
+    // runs whose hashes share a start is the case that matters — which cannot be arranged by starting real runs,
+    // since their hashes are random.
+    const { resumeAgent, RESUME_PREFIX_MIN } = await import("../src/ml-agent-handle.ts");
+    const { handleRegistry } = await import("../src/bus.ts");
+    const A = "abcdef0123456789abcdef0123456789";
+    const B = "abcdef0199999999abcdef0199999999";   // shares the first ten characters with A
+    const get = (h) => resumeAgent.call({}, h);
+
+    handleRegistry.set(A, { hash: A });
+    try {
+        assert.equal(get(A).hash, A, "the whole id names it");
+        assert.equal(get("abcdef0123").hash, A, "and so does the start of it");
+        // TOO SHORT IS NOT A NEAR MISS, it is refused: a stray string ("0", a title, an empty-ish variable) must
+        // never resolve to a run by accident, because resuming the wrong one is silent and costs the right one's
+        // next turn.
+        assert.throws(() => get(A.slice(0, RESUME_PREFIX_MIN - 1)), /No resumable agent handle/);
+        assert.equal(get(A.slice(0, RESUME_PREFIX_MIN)).hash, A, "exactly the minimum is enough");
+
+        // AMBIGUITY IS AN ERROR, NEVER A PICK: two runs sharing a start cannot be told apart here, and choosing one
+        // would be choosing for the caller.
+        handleRegistry.set(B, { hash: B });
+        assert.throws(() => get("abcdef01"), /matches 2 runs/, "it names both rather than guessing");
+        assert.equal(get("abcdef0123").hash, A, "a start that still belongs to one run keeps working");
+        assert.equal(get(B).hash, B, "an EXACT id is never a prefix question, even while another shares its start");
+    } finally { handleRegistry.delete(A); handleRegistry.delete(B); }
+});
+
 test("createAgent: a run in flight rejects a second run(); say() mid-run STEERS (injected at the next step boundary)", async () => {
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("poke", {}, "c1"), reply("done")]) });
     let a, nestedErr;
