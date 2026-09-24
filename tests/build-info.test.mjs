@@ -33,9 +33,15 @@ test("writeBuildInfo stamps a BUILD_INFO module with the provenance fields", () 
     const out = writeBuildInfo();
     const src = readFileSync(out, "utf8");
     assert.match(src, /export const BUILD_INFO =/);
-    for (const key of ["commit", "shortCommit", "dirty", "dirtyFiles", "dirtyDiff", "commitDate", "repoUrl", "commitUrl", "buildTime"])
+    for (const key of ["commit", "shortCommit", "dirty", "dirtyFiles", "commitDate", "repoUrl", "commitUrl", "buildTime"])
         assert.match(src, new RegExp(`"${key}":`), `BUILD_INFO carries ${key}`);
     // buildTime is a real ISO timestamp; dirty is a boolean (uncommitted-changes flag).
     assert.match(src, /"buildTime": "\d{4}-\d{2}-\d{2}T[\d:.]+Z"/);
     assert.match(src, /"dirty": (true|false)/);
+    // THE DIFF IS NOT ONE OF THEM. It is written beside it, because nothing tree-shakes a property off an object:
+    // the day the chat page started importing BUILD_INFO for an export's provenance, a whole `git diff` went into
+    // a bundle that never reads one.
+    assert.doesNotMatch(src, /"dirtyDiff":/, "the diff is not a field on BUILD_INFO");
+    const diff = readFileSync(out.replace("build-info.gen.ts", "build-diff.gen.ts"), "utf8");
+    assert.match(diff, /export const BUILD_DIFF = "/);
 });

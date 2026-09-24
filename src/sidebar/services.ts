@@ -53,12 +53,34 @@ export interface SidebarServices {
     highlight(ref: HighlightRef): void;
     /** show an image full-size */
     openLightbox(src: string): void;
+    /** Open a URL AWAY from this surface — a new tab in a browser, the system browser from the phone app. Never a
+     *  navigation of the surface itself: this page IS the client, and leaving it drops the hub connection. */
+    openLink(url: string): void;
     /** host-permission checks for a credentialed fetch; null where the host has no such permissions */
     hostAccess: { has(pattern: string): Promise<boolean>; request(pattern: string): Promise<void> } | null;
     /** a Google Sheet's title by id, or null when it cannot be read here */
     sheetTitle(id: string): Promise<string | null>;
     /** persist a display preference (the bench's state, and the like) */
     savePref(key: string, value: unknown): void;
+    /** Hand a finished file to the person: a download in a browser, the share sheet on a phone. The EXPORTS go
+     *  through this, which is why it is here rather than left to each surface's own download helper. */
+    saveFile(name: string, data: Blob): void;
+    /**
+     * Print a rendered, self-contained document — the PDF export, which is really "print this, choose Save as PDF".
+     * NULL WHERE NOTHING HERE CAN PRINT, and that is not a detail a caller may skip: a phone app's WebView has no
+     * print dialog and no tab to open one in, so the export picker offers PDF only where this is set.
+     *
+     * The extension's own frames pass the document to a real TAB through the background, because `window.print()`
+     * is suppressed inside docked DevTools; a plain page prints it in an offscreen iframe of its own.
+     */
+    printDoc: ((html: string) => void) | null;
+    /** The version of whatever is hosting these views, stamped into a JSON export. Null where there is no such
+     *  number — a page served from a build has its commit (`BUILD_INFO`) and nothing else. */
+    appVersion: string | null;
+    /** An ABSOLUTE url for a file shipped beside this surface (`fonts/KaTeX_Math-Italic.woff2`). The print document
+     *  renders from a blob url, whose relative paths resolve against the origin ROOT rather than against wherever
+     *  this page is served from, so a relative reference in it silently 404s. */
+    assetUrl(path: string): string;
     /**
      * Load the page of events before the oldest one held for a session, for a reference that points further back than
      * what is loaded (transcript-window.tsx `reveal`). Resolves with whether anything older can still be loaded. Null
@@ -96,9 +118,14 @@ const UNAVAILABLE: SidebarServices = {
     continueSession() {},
     highlight() {},
     openLightbox() {},
+    openLink() {},
     hostAccess: null,
     sheetTitle: async () => null,
     savePref() {},
+    saveFile() {},
+    printDoc: null,
+    appVersion: null,
+    assetUrl: (path) => path,
     loadEarlier: null,
     storedTable: null,
 };

@@ -545,6 +545,36 @@ test("desktop: a run whose page has gone offers a resume instead of a composer, 
     await page.close();
 });
 
+/** WCAG relative luminance of an `rgb(r, g, b)` string. */
+function luminance(css) {
+    const [r, g, b] = css.match(/[\d.]+/g).slice(0, 3).map(Number)
+        .map((v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+/** The WCAG contrast ratio between two `rgb()` strings, 1:1 (identical) to 21:1 (black on white). */
+function contrast(a, b) {
+    const [x, y] = [luminance(a), luminance(b)].sort((m, n) => n - m);
+    return (x + 0.05) / (y + 0.05);
+}
+
+test("the two answers to an approval are both legible, measured rather than eyeballed", async () => {
+    // Deny is the OUTLINED half of a consent control, and an outline at `--border` sits near 1.4:1 against the card
+    // — drawn, and effectively invisible. That is the wrong thing for one of two answers to a question about what an
+    // agent may do, and it is the kind of wrong that looks fine to whoever chose the colour. So it is measured:
+    // WCAG wants 3:1 for a non-text UI boundary and 4.5:1 for body-sized text.
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(WAITING)}`);
+    const seen = await page.evaluate(() => {
+        const btn = document.querySelector(".astep-approve .appr-btn.no");
+        const card = document.querySelector(".astep-approve");
+        const cs = getComputedStyle(btn);
+        return { text: cs.color, border: cs.borderTopColor, card: getComputedStyle(card).backgroundColor };
+    });
+    expect(contrast(seen.border, seen.card)).toBeGreaterThanOrEqual(3);
+    expect(contrast(seen.text, seen.card)).toBeGreaterThanOrEqual(4.5);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 test("desktop: a picker inside a dialog opens against its own pill, not somewhere else on the page", async () => {
     // The pickers place their popovers in VIEWPORT coordinates (position: fixed). Any ancestor with a transform —
     // including the identity one an `animation-fill-mode: both` leaves behind after a dialog's entrance — becomes
@@ -1152,23 +1182,27 @@ test("the phone app's start page is the standalone client, not the demo @mobile"
     }
 });
 
-test("a waiting count is the warning yellow under a mouse and cyan under a finger @mobile", async () => {
+test("a waiting count is the accent in the calm view and the warning yellow outside it @mobile", async () => {
+    // Something waiting on you is the app ASKING, not a warning that something went wrong, so in the reading view it
+    // is the accent — the colour the phone app draws the same state in. The busy developer view keeps the yellow,
+    // where it sits among the other machinery and a second accent would say nothing. It is the same at either
+    // pointer size: the touch-only cyan existed because yellow read as an alarm in a phone's frame, which is not a
+    // problem the accent has.
     const notice = async (opts) => {
         const ctx = await browser.newContext({ viewport: PHONE, ...opts });
         const page = await ctx.newPage();
         await page.goto(server.url);
         const v = await page.evaluate(() => {
-            const probe = document.body.appendChild(Object.assign(document.createElement("span"), { className: "chat-appr-badge" }));
-            return getComputedStyle(probe).backgroundColor;
+            const mk = (host) => getComputedStyle(host.appendChild(Object.assign(document.createElement("span"), { className: "chat-appr-badge" }))).backgroundColor;
+            return { calm: mk(document.querySelector(".chat.calm")), plain: mk(document.body) };
         });
         await ctx.close();
         return v;
     };
     const touch = { hasTouch: true, isMobile: true };
-    expect(await notice({ colorScheme: "dark" })).toBe("rgb(234, 179, 8)");
-    expect(await notice({ colorScheme: "dark", ...touch })).toBe("rgb(56, 189, 248)");
-    expect(await notice({ colorScheme: "light" })).toBe("rgb(202, 138, 4)");
-    expect(await notice({ colorScheme: "light", ...touch })).toBe("rgb(2, 132, 199)");
+    expect(await notice({ colorScheme: "dark" })).toEqual({ calm: "rgb(99, 102, 241)", plain: "rgb(234, 179, 8)" });
+    expect(await notice({ colorScheme: "dark", ...touch })).toEqual({ calm: "rgb(99, 102, 241)", plain: "rgb(234, 179, 8)" });
+    expect(await notice({ colorScheme: "light" })).toEqual({ calm: "rgb(99, 102, 241)", plain: "rgb(202, 138, 4)" });
 });
 
 test("phone (touch): the tab picker opens without raising the keyboard, and stays open when the keyboard comes @mobile", async () => {
@@ -1466,4 +1500,81 @@ test("a citation to a step the window no longer draws brings it back, rather tha
     await expect(page.locator('[data-astep-seq="1"]')).toHaveClass(/open/);
     expect(errors).toEqual([]);
     await page.close();
+});
+
+// A fade PROMISES there is more that way. Drawn at rest it promises it about nothing, and a dimmed first line with
+// clear space above it reads as precisely the cut-off document the fade was added to soften — which is what the
+// session list did, over its own first group heading, while sitting at the top of a list that fits on screen.
+test("an edge fades only where the document continues past it", async () => {
+    const { page, errors } = await open(PHONE);
+    const alpha = (sel, pseudo) => page.evaluate(([s, p]) => {
+        const el = document.querySelector(s);
+        if (!el) return null;
+        const cs = getComputedStyle(el, p);
+        return cs.display === "none" ? 0 : parseFloat(cs.opacity);
+    }, [sel, pseudo]);
+
+    // The list, at its top and short enough to need no scrolling: neither end continues, so neither end fades.
+    await page.locator(".chat-list-scroll").waitFor();
+    await expect.poll(() => alpha(".chat-list-scroll", "::before")).toBe(0);
+    await expect.poll(() => alpha(".chat-list-scroll", "::after")).toBe(0);
+
+    // A transcript long enough to scroll, which opens pinned to its newest turn: the end is reached, the start is
+    // several screens up, so the top fades and the bottom does not.
+    const key = await longThread(page, 30, "fade");
+    await page.goto(`${server.url}#/s/${encodeURIComponent(key)}`);
+    await page.locator(".chat-transcript").getByText("Answer 29").waitFor();
+    await expect.poll(() => alpha(".chat-transcript", "::after")).toBe(0);
+    await expect.poll(() => alpha(".chat-transcript", "::before")).toBe(1);
+
+    // And the other way round once the reader is back at the start.
+    await page.locator(".chat-transcript").evaluate((el) => { el.scrollTop = 0; });
+    await expect.poll(() => alpha(".chat-transcript", "::before")).toBe(0);
+    await expect.poll(() => alpha(".chat-transcript", "::after")).toBe(1);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// IN-CHAT OPTIONS ON A WIDE PAGE. The calm view has no header band by design, which left the session's own actions —
+// looking at its page, exporting it — with no door at all on the view that is the default.
+test("the wide chat's ⋮ carries the session's own options, and Export chat writes a file", async () => {
+    const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(CHAT)}`);
+    await page.locator(".chat-transcript").waitFor();
+    await page.locator(".chat-more-float").click();
+    const menu = page.locator(".chat-head-menu");
+    await expect(menu).toContainText("Export chat");
+
+    await menu.getByRole("menuitem", { name: /Export chat/ }).click();
+    const dialog = page.locator(".chat-dialog");
+    await expect(dialog.locator("h2")).toHaveText("Export chat");
+    // Three shapes, and this page can print, so PDF is among them.
+    await expect(dialog.locator(".chat-export-opt")).toHaveCount(3);
+
+    // The file is really written: the export goes through the services seam to the platform's own saveFile, and
+    // nothing before this checked that the chat page had one wired at all.
+    const [download] = await Promise.all([
+        page.waitForEvent("download"),
+        dialog.getByRole("button", { name: "Export" }).click(),
+    ]);
+    expect(download.suggestedFilename()).toMatch(/^ml-(chat|agent)-.*\.(md|zip)$/);
+    await expect(dialog).toHaveCount(0);   // and it closes behind itself
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// The collapse chevron has no gutter to sit in at a phone's width, and on the left of the footer row it was the one
+// control in the transcript lined up with nothing — under the paragraph's first character, as if it belonged to it.
+test("the answer's collapse control sits in the gutter on a wide page and with the other controls on a phone @mobile", async () => {
+    const x = async (page, sel) => (await page.locator(sel).first().boundingBox()).x;
+    const wide = await open(DESKTOP, `#/s/${encodeURIComponent(CHAT)}`);
+    await wide.page.locator(".msg.asst .who-toggle").waitFor();
+    expect(await x(wide.page, ".msg.asst .who-toggle")).toBeLessThan(await x(wide.page, ".msg.asst .md"));
+    expect(wide.errors).toEqual([]);
+    await wide.page.close();
+
+    const phone = await open(PHONE, `#/s/${encodeURIComponent(CHAT)}`);
+    await phone.page.locator(".msg.asst .who-toggle").waitFor();
+    expect(await x(phone.page, ".msg.asst .who-toggle")).toBeGreaterThan(await x(phone.page, ".msg.asst .mrow .icon-btn"));
+    expect(phone.errors).toEqual([]);
+    await phone.page.close();
 });

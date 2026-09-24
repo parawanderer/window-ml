@@ -68,6 +68,15 @@ export function ArchiveFolderBody(p: {
                 ? <>Last time it was allowed only until the browser restarted. Reconnect, and this time choose <b>Always allow</b> (<b>Allow on every visit</b> in Chrome) so it stays connected.</>
                 : <>The browser asks again after a restart unless it was allowed for good. Reconnect, and in the prompt choose <b>Always allow</b> (<b>Allow on every visit</b> in Chrome) so it stays connected.</>}</div>
             {asks("Reconnect", "Asking…", "regrant", p.onRegrant, true)}
+            {/* Said only once the lasting choice has demonstrably not been taken. Chrome STOPS offering "Allow on
+                every visit" for an origin after the prompt is dismissed or denied a few times, and reverts to the
+                one-time question with no sign that it has done so — which reads as the lasting option never having
+                existed. Nothing here can re-enable it; resetting the site's permissions can. */}
+            {regrantedBefore() ? (
+                <div class="set-hint">Only offered <b>Allow this time</b>? A browser stops offering the lasting choice
+                    for a site once the prompt has been dismissed a few times. Reset this page's permissions in the
+                    address bar (the icon left of the address → Site settings → Reset permissions), then reconnect.</div>
+            ) : null}
             {pending}{off}{note}
         </div>
     );

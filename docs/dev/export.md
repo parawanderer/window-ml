@@ -45,6 +45,34 @@ own way. A third format = a third sink, not a third walker.
   hostile tool result or model reply can never inject markup. Disclosures are
   `<details open>`: a collapsed one prints as just its summary.
 
+**Three surfaces, one exporter (2026-09-24).** The chat page and the phone app export the same sessions with the
+same code, so what used to be `chrome.*` inline in `export.ts` now goes through the services seam
+(`sidebar/services.ts`): `saveFile` (a download in a browser, the share sheet on a phone), `printDoc`, `appVersion`
+and `assetUrl`. Three things to know before touching it.
+
+`printDoc` is NULLABLE and that is the interface, not a convenience. A PDF is really "print this document and choose
+Save as PDF", which needs a print dialog: the extension's frames route the doc to a tab (above), a plain page prints
+it in its own offscreen iframe (`sidebar/print-frame.ts`, extracted for exactly this), and a phone app's WebView has
+neither. `canPrintSession()` is what the pickers ask, and the phone's picker offers Markdown and JSON only.
+
+`assetUrl` exists because of KaTeX. The print doc loads from a blob URL, whose relative paths resolve against the
+ORIGIN ROOT rather than wherever the page is served from, so `url(fonts/KaTeX_*.woff2)` silently 404s on any page
+not served at `/`. Each host resolves it: `chrome.runtime.getURL` in the extension, `new URL(path, location.href)`
+on a page.
+
+And the diff moved OUT of `BUILD_INFO`. `build-info.gen.ts` carries the commit and the dirty FILE LIST; the
+uncommitted diff is `build-diff.gen.ts`, imported only by `tools.ts`, which serves it on `agent_api_docs({ diff:
+true })`. Nothing tree-shakes a property off an object literal, so the day the chat page began importing
+`BUILD_INFO` for an export's provenance it also began carrying a whole `git diff` into a bundle that never reads
+one — and the web build's `chrome.*` guard started failing whenever the working tree happened to contain that
+string. A harness artifact that DOES want the diff folds it back in itself (`tests/e2e/run-once.mjs`).
+
+**The picker (chat page, `src/chat/export-dialog.tsx`).** The panel's export is a menu of formats; the chat page's
+is a dialog, because the three formats are a choice nobody arrives with an opinion about and a menu makes you pick
+before reading what they are for. Each row says who the file is for, not its extension. It also says when the
+session is only PARTLY loaded: a long transcript is paged (`transcript-window.tsx`), and a file holding just the end
+of a conversation would be read as the whole of it.
+
 
 **Programmatic export (`export-schema.ts` + `docs/spec/export.schema.json`).** The JSON export is a
 PUBLISHED contract, and `export-schema.ts` (root, beside contract.ts) is normative. Two things about it are

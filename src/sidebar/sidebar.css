@@ -11,6 +11,10 @@
     /* Something waiting on the person (an approval, an attention count). The warning yellow at a desk; the chat page
        turns it cyan on a touch screen (chat.css), where a yellow badge in a small frame read as an alarm. */
     --notice: var(--warn); --notice-fg: #1a1400;
+    /* The mark on a CITATION — a value in the prose that came from a tool rather than from the model. Its own name
+       because `--ok` means "that worked" everywhere else, and the chat page's calm view recolours one without the
+       other (chat.css). */
+    --cite: var(--ok);
     /* JSON-tree syntax colours, matched to the atom-one-dark code theme so the raw In tree reads like the code block. */
     --j-key: #d19a66; --j-str: #98c379; --j-lit: #56b6c2; --j-base: #abb2bf;
 }
@@ -1234,13 +1238,21 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
 
 /* Design A: a background-hosted call blocked on the human gate. A warn-edged bar with approve/deny —
    the decision is made HERE (extension iframe), unforgeable by the page. */
-.astep.tool.awaiting { border-left-color: var(--warn); }
+.astep.tool.awaiting { border-left-color: var(--notice); }
+/* THE CONSENT SURFACE inside a step: what the agent wants to do, and the two answers. Drawn twice over — the busy
+   view's alert card, matching the instrumentation around it, and the reading view's quiet one below. */
 .astep-approve { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 6px; padding: 6px 8px; border-radius: 6px;
-    background: color-mix(in srgb, var(--warn) 14%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); }
+    background: color-mix(in srgb, var(--notice) 14%, transparent); border: 1px solid color-mix(in srgb, var(--notice) 45%, transparent); }
+/* IN THE READING VIEW, one container rather than three. The step already carries a rail saying it is unfinished, and
+   this had a tinted background AND a hard border of the same colour inside it — one decision wrapped three times,
+   reading as an alert nested in an alert. The busy view keeps all of it: there the card sits among the other
+   instrumentation, matching the bar above it, and it is the same trace the DevTools panel draws. */
+html[data-focus] .astep-approve { gap: 8px; margin: 6px 0; padding: 9px 11px; border-radius: 10px;
+    background: var(--panel); border: none; }
 .astep-approve .appr-row { display: flex; align-items: center; gap: 8px; }
 .astep-approve .appr-note { display: flex; align-items: flex-start; gap: 6px; font-size: 0.82em; color: var(--fg);
     padding-bottom: 5px; border-bottom: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); }
-.astep-approve .appr-note svg { flex: none; width: 13px; height: 13px; margin-top: 1px; color: var(--warn); }
+.astep-approve .appr-note svg { flex: none; width: 13px; height: 13px; margin-top: 1px; color: var(--notice); }
 .astep-approve .appr-note b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 /* Google Docs-style smart chip for a Sheet reference: icon + friendly name, hoverable for the id. */
@@ -1256,10 +1268,31 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
 .appr-btn { font-size: 0.82em; font-weight: 700; padding: 3px 12px; border-radius: 6px; border: 1px solid; cursor: pointer; background: none; }
 .appr-btn.yes { color: var(--accent-fg); background: var(--ok); border-color: var(--ok); }
 .appr-btn.no { color: var(--err); border-color: var(--err); }
+/* DELIBERATE, not alarming — in the reading view. A solid green against an outlined red reads as a traffic light:
+   the loudest thing on a page of prose, carrying a claim the card cannot make, since most approvals are routine.
+   What the control must keep either way is that the two answers are TOLD APART instantly and that neither is the one
+   an eye slides onto. So here: the page's own primary chip for yes, a quiet outline for no. Deny is NOT softened to
+   "Skip" on any surface — denying is a decision about what an agent may do, not stepping past a wizard. */
+html[data-focus] .appr-btn { font-weight: 600; padding: 4px 13px; border-radius: 999px; border-color: transparent; }
+/* SIZED FOR THE PAGE where there is a page to size for. These are the panel's buttons, drawn for a 360px drawer, and
+   at a reading measure they came out smaller than the prose around them — the one control on screen you are meant to
+   stop and use. A coarse pointer already gets its 40px minimum below, so this is the mouse's case. */
+@media (min-width: 720px) and (pointer: fine) {
+    html[data-focus] .appr-btn { font-size: .95em; padding: 7px 18px; }
+}
+html[data-focus] .appr-btn.yes { color: var(--bg); background: var(--fg); border-color: var(--fg); font-weight: 700; }
+/* The outline is `--fg-dim`, the same token as the label, not `--border`. A border at `--border` sits about 1.4:1
+   against this card — technically drawn, effectively invisible, which on one of two answers to a consent question
+   is the wrong thing to be. WCAG's non-text minimum is 3:1; this lands near 5.8:1 and is still plainly the quieter
+   of the pair, because Approve is FILLED. `tests/e2e/chat-web.spec.mjs` measures it rather than trusting the eye. */
+html[data-focus] .appr-btn.no { color: var(--fg-dim); border-color: var(--fg-dim); }
+html[data-focus] .appr-btn.no:hover { color: var(--fg); border-color: var(--fg-dim); background: var(--panel-2); }
 .appr-btn:hover { filter: brightness(1.08); }
 /* "Keep" (approve + remember): a hollow variant of the yes button so the plain Approve stays primary. */
 .appr-btn.yes.remember { background: none; color: var(--ok); }
+html[data-focus] .appr-btn.yes.remember { color: var(--fg); border-color: var(--fg-dim); font-weight: 600; }
 .appr-btn.yes.remember:hover { background: color-mix(in srgb, var(--ok) 16%, transparent); }
+html[data-focus] .appr-btn.yes.remember:hover { background: var(--panel-2); }
 /* The collapsed grant CARD: what "Keep" will persist. Summary line always shown; expand for the exact items.
    Extensible — generic over grant kind (a warm card, since it establishes a session-long consent). */
 .appr-grant { border-radius: 6px; padding: 4px 8px;
@@ -1412,8 +1445,13 @@ details.io[open] > summary .io-preview { display: none; }
 .ctx-menu { position: fixed; min-width: 200px; padding: 4px; background: var(--panel, #1f2430); border: 1px solid var(--border);
     border-radius: 7px; box-shadow: 0 8px 28px rgba(0,0,0,.5); display: flex; flex-direction: column; }
 .ctx-item { display: block; width: 100%; text-align: left; padding: 6px 10px; border: none; border-radius: 4px; background: none;
-    color: var(--fg); font: inherit; font-size: 0.9em; cursor: default; white-space: nowrap; }
-.ctx-item:hover { background: var(--accent); color: var(--accent-fg); }
+    color: var(--fg); font: inherit; font-size: 0.9em; cursor: pointer; white-space: nowrap; }
+/* A raised surface, not a filled accent bar. This menu began as the panel's right-click menu, where a solid accent
+   row is the platform look; it is now also the page's, beside pickers whose rows highlight with `--panel-2`, and one
+   of the two had to give. The quieter one does — a menu row is a place to look, not the loudest thing on screen.
+   `cursor` was `default`, which said the row was not a control at all. */
+.ctx-item:hover { background: var(--panel-2); color: var(--fg); }
+.ctx-item:focus-visible { background: var(--panel-2); outline: 2px solid var(--accent); outline-offset: -2px; }
 .r-el-idx { color: var(--fg-faint); font: 0.8em ui-monospace, SFMono-Regular, Menlo, monospace; flex: 0 0 auto; }
 .r-el-text { color: var(--fg); }
 .r-el-path { color: var(--fg-dim); font: 0.82em ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
@@ -1644,6 +1682,13 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
 /* Shared tool OUTPUT CELL (python_exec / exec / any future tool): capped height → scrolls, with a drag grip.
    Jupyter's output area — tall output can't bury the transcript, and tail-follow keeps the newest line in view. */
 .r-outcell { position: relative; }
+/* ONE SURFACE FOR A RAW PAYLOAD, whichever slot it is in and whatever shape it takes. The Out's raw view is a
+   `Code` block, which paints its own box; the In's raw view is a tree of arguments, which painted none — so the
+   two halves of the same step, both showing exactly what the model sent or received, sat on different surfaces and
+   one of them looked like it had lost its container. The surface moves to the CELL, and the code block inside it
+   stops drawing a second one. */
+.io-raw > .r-outcell { background: var(--code-bg, var(--bg)); border: 1px solid var(--border); border-radius: 5px; }
+.io-raw > .r-outcell > .r-outscroll > .code { background: none; border: none; border-radius: 0; }
 /* A cell that takes its height from what CONTAINS it instead of from the cap — the bench's output pane,
    where the divider you dragged already said how much room you wanted, and a capped box would leave dead
    space under it that reads as output having been cut off. */
@@ -1891,7 +1936,7 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
     /* `--panel`, not `--bg`, as the fallback: a code block LOOKS filled because the highlighter paints its own
        background on the inner `code.hljs`, and `--code-bg` is only set for a non-default theme — so falling back
        to the page's own colour drew a box with nothing in it beside a block that was plainly full. */
-    padding: 6px 44px 6px 8px; background: var(--code-bg, var(--panel)); border: 1px solid var(--border);
+    padding: 6px 44px 6px 8px; background: var(--code-bg, var(--bg)); border: 1px solid var(--border);
     border-radius: 5px; max-width: 100%; overflow-x: auto;
 }
 /* The row where a clipped value's text ended, in the container that was still open there. */
@@ -1931,6 +1976,11 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
 .r-outcorner { position: absolute; top: 2px; right: 6px; z-index: 2; opacity: .5; transition: opacity .12s ease; }
 .r-outcell:hover .r-outcorner, .r-outcorner:focus-within { opacity: 1; }
 .r-outcell:has(.r-find) .r-outcorner { display: none; }
+/* …and it is the SAME control as a code block's toolbar button (`.code-tool`), because it does the same job in the
+   same corner. One was boxed and one was bare, side by side down a step. */
+.r-outcorner .icon-btn { padding: 2px 6px; border-radius: 5px; color: var(--fg-dim);
+    background: var(--panel); border: 1px solid var(--border); }
+.r-outcorner .icon-btn:hover { color: var(--fg); border-color: var(--fg-dim); }
 
 .msg { border-radius: 7px; padding: 6px 9px; margin-bottom: 8px; border: 1px solid var(--border); }
 .msg.user { background: var(--user-bg); }
@@ -2608,8 +2658,26 @@ html[data-surface="card"] .appr-btn.no:hover {
     text-decoration: underline dotted; text-decoration-thickness: 2px; text-underline-offset: 3px; }
 /* navigate's destination URL — same "significant action" cue as submit (warm + dotted), but wraps since a
    URL can be long. Leaving the current page for another is worth flagging. */
-.action-link { font-weight: 650; color: var(--warn); word-break: break-all;
+.action-link { font-weight: 650; color: var(--warn); word-break: break-all; cursor: pointer;
     text-decoration: underline dotted; text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.action-link:hover { text-decoration-style: solid; }
+.action-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+/* In the reading view: the page's own text colour, with the ACCENT in the dots under it. The warm URL was the last
+   thing still shouting on a quiet card, but colouring the words themselves only moved the problem — `--accent` is
+   tuned as a FILL, with white text on it, and as text on a dark ground it lands near 3.6:1, under what body text
+   wants. White words and a coloured line is the same treatment a link-form citation already gets (`.tok-link`), so
+   the card gains no new idiom, and the weight comes down with it: 650 was carrying the emphasis while the colour
+   was warm, and on white words in a sentence it only reads as shouting. The busy view keeps both. */
+/* WHAT THE ACCENT MEANS HERE, and what it must not. In the reading view a coloured mark means a POINTER — a value
+   that came from a tool, a citation, something the run itself produced (`--cite`). An approval's URL is none of
+   those: it is an ordinary web address, and giving it the same mark said the outside world was one of our objects.
+   So it is the plain link treatment `.md a` already uses in prose — the page's text colour, dots in the same — and
+   the accent is left meaning one thing. */
+html[data-focus] .action-link { color: var(--fg); text-decoration-color: currentColor; font-weight: 600; }
+/* …and the VERB comes down to meet it. The sentence had its emphasis inverted: `fetch` at 700 against a target at
+   650, when the verb is grammar and the target is the whole of what is being judged. Whatever is heaviest here
+   should be the thing you say yes or no to. */
+html[data-focus] .action-verb { font-weight: 500; }
 /* "Highlighted on the page · bottom-left" — a pulsing green dot matching the on-page spotlight. */
 .action-loc { display: flex; align-items: center; gap: 7px; color: var(--fg-dim); font-size: .9em; margin-top: 1px; }
 .loc-dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; background: #22c55e; animation: loc-pulse 1.3s ease-in-out infinite; }
@@ -2671,17 +2739,17 @@ html[data-surface="card"] .appr-btn.no:hover {
 /* A resolved citation: the actual tool output, subtly marked as deterministic + clickable. Block for a
    table/image/code; inline for a short cited value so the prose flows around it. */
 .answer-rendered .tok-ref { cursor: pointer; border-radius: 2px; }
-.answer-rendered .tok-block { display: block; margin: 6px 0; padding-left: 8px; border-left: 2px solid var(--ok); }
+.answer-rendered .tok-block { display: block; margin: 6px 0; padding-left: 8px; border-left: 2px solid var(--cite); }
 /* Every inline citation — a plain value OR a typeset `| latex` formula — gets the green underline + a slightly
    lighter tinted box, so an inline math cite reads as a highlighted tool output, not model prose. The box is on
    the container so KaTeX (which isn't a .tok-val) is boxed too. */
-.answer-rendered .tok-inline { border-bottom: 1px dashed var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); padding: 0 3px; border-radius: 3px; }
+.answer-rendered .tok-inline { border-bottom: 1px dashed var(--cite); background: color-mix(in srgb, var(--cite) 12%, transparent); padding: 0 3px; border-radius: 3px; }
 /* …and the `code` INSIDE it paints none of its own. `.md code` gives every inline code span the panel's grey,
    which sat on top of the tint and turned a citation back into something the model typed in backticks — the one
    thing this mark exists to say it is not. The block form carries the same green as a rail; the inline form is
    the same claim in one line, so it is the same colour. */
 .answer-rendered .tok-inline > .tok-val { background: none; border: 0; padding: 0; }
-.answer-rendered .tok-ref:hover { background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.answer-rendered .tok-ref:hover { background: color-mix(in srgb, var(--cite) 10%, transparent); }
 .answer-rendered .tok-ref:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .answer-rendered .tok-ref { position: relative; }
 /* The model's caption → a small caption under a block citation (the "reps"/"regions"/"totals & breakdown" labels). */
@@ -2694,7 +2762,7 @@ html[data-surface="card"] .appr-btn.no:hover {
    underlined dotted in the text's colour. Blue link text in the middle of an answer pulled the eye to every link
    before the sentence it sat in, and a citation looked exactly like a way off the page. Each says where it goes on
    hover (`cursorTipOn` for a citation, `data-tip` for a markdown link). */
-.answer-rendered .tok-link { color: var(--fg); text-decoration: underline dotted var(--ok); text-underline-offset: 3px; cursor: pointer; }
+.answer-rendered .tok-link { color: var(--fg); text-decoration: underline dotted var(--cite); text-underline-offset: 3px; cursor: pointer; }
 .answer-rendered .tok-link:hover { text-decoration-style: solid; }
 .answer-rendered .tok-link:focus-visible { outline: 2px solid var(--accent, #6366f1); outline-offset: 1px; border-radius: 2px; }
 /* The bottom-of-answer RESULT block (ResultBlock — the designated/auto-appended tool outputs, both surfaces). Its
@@ -2737,8 +2805,9 @@ html[data-surface="card"] .appr-btn.no:hover {
 /* The cursor-following tip. `.rc-tip` for the shared look; it only differs in following the pointer. */
 .cursor-tip { max-width: min(320px, 92vw); white-space: normal; }
 .cline.cline-fail .lno { color: var(--err); font-weight: 600; }
-/* The SAME green flash a cited step gets — it is the same gesture, "show me the thing this is about". */
-@keyframes clinePulse { 0% { background: color-mix(in srgb, var(--ok) 40%, transparent); } 100% { background: transparent; } }
+/* The SAME flash a cited step gets — it is the same gesture, "show me the thing this is about" — and it follows
+   `--cite`, so the confirmation of a click is the colour of the mark that was clicked. */
+@keyframes clinePulse { 0% { background: color-mix(in srgb, var(--cite) 40%, transparent); } 100% { background: transparent; } }
 /* The green flash a cited line gets when a citation or a traceback frame jumps to it — the confirmation
    that the click landed where it said. Its own class, not a colour on .cline, so a line can be marked and
    pulsed at once. */
@@ -2751,7 +2820,7 @@ html[data-surface="card"] .appr-btn.no:hover {
 /* The same flash in the failure colour, for the line a traceback names. */
 .cline-pulse-fail { animation: clinePulseFail 1.4s ease-out forwards; }
 @media (prefers-reduced-motion: reduce) {
-    .cline-pulse { animation: none; background: color-mix(in srgb, var(--ok) 20%, transparent); }
+    .cline-pulse { animation: none; background: color-mix(in srgb, var(--cite) 20%, transparent); }
     .cline-pulse-fail { animation: none; background: color-mix(in srgb, var(--err) 30%, transparent); }
 }
 
@@ -2765,10 +2834,10 @@ html[data-surface="card"] .appr-btn.no:hover {
 .r-ranfor.live { color: var(--fg-dim); }
 
 /* Click-to-step: pulse the cited step green when you jump to it. */
-@keyframes astepPulse { 0% { background: color-mix(in srgb, var(--ok) 45%, transparent); }
+@keyframes astepPulse { 0% { background: color-mix(in srgb, var(--cite) 45%, transparent); }
     100% { background: transparent; } }
 .astep-pulse { animation: astepPulse 1.4s ease-out; }
-@media (prefers-reduced-motion: reduce) { .astep-pulse { animation: none; outline: 2px solid var(--ok); } }
+@media (prefers-reduced-motion: reduce) { .astep-pulse { animation: none; outline: 2px solid var(--cite); } }
 
 /* A caption above a rendered block saying it is not literally what the caller wrote — `exec` uses it for
    expanded pointer macros. Quiet: it explains the render, it is not part of it. */
@@ -2779,8 +2848,10 @@ html[data-surface="card"] .appr-btn.no:hover {
 /* A span of code that was SUBSTITUTED for something the author did not write — `exec`'s expanded pointer
    macros. Underlined rather than filled, so it marks a region without competing with syntax highlighting;
    `help` because the original is in the tooltip. */
-code .expanded { border-bottom: 1px dashed var(--ok, #22c55e); cursor: help; }
-code .expanded:hover { background: color-mix(in srgb, var(--ok, #22c55e) 12%, transparent); }
+/* An expanded pointer macro inside code: the same claim as a citation in prose — this came from a tool, not from
+   the model — so it takes `--cite` and moves with it. It was the last green left in that family. */
+code .expanded { border-bottom: 1px dashed var(--cite); cursor: help; }
+code .expanded:hover { background: color-mix(in srgb, var(--cite) 12%, transparent); }
 
 /* The scrub window's handles. The middle pans, the edges resize — so the cursor has to say which is which
    before the drag starts, since the two gestures are indistinguishable until you have already made one. */

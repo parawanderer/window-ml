@@ -174,6 +174,9 @@ export type ToWeb =
     | { type: "chromeFor"; id: string; key: string }
     /** Capture the page the session's run is on, as it is now: the image arrives as `openImage`, the outcome as `sent`. */
     | { type: "peek"; id: string; key: string }
+    /** Write a session out and hand the file to the app's share sheet (it arrives as `saveFile`); the outcome is
+     *  `sent`. No PDF: that format is a print dialog, and a WebView has none. */
+    | { type: "export"; id: string; key: string; format: "md" | "json" }
     | { type: "models"; runtime: string }
     | { type: "resume" }
     | { type: "pairing"; id: string; call: PairingCall; args?: Record<string, unknown> }
@@ -231,6 +234,7 @@ const TO_WEB: Record<ToWeb["type"], Shape> = {
     rename: { id: "string", key: "string", title: "string" },
     delete: { id: "string", key: "string" },
     peek: { id: "string", key: "string" },
+    export: { id: "string", key: "string", format: "string" },
     chromeFor: { id: "string", key: "string" },
     models: { runtime: "string" },
     resume: {},

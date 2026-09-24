@@ -12,7 +12,7 @@ import { parseSessionKey } from "../session-host";
 import { DetailView } from "../sidebar/session-detail";
 import { Composer } from "../sidebar/composer";
 import { AgentBadge } from "../sidebar/reply";
-import { IconBack, IconBench, IconBrain, IconCompose, IconCopy, IconCamera, IconChevron, IconClose, IconHistory, IconMore, IconPin, IconSave, IconSearch, IconVram } from "../sidebar/icons";
+import { IconBack, IconBench, IconBrain, IconCompose, IconCopy, IconCamera, IconChevron, IconClose, IconExport, IconHistory, IconMore, IconPin, IconSave, IconSearch, IconVram } from "../sidebar/icons";
 import { services } from "../sidebar/services";
 import { ContextMenu, CursorTipLayer, Dot, Hash, Stamp, cursorTipOn } from "../sidebar/ui-kit";
 import { benchOpen, openBench, rev, sessionMap, view, type Status } from "../sidebar/store";
@@ -25,6 +25,8 @@ import { START_GRACE_MS, StartPage, useHeldTrue } from "./start-page";
 import { AttentionButton, AttentionPage, useAttention } from "./attention-page";
 import { attentionCount } from "./attention";
 import { setAppBadge } from "./app-badge";
+import { useFadeEdges } from "./fade-edges";
+import { ExportChat, exportingChat } from "./export-dialog";
 import { ListToggle, ViewToggle, calm, codeSize, foldedRuntimes, panelSize, listOpen, pane, pinned, setCalm, setPane, toggleRuntime } from "./view-mode";
 import { MenuItem } from "./menu";
 import { SessionModelPicker } from "./model-picker";
@@ -241,7 +243,10 @@ function PagePeek({ peek }: { peek: { busy: boolean; peek: () => void } | null }
  * view, copying the id). Three icons at 390px crowded the title into two words, and a brain glyph says nothing on its
  * own; in a menu each has its name.
  */
-function SessionMenu({ peek, hash, title }: { peek: { busy: boolean; peek: () => void } | null; hash?: string; title?: string }) {
+function SessionMenu({ peek, hash, title, sessionKey, partial, calmShown, floating }: {
+    peek: { busy: boolean; peek: () => void } | null; hash?: string; title?: string;
+    sessionKey?: SessionKey; partial?: boolean; calmShown?: boolean; floating?: boolean;
+}) {
     const [at, setAt] = useState<{ top: number; right: number } | null>(null);
     const btn = useRef<HTMLButtonElement>(null);
     const menu = useRef<HTMLDivElement>(null);
@@ -257,13 +262,16 @@ function SessionMenu({ peek, hash, title }: { peek: { busy: boolean; peek: () =>
     const act = (f: () => void) => () => { setAt(null); f(); };
     return (
         <>
-            <button ref={btn} class="hbtn chat-head-more" aria-label="Session options" aria-haspopup="menu" aria-expanded={!!at}
+            <button ref={btn} class={`hbtn chat-head-more${floating ? " chat-more-float" : ""}`} aria-label="Session options" aria-haspopup="menu" aria-expanded={!!at}
                 onClick={() => (at ? setAt(null) : open())}><IconMore /></button>
             {at ? (
                 <div ref={menu} class="chat-menu chat-head-menu" role="menu" aria-label="Session options" style={`top:${at.top}px;right:${at.right}px`}>
                     {title ? <div class="chat-head-menu-title" role="presentation">{title}</div> : null}
                     {peek ? <MenuItem icon={<IconCamera />} label="Look at the page" onPick={act(peek.peek)} /> : null}
-                    <MenuItem icon={<IconBrain />} label="Calm view" on={calm.value} onPick={act(() => setCalm(!calm.value))} />
+                    {/* Only where nothing beside it already switches the view: the wide header keeps its own toggle,
+                        and the same control twice in one bar reads as two different ones. */}
+                    {calmShown ? null : <MenuItem icon={<IconBrain />} label="Calm view" on={calm.value} onPick={act(() => setCalm(!calm.value))} />}
+                    {sessionKey ? <MenuItem icon={<IconExport />} label="Export chat…" onPick={act(() => (exportingChat.value = { key: sessionKey, title: title || "Session", partial: !!partial }))} /> : null}
                     {hash ? <MenuItem icon={<IconCopy />} label="Copy session id" onPick={act(() => void navigator.clipboard?.writeText(hash).catch(() => {}))} /> : null}
                 </div>
             ) : null}
@@ -343,6 +351,8 @@ function SessionList({ store, activeKey, narrow, onStart, gear, gearWide }: { st
     const folded = foldedRuntimes.value;
     const pins = pinned.value;
     const rtOf = new Map(runtimes.map((rt) => [rt.id, rt]));
+    const listScroll = useRef<HTMLDivElement>(null);
+    useFadeEdges(listScroll);
     const keyOf = (s: SessionSummary) => `${s.id.runtime}:${s.id.hash}`;
     const cutoff = Date.now() - RECENT_DAYS * 86_400_000;
     const live = (s: SessionSummary) => s.status === "running" || s.status === "waiting";
@@ -364,7 +374,7 @@ function SessionList({ store, activeKey, narrow, onStart, gear, gearWide }: { st
                 </button>
                 <StartMenu store={store} onPick={onStart} icon={<IconCompose />} />{narrow ? gear : null}
             </div>
-            <div class="view chat-list-scroll">
+            <div class="view chat-list-scroll fade-edges" ref={listScroll}>
                 {runtimes.length === 0 && status.state === "online" ? <div class="empty">No runtimes yet. Pair one to see its sessions here.</div> : null}
                 {pinnedRows.length ? (
                     <section class="chat-group chat-pinned" aria-label="Pinned">
@@ -471,6 +481,7 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     const scroller = useRef<HTMLDivElement>(null);
     const content = useRef<HTMLDivElement>(null);
     const stuck = useRef(true);
+    useFadeEdges(scroller);
 
     // Follow the newest event while the reader is at the bottom; leave them alone once they scroll up.
     useEffect(() => {
@@ -551,6 +562,12 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     const modelBelow = !narrow && !native && !!summary?.model && !!rt && canDrive && !canResume;
     return (
         <main class="chat-main" data-rev={r} data-session={sessionKey}>
+            {/* WIDE CALM HAS NO HEADER BAND to hang this off, and that is deliberate — but the session's own options
+                still need a door, or the calm view (the default) is the one with no way to export what is in it. A
+                single ⋮ in the corner is the least the page can put back and still answer "and this session?". */}
+            {bare && !native
+                ? <div class="chat-more-corner"><SessionMenu peek={peek} hash={id?.hash} title={title} sessionKey={sessionKey} partial={truncated} floating /></div>
+                : null}
             {bare
                 ? null
                 : <div class="head chat-head">
@@ -567,15 +584,19 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
                     </span>
                     <span class="sp" />
                     {!narrow && !modelBelow && summary?.model && rt ? <ModelTop store={store} rt={rt} model={summary.model} sessionKey={sessionKey} summary={summary} /> : null}
-                    {narrow ? <SessionMenu peek={peek} hash={id?.hash} title={summary?.model ? title : undefined} /> : <>
-                        <PagePeek peek={peek} />
-                        <DeviceViews extras={extras} rt={rt} />
-                        <ViewToggle />
-                        {id ? <Hash hash={id.hash} /> : null}
-                    </>}
+                    {narrow ? <SessionMenu peek={peek} hash={id?.hash} title={summary?.model ? title : undefined} sessionKey={sessionKey} partial={truncated} />
+                        : <>
+                            <DeviceViews extras={extras} rt={rt} />
+                            <ViewToggle />
+                            {id ? <Hash hash={id.hash} /> : null}
+                            {/* IN-CHAT options, beside (not inside) the page-wide ones: looking at this session's
+                                page, exporting this session. `Look at the page` was a camera icon of its own here,
+                                which spent a header button on the one action and left the rest nowhere to go. */}
+                            <SessionMenu peek={peek} hash={id?.hash} title={title} sessionKey={sessionKey} partial={truncated} calmShown />
+                        </>}
                 </div>}
             {!native && waiting && (gateAway || !calm.value) ? <button class="chat-waiting" onClick={jumpToApproval}>Waiting on your approval<span class="chat-waiting-go">Review ›</span></button> : null}
-            <div class="view chat-transcript" ref={scroller} onScroll={onScroll}
+            <div class="view chat-transcript fade-edges" ref={scroller} onScroll={onScroll}
                 onWheel={markUser} onTouchMove={markUser} onPointerDown={markUser} onKeyDown={markUser}>
                 <div ref={content}>
                     {bare ? <Lede title={title} rt={rt} summary={summary} id={id} store={store} sessionKey={sessionKey} native={native || modelBelow} /> : null}
@@ -840,6 +861,7 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
             <Lightbox platform={platform} />
             <DeleteConfirm store={store} />
             <RenameDialog store={store} />
+            <ExportChat />
         </div>
     );
 }

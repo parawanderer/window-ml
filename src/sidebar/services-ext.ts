@@ -6,6 +6,8 @@
 import { hintSession } from "../contract-run";
 import { config } from "./store";
 import { bareHash, type SidebarServices, type SideCallRequest, type SideCallResult } from "./services";
+import { downloadBlob } from "./download";
+import { printInFrame } from "./print-frame";
 
 const toParent = (msg: unknown): void => window.parent.postMessage(msg, "*");
 
@@ -48,6 +50,9 @@ export const extensionServices: SidebarServices = {
     continueSession: (hash, maxSteps) => toParent({ __mlSidebarApp: "continueRun", hash, ...(maxSteps ? { maxSteps } : {}) }),
     highlight: (ref) => toParent({ __mlHighlight: ref }),
     openLightbox: (src) => toParent({ __mlLightbox: src }),
+    // `noopener` is not politeness here: without it the opened page gets a handle on this one, and this one is the
+    // extension's own surface.
+    openLink: (url) => { window.open(url, "_blank", "noopener,noreferrer"); },
     hostAccess: {
         has: async (pattern) => {
             if (typeof chrome === "undefined" || !chrome.permissions?.contains) return true;   // nothing to ask: say granted, so no note shows
@@ -63,6 +68,18 @@ export const extensionServices: SidebarServices = {
         catch { resolve(null); }
     }),
     savePref: (key, value) => { try { chrome.storage.local.set({ [key]: value }); } catch { /* no chrome in a bare render */ } },
+    saveFile: (name, data) => downloadBlob(name, data),
+    // Print from a REAL browser tab via the background, NOT this frame: `window.print()` is suppressed for a frame
+    // inside DOCKED DevTools, so the PDF export silently did nothing there while the markdown one worked (that
+    // downloads through an `<a download>`). `chrome.runtime.sendMessage` reaches the background from every extension
+    // frame, so no surface detection is needed; the background opens print.html in a normal tab that renders, prints
+    // and closes itself. The in-frame print stays as the fallback for a degraded context with no runtime channel.
+    printDoc: (html) => {
+        try { chrome.runtime.sendMessage({ type: "PRINT_SESSION", payload: { html } }); }
+        catch { printInFrame(html); }
+    },
+    appVersion: (() => { try { return chrome.runtime.getManifest().version; } catch { return null; } })(),
+    assetUrl: (path) => { try { return chrome.runtime.getURL(path); } catch { return path; } },
     // The panel holds a run's whole log in the worker's ring already: there is no earlier page to ask for.
     loadEarlier: null,
     // Every extension frame is extension-origin, so it opens the same value store the service worker writes, and decodes

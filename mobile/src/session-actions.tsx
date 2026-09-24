@@ -30,8 +30,11 @@ export const SessionActions = forwardRef<SessionActionsHandle, { chrome: Session
         const [naming, setNaming] = useState<string | null>(null);
         const [busy, setBusy] = useState(false);
         const [peeking, setPeeking] = useState(false);
-        useImperativeHandle(ref, () => ({ present: () => { setNaming(null); sheet.current?.present(); } }), []);
-        const close = () => { sheet.current?.dismiss(); setNaming(null); };
+        // Choosing an export format swaps the sheet's contents, like renaming does: a second sheet over the first is
+        // two dismissals deep for one decision.
+        const [picking, setPicking] = useState(false);
+        useImperativeHandle(ref, () => ({ present: () => { setNaming(null); setPicking(false); sheet.current?.present(); } }), []);
+        const close = () => { sheet.current?.dismiss(); setNaming(null); setPicking(false); };
 
         const pin = async () => {
             if (!c) return;
@@ -62,6 +65,14 @@ export const SessionActions = forwardRef<SessionActionsHandle, { chrome: Session
             setPeeking(false);
             if (r.ok) close();
         };
+        // The file is written by the PAGE, with the same code every other surface exports with, and arrives back as a
+        // share sheet. No PDF: that format is really a print dialog, and a WebView has none.
+        const exportAs = (format: "md" | "json") => {
+            if (!c) return;
+            close();
+            void Haptics.selectionAsync();
+            void e.exportSession(c.key, format);
+        };
         const copyId = () => {
             if (!c) return;
             close();
@@ -78,6 +89,12 @@ export const SessionActions = forwardRef<SessionActionsHandle, { chrome: Session
                     </View>
                     <SheetRow title={busy ? "Saving…" : "Save"} disabled={busy || !naming.trim() || naming.trim() === c.title} onPress={() => void rename()} />
                     <SheetRow title="Cancel" onPress={() => setNaming(null)} />
+                </> : c && picking ? <>
+                    <Text style={[s.title, { color: p.fg }]}>Export this chat</Text>
+                    <Text style={[s.sub, { color: p.fgDim }]}>The file opens in the share sheet, to send or keep.</Text>
+                    <SheetRow title="Markdown" detail="readable, screenshots as files" onPress={() => exportAs("md")} />
+                    <SheetRow title="JSON" detail="every field, for a program" onPress={() => exportAs("json")} />
+                    <SheetRow title="Cancel" onPress={() => setPicking(false)} />
                 </> : c ? <>
                     <Text style={[s.title, { color: p.fg }]}>{c.title}</Text>
                     <Text style={[s.sub, { color: p.fgDim }]}>{c.kind === "agent" ? "Agent" : "Chat"} on {c.runtimeName}{c.pinned ? " · pinned" : ""}</Text>
@@ -87,6 +104,9 @@ export const SessionActions = forwardRef<SessionActionsHandle, { chrome: Session
                     {c.canPeek ? <SheetRow title={peeking ? "Capturing…" : "Look at the page"} detail="The page this run is on, as it is now" disabled={peeking} onPress={() => void peek()} /> : null}
                     {c.canPin ? <SheetRow title={c.pinned ? "Unpin" : "Pin"} detail={c.pinned ? undefined : "Kept on the runtime, never expired or evicted"} onPress={() => void pin()} /> : null}
                     {c.canRename ? <SheetRow title="Rename" onPress={() => setNaming(c.title)} /> : null}
+                    {/* Only for the session that is OPEN: the file is written from the transcript the page holds, and
+                        the list's sheet is about one it has not loaded. `onOpen` is what tells the two sheets apart. */}
+                    {onOpen ? null : <SheetRow title="Export chat" detail="Markdown or JSON, to the share sheet" onPress={() => setPicking(true)} />}
                     <SheetRow title="Copy session id" onPress={copyId} />
                     {c.canDelete ? <SheetRow title="Delete" danger onPress={remove} /> : null}
                 </> : null}

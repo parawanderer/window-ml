@@ -30,7 +30,7 @@ import { JsonNode, type JsonSchemaNode } from "./json-tree";
 export { JsonNode, JtKey, jtPreview, type JsonSchemaNode } from "./json-tree";
 import { RenderPanel, OutputCell, SeenSplit, RanFor, RunningFor, inLineMap, type CodeCtx } from "./render-panel";
 import { ReplyBubble } from "./reply";
-import { CodeExplain, codeOf } from "./summaries";
+import { CodeExplain, IntentSentence, codeOf, intentFor } from "./summaries";
 import { groupTurns } from "./debug-reducer";
 import { EarlierInThread, tail } from "./transcript-window";
 import type { AgentTurnGroup } from "./debug-reducer";
@@ -335,6 +335,8 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // decision is made in this (extension-origin) iframe, unforgeable by the page. Needs the run hash +
     // the step seq to correlate; without them (a page-loop run) fall back to the plain pending view.
     const awaiting = !!(st.awaitingApproval && st.pending && !decided && hash && st.seq != null);
+    // What the call WANTS, deterministically, from the tool's own render — null for a tool that offers none.
+    const intent = awaiting ? intentFor(st) : null;
     // A pending approval AUTO-UNFURLS the In so you review the call before deciding (no extra click).
     // So does being the step someone just navigated TO — from a lane block or an answer citation, both of
     // which say "open this step". Landing on a collapsed row that merely pulses is the promise half-kept:
@@ -348,7 +350,13 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // own bars — so the bar and the rows it is about are picked out together.
     const litSeqs = laneLitSeqs.value;
     const dimmed = !!litSeqs && st.seq != null && !litSeqs.has(st.seq);
-    const open = expanded || awaiting;
+    // An approval that SAYS what it will do in words does not also need its arguments unfurled underneath: the
+    // sentence names the same host or element, and showing both made the card state the one fact you are judging
+    // twice. Only in FOCUS (the chat page's calm view), though — the busy view is the developer's projection of the
+    // run, where the raw call is the point and the same trace the DevTools panel shows must stay whole. Where there
+    // is no sentence at all (a code tool: you cannot approve code you cannot see) the In opens itself either way,
+    // and it is always one click from closed.
+    const open = expanded || (awaiting && !(intent && focusMode.value));
     // CLOSING A STEP, on a surface that animates it shut. The body is unmounted the moment it closes, so there is
     // nothing left to animate — the way to give it a way out is to keep it mounted for exactly as long as the
     // surface says its own animation lasts, and the surface says so in CSS (`--astep-close-ms`) rather than here.
@@ -468,8 +476,14 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                     <HostAccessNote st={st} />
                     <OutputRaiseNote tool={st.tool} args={st.arguments} />
                     {showGrants ? <GrantCard grants={st.grants!} /> : null}
+                    {/* WHAT is being approved, in the same sentence the off-mode card uses. "Approve running
+                        `fetch_url`?" named the least interesting part of the call: a person says yes to a HOST or
+                        an element, not to a tool. Where a tool has no deterministic intent the old wording stands
+                        in — the rendered arguments are directly above either way. */}
+                    {intent
+                        ? <IntentSentence intent={intent} />
+                        : <span class="appr-ask">Approve running <b>{st.tool}</b>?</span>}
                     <div class="appr-row">
-                        <span class="appr-ask">Approve running <b>{st.tool}</b>?</span>
                         <span class="sp" />
                         <button class="appr-btn no" onClick={() => decide(false)}>Deny</button>
                         <button class="appr-btn yes" onClick={() => decide(true)}>Approve</button>

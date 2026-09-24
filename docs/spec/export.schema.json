@@ -1314,6 +1314,9 @@
                 "offMachine": {
                   "type": "string"
                 },
+                "asYou": {
+                  "type": "string"
+                },
                 "ask": {
                   "type": "string"
                 },
@@ -1863,6 +1866,9 @@
                   "type": "string"
                 },
                 "offMachine": {
+                  "type": "string"
+                },
+                "asYou": {
                   "type": "string"
                 },
                 "ask": {

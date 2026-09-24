@@ -76,6 +76,9 @@ export interface EmbedApi extends EmbedState {
     remove(key: string): Promise<{ ok: boolean; error?: string }>;
     /** Capture the page the session's run is on, as it is now; the capture opens full size when it arrives. */
     peek(key: string): Promise<{ ok: boolean; error?: string }>;
+    /** Write the open session out and hand the file to the share sheet. Markdown or JSON only: a PDF is a print
+     *  dialog, which a WebView has none of. */
+    exportSession(key: string, format: "md" | "json"): Promise<{ ok: boolean; error?: string }>;
     /** What may be done with a session that is not open (the list's long press): the page's chrome for it. */
     chromeFor(key: string): Promise<SessionChrome | null>;
     /** Show an image full size (an attachment, before it is sent). */
@@ -276,6 +279,7 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
         rename: (key, title) => request((id) => ({ type: "rename", id, key, title })),
         remove: (key) => request((id) => ({ type: "delete", id, key })),
         peek: (key) => request((id) => ({ type: "peek", id, key })),
+        exportSession: (key, format) => request((id) => ({ type: "export", id, key, format })),
         chromeFor: (key) => new Promise((resolve) => {
             const id = nextId();
             // The page answers from what it holds, at once; a page that never answers is treated as "nothing to offer".

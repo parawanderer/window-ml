@@ -7,6 +7,7 @@ import { services, splitStepKey } from "./services";
 import type { AgentStep } from "./store";
 import { stepKey } from "./ui-kit";
 import { truncate } from "./format";
+import { IconWarn } from "./icons";
 import { NOTES_SCHEMA, notesMessages, parseNotes, type LineNote } from "./annotate";
 
 // Utility-model auto-summaries (card title, code/action approval summaries) are gated on BOTH the host being able
@@ -133,10 +134,66 @@ export function fetchUtilityLine(messages: { role: string; content: string }[], 
 // A pending call's INTENT: prefer the tool-provided `action` descriptor (deterministic; custom tools
 // too), else a name-based verb for built-ins, else nothing (→ utility-model description).
 export const CODE_LANG: Record<string, string> = { exec: "javascript", python_exec: "python" };
-export interface Intent { verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; submit?: boolean; crossOrigin?: string; offMachine?: string; link?: boolean; }
+/** WHAT A PENDING CALL WILL DO, deterministically: the verb, what it acts on, and the facts that change what
+ *  approving it MEANS — reaching into a cross-origin frame, leaving this machine, or going out as the user. */
+export interface Intent { verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; submit?: boolean; crossOrigin?: string; offMachine?: string; asYou?: string; link?: boolean; }
 /** WHAT THIS CALL WILL DO, for the approval card — deterministic, from the tool's own `action` render
  *  rather than from a model's description of itself. Null when the tool supplies none, which is when the
  *  utility model is asked to paraphrase instead. */
+
+/**
+ * THE URL AN APPROVAL IS ABOUT, as a real link.
+ *
+ * It was a `<span>`, which is the one thing a URL must not be on a consent card: checking where something goes
+ * before allowing it is the whole gesture, and a span gives no hover, no right-click "open in new tab", and no
+ * long-press menu on a phone. An anchor gives all three from the platform, in each platform's own idiom.
+ *
+ * The click is INTERCEPTED rather than followed, because this surface is the client: navigating it away drops the
+ * hub connection. It goes to `services().openLink`, which opens a tab in a browser and hands the URL to the system
+ * browser from the phone app — whose WebView refuses outside navigation entirely, so an un-intercepted link there
+ * does nothing at all. `href` is still set, because that is what the platform's own menus read.
+ */
+function ActionLink({ url }: { url: string }) {
+    return (
+        <a class="action-link" href={url} target="_blank" rel="noopener noreferrer"
+            onClick={(e) => { e.preventDefault(); services().openLink(url); }}>{url}</a>
+    );
+}
+
+/**
+ * WHAT THE AGENT WANTS TO DO, in a sentence — "Agent wants to fetch <url>", "Agent wants to click the button
+ * “Search”" — with the part a person actually judges picked out.
+ *
+ * The consent surface's one job is to be READ, and a question naming the TOOL ("Approve running `fetch_url`?")
+ * fails at it: the tool is the least interesting thing about the call. The host, the element, the text being typed
+ * — those are what someone says yes or no to.
+ *
+ * Shared by both approval surfaces (the off-mode card and the transcript's step), because two wordings for one
+ * decision is how the quieter one ends up being the one nobody reads.
+ */
+export function IntentSentence({ intent }: { intent: Intent }) {
+    const isType = intent.verb.toLowerCase() === "type";
+    return (
+        <div class="action-sentence">
+            {intent.link
+                ? <>Agent wants to <span class="action-verb">{intent.verb.toLowerCase()}</span> <ActionLink url={intent.target || ""} /></>
+                : <>Agent wants to <span class="action-verb">{intent.verb.toLowerCase()}</span>
+                    {isType ? <> “<b class="action-target">{truncate(intent.input || "", 100)}</b>” into</> : null}
+                    {" the "}{intent.kind || "element"}
+                    {intent.target ? <> <b class="action-target">“{intent.target}”</b></> : null}
+                    {isType && intent.submit ? <> and <span class="action-submit">submit</span> it</> : null}</>}
+            {intent.note ? <span class="action-note"> · {intent.note}</span> : null}.
+            {/* FETCHING AS THE USER changes what a yes means: it spends their identity on that site, so the agent
+                reads whatever they can read while signed in there. It used to ride the trailing note, which is
+                DIMMED — the faintest thing on the card carrying the most consequential fact on it. It is its own
+                line now, like the other two facts that change the meaning of approving. */}
+            {intent.asYou
+                ? <div class="action-xorigin"><IconWarn /><span><b>This runs as you</b> — it sends your cookies for <b class="xorigin-host">{intent.asYou}</b>, so it reads whatever you can read there while signed in.</span></div>
+                : null}
+        </div>
+    );
+}
+
 export function intentFor(st: AgentStep): Intent | null {
     // Whether a `type` will ALSO press Enter — a materially bigger action (it submits the form/search), so the
     // approval must call it out. Read from the raw args (the ground truth), regardless of the render path.
@@ -144,7 +201,7 @@ export function intentFor(st: AgentStep): Intent | null {
     const ri = st.renderIn;
     // `link` renders the target as a significant URL (warm-yellow + dotted, like navigate/submit) rather than
     // "the element …" — a fetch's URL is leaving-the-page-worthy, so style it the same as navigate's.
-    if (ri && ri.type === "action") return { verb: ri.verb, kind: ri.kind, target: ri.target, selector: ri.selector, input: ri.input, note: ri.note, submit, crossOrigin: ri.crossOrigin, offMachine: ri.offMachine, link: st.tool === "navigate" || st.tool === "fetch_url" };
+    if (ri && ri.type === "action") return { verb: ri.verb, kind: ri.kind, target: ri.target, selector: ri.selector, input: ri.input, note: ri.note, submit, crossOrigin: ri.crossOrigin, offMachine: ri.offMachine, asYou: ri.asYou, link: st.tool === "navigate" || st.tool === "fetch_url" };
     if (ri && ri.type === "elements" && ri.items[0])   // an older/other target render still gives a target + selector
         return { verb: st.tool === "click" ? "Click" : st.tool === "type" ? "Type" : `Run ${st.tool}`, target: ri.items[0].text || ri.items[0].path, selector: ri.items[0].path, submit };
     const sel = typeof st.arguments?.selector === "string" ? (st.arguments.selector as string) : undefined;

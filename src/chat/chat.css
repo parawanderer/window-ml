@@ -19,7 +19,7 @@ html, body, #root { height: 100%; }
 /* THE PHONE APP'S PAGE (native-embed.tsx): only the transcript, filling the WebView on calm's canvas so it meets the
    native header and composer with no seam. The app keeps the safe areas itself, so the page takes none. */
 .chat.native-embed { height: 100vh; padding: 0 var(--safe-right, 0) 0 var(--safe-left, 0); }
-.chat.native-embed .chat-transcript { padding-top: 10px; }
+.chat.native-embed .chat-transcript { padding-top: 10px; --pt: 10px; }
 .chat.native-embed .view::-webkit-scrollbar { width: 0; }
 .chat {
     font-size: var(--fs); height: 100vh; height: 100dvh; display: grid;
@@ -92,7 +92,63 @@ html, body, #root { height: 100%; }
     background: color-mix(in srgb, var(--notice) 14%, var(--bg)); color: var(--fg); padding: 8px 12px; font: inherit; cursor: pointer; text-align: left;
 }
 .chat-waiting-go { margin-left: auto; color: var(--notice); font-weight: 600; }
-.chat-transcript { padding: 10px 14px; }
+.chat-transcript { padding: 10px 14px; --pt: 10px; --pb: 10px; }
+/* THE EDGES A SCROLLER CUTS. A column of prose that ends in a hard horizontal line, mid-word, reads as broken —
+   the page looks clipped rather than continued. A short gradient from the page's own colour to nothing at each end
+   softens the cut without hiding anything: the text is still there, still selectable, still found by Ctrl+F.
+   STICKY PSEUDO-ELEMENTS, not `mask-image`: a mask on the scroller would make it the containing block for every
+   `position: fixed` descendant, which is exactly the bug that put the pickers' popovers in the corner. Sticky
+   creates none. The negative margin gives them no height of their own, so nothing moves. */
+/* A COLUMN, so the bottom fade can be pushed to the scroller's own edge with `margin-top: auto` when the content is
+   short. Sticky alone was not enough: with nothing to scroll, a sticky element simply sits where it falls, which put
+   the gradient in the middle of a half-empty panel with clear space under it — a line across the page where the
+   content happened to stop. `auto` takes the free space when there is some and collapses to nothing when there is
+   not, so the fade is at the bottom edge either way. */
+/* The fade OVERSHOOTS the scroller's edge by 12px and is clipped there. A sticky element is held inside the
+   scrollport inset by the container's own padding, so `bottom: 0` stopped it a few pixels short and left a band of
+   hard-cut content under it — the exact thing the fade exists to remove. Overshooting cannot be wrong: the scroller
+   clips what hangs past its edge, so the gradient always ends ON the edge whatever the padding is. */
+.fade-edges {
+    position: relative; display: flex; flex-direction: column;
+    /* A SMOOTHSTEP, not a straight ramp. A linear gradient in sRGB bands — the eye finds the constant rate, and both
+       ends show a seam where the ramp meets solid colour and where it meets nothing. Sampling 3t²-2t³ at eighths
+       gives the ")" curve instead: it leaves the background slowly, moves fastest in the middle, and arrives at
+       transparent slowly, so neither end has an edge to catch on. The first stop holds solid across `--over`, which
+       is the part that hangs past the scroller and gets clipped. */
+    --fade-stops:
+        var(--bg) var(--over, 12px),
+        color-mix(in srgb, var(--bg) 96%, transparent) 31%,
+        color-mix(in srgb, var(--bg) 84%, transparent) 41%,
+        color-mix(in srgb, var(--bg) 68%, transparent) 51%,
+        color-mix(in srgb, var(--bg) 50%, transparent) 61%,
+        color-mix(in srgb, var(--bg) 32%, transparent) 71%,
+        color-mix(in srgb, var(--bg) 16%, transparent) 80%,
+        color-mix(in srgb, var(--bg) 4%, transparent) 90%,
+        transparent 100%;
+}
+.fade-edges > * { flex: 0 0 auto; }
+.fade-edges::before, .fade-edges::after {
+    /* Tall enough to hang past the edge by `--over` AND still complete the fade inside the visible part. The first
+       overshoot version made the gradient span the clipped pixels too, so what you could see only ever got about
+       three-quarters of the way to the background and the step never finished — a soft grey band instead of a fade.
+       The stop at `--over` holds it at solid background across everything that gets clipped. */
+    content: ""; display: block; position: sticky; height: calc(var(--fade, 28px) + var(--over, 12px));
+    z-index: 2; pointer-events: none; flex: 0 0 auto;
+}
+/* The TOP fade is only drawn where something sits above the scroller for content to pass behind. On a wide calm
+   page there is no header band at all — that is the point of it — so the transcript's top edge is the window's, and
+   fading there dims the first line to hide it behind nothing. The session list always has its own header, and a
+   narrow page has the phone bar, so both keep it. */
+.fade-edges::before { display: none; top: calc((var(--pt, 0px) + var(--over, 12px)) * -1); margin-bottom: calc((var(--fade, 28px) + var(--over, 12px)) * -1); background: linear-gradient(to bottom, var(--fade-stops)); }
+.chat-list-scroll.fade-edges::before, .chat.narrow .chat-transcript.fade-edges::before { display: block; }
+.fade-edges::after { bottom: calc((var(--pb, 0px) + var(--over, 12px)) * -1); margin-top: auto; background: linear-gradient(to top, var(--fade-stops)); }
+/* AND ONLY WHERE THE DOCUMENT ACTUALLY CONTINUES (`fade-edges.ts` marks the ends). A fade says "there is more this
+   way"; sitting at the top of a list it says it about nothing, and dimming the first line with clear space above it
+   reads as exactly the cut-off document the fade was added to soften. A scroller with nothing to scroll is at both
+   ends, so a short list fades neither. It dissolves rather than switching, or the first pixel of a scroll pops. */
+.fade-edges::before, .fade-edges::after { opacity: 1; transition: opacity .12s linear; }
+.fade-edges.at-top::before, .fade-edges.at-end::after { opacity: 0; }
+@media (prefers-reduced-motion: reduce) { .fade-edges::before, .fade-edges::after { transition: none; } }
 .chat:not(.narrow) .chat-transcript > div { max-width: 920px; margin: 0 auto; }
 .chat-truncated, .chat-readonly { color: var(--fg-dim); font-size: .92em; }
 .chat-truncated { border: 1px dashed var(--border); border-radius: 7px; padding: 6px 10px; margin-bottom: 10px; }
@@ -156,7 +212,7 @@ html, body, #root { height: 100%; }
    saw a 22px ⋮ beside a 36px back. */
 @media not (pointer: coarse) { .chat.narrow .chat-head .hbtn { min-width: 36px; min-height: 36px; border-radius: 50%; } }
 .chat.narrow .chat-row { padding: 10px 12px; min-height: 56px; }
-.chat.narrow .chat-transcript { padding: 8px 10px; }
+.chat.narrow .chat-transcript { padding: 8px 10px; --pt: 8px; --pb: 8px; }
 /* The step pill sits over a turn's first line, which a panel's wide first line leaves room for and a phone's does not:
    floated, the text and the step row flow around it instead of under it. */
 .chat.narrow .aturn-head { position: static; float: right; margin: 0 -2px 2px 6px; }
@@ -203,7 +259,7 @@ html, body, #root { height: 100%; }
    Every rule here is presentational. Nothing is removed from the document, every disclosure still opens, and the
    toggle brings all of it back, which is the standing rule about a run's raw view being quiet but never gone. */
 .chat.calm { --fs: 15px; --read: 42rem; }
-.chat.calm .chat-transcript { padding: 18px 18px 2px; line-height: 1.7; }
+.chat.calm .chat-transcript { padding: 18px 18px 2px; --pt: 18px; --pb: 2px; line-height: 1.7; }
 .chat.calm:not(.narrow) .chat-transcript > div { max-width: var(--read); }
 .chat.calm .md p { margin: 0 0 1.05em; }
 .chat.calm .md h1, .chat.calm .md h2, .chat.calm .md h3 { margin: 1.1em 0 .4em; }
@@ -619,11 +675,12 @@ button.chat-page-go:hover { color: var(--fg); }
    sit against the one element that raises it — a tip that opens half a screen from the pointer reads as belonging
    to something else. */
 .chat.calm .tok-block > .tok-tip { bottom: auto; top: calc(100% + 4px); left: 8px; }
-/* The green wash over the whole embed goes with the tip, for the same reason: it fires while you are reading a
-   table, and the rail already says where the transclusion starts and stops. It moves to the caption, which is the
-   part that is now behaving like a control. */
+/* The wash over the whole embed goes with the tip, for the same reason: it fires while you are reading a table, and
+   the rail already says where the transclusion starts and stops. It moves to the caption, which is the part that is
+   now behaving like a control — and it is `--cite`, like every other mark on a citation. It was the last `--ok` in
+   the family and it lived HERE rather than in sidebar.css, which is why a sweep of that file kept missing it. */
 .chat.calm .answer-rendered .tok-block:hover { background: none; }
-.chat.calm .tok-anno:hover { background: color-mix(in srgb, var(--ok) 12%, transparent); border-radius: 3px; }
+.chat.calm .tok-anno:hover { background: color-mix(in srgb, var(--cite) 12%, transparent); border-radius: 3px; }
 
 /* THE REPLY'S PROVENANCE MOVES UNDER IT. Copying an answer and knowing when it landed are things you want AFTER
    reading it, and they were sitting on the line your eye lands on first. The status dot goes entirely unless it
@@ -635,8 +692,11 @@ button.chat-page-go:hover { color: var(--fg); }
    the same shape the panel's focus mode has to handle for the model pill. */
 .chat.calm .msg.asst:not(.err):not(.capped):not(.streaming) > .mrow > .tt:has(> .dot) { display: none; }
 /* Out in the GUTTER, which only a wide layout has: at a phone's width there is no margin to put it in, so it
-   stays in the row it moved to. */
+   stays in the row it moved to — at its RIGHT END, with copy and the time. A phone's column has no gutter on
+   either side, so a chevron alone on the left was the one control in the transcript that did not line up with
+   anything, sitting under the text's first character as though it belonged to the paragraph. */
 .chat.calm:not(.narrow) .msg.asst > .mrow > .who-toggle { position: absolute; top: 7px; left: -20px; margin: 0; }
+.chat.calm.narrow .msg.asst > .mrow > .who-toggle { order: 1; }
 /* It centres on the FIRST LINE (a 25.5px line, an 11px glyph), and in the gutter it is a thing you reach for, not
    something to read past: it arrives with the pointer over the reply and leaves with it. A touch screen keeps it. */
 @media (hover: hover) and (pointer: fine) {
@@ -760,7 +820,7 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-lede-sep { color: var(--fg-faint); opacity: .6; }
 /* The model inside that line rides its height instead of setting it: the quiet pill is sized for a composer. */
 .chat-lede-sub .tp-pill.tp-pill-model.tp-pill-quiet { margin: 0 0 0 -4px; padding: 2px 6px; font-size: 1em; max-width: 30ch; }
-.chat.calm .chat-transcript { padding-top: 26px; }
+.chat.calm .chat-transcript { padding-top: 26px; --pt: 26px; }
 
 /* The send hint goes at a phone's width: there Enter makes a line and the button sends, so a line explaining the
    keyboard is advice about a keyboard that is not there. */
@@ -865,6 +925,27 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-dialog .btn.primary { background: var(--fg); border-color: var(--fg); color: var(--bg); font-weight: 600; }
 .chat-dialog .btn.primary:hover { filter: brightness(.92); }
 .chat-dialog .btn:disabled { opacity: .6; cursor: default; }
+/* THE EXPORT PICKER'S FORMAT ROWS (export-dialog.tsx). A whole row is the target, not the 12px circle beside it, and
+   the native radio stays in the DOM: it is what a keyboard arrows through and what a screen reader reads as a group.
+   Each row carries WHO THE FILE IS FOR rather than its extension — three formats side by side is a choice nobody
+   arrives with an opinion about, and "readable, with screenshots" answers it where ".zip" does not. */
+.chat-export-picks { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
+.chat-export-opt {
+    display: flex; align-items: baseline; gap: 8px; padding: 9px 12px; border-radius: 9px; cursor: pointer;
+    border: 1px solid var(--border); background: transparent;
+}
+.chat-export-opt:hover { background: var(--panel-2); }
+.chat-export-opt.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.chat-export-opt:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chat-export-opt input { accent-color: var(--accent); margin: 0; }
+.chat-export-hint { color: var(--fg-dim); font-size: .92em; }
+
+/* THE CORNER ⋮ ON A WIDE CALM PAGE (chat-app.tsx). There is no header band there to hold it, so it floats over the
+   transcript's top-right, above the fade. Quiet until you go for it: at rest it is one of the dimmest things on the
+   page, because it is the only chrome left in a view whose whole point is that the chrome went away. */
+.chat-more-corner { position: absolute; top: 8px; right: 10px; z-index: 3; }
+.chat-more-float { opacity: .35; transition: opacity .12s linear; }
+.chat-more-float:hover, .chat-more-float:focus-visible, .chat-more-float[aria-expanded="true"] { opacity: 1; }
 @keyframes chat-fade { from { opacity: 0; } }
 @keyframes chat-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
 @media (prefers-reduced-motion: reduce) { .chat-dialog-back, .chat-dialog { animation: none; } }
@@ -956,7 +1037,7 @@ button.chat-page-go:hover { color: var(--fg); }
    is for problems only, in the notice colour, since a suggestion is not something to be nagged about. */
 .chat-att-btn { position: relative; }
 .chat-att-dot { position: absolute; top: 2px; right: 1px; min-width: 15px; height: 15px; padding: 0 3px; box-sizing: border-box; border-radius: 999px; background: var(--notice); color: var(--notice-fg); font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; }
-.chat-att-n { margin-left: -4px; min-width: 18px; padding: 0 5px; border-radius: 999px; background: color-mix(in srgb, var(--notice) 22%, transparent); color: var(--notice); font-size: .8em; font-weight: 600; text-align: center; }
+.chat-att-n { margin-left: -4px; min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--notice); color: var(--notice-fg); font-size: .8em; font-weight: 600; text-align: center; }
 /* The sheet's rows: a sentence on the left, its fix on the right; problems carry a coloured edge, suggestions none. */
 .chat-att-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .chat-att-item { display: flex; align-items: flex-start; gap: 16px; padding: 14px 16px; border-radius: 14px; background: var(--panel); box-shadow: inset 3px 0 0 transparent; }
@@ -1139,10 +1220,11 @@ button.chat-page-go:hover { color: var(--fg); }
    button is not something a keyboard or a screen reader can take apart, and the row's whole job is to pick. */
 .tp-rowwrap { display: flex; align-items: center; }
 .tp-rowwrap > .tp-row { flex: 1 1 auto; min-width: 0; }
-/* Quiet until the row is under the pointer — drawn for every row so the affordance is findable, but forty faint
-   pins down a list is a texture, not a control. A pinned one stays lit, because that is the state it reports. */
+/* ALWAYS DRAWN, quiet. Hiding the unpinned ones until their row was hovered saved no space — the column is reserved
+   for them either way — so an unhovered list showed a gutter of nothing beside the names and read as a layout that
+   had gone wrong. Faint is enough to stop forty of them becoming a texture. */
 .tp-pin { flex: 0 0 auto; display: inline-flex; padding: 5px; margin-right: 4px; border: none; border-radius: 50%;
-    background: none; color: var(--fg-faint); cursor: pointer; opacity: 0; transition: opacity .12s ease, color .12s ease; }
+    background: none; color: var(--fg-faint); cursor: pointer; opacity: .45; transition: opacity .12s ease, color .12s ease; }
 .tp-pin svg { width: 14px; height: 14px; }
 .tp-pin.on { opacity: 1; color: var(--accent); }
 .tp-rowwrap:hover .tp-pin, .tp-pin:focus-visible { opacity: 1; }
@@ -1151,7 +1233,7 @@ button.chat-page-go:hover { color: var(--fg); }
 /* The line between the shortlist and the rest. A margin rather than a rule between every row: it marks ONE
    boundary, and only when there is something on both sides of it. */
 .tp-rowwrap.tp-after-pins { border-top: 1px solid var(--border); margin-top: 5px; padding-top: 5px; }
-/* A touch screen cannot hover, so every pin is simply there. */
+/* A touch screen cannot hover, so every pin sits at full strength. */
 @media (hover: none) { .tp-pin { opacity: 1; } }
 .tp-row.indent { padding-left: 30px; }
 /* A row's tab title, cut with an ellipsis. */
@@ -1283,15 +1365,43 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-head-menu { position: fixed; z-index: 60; max-width: min(320px, calc(100vw - 16px)); }
 /* The session's title at the top of that menu: what the bar gave up for the model, a tap away. */
 .chat-head-menu-title { padding: 8px 10px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--border); font-weight: 600; color: var(--fg); white-space: normal; overflow-wrap: anywhere; }
-/* The phone bar's lead: the session's model, in the code face it is written in everywhere else. */
+/* The phone bar's lead: the session's model, in the code face it is written in everywhere else.
+   NO PILL HERE. In a narrow header the model does not sit BESIDE the title — it IS the title slot — and a filled,
+   rounded chip between a back chevron and a `⋮` reads as something floating in the bar rather than as the bar's own
+   heading. It keeps the caret, which is what says it can be changed, and the surface arrives on hover. */
 .chat-head-model { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; }
-
-/* ON A TOUCH SCREEN a waiting count is cyan, not the warning yellow (sidebar.css `--notice`): in a phone's small frame
-   the yellow badges read as an alarm, where at a desk they sit quietly in a wide page. */
-@media (pointer: coarse) {
-    :root { --notice: #38bdf8; --notice-fg: #082f49; }
-    :root[data-theme="light"] { --notice: #0284c7; --notice-fg: #ffffff; }
+.tp-pill.chat-head-model, .tp-pill.chat-head-model:hover, .tp-pill.chat-head-model[aria-expanded="true"] {
+    background: none; border-color: transparent; padding-left: 4px; padding-right: 4px;
 }
+/* Not even on hover: a heading that grows a surface under the pointer is a heading pretending to be a button in a
+   bar where the real buttons are round. The caret is what says it opens, and it is enough. */
+.tp-pill.chat-head-model:hover .tp-pill-text { color: var(--fg); }
+
+/* SOMETHING WAITING ON YOU IS THE ACCENT, not the warning yellow the panel uses (`--notice`, sidebar.css).
+   TRYING THIS OUT — the phone app draws the same idea in the same accent, and the two surfaces showing one state in
+   two colours is the kind of difference that reads as two products. Yellow also overstates it: an approval waiting is
+   the app asking a question, not a warning about something that went wrong, and a page of amber badges says the
+   second. This replaces the touch-only cyan, which existed because the yellow read as an alarm in a phone's small
+   frame — a problem the accent does not have at either size, so one colour now serves both. */
+.chat.calm { --notice: var(--accent); --notice-fg: var(--accent-fg); }
+/* …and a CITATION with it. The green rails and underlines are right in the developer view, where green means "this
+   is real, it came from a tool" among a page of other machinery. In the reading view they are the loudest thing on
+   a page of prose — a colour the page uses nowhere else, down the side of every table and under every cited number —
+   and an answer ends up looking annotated rather than written. The accent says the same thing in the page's own
+   voice. Green stays outside calm. */
+.chat.calm { --cite: var(--accent); }
+/* …and the DOT beside such a row with it, or a session reads as two states at once: an amber dot against blue words
+   saying the same thing. `pending` is a run working or a run waiting on you — activity, which is not a warning
+   either. The dots that mean something WENT wrong (`err`, `warn`) keep their own colours. */
+.chat.calm .dot.pending { background: var(--notice); }
+/* A STEP THAT WORKED gets no colour. Succeeding is what nearly every step does, so a saturated dot beside each one
+   spends the page's loudest signal on its least surprising fact — twelve of them down a run, none of which you
+   needed. The step's NAME is the landmark; the dot only has to be there. Colour is kept for what is exceptional:
+   amber where a run stopped short, red where one failed, and the accent, pulsing, where something is happening
+   now. Not the accent for success either — it already means "waiting on you" and "this came from a tool" here, and
+   a third meaning would empty it of all three. The busy view keeps the full green/amber/red taxonomy, which is
+   what you want when you are scanning twelve steps for the one that broke. */
+.chat.calm .dot.ok { background: var(--fg-faint); }
 
 /* ===================== A FINGER, NOT A MOUSE =====================
    Where the pointer is coarse (a phone, a tablet), anything tapped is at least 40px: the icon buttons of the headers
@@ -1320,8 +1430,10 @@ button.chat-page-go:hover { color: var(--fg); }
     .chat .mrow > .tt:has(> .icon-btn), .chat .mrow > .raw-btn, .chat .mrow > .time { order: 2; }
     .pair-card .btn { min-height: 40px; }
     /* Continue after a step cap: the run's one way forward, not a footnote. */
-    .chat .continue-run, .chat.calm .msg.asst.capped .continue-run { min-height: 40px; padding: 6px 18px; font-size: 1em; }
-    .chat .continue-more { min-width: 40px; justify-content: center; }
+    /* Continue is the one thing a capped run offers, so it is sized as an ACTION rather than to the 40px floor the
+       rest of this block enforces — at the minimum it read as a chip among the prose rather than the way onward. */
+    .chat .continue-run, .chat.calm .msg.asst.capped .continue-run { min-height: 46px; padding: 10px 22px; font-size: 1em; }
+    .chat .continue-more { min-width: 46px; justify-content: center; }
     .chat-search-box input, .chat-search input[type="search"] { min-height: 40px; }
     /* A chip inside a line of text (the run's page in a session's header): the line keeps its height, and a hidden
        area around the chip takes the finger. */
