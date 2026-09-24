@@ -63,7 +63,9 @@ export function sessionChrome(key: SessionKey, summary: SessionSummary | undefin
 export function attentionForApp(runtimes: readonly RuntimeInfo[]): { items: AttentionRow[]; count: number } {
     const items = attentionItems(runtimes, new Map(), () => false);
     return {
-        items: items.map((i) => ({ key: i.key, runtime: i.runtime.id, runtimeName: i.runtime.name, level: i.level, title: i.title, detail: i.detail })),
+        // Every item this snapshot carries comes from `attentionItems`, which is per runtime; the device-level ones
+        // (`deviceItems`) are the page's own and never reach the app, whose install story is the App Store's.
+        items: items.map((i) => ({ key: i.key, runtime: i.runtime!.id, runtimeName: i.runtime!.name, level: i.level, title: i.title, detail: i.detail })),
         count: attentionCount(items),
     };
 }
