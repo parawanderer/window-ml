@@ -8,10 +8,10 @@ import { ThemeMenu } from "./theme-pick";
 import { signal } from "@preact/signals";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import type { RuntimeInfo } from "../session-host";
+import type { RuntimeInfo, SessionKey } from "../session-host";
 import { IconBench, IconBrain, IconCompose, IconGear, IconMenu, IconSearch, IconVram } from "../sidebar/icons";
 import { MenuItem } from "./menu";
-import { benchOpen, openBench } from "../sidebar/store";
+import { benchOpen, openBench, view } from "../sidebar/store";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
 import { StartMenu, type StartKind } from "./new-session";
@@ -98,3 +98,6 @@ export function GearMenu({ graphsRt, benchRt, labelled }: {
         </div>
     );
 }
+
+/** Open a session: the one navigation the page has. */
+export const openSession = (key: SessionKey) => { view.value = { name: "detail", hash: key }; };
