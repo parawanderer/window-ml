@@ -46,7 +46,7 @@ event's `t`), Ctrl+F, the resize grip and tail-follow, which keeps the newest ev
 sit in the view's toolbar, the event lane's `rc-lane-chip`s. Anything the worker did not record itself ends
 in `[offscreen]` or `[page tab N]`. A cleared log shows its `log clear` line; an empty one says nothing has been
 recorded since the browser started. `housekeepingText` is pure and tested in `tests/housekeeping-log.test.mjs`; the
-section itself in `tests/sidebar.test.js`.
+section itself in `tests/sidebar-settings.test.js`.
 
 ## Adding an emitter
 
