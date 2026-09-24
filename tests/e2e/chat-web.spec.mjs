@@ -1657,3 +1657,26 @@ test("starting a session on a phone leads with one row: the way back, then the m
     expect(errors).toEqual([]);
     await page.close();
 });
+
+// Every other row on this panel is a short string that right-aligns into a tidy column; a wrapping SET of chips is
+// not that kind of value, and squeezed into 60% at the right it came out centre-ragged. And the storage bars each
+// sized their own value column, so a row of bars ended in three different places — the one thing bars are for.
+test("the runtime panel's lists read as lists: chips left and full width, bars ending together", async () => {
+    const { page, errors } = await open(DESKTOP, "#/settings/runtimes");
+    const caps = page.locator(".rt-caps");
+    await expect(caps).toBeVisible();
+
+    // The chips start at the row's left edge and every wrapped line starts there too.
+    const xs = await caps.locator(".chat-chip").evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().x)));
+    expect(new Set(xs.filter((x, i) => i === 0 || x < xs[i - 1])).size).toBe(1);
+    // And the label above them is a label, not a 240px column turned on its side.
+    const label = await caps.locator("xpath=../div[@class='chat-set-label']").boundingBox();
+    expect(label.height).toBeLessThan(60);
+
+    // Every bar ends at the same place, whatever its figure reads.
+    const rights = await page.locator(".stor-tools .stor-toolbar").evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().right)));
+    expect(rights.length).toBeGreaterThan(1);
+    expect(new Set(rights).size, `bars ended at ${rights.join(", ")}`).toBe(1);
+    expect(errors).toEqual([]);
+    await page.close();
+});

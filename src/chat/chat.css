@@ -1117,6 +1117,12 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-set-tabs { margin: 0 12px 24px; }
 .chat-set-lede { margin: 0 0 16px; padding: 0 12px; color: var(--fg-faint); font-size: .92em; }
 .chat-set-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 10px 12px; }
+/* A row whose VALUE is a list rather than a word: the label on its own line, the value under it across the full
+   width. Right-aligning a wrapping set into a narrow column is what made Offers read as ragged. */
+.chat-set-row.stack { flex-direction: column; align-items: stretch; gap: 8px; }
+/* The label's `flex: 1 1 240px` is a basis on the MAIN axis, which stacking turns from width into HEIGHT — it drew
+   a 240px-tall label with the chips marooned at the bottom of it. */
+.chat-set-row.stack .chat-set-label { flex: 0 0 auto; }
 .chat-set-label { flex: 1 1 240px; display: flex; flex-direction: column; gap: 3px; }
 .chat-set-hint { color: var(--fg-faint); font-size: .88em; }
 .chat-set-sample { margin: 4px 12px 0; }
@@ -1327,7 +1333,10 @@ button.chat-page-go:hover { color: var(--fg); }
 /* A fact's value, on the row's right. */
 .rt-val { color: var(--fg-dim); }
 /* What the runtime offers, as chips. */
-.rt-caps { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; max-width: 60%; }
+/* A WRAPPING LIST, left-aligned and across the full width, in a row that stacks (`.chat-set-row.stack`). It used to
+   right-align inside 60%, which is right for a one-word value and wrong for a set: the lines ended at different
+   places and read as ragged rather than as a list. */
+.rt-caps { display: flex; flex-wrap: wrap; gap: 6px; }
 /* A line in place of a part: asking, offline, not offered. */
 .rt-note { padding: 0 12px; margin: 4px 0; }
 /* The runtime's models, one per line, the default marked. */
