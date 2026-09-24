@@ -181,7 +181,8 @@ test("a session this browser had BEFORE the client paired opens on the client wi
         page.on("pageerror", (e) => errors.push(`extension: ${e.message}`));
         await page.goto(`chrome-extension://${ext.extensionId}/chat.html`);
         await page.locator(".chat").waitFor();
-        await page.getByRole("radio", { name: "Chat" }).click();
+        await page.getByRole("button", { name: /^Kind:/ }).click();
+        await page.getByRole("listbox", { name: "Kind" }).getByRole("option", { name: /^Chat/ }).click();
         await page.locator(".chat-start-box textarea").fill("Hello there?");
         await page.locator(".chat-start-box textarea").press("Enter");
         await expect(page.locator(".chat-main")).toContainText("General Kenobi.");

@@ -9,6 +9,9 @@ import * as Haptics from "expo-haptics";
 import type { SessionChrome } from "../../src/native/bridge";
 import { useEmbed } from "./embed";
 import { TabSheet, type TabList } from "./tab-sheet";
+// The SAME reading the chat page makes of the runtime's answer (src/chat/blank-start.ts): a resume lands on a page
+// like any other run, so a machine that may not open the blank one cannot resume onto it either.
+import { blankBlockedReason, blankStartState } from "../../src/chat/blank-start";
 
 /** The sheet's handle: show it for a session. */
 export interface ResumeHandle { present(): void }
@@ -38,5 +41,11 @@ export const ResumeSheet = forwardRef<ResumeHandle, { chrome: SessionChrome | nu
         setBusy(false);
         if (r.ok) { void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); sheet.current?.dismiss(); }
     };
-    return <TabSheet ref={sheet} list={list} value={null} title={busy ? "Resuming…" : "Resume this run on…"} lede={LOST} blankDetail="At the runtime's start page" onPick={(w) => void pick(w)} />;
+    // A phone can never grant a permission on the machine the run would go to, so `canGrant` is false by construction.
+    // This is the case with nowhere left to go: a run whose tab has closed, on a runtime with no tabs and no site
+    // access. Saying so on the row beats taking the tap and failing after it.
+    const rt = e.runtimes.find((r) => r.id === c?.runtime);
+    const why = blankBlockedReason(blankStartState(rt, false));
+    return <TabSheet ref={sheet} list={list} value={null} title={busy ? "Resuming…" : "Resume this run on…"} lede={LOST}
+        blankDetail="At the runtime's start page" blankBlocked={why} onPick={(w) => void pick(w)} />;
 });

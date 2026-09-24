@@ -81,7 +81,7 @@ export function PinStar({ id }: { id: string }) {
 }
 
 /** The pill and its list. `models` is the runtime's list with embedding models already left out. */
-export function ModelPicker({ models, value, onChange, arrived, head }: { models: readonly ModelChoice[]; value: string; onChange: (id: string) => void; arrived?: boolean;
+export function ModelPicker({ models, value, onChange, head }: { models: readonly ModelChoice[]; value: string; onChange: (id: string) => void;
     /** drawn as a HEADING in a top bar (`chat-head-model`) rather than as a pill in a row — what a session's own
      *  header does with the model, so a start page's bar and a chat's bar are the same bar. */
     head?: boolean }) {
@@ -102,7 +102,7 @@ export function ModelPicker({ models, value, onChange, arrived, head }: { models
     const name = value || (dflt ? `Default · ${dflt.id}` : "Default");
     return (
         <>
-            <button {...p.pillProps} {...cutTip(label, true)} class={`tp-pill tp-pill-model${head ? " chat-head-model" : ""}${arrived ? " tp-pill-in" : ""}`} aria-label={`Model: ${name}`}>
+            <button {...p.pillProps} {...cutTip(label, true)} class={`tp-pill tp-pill-model${head ? " chat-head-model" : ""} tp-pill-in`} aria-label={`Model: ${name}`}>
                 <span class="tp-pill-text">{label}</span>
                 <svg class="tp-caret" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
             </button>

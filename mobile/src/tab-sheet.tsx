@@ -25,8 +25,11 @@ export type TabChoice = number | "blank";
 export interface TabList { tabs: TabInfo[] | null; groups: TabGroupInfo[]; withheld: number; error?: string }
 
 /** The sheet. `onPick` gets the choice; the caller closes it. `title` and `lede` word it for another use (a resume). */
-export const TabSheet = forwardRef<BottomSheetModal, { list: TabList; value: TabChoice | null; onPick: (c: TabChoice) => void; title?: string; lede?: string; blankDetail?: string }>(
-    function TabSheet({ list, value, onPick, title = "Where the agent runs", lede, blankDetail = "At a page you name, or the runtime's start page" }, ref) {
+export const TabSheet = forwardRef<BottomSheetModal, { list: TabList; value: TabChoice | null; onPick: (c: TabChoice) => void; title?: string; lede?: string; blankDetail?: string;
+    /** why a NEW tab cannot be opened on this runtime (blank-start.ts). The row is then unpressable and says this
+     *  instead of its usual detail — a picker that takes a choice it cannot honour is worse than one that says so. */
+    blankBlocked?: string }>(
+    function TabSheet({ list, value, onPick, title = "Where the agent runs", lede, blankDetail = "At a page you name, or the runtime's start page", blankBlocked }, ref) {
         const p = usePalette();
         const [q, setQ] = useState("");
         const tabs = list.tabs ?? [];
@@ -39,8 +42,9 @@ export const TabSheet = forwardRef<BottomSheetModal, { list: TabList; value: Tab
                 note={list.withheld ? `${list.withheld} tab${list.withheld > 1 ? "s are" : " is"} not listed: the browser gives this runtime no access to ${list.withheld > 1 ? "their sites" : "its site"}.` : undefined}
                 header={long ? <SheetFilter value={q} onChangeText={setQ} placeholder="Filter tabs" /> : undefined}>
                 {lede ? <Text style={[s.note, { color: p.fgDim }]}>{lede}</Text> : null}
-                <Row chosen={value === "blank"} onPress={() => onPick("blank")} title="A new tab" detail={blankDetail}
-                    icon={<View style={[s.icon, s.letter, { backgroundColor: p.panel2 }]}><Plus size={16} color={p.fg} /></View>} />
+                <Row chosen={value === "blank"} disabled={!!blankBlocked} onPress={() => onPick("blank")} title="A new tab"
+                    detail={blankBlocked ?? blankDetail}
+                    icon={<View style={[s.icon, s.letter, { backgroundColor: p.panel2 }]}><Plus size={16} color={blankBlocked ? p.fgFaint : p.fg} /></View>} />
                 <View style={[s.rule, { backgroundColor: p.border }]} />
                 {list.tabs === null ? <Text style={[s.note, { color: p.fgDim }]}>{list.error ? `The runtime did not list its tabs: ${list.error}` : "Asking for its tabs…"}</Text>
                     : !tabs.length ? <Text style={[s.note, { color: p.fgDim }]}>No tabs are open there.</Text>
@@ -78,13 +82,15 @@ export const TabSheet = forwardRef<BottomSheetModal, { list: TabList; value: Tab
 );
 
 /** One choice: its icon, its title, the line under it, and a check when chosen. */
-function Row({ title, detail, icon, chosen, indent, rail, onPress }: { title: string; detail: string; icon: React.ReactNode; chosen: boolean; indent?: boolean;
+function Row({ title, detail, icon, chosen, indent, rail, disabled, onPress }: { title: string; detail: string; icon: React.ReactNode; chosen: boolean; indent?: boolean;
     /** the colour of the group this row is in, drawn as a line down its left edge; null when it is in none */
-    rail?: string | null; onPress: () => void }) {
+    rail?: string | null; disabled?: boolean; onPress: () => void }) {
     const p = usePalette();
     return (
-        <Pressable accessibilityRole="button" accessibilityLabel={title} accessibilityState={{ selected: chosen }} onPress={onPress}
-            style={({ pressed }) => [s.row, indent && s.indent, rail ? { borderLeftWidth: 2, borderLeftColor: rail } : null, pressed && { backgroundColor: p.panel }]}>
+        <Pressable accessibilityRole="button" accessibilityLabel={title} disabled={disabled}
+            accessibilityState={{ selected: chosen, disabled: !!disabled }}
+            style={({ pressed }) => [s.row, indent && s.indent, rail ? { borderLeftWidth: 2, borderLeftColor: rail } : null, disabled && { opacity: 0.55 }, pressed && !disabled && { backgroundColor: p.panel }]}
+            onPress={onPress}>
             {icon}
             <View style={{ flex: 1 }}>
                 <Text numberOfLines={1} style={[s.title, { color: p.fg }]}>{title}</Text>

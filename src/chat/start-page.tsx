@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ModelChoice, RuntimeInfo } from "../session-host";
 import { loadDraft, saveDraft } from "../sidebar/drafts";
-import { IconAgent, IconChat, IconSend, IconWarn } from "../sidebar/icons";
+import { IconSend, IconWarn } from "../sidebar/icons";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
 import { mayCommand } from "./grants";
@@ -81,9 +81,6 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
     // waits (with a placeholder pill the real one fades into, rather than a pill that jumps into the row).
     const [models, setModels] = useState<ModelChoice[] | null>(() => (rt ? modelCache.get(rt.id) ?? null : null));
     const [model, setModel] = useState("");
-    // Whether a placeholder was drawn: only then does the real pill animate in (a cached list is simply there).
-    const waited = useRef(false);
-    if (models === null) waited.current = true;
     const canList = !!rt && mayCommand(rt, "models.list");
     useEffect(() => {
         setModels(rt ? modelCache.get(rt.id) ?? null : null); setModel("");
@@ -137,10 +134,41 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
     // In that bar it is a HEADING (`head`), which is what a session's own header makes of the model — a solid pill
     // sitting alone under a back arrow read as a control that had been left there rather than as the bar's title.
     const modelAs = (head: boolean) => (models && models.length
-        ? <ModelPicker models={models} value={model} onChange={setModel} arrived={waited.current} head={head} />
+        // KEYED ON THE KIND so it arrives with the pills beside it. The model list is per RUNTIME, not per kind, so
+        // this pill is the one that does not unmount when the kind changes — and a one-shot animation only plays on
+        // mount. Device and tab both come and go with the kind, so without this the row half faded and half popped.
+        ? <ModelPicker key={`${kind}-${rt.id}`} models={models} value={model} onChange={setModel} head={head} />
         : models === null && canList ? <span class={`tp-pill tp-pill-model${head ? " chat-head-model" : ""} tp-pill-wait`} role="status" aria-label="Loading models" /> : null);
     const modelTop = modelAs(false);
     const modelHead = modelAs(true);
+    const sendButton = (
+        <button class="tt cbtn csend chat-start-send" disabled={!ready} onClick={() => void start()} aria-label={kind === "agent" ? "Start the run" : "Start the chat"}>
+            <IconSend /><span class="tt-pop above" role="tooltip">{busy ? "Starting…" : kind === "agent" ? "Start the run" : "Start the chat"}</span>
+        </button>
+    );
+    // THE CHOICES, as pills, at every width. The kind was a segmented control on a wide page, which spends the room
+    // of two pills permanently showing the option you did not pick — and once a new tab's URL box joins the row, that
+    // is paid for by the device, the tab and the model, all three cut to "D…". One idiom, and the same one the phone
+    // has always used.
+    const row = (
+        <div class="chat-start-row">
+            {kinds.length > 1 ? <KindPicker kinds={kinds} value={kind} onChange={setKind} /> : null}
+            {/* The device comes BEFORE the model, because it is what decides which models there are: picking
+                a machine after its model list would be choosing from a list the next choice replaces. */}
+            {runtimes.length > 1 ? <DevicePicker runtimes={runtimes} value={rt.id} onChange={setRuntimeId} /> : null}
+            {pick.inline}
+            {narrow ? null : modelTop}
+            {!rt.online ? <span class="chat-start-wait">Reconnecting…</span> : null}
+            {/* Said in the row rather than only on send: the choice is already made by the time anyone
+                types, and a send button that simply will not go is the thing this replaces. */}
+            {blocked.kind !== "ok" ? (
+                <button class="chat-start-blocked" onClick={() => setAskingPage(true)}>
+                    <IconWarn />New tab needs permission
+                </button>
+            ) : null}
+            {narrow ? null : <><span class="sp" />{sendButton}</>}
+        </div>
+    );
     return (
         <>
         {/* ONE ROW, not a button floating over a bar that was padded to dodge it. The back button and the model are
@@ -157,39 +185,18 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
         ) : null}
         <div class="chat-start-page">
             <div class="chat-start-col">
+                {/* NARROW: the choices sit OUTSIDE the box, above it and across the full width, as the phone app's
+                    own start screen has them. Inside it they read as part of the message being composed; they are not
+                    — they are what the message will be sent AS, and they outlive it. A row under a growing textarea
+                    is also pushed about by what is typed. Ordered in the DOM rather than with `order`, so the
+                    keyboard walks them in the order they are drawn. */}
+                {narrow ? <div class="chat-start-above">{row}{pick.urlField}</div> : null}
                 <div class="chat-start-box">
                     <textarea ref={box} rows={1} value={text} aria-label={kind === "agent" ? "Task" : "Message"}
                         placeholder={kind === "agent" ? "What should the agent do?" : "Start a chat"}
                         onInput={(e: any) => { setText(e.target.value); saveDraft("start", e.target.value); }}
                         onKeyDown={(e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void start(); } }} />
-                    <div class="chat-start-row">
-                        {kinds.length > 1 && narrow ? <KindPicker kinds={kinds} value={kind} onChange={setKind} />
-                            : kinds.length > 1 ? (
-                            <div class="chat-seg" role="radiogroup" aria-label="Kind">
-                                {kinds.map((k) => (
-                                    <button key={k} role="radio" aria-checked={k === kind} class={`chat-seg-opt${k === kind ? " on" : ""}`}
-                                        onClick={() => setKind(k)}>{k === "agent" ? <IconAgent /> : <IconChat />}{k === "agent" ? "Agent" : "Chat"}</button>
-                                ))}
-                            </div>
-                        ) : null}
-                        {/* The device comes BEFORE the model, because it is what decides which models there are: picking
-                            a machine after its model list would be choosing from a list the next choice replaces. */}
-                        {runtimes.length > 1 ? <DevicePicker runtimes={runtimes} value={rt.id} onChange={setRuntimeId} /> : null}
-                        {pick.inline}
-                        {narrow ? null : modelTop}
-                        {!rt.online ? <span class="chat-start-wait">Reconnecting…</span> : null}
-                        {/* Said in the row rather than only on send: the choice is already made by the time anyone
-                            types, and a send button that simply will not go is the thing this replaces. */}
-                        {blocked.kind !== "ok" ? (
-                            <button class="chat-start-blocked" onClick={() => setAskingPage(true)}>
-                                <IconWarn />New tab needs permission
-                            </button>
-                        ) : null}
-                        <span class="sp" />
-                        <button class="tt cbtn csend chat-start-send" disabled={!ready} onClick={() => void start()} aria-label={kind === "agent" ? "Start the run" : "Start the chat"}>
-                            <IconSend /><span class="tt-pop above" role="tooltip">{busy ? "Starting…" : kind === "agent" ? "Start the run" : "Start the chat"}</span>
-                        </button>
-                    </div>
+                    {narrow ? <div class="chat-start-foot">{sendButton}</div> : <>{row}{pick.urlField}</>}
                 </div>
                 {askingPage && blocked.kind !== "ok" ? (
                     <BlankStartDialog state={blocked} onClose={() => setAskingPage(false)}

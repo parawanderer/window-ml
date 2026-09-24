@@ -38,6 +38,11 @@ async function open(viewport, hash = "") {
 // this matches twice; `.last()` is the one where it lives, which is the one every assertion here means.
 const row = (page, key) => page.locator(`.chat-row[data-session="${key}"]`).last();
 const commands = (page) => page.evaluate(() => globalThis.__chatFake.commands);
+/** Choose Agent or Chat on the start page. One pill at every width now — the segmented control is gone. */
+async function pickKind(page, name) {
+    await page.getByRole("button", { name: /^Kind:/ }).click();
+    await page.getByRole("listbox", { name: "Kind" }).getByRole("option", { name: new RegExp(`^${name}`) }).click();
+}
 
 test("it runs with no extension: no chrome global, and the bundle loaded nothing that needs one", async () => {
     const { page, errors } = await open(DESKTOP);
@@ -399,36 +404,36 @@ test("the device pill is drawn only where there is more than one device to choos
 
 // Two rows of prose differing in one word are told apart by READING; a robot beside a speech bubble is told apart at
 // a glance. The pair is drawn wherever the kinds appear, and the phone app draws the same two — one design language.
-test("the kind is marked by a glyph in both of its controls, and the pills arrive the same way", async () => {
+test("the kind is marked by a glyph, and the pills that come and go arrive the same way", async () => {
     const { page, errors } = await open(DESKTOP);
-    // WIDE: the segmented control, a glyph in each segment.
-    for (const name of ["Agent", "Chat"]) {
-        await expect(page.getByRole("radio", { name }).locator("svg")).toHaveCount(1);
-    }
+    // ONE control at every width now: the segmented pair spent the room of two pills permanently showing the option
+    // you did not pick, which the tab, the device and the model then paid for in truncated names.
+    await expect(page.getByRole("radio", { name: "Agent" })).toHaveCount(0);
+    const kind = page.getByRole("button", { name: /^Kind:/ });
+    await expect(kind.locator("svg")).toHaveCount(2, "the glyph and the caret");
 
     // The device pill ARRIVES rather than appearing: it is drawn only where there is a choice, so switching kind
     // mounts and unmounts it, and popping in beside a tab pill that fades read as the row jolting.
-    await page.getByRole("radio", { name: "Chat" }).click();
+    await pickKind(page, "Chat");
     await expect(page.getByRole("button", { name: /^Device:/ })).toHaveCount(0);
-    await page.getByRole("radio", { name: "Agent" }).click();
-    const device = page.getByRole("button", { name: /^Device:/ });
-    await expect(device).toBeVisible();
-    // Not "every pill animates identically": a pill whose list was already cached has nothing to wait for and simply
-    // is there, which is right. The device pill is the one that was appearing from nothing beside one that faded.
-    expect(await device.evaluate((e) => getComputedStyle(e).animationName)).toBe("chat-pill-in");
+    await pickKind(page, "Agent");
+    await expect(page.getByRole("button", { name: /^Device:/ })).toBeVisible();
+    // EVERY pill that comes and goes with the kind arrives the same way. The model pill is the catch: its list is per
+    // RUNTIME, not per kind, so it never unmounts on this switch and a one-shot animation only plays on mount — it
+    // popped while its neighbours glided until it was keyed to arrive with them.
+    for (const name of [/^Device:/, /^Where it runs/, /^Model:/]) {
+        expect(await page.getByRole("button", { name }).evaluate((e) => getComputedStyle(e).animationName), `${name} should arrive`).toBe("chat-pill-in");
+    }
+    // …and the KIND pill does not: it is the control you just pressed, and a button that flies away from under the
+    // pointer that chose it reads as a mis-click.
+    expect(await kind.evaluate((e) => getComputedStyle(e).animationName)).toBe("none");
 
-    // NARROW: the same pair on the pill and in its list.
-    const phone = await browser.newPage({ viewport: PHONE });
-    await phone.goto(server.url);
-    await phone.locator(".chat-start").first().click();
-    const kind = phone.getByRole("button", { name: /^Kind:/ });
-    await expect(kind.locator("svg")).toHaveCount(2, "the glyph and the caret");
+    // The pair is in the list too, one glyph each.
     await kind.click();
     for (const name of [/^Agent/, /^Chat/]) {
         // The GLYPH's own slot: the chosen row also carries a check, so counting every svg in the row counts that too.
-        await expect(phone.getByRole("listbox", { name: "Kind" }).getByRole("option", { name }).locator(".tp-kind-icon svg")).toHaveCount(1);
+        await expect(page.getByRole("listbox", { name: "Kind" }).getByRole("option", { name }).locator(".tp-kind-icon svg")).toHaveCount(1);
     }
-    await phone.close();
     expect(errors).toEqual([]);
     await page.close();
 });
@@ -504,7 +509,7 @@ test("a runtime's + starts a session on that runtime, and only the ones that can
     await head("desk-pc").locator(".chat-rt-add").click();
     await expect(page.getByRole("button", { name: /^Device:/ })).toHaveAccessibleName("Device: Desk PC");
     // And on a kind THAT machine can start: the desk PC runs agents and not chats, so it must not open on Chat.
-    await expect(page.getByRole("radio", { name: "Agent" })).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByRole("button", { name: /^Kind:/ })).toHaveAccessibleName("Kind: Agent");
 
     await page.locator(".chat-start-box textarea").fill("check the build");
     await page.locator(".chat-start-box textarea").press("Enter");
@@ -1077,8 +1082,8 @@ test("the start row fits one line at the start box's full width, however long th
         f.models[0].id = "qwen3.8-flash-next-extra-long-name:vision";
     });
     // The page asked before the names changed: switch kinds to ask again.
-    await page.getByRole("radio", { name: "Chat" }).click();
-    await page.getByRole("radio", { name: "Agent" }).click();
+    await pickKind(page, "Chat");
+    await pickKind(page, "Agent");
     await page.getByRole("button", { name: /^Where it runs/ }).click();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("button", { name: /^Where it runs/ })).toContainText("Verify TLS");
@@ -1087,7 +1092,7 @@ test("the start row fits one line at the start box's full width, however long th
     await page.close();
 });
 
-test("the model pill waits as a placeholder of its own size and slides in; a second open draws it at once", async () => {
+test("the model pill waits as a placeholder of its own size, then arrives like the pills beside it", async () => {
     const page = await browser.newPage({ viewport: DESKTOP });
     await page.addInitScript(() => { globalThis.__chatFakeLatencyMs = 700; });
     await page.goto(server.url);
@@ -1101,11 +1106,14 @@ test("the model pill waits as a placeholder of its own size and slides in; a sec
     await expect(pill).toHaveClass(/tp-pill-in/);
     // The row kept its height: the placeholder held the pill's place.
     expect(Math.abs((await rowBox()).height - before.height)).toBeLessThanOrEqual(1);
-    // Away to a session and back: the list is remembered, so no placeholder and no animation this time.
+    // Away to a session and back: the LIST is remembered, so there is no placeholder to wait behind this time…
     await page.locator(".chat-row").first().click();
     await page.locator(".chat-list .chat-start").click();
-    await expect(pill).toBeVisible();
-    await expect(pill).not.toHaveClass(/tp-pill-in/);
+    await expect(page.getByRole("status", { name: "Loading models" })).toHaveCount(0);
+    // …but it still arrives the way the device and tab pills do. Whether its list had to be fetched is this pill's
+    // private business; from outside the row they appear together, and one popping while the others glide is the
+    // thing you notice. (This used to assert the opposite, on the reasoning that a cached list is simply there.)
+    await expect(pill).toHaveClass(/tp-pill-in/);
     await page.close();
 });
 

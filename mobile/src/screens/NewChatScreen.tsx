@@ -26,7 +26,7 @@ import { faviconSrc, tabHost } from "../../../src/chat/tab-tree";
 // The SAME reading the chat page makes (src/chat/blank-start.ts), not a second copy of the rules: which state the
 // choice is in is a fact about the runtime's answer, and two surfaces disagreeing about it is the drift AGENTS.md's
 // one-design-language rule exists to stop. Only the drawing below is this screen's.
-import { blankStartState } from "../../../src/chat/blank-start";
+import { blankBlockedReason, blankStartState } from "../../../src/chat/blank-start";
 
 /** The new-session screen. */
 export function NewChatScreen() {
@@ -184,7 +184,11 @@ export function NewChatScreen() {
                 <Text style={[s.none, { color: p.fgDim }]}>No runtime this device may start a session on is online.</Text>
             )}
             <AttachSheet att={att} />
-            <TabSheet ref={tabSheet} list={tabs} value={where ?? "blank"} onPick={(c) => { setWhere(c); tabSheet.current?.dismiss(); }} />
+            {/* The same answer the chip above carries, on the row it is about: a new tab that cannot be opened is not
+                a choice, and the picker should not take a tap it cannot honour. */}
+            <TabSheet ref={tabSheet} list={tabs} value={where ?? "blank"}
+                blankBlocked={blankBlockedReason(blocked)}
+                onPick={(c) => { setWhere(c); tabSheet.current?.dismiss(); }} />
             {/* The ways out, as a sheet: this is a picker (which page shall it be?) wearing an explanation, and a
                 picker is the one thing that stays a sheet on this device. There is no "grant" row — a phone cannot
                 raise a permission prompt on another machine, which is the whole shape of the remote case. */}

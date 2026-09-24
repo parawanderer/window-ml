@@ -997,11 +997,15 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-export-hint { color: var(--fg-dim); font-size: .92em; }
 
 /* THE CORNER ⋮ ON A WIDE CALM PAGE (chat-app.tsx). There is no header band there to hold it, so it floats over the
-   transcript's top-right, above the fade. Quiet until you go for it: at rest it is one of the dimmest things on the
-   page, because it is the only chrome left in a view whose whole point is that the chrome went away. */
+   transcript's top-right, above the fade.
+   It is SIZED AND COLOURED AS THE RAIL'S GLYPHS ARE, because it is one of them: the same round 36px target and the
+   same resting colour. It had neither — the 36px rule names the rail, the list's head and its foot, and this button
+   is in none of them, so it fell back to a 22px one — and on top of that it was faded to a third, on the reasoning
+   that it is "the only chrome left". That is true of a page with nothing down its left edge; with the rail there it
+   is five bright glyphs and one dim, small one, which reads as a different KIND of control rather than a quiet one. */
 .chat-more-corner { position: absolute; top: 8px; right: 10px; z-index: 3; }
-.chat-more-float { opacity: .35; transition: opacity .12s linear; }
-.chat-more-float:hover, .chat-more-float:focus-visible, .chat-more-float[aria-expanded="true"] { opacity: 1; }
+.chat-more-corner .hbtn { min-width: 36px; min-height: 36px; border-radius: 50%; }
+.chat-more-float { transition: opacity .12s linear; }
 @keyframes chat-fade { from { opacity: 0; } }
 @keyframes chat-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
 @media (prefers-reduced-motion: reduce) { .chat-dialog-back, .chat-dialog { animation: none; } }
@@ -1133,7 +1137,7 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-sheet-head { position: relative; display: flex; align-items: center; gap: 8px; margin: 0 0 24px; padding: 0 12px; }
 .chat-sheet-back { position: absolute; right: 100%; top: 50%; transform: translateY(-50%); color: var(--fg-dim); }
 .chat.narrow .chat-sheet-back { position: static; transform: none; }
-.chat-sheet-col > .chat-sheet-back { margin-bottom: 8px; }
+.chat-sheet-col > .chat-sheet-back { align-self: flex-start; margin-bottom: 8px; }
 .chat.narrow .chat-sheet-head { padding-left: 0; }
 .chat-sheet-title { margin: 0; font-size: 1.6em; font-weight: 500; color: var(--fg); }
 /* The search page: a pill to type in, and the whole history under it with each date at the right. */
@@ -1187,13 +1191,10 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-set-sample { margin: 4px 12px 0; }
 /* A segmented choice: the options side by side in one pill, the chosen one filled. */
 .chat-seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 999px; background: var(--panel); }
-/* The kind's glyph, in the row's list and in the segmented control: a robot and a speech bubble, so the pair is told
-   apart at a glance rather than by reading two lines that differ in one word. Sized and dimmed like every other
-   leading glyph here; it never takes the row's colour from the label beside it. */
+/* The kind's glyph in its list: a robot and a speech bubble, so the pair is told apart at a glance rather than by
+   reading two lines that differ in one word. Sized and dimmed like every other leading glyph here. */
 .tp-kind-icon { display: flex; flex: 0 0 auto; align-items: center; align-self: flex-start; margin-top: 2px; color: var(--fg-dim); }
-.chat-seg-opt svg { flex: 0 0 auto; }
 .chat-seg-opt {
-    display: inline-flex; align-items: center; gap: 6px;
     border: none; border-radius: 999px; padding: 6px 12px; background: none; color: var(--fg-dim); font: inherit;
     font-size: .92em; cursor: pointer;
 }
@@ -1218,20 +1219,39 @@ button.chat-page-go:hover { color: var(--fg); }
     line-height: 1.5; padding: 4px 0; min-height: 1.5em; max-height: 280px;
 }
 .chat-start-box textarea::placeholder { color: var(--fg-faint); }
-.chat-start-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-/* WIDE: one line, by SHRINKING rather than wrapping. A flex row wraps before it shrinks, so every control added to
-   this row used to be paid for out of the next one's cap — adding the device pill pushed send onto a second line
-   while three pills sat at their maximum widths. Nowrap makes the caps mean "do not get greedy" instead of being
-   load-bearing arithmetic, and each pill's text ellipsizes (`.tp-pill-text`) with the whole of it in its popover.
-   The narrow layout keeps the wrap: there the model moves to the top bar and the row has fewer items to hold. */
-.chat:not(.narrow) .chat-start-row { flex-wrap: nowrap; }
-/* The kind switch and send are the two things on the row that must stay whole: one is two words, the other an icon. */
-.chat-seg, .chat-start-send { flex: 0 0 auto; }
+/* ONE LINE, AT EVERY WIDTH, by SHRINKING rather than wrapping. A flex row wraps before it shrinks, so every control
+   added here used to be paid for out of the next one's cap — the device pill pushed send onto a second line while
+   three pills sat at their maximums, and on a phone three pills overflowed 398px by eleven and the third dropped to a
+   line of its own. Nowrap makes the caps mean "do not get greedy" rather than being load-bearing arithmetic, and each
+   pill's text ellipsizes (`.tp-pill-text`) with the whole of it one tap away in its popover. */
+.chat-start-row { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+/* Send must stay whole: it is an icon, and an icon that shrinks is a smudge. */
+.chat-start-send { flex: 0 0 auto; }
+/* NARROW: the choices sit above the box — outside it, across the full width — and send below the text, on a line of
+   its own at the end. The shape the phone app's own start screen has. */
+.chat-start-foot { display: flex; justify-content: flex-end; }
+.chat-start-above { display: flex; flex-direction: column; gap: 8px; width: 100%; margin-bottom: 10px; }
+/* THE PILLS FIT, OR THEY WRAP — they never scroll out of reach. Three came to 409px in a 398px row, and a sideways
+   scroller was the obvious fix until the touch probe (chat-web.spec.mjs) refused it: every control must be ON the
+   screen, because one parked past the edge is hidden behind a gesture nothing advertises. So the gaps and the pills
+   are tightened, which fits them on one line at the widths most phones have, and below that the row wraps — every
+   pill visible, every name whole, one line taller. */
+.chat-start-above .chat-start-row { flex-wrap: wrap; row-gap: 6px; gap: 6px; }
+.chat-start-above .tp-pill { padding-left: 8px; padding-right: 8px; gap: 6px; }
+.chat-start-above .chat-start-row > .tp-pill { flex: 0 0 auto; max-width: none; }
+   mask-image: linear-gradient(to right, transparent 0, #000 var(--fade), #000 calc(100% - var(--fade)), transparent 100%);
+}
+.chat-start-above .chat-pick-url { max-width: none; }
 /* The row's URL field reads as a quiet pill, not a form field. (The device beside it was a `<select>` styled to match
    from a distance; it is a real pill now — `.tp-pill-device` — so the pair is down to one.) */
 .chat-pick-url {
     font: inherit; font-size: .88em; color: var(--fg); background: var(--panel-2); border: none; border-radius: 999px;
-    padding: 6px 12px; max-width: 22rem; min-width: 0; flex: 1 1 12rem; outline: none;
+    padding: 6px 12px; max-width: 22rem; min-width: 0; outline: none;
+    /* GIVES UP ROOM FIRST. It is the only item here that grows, so it took the space the pills needed and left them
+       reading "D…", "Ne…", "qwen3…" — three labels cut to nothing so a placeholder could keep its full width. The
+       high shrink factor means the row is paid for out of this box until it is at its basis, and only then out of
+       the names beside it. */
+    width: 100%;
 }
 .chat-start-send { flex: 0 0 auto; }
 /* Settings → Housekeeping: the log's output cell fills a fixed-height box, as it fills the DevTools view. */
@@ -1539,8 +1559,12 @@ button.chat-page-go:hover { color: var(--fg); }
     .chat-att-why::after { content: ""; position: absolute; inset: -14px -14px; }
 }
 /* A ROUND button keeps its own size wherever it lands. In a phone's column the back button was laid out in flow and
-   stretched across the whole width, a circle drawn 390px wide. */
-.chat-sheet-back { flex: 0 0 auto; align-self: flex-start; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+   stretched across the whole width, a circle drawn 390px wide.
+   NOT `align-self: flex-start`, which is what stopped that stretch and then followed the button into the header ROW,
+   where flex-start means the TOP: beside a title block two lines tall (the model, and the runtime under it) the back
+   sat 8px above the ⋮ it is paired with. Centring is right in a row, and in a column it prevents the stretch just as
+   well — only the sheet's column wants it at the start, and it says so itself below. */
+.chat-sheet-back { flex: 0 0 auto; align-self: center; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
 /* THE KIND PICKER's rows (kind-picker.tsx): the kind's name, and a line under it saying what it does. */
 .tp-row.tp-kind { align-items: flex-start; }
 /* A kind row's text column: its name above, what it does below, wrapping rather than cut. */

@@ -446,7 +446,7 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
                 never both offer to continue the same run. */}
             {native ? null : canResume && id && rt ? (
                 resuming
-                    ? <ResumeSession store={store} rt={rt} session={{ runtime: id.runtime, hash: id.hash }}
+                    ? <ResumeSession store={store} rt={rt} session={{ runtime: id.runtime, hash: id.hash }} extras={extras}
                         onResumed={() => setResuming(false)} onCancel={() => setResuming(false)} />
                     : <button class="chat-resume" onClick={() => setResuming(true)}>
                         <span class="chat-resume-what">The tab this run worked in has closed.</span><span class="chat-resume-go">Resume on a page</span>
