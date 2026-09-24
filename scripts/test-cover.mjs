@@ -14,11 +14,12 @@
 // that covers it, so the verification I did was against the tests I happened to think of. It passed. That is the
 // kind of thing that passes until it does not.
 //
-// HOW IT RESOLVES. Its own parse, not the compiler's program: the tests are `.mjs` and `.js` that pull source in
-// with `await import("../src/chat/attention.ts")`, a STRING the language service does not follow from a JS file,
-// and `tsconfig.tests.json` has two root files. So every specifier is read out of the AST — static `import`,
-// `require`, and dynamic `import()` with a literal argument — and resolved by hand, which is exactly the set the
-// tests use. A specifier built from a variable cannot be resolved and is skipped rather than guessed at.
+// HOW IT RESOLVES. Its own scan, not the compiler's program, for two reasons. The tests are `.mjs` and `.js` that
+// pull source in with `await import("../src/chat/attention.ts")` — a STRING the language service does not follow
+// from a JS file — and `tsconfig.tests.json` has two root files. And CI's `tools` job runs with NO node_modules,
+// so a tool that needs a parser off npm is a check that does not run where it is meant to. `scripts/js-scan.mjs`
+// blanks comments and lifts strings out; the specifiers are read off what is left. One built from a variable
+// cannot be resolved and is skipped rather than guessed at.
 //
 // THE BUILD IS THE OTHER HALF, in two shapes. A test may name a BUNDLE FILE (`dist/sidebar-app.js`, which
 // `tests/helpers.js` loads into a `node:vm` sandbox) — that is traced to the entry it was built from, which is how
@@ -36,10 +37,8 @@ import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, dirname, resolve, relative, extname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
+import { scan, MARKED } from "./js-scan.mjs";
 
-const require = createRequire(import.meta.url);
-const { ts } = require("@ts-morph/common");
 const ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 
 /** Extensions a specifier may resolve to, in the order a bundler would try them. */
@@ -71,33 +70,21 @@ function resolveSpec(from, spec) {
 
 /** Every specifier a file names: static imports and re-exports, `require`, and dynamic `import()` — literals only. */
 export function specifiersOf(file, text = readFileSync(file, "utf8")) {
-    const kind = /\.tsx?$/.test(file) ? (file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS) : ts.ScriptKind.JS;
-    const src = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, kind);
+    const { code, strings } = scan(text);
     const out = new Set();
-    const lit = (n) => (n && (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) ? n.text : null);
-    const visit = (node) => {
-        if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
-            const s = lit(node.moduleSpecifier);
-            if (s) out.add(s);
-        } else if (ts.isCallExpression(node)) {
-            const callee = node.expression;
-            const isImport = callee.kind === ts.SyntaxKind.ImportKeyword;
-            const isRequire = ts.isIdentifier(callee) && callee.text === "require";
-            if (isImport || isRequire) {
-                const s = lit(node.arguments[0]);
-                if (s) out.add(s);
-            }
-        }
-        // A BUILD named in any string. Two shapes, and both matter: a bundle file (`dist/sidebar-app.js`, which
-        // `tests/helpers.js` loads into a vm) and a build DIRECTORY (`dist`, `dist-web`), which a harness hands to
-        // a browser. The first can be traced to its entry; the second is the whole build and is marked as such.
-        if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
-            if (/(^|\/)dist[^"']*\.js$/.test(node.text)) out.add(node.text);
-            else if (/^(?:\.{1,2}\/)*dist(-web|-app|-native)?\/?$/.test(node.text)) out.add(`\0build:${node.text.replace(/^[./]+|\/$/g, "")}`);
-        }
-        ts.forEachChild(node, visit);
-    };
-    ts.forEachChild(src, visit);
+    // `from "x"`, `import "x"`, `import("x")`, `require("x")` — everything that brings a module in.
+    for (const m of code.matchAll(new RegExp(`(?:\\bfrom|\\bimport|\\brequire)\\s*\\(?\\s*${MARKED}`, "g"))) {
+        const v = strings[Number(m[1])]?.value;
+        if (v) out.add(v);
+    }
+    // A BUILD named in ANY string, wherever it appears — these are handed to a browser or a vm, never imported.
+    // Two shapes and both matter: a bundle FILE (`dist/sidebar-app.js`, which `tests/helpers.js` loads into a vm)
+    // can be traced to the entry it came from; a build DIRECTORY (`dist`, `../../dist`) is the whole thing.
+    for (const s of strings) {
+        if (s.value == null) continue;
+        if (/(^|\/)dist[^"']*\.js$/.test(s.value)) out.add(s.value);
+        else if (/^(?:\.{1,2}\/)*dist(-web|-app|-native)?\/?$/.test(s.value)) out.add(`\0build:${s.value.replace(/^[./]+|\/$/g, "")}`);
+    }
     return [...out];
 }
 

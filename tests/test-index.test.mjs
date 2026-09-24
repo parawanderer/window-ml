@@ -38,6 +38,21 @@ const note = 'test("not a test, just a string")';
     ]);
 });
 
+test("a regex literal containing a quote does not swallow the rest of the file", () => {
+    // THE BUG THIS EXISTS FOR. `/doesn't report vision/` reads as the start of a single-quoted string to anything
+    // that only tracks quotes, and everything up to the next apostrophe disappears with it — ninety-five tests, in
+    // the file where it happened. A regex is consumed whole, and a `/` is only a regex where one can begin.
+    const { tests } = index(`// sample.test.mjs — a file.
+test("before the regex", () => {
+    assert.match(x, /doesn't report vision capability/);
+});
+test("after the regex", () => {});
+const ratio = a / b / c;   // division, not a regex
+test("after a division", () => {});
+`);
+    assert.deepEqual(tests.map((t) => t.name), ["before the regex", "after the regex", "after a division"]);
+});
+
 test("a name built from a variable is skipped rather than guessed at", () => {
     // Nothing useful can be printed for it, and printing the expression would be worse than printing nothing.
     const { tests } = index(`// sample.test.mjs — a file.\nconst n = "x";\ntest(\`a \${n} name\`, () => {});\n`);

@@ -32,9 +32,11 @@
 // belongs to" is a judgement, and the place it shows up is this tool's own output — the section prints beside the
 // name, so a test filed under the wrong one reads wrong the moment anyone searches for it.
 //
-// PARSED, NOT GREPPED. A regex over `test("` misses a name in backticks, a `test.skip`, and a call spread over two
-// lines, and it finds the word "test(" inside a string. The parser is TypeScript's, through `@ts-morph/common` —
-// the repo's own `typescript` is 7.x, which is the Go port and exposes no JS API (see `scripts/refactor/`).
+// SCANNED, NOT GREPPED. A regex over `test("` misses a name in backticks, a `test.skip`, and a call spread over
+// two lines, and it finds the word inside a string or a comment. `scripts/js-scan.mjs` blanks the comments and
+// lifts every string out, so the pattern runs over something a regex cannot misread. It is a scanner rather than
+// TypeScript's parser because CI's `tools` job runs with NO node_modules — "plain node reading files" is what
+// keeps it a ten-second job, and a tool that cannot run there is a check that does not run.
 //
 // OUTPUT IS TAB-SEPARATED, one record per line, so it chains: `grep`, `cut -f3`, `awk -F'\t'`. Nothing is
 // column-padded. Fields: PATH:LINE, SECTION, NAME.
@@ -43,10 +45,9 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
+import { scan, MARKED, lineAt } from "./js-scan.mjs";
 
 const ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..");
-const { ts } = createRequire(import.meta.url)("@ts-morph/common");
 
 /** A comment line that opens a section: `// --- name ---`, `// ==== name ====`, any run of two or more. */
 const SECTION = /^\s*\/\/\s*[-=]{2,}\s*(.*?)\s*[-=]*\s*$/;
@@ -82,13 +83,6 @@ function summaryOf(lines) {
     return (text.split(/(?<=[.:])\s/)[0] ?? "").trim();
 }
 
-/** The callee's name for `test(…)`, `test.skip(…)`, `test.describe.configure(…)` — the leftmost identifier. */
-function calleeName(expr) {
-    let node = expr;
-    while (ts.isPropertyAccessExpression(node)) node = node.expression;
-    return ts.isIdentifier(node) ? node.text : "";
-}
-
 /** Every test in one file: its line, its section, and its name. */
 export function testsIn(file) {
     const text = readFileSync(file, "utf8");
@@ -105,19 +99,18 @@ export function testsIn(file) {
         return found;
     };
 
-    const src = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+    // `test(`, `it.skip(`, `describe (` — the declaring name, any `.member` chain after it, then the lifted name.
+    const { code, strings } = scan(text);
+    // NOT preceded by a dot: `rx.test("foo")` is a regular expression being used, not a test being declared, and
+    // there are fourteen of those in this repo. `test.skip(…)` still matches, because the dot comes after.
+    const rx = new RegExp(`(?<![.\\w$])(${[...DECLARES].join("|")})\\b(?:\\s*\\.\\s*\\w+)*\\s*\\(\\s*${MARKED}`, "g");
     const out = [];
-    const visit = (node) => {
-        if (ts.isCallExpression(node) && DECLARES.has(calleeName(node.expression))) {
-            const arg = node.arguments[0];
-            if (arg && (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg))) {
-                const line = src.getLineAndCharacterOfPosition(node.getStart(src)).line + 1;
-                out.push({ file: relative(ROOT, file), line, section: sectionAt(line), name: arg.text });
-            }
-        }
-        ts.forEachChild(node, visit);
-    };
-    ts.forEachChild(src, visit);
+    for (const m of code.matchAll(rx)) {
+        const name = strings[Number(m[2])]?.value;
+        if (name == null) continue;   // a name built at runtime: skipped, never guessed at
+        const line = lineAt(code, m.index);
+        out.push({ file: relative(ROOT, file), line, section: sectionAt(line), name });
+    }
     return { summary: summaryOf(lines), tests: out, sectioned: marks.length > 0 };
 }
 

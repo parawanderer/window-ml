@@ -43,6 +43,8 @@ after.
   are about your change".
 - **A specifier built from a variable is skipped**, not guessed at: a wrong edge sends you to the wrong suite with
   confidence, which is worse than a missing one.
+- **It scans rather than parses** (`scripts/js-scan.mjs`), and for the same reason as its sibling: CI's `tools` job
+  has no `node_modules`.
 - **It resolves by hand, not through the compiler.** The tests are `.mjs`/`.js` loading source with
   `await import("../src/x.ts")` — a string the language service does not follow from a JS file — and
   `tsconfig.tests.json` has two root files. `scripts/imports.mjs` is the compiler-backed tool, and it is the right

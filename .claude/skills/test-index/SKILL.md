@@ -55,8 +55,11 @@ tidy-up, not for a gate.
   up in this tool's output, where the section prints beside the name.
 - **`describe`/`suite` count as declarations too**, so a file that groups with them indexes as well as one that uses
   comments.
-- **The parser is `@ts-morph/common`'s TypeScript 6**, not the repo's `typescript` — 7.x is the Go port and exposes
-  no JS API at all (`scripts/refactor/` has the same constraint).
+- **It scans rather than parses** (`scripts/js-scan.mjs`), because CI's `tools` job runs with NO `node_modules` —
+  "plain node reading files" is what keeps it a ten-second job, and a tool that needs a parser off npm is a check
+  that does not run where it is meant to. The scanner blanks comments, lifts strings out, and consumes regex
+  literals whole; that last one is not optional, since `/doesn't report vision/` otherwise reads as the start of a
+  string and takes the next ninety-five tests with it.
 - **Importing the module does not run the CLI.** `testsIn(file)` is exported for its own test; the command only runs
   when the file IS the command.
 
