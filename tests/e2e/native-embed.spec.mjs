@@ -36,7 +36,7 @@ test("the page says who it is, the connection, and the index; it draws nothing u
     const { page, errors } = await open();
     expect((await last(page, "account")).account).toEqual({ label: "Demo phone", hubUrl: "demo", root: false });
     const index = await last(page, "index");
-    expect(index.runtimes.map((r) => r.id).sort()).toEqual(["lab-box", "laptop", "old-mac"]);
+    expect(index.runtimes.map((r) => r.id).sort()).toEqual(["desk-pc", "lab-box", "laptop", "old-mac"]);
     expect(index.sessions.length).toBeGreaterThan(3);
     await expect(page.locator(".chat-transcript")).toHaveCount(0);
     expect(errors).toEqual([]);
