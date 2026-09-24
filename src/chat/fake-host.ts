@@ -484,8 +484,27 @@ export class FakeHost implements SessionHost {
                 if (c.maxSteps != null && (!Number.isInteger(c.maxSteps) || c.maxSteps < 1)) return fail("invalid", "maxSteps must be a whole number of steps");
                 // A chosen budget is announced the way a real runtime announces it, so the demo world exercises the
                 // event the surfaces actually read rather than only the command.
-                if (c.maxSteps != null) this.emit(key, { id: h.summary.id.hash, ts: Date.now(), save: false, session: { hash: h.summary.id.hash, turn: 0 }, kind: "agent-cap", maxSteps: c.maxSteps } as MlDebugEvent);
+                const hash = h.summary.id.hash;
+                const at = Date.now();
+                if (c.maxSteps != null) this.emit(key, { id: hash, ts: at, save: false, session: { hash, turn: 0 }, kind: "agent-cap", maxSteps: c.maxSteps } as MlDebugEvent);
                 this.updateSummary(key, { status: "running" });
+                // AND IT ACTUALLY CARRIES ON. Setting the summary to `running` and emitting nothing else left the
+                // TRANSCRIPT still showing a run that had stopped at its cap — the reduced session is built from
+                // events, not from the summary — so the Continue button stayed, and pressing it again was refused
+                // with "only a run stopped at its step cap can continue". A real runtime emits the steps its page
+                // produces; the demo has to emit something, or the one button it exists to exercise is a trap.
+                const steps = h.log.filter((l) => l.event.kind === "agent-step").length + 1;
+                this.later(() => {
+                    this.emit(key, { id: hash, ts: at + 1, save: true, session: { hash, turn: 0 }, kind: "agent-step", step: steps, seq: steps,
+                        tool: "exec", approval: "readonly", toolMs: 14, arguments: { js: "document.querySelectorAll('a').length" }, result: "18",
+                        renderIn: { type: "code", text: "document.querySelectorAll('a').length", lang: "javascript", format: true },
+                        renderOut: { type: "exec-out", value: "18" } } as MlDebugEvent);
+                    this.later(() => {
+                        this.emit(key, { id: hash, ts: at + 2, save: true, session: { hash, turn: 0 }, kind: "agent-result",
+                            summary: "Eighteen links, and the three fare cards are all on the same host.", steps } as MlDebugEvent);
+                        this.updateSummary(key, { status: "done" });
+                    });
+                });
                 return ok(c.maxSteps != null ? { maxSteps: c.maxSteps } : {});
             }
             case "session.resume": {

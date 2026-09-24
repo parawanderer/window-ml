@@ -34,7 +34,9 @@ async function open(viewport, hash = "") {
     await page.locator(".chat").waitFor();
     return { page, errors };
 }
-const row = (page, key) => page.locator(`.chat-row[data-session="${key}"]`);
+// The row in the session's OWN runtime group. A session waiting on you is also listed in "Needs you" at the top, so
+// this matches twice; `.last()` is the one where it lives, which is the one every assertion here means.
+const row = (page, key) => page.locator(`.chat-row[data-session="${key}"]`).last();
 const commands = (page) => page.evaluate(() => globalThis.__chatFake.commands);
 
 test("it runs with no extension: no chrome global, and the bundle loaded nothing that needs one", async () => {
@@ -448,14 +450,17 @@ test("desktop: the list folds a runtime away, and marks what moved while you wer
     await expect.poll(opacity).toBe("1");
 
     await head.click();
-    await expect(rows).toHaveCount(2);
+    // Three, not two: folding a machine tidies its group away, and the "Needs you" row survives it. Folding is about
+    // what you want to look at; a gate is about what has stopped until you come back to it, and one you have hidden
+    // is one you forget. The phone computes its own needs-you list from every session, with no fold filter either.
+    await expect(rows).toHaveCount(3);
     await expect(tri).not.toHaveClass(/open/);
     await page.mouse.move(0, 0);
     await expect.poll(opacity).toBe("0");
     await expect(page.locator(".chat-rt[data-runtime='laptop']")).toHaveAttribute("aria-expanded", "false");
     // …and it is this device's choice, so it survives a reload.
     await page.reload();
-    await expect(rows).toHaveCount(2);
+    await expect(rows).toHaveCount(3);
     await page.locator(".chat-rt[data-runtime='laptop']").click();
     await expect(rows).toHaveCount(7);
 
@@ -476,7 +481,10 @@ test("desktop: a run says which tab it is driving, and peeks at it", async () =>
     const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(WAITING)}`);
     // The header names the page, not only the machine and the model.
     await expect(page.locator(".chat-lede-sub .chat-page")).toHaveText("flights.example");
-    await expect(row(page, WAITING).locator(".chat-page")).toHaveText("flights.example");
+    // In the LIST, on a row in its own runtime group. WAITING is not one: it sits in "Needs you", where a row names
+    // the machine instead, because out of its group that is the thing it has lost.
+    await expect(row(page, CAPPED).locator(".chat-page")).toHaveText("flights.example");
+    await expect(row(page, WAITING).locator(".chat-row-rt")).toHaveText("Work laptop");
     // A plain chat is on no page at all, and says nothing rather than something empty.
     await expect(row(page, CHAT).locator(".chat-page")).toHaveCount(0);
     // The chip asks the RUNTIME to bring the tab forward, so it works the same over a hub.
@@ -1662,6 +1670,27 @@ test("a card that cannot be dismissed says why, by pointer and by tap", async ()
     await page.close();
 });
 
+// The notes sit UNDER the results, so one about a machine the filter has excluded reads as being about the results
+// above it: picking Lab box and being told to reconnect Work laptop's folder looks like Lab box is the one at fault.
+test("the archive-folder note follows the device filter, rather than speaking for every machine", async () => {
+    const { page, errors } = await open(DESKTOP, "#/search");
+    const foot = page.locator(".chat-search-foot");
+    const devices = page.locator(".chat-search-devices");
+
+    // Across every device, the lapsed one is named.
+    await expect(foot).toContainText("Work laptop's archive folder");
+
+    // Narrowed to a machine that has no such problem, it says nothing at all.
+    await devices.getByRole("button", { name: "Lab box" }).click();
+    await expect(foot).toHaveCount(0);
+
+    // Narrowed to the machine it IS about, it comes back.
+    await devices.getByRole("button", { name: "Work laptop" }).click();
+    await expect(foot).toContainText("Work laptop's archive folder");
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 // Being invisible at rest does not make a thing take no room. The fold chevron sat between a runtime's name and its
 // badge, so a heading with a badge held a chevron-shaped hole in the middle of itself — which reads as the badge
 // having drifted away from the name.
@@ -1756,6 +1785,49 @@ test("the runtime panel's lists read as lists: chips left and full width, bars e
     await page.close();
 });
 
+// The list and the phone's list are the same list. Four things had drifted: the status sat LAST, after a hostname of
+// a different width on every row; the agent marker was a panel badge at 0.75em inside a .86em line, so it read at
+// about two-thirds of the words beside it; the meta line wrapped; and what needs you was only findable by knowing
+// which machine it was on.
+test("the session list reads as the phone's: status first, one line, and what needs you at the top", async () => {
+    const { page, errors } = await open(DESKTOP);
+    const row = page.locator(`.chat-list .chat-row[data-session="${WAITING}"]`).last();
+    const meta = row.locator(".chat-row-meta");
+    const x = async (sel) => (await meta.locator(sel).boundingBox()).x;
+
+    // WHERE IT STANDS, then WHAT IT IS, then WHERE IT LIVES.
+    expect(await x(".chat-appr-badge")).toBeLessThan(await x(".agent-badge"));
+    expect(await x(".agent-badge")).toBeLessThan(await x(".chat-page, .chat-row-rt"));
+
+    // One line, whatever is on it — a status that drops to a second row is in a different place on every row.
+    for (const h of await page.locator(".chat-list .chat-row-meta").evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height))) {
+        expect(h).toBeLessThan(20);
+    }
+
+    // The agent marker is the line's own size, and it carries the glyph the phone has always drawn.
+    const sizes = await meta.evaluate((m) => {
+        const px = (s) => parseFloat(getComputedStyle(m.querySelector(s)).fontSize);
+        return { agent: px(".agent-badge"), host: px(".chat-page, .chat-row-rt") };
+    });
+    expect(sizes.agent).toBeCloseTo(sizes.host, 1);
+    await expect(meta.locator(".agent-badge svg")).toHaveCount(1);
+
+    // And what is waiting on you is the first group, however many machines there are — and it LEAVES its own group
+    // while it is up there: the same row twice within one screen reads as a bug.
+    const groups = page.locator(".chat-list .chat-group");
+    await expect(groups.first()).toHaveClass(/chat-needs-you/);
+    await expect(groups.first().locator(".chat-row")).toHaveCount(1);
+    await expect(page.locator(`.chat-list .chat-row[data-session="${WAITING}"]`)).toHaveCount(1);
+
+    // Pinning from up here cannot move the row, so it says so instead: the press did something.
+    await expect(groups.first().locator(".chat-row-pin")).toHaveCount(0);
+    await page.locator(".chat-needs-you .chat-row-wrap").getByRole("button", { name: /options/i }).click();
+    await page.getByRole("menuitem", { name: /^Pin to the top/ }).click();
+    await expect(groups.first().locator(".chat-row-pin")).toHaveCount(1);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 // A capped run was offering BOTH ways forward at once, and only one of them could work: Continue is delivered
 // through the page that still holds the run, so on a run whose tab has closed the runtime answers "the page no
 // longer holds this run" and the press does nothing. The bolder of the two buttons was the one that could not.
@@ -1787,6 +1859,51 @@ test("resuming a run picks its budget and carries it on in one press", async () 
     // The command carried the budget, and the run is going rather than sitting on a page waiting to be pressed again.
     await expect.poll(async () => (await commands(page)).filter((c) => c.type === "session.resume").at(-1)?.maxSteps).toBe(50);
     await expect(page.locator(".chat-resume")).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// A step that CANNOT close has nothing to animate, and the guard for that said `awaiting` — but a gated step in calm
+// closes like any other, because the intent line above it says what is being asked. So the one step you are most
+// likely to be poking at snapped shut while every step beside it eased.
+test("a gated step closes the way every other step closes", async () => {
+    const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(WAITING)}`);
+    const heights = async (name) => page.evaluate(async (tool) => {
+        const step = [...document.querySelectorAll(".astep")].find((e) => e.textContent.includes(tool));
+        const head = step.querySelector("button");
+        head.click();
+        await new Promise((r) => setTimeout(r, 400));
+        const opened = step.getBoundingClientRect().height;
+        head.click();
+        await new Promise((r) => requestAnimationFrame(r));
+        await new Promise((r) => requestAnimationFrame(r));
+        return { opened, afterTwoFrames: step.getBoundingClientRect().height };
+    }, name);
+
+    // Two frames in, a step that is easing shut has barely moved. One that snapped has already lost most of itself.
+    for (const tool of ["exec", "fetch_url"]) {
+        const { opened, afterTwoFrames } = await heights(tool);
+        expect(opened).toBeGreaterThan(80);
+        expect(afterTwoFrames, `${tool} snapped instead of easing`).toBeGreaterThan(opened * 0.9);
+    }
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// Continuing has to CARRY ON. The demo set the summary to `running` and emitted nothing else, but the transcript is
+// built from EVENTS, not from the summary — so the run still read as stopped at its cap, the button stayed, and
+// pressing it again was refused with "only a run stopped at its step cap can continue".
+test("continuing a capped run carries it on, and the offer goes with it", async () => {
+    const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(CAPPED_HERE)}`);
+    const steps = () => page.locator(".astep").count();
+    const before = await steps();
+    await expect(page.locator(".continue-wrap")).toBeVisible();
+
+    await page.locator(".continue-run").click();
+    await expect.poll(steps).toBeGreaterThan(before);
+    await expect(page.locator(".continue-wrap")).toHaveCount(0);
+    // And it is not still asking: pressing again is what produced the refusal.
+    await expect(page.locator(".chat-notice")).toHaveCount(0);
     expect(errors).toEqual([]);
     await page.close();
 });
