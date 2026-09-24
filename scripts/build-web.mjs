@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { writeBuildInfo } from "./gen-build-info.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -40,6 +41,10 @@ export const webBuildOptions = (outdir) => ({
 
 /** Build dist-web/ (staged, swapped in on success, like the extension build). Throws on a `chrome` reference. */
 export async function buildWeb({ outdir = "dist-web", appdir = outdir === "dist-web" ? "dist-app" : null } = {}) {
+    // The build stamp is GENERATED and gitignored, and this build needs it: the exports carry a run's provenance.
+    // `build.mjs` writes it before calling here, but this script is also run alone (the mobile CI job does), and a
+    // fresh checkout then has no such file — which fails as an unresolved import rather than as "run the generator".
+    writeBuildInfo();
     const out = path.resolve(ROOT, outdir);
     const stage = `${out}.stage`;
     rmSync(stage, { recursive: true, force: true });
