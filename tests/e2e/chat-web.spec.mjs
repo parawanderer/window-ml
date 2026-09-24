@@ -1152,23 +1152,27 @@ test("the phone app's start page is the standalone client, not the demo @mobile"
     }
 });
 
-test("a waiting count is the warning yellow under a mouse and cyan under a finger @mobile", async () => {
+test("a waiting count is the accent in the calm view and the warning yellow outside it @mobile", async () => {
+    // Something waiting on you is the app ASKING, not a warning that something went wrong, so in the reading view it
+    // is the accent — the colour the phone app draws the same state in. The busy developer view keeps the yellow,
+    // where it sits among the other machinery and a second accent would say nothing. It is the same at either
+    // pointer size: the touch-only cyan existed because yellow read as an alarm in a phone's frame, which is not a
+    // problem the accent has.
     const notice = async (opts) => {
         const ctx = await browser.newContext({ viewport: PHONE, ...opts });
         const page = await ctx.newPage();
         await page.goto(server.url);
         const v = await page.evaluate(() => {
-            const probe = document.body.appendChild(Object.assign(document.createElement("span"), { className: "chat-appr-badge" }));
-            return getComputedStyle(probe).backgroundColor;
+            const mk = (host) => getComputedStyle(host.appendChild(Object.assign(document.createElement("span"), { className: "chat-appr-badge" }))).backgroundColor;
+            return { calm: mk(document.querySelector(".chat.calm")), plain: mk(document.body) };
         });
         await ctx.close();
         return v;
     };
     const touch = { hasTouch: true, isMobile: true };
-    expect(await notice({ colorScheme: "dark" })).toBe("rgb(234, 179, 8)");
-    expect(await notice({ colorScheme: "dark", ...touch })).toBe("rgb(56, 189, 248)");
-    expect(await notice({ colorScheme: "light" })).toBe("rgb(202, 138, 4)");
-    expect(await notice({ colorScheme: "light", ...touch })).toBe("rgb(2, 132, 199)");
+    expect(await notice({ colorScheme: "dark" })).toEqual({ calm: "rgb(99, 102, 241)", plain: "rgb(234, 179, 8)" });
+    expect(await notice({ colorScheme: "dark", ...touch })).toEqual({ calm: "rgb(99, 102, 241)", plain: "rgb(234, 179, 8)" });
+    expect(await notice({ colorScheme: "light" })).toEqual({ calm: "rgb(99, 102, 241)", plain: "rgb(202, 138, 4)" });
 });
 
 test("phone (touch): the tab picker opens without raising the keyboard, and stays open when the keyboard comes @mobile", async () => {

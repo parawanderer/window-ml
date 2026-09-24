@@ -11,6 +11,10 @@
     /* Something waiting on the person (an approval, an attention count). The warning yellow at a desk; the chat page
        turns it cyan on a touch screen (chat.css), where a yellow badge in a small frame read as an alarm. */
     --notice: var(--warn); --notice-fg: #1a1400;
+    /* The mark on a CITATION — a value in the prose that came from a tool rather than from the model. Its own name
+       because `--ok` means "that worked" everywhere else, and the chat page's calm view recolours one without the
+       other (chat.css). */
+    --cite: var(--ok);
     /* JSON-tree syntax colours, matched to the atom-one-dark code theme so the raw In tree reads like the code block. */
     --j-key: #d19a66; --j-str: #98c379; --j-lit: #56b6c2; --j-base: #abb2bf;
 }
@@ -2671,17 +2675,17 @@ html[data-surface="card"] .appr-btn.no:hover {
 /* A resolved citation: the actual tool output, subtly marked as deterministic + clickable. Block for a
    table/image/code; inline for a short cited value so the prose flows around it. */
 .answer-rendered .tok-ref { cursor: pointer; border-radius: 2px; }
-.answer-rendered .tok-block { display: block; margin: 6px 0; padding-left: 8px; border-left: 2px solid var(--ok); }
+.answer-rendered .tok-block { display: block; margin: 6px 0; padding-left: 8px; border-left: 2px solid var(--cite); }
 /* Every inline citation — a plain value OR a typeset `| latex` formula — gets the green underline + a slightly
    lighter tinted box, so an inline math cite reads as a highlighted tool output, not model prose. The box is on
    the container so KaTeX (which isn't a .tok-val) is boxed too. */
-.answer-rendered .tok-inline { border-bottom: 1px dashed var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); padding: 0 3px; border-radius: 3px; }
+.answer-rendered .tok-inline { border-bottom: 1px dashed var(--cite); background: color-mix(in srgb, var(--cite) 12%, transparent); padding: 0 3px; border-radius: 3px; }
 /* …and the `code` INSIDE it paints none of its own. `.md code` gives every inline code span the panel's grey,
    which sat on top of the tint and turned a citation back into something the model typed in backticks — the one
    thing this mark exists to say it is not. The block form carries the same green as a rail; the inline form is
    the same claim in one line, so it is the same colour. */
 .answer-rendered .tok-inline > .tok-val { background: none; border: 0; padding: 0; }
-.answer-rendered .tok-ref:hover { background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.answer-rendered .tok-ref:hover { background: color-mix(in srgb, var(--cite) 10%, transparent); }
 .answer-rendered .tok-ref:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .answer-rendered .tok-ref { position: relative; }
 /* The model's caption → a small caption under a block citation (the "reps"/"regions"/"totals & breakdown" labels). */

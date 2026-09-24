@@ -956,7 +956,7 @@ button.chat-page-go:hover { color: var(--fg); }
    is for problems only, in the notice colour, since a suggestion is not something to be nagged about. */
 .chat-att-btn { position: relative; }
 .chat-att-dot { position: absolute; top: 2px; right: 1px; min-width: 15px; height: 15px; padding: 0 3px; box-sizing: border-box; border-radius: 999px; background: var(--notice); color: var(--notice-fg); font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; }
-.chat-att-n { margin-left: -4px; min-width: 18px; padding: 0 5px; border-radius: 999px; background: color-mix(in srgb, var(--notice) 22%, transparent); color: var(--notice); font-size: .8em; font-weight: 600; text-align: center; }
+.chat-att-n { margin-left: -4px; min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--notice); color: var(--notice-fg); font-size: .8em; font-weight: 600; text-align: center; }
 /* The sheet's rows: a sentence on the left, its fix on the right; problems carry a coloured edge, suggestions none. */
 .chat-att-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .chat-att-item { display: flex; align-items: flex-start; gap: 16px; padding: 14px 16px; border-radius: 14px; background: var(--panel); box-shadow: inset 3px 0 0 transparent; }
@@ -1139,10 +1139,11 @@ button.chat-page-go:hover { color: var(--fg); }
    button is not something a keyboard or a screen reader can take apart, and the row's whole job is to pick. */
 .tp-rowwrap { display: flex; align-items: center; }
 .tp-rowwrap > .tp-row { flex: 1 1 auto; min-width: 0; }
-/* Quiet until the row is under the pointer — drawn for every row so the affordance is findable, but forty faint
-   pins down a list is a texture, not a control. A pinned one stays lit, because that is the state it reports. */
+/* ALWAYS DRAWN, quiet. Hiding the unpinned ones until their row was hovered saved no space — the column is reserved
+   for them either way — so an unhovered list showed a gutter of nothing beside the names and read as a layout that
+   had gone wrong. Faint is enough to stop forty of them becoming a texture. */
 .tp-pin { flex: 0 0 auto; display: inline-flex; padding: 5px; margin-right: 4px; border: none; border-radius: 50%;
-    background: none; color: var(--fg-faint); cursor: pointer; opacity: 0; transition: opacity .12s ease, color .12s ease; }
+    background: none; color: var(--fg-faint); cursor: pointer; opacity: .45; transition: opacity .12s ease, color .12s ease; }
 .tp-pin svg { width: 14px; height: 14px; }
 .tp-pin.on { opacity: 1; color: var(--accent); }
 .tp-rowwrap:hover .tp-pin, .tp-pin:focus-visible { opacity: 1; }
@@ -1151,7 +1152,7 @@ button.chat-page-go:hover { color: var(--fg); }
 /* The line between the shortlist and the rest. A margin rather than a rule between every row: it marks ONE
    boundary, and only when there is something on both sides of it. */
 .tp-rowwrap.tp-after-pins { border-top: 1px solid var(--border); margin-top: 5px; padding-top: 5px; }
-/* A touch screen cannot hover, so every pin is simply there. */
+/* A touch screen cannot hover, so every pin sits at full strength. */
 @media (hover: none) { .tp-pin { opacity: 1; } }
 .tp-row.indent { padding-left: 30px; }
 /* A row's tab title, cut with an ellipsis. */
@@ -1286,12 +1287,23 @@ button.chat-page-go:hover { color: var(--fg); }
 /* The phone bar's lead: the session's model, in the code face it is written in everywhere else. */
 .chat-head-model { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; }
 
-/* ON A TOUCH SCREEN a waiting count is cyan, not the warning yellow (sidebar.css `--notice`): in a phone's small frame
-   the yellow badges read as an alarm, where at a desk they sit quietly in a wide page. */
-@media (pointer: coarse) {
-    :root { --notice: #38bdf8; --notice-fg: #082f49; }
-    :root[data-theme="light"] { --notice: #0284c7; --notice-fg: #ffffff; }
-}
+/* SOMETHING WAITING ON YOU IS THE ACCENT, not the warning yellow the panel uses (`--notice`, sidebar.css).
+   TRYING THIS OUT — the phone app draws the same idea in the same accent, and the two surfaces showing one state in
+   two colours is the kind of difference that reads as two products. Yellow also overstates it: an approval waiting is
+   the app asking a question, not a warning about something that went wrong, and a page of amber badges says the
+   second. This replaces the touch-only cyan, which existed because the yellow read as an alarm in a phone's small
+   frame — a problem the accent does not have at either size, so one colour now serves both. */
+.chat.calm { --notice: var(--accent); --notice-fg: var(--accent-fg); }
+/* …and a CITATION with it. The green rails and underlines are right in the developer view, where green means "this
+   is real, it came from a tool" among a page of other machinery. In the reading view they are the loudest thing on
+   a page of prose — a colour the page uses nowhere else, down the side of every table and under every cited number —
+   and an answer ends up looking annotated rather than written. The accent says the same thing in the page's own
+   voice. Green stays outside calm. */
+.chat.calm { --cite: var(--accent); }
+/* …and the DOT beside such a row with it, or a session reads as two states at once: an amber dot against blue words
+   saying the same thing. `pending` is a run working or a run waiting on you — activity, which is not a warning
+   either. The dots that mean something WENT wrong (`err`, `warn`) keep their own colours. */
+.chat.calm .dot.pending { background: var(--notice); }
 
 /* ===================== A FINGER, NOT A MOUSE =====================
    Where the pointer is coarse (a phone, a tablet), anything tapped is at least 40px: the icon buttons of the headers
