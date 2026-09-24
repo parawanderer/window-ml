@@ -313,6 +313,14 @@ html, body, #root { height: 100%; }
 .chat.calm .msg.asst.capped .asst-body:has(> .md:empty) { display: none; }
 .chat.calm .msg.asst.capped .asst-body { flex-basis: 100%; order: 1; }
 .chat.calm .msg.asst.capped .continue-wrap { margin: 2px 0 0; }
+/* AND IT IS SIZED AS AN ACTION, not as a chip. The panel's 5px pill is right in a 360px column where everything is
+   small together; on a page this wide it reads as a footnote under the line that just said the run stopped — which
+   is the one place a run offers a way onward. The touch block below takes it further still (46px, the thumb's
+   floor); this is the pointer's version of the same judgement. */
+.chat .continue-run { padding: 10px 20px; font-size: .95em; }
+.chat .continue-more { padding: 0 12px 0 10px; }
+.chat .continue-more svg { width: 15px; height: 15px; }
+.chat .continue-run svg { width: 15px; height: 15px; }
 .chat.calm .msg.asst .asst-body > .md { padding: 0; }
 
 /* An agent turn's box: the border earns its keep in a 360px panel, where a turn and its steps need telling apart at

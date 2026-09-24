@@ -1578,3 +1578,18 @@ test("the answer's collapse control sits in the gutter on a wide page and with t
     expect(phone.errors).toEqual([]);
     await phone.page.close();
 });
+
+// Continue is the ONE thing a capped run offers, and the panel's pill is sized for a 360px column where everything
+// is small together. On a page this wide that same pill read as a footnote under the line that had just said the
+// run stopped — a chip among the prose rather than the way onward.
+test("the Continue pill is sized as an action on a wide page, not as a chip", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CAPPED)}`);
+    const wrap = page.locator(".continue-wrap");
+    await expect(wrap).toBeVisible();
+    const box = await wrap.boundingBox();
+    expect(box.height).toBeGreaterThanOrEqual(34);
+    // Both halves of the split control fill it: a chevron half shorter than the button leaves a seam down the pill.
+    expect((await page.locator(".continue-more").boundingBox()).height).toBe(box.height);
+    expect(errors).toEqual([]);
+    await page.close();
+});
