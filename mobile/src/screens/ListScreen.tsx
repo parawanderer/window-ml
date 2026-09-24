@@ -13,7 +13,7 @@ import * as Haptics from "expo-haptics";
 import type { SessionSummary } from "../../../src/session-host";
 import type { SessionChrome } from "../../../src/native/bridge";
 import { useEmbed } from "../embed";
-import { ago, needsYou, sections, STATUS_LABEL, STATUS_TONE } from "../format";
+import { ago, approvalsPending, needsYou, sections, STATUS_LABEL, STATUS_TONE } from "../format";
 import { useSessionLayer } from "../layer";
 import { SIZE, usePalette } from "../theme";
 import { Badge, Dot, IconButton } from "../ui";
@@ -139,7 +139,12 @@ function Row({ s: x, runtimeName, onPress, onLongPress }: { s: SessionSummary; r
                     trails a page host of any length is one the eye has to find again each time. It never shrinks;
                     the host does. */}
                 <View style={s.rowMeta}>
-                    {label ? <Text style={[s.rowState, { color: x.status === "waiting" ? p.notice : tone === "err" ? p.err : tone === "stopped" ? p.warn : p.fgDim }]}>{label}</Text> : null}
+                    {/* ONE THING, NOT TWO. "waiting on you" here beside a count at the row's end is the same fact in
+                        two voices, so where there is a count the BADGE is the status: it says how many, and it is
+                        the notice colour, which is what the word was doing. The web list reads the same. */}
+                    {x.pendingApprovals > 0
+                        ? <Badge n={x.pendingApprovals} text={approvalsPending(x.pendingApprovals)} />
+                        : label ? <Text style={[s.rowState, { color: tone === "err" ? p.err : tone === "stopped" ? p.warn : p.fgDim }]}>{label}</Text> : null}
                     {x.kind === "agent" ? <View style={s.kind}><Bot size={13} color={p.fgFaint} /><Text style={[s.metaText, { color: p.fgFaint }]}>agent</Text></View> : null}
                     {/* Out of its runtime's section, the machine is what the row is missing; the page host is what
                         it can spare, since the transcript says that on the next tap. */}
@@ -150,7 +155,6 @@ function Row({ s: x, runtimeName, onPress, onLongPress }: { s: SessionSummary; r
             </View>
             <View style={s.rowEnd}>
                 <Text style={[s.metaText, { color: p.fgFaint }]}>{ago(x.lastTs)}</Text>
-                <Badge n={x.pendingApprovals} label={`${x.pendingApprovals} approvals waiting`} />
             </View>
         </Pressable>
     );
