@@ -1313,6 +1313,14 @@ button.chat-page-go:hover { color: var(--fg); }
    saying the same thing. `pending` is a run working or a run waiting on you — activity, which is not a warning
    either. The dots that mean something WENT wrong (`err`, `warn`) keep their own colours. */
 .chat.calm .dot.pending { background: var(--notice); }
+/* A STEP THAT WORKED gets no colour. Succeeding is what nearly every step does, so a saturated dot beside each one
+   spends the page's loudest signal on its least surprising fact — twelve of them down a run, none of which you
+   needed. The step's NAME is the landmark; the dot only has to be there. Colour is kept for what is exceptional:
+   amber where a run stopped short, red where one failed, and the accent, pulsing, where something is happening
+   now. Not the accent for success either — it already means "waiting on you" and "this came from a tool" here, and
+   a third meaning would empty it of all three. The busy view keeps the full green/amber/red taxonomy, which is
+   what you want when you are scanning twelve steps for the one that broke. */
+.chat.calm .dot.ok { background: var(--fg-faint); }
 
 /* ===================== A FINGER, NOT A MOUSE =====================
    Where the pointer is coarse (a phone, a tablet), anything tapped is at least 40px: the icon buttons of the headers
