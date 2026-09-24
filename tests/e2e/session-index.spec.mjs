@@ -198,6 +198,36 @@ test("agent.start: a run on a chosen tab, and one on a blank tab the browser ope
     } finally { await ext.context.close(); await fake.stop(); await site.stop(); }
 });
 
+test("a start page that cannot be reached fails fast, says so, and leaves no tab behind", async () => {
+    // A blank run opens a page nobody typed (the published one, or whatever the setting names), so its failure has
+    // to name its own cause. `executeScript` throws the same way for "never loaded" and "not allowed here", and the
+    // wait used to report the second for both: fifteen seconds of nothing, then a permissions answer to a network
+    // problem, with a browser-error tab left open at an address the person never chose.
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off",
+            agentStartPage: "https://127.0.0.1:9/nothing-here.html",   // discard port: nothing answers
+        });
+        const rows = await indexReader(ext);
+        const before = ext.context.pages().length;
+
+        const t0 = Date.now();
+        const r = await rows.cmd({ type: "agent.start", runtime: "local", task: "look around", target: { kind: "blank" } });
+        const took = Date.now() - t0;
+
+        expect(r.ok).toBe(false);
+        expect(r.error.message).toMatch(/could not be reached/);
+        expect(r.error.message, "the browser's own reason is the actionable half").toMatch(/net::/);
+        expect(r.error.message, "a load failure is not a permissions problem").not.toMatch(/site access/);
+        // Fast, because a load that failed is never going to succeed: the 15s budget is for a slow page, not a dead one.
+        expect(took, `took ${took}ms`).toBeLessThan(10_000);
+        // And nothing is left open at an address nobody typed.
+        expect(ext.context.pages().length).toBe(before);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
 test("a run the browser's own UI starts is kept; one started from code is not", async () => {
     const fake = await startFakeLlm({ model: "fake-model" });
     const site = await startPageServer({});

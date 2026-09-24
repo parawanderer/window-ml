@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<!-- Reachable by URL and by nothing else: nothing here links to it, and it asks not to be indexed. It is not a
+     destination, it is the floor a run stands on for its first turn. -->
+<meta name="robots" content="noindex, nofollow">
+<title>window.ml — agent start page</title>
+<style>
+:root { color-scheme: dark light; --bg: #1e1f24; --fg: #e4e4e7; --dim: #a1a1aa; }
+@media (prefers-color-scheme: light) { :root { --bg: #ffffff; --fg: #18181b; --dim: #52525b; } }
+html, body { height: 100%; }
+body {
+    margin: 0; display: flex; align-items: center; justify-content: center; padding: 24px;
+    background: var(--bg); color: var(--fg);
+    font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+main { max-width: 34rem; }
+h1 { margin: 0 0 12px; font-size: 1.15rem; font-weight: 600; }
+p { margin: 0 0 10px; color: var(--dim); }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
+</style>
+</head>
+<body>
+<main>
+    <h1>An empty page for an agent to start on</h1>
+    <p>A run asked for a new tab rather than one of yours, and a browser extension cannot run on the browser's own
+       new-tab page — so it opens this one instead: an ordinary web page, with nothing on it and nothing to read.</p>
+    <p>The run's first move is normally to go somewhere real. If you are reading this and no run is going, nothing
+       is wrong; you have simply opened a page that exists to be left.</p>
+    <p>You can point runs at a page of your own instead — <code>Settings → Agent start page</code> in the
+       extension.</p>
+</main>
+</body>
+</html>

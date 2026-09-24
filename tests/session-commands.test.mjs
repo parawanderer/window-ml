@@ -547,10 +547,12 @@ test("agent.start on a blank tab opens one, at the command's url or the browser'
     assert.equal(w.named("openTab")[1][1], "https://other.example/x", "the command's own url wins");
     assert.equal(w.named("startAgent")[1][1], 99, "the run starts on the tab that was opened");
 
-    // With no start page set and no url, there is nowhere to go: the browser's own new-tab page cannot host a run.
+    // With no start page set and no url, the PUBLISHED empty page. This used to be refused ("a blank target needs a
+    // url"), which is a dead end reached by choosing the obvious option — and the UI offering it had no way to know.
+    const { AGENT_START_PAGE } = await import("../src/contract-config.ts");
     const bare = world({ startPage: () => "" });
-    assert.equal((await bare.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "blank" } })).error.code, "invalid");
-    assert.equal(bare.named("openTab").length, 0);
+    assert.equal(code(await bare.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "blank" } })), "ok");
+    assert.equal(bare.named("openTab")[0][1], AGENT_START_PAGE);
     // And a non-http(s) one is refused before a tab is opened at it.
     const bad = world({ startPage: () => "" });
     assert.equal((await bad.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "blank", url: "file:///etc/passwd" } })).error.code, "invalid");
@@ -775,4 +777,17 @@ test("session.model: a page's own session is unsupported, and a model the runtim
     assert.equal(w.named("setChatModel").length, 0);
     assert.equal(w.named("remodel").length, 0);
     assert.equal((await w.run({ type: "session.model", session: sid("dead0001"), model: "m2" })).error.code, "not-found");
+});
+
+// --- where a run stands when it asked for an empty tab and nobody named a page ---
+
+test("the published empty page is an ordinary https page, not an extension or browser one", async () => {
+    // THE WHOLE POINT of it being hosted. Chrome refuses an extension on `chrome://newtab` and on a top-level
+    // `about:blank`, and an extension's OWN page is privileged — `exec` there would reach `chrome.storage` and the
+    // API key with it. Only a plain web origin is both reachable and unprivileged.
+    const { AGENT_START_PAGE } = await import("../src/contract-config.ts");
+    const u = new URL(AGENT_START_PAGE);
+    assert.equal(u.protocol, "https:");
+    assert.ok(!/^chrome|^about|^data/.test(AGENT_START_PAGE), "must not be a browser or extension page");
+    assert.ok(u.pathname.endsWith("/agent-start.html"), "the service worker exempts it by this name");
 });

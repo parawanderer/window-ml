@@ -9,6 +9,7 @@ import { cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, i
 import { type StoredSession } from "./contract-messages";
 import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type ArchiveCapability, type RuntimeInfo, type SessionSummary, type TabGroupInfo, type TabInfo } from "./session-host";
 import { FaviconCache, stripOrder } from "./tab-favicons";
+import { tabReadyFailure } from "./tab-ready";
 import { SessionIndex, type IngestSource } from "./session-index";
 import { SESSIONS_PORT, SessionServer } from "./session-server";
 import { STORE_MAX_SESSIONS, SessionStore, indexedDbBackend, type SessionHistory } from "./session-store";
@@ -277,19 +278,41 @@ export function configureSessionCommands(run: RunDeps): void {
         },
         openTab: async (url) => {
             const tab = await chrome.tabs.create({ url, active: true });
-            if (tab.id == null) throw new Error("the browser opened a tab with no id");
-            // Wait for `window.ml` to EXIST in the new page, not for the tab to report "complete" and not for the
-            // content script to answer. The content script registers its listener before `injected.js` runs, so a
-            // start relayed on that signal reaches a page whose `__mlStartAgent` listener is not there yet, and the
-            // run is lost to a timeout. What the run needs is the main world, so that is what this asks.
-            const until = Date.now() + TAB_READY_MS;
-            for (;;) {
-                try {
-                    const [probe] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "MAIN", func: () => !!(window as { ml?: unknown }).ml });
-                    if (probe?.result === true) return tab.id;
-                } catch { /* still loading, or the extension cannot script this page yet */ }
-                if (Date.now() > until) throw new Error("the new tab never loaded window.ml (the extension may not be allowed to run there)");
-                await new Promise((r) => setTimeout(r, TAB_POLL_MS));
+            const tabId = tab.id;
+            if (tabId == null) throw new Error("the browser opened a tab with no id");
+            // WHY IT FAILED, not merely that it did. `executeScript` throws the same way whether the page never
+            // loaded or this browser will not let the extension run on it, so the wait used to report one of them
+            // for both — and since a blank run now defaults to a page nobody typed, the wrong half of that answer
+            // reads as the extension going somewhere on its own. `onErrorOccurred` is what tells them apart.
+            let netError: string | undefined;
+            const onError = (d: { tabId: number; frameId: number; error?: string }) => {
+                if (d.tabId === tabId && d.frameId === 0) netError = d.error || "the load failed";
+            };
+            chrome.webNavigation.onErrorOccurred.addListener(onError);
+            try {
+                // Wait for `window.ml` to EXIST in the new page, not for the tab to report "complete" and not for the
+                // content script to answer. The content script registers its listener before `injected.js` runs, so a
+                // start relayed on that signal reaches a page whose `__mlStartAgent` listener is not there yet, and the
+                // run is lost to a timeout. What the run needs is the main world, so that is what this asks.
+                const until = Date.now() + TAB_READY_MS;
+                for (;;) {
+                    try {
+                        const [probe] = await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", func: () => !!(window as { ml?: unknown }).ml });
+                        if (probe?.result === true) return tabId;
+                    } catch { /* still loading, or the extension cannot script this page yet */ }
+                    // A load that FAILED is never going to succeed, so it is reported at once rather than after the
+                    // full budget: fifteen seconds of nothing is a long way to go to be told the host is down.
+                    if (netError) throw new Error(tabReadyFailure(url, netError));
+                    if (Date.now() > until) throw new Error(tabReadyFailure(url, null));
+                    await new Promise((r) => setTimeout(r, TAB_POLL_MS));
+                }
+            } catch (err) {
+                // Nothing useful is left in a tab a run could not start on, and leaving it is how someone ends up
+                // with a browser-error page at an address they never typed and no way to connect it to the run.
+                await chrome.tabs.remove(tabId).catch(() => {});
+                throw err;
+            } finally {
+                chrome.webNavigation.onErrorOccurred.removeListener(onError);
             }
         },
         startPage: () => agentStartPage,

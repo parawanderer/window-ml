@@ -129,6 +129,11 @@ function buildApp(web, app) {
     mkdirSync(app, { recursive: true });
     for (const f of ["client.js", "sidebar.css", "chat.css"]) cpSync(path.join(web, f), path.join(app, f));
     cpSync(path.join(web, "client.html"), path.join(app, "index.html"));
+    // THE AGENT START PAGE (`AGENT_START_PAGE`, contract-config.ts). A run that asked for a new tab has to open some
+    // real http(s) page — a browser extension cannot run on the browser's own new-tab page, nor on `about:blank` —
+    // and this origin is one we publish, so it needs no configuring and costs the run nothing to be on. Copied
+    // verbatim: it has no bundle, because a page whose whole job is to be empty should not depend on a build.
+    cpSync(path.resolve(ROOT, "src/chat/agent-start.html"), path.join(app, "agent-start.html"));
     if (existsSync(path.join(web, "fonts"))) cpSync(path.join(web, "fonts"), path.join(app, "fonts"), { recursive: true });
     installable(app);
     console.log(`built ${path.relative(ROOT, app)}/ (the phone app's pages: the standalone client, installable)`);
@@ -137,7 +142,7 @@ function buildApp(web, app) {
 /** Everything the page's own source does not carry: what a browser needs to offer to install it. */
 const PWA_DIR = path.resolve(ROOT, "src/chat/pwa");
 /** The files a fresh visit needs before the network is optional. Fonts and icons are added from what was built. */
-const SHELL = ["index.html", "client.js", "sidebar.css", "chat.css"];
+const SHELL = ["index.html", "client.js", "sidebar.css", "chat.css", "agent-start.html"];
 
 /**
  * MAKE `dist-app/` INSTALLABLE: the manifest, the icons and a service worker holding the app's own files, so a phone
