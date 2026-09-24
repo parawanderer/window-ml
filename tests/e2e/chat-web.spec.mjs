@@ -1621,3 +1621,25 @@ test("the approval bar does not flash on load when the gate is right there", asy
     expect(errors).toEqual([]);
     await page.close();
 });
+
+// The back button used to be positioned absolutely over the corner while this bar carried 60px of padding to dodge
+// it — two mechanisms placing two things that belong together, and it read as exactly that: a chevron adrift above a
+// pill that had drifted the other way. A session's own header already reads `‹ <model>`; a new one should too.
+test("starting a session on a phone leads with one row: the way back, then the model @mobile", async () => {
+    const { page, errors } = await open(PHONE);
+    await page.getByRole("button", { name: "New session" }).click();
+    const bar = page.locator(".chat-start-top");
+    await expect(bar).toBeVisible();
+    const back = bar.locator(".chat-sheet-back");
+    const model = bar.locator(".tp-pill-model");
+    await expect(back).toBeVisible();
+    await expect(model).toBeVisible();
+
+    // ONE ROW: same line, back first, and the model does not begin a third of the way across the screen.
+    const [b, m] = [await back.boundingBox(), await model.boundingBox()];
+    expect(Math.abs((b.y + b.height / 2) - (m.y + m.height / 2))).toBeLessThan(4);
+    expect(b.x).toBeLessThan(m.x);
+    expect(m.x - (b.x + b.width)).toBeLessThan(24);
+    expect(errors).toEqual([]);
+    await page.close();
+});
