@@ -99,13 +99,24 @@ html, body, #root { height: 100%; }
    STICKY PSEUDO-ELEMENTS, not `mask-image`: a mask on the scroller would make it the containing block for every
    `position: fixed` descendant, which is exactly the bug that put the pickers' popovers in the corner. Sticky
    creates none. The negative margin gives them no height of their own, so nothing moves. */
-.fade-edges { position: relative; }
+/* A COLUMN, so the bottom fade can be pushed to the scroller's own edge with `margin-top: auto` when the content is
+   short. Sticky alone was not enough: with nothing to scroll, a sticky element simply sits where it falls, which put
+   the gradient in the middle of a half-empty panel with clear space under it — a line across the page where the
+   content happened to stop. `auto` takes the free space when there is some and collapses to nothing when there is
+   not, so the fade is at the bottom edge either way. */
+.fade-edges { position: relative; display: flex; flex-direction: column; }
+.fade-edges > * { flex: 0 0 auto; }
 .fade-edges::before, .fade-edges::after {
     content: ""; display: block; position: sticky; height: var(--fade, 26px); z-index: 2; pointer-events: none;
     flex: 0 0 auto;
 }
-.fade-edges::before { top: 0; margin-bottom: calc(var(--fade, 26px) * -1); background: linear-gradient(to bottom, var(--bg), transparent); }
-.fade-edges::after { bottom: 0; margin-top: calc(var(--fade, 26px) * -1); background: linear-gradient(to top, var(--bg), transparent); }
+/* The TOP fade is only drawn where something sits above the scroller for content to pass behind. On a wide calm
+   page there is no header band at all — that is the point of it — so the transcript's top edge is the window's, and
+   fading there dims the first line to hide it behind nothing. The session list always has its own header, and a
+   narrow page has the phone bar, so both keep it. */
+.fade-edges::before { display: none; top: 0; margin-bottom: calc(var(--fade, 26px) * -1); background: linear-gradient(to bottom, var(--bg), transparent); }
+.chat-list-scroll.fade-edges::before, .chat.narrow .chat-transcript.fade-edges::before { display: block; }
+.fade-edges::after { bottom: 0; margin-top: auto; background: linear-gradient(to top, var(--bg), transparent); }
 .chat:not(.narrow) .chat-transcript > div { max-width: 920px; margin: 0 auto; }
 .chat-truncated, .chat-readonly { color: var(--fg-dim); font-size: .92em; }
 .chat-truncated { border: 1px dashed var(--border); border-radius: 7px; padding: 6px 10px; margin-bottom: 10px; }
