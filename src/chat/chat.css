@@ -413,10 +413,13 @@ html, body, #root { height: 100%; }
 .chat.calm .chat-row .dot.ok { visibility: hidden; }
 .chat.calm .chat-row .agent-badge { background: transparent; color: var(--fg-faint); padding: 0; font-weight: 600; }
 .chat.calm .chat-row .time { opacity: .55; }
-/* A runtime's fold chevron, calm: after the name instead of before it, and only while the pointer (or focus) is on the
-   heading, so a quiet list shows no furniture but a fold is still discoverable where you would click. */
+/* A runtime's fold chevron, calm: after EVERYTHING the heading says instead of before it, and only while the pointer
+   (or focus) is on the heading, so a quiet list shows no furniture but a fold is still discoverable where you would
+   click. It used to sit between the name and the badge, where being invisible at rest did not make it take no room:
+   a heading with a badge held a chevron-shaped hole in the middle of itself, which reads as the badge having drifted
+   away from the name. Last, it costs the row nothing until it is wanted. */
 .chat.calm .chat-rt .tri {
-    order: 1; opacity: 0;
+    order: 3; opacity: 0;
     transition: opacity .18s ease, transform .24s cubic-bezier(.4, 0, .2, 1);
 }
 .chat.calm .chat-rt .chat-rt-note, .chat.calm .chat-rt .chat-chip { order: 2; }
