@@ -790,7 +790,7 @@ export function AgentRunView({ s }: { s: Session }) {
                 label={a.cancelled ? "cancelled" : a.hitCap ? "stopped at its step cap" : undefined} capped={a.hitCap || a.cancelled}
                 // Only the LATEST answer, and only a step-cap stop (not a cancel/error), offers Continue — resuming
                 // an old buried answer would be confusing, and a live run has nothing to resume.
-                resumeCap={a.hitCap && !a.cancelled && a.ts === lastAnswerTs && s.status !== "pending" ? { hash: s.hash, steps: s.maxSteps || 20 } : undefined} />;
+                resumeCap={a.hitCap && !a.cancelled && a.ts === lastAnswerTs && s.status !== "pending" && services().canContinue(s.hash) ? { hash: s.hash, steps: s.maxSteps || 20 } : undefined} />;
     // Answers AND says share the same positional base (atStep + 0.5 = "after this turn's steps"); the TS
     // breaks the tie. A fixed answer-before-say fraction was wrong: when a turn runs no tool steps (a plain
     // chat-style reply, or a cancel), every answer/say lands at the SAME atStep, so the fraction forced ALL

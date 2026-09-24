@@ -168,8 +168,12 @@ export function Chip({ text, on, onPress }: { text: string; on: boolean; onPress
 }
 
 /** One row of a sheet: a title, an optional line under it, and a check when it is the chosen one. */
-export function SheetRow({ title, detail, chosen, disabled, onPress, mono, danger, pin }: {
+export function SheetRow({ title, detail, chosen, disabled, onPress, mono, danger, pin, icon }: {
     title: string; detail?: string; chosen?: boolean; disabled?: boolean; onPress?: () => void; mono?: boolean; danger?: boolean;
+    /** A glyph before the words, in a column of its own so a sheet of ACTIONS reads as the page's menu does — the
+     *  labels line up whatever their icons, and a row is recognised by its shape before it is read. A picker's rows
+     *  (models, tabs) take none: there the words are the choice, and forty identical glyphs are forty distractions. */
+    icon?: (color: string) => ReactNode;
     /** a pin at the row's end: whether it is on, and what a tap does. Absent means the row has none */
     pin?: { on: boolean; toggle: () => void };
 } & Pick<PressableProps, "onPress">) {
@@ -177,6 +181,7 @@ export function SheetRow({ title, detail, chosen, disabled, onPress, mono, dange
     return (
         <Pressable accessibilityRole="button" accessibilityState={{ selected: !!chosen, disabled: !!disabled }} disabled={disabled} onPress={onPress}
             style={({ pressed }) => [s.sheetRow, pressed && { backgroundColor: p.panel }]}>
+            {icon ? <View style={s.sheetRowIcon}>{icon(danger ? p.err : disabled ? p.fgFaint : p.fgDim)}</View> : null}
             <View style={{ flex: 1 }}>
                 <Text numberOfLines={1} style={[s.sheetRowTitle, { color: danger ? p.err : disabled ? p.fgFaint : p.fg }, mono && s.mono]}>{title}</Text>
                 {detail ? <Text style={[s.sheetRowDetail, { color: p.fgDim }]}>{detail}</Text> : null}
@@ -270,6 +275,8 @@ const s = StyleSheet.create({
     // A row: 52pt, its title and detail on the left, the check on the right.
     sheetRow: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 52, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12 },
     // The pin at a model row's end. Padded so the tap target clears the 44pt floor without the glyph growing.
+    // The glyph column before a row's words: one width for every row, so the labels line up.
+    sheetRowIcon: { width: 28, alignItems: "flex-start" },
     sheetRowPin: { paddingVertical: 10, paddingHorizontal: 6, marginRight: -4 },
     // A row's title.
     sheetRowTitle: { fontSize: SIZE.text },

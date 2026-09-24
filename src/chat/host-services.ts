@@ -61,6 +61,10 @@ export function hostServices(store: ChatStore, platform: ClientPlatform): Sideba
             const id = idOf(key);
             if (id) void store.send({ type: "session.continue", session: id, ...(maxSteps ? { maxSteps } : {}) });
         },
+        // The page has to STILL HOLD the run: `session.continue` is delivered through it. Without a tab the answer
+        // is "the page no longer holds this run", so the button would be a press that does nothing — and the run's
+        // own bar is already offering the thing that does work.
+        canContinue: (key) => !!summaryOf(key as SessionKey)?.page?.tabId,
         highlight: (ref) => {
             // The shared views outline things on "the session's page" without naming it, because in a panel there is
             // only one. Here that is the session being read.

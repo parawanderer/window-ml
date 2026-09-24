@@ -16,7 +16,9 @@ export type AttentionLevel = "blocks" | "limits" | "suggests";
 export type AttentionCode =
     | "no-model" | "backend-unreachable" | "site-access" | "tab-groups" | "no-utility-model"
     | "archive-folder-lapsed" | "archive-folder-unsupported" | "python-packages-missing"
-    | "archive-off" | "archive-folder-none";
+    | "archive-off" | "archive-folder-none"
+    /** THIS DEVICE, not a runtime: an iPhone or iPad reading the hosted client in a tab rather than as an app. */
+    | "add-to-home";
 
 /** How it is fixed from here, when it can be: one click (`ChatExtras.fix`), or the extension's Settings. */
 export type AttentionFix = { kind: "act"; label: string } | { kind: "settings"; label: string; where: string };
@@ -24,7 +26,9 @@ export type AttentionFix = { kind: "act"; label: string } | { kind: "settings"; 
 /** One line of the list. `key` is `runtime:code`, what a dismissal remembers. */
 export interface AttentionItem {
     key: string;
-    runtime: RuntimeInfo;
+    /** The machine it is about. ABSENT on the few items that are about THIS DEVICE — the thing you are holding is
+     *  not a runtime, has no name worth printing beside the title, and nothing is "fixed on" it but here. */
+    runtime?: RuntimeInfo;
     code: string;
     level: AttentionLevel;
     title: string;
@@ -33,7 +37,8 @@ export interface AttentionItem {
     fix?: AttentionFix;
 }
 
-/** Each known code: its level, its words, and how it is fixed on the runtime's own device. */
+/** Each known code: its level, its words, and how it is fixed on the runtime's own device (`add-to-home` is about
+ *  THIS device and has no fix: Apple gives a page no way to offer installing as a button — see `deviceItems`). */
 const KNOWN: Record<AttentionCode, { level: AttentionLevel; title: string; detail: string; fix?: AttentionFix; again?: { title: string; detail: string } }> = {
     "no-model": {
         level: "blocks", title: "No model is chosen",
@@ -76,6 +81,12 @@ const KNOWN: Record<AttentionCode, { level: AttentionLevel; title: string; detai
         level: "suggests", title: "Tab groups show without names",
         detail: "The tab picker groups tabs either way; their names and colours need the browser's permission.",
         fix: { kind: "act", label: "Show them" },
+    },
+    "add-to-home": {
+        level: "suggests", title: "Add this to your home screen",
+        // What it actually buys, not a slogan: it opens full screen, and the icon can carry the same count the inbox
+        // does — which in a tab is specified to do nothing at all (app-badge.ts).
+        detail: "Installed, it opens full screen and its icon can show the count of what needs you; in a browser tab that badge does nothing. Tap the Share button, then Add to Home Screen.",
     },
     "archive-off": {
         level: "suggests", title: "Old sessions are deleted, not kept",
@@ -136,4 +147,32 @@ function reported(rt: RuntimeInfo): string[] {
 /** What the count on the button says: problems only, never the suggestions, so a set-up page shows no number. */
 export function attentionCount(items: readonly AttentionItem[]): number {
     return items.filter((i) => i.level !== "suggests").length;
+}
+
+/** What this device is, as the few plain facts the suggestion below turns on. Passed in rather than read here, so
+ *  the rule and the wording stay testable without a DOM, like everything else in this file. */
+export interface DeviceEnv {
+    /** already running as a home-screen app */
+    installed: boolean;
+    /** an iPhone or iPad, where installing is a Share-sheet step and nothing else */
+    ios: boolean;
+    /** this build declares a manifest — the hosted client, not an extension page and not the phone app's WebView */
+    installable: boolean;
+}
+
+/**
+ * What THIS DEVICE could do better, as inbox items. Only one today: an iPhone or iPad reading the hosted client in a
+ * tab, which could be an app.
+ *
+ * It carries no `fix` because there is nothing to wire one to. Every other browser fires `beforeinstallprompt` and a
+ * page can offer a button; Safari fires nothing and exposes no install API, so the only honest thing a page can do is
+ * say where the menu item is. That is also why this is a SUGGESTION: it is dismissible, and telling someone twice
+ * about a menu they have decided not to use is nagging.
+ */
+export function deviceItems(env: DeviceEnv, hidden: ReadonlySet<string> = new Set()): AttentionItem[] {
+    if (!env.ios || env.installed || !env.installable) return [];
+    const key = "this-device:add-to-home";
+    if (hidden.has(key)) return [];
+    const k = KNOWN["add-to-home"];
+    return [{ key, code: "add-to-home", level: k.level, title: k.title, detail: k.detail }];
 }

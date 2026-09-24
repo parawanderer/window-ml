@@ -1,8 +1,12 @@
 // text-size.ts — the code sizes a person is offered, as one list both surfaces read.
 //
-// Its own module, with no imports, because the phone app offers the same choice natively and cannot import the
-// page's `view-mode.tsx` (which pulls Preact's signals into a React Native bundle). Two lists would drift, and a
-// size the app offers that the page does not honour is a control that does nothing.
+// IN `src/native/`, which is one of the three folders Metro watches (mobile/metro.config.js). The phone app
+// offers this choice natively, and a VALUE imported from anywhere else typechecks, runs in a debug bundle,
+// and then fails the RELEASE build with "Unable to resolve module" — which xcodebuild reports only as exit
+// 65. Type-only imports are erased and may come from anywhere; this one is not.
+//
+// No imports of its own, so the page reads it too: two lists would drift, and a size the app offers that the
+// page does not honour is a control that does nothing.
 
 /**
  * The size code is set at on this page, in px: transcript code blocks, the Python bench's editor and what it prints.
