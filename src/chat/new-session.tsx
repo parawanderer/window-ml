@@ -87,7 +87,17 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
             if (fresh && !list.length) setWhere("blank");
         });
     };
-    useEffect(() => { load(true); return () => { seq.current++; }; }, [rt?.id, wantsTabs]);
+    // A TAB BELONGS TO ONE MACHINE, so nothing about the target survives a change of device. Keeping the id meant the
+    // pill read "That tab closed · pick another" about a tab that is open and perfectly fine on the machine you had
+    // just left — and on a runtime with no tabs at all there was no list coming that could ever clear it. It goes back
+    // to a new tab rather than to that device's active tab: picking one machine's foreground page because you chose
+    // the machine is a second choice nobody made. What was TYPED stays, since a URL is not a tab.
+    const lastRt = useRef<string | undefined>(rt?.id);
+    useEffect(() => {
+        if (lastRt.current !== rt?.id) { lastRt.current = rt?.id; setWhere("blank"); setTabId(null); }
+        load(true);
+        return () => { seq.current++; };
+    }, [rt?.id, wantsTabs]);
 
     const closed = where === "tab" && tabId != null && !!tabs && !tabs.some((t) => t.tabId === tabId);
     return {
@@ -120,6 +130,7 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
             <>
                 <TabPicker tabs={tabs} groups={groups} value={where === "tab" && tabId != null ? tabId : "blank"}
                     onOpen={() => load(false)}
+                    loading={wantsTabs && tabs === null}
                     runtime={rt?.id}
                     groupsGrant={rt ? extras?.fix?.(rt.id, "tab-groups") : null}
                     withheld={withheld}

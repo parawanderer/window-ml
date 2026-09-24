@@ -1198,13 +1198,20 @@ button.chat-page-go:hover { color: var(--fg); }
 }
 .chat-start-box textarea::placeholder { color: var(--fg-faint); }
 .chat-start-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-/* The row's pickers read as quiet pills, not form fields. */
-.chat-pick-rt, .chat-pick-url {
-    font: inherit; font-size: .88em; color: var(--fg-dim); background: var(--panel-2); border: none; border-radius: 999px;
-    padding: 6px 12px; max-width: 22rem; min-width: 0;
+/* WIDE: one line, by SHRINKING rather than wrapping. A flex row wraps before it shrinks, so every control added to
+   this row used to be paid for out of the next one's cap — adding the device pill pushed send onto a second line
+   while three pills sat at their maximum widths. Nowrap makes the caps mean "do not get greedy" instead of being
+   load-bearing arithmetic, and each pill's text ellipsizes (`.tp-pill-text`) with the whole of it in its popover.
+   The narrow layout keeps the wrap: there the model moves to the top bar and the row has fewer items to hold. */
+.chat:not(.narrow) .chat-start-row { flex-wrap: nowrap; }
+/* The kind switch and send are the two things on the row that must stay whole: one is two words, the other an icon. */
+.chat-seg, .chat-start-send { flex: 0 0 auto; }
+/* The row's URL field reads as a quiet pill, not a form field. (The device beside it was a `<select>` styled to match
+   from a distance; it is a real pill now — `.tp-pill-device` — so the pair is down to one.) */
+.chat-pick-url {
+    font: inherit; font-size: .88em; color: var(--fg); background: var(--panel-2); border: none; border-radius: 999px;
+    padding: 6px 12px; max-width: 22rem; min-width: 0; flex: 1 1 12rem; outline: none;
 }
-.chat-pick-url { flex: 1 1 12rem; outline: none; color: var(--fg); }
-.chat-pick-rt:hover { color: var(--fg); }
 .chat-start-send { flex: 0 0 auto; }
 /* Settings → Housekeeping: the log's output cell fills a fixed-height box, as it fills the DevTools view. */
 .chat-set-hk { display: flex; flex-direction: column; height: min(640px, calc(100vh - 220px)); min-height: 240px; }
@@ -1246,7 +1253,10 @@ button.chat-page-go:hover { color: var(--fg); }
 /* The start row's two pickers, capped so the row fits the start box on one line at its full width (42rem): the kind
    switch, both pills and the send. The text ellipsizes; the whole name is in the list. */
 .tp-pill-tab, .tp-pill.tp-pill-tab { flex: 0 1 auto; max-width: 14rem; }
-/* A pill still waiting for its list: the model pill's size, a slow shimmer across it, nothing to read. */
+.tp-pill.tp-pill-tab.tp-pill-wait { width: 12rem; }
+/* A pill still waiting for its list: the finished pill's size, a slow shimmer across it, nothing to read. Both the
+   model and the tab (tab-picker.tsx) fill in this way, so the start row settles as one thing rather than each pill
+   having its own idea of what "not ready" looks like. The tab's is wider because what lands in it is a page title. */
 .tp-pill.tp-pill-wait { width: 9rem; height: 30px; box-sizing: border-box; cursor: default; background: linear-gradient(90deg, var(--panel-2) 0%, var(--panel-2-hover) 50%, var(--panel-2) 100%); background-size: 200% 100%; animation: chat-pill-shimmer 1.2s ease-in-out infinite; }
 @keyframes chat-pill-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 /* The pill that replaces it arrives with a short fade and slide from the left. */
@@ -1254,6 +1264,10 @@ button.chat-page-go:hover { color: var(--fg); }
 @keyframes chat-pill-in { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .tp-pill.tp-pill-wait, .tp-pill-in { animation: none; } }
 .tp-pill-model, .tp-pill.tp-pill-model { flex: 0 1 auto; max-width: 12rem; }
+/* The device pill (device-picker.tsx). A name is a label its owner chose, so it ellipsizes like the others; the glyph
+   in front of it is what makes the pill readable as a MACHINE at a glance, and never shrinks with the text. */
+.tp-pill-device, .tp-pill.tp-pill-device { flex: 0 1 auto; max-width: 12rem; }
+.tp-pill-icon { display: inline-flex; flex: 0 0 auto; align-items: center; }
 /* The pill's down caret. */
 .tp-caret { flex: 0 0 auto; opacity: .7; }
 /* The list: fixed from the pill's rect, so no scrolling or clipping container can cut it. */

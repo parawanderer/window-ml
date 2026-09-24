@@ -2,10 +2,11 @@
 // without the greeting. This is a brainstorming tool, and the first thing on it is somewhere to put a thought.
 //
 // It replaced "Pick a session." and the separate start form: the compose button in the list and the rail now come
-// here. Agent is the default, because a run on a page is what this page is for; the pill's row says where the run
-// goes (an open tab, or a new one), the model (that runtime's own list, `models.list`, the runtime's default first)
-// and, with more than one, on which runtime. What starts here is saved (the start
-// commands save unless told otherwise), so it is in the list the moment the runtime answers.
+// here. Agent is the default, because a run on a page is what this page is for; the pill's row says which device it
+// runs on (with more than one to choose from), where the run goes (an open tab, or a new one), and the model (that
+// device's own list, `models.list`, its default first) — device before model, since the device decides the list.
+// What starts here is saved (the start commands save unless told otherwise), so it is in the list the moment the
+// runtime answers.
 //
 // Rendered by capability like the rest: only the kinds some runtime offers and this client may start, the "where"
 // only on a runtime with tabs, and nothing at all (the old sentence) when nothing can be started.
@@ -18,6 +19,7 @@ import type { ChatExtras } from "./extras";
 import { mayCommand } from "./grants";
 import { ModelPicker } from "./model-picker";
 import { KindPicker } from "./kind-picker";
+import { DevicePicker } from "./device-picker";
 import { startableOn, useTargetPick, type StartKind } from "./new-session";
 
 /** Each runtime's model list as last answered, for the page's life: a start page opened again draws it at once. */
@@ -117,14 +119,27 @@ export function StartPage({ store, onStarted, initialKind, extras, narrow, back 
     };
     // THE MODEL: in the box's row where the page is wide enough to hold it, at the TOP of the page on a phone. There the
     // row keeps only what this start needs (the kind, the tab, send) and fits on one line; the top bar has the room.
-    const modelTop = models && models.length ? <ModelPicker models={models} value={model} onChange={setModel} arrived={waited.current} />
-        : models === null && canList ? <span class="tp-pill tp-pill-model tp-pill-wait" role="status" aria-label="Loading models" /> : null;
+    // In that bar it is a HEADING (`head`), which is what a session's own header makes of the model — a solid pill
+    // sitting alone under a back arrow read as a control that had been left there rather than as the bar's title.
+    const modelAs = (head: boolean) => (models && models.length
+        ? <ModelPicker models={models} value={model} onChange={setModel} arrived={waited.current} head={head} />
+        : models === null && canList ? <span class={`tp-pill tp-pill-model${head ? " chat-head-model" : ""} tp-pill-wait`} role="status" aria-label="Loading models" /> : null);
+    const modelTop = modelAs(false);
+    const modelHead = modelAs(true);
     return (
         <>
         {/* ONE ROW, not a button floating over a bar that was padded to dodge it. The back button and the model are
             the same kind of thing here — where you came from, and what this will run on — and a session's own header
-            already reads `‹ <model>`, so a new one that reads differently is a second grammar for the same bar. */}
-        {narrow && (back || modelTop) ? <div class="chat-start-top">{back}{modelTop}</div> : null}
+            already reads `‹ <model>`, so a new one that reads differently is a second grammar for the same bar. It is
+            that same bar now, markup and all (`head chat-head`, `chat-head-title`): the rule under it, the round back
+            button, the model as the heading. It had been a bare pill on an empty page, which read as a stray control. */}
+        {narrow && (back || modelHead) ? (
+            <div class="head chat-head chat-start-top">
+                {back}
+                <span class="chat-head-title">{modelHead}</span>
+                <span class="sp" />
+            </div>
+        ) : null}
         <div class="chat-start-page">
             <div class="chat-start-col">
                 <div class="chat-start-box">
@@ -142,14 +157,12 @@ export function StartPage({ store, onStarted, initialKind, extras, narrow, back 
                                 ))}
                             </div>
                         ) : null}
+                        {/* The device comes BEFORE the model, because it is what decides which models there are: picking
+                            a machine after its model list would be choosing from a list the next choice replaces. */}
+                        {runtimes.length > 1 ? <DevicePicker runtimes={runtimes} value={rt.id} onChange={setRuntimeId} /> : null}
                         {pick.inline}
                         {narrow ? null : modelTop}
                         {!rt.online ? <span class="chat-start-wait">Reconnecting…</span> : null}
-                        {runtimes.length > 1 ? (
-                            <select class="chat-pick-rt" aria-label="Runtime" value={rt.id} onChange={(e: any) => setRuntimeId(e.target.value)}>
-                                {runtimes.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                            </select>
-                        ) : null}
                         <span class="sp" />
                         <button class="tt cbtn csend chat-start-send" disabled={!ready} onClick={() => void start()} aria-label={kind === "agent" ? "Start the run" : "Start the chat"}>
                             <IconSend /><span class="tt-pop above" role="tooltip">{busy ? "Starting…" : kind === "agent" ? "Start the run" : "Start the chat"}</span>

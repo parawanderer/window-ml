@@ -1,6 +1,8 @@
-// THE FAKE HOST'S DEMO WORLD: three runtimes and a handful of sessions in the states the chat page has to render. An
+// THE FAKE HOST'S DEMO WORLD: four runtimes and a handful of sessions in the states the chat page has to render. An
 // agent waiting on an approval, a finished chat with code and math, a run stopped at its step cap, a run on a runtime
-// this device may only watch, and a runtime that is offline. The web build opens on it until `HubHost` exists, the
+// this device may only watch, a second machine an agent can actually be STARTED on (without which the start page has
+// nothing to choose between and draws no device picker at all), and a runtime that is offline. The web build opens on
+// it until `HubHost` exists, the
 // e2e specs drive it, and it is the live mockup of both layouts.
 import type { MlDebugEvent } from "../contract-debug";
 import { SESSION_CONTRACT_VERSION, type Grant, type RuntimeInfo, type SessionSummary } from "../session-host";
@@ -34,6 +36,14 @@ export function demoHost(now = Date.now(), opts: { latencyMs?: number } = {}): F
             // Its own attention codes, as a runtime would report them once the contract carries `attention` (proposed):
             // one this page words, one it does not know yet.
             capabilities: { agent: true, sideCalls: true, attention: ["no-utility-model", "gpu-driver-old"] } as RuntimeInfo["capabilities"],
+        },
+        {
+            // The SECOND machine a run can be started on, and the only reason the start page's device picker is drawn
+            // at all: `startableOn` needs two, and the lab box is view-only while the old Mac is offline. It runs
+            // agents and not chats on purpose, so the chat kind still has exactly one home and the page still asks
+            // nothing when there is nothing to ask.
+            id: "desk-pc", name: "Desk PC", kind: "desktop", online: true, contractVersion: SESSION_CONTRACT_VERSION, grants: EVERY,
+            capabilities: { agent: true, sideCalls: true, persistence: true, switchModel: true },
         },
         {
             id: "old-mac", name: "Old Mac", kind: "browser", online: false, lastSeen: now - 90 * min, contractVersion: SESSION_CONTRACT_VERSION, grants: EVERY,
