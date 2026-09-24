@@ -484,7 +484,8 @@ their declarations to satisfy an indexer. Playbook: `.claude/skills/code-index/S
 **RULE — a test goes under a SECTION, and `node scripts/test-index.mjs '<regex>'` is how you find one.** The code
 index above made the source searchable and left the tests opaque, which is the worse half: the tests are where the
 knowledge about behaviour lives, and they are what you must read before adding a twelfth test for a thing that has
-eleven. `tests/sidebar.test.js` is 407 tests in 9,300 lines behind ten section comments — grep finds a test whose
+eleven. `tests/sidebar.test.js` was 407 tests in 9,300 lines behind ten section comments (it is now twelve
+`sidebar-*.test.js` files, and the index is what made that partition plannable) — grep finds a test whose
 name you can already guess and answers neither question you actually have ("is this covered?", "where does a new one
 go?"), and reading the file to find out costs about 150,000 tokens. The index answers both for about 5,000: one
 TAB-separated line per test, `PATH:LINE  SECTION  NAME`, with the regex running over the section and the file's
@@ -525,6 +526,14 @@ real cases the day it was written, the clearest being a doc block that had drift
 function had no documentation and the next advertised an option it does not take. The repo is at zero
 findings: every one of the ten was a block that had drifted off its declaration, and each was FOLDED BACK
 rather than deleted, because a stranded block is usually the only copy of what it says.
+
+**A HUGE TEST FILE COSTS MORE THAN ITS TESTS.** Splitting `sidebar.test.js` (407 jsdom tests) into twelve files
+cut the SAME tests from 105s to 54s of CPU — in separate processes, with nothing shared and nothing rewritten. One
+process accumulating hundreds of jsdom worlds goes superlinear (it was carrying ~1.7 GB and burning ~270% CPU on
+GC), and under `--jobs` it then contends with every other file: the full suite measured 133s and 359s on two runs
+before, and 36s and 46s after. So a slow test file is not only serial, it is also EXPENSIVE, and `--timings` hides
+both — it runs one process per file, so its total is a SUM and its per-file number is that file at its best, alone
+on the machine. `background.test.js` (22s) and `cdp-stream.test.mjs` (20s) are the same shape and untested.
 
 **A file that has grown past ~800 lines gets a REMINDER** (`node scripts/check-file-size.mjs`) — in the
 pre-commit hook and in CI's `tools` job suggesting it be split into logical modules, with per-module tests where that follows. It never
@@ -610,12 +619,13 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   anything threw. The consequence to remember: a build you silenced (`npm run build >/dev/null 2>&1`) that
   FAILED now looks exactly like one that worked, and everything you run next tests the previous bundle —
   which will mislead a bisect. It exits non-zero and says so on stderr; do not discard that stream.
-- **Iterating? Run a GENRE, not the suite: `npm run test:core`** (~8s, 978 tests) — `node scripts/test.mjs`
+- **Iterating? Run a GENRE, not the suite: `npm run test:core`** (~8s, 1,394 tests) — `node scripts/test.mjs`
   with `core` / `panel` / `ext` / `chat` / `python` / `live`, `--list` to see what each holds, `--timings` for
   per-file durations slowest-first (`npm run test:chat` is the chat page's suite by name: that genre plus its two
-  Playwright specs). The full suite is ~2 minutes and three files are 80% of it
-  (`sidebar` 53s, `background` 22s, `cdp-stream` 20s), which is the right cost in CI and the wrong one in a
-  loop where you changed one pure module. `core` is DERIVED — everything the named genres do not claim — so
+  Playwright specs). The full suite is ~40s in parallel, and its floor is now its slowest FILE
+  (`background` 22s, `cdp-stream` 20s), which is the right cost in CI and the wrong one in a
+  loop where you changed one pure module. **`--timings` is a SERIAL measure** — one process per file, so its
+  total is a sum (206s), not a wall clock; read it for per-file cost, never for what the suite takes. `core` is DERIVED — everything the named genres do not claim — so
   a new test file runs by DEFAULT rather than falling out of every bucket and being silently skipped; the
   cost of that direction is that a new SLOW file quietly lands in `core`, which is what `--timings` is for.
   The OTHER cost is a whole subsystem landing there one file at a time — thirteen `hub-*` tests and nine
