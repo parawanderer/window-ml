@@ -1534,3 +1534,47 @@ test("an edge fades only where the document continues past it", async () => {
     expect(errors).toEqual([]);
     await page.close();
 });
+
+// IN-CHAT OPTIONS ON A WIDE PAGE. The calm view has no header band by design, which left the session's own actions —
+// looking at its page, exporting it — with no door at all on the view that is the default.
+test("the wide chat's ⋮ carries the session's own options, and Export chat writes a file", async () => {
+    const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(CHAT)}`);
+    await page.locator(".chat-transcript").waitFor();
+    await page.locator(".chat-more-float").click();
+    const menu = page.locator(".chat-head-menu");
+    await expect(menu).toContainText("Export chat");
+
+    await menu.getByRole("menuitem", { name: /Export chat/ }).click();
+    const dialog = page.locator(".chat-dialog");
+    await expect(dialog.locator("h2")).toHaveText("Export chat");
+    // Three shapes, and this page can print, so PDF is among them.
+    await expect(dialog.locator(".chat-export-opt")).toHaveCount(3);
+
+    // The file is really written: the export goes through the services seam to the platform's own saveFile, and
+    // nothing before this checked that the chat page had one wired at all.
+    const [download] = await Promise.all([
+        page.waitForEvent("download"),
+        dialog.getByRole("button", { name: "Export" }).click(),
+    ]);
+    expect(download.suggestedFilename()).toMatch(/^ml-(chat|agent)-.*\.(md|zip)$/);
+    await expect(dialog).toHaveCount(0);   // and it closes behind itself
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// The collapse chevron has no gutter to sit in at a phone's width, and on the left of the footer row it was the one
+// control in the transcript lined up with nothing — under the paragraph's first character, as if it belonged to it.
+test("the answer's collapse control sits in the gutter on a wide page and with the other controls on a phone @mobile", async () => {
+    const x = async (page, sel) => (await page.locator(sel).first().boundingBox()).x;
+    const wide = await open(DESKTOP, `#/s/${encodeURIComponent(CHAT)}`);
+    await wide.page.locator(".msg.asst .who-toggle").waitFor();
+    expect(await x(wide.page, ".msg.asst .who-toggle")).toBeLessThan(await x(wide.page, ".msg.asst .md"));
+    expect(wide.errors).toEqual([]);
+    await wide.page.close();
+
+    const phone = await open(PHONE, `#/s/${encodeURIComponent(CHAT)}`);
+    await phone.page.locator(".msg.asst .who-toggle").waitFor();
+    expect(await x(phone.page, ".msg.asst .who-toggle")).toBeGreaterThan(await x(phone.page, ".msg.asst .mrow .icon-btn"));
+    expect(phone.errors).toEqual([]);
+    await phone.page.close();
+});

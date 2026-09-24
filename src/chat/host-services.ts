@@ -78,6 +78,12 @@ export function hostServices(store: ChatStore, platform: ClientPlatform): Sideba
         hostAccess: null,
         sheetTitle: async () => null,
         savePref: (key, value) => platform.prefs.set(key, value),
+        saveFile: (name, data) => platform.saveFile(name, data),
+        printDoc: platform.printDoc ?? null,
+        // This page is served from a build, not installed as a versioned thing: its commit (BUILD_INFO) is the
+        // identity an export carries.
+        appVersion: null,
+        assetUrl: (path) => { try { return new URL(path, location.href).href; } catch { return path; } },
         // A reference into a part of the session this page has not loaded: the store pages back through the runtime.
         loadEarlier: async (session) => {
             await store.loadEarlier(session as SessionKey);

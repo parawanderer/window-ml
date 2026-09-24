@@ -594,7 +594,7 @@ table { border-collapse: collapse; }
 // extension URLs (`fonts/*` is web-accessible, already used by the overlay). Falls back to the literal path in a
 // non-extension context (tests), where fonts don't matter.
 function katexStyle(): string {
-    const base = (typeof chrome !== "undefined" && chrome?.runtime?.getURL) ? chrome.runtime.getURL("fonts/") : "fonts/";
+    const base = services().assetUrl("fonts/");
     return katexCss.replace(/url\((['"]?)fonts\//g, (_m, q: string) => `url(${q}${base}`);
 }
 
@@ -663,6 +663,7 @@ function zipStore(files: Sidecar[]): Blob {
 // Trigger a client-side download (the iframe can't touch the filesystem). It lives in its own module now —
 // see download.ts for why a four-line helper could not stay next to the highlighter stylesheet.
 import { downloadBlob } from "./download";
+import { services } from "./services";
 export { downloadBlob };
 
 const baseName = (s: Session): string => `ml-${s.kind === "agent" ? "agent" : "chat"}-${s.hash}`;
@@ -674,8 +675,8 @@ export function exportSession(hash: string): void {
     if (!s) return;
     const base = baseName(s);
     const { md, images } = serializeSession(s);
-    if (!images.length) { downloadBlob(`${base}.md`, new Blob([md], { type: "text/markdown" })); return; }
-    downloadBlob(`${base}.zip`, zipStore([{ name: "run.md", bytes: new TextEncoder().encode(md) }, ...images]));
+    if (!images.length) { services().saveFile(`${base}.md`, new Blob([md], { type: "text/markdown" })); return; }
+    services().saveFile(`${base}.zip`, zipStore([{ name: "run.md", bytes: new TextEncoder().encode(md) }, ...images]));
 }
 
 /**
@@ -688,62 +689,22 @@ export function exportSession(hash: string): void {
 export function exportSessionJson(hash: string): void {
     const s = sessionMap.get(hash);
     if (!s) return;
-    const version = (typeof chrome !== "undefined" && chrome.runtime?.getManifest)
-        ? chrome.runtime.getManifest().version : undefined;
-    // BUILD_INFO identifies the COMMIT, which is what says whether two exports are comparable; the
-    // manifest version only moves on releases. The uncommitted diff is left out of a file the user is
-    // about to download and share — see ExportProvenance.includeDirtyDiff.
-    downloadBlob(`${baseName(s)}.json`, new Blob([serializeSessionJson(s, { version, build: BUILD_INFO })], { type: "application/json" }));
+    // BUILD_INFO identifies the COMMIT, which is what says whether two exports are comparable; the host's own
+    // version only moves on releases, and a page served from a build has no such number at all. The uncommitted
+    // diff is left out of a file the user is about to download and share — see ExportProvenance.includeDirtyDiff.
+    const version = services().appVersion ?? undefined;
+    services().saveFile(`${baseName(s)}.json`, new Blob([serializeSessionJson(s, { version, build: BUILD_INFO })], { type: "application/json" }));
 }
 
-// Print the session → the user chooses "Save as PDF" (or a real printer). We
-// render into an offscreen iframe rather than printing the sidebar itself: the
-// panel is a narrow dark scroll-box with collapsed disclosures, none of which
-// belongs on paper. The doc is loaded from a Blob URL (a multi-megabyte srcdoc
-// attribute of inlined screenshots is wasteful) — same-origin, so we can reach
-// contentWindow.print(). Chrome's print() blocks until the dialog closes, but we
-// clean up on `afterprint` (plus a long fallback) so a dismissed dialog can't
-// leak the frame either way.
-const PRINT_CLEANUP_MS = 120_000;
-/** Print a session to PDF. Routed through the BACKGROUND to a real tab, because `window.print()` is
- *  suppressed for a frame inside docked DevTools. */
+/** Whether a PDF can be produced HERE. It is really "print this document and choose Save as PDF", so it needs a
+ *  print dialog: a browser has one, a phone app's WebView has none and no tab to open one in. The export picker
+ *  asks before offering the format, rather than offering a button that would do nothing. */
+export const canPrintSession = (): boolean => services().printDoc !== null;
+
+/** Print a session to PDF, where {@link canPrintSession}. How the document reaches a print dialog is the host's
+ *  business — an extension frame hands it to a real tab, a plain page prints it in an offscreen iframe. */
 export function printSession(hash: string): void {
     const s = sessionMap.get(hash);
     if (!s) return;
-    const html = sessionToHtml(s, baseName(s));
-    // Print from a REAL browser tab via the background, NOT this app's own frame: window.print() is
-    // suppressed for a frame inside DOCKED DevTools (the panel surface), so PDF export silently did nothing
-    // there (markdown export worked — it downloads via <a download>). chrome.runtime.sendMessage reaches the
-    // background from BOTH surfaces, so no surface detection is needed; the background opens print.html in a
-    // normal tab that renders + prints + closes itself. Fall back to the in-frame print only if the runtime
-    // channel is unavailable (e.g. a degraded/test context).
-    if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
-        try { chrome.runtime.sendMessage({ type: "PRINT_SESSION", payload: { html } }); return; }
-        catch { /* fall through to the in-frame print */ }
-    }
-    printInFrame(html);
-}
-// The legacy in-frame print — render the doc into an offscreen iframe and print it. Works in the in-page
-// overlay and an UNDOCKED DevTools window; kept as a fallback for when the background channel is absent.
-function printInFrame(html: string): void {
-    const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
-    const frame = document.createElement("iframe");
-    frame.className = "printframe";
-    frame.setAttribute("aria-hidden", "true");
-    let cleaned = false;
-    const cleanup = () => {
-        if (cleaned) return;
-        cleaned = true;
-        frame.remove();
-        URL.revokeObjectURL(url);
-    };
-    frame.onload = () => {
-        const w = frame.contentWindow;
-        if (!w) { cleanup(); return; }
-        setTimeout(cleanup, PRINT_CLEANUP_MS);
-        w.addEventListener("afterprint", cleanup);
-        try { w.focus(); w.print(); } catch { cleanup(); }
-    };
-    frame.src = url;
-    document.body.append(frame);
+    services().printDoc?.(sessionToHtml(s, baseName(s)));
 }

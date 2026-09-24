@@ -4,6 +4,7 @@
 // the extension adapter with the extension page (slice 3), and `nativePlatform` (native-embed.tsx) in the phone app,
 // where each of these crosses the bridge to the shell (docs/spec/NATIVE_SHELL.md).
 import { signal } from "@preact/signals";
+import { printInFrame } from "../sidebar/print-frame";
 import type { PairingApi } from "../pairing/api";
 
 /** Device-local storage for display preferences. Synchronous reads, so a first render can use them. */
@@ -24,6 +25,9 @@ export interface ClientPlatform {
     /** hand a file to the person: a download on the web, the share sheet on a phone */
     saveFile(name: string, data: Blob): void;
     copyText(text: string): Promise<boolean>;
+    /** Print a self-contained document, for the PDF export — really "print this, choose Save as PDF". Absent where
+     *  there is no print dialog to reach: a phone app's WebView has none, and the picker then does not offer PDF. */
+    printDoc?: (html: string) => void;
     /** joining a hub account and pairing devices, where this device can: the Devices tab in Settings shows only then */
     pairing?: PairingApi;
 }
@@ -67,4 +71,7 @@ export const webPlatform: ClientPlatform = {
     copyText: async (text) => {
         try { await navigator.clipboard.writeText(text); return true; } catch { return false; }
     },
+    // A real browser page, so its own offscreen iframe can print. (The EXTENSION's sidebar frames cannot — a
+    // docked DevTools frame has `print()` suppressed — which is why they route the document to a tab instead.)
+    printDoc: printInFrame,
 };

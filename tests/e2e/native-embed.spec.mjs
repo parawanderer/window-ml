@@ -101,3 +101,31 @@ test("the app's theme, a model list, a chat started from the app, and a malforme
     expect(errors).toEqual([]);
     await page.close();
 });
+
+// THE PHONE'S EXPORT. The app has no session data of its own: the file is written by the page, with the same code
+// every other surface exports with, and leaves through `saveFile` — which on this surface is the share sheet.
+test("exporting the open session hands the app a file; an unopened one is refused rather than written empty @mobile", async () => {
+    const { page, errors } = await open();
+    await tell(page, { type: "open", key: CHAT });
+    await expect(page.locator(".chat-transcript")).toContainText("How much memory does the KV cache");
+
+    await tell(page, { type: "export", id: "x1", key: CHAT, format: "md" });
+    await expect.poll(async () => (await last(page, "sent"))?.id).toBe("x1");
+    expect((await last(page, "sent")).ok).toBe(true);
+    const file = await last(page, "saveFile");
+    expect(file.name).toMatch(/^ml-(chat|agent)-.*\.(md|zip)$/);
+    expect(atob(file.base64).length).toBeGreaterThan(50);   // a real transcript, not an empty shell
+
+    await tell(page, { type: "export", id: "x2", key: CHAT, format: "json" });
+    await expect.poll(async () => (await last(page, "saveFile"))?.name).toMatch(/\.json$/);
+    expect(JSON.parse(atob((await last(page, "saveFile")).base64)).session.hash).toBeTruthy();
+
+    // A session the page has not loaded has no transcript to write, so it says so instead of handing over a file.
+    const before = (await out(page)).filter((m) => m.type === "saveFile").length;
+    await tell(page, { type: "export", id: "x3", key: WATCHED, format: "md" });
+    await expect.poll(async () => (await last(page, "sent"))?.id).toBe("x3");
+    expect((await last(page, "sent")).ok).toBe(false);
+    expect((await out(page)).filter((m) => m.type === "saveFile").length).toBe(before);
+    expect(errors).toEqual([]);
+    await page.close();
+});

@@ -41,6 +41,7 @@ import { answerItemFromString, type AnswerSet } from "./answer-set";
 const answerEcho = (set: AnswerSet): string =>
     set.length ? set.dump().map(d => `  [${d.i}] ${d.kind}: ${d.preview}`).join("\n") : "  (empty)";
 import { BUILD_INFO } from "./build-info.gen";
+import { BUILD_DIFF } from "./build-diff.gen";
 
 /**
  * Wrap a pre-resolved pointer read as the SAME value the asynchronous `ml.dereference` returns.
@@ -168,12 +169,12 @@ const sourceSection = (): string => {
 /** The `agent_api_docs({ diff: true })` section: this build's EXACT uncommitted diff (captured at build time,
  *  the extension can't run git live). Kept behind an explicit arg — it's large and rarely needed. */
 const dirtyDiffSection = (): string => {
-    const b = BUILD_INFO as { dirty?: boolean; shortCommit?: string; dirtyDiff?: string };
+    const b = BUILD_INFO as { dirty?: boolean; shortCommit?: string };
     if (!b.dirty) return `This build is a CLEAN checkout of \`${b.shortCommit || "its commit"}\` — no uncommitted changes, so the repo at that commit matches exactly.`;
-    if (!b.dirtyDiff) return `This build has uncommitted changes, but no diff was captured (a git-less build). See the file list in the source section.`;
+    if (!BUILD_DIFF) return `This build has uncommitted changes, but no diff was captured (a git-less build). See the file list in the source section.`;
     return ["## Local changes (uncommitted diff vs `" + (b.shortCommit || "commit") + "`)", "",
         "This is exactly what differs in THIS build from the repo at its commit — everything else matches.",
-        "", "```diff", b.dirtyDiff, "```"].join("\n");
+        "", "```diff", BUILD_DIFF, "```"].join("\n");
 };
 
 const firstOfNote = (selector: string, count: number): string =>

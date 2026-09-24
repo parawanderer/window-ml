@@ -692,8 +692,11 @@ button.chat-page-go:hover { color: var(--fg); }
    the same shape the panel's focus mode has to handle for the model pill. */
 .chat.calm .msg.asst:not(.err):not(.capped):not(.streaming) > .mrow > .tt:has(> .dot) { display: none; }
 /* Out in the GUTTER, which only a wide layout has: at a phone's width there is no margin to put it in, so it
-   stays in the row it moved to. */
+   stays in the row it moved to — at its RIGHT END, with copy and the time. A phone's column has no gutter on
+   either side, so a chevron alone on the left was the one control in the transcript that did not line up with
+   anything, sitting under the text's first character as though it belonged to the paragraph. */
 .chat.calm:not(.narrow) .msg.asst > .mrow > .who-toggle { position: absolute; top: 7px; left: -20px; margin: 0; }
+.chat.calm.narrow .msg.asst > .mrow > .who-toggle { order: 1; }
 /* It centres on the FIRST LINE (a 25.5px line, an 11px glyph), and in the gutter it is a thing you reach for, not
    something to read past: it arrives with the pointer over the reply and leaves with it. A touch screen keeps it. */
 @media (hover: hover) and (pointer: fine) {
@@ -922,6 +925,27 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-dialog .btn.primary { background: var(--fg); border-color: var(--fg); color: var(--bg); font-weight: 600; }
 .chat-dialog .btn.primary:hover { filter: brightness(.92); }
 .chat-dialog .btn:disabled { opacity: .6; cursor: default; }
+/* THE EXPORT PICKER'S FORMAT ROWS (export-dialog.tsx). A whole row is the target, not the 12px circle beside it, and
+   the native radio stays in the DOM: it is what a keyboard arrows through and what a screen reader reads as a group.
+   Each row carries WHO THE FILE IS FOR rather than its extension — three formats side by side is a choice nobody
+   arrives with an opinion about, and "readable, with screenshots" answers it where ".zip" does not. */
+.chat-export-picks { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
+.chat-export-opt {
+    display: flex; align-items: baseline; gap: 8px; padding: 9px 12px; border-radius: 9px; cursor: pointer;
+    border: 1px solid var(--border); background: transparent;
+}
+.chat-export-opt:hover { background: var(--panel-2); }
+.chat-export-opt.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.chat-export-opt:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chat-export-opt input { accent-color: var(--accent); margin: 0; }
+.chat-export-hint { color: var(--fg-dim); font-size: .92em; }
+
+/* THE CORNER ⋮ ON A WIDE CALM PAGE (chat-app.tsx). There is no header band there to hold it, so it floats over the
+   transcript's top-right, above the fade. Quiet until you go for it: at rest it is one of the dimmest things on the
+   page, because it is the only chrome left in a view whose whole point is that the chrome went away. */
+.chat-more-corner { position: absolute; top: 8px; right: 10px; z-index: 3; }
+.chat-more-float { opacity: .35; transition: opacity .12s linear; }
+.chat-more-float:hover, .chat-more-float:focus-visible, .chat-more-float[aria-expanded="true"] { opacity: 1; }
 @keyframes chat-fade { from { opacity: 0; } }
 @keyframes chat-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
 @media (prefers-reduced-motion: reduce) { .chat-dialog-back, .chat-dialog { animation: none; } }

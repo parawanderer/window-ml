@@ -142,9 +142,11 @@ test("fetch_url tool: the render puts the ASK on its own field, FULL (never trun
     assert.equal(r.ask, long, "the whole question is carried, untruncated");
     assert.ok(!/ask:/.test(r.note || ""), "the ask is NOT crammed into the inline note");
     assert.equal(r.verb, "fetch");
-    // A credentialed ask still shows the cookies note AND the ask field.
+    // A credentialed ask still says so AND keeps the ask field. Spending the user's identity on a site is its own
+    // fact on the card (`asYou`), not a qualifier in the dimmed trailing note it used to share with "schema only".
     const cred = tool.render(undefined, { url: "https://x.test/a.json", ask: "who?", credentials: true });
-    assert.match(cred.note, /sends your cookies/);
+    assert.equal(cred.asYou, "x.test");
+    assert.equal(cred.note, undefined, "and it is NOT also buried in the note");
     assert.equal(cred.ask, "who?");
 });
 

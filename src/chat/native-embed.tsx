@@ -24,6 +24,7 @@ import { installServices, services } from "../sidebar/services";
 import { installTooltipLayer } from "../sidebar/tooltip-layer";
 import { applyCodePrefs, applyTheme, initThemeStyle, pageTheme } from "../sidebar/prefs";
 import { rev, sessionMap } from "../sidebar/store";
+import { exportSession, exportSessionJson } from "../sidebar/export";
 import { SessionPane } from "./chat-app";
 import { ChatStore } from "./chat-store";
 import { hostServices } from "./host-services";
@@ -131,6 +132,10 @@ const nativePlatform: ClientPlatform = {
     // The app opens it in the system browser. This WebView refuses every navigation outside its own directory
     // (mobile/src/embed.tsx), so a link left to itself here does nothing at all — which reads as a broken link.
     openLink: (url) => { if (/^https?:\/\//i.test(url)) post({ type: "openLink", url }); },
+    // NO PDF HERE. The web adapter prints from an offscreen iframe; a WebView has no print dialog and no tab to
+    // open one in, and the export picker asks this before offering the format. Spelled out rather than left to the
+    // spread above, which would quietly inherit a print that does nothing.
+    printDoc: undefined,
 };
 
 /**
@@ -335,6 +340,15 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
                 const r = id ? await store.send({ type: "tab.screenshot", runtime: id.runtime, target: { session: id } }) : null;
                 if (r?.ok) openInApp(r.data.image);
                 post({ type: "sent", id: m.id, ok: !!r?.ok, ...(r?.ok ? {} : { error: r ? r.error.message || r.error.code : "That is not a session." }) });
+                return;
+            }
+            // The file is written page-side, by the same code every other surface exports with, and leaves through
+            // `saveFile` — which on this surface is the app's share sheet. Only the session's LOADED transcript can
+            // be written, so the app asks for one that is open.
+            case "export": {
+                const known = sessionMap.get(m.key as SessionKey);
+                if (known) (m.format === "json" ? exportSessionJson : exportSession)(m.key);
+                post({ type: "sent", id: m.id, ok: !!known, ...(known ? {} : { error: "Open the session first." }) });
                 return;
             }
             case "models": {
