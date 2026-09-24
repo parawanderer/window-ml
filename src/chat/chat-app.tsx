@@ -25,6 +25,7 @@ import { START_GRACE_MS, StartPage, useHeldTrue } from "./start-page";
 import { AttentionButton, AttentionPage, useAttention } from "./attention-page";
 import { attentionCount } from "./attention";
 import { setAppBadge } from "./app-badge";
+import { useFadeEdges } from "./fade-edges";
 import { ListToggle, ViewToggle, calm, codeSize, foldedRuntimes, panelSize, listOpen, pane, pinned, setCalm, setPane, toggleRuntime } from "./view-mode";
 import { MenuItem } from "./menu";
 import { SessionModelPicker } from "./model-picker";
@@ -343,6 +344,8 @@ function SessionList({ store, activeKey, narrow, onStart, gear, gearWide }: { st
     const folded = foldedRuntimes.value;
     const pins = pinned.value;
     const rtOf = new Map(runtimes.map((rt) => [rt.id, rt]));
+    const listScroll = useRef<HTMLDivElement>(null);
+    useFadeEdges(listScroll);
     const keyOf = (s: SessionSummary) => `${s.id.runtime}:${s.id.hash}`;
     const cutoff = Date.now() - RECENT_DAYS * 86_400_000;
     const live = (s: SessionSummary) => s.status === "running" || s.status === "waiting";
@@ -364,7 +367,7 @@ function SessionList({ store, activeKey, narrow, onStart, gear, gearWide }: { st
                 </button>
                 <StartMenu store={store} onPick={onStart} icon={<IconCompose />} />{narrow ? gear : null}
             </div>
-            <div class="view chat-list-scroll fade-edges">
+            <div class="view chat-list-scroll fade-edges" ref={listScroll}>
                 {runtimes.length === 0 && status.state === "online" ? <div class="empty">No runtimes yet. Pair one to see its sessions here.</div> : null}
                 {pinnedRows.length ? (
                     <section class="chat-group chat-pinned" aria-label="Pinned">
@@ -471,6 +474,7 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     const scroller = useRef<HTMLDivElement>(null);
     const content = useRef<HTMLDivElement>(null);
     const stuck = useRef(true);
+    useFadeEdges(scroller);
 
     // Follow the newest event while the reader is at the bottom; leave them alone once they scroll up.
     useEffect(() => {

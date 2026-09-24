@@ -1501,3 +1501,36 @@ test("a citation to a step the window no longer draws brings it back, rather tha
     expect(errors).toEqual([]);
     await page.close();
 });
+
+// A fade PROMISES there is more that way. Drawn at rest it promises it about nothing, and a dimmed first line with
+// clear space above it reads as precisely the cut-off document the fade was added to soften — which is what the
+// session list did, over its own first group heading, while sitting at the top of a list that fits on screen.
+test("an edge fades only where the document continues past it", async () => {
+    const { page, errors } = await open(PHONE);
+    const alpha = (sel, pseudo) => page.evaluate(([s, p]) => {
+        const el = document.querySelector(s);
+        if (!el) return null;
+        const cs = getComputedStyle(el, p);
+        return cs.display === "none" ? 0 : parseFloat(cs.opacity);
+    }, [sel, pseudo]);
+
+    // The list, at its top and short enough to need no scrolling: neither end continues, so neither end fades.
+    await page.locator(".chat-list-scroll").waitFor();
+    await expect.poll(() => alpha(".chat-list-scroll", "::before")).toBe(0);
+    await expect.poll(() => alpha(".chat-list-scroll", "::after")).toBe(0);
+
+    // A transcript long enough to scroll, which opens pinned to its newest turn: the end is reached, the start is
+    // several screens up, so the top fades and the bottom does not.
+    const key = await longThread(page, 30, "fade");
+    await page.goto(`${server.url}#/s/${encodeURIComponent(key)}`);
+    await page.locator(".chat-transcript").getByText("Answer 29").waitFor();
+    await expect.poll(() => alpha(".chat-transcript", "::after")).toBe(0);
+    await expect.poll(() => alpha(".chat-transcript", "::before")).toBe(1);
+
+    // And the other way round once the reader is back at the start.
+    await page.locator(".chat-transcript").evaluate((el) => { el.scrollTop = 0; });
+    await expect.poll(() => alpha(".chat-transcript", "::before")).toBe(0);
+    await expect.poll(() => alpha(".chat-transcript", "::after")).toBe(1);
+    expect(errors).toEqual([]);
+    await page.close();
+});
