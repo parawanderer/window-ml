@@ -1291,6 +1291,21 @@ test("addresses: a link opens a view and its tab, the address follows what is on
     await page.goBack();
     await expect(page.getByRole("tablist", { name: "Settings" })).toHaveCount(0);
 
+    // BACK, THEN A LINK, faster than a render: the address the link set must stand. The writer used to mirror the
+    // state back's `hashchange` had just read over the newer address, so `#/search` came up as the list (CI's slower
+    // runners lost this every time). A throttled CPU widens the gap between the render and its effect the same way.
+    await page.locator(".chat-list-foot .chat-gear-btn").click();
+    await page.getByRole("menuitem", { name: "Settings" }).click();
+    await expect(page).toHaveURL(/#\/settings\//);
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: 20 });
+    // The link lands as soon as back has (in back's own `hashchange`, after the router's reader has run), before
+    // the render that reading scheduled has reached its effect.
+    await page.evaluate(() => { addEventListener("hashchange", () => { queueMicrotask(() => { location.hash = "#/search"; }); }, { once: true }); history.back(); });
+    await expect(page.getByRole("main", { name: /Search/ })).toBeVisible();
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+    await expect(page).toHaveURL(/#\/search$/);
+
     // The other views have addresses too, and a reload keeps the one you are on.
     await page.goto(`${server.url}#/search`);
     await expect(page.getByRole("main", { name: /Search/ })).toBeVisible();
@@ -1798,6 +1813,25 @@ test("a card that cannot be dismissed says why, by pointer and by tap", async ()
     await page.close();
 });
 
+// `width: 100%` is not redundant beside `margin: 0 auto`. The scroller is a flex COLUMN, so the column is a flex
+// item, and auto side margins on one centre it at its CONTENT width rather than filling to the cap — which made
+// every chat as wide as its own longest line, so the column moved when you changed session.
+test("every session's column is the same width, whatever is in it", async () => {
+    const { page, errors } = await open(DESKTOP);
+    const widths = [];
+    for (const key of [WAITING, CHAT, CAPPED]) {
+        await page.goto(`${server.url}#/s/${encodeURIComponent(key)}`);
+        await page.locator(".chat-transcript > div").waitFor();
+        await page.waitForTimeout(100);
+        widths.push(Math.round((await page.locator(".chat-transcript > div").boundingBox()).width));
+    }
+    expect(new Set(widths).size, `column widths differed: ${widths.join(", ")}`).toBe(1);
+    // And it is the reading measure, not whatever the content happened to need.
+    expect(widths[0]).toBeGreaterThan(600);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 // The notes sit UNDER the results, so one about a machine the filter has excluded reads as being about the results
 // above it: picking Lab box and being told to reconnect Work laptop's folder looks like Lab box is the one at fault.
 test("the archive-folder note follows the device filter, rather than speaking for every machine", async () => {
@@ -2009,6 +2043,33 @@ test("the buttons in an output cell's corner are one set, not two", async () => 
     // Side by side in one row, close together — not scattered across the corner.
     const gaps = boxes.slice(1).map((b, i) => b.right - b.h - boxes[i].right);
     for (const g of gaps) expect(Math.abs(g)).toBeLessThan(30);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// A notice is centred on the COLUMN being read, not the window — beside a session list the window's middle is off to
+// one side of the thread. But the measurement outlived the thing measured: going back to the list unmounts that pane
+// and the notice stayed where it had been, which on a phone put it half off the left of the screen, where it can be
+// neither read nor dismissed.
+test("a notice stays on screen when the pane it was centred on goes away @mobile", async () => {
+    const { page, errors } = await open(PHONE, `#/s/${encodeURIComponent(CAPPED_HERE)}`);
+    await page.locator(".continue-run").waitFor();
+    // Twice in one tick: the first press sets the run going, so the second is refused and says so.
+    await page.evaluate(() => {
+        const b = document.querySelector(".continue-run");
+        b.click();
+        b.click();
+    });
+    const notices = page.locator(".chat-notices");
+    await expect(notices).toBeVisible();
+
+    await page.locator(".chat-sheet-back").click();
+    await expect(page.locator(".chat-list")).toBeVisible();
+    await expect(notices).toBeVisible();
+    const box = await notices.boundingBox();
+    const width = page.viewportSize().width;
+    expect(box.x, `notice starts at ${box.x}`).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width, `notice ends at ${box.x + box.width} of ${width}`).toBeLessThanOrEqual(width);
     expect(errors).toEqual([]);
     await page.close();
 });

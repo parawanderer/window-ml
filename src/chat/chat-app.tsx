@@ -68,6 +68,9 @@ function useNarrow(): boolean {
 /** Whether this page pushed the history entry the open session sits on. Back then pops it (so the phone's own back
  *  gesture and the button agree); a session opened from a link has no entry of ours beneath it to go back to. */
 let pushedEntry = false;
+/** The address as the router last READ or WROTE it. One that differs has been changed by someone else (a link, back,
+ *  a typed address) and its `hashchange` is still on the way, so the writer leaves it alone for the reader. */
+let seenHash = "";
 
 /**
  * The page's ADDRESS mirrors what is on screen, both ways (route.ts): the open session, or a main view and its tab. So
@@ -77,6 +80,7 @@ let pushedEntry = false;
 function useHashRoute(): void {
     useEffect(() => {
         const read = () => {
+            seenHash = location.hash;
             const r = parseRoute(location.hash);
             const key = r.session && parseSessionKey(r.session) ? r.session : null;
             const v = view.value;
@@ -101,6 +105,10 @@ function useHashRoute(): void {
     const first = useRef(true);
     useEffect(() => {
         if (first.current) { first.current = false; return; }
+        // THE ADDRESS MOVED ON since this state was read from it: back, then a link, faster than a render. Writing now
+        // would put the older state's address over the newer one (a quick back then `#/search` landed on the list),
+        // and the `hashchange` already queued would then read the overwritten address. The reader applies the new one.
+        if (location.hash !== seenHash) return;
         const want = formatRoute({ session: key ?? undefined, main: main ?? undefined, tab: main === "settings" ? tab : undefined });
         if (location.hash === want || (!want && !location.hash)) return;
         const here = parseRoute(location.hash);
@@ -109,6 +117,7 @@ function useHashRoute(): void {
         if (!want) { history.replaceState(null, "", location.pathname + location.search); pushedEntry = false; }
         else if (same) history.replaceState(null, "", want);
         else { history.pushState(null, "", want); pushedEntry = true; }
+        seenHash = location.hash;
     }, [key, main, tab]);
 }
 
@@ -525,17 +534,27 @@ function Notices({ store }: { store: ChatStore }) {
     // Centred on the column being read, not the window: beside a session list (and a dock) the window's middle is
     // off to one side of the thread. The column is measured, because the list folds and the dock opens.
     const [mid, setMid] = useState<number | null>(null);
+    // RE-MEASURED WHEN THE VIEW CHANGES, not only when a notice appears. Going back to the list unmounts the pane
+    // this was centred on, and the measurement outlived it: the notice stayed at a column that was no longer there,
+    // which on a phone put it half off the left of the screen. No pane means the window's own middle.
+    const where = view.value.name === "detail" ? `detail:${view.value.hash}` : view.value.name;
     useEffect(() => {
         if (!list.length) return;
         const main = document.querySelector<HTMLElement>(".chat-main");
         if (!main) { setMid(null); return; }
-        const place = () => { const r = main.getBoundingClientRect(); setMid(r.left + r.width / 2); };
+        // And CLAMPED, because a column can be narrower than the notice or sit against an edge; centring on it then
+        // hangs the notice off the screen, which is the one place it cannot be read or dismissed.
+        const place = () => {
+            const r = main.getBoundingClientRect();
+            const half = Math.min(innerWidth * 0.92, 460) / 2;
+            setMid(Math.min(Math.max(r.left + r.width / 2, half + 8), innerWidth - half - 8));
+        };
         place();
         const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(place);
         ro?.observe(main);
         addEventListener("resize", place);
         return () => { ro?.disconnect(); removeEventListener("resize", place); };
-    }, [list.length > 0]);
+    }, [list.length > 0, where]);
     if (!list.length) return null;
     return (
         <div class="chat-notices" role="status" aria-live="polite" style={mid == null ? undefined : `left:${mid}px`}>
