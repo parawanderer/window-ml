@@ -11,6 +11,7 @@
 // it can, "new agent run" only where `capabilities.agent` does, and the tab picker only where `capabilities.tabs`
 // does. A phone talking to a headless box gets a chat form and no tabs, without this file knowing what a box is.
 import type { ComponentChildren } from "preact";
+import { STEP_BUDGETS } from "../step-budget";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { AgentTarget, RuntimeInfo, TabGroupInfo, TabInfo } from "../session-host";
 import { truncate } from "../sidebar/format";
@@ -151,13 +152,16 @@ export function ResumeSession({ store, rt, session, onResumed, onCancel }: {
     onCancel: () => void;
 }) {
     const [busy, setBusy] = useState(false);
+    // The budget it carries on with. A resume that re-homes a run and leaves it stopped is two presses for one
+    // intention — you came here to make it go — so the form asks how far, and the answer is what makes it go.
+    const [steps, setSteps] = useState<number>(STEP_BUDGETS[1]);
     const pick = useTargetPick(store, rt, true);
     const resume = async (): Promise<void> => {
         if (!pick.ready || busy) return;
         setBusy(true);
         try {
             // A refusal is already on screen as a notice, so the form stays as it is: pick somewhere else and retry.
-            const r = await store.send({ type: "session.resume", session, target: pick.target() });
+            const r = await store.send({ type: "session.resume", session, target: pick.target(), maxSteps: steps });
             if (r.ok) onResumed();
         } finally { setBusy(false); }
     };
@@ -169,16 +173,24 @@ export function ResumeSession({ store, rt, session, onResumed, onCancel }: {
                 product's form the moment it sits beside them. */}
             <div class="chat-dialog-form">
                 <div class="chat-dialog-pick"><span class="chat-dialog-lead">Resume on</span>{pick.inline}</div>
+                <div class="chat-dialog-pick"><span class="chat-dialog-lead">And give it</span>
+                    <div class="chat-seg" role="radiogroup" aria-label="Steps to carry on with">
+                        {STEP_BUDGETS.map((n) => (
+                            <button key={n} type="button" role="radio" aria-checked={steps === n}
+                                class={`chat-seg-opt${steps === n ? " on" : ""}`} onClick={() => setSteps(n)}>{n} steps</button>
+                        ))}
+                    </div>
+                </div>
                 <p id="chat-res-p" class="chat-resume-lost" data-field="lost">
-                    The same run, not a new one: it keeps its hash and its history, and carries on from what it had
-                    said, on the page you pick. It does not carry over live references to elements on the old page,
+                    The same run, not a new one: it keeps its hash and its history, and carries straight on from what
+                    it had said, on the page you pick. It does not carry over live references to elements on the old page,
                     that page's state, cached fetches, tools a page script defined, or approval grants: consent
                     belongs to the tab it was given in, and is asked again.
                 </p>
             </div>
             <div class="chat-dialog-actions">
                 <button class="btn" onClick={onCancel}>Cancel</button>
-                <button class="btn primary" disabled={!pick.ready || busy} onClick={() => void resume()}>{busy ? "Resuming…" : "Resume"}</button>
+                <button class="btn primary" disabled={!pick.ready || busy} onClick={() => void resume()}>{busy ? "Resuming…" : "Resume and go"}</button>
             </div>
         </Dialog>
     );
