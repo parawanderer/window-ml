@@ -48,7 +48,7 @@ test("phone: the list first, a session on its own, approve through the runtime, 
     // One pane: the list, grouped by runtime, with the open approval badged.
     await expect(page.locator(".chat-main")).toHaveCount(0);
     await expect(page.locator(".chat-rt", { hasText: "Lab box" }).locator(".chat-chip")).toHaveText("view only");
-    await expect(row(page, WAITING).locator(".chat-appr-badge")).toHaveText("1 approval");
+    await expect(row(page, WAITING).locator(".chat-appr-badge")).toHaveText("1 pending");
 
     await row(page, WAITING).click();
     await expect(page.locator(".chat-list")).toHaveCount(0);
@@ -1594,6 +1594,20 @@ test("the Continue pill is sized as an action on a wide page, not as a chip", as
     await page.close();
 });
 
+// "waiting on you" beside "1 approval" is the same fact in two voices. The badge is the one that says how many and
+// reads at a glance, so where there is a count the count IS the status.
+test("a session waiting on you says so once, as one badge", async () => {
+    const { page, errors } = await open(DESKTOP);
+    const meta = row(page, WAITING).locator(".chat-row-meta");
+    await expect(meta.locator(".chat-appr-badge")).toHaveText("1 pending");
+    await expect(meta).not.toContainText("waiting on you");
+    await expect(meta.locator(".chat-status")).toHaveCount(0);
+    // A status with no count of its own still speaks: the badge only replaces what it can say better.
+    await expect(row(page, CAPPED).locator(".chat-status")).toHaveText("stopped at its step cap");
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 // A GATE THAT HAS NOT BEEN DRAWN YET IS NOT A GATE THAT IS OUT OF REACH, and reading the two alike put the bar on
 // screen for a few frames of every reload: the summary says an approval is pending before the transcript's events
 // have arrived, so there was no card to find, and the bar announced a gate about to appear right under it.
@@ -1641,6 +1655,28 @@ test("a card that cannot be dismissed says why, by pointer and by tap", async ()
     await expect(stuck.locator(".chat-att-why-note")).toContainText("until it is put right on Work laptop");
     await stuck.locator(".chat-att-why").click();
     await expect(stuck.locator(".chat-att-why-note")).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// The back button used to be positioned absolutely over the corner while this bar carried 60px of padding to dodge
+// it — two mechanisms placing two things that belong together, and it read as exactly that: a chevron adrift above a
+// pill that had drifted the other way. A session's own header already reads `‹ <model>`; a new one should too.
+test("starting a session on a phone leads with one row: the way back, then the model @mobile", async () => {
+    const { page, errors } = await open(PHONE);
+    await page.getByRole("button", { name: "New session" }).click();
+    const bar = page.locator(".chat-start-top");
+    await expect(bar).toBeVisible();
+    const back = bar.locator(".chat-sheet-back");
+    const model = bar.locator(".tp-pill-model");
+    await expect(back).toBeVisible();
+    await expect(model).toBeVisible();
+
+    // ONE ROW: same line, back first, and the model does not begin a third of the way across the screen.
+    const [b, m] = [await back.boundingBox(), await model.boundingBox()];
+    expect(Math.abs((b.y + b.height / 2) - (m.y + m.height / 2))).toBeLessThan(4);
+    expect(b.x).toBeLessThan(m.x);
+    expect(m.x - (b.x + b.width)).toBeLessThan(24);
     expect(errors).toEqual([]);
     await page.close();
 });
