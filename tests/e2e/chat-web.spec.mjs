@@ -1621,3 +1621,24 @@ test("the approval bar does not flash on load when the gate is right there", asy
     expect(errors).toEqual([]);
     await page.close();
 });
+
+// The notes sit UNDER the results, so one about a machine the filter has excluded reads as being about the results
+// above it: picking Lab box and being told to reconnect Work laptop's folder looks like Lab box is the one at fault.
+test("the archive-folder note follows the device filter, rather than speaking for every machine", async () => {
+    const { page, errors } = await open(DESKTOP, "#/search");
+    const foot = page.locator(".chat-search-foot");
+    const devices = page.locator(".chat-search-devices");
+
+    // Across every device, the lapsed one is named.
+    await expect(foot).toContainText("Work laptop's archive folder");
+
+    // Narrowed to a machine that has no such problem, it says nothing at all.
+    await devices.getByRole("button", { name: "Lab box" }).click();
+    await expect(foot).toHaveCount(0);
+
+    // Narrowed to the machine it IS about, it comes back.
+    await devices.getByRole("button", { name: "Work laptop" }).click();
+    await expect(foot).toContainText("Work laptop's archive folder");
+    expect(errors).toEqual([]);
+    await page.close();
+});
