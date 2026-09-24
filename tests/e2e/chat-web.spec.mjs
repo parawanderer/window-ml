@@ -14,6 +14,8 @@ const ROOT = path.resolve(process.env.E2E_DIST_WEB || "dist-web");
 const PHONE = { width: 390, height: 844 };
 const DESKTOP = { width: 1280, height: 800 };
 const WAITING = "laptop:3f9a0c21", CHAT = "laptop:7b21d4e8", WATCHED = "lab-box:1d2e3f40", CAPPED = "laptop:c0ffee12";
+// A capped run whose tab is still OPEN, against CAPPED, whose page has gone: the two offer different things.
+const CAPPED_HERE = "laptop:beef1234";
 
 let server, browser;
 test.beforeAll(async () => {
@@ -432,7 +434,7 @@ test("desktop: the list folds a runtime away, and marks what moved while you wer
     const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
     // Visible rows: a folded group stays mounted so it can slide, hidden once it has.
     const rows = page.locator(".chat-list .chat-row:visible");
-    await expect(rows).toHaveCount(6);
+    await expect(rows).toHaveCount(7);
 
     // Calm: the heading's chevron sits after the name and shows only while the pointer is on the heading.
     const head = page.locator(".chat-rt[data-runtime='laptop']");
@@ -455,7 +457,7 @@ test("desktop: the list folds a runtime away, and marks what moved while you wer
     await page.reload();
     await expect(rows).toHaveCount(2);
     await page.locator(".chat-rt[data-runtime='laptop']").click();
-    await expect(rows).toHaveCount(6);
+    await expect(rows).toHaveCount(7);
 
     // A session that moves while another one is open is marked; reading it is catching up with it.
     await expect(row(page, WAITING).locator(".chat-moved")).toHaveCount(0);
@@ -696,9 +698,9 @@ test("desktop: the list shows the last month, and the search page holds every se
     await expect(search.locator(".chat-search-row").first().locator(".chat-search-date")).toHaveText(/\S/);
     const toEnd = () => search.locator(".chat-sheet-scroll").evaluate((el) => { el.scrollTop = el.scrollHeight; });
     await toEnd();
-    await expect(search.locator(".chat-search-row")).toHaveCount(54);
+    await expect(search.locator(".chat-search-row")).toHaveCount(55);
     // Past what the page holds, the runtime's ARCHIVE: asked for a page at a time, and each of its rows marked.
-    await expect(async () => { await toEnd(); expect(await search.locator(".chat-search-row").count()).toBe(84); }).toPass();
+    await expect(async () => { await toEnd(); expect(await search.locator(".chat-search-row").count()).toBe(85); }).toPass();
     await expect(search.locator(".chat-search-arch")).toHaveCount(30);
     // A runtime whose archive folder lost its permission says so at the foot: search still works, the copy is paused.
     await expect(search.locator(".chat-search-foot")).toContainText("Reconnect Work laptop's archive folder");
@@ -1583,7 +1585,8 @@ test("the answer's collapse control sits in the gutter on a wide page and with t
 // is small together. On a page this wide that same pill read as a footnote under the line that had just said the
 // run stopped — a chip among the prose rather than the way onward.
 test("the Continue pill is sized as an action on a wide page, not as a chip", async () => {
-    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CAPPED)}`);
+    // CAPPED_HERE, not CAPPED: Continue is only offered on a run whose page still holds it.
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CAPPED_HERE)}`);
     const wrap = page.locator(".continue-wrap");
     await expect(wrap).toBeVisible();
     const box = await wrap.boundingBox();
@@ -1677,6 +1680,41 @@ test("the runtime panel's lists read as lists: chips left and full width, bars e
     const rights = await page.locator(".stor-tools .stor-toolbar").evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().right)));
     expect(rights.length).toBeGreaterThan(1);
     expect(new Set(rights).size, `bars ended at ${rights.join(", ")}`).toBe(1);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// A capped run was offering BOTH ways forward at once, and only one of them could work: Continue is delivered
+// through the page that still holds the run, so on a run whose tab has closed the runtime answers "the page no
+// longer holds this run" and the press does nothing. The bolder of the two buttons was the one that could not.
+test("a capped run offers the one way forward that works, not both", async () => {
+    const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(CAPPED_HERE)}`);
+    // Its tab is open, so it carries on in place — and there is nothing to resume onto.
+    await expect(page.locator(".continue-wrap")).toBeVisible();
+    await expect(page.locator(".chat-resume")).toHaveCount(0);
+
+    // Its page has gone, so the offer is to put it back on one. Continue would reach nothing.
+    await page.goto(`${server.url}#/s/${encodeURIComponent(CAPPED)}`);
+    await expect(page.locator(".chat-resume")).toBeVisible();
+    await expect(page.locator(".continue-wrap")).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// And resuming ASKS HOW FAR, because a resume that re-homes a run and leaves it stopped is two presses for one
+// intention: you opened this to make it go.
+test("resuming a run picks its budget and carries it on in one press", async () => {
+    const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(CAPPED)}`);
+    await page.getByRole("button", { name: "Resume on a page" }).click();
+    const dialog = page.locator(".chat-dialog");
+    await expect(dialog.locator("h2")).toHaveText("Resume this run");
+    await expect(dialog.locator(".chat-seg-opt")).toHaveCount(3);
+    await dialog.getByRole("radio", { name: "50 steps" }).click();
+    await dialog.getByRole("button", { name: "Resume and go" }).click();
+
+    // The command carried the budget, and the run is going rather than sitting on a page waiting to be pressed again.
+    await expect.poll(async () => (await commands(page)).filter((c) => c.type === "session.resume").at(-1)?.maxSteps).toBe(50);
+    await expect(page.locator(".chat-resume")).toHaveCount(0);
     expect(errors).toEqual([]);
     await page.close();
 });
