@@ -1593,3 +1593,17 @@ test("the Continue pill is sized as an action on a wide page, not as a chip", as
     expect(errors).toEqual([]);
     await page.close();
 });
+
+// "waiting on you" beside "1 approval" is the same fact in two voices. The badge is the one that says how many and
+// reads at a glance, so where there is a count the count IS the status.
+test("a session waiting on you says so once, as one badge", async () => {
+    const { page, errors } = await open(DESKTOP);
+    const meta = row(page, WAITING).locator(".chat-row-meta");
+    await expect(meta.locator(".chat-appr-badge")).toHaveText("1 pending");
+    await expect(meta).not.toContainText("waiting on you");
+    await expect(meta.locator(".chat-status")).toHaveCount(0);
+    // A status with no count of its own still speaks: the badge only replaces what it can say better.
+    await expect(row(page, CAPPED).locator(".chat-status")).toHaveText("stopped at its step cap");
+    expect(errors).toEqual([]);
+    await page.close();
+});
