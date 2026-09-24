@@ -4,7 +4,7 @@ Status: **shipped.** Builds on the `python_exec` tool (offscreen Pyodide sandbox
 `offscreen.ts` + the relay + `buildPythonTool`). All five build steps landed:
 stdout fidelity, `cast`, the two-slot render architecture, the `python-in`/`python-out`
 descriptors + RenderPanel cases + export, and the generic `rendered/raw` tooltips.
-Tested in `tests/sidebar.test.js` (python render + the migrated two-slot assertions) and
+Tested in `tests/sidebar-output.test.js` (python render + the migrated two-slot assertions) and
 `tests/agent.test.js` (the `renderIn`/`renderOut` emit shape).
 
 **pandas + table-selector `df` — SHIPPED.** pandas is bundled (single-sourced in
