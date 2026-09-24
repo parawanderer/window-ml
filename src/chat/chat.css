@@ -42,6 +42,16 @@ html, body, #root { height: 100%; }
 
 /* A runtime's heading in the list: a dot for reachable, its name, and what this device may do there. */
 .chat-group { margin-bottom: 14px; }
+/* The heading is TWO controls side by side — fold the group, and start a session on this machine — because a button
+   cannot hold a button. The `+` stays quiet until the heading is under the pointer: it is an offer, not a thing to
+   read down the list, and one per group drawn at full strength would be the loudest thing on a page of session names.
+   A touch screen has no hover, so there it is simply always there. */
+.chat-rt-head { display: flex; align-items: center; gap: 4px; }
+.chat-rt-head .chat-rt { flex: 1 1 auto; min-width: 0; }
+.chat-rt-add { flex: 0 0 auto; opacity: 0; transition: opacity .12s linear; }
+.chat-rt-head:hover .chat-rt-add, .chat-rt-add:focus-visible { opacity: 1; }
+@media (pointer: coarse) { .chat-rt-add { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .chat-rt-add { transition: none; } }
 .chat-rt {
     display: flex; align-items: center; gap: 7px; padding: 4px 2px 6px; color: var(--fg-dim); font: inherit;
     font-size: .92em; width: 100%; text-align: left; background: none; border: none; cursor: pointer;

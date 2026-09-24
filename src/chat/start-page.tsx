@@ -47,7 +47,10 @@ export function useHeldTrue(on: boolean, ms: number): boolean {
 }
 
 /** The start page: a pill to type in, and the choices a start needs on one row inside it. */
-export function StartPage({ store, onStarted, initialKind, extras, narrow, back }: { store: ChatStore; onStarted: (key: string) => void; initialKind?: StartKind; extras?: ChatExtras; narrow?: boolean;
+export function StartPage({ store, onStarted, initialKind, initialRuntime, extras, narrow, back }: { store: ChatStore; onStarted: (key: string) => void; initialKind?: StartKind;
+    /** the device to arrive on, where the start began at one (a runtime's `+` in the list). Ignored where that
+     *  runtime cannot start this kind: the page falls back to one that can, rather than offering a dead choice. */
+    initialRuntime?: string; extras?: ChatExtras; narrow?: boolean;
     /** the way back, on a phone: drawn as the first thing in the top bar, beside the model */
     back?: preact.ComponentChildren }) {
     // Kept through a reconnect like the runtime below, or the Agent/Chat switch would vanish and come back with it.
@@ -58,7 +61,7 @@ export function StartPage({ store, onStarted, initialKind, extras, narrow, back 
     const [kindPick, setKind] = useState<StartKind>(initialKind ?? "agent");
     const kind: StartKind = kinds.includes(kindPick) ? kindPick : kinds[0] ?? "agent";
     const runtimes = startableOn(store, kind);
-    const [runtimeId, setRuntimeId] = useState("");
+    const [runtimeId, setRuntimeId] = useState(initialRuntime ?? "");
     // The runtime last drawn is kept while it reconnects (START_GRACE_MS), so the choices below, the tab list and the
     // models already asked for, stay as they were instead of being dropped and asked for again. It cannot start
     // anything until it is back: `ready` reads `online`.
@@ -99,6 +102,7 @@ export function StartPage({ store, onStarted, initialKind, extras, narrow, back 
     const box = useRef<HTMLTextAreaElement>(null);
     useEffect(() => { box.current?.focus(); }, [kind]);
     useEffect(() => { if (initialKind) setKind(initialKind); }, [initialKind]);
+    useEffect(() => { if (initialRuntime) setRuntimeId(initialRuntime); }, [initialRuntime]);
     // The box grows with what is typed, to a cap, like the session composer.
     useEffect(() => {
         const el = box.current;

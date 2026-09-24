@@ -619,7 +619,9 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
     const key = v.name === "detail" ? v.hash : null;
     // The new-session form is deliberately NOT in the URL, unlike the open session: it holds what someone is part
     // way through typing, and a link to a half-written message is not a thing anyone wants to share or reload into.
-    const [starting, setStarting] = useState<StartKind | null>(null);
+    // WHAT is being started, and WHERE. The runtime is carried because a start can begin at a device — the `+` on a
+    // runtime's group in the list — and arriving at the form with the machine already chosen is the whole point of it.
+    const [starting, setStarting] = useState<{ kind: StartKind; runtime?: string } | null>(null);
     // WHOSE box the device's own views describe: the open session's runtime, or — with nothing open — the first
     // one that offers anything. Never "the local one": that question is not asked anywhere on this page.
     const openRt = key ? store.runtime(parseSessionKey(key)?.runtime ?? "") : undefined;
@@ -646,7 +648,7 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
     useEffect(() => { if (key) store.open(key); else store.close(); }, [key]);
     useEffect(() => { if (key) { setStarting(null); mainView.value = null; } }, [key]);   // opening a session puts the form and the search page away
     // The compose button opens the start page: it closes whatever is open, because the start page IS the empty page.
-    const start = (k: StartKind) => { mainView.value = null; setStarting(k); if (key) view.value = { name: "list" }; };
+    const start = (k: StartKind, runtime?: string) => { mainView.value = null; setStarting({ kind: k, ...(runtime ? { runtime } : {}) }); if (key) view.value = { name: "list" }; };
     // Held through a worker restart (START_GRACE_MS): the page does not trade the start page for "Pick a session" and
     // back each time the browser stops an idle worker.
     const canStart = useHeldTrue(startableOn(store, "agent").length > 0 || startableOn(store, "chat").length > 0, START_GRACE_MS);
@@ -682,7 +684,7 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
                                 <ViewToggle />
                             </div>
                         )}
-                        <StartPage store={store} extras={extras} narrow={narrow} initialKind={starting ?? undefined}
+                        <StartPage store={store} extras={extras} narrow={narrow} initialKind={starting?.kind} initialRuntime={starting?.runtime}
                             back={narrow ? <button class="hbtn chat-sheet-back" aria-label="Back to sessions" onClick={() => setStarting(null)}><IconBack /></button> : null}
                             onStarted={(k) => { setStarting(null); openSession(k); }} />
                     </main>

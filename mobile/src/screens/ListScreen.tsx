@@ -8,7 +8,7 @@ import { Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from "
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { Bot } from "lucide-react-native";
+import { Bot, Plus } from "lucide-react-native";
 import { IconCompose, IconGear, IconInbox, IconSearch } from "../icons";
 import * as Haptics from "expo-haptics";
 import type { SessionSummary } from "../../../src/session-host";
@@ -29,6 +29,10 @@ export function ListScreen() {
     const insets = useSafeAreaInsets();
     const nav = useNavigation<NativeStackNavigationProp<Routes>>();
     const e = useEmbed();
+    // Can a session be started on this machine at all? The page's own answer (`startable`), so the `+` appears on
+    // exactly the runtimes the chat page draws one on — a machine that is offline or that this device may only watch
+    // gets none, and its absence is the honest signal about which machines can take work.
+    const startOn = (id: string) => e.startable.agent.includes(id) || e.startable.chat.includes(id);
     const layer = useSessionLayer();
     const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
     const [refreshing, setRefreshing] = useState(false);
@@ -102,6 +106,15 @@ export function ListScreen() {
                         <Text style={[s.sectionName, { color: p.fgDim }]}>{section.runtime.name}</Text>
                         {section.runtime.grants.every((g) => g.scope === "view") ? <Text style={[s.tag, { color: p.fgFaint, borderColor: p.border }]}>view only</Text> : null}
                         {!section.runtime.online ? <Text style={{ color: p.fgFaint, fontSize: 12.5 }}>offline</Text> : null}
+                        <View style={{ flex: 1 }} />
+                        {/* Only where something can actually be started here — `startable` is the PAGE's answer, the
+                            same one its own `+` is drawn from, so the two surfaces cannot disagree about which
+                            machines can take work. A touch screen has no hover, so it is simply always there. */}
+                        {startOn(section.runtime.id) ? (
+                            <IconButton label={`Start a session on ${section.runtime.name}`}
+                                icon={(c) => <Plus size={18} color={c} />}
+                                onPress={() => nav.navigate("NewChat", { runtime: section.runtime!.id })} />
+                        ) : null}
                     </Pressable>
                 )}
                 renderSectionFooter={({ section }) => section.runtime && section.older && !folded.has(section.runtime.id) ? (

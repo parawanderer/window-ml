@@ -11,7 +11,7 @@ import { signal } from "@preact/signals";
 import { useRef, useEffect } from "preact/hooks";
 import type { SessionStatus, SessionKey, RuntimeInfo, SessionSummary } from "../session-host";
 import { truncate } from "../sidebar/format";
-import { IconChevron, IconPin, IconSearch, IconCompose, IconInbox, IconHistory } from "../sidebar/icons";
+import { IconChevron, IconPin, IconPlus, IconSearch, IconCompose, IconInbox, IconHistory } from "../sidebar/icons";
 import { AgentBadge } from "../sidebar/reply";
 import type { Status } from "../sidebar/store";
 import { Stamp, Dot, cursorTipOn } from "../sidebar/ui-kit";
@@ -19,7 +19,7 @@ import type { ChatStore } from "./chat-store";
 import { useFadeEdges } from "./fade-edges";
 import { mayCommand, speaksOurContract } from "./grants";
 import { openSession, mainView, openSearch } from "./nav";
-import { type StartKind, StartMenu } from "./new-session";
+import { startableOn, type StartKind, StartMenu } from "./new-session";
 import { PageChip } from "./page-chip";
 import { isPinned, RowMenu } from "./row-menu";
 import { toggleRuntime, foldedRuntimes, pinned, ListToggle } from "./view-mode";
@@ -71,17 +71,32 @@ export function useMovedSince(store: ChatStore, openKey: SessionKey | null): voi
 }
 
 /** A runtime's heading in the list: its name, whether it is reachable, and what this device may do there. */
-function RuntimeHead({ rt, folded }: { rt: RuntimeInfo; folded: boolean }) {
+function RuntimeHead({ store, rt, folded, onStart }: { store: ChatStore; rt: RuntimeInfo; folded: boolean; onStart: (kind: StartKind, runtime: string) => void }) {
     const watchOnly = !mayCommand(rt, "session.send");
+    // The kind this device would start here: the FIRST one it can, not the page's usual default. A machine that runs
+    // agents and not chats must not open the form on Chat and then quietly swap the device out from under the choice.
+    const kind = (["agent", "chat"] as const).find((k) => startableOn(store, k).some((r) => r.id === rt.id));
     return (
-        <button class={`chat-rt${rt.online ? "" : " off"}${folded ? " folded" : ""}`} data-runtime={rt.id}
-            aria-expanded={!folded} onClick={() => toggleRuntime(rt.id)}>
-            <span class={`tri${folded ? "" : " open"}`} aria-hidden="true"><IconChevron /></span>
-            <span class={`chat-rt-dot${rt.online ? " on" : ""}`} aria-hidden="true" />
-            <b class="chat-rt-name">{rt.name}</b>
-            {!rt.online ? <span class="chat-rt-note">offline{rt.lastSeen ? <> · seen <Stamp ts={rt.lastSeen} /></> : null}</span> : null}
-            {rt.online && watchOnly ? <span class="chat-chip">view only</span> : null}
-        </button>
+        // A wrapper with TWO buttons rather than one inside the other: the head is itself a button (it folds the
+        // group), and a button cannot hold a button — the same reason a row's `⋮` is a sibling of the row.
+        <div class="chat-rt-head">
+            <button class={`chat-rt${rt.online ? "" : " off"}${folded ? " folded" : ""}`} data-runtime={rt.id}
+                aria-expanded={!folded} onClick={() => toggleRuntime(rt.id)}>
+                <span class={`tri${folded ? "" : " open"}`} aria-hidden="true"><IconChevron /></span>
+                <span class={`chat-rt-dot${rt.online ? " on" : ""}`} aria-hidden="true" />
+                <b class="chat-rt-name">{rt.name}</b>
+                {!rt.online ? <span class="chat-rt-note">offline{rt.lastSeen ? <> · seen <Stamp ts={rt.lastSeen} /></> : null}</span> : null}
+                {rt.online && watchOnly ? <span class="chat-chip">view only</span> : null}
+            </button>
+            {/* Only where something can actually be started here. A machine that is offline, or that this device may
+                only watch, gets none — a `+` that cannot work is worse than no `+`, and its absence is itself the
+                honest signal about which machines can take work. */}
+            {kind ? (
+                <button class="tt chat-rt-add hbtn" aria-label={`Start a session on ${rt.name}`} onClick={() => onStart(kind, rt.id)}>
+                    <IconPlus /><span class="tt-pop" role="tooltip">Start a session on {rt.name}</span>
+                </button>
+            ) : null}
+        </div>
     );
 }
 
@@ -143,7 +158,7 @@ const localTs = (s: SessionSummary, rt: RuntimeInfo | undefined) => s.lastTs - (
  * away something that wants you. Everything else past `RECENT_DAYS` lives on the search page (`search-page.tsx`),
  * which both the header's search button and the "Older sessions" row open: one place to find a session, not two.
  */
-export function SessionList({ store, activeKey, narrow, onStart, gear, gearWide }: { store: ChatStore; activeKey: SessionKey | null; narrow: boolean; onStart: (kind: StartKind) => void; gear: preact.ComponentChildren; gearWide: preact.ComponentChildren }) {
+export function SessionList({ store, activeKey, narrow, onStart, gear, gearWide }: { store: ChatStore; activeKey: SessionKey | null; narrow: boolean; onStart: (kind: StartKind, runtime?: string) => void; gear: preact.ComponentChildren; gearWide: preact.ComponentChildren }) {
     const runtimes = store.runtimes.value;
     const sessions = store.listed();
     const status = store.status.value;
@@ -201,7 +216,7 @@ export function SessionList({ store, activeKey, narrow, onStart, gear, gearWide 
                     const shut = folded.has(rt.id);
                     return (
                         <section class={`chat-group${shut ? " folded" : ""}`} key={rt.id}>
-                            <RuntimeHead rt={rt} folded={shut} />
+                            <RuntimeHead store={store} rt={rt} folded={shut} onStart={onStart} />
                             {/* Mounted while folded, so folding slides both ways; `inert` keeps a folded group's rows out of reach. */}
                             <div class="chat-group-body" inert={shut}>
                                 <div class="chat-group-rows">

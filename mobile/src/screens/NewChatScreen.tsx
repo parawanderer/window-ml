@@ -8,10 +8,11 @@ import { useEffect, useRef, useState } from "react";
 import { Image, Keyboard, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import type { BottomSheetModal } from "@gorhom/bottom-sheet";
 import { AppWindow, ArrowUp, Bot, ChevronLeft, Cpu, Globe, MessageCircle, MonitorSmartphone, Plus, TriangleAlert } from "lucide-react-native";
 import type { ModelChoice } from "../../../src/session-host";
+import type { Routes } from "../routes";
 import { draftOf, saveDraft } from "../drafts";
 import { useEmbed } from "../embed";
 import { useSessionLayer } from "../layer";
@@ -38,7 +39,10 @@ export function NewChatScreen() {
     const [kindPick, setKind] = useState<"chat" | "agent">("chat");
     const kind = kinds.includes(kindPick) ? kindPick : kinds[0] ?? "chat";
     const startable = e.runtimes.filter((r) => e.startable[kind].includes(r.id));
-    const [runtimeId, setRuntimeId] = useState(startable[0]?.id ?? "");
+    // The device the start BEGAN at, where it began at one (a runtime's `+` in the list). Honoured only while that
+    // machine can start this kind: falling back beats arriving on a device that cannot take the run.
+    const askedRuntime = useRoute<RouteProp<Routes, "NewChat">>().params?.runtime;
+    const [runtimeId, setRuntimeId] = useState((askedRuntime && startable.some((r) => r.id === askedRuntime) ? askedRuntime : startable[0]?.id) ?? "");
     const rt = startable.find((r) => r.id === runtimeId) ?? startable[0];
     const [models, setModels] = useState<ModelChoice[] | null | undefined>(undefined);
     const [model, setModel] = useState("");

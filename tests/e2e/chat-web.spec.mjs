@@ -487,6 +487,32 @@ test("a runtime that holds no other site is explained in ITS browser, not the re
     await page.close();
 });
 
+// A runtime's heading is where the thought "on THIS machine" happens, so starting from there should not then ask
+// which machine. The `+` is drawn by capability, which also makes its absence the honest signal: the machines showing
+// one are the machines that can take work.
+test("a runtime's + starts a session on that runtime, and only the ones that can take work have one", async () => {
+    const { page, errors } = await open(DESKTOP);
+    const head = (id) => page.locator(`.chat-rt-head:has(.chat-rt[data-runtime="${id}"])`);
+
+    // The laptop and the desk PC can start; the lab box is view-only and the old Mac is offline.
+    await expect(head("laptop").locator(".chat-rt-add")).toHaveCount(1);
+    await expect(head("desk-pc").locator(".chat-rt-add")).toHaveCount(1);
+    await expect(head("lab-box").locator(".chat-rt-add")).toHaveCount(0);
+    await expect(head("old-mac").locator(".chat-rt-add")).toHaveCount(0);
+
+    // Pressing it arrives with that machine already chosen — the whole point of starting from the heading.
+    await head("desk-pc").locator(".chat-rt-add").click();
+    await expect(page.getByRole("button", { name: /^Device:/ })).toHaveAccessibleName("Device: Desk PC");
+    // And on a kind THAT machine can start: the desk PC runs agents and not chats, so it must not open on Chat.
+    await expect(page.getByRole("radio", { name: "Agent" })).toHaveAttribute("aria-checked", "true");
+
+    await page.locator(".chat-start-box textarea").fill("check the build");
+    await page.locator(".chat-start-box textarea").press("Enter");
+    await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "agent.start", runtime: "desk-pc" });
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 // A tab id means nothing on another machine, so changing device drops the target rather than carrying it. It used to
 // keep it, and the pill then said "That tab closed · pick another" about a tab that is open and fine on the machine
 // you just left — and on a device with no tabs, no list was ever coming that could clear it.
