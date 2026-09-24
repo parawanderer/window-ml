@@ -48,7 +48,7 @@ test("phone: the list first, a session on its own, approve through the runtime, 
     // One pane: the list, grouped by runtime, with the open approval badged.
     await expect(page.locator(".chat-main")).toHaveCount(0);
     await expect(page.locator(".chat-rt", { hasText: "Lab box" }).locator(".chat-chip")).toHaveText("view only");
-    await expect(row(page, WAITING).locator(".chat-appr-badge")).toHaveText("1 approval");
+    await expect(row(page, WAITING).locator(".chat-appr-badge")).toHaveText("1 pending");
 
     await row(page, WAITING).click();
     await expect(page.locator(".chat-list")).toHaveCount(0);
