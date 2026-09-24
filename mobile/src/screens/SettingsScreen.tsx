@@ -3,7 +3,7 @@
 // it may do on each. Pairing and the device list arrive as screens of their own.
 
 import { useContext } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -12,6 +12,8 @@ import type { Routes } from "../routes";
 import { useEmbed } from "../embed";
 import { SIZE, ThemeChoiceContext, usePalette, type ThemeChoice } from "../theme";
 import { Dot, IconButton } from "../ui";
+import { CODE_SIZES } from "../../../src/text-size";
+import { setCodeSize, useCodeSize } from "../code-size";
 
 const THEMES: { value: ThemeChoice; label: string }[] = [
     { value: "system", label: "Same as the phone" },
@@ -33,6 +35,7 @@ export function SettingsScreen() {
     const nav = useNavigation<NativeStackNavigationProp<Routes>>();
     const e = useEmbed();
     const { choice, setChoice } = useContext(ThemeChoiceContext);
+    const code = useCodeSize();
     // Leaving forgets this phone's membership (never a root: a phone holding one keeps it) and starts over at Welcome.
     const leave = () => Alert.alert("Leave the account?", "This phone stops reaching your browsers. To come back, pair it again from a device in the account.",
         [{ text: "Stay", style: "cancel" }, { text: "Leave", style: "destructive", onPress: () => { void e.pairing("leave"); } }]);
@@ -50,6 +53,23 @@ export function SettingsScreen() {
                             style={({ pressed }) => [s.row, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: p.border }, pressed && { backgroundColor: p.panel2 }]}>
                             <Text style={[s.rowText, { color: p.fg }]}>{t.label}</Text>
                             {choice === t.value ? <Check size={20} color={p.accent} /> : null}
+                        </Pressable>
+                    ))}
+                </View>
+
+                {/* CODE SIZE, the page's own setting on its "This page" tab, which this app had no answer to: a code
+                    block on a phone was whatever the page shipped with. Its sibling there, PANEL TEXT SIZE, is not
+                    here on purpose — `--panel-fs` drives the docked panels (the resource graphs, the Python bench,
+                    the housekeeping log) and this app has none of them, so it would be a control with nothing to
+                    change. */}
+                <Text style={[s.group, { color: p.fgDim }]}>Code size</Text>
+                <View style={[s.card, { backgroundColor: p.scheme === "dark" ? p.panel : p.bg }]}>
+                    {CODE_SIZES.map((o, i) => (
+                        <Pressable key={o.px} accessibilityRole="radio" accessibilityState={{ checked: code === o.px }} onPress={() => setCodeSize(o.px)}
+                            style={({ pressed }) => [s.row, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: p.border }, pressed && { backgroundColor: p.panel2 }]}>
+                            {/* The label AT the size it sets, in the code face: "Large" tells you less than seeing it. */}
+                            <Text style={[s.rowText, s.codeSample, { color: p.fg, fontSize: o.px * 1.3 }]}>{o.label}</Text>
+                            {code === o.px ? <Check size={20} color={p.accent} /> : null}
                         </Pressable>
                     ))}
                 </View>
@@ -115,4 +135,6 @@ const s = StyleSheet.create({
     row: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 52, paddingHorizontal: 16, paddingVertical: 10 },
     // A row's main text.
     rowText: { fontSize: SIZE.text, flex: 1 },
+    // A code-size row's label, set in the code face at the size it chooses.
+    codeSample: { fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }) },
 });

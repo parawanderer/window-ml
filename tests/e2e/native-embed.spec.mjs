@@ -129,3 +129,24 @@ test("exporting the open session hands the app a file; an unopened one is refuse
     expect(errors).toEqual([]);
     await page.close();
 });
+
+// THE APP OWNS THE SIZE, THE PAGE DRAWS IT. The page only ever renders a SessionPane here, and `--code-fs` is set by
+// `ChatApp` on every other surface — so nothing was setting it and a phone's code block was whatever shipped.
+test("the app's code size reaches the transcript's code @mobile", async () => {
+    const { page, errors } = await open();
+    await tell(page, { type: "open", key: CHAT });
+    await page.locator(".chat-transcript .code").first().waitFor();
+    const size = () => page.locator(".chat-transcript .code").first().evaluate((e) => parseFloat(getComputedStyle(e).fontSize));
+    const before = await size();
+
+    await tell(page, { type: "theme", theme: { scheme: "dark", fontScale: 1, insets: { top: 0, bottom: 0, left: 0, right: 0 }, reducedMotion: false, codeSize: 15.5 } });
+    await expect.poll(size).toBe(15.5);
+    expect(before).not.toBe(15.5);
+
+    // And a theme with no size leaves whatever was chosen, rather than resetting it on every rotation.
+    await tell(page, { type: "theme", theme: { scheme: "dark", fontScale: 1, insets: { top: 0, bottom: 0, left: 0, right: 0 }, reducedMotion: false } });
+    await page.waitForTimeout(100);
+    expect(await size()).toBe(15.5);
+    expect(errors).toEqual([]);
+    await page.close();
+});
