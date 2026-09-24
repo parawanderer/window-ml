@@ -13,6 +13,7 @@ import { DarkTheme, DefaultTheme, NavigationContainer } from "@react-navigation/
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { loadDrafts } from "./src/drafts";
 import { loadPinnedModels } from "./src/pinned-models";
+import { loadCodeSize, useCodeSize } from "./src/code-size";
 import { EmbedProvider, useEmbed } from "./src/embed";
 import { SessionLayer, SessionLayerProvider } from "./src/layer";
 import type { Routes } from "./src/routes";
@@ -36,7 +37,7 @@ export default function App() {
     const [loaded, setLoaded] = useState(false);
     const [choice, setChoiceState] = useState<ThemeChoice>("system");
     useEffect(() => {
-        void Promise.all([loadDrafts(), loadPinnedModels(), AsyncStorage.getItem(THEME_KEY)]).then(([, , t]) => {
+        void Promise.all([loadDrafts(), loadPinnedModels(), loadCodeSize(), AsyncStorage.getItem(THEME_KEY)]).then(([, , , t]) => {
             if (t === "light" || t === "dark" || t === "system") setChoiceState(t);
             setLoaded(true);
         });
@@ -67,9 +68,10 @@ function Shell() {
     const p = usePalette();
     const e = useEmbed();
     const insets = useSafeAreaInsets();
+    const codeSize = useCodeSize();
     useEffect(() => {
-        e.theme({ scheme: p.scheme, fontScale: 1, insets: { top: 0, bottom: 0, left: insets.left, right: insets.right }, reducedMotion: false });
-    }, [p.scheme, insets.left, insets.right]);
+        e.theme({ scheme: p.scheme, fontScale: 1, insets: { top: 0, bottom: 0, left: insets.left, right: insets.right }, reducedMotion: false, codeSize });
+    }, [p.scheme, insets.left, insets.right, codeSize]);
     const nav = p.scheme === "dark" ? DarkTheme : DefaultTheme;
     const firstRun = e.account === null && !e.demo;
     return (

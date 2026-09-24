@@ -8,7 +8,8 @@
 import { useState } from "preact/hooks";
 import type { RuntimeInfo } from "../session-host";
 import { IconInbox } from "../sidebar/icons";
-import { attentionCount, attentionItems, type AttentionFix, type AttentionItem } from "./attention";
+import { attentionCount, attentionItems, deviceItems, type AttentionFix, type AttentionItem } from "./attention";
+import { deviceEnv } from "./app-badge";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
 import { cursorTipOn } from "../sidebar/ui-kit";
@@ -27,7 +28,9 @@ export function useAttention(store: ChatStore, extras?: ChatExtras): { items: At
     const canFix = (rt: RuntimeInfo, fix: AttentionFix, code: string) =>
         fix.kind === "act" ? !!extras?.fix?.(rt.id, code) : !!rt.capabilities.localSettings && extras?.settings?.(rt.id) != null;
     const repeat = (rt: RuntimeInfo, code: string) => !!extras?.fixedBefore?.(rt.id, code);
-    return { items: attentionItems(store.runtimes.value, NONE, canFix, dismissed.value, repeat) };
+    // This device's own suggestions come FIRST in the call and last in the list: `attentionItems` sorts by level and
+    // a suggestion outranks nothing, so where they sit is the sort's business rather than this line's.
+    return { items: [...attentionItems(store.runtimes.value, NONE, canFix, dismissed.value, repeat), ...deviceItems(deviceEnv(), dismissed.value)] };
 }
 
 /** The inbox above the gear: absent with nothing to do, a count only for problems. `labelled` in the list's foot. */
@@ -55,12 +58,13 @@ const stuckWhy = (rt: string): string => `This stays until it is put right on ${
 export function AttentionPage({ items, extras }: { items: AttentionItem[]; extras?: ChatExtras }) {
     useEscapeCloses();
     const [busy, setBusy] = useState("");
-    const many = new Set(items.map((i) => i.runtime.id)).size > 1;
+    const many = new Set(items.map((i) => i.runtime?.id).filter(Boolean)).size > 1;
     // Which card has been asked WHY IT WILL NOT GO. One at a time: it is an aside, not a mode.
     const [why, setWhy] = useState("");
     const apply = (it: AttentionItem) => {
         const fix = it.fix;
-        if (!fix) return;
+        // A device-level item has no runtime and never has a fix: the two go together, and this is the choke point.
+        if (!fix || !it.runtime) return;
         if (fix.kind === "settings") { settingsTab.value = "extension"; mainView.value = "settings"; return; }
         // Called synchronously in the click: a browser shows a permission prompt or a folder picker only inside one.
         const ask = extras?.fix?.(it.runtime.id, it.code);
@@ -78,14 +82,17 @@ export function AttentionPage({ items, extras }: { items: AttentionItem[]; extra
                             {items.map((it) => (
                                 <li key={it.key} class={`chat-att-item ${it.level}`}>
                                     <div class="chat-att-text">
-                                        <div class="chat-att-title">{it.title}{many ? <span class="chat-att-rt">{it.runtime.name}</span> : null}
+                                        <div class="chat-att-title">{it.title}{many && it.runtime ? <span class="chat-att-rt">{it.runtime.name}</span> : null}
                                             {/* WHY THIS ONE HAS NO BUTTONS. A card with neither a fix nor a Dismiss reads
                                                 as a message that ignored you, and the answer — that it clears when the
                                                 machine it is about is put right, and not before — is worth a corner
                                                 rather than a line on every card. Hovering says it where there is a
                                                 pointer; tapping says it where there is not, because the panel's tooltip
-                                                is hidden by the same pointerdown that a tap begins with. */}
-                                            {!it.fix && it.level !== "suggests" ? (
+                                                is hidden by the same pointerdown that a tap begins with.
+
+                                                Never on a DEVICE item: "add this to your home screen" has no machine
+                                                to be put right on, and it carries a Dismiss of its own. */}
+                                            {!it.fix && it.runtime && it.level !== "suggests" ? (
                                                 <button class="chat-att-why" data-inline-target aria-expanded={why === it.key}
                                                     aria-label={`Why ${it.title} cannot be dismissed`}
                                                     onClick={() => setWhy((k) => (k === it.key ? "" : it.key))}
@@ -95,9 +102,9 @@ export function AttentionPage({ items, extras }: { items: AttentionItem[]; extra
                                         <div class="chat-att-detail">
                                             {it.detail}
                                             {it.fix?.kind === "settings" ? <> In Settings → {it.fix.where}.</> : null}
-                                            {!it.fix && !it.runtime.capabilities.localSettings ? <> It is fixed on {it.runtime.name}.</> : null}
+                                            {!it.fix && it.runtime && !it.runtime.capabilities.localSettings ? <> It is fixed on {it.runtime.name}.</> : null}
                                         </div>
-                                        {why === it.key ? <div class="chat-att-why-note">{stuckWhy(it.runtime.name)}</div> : null}
+                                        {why === it.key && it.runtime ? <div class="chat-att-why-note">{stuckWhy(it.runtime.name)}</div> : null}
                                     </div>
                                     <div class="chat-att-acts">
                                         {it.fix ? (

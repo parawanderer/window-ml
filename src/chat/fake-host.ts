@@ -507,7 +507,14 @@ export class FakeHost implements SessionHost {
                     dropped: ["live references to elements on the old page", "the page's state object", "approval grants"],
                 } as MlDebugEvent);
                 this.updateSummary(key, { page: { url, tabId } });
-                return ok({ session: c.session });
+                // A budget means "and carry it on", the way the real runtime reads it: the demo world has to show
+                // the one press doing both, or the dialog's picker looks like a setting with no effect.
+                if (c.maxSteps != null) {
+                    if (!Number.isInteger(c.maxSteps) || c.maxSteps < 1) return fail("invalid", "maxSteps must be a whole number of steps");
+                    this.emit(key, { ...base, id: c.session.hash, kind: "agent-cap", maxSteps: c.maxSteps } as MlDebugEvent);
+                    this.updateSummary(key, { status: "running" });
+                }
+                return ok({ session: c.session, ...(c.maxSteps != null ? { maxSteps: c.maxSteps } : {}) });
             }
             case "session.delete":
                 this.deleteSession(key);

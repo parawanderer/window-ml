@@ -407,8 +407,13 @@ export type Command =
      * The hash does not change: it stays one conversation on every surface, and the result says so by answering
      * with the same id. What the session keeps and what it loses is in `CHAT_PAGE.md` §Resuming, and the runtime
      * says which in the `session-resumed` event that opens the new turn.
+     *
+     * `maxSteps` BOTH sets the budget and carries the run on with it, in one command. Without it the run is put
+     * back on a page and left where it stopped, for a caller that wants to look before anything moves. There is no
+     * third state: a budget set on a run nobody started is a number with nothing to spend it on, and the two-press
+     * version of this (resume, then find Continue) is what the field exists to remove.
      */
-    | { type: "session.resume"; session: SessionId; target: AgentTarget; idempotencyKey?: IdempotencyKey }
+    | { type: "session.resume"; session: SessionId; target: AgentTarget; maxSteps?: number; idempotencyKey?: IdempotencyKey }
     /**
      * What a runtime IS, asked of the runtime itself.
      *
@@ -691,8 +696,8 @@ export interface CommandResultData {
     "approval.answer": { resolved: boolean };
     "chat.start": { session: SessionId };
     "agent.start": { session: SessionId };
-    /** the same session, because resuming is not starting a new one */
-    "session.resume": { session: SessionId };
+    /** The same session, because resuming is not starting a new one; `maxSteps` when the resume also carried it on. */
+    "session.resume": { session: SessionId; maxSteps?: number };
     /**
      * Older events, OLDEST-FIRST within the page so a client applies them in stream order, from a page that ends
      * just before `before`.

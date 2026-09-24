@@ -8,7 +8,8 @@ import { Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from "
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { Bot, Inbox, Search, Settings, SquarePen } from "lucide-react-native";
+import { Bot } from "lucide-react-native";
+import { IconCompose, IconGear, IconInbox, IconSearch } from "../icons";
 import * as Haptics from "expo-haptics";
 import type { SessionSummary } from "../../../src/session-host";
 import type { SessionChrome } from "../../../src/native/bridge";
@@ -61,17 +62,19 @@ export function ListScreen() {
             <View style={s.bar}>
                 <Text style={[s.title, { color: p.fg }]} accessibilityRole="header">Sessions</Text>
                 <View style={{ flex: 1 }} />
-                {/* The inbox: there only when a runtime reports something, and a number only for problems, never for the
-                    suggestions, so a set-up account shows no badge (the page's rule, attention.ts). */}
+                {/* SEARCH, COMPOSE, INBOX, GEAR — the page's order (chat-app.tsx `SessionList`). The app had the inbox
+                    first, so the two surfaces put the same four buttons in two different places and neither built a
+                    habit. The inbox is there only when a runtime reports something, and carries a number only for
+                    problems, never for suggestions, so a set-up account shows no badge (attention.ts). */}
+                <IconButton label="Search sessions" icon={(c) => <IconSearch color={c} />} onPress={() => nav.navigate("Search")} />
+                <IconButton label="New session" icon={(c) => <IconCompose color={c} />} onPress={() => nav.navigate("NewChat")} />
                 {e.attention.items.length ? (
                     <View>
-                        <IconButton label={e.attention.count ? `${e.attention.count} things need attention` : "Suggestions"} icon={(c) => <Inbox size={22} color={c} />} onPress={() => nav.navigate("Attention")} />
+                        <IconButton label={e.attention.count ? `${e.attention.count} things need attention` : "Suggestions"} icon={(c) => <IconInbox color={c} />} onPress={() => nav.navigate("Attention")} />
                         {e.attention.count ? <View pointerEvents="none" style={s.inboxBadge}><Badge n={e.attention.count} label={`${e.attention.count} need attention`} /></View> : null}
                     </View>
                 ) : null}
-                <IconButton label="Search sessions" icon={(c) => <Search size={22} color={c} />} onPress={() => nav.navigate("Search")} />
-                <IconButton label="New session" icon={(c) => <SquarePen size={22} color={c} />} onPress={() => nav.navigate("NewChat")} />
-                <IconButton label="Settings" icon={(c) => <Settings size={22} color={c} />} onPress={() => nav.navigate("Settings")} />
+                <IconButton label="Settings" icon={(c) => <IconGear color={c} />} onPress={() => nav.navigate("Settings")} />
             </View>
             <SectionList
                 sections={data}
