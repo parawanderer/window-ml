@@ -48,6 +48,8 @@ export const extensionServices: SidebarServices = {
     sendToSession: async (hash, text, images) => { toParent({ __mlSidebarApp: "sessionSend", hash, text, images }); return { ok: true }; },
     cancelSession: (hash) => toParent({ __mlSidebarApp: "sessionCancel", hash }),
     continueSession: (hash, maxSteps) => toParent({ __mlSidebarApp: "continueRun", hash, ...(maxSteps ? { maxSteps } : {}) }),
+    // This frame is attached to the tab the run is in: if it were gone, so would this panel be.
+    canContinue: () => true,
     highlight: (ref) => toParent({ __mlHighlight: ref }),
     openLightbox: (src) => toParent({ __mlLightbox: src }),
     // `noopener` is not politeness here: without it the opened page gets a handle on this one, and this one is the

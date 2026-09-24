@@ -13,6 +13,7 @@ export const DEMO = {
     waiting: "laptop:3f9a0c21",
     chat: "laptop:7b21d4e8",
     capped: "laptop:c0ffee12",
+    cappedHere: "laptop:beef1234",
     watched: "lab-box:1d2e3f40",
     pointers: "laptop:5e6f7a80",
     offline: "old-mac:aa55aa55",
@@ -120,6 +121,21 @@ export function demoHost(now = Date.now(), opts: { latencyMs?: number } = {}): F
             renderOut: { type: "exec-out", value: "3" },
         },
         { ...base(k, now - 178 * min + 1000, 2), kind: "agent-result", summary: "", steps: 2, hitCap: true },
+    ];
+
+    // THE OTHER KIND OF CAPPED RUN: one whose tab is still open. `capped` above has lost its page, so it offers a
+    // resume and no Continue — which left the demo world with no way to see Continue at all, and a button nothing
+    // exercises is a button nobody notices breaking.
+    const kh = DEMO.cappedHere.split(":")[1];
+    const cappedHere: MlDebugEvent[] = [
+        agentStart(kh, now - 9 * min, "Count the open tabs and say which are on the same site", 2),
+        {
+            ...base(kh, now - 8 * min, 1), kind: "agent-step", step: 1, seq: 1, tool: "exec", approval: "readonly", toolMs: 9,
+            arguments: { js: COUNT_JS }, result: "3",
+            renderIn: { type: "code", text: COUNT_JS, lang: "javascript", format: true },
+            renderOut: { type: "exec-out", value: "3" },
+        },
+        { ...base(kh, now - 8 * min + 900, 1), kind: "agent-result", summary: "", steps: 1, hitCap: true },
     ];
 
     // A run whose ANSWER CITES ITS OWN STEPS (`![label](@tool:<id>)`, docs/dev/pointers.md): one value quoted
@@ -247,6 +263,7 @@ export function demoHost(now = Date.now(), opts: { latencyMs?: number } = {}): F
             // A page with no `tabId`: the tab it worked in has since closed, which is what makes it resumable and what the
             // header's page chip then reports — which page the run WAS on, rather than nothing at all.
             { summary: summary(DEMO.capped, { kind: "agent", status: "capped", createdTs: now - 180 * min, lastTs: now - 178 * min, title: "Plot the fare prices", model: "qwen3:32b", page: { url: "https://flights.example/search?from=AMS&to=LIS", title: "Flights AMS → LIS" } }), events: capped },
+            { summary: summary(DEMO.cappedHere, { kind: "agent", status: "capped", createdTs: now - 9 * min, lastTs: now - 8 * min, title: "Which tabs share a site", model: "qwen3:32b", page: { url: "https://news.example/", title: "The front page", tabId: 41 } }), events: cappedHere },
             { summary: summary(DEMO.pointers, { kind: "agent", status: "done", createdTs: now - 12 * min, lastTs: now - 9 * min, title: "Fares, cited", model: "qwen3:32b", page: { url: "https://flights.example/search?from=AMS&to=LIS", title: "Flights AMS → LIS", tabId: 41 } }), events: pointers },
             { summary: summary(DEMO.watched, { kind: "agent", status: "running", createdTs: now - 2 * min, lastTs: now - min, title: "Nightly benchmark", model: "qwen3:32b" }), events: watched },
             { summary: summary(DEMO.offline, { kind: "chat", status: "done", createdTs: now - 26 * 60 * min, lastTs: now - 26 * 60 * min + 5000, title: "Invoice reminder" }), events: offline },

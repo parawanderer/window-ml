@@ -8,7 +8,8 @@
 import { useState } from "preact/hooks";
 import type { RuntimeInfo } from "../session-host";
 import { IconInbox } from "../sidebar/icons";
-import { attentionCount, attentionItems, type AttentionFix, type AttentionItem } from "./attention";
+import { attentionCount, attentionItems, deviceItems, type AttentionFix, type AttentionItem } from "./attention";
+import { deviceEnv } from "./app-badge";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
 import { mainView, useEscapeCloses } from "./nav";
@@ -26,7 +27,9 @@ export function useAttention(store: ChatStore, extras?: ChatExtras): { items: At
     const canFix = (rt: RuntimeInfo, fix: AttentionFix, code: string) =>
         fix.kind === "act" ? !!extras?.fix?.(rt.id, code) : !!rt.capabilities.localSettings && extras?.settings?.(rt.id) != null;
     const repeat = (rt: RuntimeInfo, code: string) => !!extras?.fixedBefore?.(rt.id, code);
-    return { items: attentionItems(store.runtimes.value, NONE, canFix, dismissed.value, repeat) };
+    // This device's own suggestions come FIRST in the call and last in the list: `attentionItems` sorts by level and
+    // a suggestion outranks nothing, so where they sit is the sort's business rather than this line's.
+    return { items: [...attentionItems(store.runtimes.value, NONE, canFix, dismissed.value, repeat), ...deviceItems(deviceEnv(), dismissed.value)] };
 }
 
 /** The inbox above the gear: absent with nothing to do, a count only for problems. `labelled` in the list's foot. */
@@ -51,10 +54,11 @@ export function AttentionButton({ items, labelled }: { items: AttentionItem[]; l
 export function AttentionPage({ items, extras }: { items: AttentionItem[]; extras?: ChatExtras }) {
     useEscapeCloses();
     const [busy, setBusy] = useState("");
-    const many = new Set(items.map((i) => i.runtime.id)).size > 1;
+    const many = new Set(items.map((i) => i.runtime?.id).filter(Boolean)).size > 1;
     const apply = (it: AttentionItem) => {
         const fix = it.fix;
-        if (!fix) return;
+        // A device-level item has no runtime and never has a fix: the two go together, and this is the choke point.
+        if (!fix || !it.runtime) return;
         if (fix.kind === "settings") { settingsTab.value = "extension"; mainView.value = "settings"; return; }
         // Called synchronously in the click: a browser shows a permission prompt or a folder picker only inside one.
         const ask = extras?.fix?.(it.runtime.id, it.code);
@@ -72,11 +76,11 @@ export function AttentionPage({ items, extras }: { items: AttentionItem[]; extra
                             {items.map((it) => (
                                 <li key={it.key} class={`chat-att-item ${it.level}`}>
                                     <div class="chat-att-text">
-                                        <div class="chat-att-title">{it.title}{many ? <span class="chat-att-rt">{it.runtime.name}</span> : null}</div>
+                                        <div class="chat-att-title">{it.title}{many && it.runtime ? <span class="chat-att-rt">{it.runtime.name}</span> : null}</div>
                                         <div class="chat-att-detail">
                                             {it.detail}
                                             {it.fix?.kind === "settings" ? <> In Settings → {it.fix.where}.</> : null}
-                                            {!it.fix && !it.runtime.capabilities.localSettings ? <> It is fixed on {it.runtime.name}.</> : null}
+                                            {!it.fix && it.runtime && !it.runtime.capabilities.localSettings ? <> It is fixed on {it.runtime.name}.</> : null}
                                         </div>
                                     </div>
                                     <div class="chat-att-acts">

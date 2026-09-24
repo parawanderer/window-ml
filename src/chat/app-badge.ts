@@ -12,7 +12,7 @@
 // the app closed needs a push to wake a service worker, which is a server, a key pair and a subscription per device.
 
 /** Is this page running as an installed app, rather than in a browser tab? */
-function installed(): boolean {
+export function installed(): boolean {
     try {
         // `standalone` is what iOS sets on a home-screen web app; the media query is the standard spelling.
         return matchMedia("(display-mode: standalone)").matches
@@ -30,4 +30,24 @@ export function setAppBadge(n: number): void {
     try {
         void (n > 0 ? nav.setAppBadge(n) : nav.clearAppBadge?.() ?? nav.setAppBadge(0)).catch(() => {});
     } catch { /* a browser that lists the method and refuses the call */ }
+}
+
+/**
+ * What this device is, for the inbox's install suggestion (`deviceItems`, attention.ts). Read here because this is
+ * already the module that knows what "installed" means, and two answers to that would drift.
+ *
+ * `ios` has to survive iPadOS calling itself a Mac, which it has done since 13: the user agent says Macintosh, and
+ * what gives it away is a touch screen, since no Mac has one.
+ *
+ * `installable` asks whether the page declares a MANIFEST, which only the hosted client's build does (`installable()`
+ * in build-web.mjs). It is the precise question — an extension page and the phone app's WebView both run this code
+ * and neither can be added to a home screen — and it costs one DOM query.
+ */
+export function deviceEnv(): { installed: boolean; ios: boolean; installable: boolean } {
+    try {
+        const nav = navigator as Navigator & { platform?: string };
+        const ios = /iPad|iPhone|iPod/.test(nav.platform ?? "")
+            || (/Macintosh/.test(nav.userAgent) && nav.maxTouchPoints > 1);
+        return { installed: installed(), ios, installable: !!document.querySelector('link[rel="manifest"]') };
+    } catch { return { installed: true, ios: false, installable: false } }
 }

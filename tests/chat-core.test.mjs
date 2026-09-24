@@ -626,3 +626,20 @@ test("routes: the hash names a session or a view, round trip; old links and nons
     assert.deepEqual(parseRoute("#/wherever"), {}, "an unknown place is the list");
     assert.equal(formatRoute({ session: "laptop:x", main: "search" }), "#/search", "a view drawn over a session is what is on screen");
 });
+
+test("deviceItems: an iPhone or iPad reading the hosted client in a tab is offered the home screen, once", async () => {
+    const { deviceItems } = await import("../src/chat/attention.ts");
+    const here = { installed: false, ios: true, installable: true };
+    const [it] = deviceItems(here);
+    assert.equal(it.key, "this-device:add-to-home");
+    assert.equal(it.level, "suggests", "dismissible: telling someone twice about a menu they declined is nagging");
+    assert.equal(it.runtime, undefined, "it is about the thing in your hand, not a machine it talks to");
+    assert.equal(it.fix, undefined, "Safari exposes no install API, so there is nothing to wire a button to");
+    assert.match(it.detail, /Add to Home Screen/);
+
+    // Each fact on its own is enough to say nothing at all.
+    assert.deepEqual(deviceItems({ ...here, installed: true }), [], "already an app");
+    assert.deepEqual(deviceItems({ ...here, ios: false }), [], "elsewhere the browser offers its own prompt");
+    assert.deepEqual(deviceItems({ ...here, installable: false }), [], "an extension page and a WebView cannot be installed");
+    assert.deepEqual(deviceItems(here, new Set(["this-device:add-to-home"])), [], "and it stays dismissed");
+});
