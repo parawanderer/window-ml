@@ -173,7 +173,7 @@ export function SearchPage({ store, narrow }: { store: ChatStore; narrow: boolea
                     </ul>
                     {shown < all.length || anyMore ? <div ref={sentinel} class="chat-search-more" aria-hidden="true" /> : null}
                     {loading ? <div class="chat-search-empty">Looking further back…</div> : null}
-                    <ArchiveFolderNotes store={store} />
+                    <ArchiveFolderNotes store={store} device={device} />
                 </div>
             </div>
         </main>
@@ -181,12 +181,16 @@ export function SearchPage({ store, narrow }: { store: ChatStore; narrow: boolea
 }
 
 /**
- * A runtime whose archive folder lost its permission: the archive still answers this search (it lives in the browser);
+ * A runtime whose archive folder lost its permission, among the ones the device filter is showing: the archive still
+ * answers this search (it lives in the browser);
  * only the copy into the folder, the one that survives a wiped profile, is paused until someone clicks in THAT
  * runtime's own Settings. No command can grant it, so this says where, and opens Settings when it is this browser's.
  */
-function ArchiveFolderNotes({ store }: { store: ChatStore }) {
-    const lapsed = store.runtimes.value.filter((r) => r.capabilities.archive?.folder === "needs-grant");
+function ArchiveFolderNotes({ store, device }: { store: ChatStore; device: RuntimeId | null }) {
+    // ONLY ABOUT WHAT YOU ARE LOOKING AT. These sit under the results, and a note about a machine the filter has
+    // excluded is an answer to a question nobody asked — worse, it reads as being about the results above it, so
+    // picking Lab box and being told to reconnect Work laptop's folder looks like Lab box is the one at fault.
+    const lapsed = store.runtimes.value.filter((r) => r.capabilities.archive?.folder === "needs-grant" && (!device || r.id === device));
     if (!lapsed.length) return null;
     return (
         <div class="chat-search-foot">
