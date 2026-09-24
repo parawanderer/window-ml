@@ -42,6 +42,11 @@ import { lightboxSrc, type ClientPlatform } from "./platform";
 /** How long after a gesture a scroll still counts as the reader's own. Covers a phone's momentum coasting. */
 const USER_SCROLL_MS = 1200;
 
+/** How many frames the approval bar waits for the gate's card before deciding it is out of reach. Generous enough
+ *  to cover a reload (the summary arrives before the transcript's events) and short enough that a gate genuinely
+ *  further back than the transcript draws is still announced at once. */
+const GATE_WAIT_FRAMES = 30;
+
 /** Below this width the page shows one pane at a time. */
 export const NARROW_PX = 760;
 
@@ -51,6 +56,12 @@ const DOT: Record<SessionStatus, Status> = { running: "pending", waiting: "pendi
 
 /** What each status says in a list, where the dot alone would not tell a waiting run from a working one. */
 const STATUS_LABEL: Partial<Record<SessionStatus, string>> = { waiting: "waiting on you", capped: "stopped at its step cap", cancelled: "cancelled", interrupted: "interrupted", error: "failed" };
+
+/** A session's pending approvals, as the one badge that replaces the `waiting` label. PENDING rather than a bare
+ *  count, because "1" beside a title reads as a fact about the run rather than as something waiting on the reader —
+ *  and without the word "approval", which the badge's colour and its place in a list of runs already say, and which
+ *  a phone's row has no width for. The phone's list (mobile/src/screens/ListScreen.tsx) words it the same. */
+export const approvalsPending = (n: number): string => `${n} pending`;
 
 /** Is the viewport narrow? Follows resizes and rotation. */
 function useNarrow(): boolean {
@@ -318,8 +329,11 @@ function IndexRow({ store, s, rt, active, moved, showRuntime }: { store: ChatSto
                         {showRuntime ? <span class="chat-row-rt">{rt.name}</span> : null}
                         {s.kind === "agent" ? <AgentBadge /> : null}
                         {s.page ? <PageChip page={s.page} /> : null}
-                        {STATUS_LABEL[s.status] ? <span class={`chat-status st-${s.status}`}>{STATUS_LABEL[s.status]}</span> : null}
-                        {s.pendingApprovals > 0 ? <span class="chat-appr-badge">{s.pendingApprovals} approval{s.pendingApprovals === 1 ? "" : "s"}</span> : null}
+                        {/* ONE THING, NOT TWO. "waiting on you" beside "1 approval" is the same fact in two
+                            voices, and the badge is the one that says how many and reads at a glance — so where
+                            there is a count, the count IS the status and the word goes. */}
+                        {STATUS_LABEL[s.status] && !s.pendingApprovals ? <span class={`chat-status st-${s.status}`}>{STATUS_LABEL[s.status]}</span> : null}
+                        {s.pendingApprovals > 0 ? <span class="chat-appr-badge">{approvalsPending(s.pendingApprovals)}</span> : null}
                     </span>
                 </span>
                 {moved ? <span class="chat-moved" {...cursorTipOn("Something happened here while you were reading something else")} aria-label="new activity" /> : null}
@@ -535,11 +549,25 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     useEffect(() => {
         const root = scroller.current;
         if (!waiting || !root || typeof IntersectionObserver === "undefined") { setGateAway(false); return; }
-        const card = root.querySelector(".astep-approve");
-        if (!card) { setGateAway(true); return; }   // not rendered yet: say it until it is
-        const io = new IntersectionObserver(([e]) => setGateAway(!e.isIntersecting), { root });
-        io.observe(card);
-        return () => io.disconnect();
+        let io: IntersectionObserver | undefined, frame = 0, tries = GATE_WAIT_FRAMES;
+        // NOT RENDERED YET IS NOT THE SAME AS SCROLLED AWAY, and reading the two alike is what put a bar on screen
+        // for a few frames of every reload: the summary says an approval is pending before the transcript's events
+        // have arrived, so there is no card to find, and the bar announced a gate that was about to appear right
+        // under it. Wait a few frames for the card first. Only when it still is not there is it genuinely out of
+        // reach — a gate further back than the transcript draws (transcript-window.tsx) — and the bar is the only
+        // thing that would say so.
+        const look = (): void => {
+            const card = root.querySelector(".astep-approve");
+            if (!card) {
+                if (tries-- <= 0) { setGateAway(true); return; }
+                frame = requestAnimationFrame(look);
+                return;
+            }
+            io = new IntersectionObserver(([e]) => setGateAway(!e.isIntersecting), { root });
+            io.observe(card);
+        };
+        look();
+        return () => { cancelAnimationFrame(frame); io?.disconnect(); };
     }, [waiting, sessionKey, r]);
     // The phone app draws its own bar, from the same reading: it is chrome, and chrome up there is native.
     useEffect(() => onGate?.(waiting && gateAway), [onGate, waiting, gateAway]);
@@ -837,8 +865,9 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
                                 <ViewToggle />
                             </div>
                         )}
-                        {narrow ? <button class="hbtn chat-sheet-back chat-home-back" aria-label="Back to sessions" onClick={() => setStarting(null)}><IconBack /></button> : null}
-                        <StartPage store={store} extras={extras} narrow={narrow} initialKind={starting ?? undefined} onStarted={(k) => { setStarting(null); openSession(k); }} />
+                        <StartPage store={store} extras={extras} narrow={narrow} initialKind={starting ?? undefined}
+                            back={narrow ? <button class="hbtn chat-sheet-back" aria-label="Back to sessions" onClick={() => setStarting(null)}><IconBack /></button> : null}
+                            onStarted={(k) => { setStarting(null); openSession(k); }} />
                     </main>
                 )
                     : key ? <SessionPane store={store} sessionKey={key} narrow={narrow} />

@@ -8,12 +8,13 @@ import { Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from "
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { Bot, Inbox, Search, Settings, SquarePen } from "lucide-react-native";
+import { Bot } from "lucide-react-native";
+import { IconCompose, IconGear, IconInbox, IconSearch } from "../icons";
 import * as Haptics from "expo-haptics";
 import type { SessionSummary } from "../../../src/session-host";
 import type { SessionChrome } from "../../../src/native/bridge";
 import { useEmbed } from "../embed";
-import { ago, needsYou, sections, STATUS_LABEL, STATUS_TONE } from "../format";
+import { ago, approvalsPending, needsYou, sections, STATUS_LABEL, STATUS_TONE } from "../format";
 import { useSessionLayer } from "../layer";
 import { SIZE, usePalette } from "../theme";
 import { Badge, Dot, IconButton } from "../ui";
@@ -61,17 +62,19 @@ export function ListScreen() {
             <View style={s.bar}>
                 <Text style={[s.title, { color: p.fg }]} accessibilityRole="header">Sessions</Text>
                 <View style={{ flex: 1 }} />
-                {/* The inbox: there only when a runtime reports something, and a number only for problems, never for the
-                    suggestions, so a set-up account shows no badge (the page's rule, attention.ts). */}
+                {/* SEARCH, COMPOSE, INBOX, GEAR — the page's order (chat-app.tsx `SessionList`). The app had the inbox
+                    first, so the two surfaces put the same four buttons in two different places and neither built a
+                    habit. The inbox is there only when a runtime reports something, and carries a number only for
+                    problems, never for suggestions, so a set-up account shows no badge (attention.ts). */}
+                <IconButton label="Search sessions" icon={(c) => <IconSearch color={c} />} onPress={() => nav.navigate("Search")} />
+                <IconButton label="New session" icon={(c) => <IconCompose color={c} />} onPress={() => nav.navigate("NewChat")} />
                 {e.attention.items.length ? (
                     <View>
-                        <IconButton label={e.attention.count ? `${e.attention.count} things need attention` : "Suggestions"} icon={(c) => <Inbox size={22} color={c} />} onPress={() => nav.navigate("Attention")} />
+                        <IconButton label={e.attention.count ? `${e.attention.count} things need attention` : "Suggestions"} icon={(c) => <IconInbox color={c} />} onPress={() => nav.navigate("Attention")} />
                         {e.attention.count ? <View pointerEvents="none" style={s.inboxBadge}><Badge n={e.attention.count} label={`${e.attention.count} need attention`} /></View> : null}
                     </View>
                 ) : null}
-                <IconButton label="Search sessions" icon={(c) => <Search size={22} color={c} />} onPress={() => nav.navigate("Search")} />
-                <IconButton label="New session" icon={(c) => <SquarePen size={22} color={c} />} onPress={() => nav.navigate("NewChat")} />
-                <IconButton label="Settings" icon={(c) => <Settings size={22} color={c} />} onPress={() => nav.navigate("Settings")} />
+                <IconButton label="Settings" icon={(c) => <IconGear color={c} />} onPress={() => nav.navigate("Settings")} />
             </View>
             <SectionList
                 sections={data}
@@ -139,7 +142,12 @@ function Row({ s: x, runtimeName, onPress, onLongPress }: { s: SessionSummary; r
                     trails a page host of any length is one the eye has to find again each time. It never shrinks;
                     the host does. */}
                 <View style={s.rowMeta}>
-                    {label ? <Text style={[s.rowState, { color: x.status === "waiting" ? p.notice : tone === "err" ? p.err : tone === "stopped" ? p.warn : p.fgDim }]}>{label}</Text> : null}
+                    {/* ONE THING, NOT TWO. "waiting on you" here beside a count at the row's end is the same fact in
+                        two voices, so where there is a count the BADGE is the status: it says how many, and it is
+                        the notice colour, which is what the word was doing. The web list reads the same. */}
+                    {x.pendingApprovals > 0
+                        ? <Badge n={x.pendingApprovals} text={approvalsPending(x.pendingApprovals)} />
+                        : label ? <Text style={[s.rowState, { color: tone === "err" ? p.err : tone === "stopped" ? p.warn : p.fgDim }]}>{label}</Text> : null}
                     {x.kind === "agent" ? <View style={s.kind}><Bot size={13} color={p.fgFaint} /><Text style={[s.metaText, { color: p.fgFaint }]}>agent</Text></View> : null}
                     {/* Out of its runtime's section, the machine is what the row is missing; the page host is what
                         it can spare, since the transcript says that on the next tap. */}
@@ -150,7 +158,6 @@ function Row({ s: x, runtimeName, onPress, onLongPress }: { s: SessionSummary; r
             </View>
             <View style={s.rowEnd}>
                 <Text style={[s.metaText, { color: p.fgFaint }]}>{ago(x.lastTs)}</Text>
-                <Badge n={x.pendingApprovals} label={`${x.pendingApprovals} approvals waiting`} />
             </View>
         </Pressable>
     );

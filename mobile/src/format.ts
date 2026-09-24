@@ -8,6 +8,11 @@ export const STATUS_LABEL: Partial<Record<SessionStatus, string>> = {
     waiting: "waiting on you", capped: "stopped at its step cap", cancelled: "cancelled", interrupted: "interrupted", error: "failed",
 };
 
+/** A session's pending approvals, as the one badge that replaces the `waiting` label on a row. Mirrors the web
+ *  list's wording (`approvalsPending`, src/chat/chat-app.tsx) the way STATUS_LABEL above mirrors its labels: the
+ *  two lists are the same list on two devices, and a person who reads one should recognise the other. */
+export const approvalsPending = (n: number): string => `${n} pending`;
+
 /** A status as a tone: working, finished, stopped short without failing (a step cap: amber, it can go on), or failed. */
 export const STATUS_TONE: Record<SessionStatus, "busy" | "ok" | "stopped" | "err"> = {
     running: "busy", waiting: "busy", done: "ok", capped: "stopped", error: "err", cancelled: "err", interrupted: "err",
