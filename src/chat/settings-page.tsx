@@ -16,7 +16,8 @@ import { mainView, useEscapeCloses } from "./nav";
 import type { ChatStore } from "./chat-store";
 import { RuntimeSheet } from "./runtime-sheet";
 import { ThemeSeg } from "./theme-pick";
-import { CODE_SIZES, PANEL_SIZES, codeSize, panelSize, setCodeSize, setPanelSize } from "./view-mode";
+import { PANEL_SIZES, codeSize, panelSize, setCodeSize, setPanelSize } from "./view-mode";
+import { CODE_SIZES } from "../text-size";
 
 /** Which half of the settings is showing. Not stored: the sheet opens on this page's own, which is the half that is
  *  always there. */

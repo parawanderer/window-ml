@@ -16,6 +16,7 @@ import { signal } from "@preact/signals";
 import { IconBrain, IconMenu } from "../sidebar/icons";
 import { focusMode } from "../sidebar/store";
 import type { PlatformPrefs } from "./platform";
+import { CODE_DEFAULT, CODE_SIZES } from "../text-size";
 
 /** Preference keys, under the platform's own namespace. */
 export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", PINNED_MODELS_KEY = "view.pinnedModels", CODE_KEY = "view.codeSize", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups", THEME_KEY = "view.theme";
@@ -62,17 +63,6 @@ export const pinned = signal<ReadonlySet<string>>(new Set());
  */
 export const pinnedModels = signal<ReadonlySet<string>>(new Set());
 
-/**
- * The size code is set at on this page, in px: transcript code blocks, the Python bench's editor and what it prints.
- *
- * A setting rather than a constant because it is the one size here that people disagree about. The page reads prose
- * at 15px, and code inherited that — a monospace face nearly the size of the prose stops reading as an inset, and the
- * bench, built for the DevTools panel's 12px, came out a size and a half too big. The default is the panel's code
- * size, near enough; someone reading at arm's length can raise it without the prose moving.
- */
-export const CODE_SIZES = [{ px: 11, label: "Small" }, { px: 12.5, label: "Default" }, { px: 14, label: "Large" }, { px: 15.5, label: "Larger" }] as const;
-/** The default code size, in px. */
-export const CODE_DEFAULT = 12.5;
 /** The code size this device reads at, in px. */
 export const codeSize = signal<number>(CODE_DEFAULT);
 
