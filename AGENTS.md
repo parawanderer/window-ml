@@ -462,6 +462,26 @@ A TRAILING `//` counts as the docstring for a one-line export, which is the hous
 scanner to read those fixed thirty of them with no churn, rather than having me move thirty comments above
 their declarations to satisfy an indexer. Playbook: `.claude/skills/code-index/SKILL.md`.
 
+**RULE — a test goes under a SECTION, and `node scripts/test-index.mjs '<regex>'` is how you find one.** The code
+index above made the source searchable and left the tests opaque, which is the worse half: the tests are where the
+knowledge about behaviour lives, and they are what you must read before adding a twelfth test for a thing that has
+eleven. `tests/sidebar.test.js` is 407 tests in 9,300 lines behind ten section comments — grep finds a test whose
+name you can already guess and answers neither question you actually have ("is this covered?", "where does a new one
+go?"), and reading the file to find out costs about 150,000 tokens. The index answers both for about 5,000: one
+TAB-separated line per test, `PATH:LINE  SECTION  NAME`, with the regex running over the section and the file's
+header sentence as well as the name. `--stats` is the survey, `--sections` lists the groups, `--file <name>` narrows
+to one. It PARSES rather than greps (TypeScript's parser through `@ts-morph/common`, since the repo's own
+`typescript` is 7.x and exposes no JS API), because a regex over `test("` misses a template-literal name, a
+`test.skip`, and a call spread over two lines, and finds the word inside a string.
+
+A SECTION is a comment line — `// --- what this group is about ---` — and everything after it belongs to it until
+the next one. **`--new <base> [--staged]` is the RATCHET** (pre-commit hook + CI's `tools` job): a test a change ADDS,
+in a file that already has sections, must sit under one. It is deliberately narrower than "every test": 1,826 tests
+predate it and a check that ships red is one people learn to scroll past — `--unsectioned` and `--headerless` are the
+surveys for those, and both do ship red. What you owe it: a section name that says what the group is ABOUT in words
+someone would search, and a header comment on a new test file saying what the file covers. Playbook:
+`.claude/skills/test-index/SKILL.md`.
+
 **RULE — JSDoc that CONTRADICTS the code is a defect; JSDoc that is INCOMPLETE is not.** In a `.ts` file the
 compiler treats JSDoc as prose — `@param` names and types are never checked — and this repo lifts the
 contract's JSDoc verbatim into what the MODEL reads, so drift there ships a wrong API reference. `node

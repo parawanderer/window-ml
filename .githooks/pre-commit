@@ -94,6 +94,20 @@ fi
 #
 #    Gated on the staged files, unlike the schema above: that one is ~40ms and regenerates in place, while
 #    these two shell out to git and print a list, so running them for a README edit is noise.
+# A TEST THIS COMMIT ADDS, in a file that groups its tests, and under none of those groups. The tests are where the
+# knowledge about behaviour lives, and `tests/sidebar.test.js` is 407 of them behind ten section comments: nobody can
+# answer "is this covered?" without reading 150k tokens of it. One comment line is what keeps that from spreading.
+if echo "$staged" | grep -qE '^tests/.*\.(test|spec)\.(m?js|ts)$'; then
+    base=$(git merge-base HEAD origin/main 2>/dev/null || echo "")
+    if [ -n "$base" ] && ! node scripts/test-index.mjs --new "$base" --staged; then
+        echo ""
+        echo "pre-commit: a test this commit adds sits under no section, in a file that has them, so"
+        echo "            \`node scripts/test-index.mjs <concept>\` cannot say what it is about."
+        echo "            Put it under a \`// --- what this group is about ---\` line. See AGENTS.md."
+        exit 1
+    fi
+fi
+
 if echo "$staged" | grep -qE '^(src|mobile)/.*\.(ts|tsx|css)$'; then
     # Against the MERGE BASE, not the previous commit: a branch's second commit should not be asked about
     # a symbol or a class its first commit added and already answered for.

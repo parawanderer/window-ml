@@ -172,6 +172,15 @@ jobs:
       # check that ships red is one people learn to scroll past. Only what a PR ADDS is asked about.
       # JSDoc is PROSE to the TypeScript compiler in a .ts file — @param names and types are never checked. This
       # repo cares more than most, because contract.ts's JSDoc is lifted verbatim into what the MODEL reads.
+      # The same ratchet for TESTS, and for the same reason one level along: the tests are where the knowledge
+      # about behaviour lives, and the biggest file holds 407 of them behind ten section comments — which makes
+      # "is this already covered?" a 150k-token question. Only what a PR ADDS is asked about; 1,826 existing tests
+      # sit under no section and a check that ships red is one people learn to scroll past.
+      - name: Every test this PR adds says what it is about
+        run: |
+          base=$(git merge-base HEAD "origin/${GITHUB_BASE_REF:-main}" 2>/dev/null || echo "")
+          if [ -z "$base" ]; then echo "no merge base — skipping the ratchet"; exit 0; fi
+          node scripts/test-index.mjs --new "$base"
       - name: The documentation this PR touches matches the code
         run: |
           base=$(git merge-base HEAD "origin/${GITHUB_BASE_REF:-main}" 2>/dev/null || echo "")
