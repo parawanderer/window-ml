@@ -2820,7 +2820,7 @@ html[data-focus] .action-verb { font-weight: 500; }
 /* The same flash in the failure colour, for the line a traceback names. */
 .cline-pulse-fail { animation: clinePulseFail 1.4s ease-out forwards; }
 @media (prefers-reduced-motion: reduce) {
-    .cline-pulse { animation: none; background: color-mix(in srgb, var(--ok) 20%, transparent); }
+    .cline-pulse { animation: none; background: color-mix(in srgb, var(--cite) 20%, transparent); }
     .cline-pulse-fail { animation: none; background: color-mix(in srgb, var(--err) 30%, transparent); }
 }
 
