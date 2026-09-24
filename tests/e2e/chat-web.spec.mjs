@@ -1621,3 +1621,20 @@ test("the approval bar does not flash on load when the gate is right there", asy
     expect(errors).toEqual([]);
     await page.close();
 });
+
+// Being invisible at rest does not make a thing take no room. The fold chevron sat between a runtime's name and its
+// badge, so a heading with a badge held a chevron-shaped hole in the middle of itself — which reads as the badge
+// having drifted away from the name.
+test("a runtime's fold chevron sits after everything its heading says, not inside it", async () => {
+    const { page, errors } = await open(DESKTOP);
+    const head = page.locator(".chat-rt", { hasText: "Lab box" });
+    const x = async (sel) => (await head.locator(sel).boundingBox()).x;
+    const [name, chip, tri] = [await x(".chat-rt-name"), await x(".chat-chip"), await x(".tri")];
+    expect(chip).toBeGreaterThan(name);
+    expect(tri).toBeGreaterThan(chip);
+    // And the badge follows the name closely, rather than across a gap left for something you cannot see.
+    const nameBox = await head.locator(".chat-rt-name").boundingBox();
+    expect(chip - (nameBox.x + nameBox.width)).toBeLessThan(12);
+    expect(errors).toEqual([]);
+    await page.close();
+});
