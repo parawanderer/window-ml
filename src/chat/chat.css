@@ -1173,8 +1173,6 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-start-wait { color: var(--fg-faint); font-size: .85em; white-space: nowrap; }
 .chat-start-hint { margin-top: 10px; padding: 0 20px; color: var(--fg-faint); font-size: .84em; }
 .chat.narrow .chat-start-hint { display: none; }
-/* On a phone the way back sits over the top-left corner; the pill stays centred. */
-.chat-home-back { position: absolute; top: 10px; left: 10px; z-index: 2; }
 
 /* The top of a transcript that does not reach its start (`EarlierEdge`): a quiet line that loads earlier events as it
    scrolls into view, or says why it cannot. Never styled like `.chat-truncated`, which says they are gone. */
@@ -1461,9 +1459,11 @@ button.chat-page-go:hover { color: var(--fg); }
 .tp-kind-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; white-space: normal; }
 /* What a kind does, dim, under its name. */
 .tp-kind-detail { color: var(--fg-dim); font-size: .88em; line-height: 1.35; }
-/* THE START PAGE'S TOP BAR on a phone (start-page.tsx): the model a new session starts on, which a wide page keeps in
-   the box's row. It leaves room at the left for the round back button that sits in that corner. */
-.chat-start-top { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; min-height: 56px; padding: 8px 16px 8px 60px; }
+/* THE START PAGE'S TOP BAR on a phone (start-page.tsx): the way back, then the model a new session starts on (a wide
+   page keeps the model in the box's row). Both are IN the row. The button used to be positioned absolutely over the
+   corner while this bar carried 60px of padding to dodge it, which is two mechanisms placing two things that belong
+   together — and it read as exactly that: a chevron adrift above a pill that had drifted the other way. */
+.chat-start-top { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; min-height: 56px; padding: 8px 12px; }
 /* The note at the top of a session's model list while its runtime cannot switch: why picking does nothing. */
 .tp-note.tp-switch-note { margin: 2px 4px 6px; padding: 8px 10px; border-radius: 8px; background: var(--panel-2); color: var(--fg-dim); white-space: normal; }
 /* A model that cannot be picked yet: listed, readable, visibly not a choice. */
