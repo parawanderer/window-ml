@@ -2664,7 +2664,12 @@ html[data-surface="card"] .appr-btn.no:hover {
    wants. White words and a coloured line is the same treatment a link-form citation already gets (`.tok-link`), so
    the card gains no new idiom, and the weight comes down with it: 650 was carrying the emphasis while the colour
    was warm, and on white words in a sentence it only reads as shouting. The busy view keeps both. */
-html[data-focus] .action-link { color: var(--fg); text-decoration-color: var(--accent); font-weight: 600; }
+/* WHAT THE ACCENT MEANS HERE, and what it must not. In the reading view a coloured mark means a POINTER — a value
+   that came from a tool, a citation, something the run itself produced (`--cite`). An approval's URL is none of
+   those: it is an ordinary web address, and giving it the same mark said the outside world was one of our objects.
+   So it is the plain link treatment `.md a` already uses in prose — the page's text colour, dots in the same — and
+   the accent is left meaning one thing. */
+html[data-focus] .action-link { color: var(--fg); text-decoration-color: currentColor; font-weight: 600; }
 /* …and the VERB comes down to meet it. The sentence had its emphasis inverted: `fetch` at 700 against a target at
    650, when the verb is grammar and the target is the whole of what is being judged. Whatever is heaviest here
    should be the thing you say yes or no to. */
