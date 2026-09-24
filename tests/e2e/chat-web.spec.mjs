@@ -1647,6 +1647,29 @@ test("the approval bar does not flash on load when the gate is right there", asy
     await page.close();
 });
 
+// A card with neither a fix nor a Dismiss reads as a message that ignored you. The answer — it clears when the
+// machine it is about is put right, and not before — belongs in a corner, not on every card.
+test("a card that cannot be dismissed says why, by pointer and by tap", async () => {
+    const { page, errors } = await open(DESKTOP, "#/attention");
+    const cards = page.locator(".chat-att-item");
+    const stuck = cards.filter({ hasText: "archive folder needs reconnecting" });
+    const dismissable = cards.filter({ hasText: "No utility model" });
+
+    // Only where there is nothing to press: a card you CAN dismiss has no question to answer.
+    await expect(stuck.locator(".chat-att-why")).toHaveCount(1);
+    await expect(dismissable.locator(".chat-att-dismiss")).toHaveCount(1);
+    await expect(dismissable.locator(".chat-att-why")).toHaveCount(0);
+
+    // Tapping says it IN the card. The panel's tooltip cannot: a touch tap begins with the pointerdown that hides it.
+    await expect(stuck.locator(".chat-att-why-note")).toHaveCount(0);
+    await stuck.locator(".chat-att-why").click();
+    await expect(stuck.locator(".chat-att-why-note")).toContainText("until it is put right on Work laptop");
+    await stuck.locator(".chat-att-why").click();
+    await expect(stuck.locator(".chat-att-why-note")).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 // `width: 100%` is not redundant beside `margin: 0 auto`. The scroller is a flex COLUMN, so the column is a flex
 // item, and auto side margins on one centre it at its CONTENT width rather than filling to the cap — which made
 // every chat as wide as its own longest line, so the column moved when you changed session.
@@ -1855,6 +1878,28 @@ test("resuming a run picks its budget and carries it on in one press", async () 
     // The command carried the budget, and the run is going rather than sitting on a page waiting to be pressed again.
     await expect.poll(async () => (await commands(page)).filter((c) => c.type === "session.resume").at(-1)?.maxSteps).toBe(50);
     await expect(page.locator(".chat-resume")).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// One corner, two buttons, two different primitives: the copy is an icon button and its neighbour is a code-block
+// tool. The box had been copied across once and the metrics had not, so they stood 20px and 18px side by side, on a
+// text baseline rather than a line of their own.
+test("the buttons in an output cell's corner are one set, not two", async () => {
+    const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(WAITING)}`);
+    await page.locator(".astep", { hasText: "exec" }).first().locator("button").first().click();
+    const corner = page.locator(".r-outcorner").first();
+    await expect(corner.locator("button")).toHaveCount(2);
+
+    const boxes = await corner.locator("button").evaluateAll((els) => els.map((e) => {
+        const r = e.getBoundingClientRect();
+        return { h: Math.round(r.height), top: Math.round(r.top), right: Math.round(r.right) };
+    }));
+    expect(new Set(boxes.map((b) => b.h)).size, `heights differed: ${boxes.map((b) => b.h)}`).toBe(1);
+    expect(new Set(boxes.map((b) => b.top)).size, `tops differed: ${boxes.map((b) => b.top)}`).toBe(1);
+    // Side by side in one row, close together — not scattered across the corner.
+    const gaps = boxes.slice(1).map((b, i) => b.right - b.h - boxes[i].right);
+    for (const g of gaps) expect(Math.abs(g)).toBeLessThan(30);
     expect(errors).toEqual([]);
     await page.close();
 });
