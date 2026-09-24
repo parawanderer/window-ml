@@ -56,7 +56,11 @@ function RuntimeFacts({ rt }: { rt: RuntimeInfo }) {
                 <div class="chat-set-row"><div class="chat-set-label"><span>Archive folder</span><span class="chat-set-hint">Where old sessions are copied, so they outlive the browser's profile.</span></div>
                     <div class="rt-val">{folderText(rt.capabilities.archive)}</div></div>
             ) : null}
-            <div class="chat-set-row"><div class="chat-set-label"><span>Offers</span></div>
+            {/* STACKED, not label-and-value. Every other row here is a short string that right-aligns into a tidy
+                column; a wrapping set of chips is not that kind of value, and squeezed into 60% at the right it
+                came out centre-ragged — three chips, then two, then one, each line ending somewhere else. Below the
+                label and left-aligned it reads as the list it is, like Models and Storage under it. */}
+            <div class="chat-set-row stack"><div class="chat-set-label"><span>Offers</span></div>
                 <div class="rt-val rt-caps">{can.length ? can.map((c) => <span key={c} class="chat-chip">{c}</span>) : "Nothing this client knows"}</div></div>
         </section>
     );
