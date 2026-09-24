@@ -1281,7 +1281,11 @@ html[data-focus] .appr-btn { font-weight: 600; padding: 4px 13px; border-radius:
     html[data-focus] .appr-btn { font-size: .95em; padding: 7px 18px; }
 }
 html[data-focus] .appr-btn.yes { color: var(--bg); background: var(--fg); border-color: var(--fg); font-weight: 700; }
-html[data-focus] .appr-btn.no { color: var(--fg-dim); border-color: var(--border); }
+/* The outline is `--fg-dim`, the same token as the label, not `--border`. A border at `--border` sits about 1.4:1
+   against this card — technically drawn, effectively invisible, which on one of two answers to a consent question
+   is the wrong thing to be. WCAG's non-text minimum is 3:1; this lands near 5.8:1 and is still plainly the quieter
+   of the pair, because Approve is FILLED. `tests/e2e/chat-web.spec.mjs` measures it rather than trusting the eye. */
+html[data-focus] .appr-btn.no { color: var(--fg-dim); border-color: var(--fg-dim); }
 html[data-focus] .appr-btn.no:hover { color: var(--fg); border-color: var(--fg-dim); background: var(--panel-2); }
 .appr-btn:hover { filter: brightness(1.08); }
 /* "Keep" (approve + remember): a hollow variant of the yes button so the plain Approve stays primary. */

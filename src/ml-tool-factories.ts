@@ -261,11 +261,16 @@ export const fetchTool = function(this: MlApi): MlTool {
         // note flags the SCHEMA-only ask, and — importantly for consent — a CREDENTIALED (as-you) fetch.
         render: (_input: unknown, args?: Record<string, unknown>): RenderDescriptor => {
             const a = args as { url?: unknown; schema?: unknown; credentials?: unknown; rendered?: unknown; ask?: unknown; pipe?: unknown } | undefined;
-            const note = a?.rendered ? (a?.credentials ? "rendered in your session (runs the page's JS)" : "rendered privately (incognito — no cookies, runs the page's JS)") : a?.credentials ? "as you (sends your cookies)" : a?.schema ? "schema only" : a?.ask ? undefined : "full page";
+            // FETCHING AS THE USER is not a qualifier, it is a different act — it spends their identity on that
+            // site — so it leaves the trailing note (which is dimmed, and carries small things like "schema only")
+            // and becomes its own fact on the card, beside crossOrigin and offMachine.
+            const host = (() => { try { return new URL(String(a?.url ?? "")).host; } catch { return ""; } })();
+            const asYou = a?.credentials ? (host || "that site") : undefined;
+            const note = a?.rendered ? (a?.credentials ? "rendered (runs the page's JS)" : "rendered privately (incognito — no cookies, runs the page's JS)") : a?.credentials ? undefined : a?.schema ? "schema only" : a?.ask ? undefined : "full page";
             // The ASK gets its OWN line (full text, never truncated), not squeezed into the inline note.
             const ask = (typeof a?.ask === "string" && a.ask.trim()) ? a.ask.trim() : undefined;
             const pipe = (typeof a?.pipe === "string" && a.pipe.trim()) ? a.pipe.trim() : undefined;
-            return { type: "action", verb: "fetch", target: String(a?.url ?? ""), ...(note ? { note } : {}), ...(ask ? { ask } : {}), ...(pipe ? { pipe } : {}) };
+            return { type: "action", verb: "fetch", target: String(a?.url ?? ""), ...(note ? { note } : {}), ...(asYou ? { asYou } : {}), ...(ask ? { ask } : {}), ...(pipe ? { pipe } : {}) };
         },
         run: async ({ url, schema = false, credentials = false, rendered = false, ask = null, format = "markdown", pipe = null, header = undefined }: { url?: unknown; schema?: boolean; credentials?: boolean; rendered?: boolean; ask?: unknown; format?: unknown; pipe?: unknown; header?: boolean } = {}, ctx?: import("./contract").ToolContext): Promise<string | ToolResult> => {
             if (typeof url !== "string" || !url.trim()) return "Error: fetch_url needs a `url`.";

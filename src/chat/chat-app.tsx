@@ -364,7 +364,7 @@ function SessionList({ store, activeKey, narrow, onStart, gear, gearWide }: { st
                 </button>
                 <StartMenu store={store} onPick={onStart} icon={<IconCompose />} />{narrow ? gear : null}
             </div>
-            <div class="view chat-list-scroll">
+            <div class="view chat-list-scroll fade-edges">
                 {runtimes.length === 0 && status.state === "online" ? <div class="empty">No runtimes yet. Pair one to see its sessions here.</div> : null}
                 {pinnedRows.length ? (
                     <section class="chat-group chat-pinned" aria-label="Pinned">
@@ -575,7 +575,7 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
                     </>}
                 </div>}
             {!native && waiting && (gateAway || !calm.value) ? <button class="chat-waiting" onClick={jumpToApproval}>Waiting on your approval<span class="chat-waiting-go">Review ›</span></button> : null}
-            <div class="view chat-transcript" ref={scroller} onScroll={onScroll}
+            <div class="view chat-transcript fade-edges" ref={scroller} onScroll={onScroll}
                 onWheel={markUser} onTouchMove={markUser} onPointerDown={markUser} onKeyDown={markUser}>
                 <div ref={content}>
                     {bare ? <Lede title={title} rt={rt} summary={summary} id={id} store={store} sessionKey={sessionKey} native={native || modelBelow} /> : null}

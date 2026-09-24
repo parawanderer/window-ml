@@ -545,6 +545,36 @@ test("desktop: a run whose page has gone offers a resume instead of a composer, 
     await page.close();
 });
 
+/** WCAG relative luminance of an `rgb(r, g, b)` string. */
+function luminance(css) {
+    const [r, g, b] = css.match(/[\d.]+/g).slice(0, 3).map(Number)
+        .map((v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+/** The WCAG contrast ratio between two `rgb()` strings, 1:1 (identical) to 21:1 (black on white). */
+function contrast(a, b) {
+    const [x, y] = [luminance(a), luminance(b)].sort((m, n) => n - m);
+    return (x + 0.05) / (y + 0.05);
+}
+
+test("the two answers to an approval are both legible, measured rather than eyeballed", async () => {
+    // Deny is the OUTLINED half of a consent control, and an outline at `--border` sits near 1.4:1 against the card
+    // — drawn, and effectively invisible. That is the wrong thing for one of two answers to a question about what an
+    // agent may do, and it is the kind of wrong that looks fine to whoever chose the colour. So it is measured:
+    // WCAG wants 3:1 for a non-text UI boundary and 4.5:1 for body-sized text.
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(WAITING)}`);
+    const seen = await page.evaluate(() => {
+        const btn = document.querySelector(".astep-approve .appr-btn.no");
+        const card = document.querySelector(".astep-approve");
+        const cs = getComputedStyle(btn);
+        return { text: cs.color, border: cs.borderTopColor, card: getComputedStyle(card).backgroundColor };
+    });
+    expect(contrast(seen.border, seen.card)).toBeGreaterThanOrEqual(3);
+    expect(contrast(seen.text, seen.card)).toBeGreaterThanOrEqual(4.5);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 test("desktop: a picker inside a dialog opens against its own pill, not somewhere else on the page", async () => {
     // The pickers place their popovers in VIEWPORT coordinates (position: fixed). Any ancestor with a transform —
     // including the identity one an `animation-fill-mode: both` leaves behind after a dialog's entrance — becomes

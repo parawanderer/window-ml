@@ -93,6 +93,19 @@ html, body, #root { height: 100%; }
 }
 .chat-waiting-go { margin-left: auto; color: var(--notice); font-weight: 600; }
 .chat-transcript { padding: 10px 14px; }
+/* THE EDGES A SCROLLER CUTS. A column of prose that ends in a hard horizontal line, mid-word, reads as broken —
+   the page looks clipped rather than continued. A short gradient from the page's own colour to nothing at each end
+   softens the cut without hiding anything: the text is still there, still selectable, still found by Ctrl+F.
+   STICKY PSEUDO-ELEMENTS, not `mask-image`: a mask on the scroller would make it the containing block for every
+   `position: fixed` descendant, which is exactly the bug that put the pickers' popovers in the corner. Sticky
+   creates none. The negative margin gives them no height of their own, so nothing moves. */
+.fade-edges { position: relative; }
+.fade-edges::before, .fade-edges::after {
+    content: ""; display: block; position: sticky; height: var(--fade, 26px); z-index: 2; pointer-events: none;
+    flex: 0 0 auto;
+}
+.fade-edges::before { top: 0; margin-bottom: calc(var(--fade, 26px) * -1); background: linear-gradient(to bottom, var(--bg), transparent); }
+.fade-edges::after { bottom: 0; margin-top: calc(var(--fade, 26px) * -1); background: linear-gradient(to top, var(--bg), transparent); }
 .chat:not(.narrow) .chat-transcript > div { max-width: 920px; margin: 0 auto; }
 .chat-truncated, .chat-readonly { color: var(--fg-dim); font-size: .92em; }
 .chat-truncated { border: 1px dashed var(--border); border-radius: 7px; padding: 6px 10px; margin-bottom: 10px; }

@@ -7,6 +7,7 @@ import { services, splitStepKey } from "./services";
 import type { AgentStep } from "./store";
 import { stepKey } from "./ui-kit";
 import { truncate } from "./format";
+import { IconWarn } from "./icons";
 import { NOTES_SCHEMA, notesMessages, parseNotes, type LineNote } from "./annotate";
 
 // Utility-model auto-summaries (card title, code/action approval summaries) are gated on BOTH the host being able
@@ -133,7 +134,9 @@ export function fetchUtilityLine(messages: { role: string; content: string }[], 
 // A pending call's INTENT: prefer the tool-provided `action` descriptor (deterministic; custom tools
 // too), else a name-based verb for built-ins, else nothing (→ utility-model description).
 export const CODE_LANG: Record<string, string> = { exec: "javascript", python_exec: "python" };
-export interface Intent { verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; submit?: boolean; crossOrigin?: string; offMachine?: string; link?: boolean; }
+/** WHAT A PENDING CALL WILL DO, deterministically: the verb, what it acts on, and the facts that change what
+ *  approving it MEANS — reaching into a cross-origin frame, leaving this machine, or going out as the user. */
+export interface Intent { verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; submit?: boolean; crossOrigin?: string; offMachine?: string; asYou?: string; link?: boolean; }
 /** WHAT THIS CALL WILL DO, for the approval card — deterministic, from the tool's own `action` render
  *  rather than from a model's description of itself. Null when the tool supplies none, which is when the
  *  utility model is asked to paraphrase instead. */
@@ -180,6 +183,13 @@ export function IntentSentence({ intent }: { intent: Intent }) {
                     {intent.target ? <> <b class="action-target">“{intent.target}”</b></> : null}
                     {isType && intent.submit ? <> and <span class="action-submit">submit</span> it</> : null}</>}
             {intent.note ? <span class="action-note"> · {intent.note}</span> : null}.
+            {/* FETCHING AS THE USER changes what a yes means: it spends their identity on that site, so the agent
+                reads whatever they can read while signed in there. It used to ride the trailing note, which is
+                DIMMED — the faintest thing on the card carrying the most consequential fact on it. It is its own
+                line now, like the other two facts that change the meaning of approving. */}
+            {intent.asYou
+                ? <div class="action-xorigin"><IconWarn /><span><b>This runs as you</b> — it sends your cookies for <b class="xorigin-host">{intent.asYou}</b>, so it reads whatever you can read there while signed in.</span></div>
+                : null}
         </div>
     );
 }
@@ -191,7 +201,7 @@ export function intentFor(st: AgentStep): Intent | null {
     const ri = st.renderIn;
     // `link` renders the target as a significant URL (warm-yellow + dotted, like navigate/submit) rather than
     // "the element …" — a fetch's URL is leaving-the-page-worthy, so style it the same as navigate's.
-    if (ri && ri.type === "action") return { verb: ri.verb, kind: ri.kind, target: ri.target, selector: ri.selector, input: ri.input, note: ri.note, submit, crossOrigin: ri.crossOrigin, offMachine: ri.offMachine, link: st.tool === "navigate" || st.tool === "fetch_url" };
+    if (ri && ri.type === "action") return { verb: ri.verb, kind: ri.kind, target: ri.target, selector: ri.selector, input: ri.input, note: ri.note, submit, crossOrigin: ri.crossOrigin, offMachine: ri.offMachine, asYou: ri.asYou, link: st.tool === "navigate" || st.tool === "fetch_url" };
     if (ri && ri.type === "elements" && ri.items[0])   // an older/other target render still gives a target + selector
         return { verb: st.tool === "click" ? "Click" : st.tool === "type" ? "Type" : `Run ${st.tool}`, target: ri.items[0].text || ri.items[0].path, selector: ri.items[0].path, submit };
     const sel = typeof st.arguments?.selector === "string" ? (st.arguments.selector as string) : undefined;

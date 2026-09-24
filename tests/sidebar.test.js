@@ -542,6 +542,28 @@ test("an approval SAYS what it will do, and says it once", async () => {
     assert.match(w.shadow.querySelector(".astep-approve .appr-btn.no").textContent, /Deny/);
 });
 
+test("a fetch AS THE USER says so as its own fact, not as a dimmed aside", async () => {
+    // Sending the user's cookies is not a qualifier on the fetch, it is a different act — the agent reads whatever
+    // they can read signed in. It used to ride the trailing `.action-note`, which is DIMMED: the faintest thing on
+    // the card carrying the most consequential fact on it.
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("cred", "read my dashboard"));
+    await w.dispatch(agentStep("cred", 1, {
+        seq: 1, pending: true, awaitingApproval: true, tool: "fetch_url",
+        arguments: { url: "https://dash.example/private", credentials: true },
+        renderIn: { type: "action", verb: "fetch", target: "https://dash.example/private", asYou: "dash.example" },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.flush();
+    const warned = w.shadow.querySelector(".astep-approve .action-xorigin");
+    assert.ok(warned, "it gets the same treatment as the other facts that change what approving means");
+    assert.match(warned.textContent, /runs as you/);
+    assert.match(warned.textContent, /dash\.example/, "and names the site the cookies go to");
+    // Not buried in the dim note beside "full page" and "schema only".
+    const note = w.shadow.querySelector(".astep-approve .action-note");
+    assert.ok(!note || !/cookies/.test(note.textContent), "the dimmed note does not carry it");
+});
+
 test("an approval with no sentence to give still shows what it would run", async () => {
     // A code tool has no deterministic intent, and you cannot approve code you cannot see: there the arguments must
     // still open themselves. This is the half that the rule above must not take away.
