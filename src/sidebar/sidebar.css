@@ -1973,13 +1973,28 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
    scrolling element and slid away with the text — on a wide line, right off the edge. Same reasoning as the
    find bar beside it, and it yields to the find bar when that is open, since only one of them can own the
    corner and the one you just summoned wins. */
-.r-outcorner { position: absolute; top: 2px; right: 6px; z-index: 2; opacity: .5; transition: opacity .12s ease; }
+/* A ROW, like a code block's toolbar (`.code-tools`) — which is what this is. Inline, its buttons sat on a text
+   baseline instead of a line of their own, so a wrapped one (the copy, which carries a tooltip) rode four pixels
+   lower than its neighbour and the two ended at different right edges. */
+.r-outcorner {
+    position: absolute; top: 3px; right: 6px; z-index: 2; opacity: .5; transition: opacity .12s ease;
+    display: flex; align-items: center; gap: 4px;
+}
 .r-outcell:hover .r-outcorner, .r-outcorner:focus-within { opacity: 1; }
 .r-outcell:has(.r-find) .r-outcorner { display: none; }
 /* …and it is the SAME control as a code block's toolbar button (`.code-tool`), because it does the same job in the
    same corner. One was boxed and one was bare, side by side down a step. */
-.r-outcorner .icon-btn { padding: 2px 6px; border-radius: 5px; color: var(--fg-dim);
-    background: var(--panel); border: 1px solid var(--border); }
+/* The same BOX, the same METRICS, and the same HEIGHT. The box was copied here once and the rest was not, so the
+   two buttons in this corner stood 20px and 18px side by side — one holds a glyph and the other a word, and
+   padding alone cannot make those agree. The height is stated for both, which is the only thing that can. */
+.r-outcorner .icon-btn {
+    font: inherit; font-size: 0.82em; line-height: 1;
+    padding: 2px 6px; border-radius: 5px; color: var(--fg-dim);
+    background: var(--panel); border: 1px solid var(--border);
+}
+.r-outcorner .icon-btn, .r-outcorner .code-tool {
+    box-sizing: border-box; height: 20px; display: inline-flex; align-items: center; justify-content: center;
+}
 .r-outcorner .icon-btn:hover { color: var(--fg); border-color: var(--fg-dim); }
 
 .msg { border-radius: 7px; padding: 6px 9px; margin-bottom: 8px; border: 1px solid var(--border); }

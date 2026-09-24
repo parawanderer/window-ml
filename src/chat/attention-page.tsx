@@ -12,6 +12,7 @@ import { attentionCount, attentionItems, deviceItems, type AttentionFix, type At
 import { deviceEnv } from "./app-badge";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
+import { cursorTipOn } from "../sidebar/ui-kit";
 import { mainView, useEscapeCloses } from "./nav";
 import { SheetHead, settingsTab } from "./settings-page";
 import { dismiss, dismissed } from "./view-mode";
@@ -50,11 +51,16 @@ export function AttentionButton({ items, labelled }: { items: AttentionItem[]; l
     );
 }
 
+/** Why a card with no buttons stays put: the one thing its corner `ⓘ` has to say, on either surface. */
+const stuckWhy = (rt: string): string => `This stays until it is put right on ${rt}. Nothing on this device can clear it, and dismissing it here would only hide it.`;
+
 /** The sheet: problems first, then suggestions, each with its fix where this device has one. */
 export function AttentionPage({ items, extras }: { items: AttentionItem[]; extras?: ChatExtras }) {
     useEscapeCloses();
     const [busy, setBusy] = useState("");
     const many = new Set(items.map((i) => i.runtime?.id).filter(Boolean)).size > 1;
+    // Which card has been asked WHY IT WILL NOT GO. One at a time: it is an aside, not a mode.
+    const [why, setWhy] = useState("");
     const apply = (it: AttentionItem) => {
         const fix = it.fix;
         // A device-level item has no runtime and never has a fix: the two go together, and this is the choke point.
@@ -76,12 +82,29 @@ export function AttentionPage({ items, extras }: { items: AttentionItem[]; extra
                             {items.map((it) => (
                                 <li key={it.key} class={`chat-att-item ${it.level}`}>
                                     <div class="chat-att-text">
-                                        <div class="chat-att-title">{it.title}{many && it.runtime ? <span class="chat-att-rt">{it.runtime.name}</span> : null}</div>
+                                        <div class="chat-att-title">{it.title}{many && it.runtime ? <span class="chat-att-rt">{it.runtime.name}</span> : null}
+                                            {/* WHY THIS ONE HAS NO BUTTONS. A card with neither a fix nor a Dismiss reads
+                                                as a message that ignored you, and the answer — that it clears when the
+                                                machine it is about is put right, and not before — is worth a corner
+                                                rather than a line on every card. Hovering says it where there is a
+                                                pointer; tapping says it where there is not, because the panel's tooltip
+                                                is hidden by the same pointerdown that a tap begins with.
+
+                                                Never on a DEVICE item: "add this to your home screen" has no machine
+                                                to be put right on, and it carries a Dismiss of its own. */}
+                                            {!it.fix && it.runtime && it.level !== "suggests" ? (
+                                                <button class="chat-att-why" data-inline-target aria-expanded={why === it.key}
+                                                    aria-label={`Why ${it.title} cannot be dismissed`}
+                                                    onClick={() => setWhy((k) => (k === it.key ? "" : it.key))}
+                                                    {...cursorTipOn(stuckWhy(it.runtime.name))}>ⓘ</button>
+                                            ) : null}
+                                        </div>
                                         <div class="chat-att-detail">
                                             {it.detail}
                                             {it.fix?.kind === "settings" ? <> In Settings → {it.fix.where}.</> : null}
                                             {!it.fix && it.runtime && !it.runtime.capabilities.localSettings ? <> It is fixed on {it.runtime.name}.</> : null}
                                         </div>
+                                        {why === it.key && it.runtime ? <div class="chat-att-why-note">{stuckWhy(it.runtime.name)}</div> : null}
                                     </div>
                                     <div class="chat-att-acts">
                                         {it.fix ? (
