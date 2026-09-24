@@ -1349,8 +1349,10 @@ button.chat-page-go:hover { color: var(--fg); }
     .chat .mrow > .tt:has(> .icon-btn), .chat .mrow > .raw-btn, .chat .mrow > .time { order: 2; }
     .pair-card .btn { min-height: 40px; }
     /* Continue after a step cap: the run's one way forward, not a footnote. */
-    .chat .continue-run, .chat.calm .msg.asst.capped .continue-run { min-height: 40px; padding: 6px 18px; font-size: 1em; }
-    .chat .continue-more { min-width: 40px; justify-content: center; }
+    /* Continue is the one thing a capped run offers, so it is sized as an ACTION rather than to the 40px floor the
+       rest of this block enforces — at the minimum it read as a chip among the prose rather than the way onward. */
+    .chat .continue-run, .chat.calm .msg.asst.capped .continue-run { min-height: 46px; padding: 10px 22px; font-size: 1em; }
+    .chat .continue-more { min-width: 46px; justify-content: center; }
     .chat-search-box input, .chat-search input[type="search"] { min-height: 40px; }
     /* A chip inside a line of text (the run's page in a session's header): the line keeps its height, and a hidden
        area around the chip takes the finger. */

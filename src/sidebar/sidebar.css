@@ -2839,8 +2839,10 @@ html[data-focus] .action-verb { font-weight: 500; }
 /* A span of code that was SUBSTITUTED for something the author did not write — `exec`'s expanded pointer
    macros. Underlined rather than filled, so it marks a region without competing with syntax highlighting;
    `help` because the original is in the tooltip. */
-code .expanded { border-bottom: 1px dashed var(--ok, #22c55e); cursor: help; }
-code .expanded:hover { background: color-mix(in srgb, var(--ok, #22c55e) 12%, transparent); }
+/* An expanded pointer macro inside code: the same claim as a citation in prose — this came from a tool, not from
+   the model — so it takes `--cite` and moves with it. It was the last green left in that family. */
+code .expanded { border-bottom: 1px dashed var(--cite); cursor: help; }
+code .expanded:hover { background: color-mix(in srgb, var(--cite) 12%, transparent); }
 
 /* The scrub window's handles. The middle pans, the edges resize — so the cursor has to say which is which
    before the drag starts, since the two gestures are indistinguishable until you have already made one. */
