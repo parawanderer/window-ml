@@ -49,7 +49,7 @@ test("a started chat emits its turn, keeps the history and saves it", T, async (
     const w = world();
     const hash = await startBackgroundChat({ text: "hello", system: "be terse" });
 
-    assert.match(hash, /^[0-9a-f]{8}$/);
+    assert.match(hash, /^[0-9a-f]{32}$/);
     assert.equal(isBackgroundChat(hash), true);
     await until(() => w.of("chat-result").length === 1, "the turn to finish");
 
@@ -162,4 +162,20 @@ test("the map stays under its cap, dropping the chat idle longest", T, async () 
     for (let i = 0; i < MAX_BG_CHATS; i++) await startBackgroundChat({ text: `n${i}`, ephemeral: true });
     assert.ok(backgroundChats().length <= MAX_BG_CHATS, `${backgroundChats().length} chats held`);
     assert.equal(isBackgroundChat(first), false, "the oldest idle chat is the one dropped");
+});
+
+// The session hash itself (contract-run.ts). It names a session in the index, keys its stored record, and names it
+// in an archive that outlives every index it was ever in — so its width is a property worth pinning, not an
+// incidental of how it is generated.
+test("a session hash is long enough to stay unique, and short where it is read", async () => {
+    const { shortHash, HASH_SHOWN } = await import("../src/contract-run.ts");
+    const one = shortHash();
+    assert.match(one, /^[0-9a-f]{32}$/, "128 bits of hex");
+    // Distinct across a sample that would be a coin flip at the old 32 bits: at 2^32 a collision is about even by
+    // ~77k ids, and the archive is a store meant to hold years of them.
+    const many = new Set(Array.from({ length: 20000 }, shortHash));
+    assert.equal(many.size, 20000, "no collision in a sample the old width would not have survived");
+    // Shown short, so it stays a name a person can read out; the whole thing is what resumes it.
+    assert.equal(HASH_SHOWN, 8);
+    assert.equal(one.slice(0, HASH_SHOWN).length, 8);
 });

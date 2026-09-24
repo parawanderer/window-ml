@@ -19,8 +19,10 @@ run the same code. The hub encodes the same shapes as its `Command`, `SessionEve
 
 ## Identity
 
-- **A session is `{ runtime, hash }`**, written `runtime:hash` (`sessionKey`). A hash is 8 hex and unique only
-  within its runtime. A client keys everything by the pair, never by a bare hash.
+- **A session is `{ runtime, hash }`**, written `runtime:hash` (`sessionKey`). A hash is hex, unique only within its
+  runtime, and is shown as its first 8 characters while being copied and matched whole. It is 32 characters as of
+  `shortHash` (contract-run.ts); it was 8, and both are valid — nothing reads a fixed width and the format has always
+  accepted up to 64. A client keys everything by the pair, never by a bare hash, and never by a prefix.
 - **A runtime id is derived from the runtime's public key**, so it is unique across every account and every hub. A
   client that merges several hosts, or several accounts, cannot collide two runtimes. The local host reports the
   extension's key-derived id once it has one, and `local` until then — and it goes on ANSWERING to `local`

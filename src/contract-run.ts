@@ -109,11 +109,25 @@ export interface ElementContext {
     links: { text: string; href: string }[];
 }
 
-/** Stable short hex id per session (crypto.getRandomValues, Math.random fallback).
- *  Shown in the sidebar and used to resume a conversation. */
+/** How many hex characters of a session hash are SHOWN. The rest is still copied, and still what resumes it. */
+export const HASH_SHOWN = 8;
+
+/**
+ * Stable hex id per session (crypto.getRandomValues, Math.random fallback). Used to resume a conversation, to key
+ * its stored record, and to name it in an archive that outlives every index it was ever in.
+ *
+ * SIXTEEN BYTES, shown as the first {@link HASH_SHOWN}. It was four, which is the whole of git's trick — a short
+ * name you can say out loud — without git's safety net, because there was no longer form to fall back to: eight hex
+ * characters WERE the identifier. Two things made that thin. The live index evicts, but the archive does not, and it
+ * is keyed by this; at 32 bits a collision is around a percent by ten thousand sessions and a quarter by fifty, over
+ * a store meant to hold years. And a saved session is readable by anything that knows its hash (docs/API.md), which
+ * makes the number a guess budget as well as a name.
+ *
+ * Older ids stay valid: nothing reads a fixed width, and `HASH_RE` (session-index.ts) has always accepted up to 64.
+ */
 export const shortHash = (): string => {
     try {
-        const b = new Uint8Array(4); crypto.getRandomValues(b);
+        const b = new Uint8Array(16); crypto.getRandomValues(b);
         return [...b].map(x => x.toString(16).padStart(2, "0")).join("");
-    } catch { return Math.random().toString(16).slice(2, 10); }
+    } catch { return Array.from({ length: 4 }, () => Math.random().toString(16).slice(2, 10)).join(""); }
 };
