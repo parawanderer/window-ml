@@ -23,6 +23,7 @@ import { DevicePicker } from "./device-picker";
 import { blankStartState } from "./blank-start";
 import { BlankStartDialog } from "./blank-start-dialog";
 import { startableOn, useTargetPick, type StartKind } from "./new-session";
+import { startAmbient } from "./ambient-gl";
 
 /** Each runtime's model list as last answered, for the page's life: a start page opened again draws it at once. */
 const modelCache = new Map<string, ModelChoice[]>();
@@ -44,6 +45,29 @@ export function useHeldTrue(on: boolean, ms: number): boolean {
         return () => clearTimeout(t);
     }, [on, ms]);
     return on || held;
+}
+
+/**
+ * The ambient field behind the start box: a shader where WebGL runs, nothing where it does not.
+ *
+ * The canvas is only shown once the context is up, so a machine that refuses WebGL sees the page it always saw
+ * rather than a black rectangle that never fills in.
+ */
+function Ambient({ target }: { target: { current: HTMLElement | null } }) {
+    const canvas = useRef<HTMLCanvasElement>(null);
+    const [gl, setGl] = useState(false);
+    useEffect(() => {
+        const el = canvas.current;
+        if (!el) return;
+        const still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+        const light = typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: light)").matches;
+        // The page's own ground, read from the stylesheet rather than repeated here, so a theme change is one place.
+        const bg = getComputedStyle(document.documentElement).getPropertyValue("--bg");
+        const run = startAmbient(el, { still, light, target: target.current, bg });
+        setGl(!!run);
+        return () => run?.stop();
+    }, []);
+    return <canvas ref={canvas} aria-hidden="true" class={`chat-ambient-gl${gl ? " on" : ""}`} />;
 }
 
 /** The start page: a pill to type in, and the choices a start needs on one row inside it. */
@@ -97,6 +121,7 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
         return () => { live = false; };
     }, [rt?.id, canList]);
     const box = useRef<HTMLTextAreaElement>(null);
+    const boxEl = useRef<HTMLDivElement>(null);
     useEffect(() => { box.current?.focus(); }, [kind]);
     useEffect(() => { if (initialKind) setKind(initialKind); }, [initialKind]);
     useEffect(() => { if (initialRuntime) setRuntimeId(initialRuntime); }, [initialRuntime]);
@@ -184,6 +209,8 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
             </div>
         ) : null}
         <div class="chat-start-page">
+            {/* AN EMPTY PAGE THAT IS NOT A BLANK ONE: light off the box, and the page's own dark beyond it. */}
+            <Ambient target={boxEl} />
             <div class="chat-start-col">
                 {/* NARROW: the choices sit OUTSIDE the box, above it and across the full width, as the phone app's
                     own start screen has them. Inside it they read as part of the message being composed; they are not
@@ -191,7 +218,7 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
                     is also pushed about by what is typed. Ordered in the DOM rather than with `order`, so the
                     keyboard walks them in the order they are drawn. */}
                 {narrow ? <div class="chat-start-above">{row}{pick.urlField}</div> : null}
-                <div class="chat-start-box">
+                <div class="chat-start-box" ref={boxEl}>
                     <textarea ref={box} rows={1} value={text} aria-label={kind === "agent" ? "Task" : "Message"}
                         placeholder={kind === "agent" ? "What should the agent do?" : "Start a chat"}
                         onInput={(e: any) => { setText(e.target.value); saveDraft("start", e.target.value); }}

@@ -1603,3 +1603,11 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-bs-choices .btn svg { flex: 0 0 auto; color: var(--fg-dim); }
 /* The "or type one" row: the dialog's own field (`.chat-dialog-field`) under a label saying what it is for. */
 .chat-bs-field { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; font-size: .92em; color: var(--fg-dim); }
+
+/* THE START PAGE'S AMBIENT FIELD (ambient-gl.ts): light off the composer, the page's own dark beyond it. Behind
+   everything, untouchable, and hidden until the shader is actually running — a machine that refuses WebGL gets the
+   page it always had rather than a black rectangle. */
+.chat-start-page { position: relative; }
+.chat-start-col { position: relative; z-index: 1; }
+.chat-ambient-gl { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; display: none; }
+.chat-ambient-gl.on { display: block; }
