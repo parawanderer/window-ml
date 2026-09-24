@@ -1904,6 +1904,33 @@ test("the buttons in an output cell's corner are one set, not two", async () => 
     await page.close();
 });
 
+// A notice is centred on the COLUMN being read, not the window — beside a session list the window's middle is off to
+// one side of the thread. But the measurement outlived the thing measured: going back to the list unmounts that pane
+// and the notice stayed where it had been, which on a phone put it half off the left of the screen, where it can be
+// neither read nor dismissed.
+test("a notice stays on screen when the pane it was centred on goes away @mobile", async () => {
+    const { page, errors } = await open(PHONE, `#/s/${encodeURIComponent(CAPPED_HERE)}`);
+    await page.locator(".continue-run").waitFor();
+    // Twice in one tick: the first press sets the run going, so the second is refused and says so.
+    await page.evaluate(() => {
+        const b = document.querySelector(".continue-run");
+        b.click();
+        b.click();
+    });
+    const notices = page.locator(".chat-notices");
+    await expect(notices).toBeVisible();
+
+    await page.locator(".chat-sheet-back").click();
+    await expect(page.locator(".chat-list")).toBeVisible();
+    await expect(notices).toBeVisible();
+    const box = await notices.boundingBox();
+    const width = page.viewportSize().width;
+    expect(box.x, `notice starts at ${box.x}`).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width, `notice ends at ${box.x + box.width} of ${width}`).toBeLessThanOrEqual(width);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 // A step that CANNOT close has nothing to animate, and the guard for that said `awaiting` — but a gated step in calm
 // closes like any other, because the intent line above it says what is being asked. So the one step you are most
 // likely to be poking at snapped shut while every step beside it eased.

@@ -525,17 +525,27 @@ function Notices({ store }: { store: ChatStore }) {
     // Centred on the column being read, not the window: beside a session list (and a dock) the window's middle is
     // off to one side of the thread. The column is measured, because the list folds and the dock opens.
     const [mid, setMid] = useState<number | null>(null);
+    // RE-MEASURED WHEN THE VIEW CHANGES, not only when a notice appears. Going back to the list unmounts the pane
+    // this was centred on, and the measurement outlived it: the notice stayed at a column that was no longer there,
+    // which on a phone put it half off the left of the screen. No pane means the window's own middle.
+    const where = view.value.name === "detail" ? `detail:${view.value.hash}` : view.value.name;
     useEffect(() => {
         if (!list.length) return;
         const main = document.querySelector<HTMLElement>(".chat-main");
         if (!main) { setMid(null); return; }
-        const place = () => { const r = main.getBoundingClientRect(); setMid(r.left + r.width / 2); };
+        // And CLAMPED, because a column can be narrower than the notice or sit against an edge; centring on it then
+        // hangs the notice off the screen, which is the one place it cannot be read or dismissed.
+        const place = () => {
+            const r = main.getBoundingClientRect();
+            const half = Math.min(innerWidth * 0.92, 460) / 2;
+            setMid(Math.min(Math.max(r.left + r.width / 2, half + 8), innerWidth - half - 8));
+        };
         place();
         const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(place);
         ro?.observe(main);
         addEventListener("resize", place);
         return () => { ro?.disconnect(); removeEventListener("resize", place); };
-    }, [list.length > 0]);
+    }, [list.length > 0, where]);
     if (!list.length) return null;
     return (
         <div class="chat-notices" role="status" aria-live="polite" style={mid == null ? undefined : `left:${mid}px`}>
