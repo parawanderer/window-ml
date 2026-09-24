@@ -16,8 +16,9 @@
 //   node scripts/test-index.mjs --unsectioned            # every test under no section, repo-wide (survey)
 //
 // WHY IT EXISTS. `scripts/index.mjs` made the SOURCE searchable and left the tests opaque, and the tests are where
-// the knowledge about behaviour actually lives. `tests/sidebar.test.js` holds 407 of them in 9,300 lines behind ten
-// section comments: grep finds a test whose name you can already guess, and answers neither of the questions you
+// the knowledge about behaviour actually lives. `tests/sidebar.test.js` held 407 of them in 9,300 lines behind ten
+// section comments (it is now twelve `sidebar-*.test.js` files, partitioned with this): grep finds a test whose
+// name you can already guess, and answers neither of the questions you
 // actually have — "is this covered already?" and "where does a new one go?". Reading the file to find out costs
 // about 150,000 tokens, which is not a thing anyone or anything can spend per question.
 //
