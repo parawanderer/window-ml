@@ -49,6 +49,15 @@ export interface SidebarServices {
     /** continue a run stopped at its step cap, or retry a failed one. `maxSteps` is a budget chosen for this
      *  continuation; omitted keeps the run's own. A retry never carries one — it is the same turn again. */
     continueSession(session: string, maxSteps?: number): void;
+    /**
+     * Can a capped run be carried on FROM HERE? Continue reaches the page that still holds the run, so a run whose
+     * tab has closed cannot take it — the runtime answers "the page no longer holds this run" and the press does
+     * nothing. That run is resumed onto a new page instead, and offering both is offering the same thing twice with
+     * only one of them able to work; the bolder of the two was the one that could not.
+     *
+     * The panel says yes: it is attached to the tab that holds the run. Read during render, like `sideCalls`.
+     */
+    canContinue(session: string): boolean;
     /** outline something on the session's page; `null` clears it. A host with no page does nothing. */
     highlight(ref: HighlightRef): void;
     /** show an image full-size */
@@ -116,6 +125,7 @@ const UNAVAILABLE: SidebarServices = {
     sendToSession: async () => ({ ok: false, error: "no host is installed" }),
     cancelSession() {},
     continueSession() {},
+    canContinue: () => false,
     highlight() {},
     openLightbox() {},
     openLink() {},

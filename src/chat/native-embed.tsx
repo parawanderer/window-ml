@@ -41,6 +41,10 @@ function post(msg: ToNative): void {
 
 /** Whether the approval card is scrolled out of the open transcript, as the pane reports it: the app's bar says so. */
 const gateAway = signal(false);
+/** The size code is drawn at, as the app set it (`BridgeTheme.codeSize`). Rendered onto the `.chat` root rather than
+ *  written to the DOM: chat.css gives `.chat` a default, and a variable set on an ancestor loses to one set on the
+ *  element itself — so it has to be that element's own, which means Preact has to own it. */
+const codeFs = signal(0);
 /** The pane's report, as one stable function, so watching it does not re-run the pane's effect every render. */
 const reportGate = (away: boolean) => { gateAway.value = away; };
 
@@ -237,6 +241,10 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
                 applyTheme();
                 document.documentElement.style.setProperty("--safe-left", `${m.theme.insets.left}px`);
                 document.documentElement.style.setProperty("--safe-right", `${m.theme.insets.right}px`);
+                // The page's own `--code-fs`, which on every other surface `ChatApp` sets from its prefs. This page is
+                // only a SessionPane, so nothing was setting it. Absent leaves what was chosen: a rotation sends a
+                // theme too, and resetting the size on every one of them would be a setting that will not stay.
+                if (m.theme.codeSize) codeFs.value = m.theme.codeSize;
                 return;
             case "open": {
                 // A row found by search may be ARCHIVED: bring it back into the live store first, or the transcript
@@ -383,7 +391,7 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
 function Embed({ store, open }: { store: ChatStore; open: { value: SessionKey | null } }) {
     const key = open.value;
     return (
-        <div class="chat calm narrow native-embed">
+        <div class="chat calm narrow native-embed" style={codeFs.value ? `--code-fs: ${codeFs.value}px` : undefined}>
             {key ? <SessionPane store={store} sessionKey={key} narrow native onGate={reportGate} /> : null}
         </div>
     );

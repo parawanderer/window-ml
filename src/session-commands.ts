@@ -370,12 +370,20 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
             if (!history) return fail("not-found", "this browser kept no history for that session");
             if (history.kind !== "agent") return fail("unsupported", "only a run resumes onto a page");
             if (!history.payload) return fail("not-found", "that session was saved before this browser kept enough to continue a run");
+            // Same rule as a continue's budget, and refused rather than rounded for the same reason: a caller that
+            // meant 50 and sent "50" should hear about it instead of silently getting the run's old cap back.
+            if (c.maxSteps != null && (!Number.isInteger(c.maxSteps) || c.maxSteps < 1 || c.maxSteps > MAX_CONTINUE_STEPS))
+                return fail("invalid", `maxSteps must be a whole number of steps, 1 to ${MAX_CONTINUE_STEPS}`);
+            // The budget rides in on the payload the page is handed, so the run comes back already holding it.
+            const resumed = c.maxSteps != null && history.payload
+                ? { ...history, payload: { ...history.payload, maxSteps: c.maxSteps } }
+                : history;
 
             const t = await resolveTarget(c.target as { kind?: unknown; tabId?: unknown; url?: unknown } | undefined);
             if (t.error) return t.error;
 
             let outcome: PageOutcome | "adopted";
-            try { outcome = await deps.adoptSession(t.tabId, s.id.hash, history); }
+            try { outcome = await deps.adoptSession(t.tabId, s.id.hash, resumed); }
             catch { return fail("unavailable", "that page is not reachable; the extension may not run there"); }
             if (outcome !== "adopted") {
                 if (outcome === "no-answer") return fail("unavailable", "that page did not answer; it may still be loading");
@@ -393,7 +401,17 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
                 afterMs: Math.max(0, at - summary.lastTs),
                 dropped: [...RESUME_DROPS],
             });
-            return ok({ session: s.id });
+            // AND CARRY IT ON, when a budget said to. The page holds the run again by here, so this is the ordinary
+            // continue — the same call the button makes, made for you. A refusal after the adopt is reported as
+            // itself: the run IS back on a page, which is half of what was asked for and not worth undoing, and a
+            // reader who is told "resume failed" would go looking for a run that is sitting there waiting.
+            if (c.maxSteps != null) {
+                const carried = await viaPage(s.id.hash, "continue", { maxSteps: c.maxSteps });
+                if (typeof carried !== "string") return carried;
+                if (carried !== "continued" && carried !== "busy")
+                    return fail("failed", "the run is back on that page but did not start; press Continue");
+            }
+            return ok({ session: s.id, ...(c.maxSteps != null ? { maxSteps: c.maxSteps } : {}) });
         },
 
         "chat.start": async (c) => {

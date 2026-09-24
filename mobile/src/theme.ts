@@ -22,7 +22,9 @@ export interface Palette {
     ok: string;
     err: string;
     warn: string;
-    /** a count of things waiting on the person: cyan on a phone, as the page's touch rule has it */
+    /** Something waiting on the person — a count, an approval. THE ACCENT, because this app draws the page's calm
+     *  view and nothing else, and calm sets `--notice: var(--accent)` (chat.css). It was its own blue, so the same
+     *  badge was indigo on the page and sky on the phone, side by side. */
     notice: string;
     noticeFg: string;
 }
@@ -31,14 +33,14 @@ export interface Palette {
 export const LIGHT: Palette = {
     scheme: "light", bg: "#ffffff", panel: "#f4f4f5", panel2: "#e4e4e7", border: "#e4e4e7", fg: "#18181b",
     fgDim: "#52525b", fgFaint: "#a1a1aa", accent: "#6366f1", accentFg: "#ffffff", userBg: "#eceef1",
-    ok: "#16a34a", err: "#dc2626", warn: "#ca8a04", notice: "#0284c7", noticeFg: "#ffffff",
+    ok: "#16a34a", err: "#dc2626", warn: "#ca8a04", notice: "#6366f1", noticeFg: "#ffffff",
 };
 
 /** The dark palette: calm view's (chat.css `.chat.calm`), over the panel's dark text colours. */
 export const DARK: Palette = {
     scheme: "dark", bg: "#121316", panel: "#1c1d21", panel2: "#2a2b31", border: "#2a2b31", fg: "#e4e4e7",
     fgDim: "#a1a1aa", fgFaint: "#71717a", accent: "#6366f1", accentFg: "#ffffff", userBg: "#2a2b31",
-    ok: "#4ade80", err: "#f87171", warn: "#eab308", notice: "#38bdf8", noticeFg: "#082f49",
+    ok: "#4ade80", err: "#f87171", warn: "#eab308", notice: "#6366f1", noticeFg: "#ffffff",
 };
 
 /** Sizes shared by every screen: the page's calm type scale at a phone's reading size, and a 44pt touch target. */

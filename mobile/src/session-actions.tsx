@@ -12,6 +12,7 @@ import type { SessionChrome } from "../../src/native/bridge";
 import { useEmbed } from "./embed";
 import { SIZE, usePalette } from "./theme";
 import { Sheet, SheetFilter, SheetRow } from "./ui";
+import { IconCamera, IconChevronRight, IconCompose, IconCopy, IconExport, IconPin, IconPlay, IconStop, IconTrash } from "./icons";
 
 /** The sheet's handle: show it. */
 export interface SessionActionsHandle { present(): void }
@@ -98,17 +99,17 @@ export const SessionActions = forwardRef<SessionActionsHandle, { chrome: Session
                 </> : c ? <>
                     <Text style={[s.title, { color: p.fg }]}>{c.title}</Text>
                     <Text style={[s.sub, { color: p.fgDim }]}>{c.kind === "agent" ? "Agent" : "Chat"} on {c.runtimeName}{c.pinned ? " · pinned" : ""}</Text>
-                    {onOpen ? <SheetRow title="Open" onPress={() => { close(); onOpen(); }} /> : null}
-                    {c.running && c.canSend ? <SheetRow title="Stop this run" danger onPress={() => { close(); e.cancel(c.key); }} /> : null}
-                    {c.canResume && onResume ? <SheetRow title="Resume on a page" detail="Its tab has closed: pick the run back up on another" onPress={() => { close(); onResume(); }} /> : null}
-                    {c.canPeek ? <SheetRow title={peeking ? "Capturing…" : "Look at the page"} detail="The page this run is on, as it is now" disabled={peeking} onPress={() => void peek()} /> : null}
-                    {c.canPin ? <SheetRow title={c.pinned ? "Unpin" : "Pin"} detail={c.pinned ? undefined : "Kept on the runtime, never expired or evicted"} onPress={() => void pin()} /> : null}
-                    {c.canRename ? <SheetRow title="Rename" onPress={() => setNaming(c.title)} /> : null}
+                    {onOpen ? <SheetRow title="Open" icon={(c) => <IconChevronRight color={c} />} onPress={() => { close(); onOpen(); }} /> : null}
+                    {c.running && c.canSend ? <SheetRow title="Stop this run" danger icon={(col) => <IconStop color={col} />} onPress={() => { close(); e.cancel(c.key); }} /> : null}
+                    {c.canResume && onResume ? <SheetRow title="Resume on a page" icon={(col) => <IconPlay color={col} />} detail="Its tab has closed: pick the run back up on another" onPress={() => { close(); onResume(); }} /> : null}
+                    {c.canPeek ? <SheetRow title={peeking ? "Capturing…" : "Look at the page"} icon={(col) => <IconCamera color={col} />} detail="The page this run is on, as it is now" disabled={peeking} onPress={() => void peek()} /> : null}
+                    {c.canPin ? <SheetRow title={c.pinned ? "Unpin" : "Pin"} icon={(col) => <IconPin color={col} />} detail={c.pinned ? undefined : "Kept on the runtime, never expired or evicted"} onPress={() => void pin()} /> : null}
+                    {c.canRename ? <SheetRow title="Rename" icon={(col) => <IconCompose color={col} />} onPress={() => setNaming(c.title)} /> : null}
                     {/* Only for the session that is OPEN: the file is written from the transcript the page holds, and
                         the list's sheet is about one it has not loaded. `onOpen` is what tells the two sheets apart. */}
-                    {onOpen ? null : <SheetRow title="Export chat" detail="Markdown or JSON, to the share sheet" onPress={() => setPicking(true)} />}
-                    <SheetRow title="Copy session id" onPress={copyId} />
-                    {c.canDelete ? <SheetRow title="Delete" danger onPress={remove} /> : null}
+                    {onOpen ? null : <SheetRow title="Export chat" icon={(col) => <IconExport color={col} />} detail="Markdown or JSON, to the share sheet" onPress={() => setPicking(true)} />}
+                    <SheetRow title="Copy session id" icon={(col) => <IconCopy color={col} />} onPress={copyId} />
+                    {c.canDelete ? <SheetRow title="Delete" danger icon={(col) => <IconTrash color={col} />} onPress={remove} /> : null}
                 </> : null}
             </Sheet>
         );
