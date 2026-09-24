@@ -10,7 +10,7 @@ import { view } from "./store";
 import type { Session, Turn, Status, AgentStep } from "./store";
 import { pretty, truncate, collapsedPreview, markdown } from "./format";
 import { annotatedConfig, turnProfile } from "./model";
-import { IconChevron, IconPlay } from "./icons";
+import { IconAgent, IconChevron, IconPlay } from "./icons";
 import { cursorTipOn, openCtxMenu, Dot, Stamp, Hash, TagBadge, CopyBtn, CopyModel, Code } from "./ui-kit";
 import { STEP_BUDGETS } from "../step-budget";
 import { aliasOf, AnswerBody, ResultBlock } from "./answer-render";
@@ -256,7 +256,7 @@ export const ProfileBadge = ({ profile }: { profile?: ExtendProfile | null }) =>
 // It must NOT read a signal itself: @preact/signals auto-memoizes a
 // signal-reading child, which (with our in-place session mutation → unchanged
 // `s` reference) would make it skip the parent re-render and freeze on pending.
-export const AgentBadge = () => <span class="agent-badge">agent</span>;
+export const AgentBadge = () => <span class="agent-badge"><IconAgent />agent</span>;
 /** An `ml.embed()` session. Without it the row fell back to the generic "session" tag, so the one kind of
  *  session that is NOT a conversation was the one the list refused to name — leaving you to work out from
  *  the title that "embed 24 inputs" was not something somebody typed. */

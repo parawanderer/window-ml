@@ -75,7 +75,15 @@ html, body, #root { height: 100%; }
 .chat-row .dot { margin-top: .45em; }
 .chat-row.active { border-color: var(--accent); background: var(--panel-2); }
 .chat-row-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.chat-row-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--fg-faint); font-size: .86em; }
+/* ONE LINE, and the status keeps its place on it. This wrapped, so a row with a long page host pushed "stopped at
+   its step cap" onto a second line and the list's rows stopped being the same height — with the status in a
+   different place on each. The phone's arrangement: what it says never shrinks, the HOST does, and it ellipsises
+   rather than wrapping. */
+.chat-row-meta { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; min-width: 0; color: var(--fg-faint); font-size: .86em; }
+.chat-row-meta > * { flex: 0 0 auto; }
+/* The page host and the runtime name are what a narrow list can spare: they are the only things here that can be
+   guessed from context, and the next tap says both in full. */
+.chat-row-meta > .chat-row-rt, .chat-row-meta > .chat-page { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-status.st-waiting { color: var(--notice); }
 .chat-status.st-error, .chat-status.st-cancelled, .chat-status.st-interrupted { color: var(--err); }
 /* Open approvals on a session in the list: the one thing on a phone that is waiting on the person holding it. */
@@ -411,7 +419,18 @@ html, body, #root { height: 100%; }
 .chat.calm .chat-row:hover { background: var(--panel); border-color: transparent; }
 .chat.calm .chat-row.active { background: var(--panel-2); border-color: transparent; }
 .chat.calm .chat-row .dot.ok { visibility: hidden; }
-.chat.calm .chat-row .agent-badge { background: transparent; color: var(--fg-faint); padding: 0; font-weight: 600; }
+/* The agent marker in calm: the glyph and the word, in the row's quietest colour and its own case rather than
+   shouted in caps. The badge shape is for the panel, where a list is dense and a run has to be told from a chat at a
+   glance; a calm list has room for the word. Lowercase and the glyph are the phone's, which is where they read best. */
+.chat.calm .chat-row .agent-badge {
+    background: transparent; color: var(--fg-faint); padding: 0; font-weight: 600;
+    /* THE LINE'S OWN SIZE. `.agent-badge` is 0.75em because it is a BADGE in the panel, and inside a meta line that
+       is already .86em that came out at about two-thirds of the words beside it — the one item on the row you had to
+       lean in for. On the phone the marker and the host are the same size, and they should be. */
+    font-size: inherit; text-transform: none; letter-spacing: 0;
+    display: inline-flex; align-items: center; gap: 3px;
+}
+.chat.calm .chat-row .agent-badge svg { flex: 0 0 auto; }
 .chat.calm .chat-row .time { opacity: .55; }
 /* A runtime's fold chevron, calm: after EVERYTHING the heading says instead of before it, and only while the pointer
    (or focus) is on the heading, so a quiet list shows no furniture but a fold is still discoverable where you would
@@ -861,7 +880,14 @@ button.chat-page-go:hover { color: var(--fg); }
     color: var(--fg-faint); font-size: .8em; font-weight: 600; letter-spacing: .03em;
 }
 .chat-group-label svg { width: 13px; height: 13px; }
+/* WHAT IS WAITING ON YOU, at the top of the list and in the notice colour — the one group here that is not about
+   where a session lives but about whether it has stopped for you. The phone has had it since it had a list. */
+.chat-needs-label { color: var(--notice); }
 .chat-row-rt { color: var(--fg-faint); }
+/* The pin on a row OUTSIDE the Pinned group (a "Needs you" row): being in that group is the mark everywhere else,
+   and up here there is no group to be in — so the press that pinned it would otherwise have shown nothing. */
+.chat-row-pin { display: inline-flex; color: var(--fg-faint); }
+.chat-row-pin svg { width: 12px; height: 12px; }
 
 /** The way into the older view: the last thing in the recent list, quiet, with how many are behind it. */
 .chat-older-go {

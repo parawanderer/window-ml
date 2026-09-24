@@ -12,7 +12,7 @@ import { parseSessionKey } from "../session-host";
 import { DetailView } from "../sidebar/session-detail";
 import { Composer } from "../sidebar/composer";
 import { AgentBadge } from "../sidebar/reply";
-import { IconBack, IconBench, IconBrain, IconCompose, IconCopy, IconCamera, IconChevron, IconClose, IconExport, IconHistory, IconMore, IconPin, IconSave, IconSearch, IconVram } from "../sidebar/icons";
+import { IconBack, IconBench, IconBrain, IconCompose, IconCopy, IconCamera, IconChevron, IconClose, IconExport, IconHistory, IconInbox, IconMore, IconPin, IconSave, IconSearch, IconVram } from "../sidebar/icons";
 import { services } from "../sidebar/services";
 import { ContextMenu, CursorTipLayer, Dot, Hash, Stamp, cursorTipOn } from "../sidebar/ui-kit";
 import { benchOpen, openBench, rev, sessionMap, view, type Status } from "../sidebar/store";
@@ -315,7 +315,9 @@ function tabFocus(store: ChatStore, rt: RuntimeInfo | undefined, summary: Sessio
 
 /** One session in the list, from its index row (the transcript is fetched only when it is opened). The row and its
  *  `⋮` are siblings in a wrapper rather than one inside the other, because a button cannot hold a button. */
-function IndexRow({ store, s, rt, active, moved, showRuntime }: { store: ChatStore; s: SessionSummary; rt: RuntimeInfo; active: boolean; moved: boolean; showRuntime?: boolean }) {
+function IndexRow({ store, s, rt, active, moved, showRuntime, showPin }: { store: ChatStore; s: SessionSummary; rt: RuntimeInfo; active: boolean; moved: boolean; showRuntime?: boolean;
+    /** mark it pinned, for a row OUTSIDE the Pinned group — where being in that group is the mark */
+    showPin?: boolean }) {
     const key = `${s.id.runtime}:${s.id.hash}`;
     const title = s.title || s.task || "(untitled)";
     const offset = rt.clockOffsetMs ?? 0;
@@ -325,15 +327,27 @@ function IndexRow({ store, s, rt, active, moved, showRuntime }: { store: ChatSto
                 <Dot status={DOT[s.status] ?? "pending"} warn={s.status === "capped" ? "Stopped at its step cap. Open it to give it more steps." : undefined} />
                 <span class="chat-row-body">
                     <b class="row-title">{truncate(title, 90)}</b>
+                    {/* WHERE IT STANDS COMES FIRST, then what kind of session it is, then where it lives — the phone's
+                        order (mobile ListScreen), and the phone's for the phone's reason: a status that trails a page
+                        host of any length is one the eye has to hunt for again on every row. It was last here, after
+                        a hostname that is a different width in every row. */}
                     <span class="chat-row-meta">
-                        {showRuntime ? <span class="chat-row-rt">{rt.name}</span> : null}
-                        {s.kind === "agent" ? <AgentBadge /> : null}
-                        {s.page ? <PageChip page={s.page} /> : null}
                         {/* ONE THING, NOT TWO. "waiting on you" beside "1 approval" is the same fact in two
                             voices, and the badge is the one that says how many and reads at a glance — so where
                             there is a count, the count IS the status and the word goes. */}
-                        {STATUS_LABEL[s.status] && !s.pendingApprovals ? <span class={`chat-status st-${s.status}`}>{STATUS_LABEL[s.status]}</span> : null}
                         {s.pendingApprovals > 0 ? <span class="chat-appr-badge">{approvalsPending(s.pendingApprovals)}</span> : null}
+                        {STATUS_LABEL[s.status] && !s.pendingApprovals ? <span class={`chat-status st-${s.status}`}>{STATUS_LABEL[s.status]}</span> : null}
+                        {/* A PIN TAKEN WHERE IT CANNOT MOVE THE ROW. Pinning from "Needs you" is real — it is stored,
+                            and the row drops into Pinned once the gate is answered — but nothing moved at the time,
+                            so the press read as a press that did nothing. */}
+                        {showPin && isPinned(s) ? <span class="chat-row-pin" aria-label="Pinned"><IconPin /></span> : null}
+                        {s.kind === "agent" ? <AgentBadge /> : null}
+                        {/* OUT OF ITS GROUP, the machine is what the row is missing; the page host is what it can
+                            spare, since opening it says both. Showing both in a 300px column truncated each of them
+                            to about a word. The phone's rule, for the phone's reason. */}
+                        {showRuntime
+                            ? <span class="chat-row-rt">{rt.name}</span>
+                            : s.page ? <PageChip page={s.page} /> : null}
                     </span>
                 </span>
                 {moved ? <span class="chat-moved" {...cursorTipOn("Something happened here while you were reading something else")} aria-label="new activity" /> : null}
@@ -372,11 +386,17 @@ function SessionList({ store, activeKey, narrow, onStart, gear, gearWide }: { st
     const live = (s: SessionSummary) => s.status === "running" || s.status === "waiting";
     const isRecent = (s: SessionSummary) => live(s) || localTs(s, rtOf.get(s.id.runtime)) >= cutoff;
     void pins;   // read, so the list re-renders when this device's pins change (`isPinned` reads them too)
-    const pinnedRows = sessions.filter((s) => isPinned(s) && rtOf.has(s.id.runtime));
+    // WHAT IS WAITING ON YOU, ABOVE EVERYTHING (the phone's `needsYou`). A run holding a gate is the only thing in
+    // this list that stops until you come back to it, and finding it meant knowing which machine it was on and
+    // scrolling to that group. Newest first, and it LEAVES its own group while it is up here: the same row twice
+    // within one screen reads as a bug, and a row up here names its machine, so nothing is lost by moving it.
+    const needsYou = sessions.filter((s) => s.pendingApprovals > 0 && rtOf.has(s.id.runtime)).sort((a, b) => b.lastTs - a.lastTs);
+    const upTop = new Set(needsYou.map(keyOf));
+    const pinnedRows = sessions.filter((s) => isPinned(s) && !upTop.has(keyOf(s)) && rtOf.has(s.id.runtime));
     const olderCount = sessions.filter((s) => !isPinned(s) && !isRecent(s) && rtOf.has(s.id.runtime)).length;
-    const row = (s: SessionSummary, showRuntime = false) => {
+    const row = (s: SessionSummary, showRuntime = false, showPin = false) => {
         const key = keyOf(s);
-        return <IndexRow key={key} store={store} s={s} rt={rtOf.get(s.id.runtime)!} active={activeKey === key} moved={moved.has(key)} showRuntime={showRuntime} />;
+        return <IndexRow key={key} store={store} s={s} rt={rtOf.get(s.id.runtime)!} active={activeKey === key} moved={moved.has(key)} showRuntime={showRuntime} showPin={showPin} />;
     };
     return (
         <aside class="chat-list" aria-label="Sessions">
@@ -390,6 +410,14 @@ function SessionList({ store, activeKey, narrow, onStart, gear, gearWide }: { st
             </div>
             <div class="view chat-list-scroll fade-edges" ref={listScroll}>
                 {runtimes.length === 0 && status.state === "online" ? <div class="empty">No runtimes yet. Pair one to see its sessions here.</div> : null}
+                {needsYou.length ? (
+                    <section class="chat-group chat-needs-you" aria-label="Needs you">
+                        <div class="chat-group-label chat-needs-label"><IconInbox />Needs you</div>
+                        {/* ALWAYS named, even with one runtime: out of its group a row has lost the heading that said
+                            where it runs, and that is the first thing you need to answer a gate. */}
+                        {needsYou.map((s) => row(s, true, true))}
+                    </section>
+                ) : null}
                 {pinnedRows.length ? (
                     <section class="chat-group chat-pinned" aria-label="Pinned">
                         <div class="chat-group-label"><IconPin />Pinned</div>
@@ -397,7 +425,7 @@ function SessionList({ store, activeKey, narrow, onStart, gear, gearWide }: { st
                     </section>
                 ) : null}
                 {runtimes.map((rt) => {
-                    const mine = sessions.filter((s) => s.id.runtime === rt.id && !isPinned(s) && isRecent(s));
+                    const mine = sessions.filter((s) => s.id.runtime === rt.id && !isPinned(s) && !upTop.has(keyOf(s)) && isRecent(s));
                     const shut = folded.has(rt.id);
                     return (
                         <section class={`chat-group${shut ? " folded" : ""}`} key={rt.id}>
