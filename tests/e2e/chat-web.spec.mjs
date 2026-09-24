@@ -1163,6 +1163,21 @@ test("addresses: a link opens a view and its tab, the address follows what is on
     await page.goBack();
     await expect(page.getByRole("tablist", { name: "Settings" })).toHaveCount(0);
 
+    // BACK, THEN A LINK, faster than a render: the address the link set must stand. The writer used to mirror the
+    // state back's `hashchange` had just read over the newer address, so `#/search` came up as the list (CI's slower
+    // runners lost this every time). A throttled CPU widens the gap between the render and its effect the same way.
+    await page.locator(".chat-list-foot .chat-gear-btn").click();
+    await page.getByRole("menuitem", { name: "Settings" }).click();
+    await expect(page).toHaveURL(/#\/settings\//);
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: 20 });
+    // The link lands as soon as back has (in back's own `hashchange`, after the router's reader has run), before
+    // the render that reading scheduled has reached its effect.
+    await page.evaluate(() => { addEventListener("hashchange", () => { queueMicrotask(() => { location.hash = "#/search"; }); }, { once: true }); history.back(); });
+    await expect(page.getByRole("main", { name: /Search/ })).toBeVisible();
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+    await expect(page).toHaveURL(/#\/search$/);
+
     // The other views have addresses too, and a reload keeps the one you are on.
     await page.goto(`${server.url}#/search`);
     await expect(page.getByRole("main", { name: /Search/ })).toBeVisible();

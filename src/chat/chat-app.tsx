@@ -80,6 +80,9 @@ function useNarrow(): boolean {
 /** Whether this page pushed the history entry the open session sits on. Back then pops it (so the phone's own back
  *  gesture and the button agree); a session opened from a link has no entry of ours beneath it to go back to. */
 let pushedEntry = false;
+/** The address as the router last READ or WROTE it. One that differs has been changed by someone else (a link, back,
+ *  a typed address) and its `hashchange` is still on the way, so the writer leaves it alone for the reader. */
+let seenHash = "";
 
 /**
  * The page's ADDRESS mirrors what is on screen, both ways (route.ts): the open session, or a main view and its tab. So
@@ -89,6 +92,7 @@ let pushedEntry = false;
 function useHashRoute(): void {
     useEffect(() => {
         const read = () => {
+            seenHash = location.hash;
             const r = parseRoute(location.hash);
             const key = r.session && parseSessionKey(r.session) ? r.session : null;
             const v = view.value;
@@ -113,6 +117,10 @@ function useHashRoute(): void {
     const first = useRef(true);
     useEffect(() => {
         if (first.current) { first.current = false; return; }
+        // THE ADDRESS MOVED ON since this state was read from it: back, then a link, faster than a render. Writing now
+        // would put the older state's address over the newer one (a quick back then `#/search` landed on the list),
+        // and the `hashchange` already queued would then read the overwritten address. The reader applies the new one.
+        if (location.hash !== seenHash) return;
         const want = formatRoute({ session: key ?? undefined, main: main ?? undefined, tab: main === "settings" ? tab : undefined });
         if (location.hash === want || (!want && !location.hash)) return;
         const here = parseRoute(location.hash);
@@ -121,6 +129,7 @@ function useHashRoute(): void {
         if (!want) { history.replaceState(null, "", location.pathname + location.search); pushedEntry = false; }
         else if (same) history.replaceState(null, "", want);
         else { history.pushState(null, "", want); pushedEntry = true; }
+        seenHash = location.hash;
     }, [key, main, tab]);
 }
 

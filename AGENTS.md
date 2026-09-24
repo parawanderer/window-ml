@@ -482,6 +482,17 @@ surveys for those, and both do ship red. What you owe it: a section name that sa
 someone would search, and a header comment on a new test file saying what the file covers. Playbook:
 `.claude/skills/test-index/SKILL.md`.
 
+**And before you choose WHICH suite to run: `node scripts/test-cover.mjs <file>` (or `--changed`).** The index above
+says what tests exist; this says which of them can notice the file you just changed, and prints the command for each.
+It exists for a failure with a name: a change to `canContinue` in the services seam was verified with
+`npm run test:chat`, which runs three specs and not `tests/e2e/cross-page.spec.mjs`, where the two acceptance tests
+for continuing a capped run actually live. Nothing connected the file to the suite, so the verification was against
+the tests that came to mind. It passed. Two kinds of reach are reported separately: a test that IMPORTS the module is
+named, and a test that boots a whole BUILD (every Playwright spec hands `dist/` or `dist-web/` to a browser, so it
+can notice anything) is counted, because as a list of forty-two it buries the handful that are actually about the
+change. It over-reports on purpose — a suite too many costs a minute. It is not coverage: "is this LINE covered" is
+`npm run coverage`. Playbook: `.claude/skills/test-cover/SKILL.md`.
+
 **RULE — JSDoc that CONTRADICTS the code is a defect; JSDoc that is INCOMPLETE is not.** In a `.ts` file the
 compiler treats JSDoc as prose — `@param` names and types are never checked — and this repo lifts the
 contract's JSDoc verbatim into what the MODEL reads, so drift there ships a wrong API reference. `node
