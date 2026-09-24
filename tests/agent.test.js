@@ -1304,7 +1304,7 @@ test("agent: result carries a session hash, and { resume } appends a follow-up t
     const pong = world.ml.defineTool({ name: "pong", run: () => "ponged" });
 
     const first = await world.ml.agent("do the first thing", { tools: [ping, pong], maxSteps: 5, vision: false });
-    assert.match(first.hash, /^[0-9a-f]{8}$/, "the result carries a git-like session hash");
+    assert.match(first.hash, /^[0-9a-f]{32}$/, "the result carries a session hash — long enough to be unique for the life of an archive, shown as its first 8");
     assert.equal(first.summary, "first answer");
 
     const second = await world.ml.agent("now the second thing", { resume: first.hash });
@@ -1408,7 +1408,7 @@ test("createAgent: run() twice = two turns in one session; say() idle appends to
     assert.equal(a.messages.at(-1).content, "preamble", "say() while idle appends a user message to history");
 
     const r1 = await a.run("start");
-    assert.match(a.hash, /^[0-9a-f]{8}$/, "run() mints the session hash");
+    assert.match(a.hash, /^[0-9a-f]{32}$/, "run() mints the session hash");
     assert.equal(r1.summary, "hello");
 
     const r2 = await a.run("more");   // ANOTHER end-to-end turn, same session

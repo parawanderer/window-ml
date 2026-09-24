@@ -7,6 +7,7 @@ import type { ComponentChildren } from "preact";
 import { useState, useEffect, useMemo } from "preact/hooks";
 import { signal } from "@preact/signals";
 import type { AnswerMedia } from "../contract-render";
+import { HASH_SHOWN } from "../contract-run";
 import type { Status, AgentStep } from "./store";
 import { codeLineNumbers } from "./store";
 import { beautifyJs, highlight, htmlLines, shortStamp, fullStamp, pretty, truncate, mdInline } from "./format";
@@ -514,10 +515,14 @@ export function AnswerMediaGallery({ media }: { media: AnswerMedia[] }) {
 // click so copying a hash inside a session row doesn't also open the session.
 export function Hash({ hash, stop }: { hash: string; stop?: boolean }) {
     const { copied, copy } = useCopy();
+    // SHOWN short, COPIED whole — git's arrangement, and for git's reason: the identifier is long enough not to
+    // collide over an archive's lifetime, and a name you might read out is short. What the click puts on the
+    // clipboard is the real one, so a copied hash always resumes.
+    const shown = hash.slice(0, HASH_SHOWN);
     return (
         <span class="tt">
-            <code class="hash copyable" onClick={(e) => { if (stop) e.stopPropagation(); copy(hash); }}>{hash}</code>
-            <span class="tt-pop" role="tooltip">{copied ? "copied!" : "click to copy"}</span>
+            <code class="hash copyable" onClick={(e) => { if (stop) e.stopPropagation(); copy(hash); }}>{shown}</code>
+            <span class="tt-pop" role="tooltip">{copied ? "copied!" : hash.length > shown.length ? `click to copy ${hash}` : "click to copy"}</span>
         </span>
     );
 }

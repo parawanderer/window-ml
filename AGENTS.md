@@ -111,7 +111,7 @@ survive — each turn persists via `SAVE_SESSION` → `chrome.storage.local`
 (`ml_session_<hash>`), and `resumeChat` rehydrates via `GET_SESSION`, rebuilding a
 history from the stored messages + createChat options (no secrets in a session).
 The main world can't touch storage, hence the round-trip. A saved session is
-readable by any page that knows its (random 8-hex) hash — fine for chat history,
+readable by any page that knows its (random 128-bit) hash — fine for chat history,
 which holds no credentials.
 
 `GET_CONFIG` (`ml.config()`) returns the **non-secret** config subset
