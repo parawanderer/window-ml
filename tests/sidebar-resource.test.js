@@ -11,6 +11,8 @@ const { chatStart, chatResult, openSettings, STACKED_LAYOUT, INFO_2CARD, sidebar
 // window's timers alive, which would otherwise hang the runner after all pass.
 after(closeSidebarWorlds);
 
+/** A class that dims must have a RULE behind it. Asserting only the class name let both cross-highlight
+ *  directions ship with no styling at all — every test green, nothing visibly dimmed. */
 function assertDims(selector) {
     assert.match(cssRule(selector), /opacity:\s*0?\.\d/, `${selector} must actually reduce opacity`);
 }

@@ -17,6 +17,7 @@ after(closeSidebarWorlds);
 const growModel = (gb) => [{ model: "big", vramGB: gb, vramBytes: gb * 1024 ** 3, sizeBytes: gb * 1024 ** 3,
                              gpus: [{ id: "0", runner: "CUDA", vramBytes: gb * 1024 ** 3 }], expiresAt: null }];
 
+/** /api/ps polls on its own clock, so wait for the panel to catch up rather than assuming a flush count. */
 async function untilTrue(w, fn, why) {
     for (let i = 0; i < 40; i++) { if (fn()) return; await w.flush(); await new Promise((r) => setTimeout(r, 150)); }
     assert.fail(`${why} — gave up after 6s`);

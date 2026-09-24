@@ -90,8 +90,11 @@ const INFO_2CARD = { compute: {
     ],
 } };
 
+/** The stylesheet as text. jsdom applies no stylesheet, so a layout rule can only be checked by reading it. */
 const sidebarCss = () => require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "src", "sidebar", "sidebar.css"), "utf8");
 
+/** The body of the rule whose selector is exactly `selector`, ASSERTING that it exists. Slicing from a bare
+ *  `indexOf` returned an empty string for a renamed selector, and every `doesNotMatch` against that passed. */
 function cssRule(selector) {
     const css = sidebarCss();
     const at = css.indexOf(selector + " {");
