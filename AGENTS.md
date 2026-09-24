@@ -462,6 +462,37 @@ A TRAILING `//` counts as the docstring for a one-line export, which is the hous
 scanner to read those fixed thirty of them with no churn, rather than having me move thirty comments above
 their declarations to satisfy an indexer. Playbook: `.claude/skills/code-index/SKILL.md`.
 
+**RULE — a test goes under a SECTION, and `node scripts/test-index.mjs '<regex>'` is how you find one.** The code
+index above made the source searchable and left the tests opaque, which is the worse half: the tests are where the
+knowledge about behaviour lives, and they are what you must read before adding a twelfth test for a thing that has
+eleven. `tests/sidebar.test.js` is 407 tests in 9,300 lines behind ten section comments — grep finds a test whose
+name you can already guess and answers neither question you actually have ("is this covered?", "where does a new one
+go?"), and reading the file to find out costs about 150,000 tokens. The index answers both for about 5,000: one
+TAB-separated line per test, `PATH:LINE  SECTION  NAME`, with the regex running over the section and the file's
+header sentence as well as the name. `--stats` is the survey, `--sections` lists the groups, `--file <name>` narrows
+to one. It PARSES rather than greps (TypeScript's parser through `@ts-morph/common`, since the repo's own
+`typescript` is 7.x and exposes no JS API), because a regex over `test("` misses a template-literal name, a
+`test.skip`, and a call spread over two lines, and finds the word inside a string.
+
+A SECTION is a comment line — `// --- what this group is about ---` — and everything after it belongs to it until
+the next one. **`--new <base> [--staged]` is the RATCHET** (pre-commit hook + CI's `tools` job): a test a change ADDS,
+in a file that already has sections, must sit under one. It is deliberately narrower than "every test": 1,826 tests
+predate it and a check that ships red is one people learn to scroll past — `--unsectioned` and `--headerless` are the
+surveys for those, and both do ship red. What you owe it: a section name that says what the group is ABOUT in words
+someone would search, and a header comment on a new test file saying what the file covers. Playbook:
+`.claude/skills/test-index/SKILL.md`.
+
+**And before you choose WHICH suite to run: `node scripts/test-cover.mjs <file>` (or `--changed`).** The index above
+says what tests exist; this says which of them can notice the file you just changed, and prints the command for each.
+It exists for a failure with a name: a change to `canContinue` in the services seam was verified with
+`npm run test:chat`, which runs three specs and not `tests/e2e/cross-page.spec.mjs`, where the two acceptance tests
+for continuing a capped run actually live. Nothing connected the file to the suite, so the verification was against
+the tests that came to mind. It passed. Two kinds of reach are reported separately: a test that IMPORTS the module is
+named, and a test that boots a whole BUILD (every Playwright spec hands `dist/` or `dist-web/` to a browser, so it
+can notice anything) is counted, because as a list of forty-two it buries the handful that are actually about the
+change. It over-reports on purpose — a suite too many costs a minute. It is not coverage: "is this LINE covered" is
+`npm run coverage`. Playbook: `.claude/skills/test-cover/SKILL.md`.
+
 **RULE — JSDoc that CONTRADICTS the code is a defect; JSDoc that is INCOMPLETE is not.** In a `.ts` file the
 compiler treats JSDoc as prose — `@param` names and types are never checked — and this repo lifts the
 contract's JSDoc verbatim into what the MODEL reads, so drift there ships a wrong API reference. `node
@@ -568,6 +599,11 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   loop where you changed one pure module. `core` is DERIVED — everything the named genres do not claim — so
   a new test file runs by DEFAULT rather than falling out of every bucket and being silently skipped; the
   cost of that direction is that a new SLOW file quietly lands in `core`, which is what `--timings` is for.
+  The OTHER cost is a whole subsystem landing there one file at a time — thirteen `hub-*` tests and nine
+  `session-*` ones did, until "run the hub tests" meant running a hundred and twenty-three — so
+  **`node scripts/test.mjs --check-genres`** (pre-commit hook + CI's `tools` job) fails when four files sharing a
+  name prefix all sit in `core`: four files on one subject are a subject, and a subject gets a genre.
+  **`--files a.test.mjs b.test.mjs`** runs exactly those, which is what `scripts/test-cover.mjs` prints.
   Still run the full `npm test` before you commit; CI runs everything regardless.
 - **Tests: `npm test`** (Node ≥ 20, `node:test`). `tests/helpers.js` loads the
   real extension files into `node:vm` sandboxes with mocked `chrome`/`fetch`/
