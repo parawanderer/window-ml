@@ -1647,6 +1647,27 @@ test("the approval bar does not flash on load when the gate is right there", asy
     await page.close();
 });
 
+// The notes sit UNDER the results, so one about a machine the filter has excluded reads as being about the results
+// above it: picking Lab box and being told to reconnect Work laptop's folder looks like Lab box is the one at fault.
+test("the archive-folder note follows the device filter, rather than speaking for every machine", async () => {
+    const { page, errors } = await open(DESKTOP, "#/search");
+    const foot = page.locator(".chat-search-foot");
+    const devices = page.locator(".chat-search-devices");
+
+    // Across every device, the lapsed one is named.
+    await expect(foot).toContainText("Work laptop's archive folder");
+
+    // Narrowed to a machine that has no such problem, it says nothing at all.
+    await devices.getByRole("button", { name: "Lab box" }).click();
+    await expect(foot).toHaveCount(0);
+
+    // Narrowed to the machine it IS about, it comes back.
+    await devices.getByRole("button", { name: "Work laptop" }).click();
+    await expect(foot).toContainText("Work laptop's archive folder");
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 // Being invisible at rest does not make a thing take no room. The fold chevron sat between a runtime's name and its
 // badge, so a heading with a badge held a chevron-shaped hole in the middle of itself — which reads as the badge
 // having drifted away from the name.
@@ -1842,6 +1863,51 @@ test("a notice stays on screen when the pane it was centred on goes away @mobile
     const width = page.viewportSize().width;
     expect(box.x, `notice starts at ${box.x}`).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width, `notice ends at ${box.x + box.width} of ${width}`).toBeLessThanOrEqual(width);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// A step that CANNOT close has nothing to animate, and the guard for that said `awaiting` — but a gated step in calm
+// closes like any other, because the intent line above it says what is being asked. So the one step you are most
+// likely to be poking at snapped shut while every step beside it eased.
+test("a gated step closes the way every other step closes", async () => {
+    const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(WAITING)}`);
+    const heights = async (name) => page.evaluate(async (tool) => {
+        const step = [...document.querySelectorAll(".astep")].find((e) => e.textContent.includes(tool));
+        const head = step.querySelector("button");
+        head.click();
+        await new Promise((r) => setTimeout(r, 400));
+        const opened = step.getBoundingClientRect().height;
+        head.click();
+        await new Promise((r) => requestAnimationFrame(r));
+        await new Promise((r) => requestAnimationFrame(r));
+        return { opened, afterTwoFrames: step.getBoundingClientRect().height };
+    }, name);
+
+    // Two frames in, a step that is easing shut has barely moved. One that snapped has already lost most of itself.
+    for (const tool of ["exec", "fetch_url"]) {
+        const { opened, afterTwoFrames } = await heights(tool);
+        expect(opened).toBeGreaterThan(80);
+        expect(afterTwoFrames, `${tool} snapped instead of easing`).toBeGreaterThan(opened * 0.9);
+    }
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// Continuing has to CARRY ON. The demo set the summary to `running` and emitted nothing else, but the transcript is
+// built from EVENTS, not from the summary — so the run still read as stopped at its cap, the button stayed, and
+// pressing it again was refused with "only a run stopped at its step cap can continue".
+test("continuing a capped run carries it on, and the offer goes with it", async () => {
+    const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(CAPPED_HERE)}`);
+    const steps = () => page.locator(".astep").count();
+    const before = await steps();
+    await expect(page.locator(".continue-wrap")).toBeVisible();
+
+    await page.locator(".continue-run").click();
+    await expect.poll(steps).toBeGreaterThan(before);
+    await expect(page.locator(".continue-wrap")).toHaveCount(0);
+    // And it is not still asking: pressing again is what produced the refusal.
+    await expect(page.locator(".chat-notice")).toHaveCount(0);
     expect(errors).toEqual([]);
     await page.close();
 });
