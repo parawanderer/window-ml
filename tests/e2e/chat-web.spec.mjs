@@ -1621,3 +1621,35 @@ test("the approval bar does not flash on load when the gate is right there", asy
     expect(errors).toEqual([]);
     await page.close();
 });
+
+// A fade you have not earned yet must not be on screen AT ALL. It used to default to drawn and be taken away once
+// the scroller had been measured, so a session opened at its start showed the fade for a frame and you watched it
+// leave. Sampled every frame from before the app loads, because one look after the fact sees only the end state.
+test("opening a session that is already at its start never shows the fade at all @mobile", async () => {
+    const page = await browser.newPage({ viewport: PHONE });
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.addInitScript(() => {
+        globalThis.__fades = [];
+        const tick = () => {
+            const el = document.querySelector(".chat-transcript");
+            if (el) {
+                const top = getComputedStyle(el, "::before"), bot = getComputedStyle(el, "::after");
+                globalThis.__fades.push([top.display === "none" ? 0 : parseFloat(top.opacity), parseFloat(bot.opacity)]);
+            }
+            requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+    });
+    await page.goto(`${server.url}#/s/${encodeURIComponent(CHAT)}`);
+    await page.locator(".chat-transcript").getByText("Per token, the cache holds").waitFor();
+    await page.waitForTimeout(400);
+
+    // This transcript fits, so nothing continues in either direction and neither fade was ever entitled to draw.
+    const fades = await page.evaluate(() => globalThis.__fades);
+    expect(fades.length).toBeGreaterThan(5);   // the sampler really ran
+    expect(Math.max(...fades.map((f) => f[0]))).toBe(0);
+    expect(Math.max(...fades.map((f) => f[1]))).toBe(0);
+    expect(errors).toEqual([]);
+    await page.close();
+});
