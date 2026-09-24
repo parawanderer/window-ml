@@ -41,13 +41,17 @@ export function Pill({ text, onPress, mono, disabled, label, icon }: { text: str
     );
 }
 
-/** A count of things waiting on the person, in the notice colour. */
-export function Badge({ n, label }: { n: number; label?: string }) {
+/**
+ * A count of things waiting on the person, in the notice colour. `text` words it instead of showing the bare
+ * figure, for the one place where the badge IS the row's status rather than a tally beside it — a count sitting
+ * next to a title reads as a fact about the session, where "1 approval pending" reads as something waiting on you.
+ */
+export function Badge({ n, label, text }: { n: number; label?: string; text?: string }) {
     const p = usePalette();
     if (n <= 0) return null;
     return (
-        <View style={[s.badge, { backgroundColor: p.notice }]} accessibilityLabel={label ?? `${n} waiting`}>
-            <Text style={[s.badgeText, { color: p.noticeFg }]}>{n}</Text>
+        <View style={[s.badge, text ? s.badgeWide : null, { backgroundColor: p.notice }]} accessibilityLabel={label ?? text ?? `${n} waiting`}>
+            <Text numberOfLines={1} style={[s.badgeText, { color: p.noticeFg }]}>{text ?? n}</Text>
         </View>
     );
 }
@@ -240,6 +244,8 @@ const s = StyleSheet.create({
     mono: { fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), fontSize: 14 },
     // A count: a capsule at least as wide as it is tall.
     badge: { minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 6, alignItems: "center", justifyContent: "center" },
+    // A WORDED badge: room for the words, and it shrinks before the rest of the line does.
+    badgeWide: { paddingHorizontal: 8, flexShrink: 1 },
     // The count's figure.
     badgeText: { fontSize: 12, fontWeight: "700" },
     // A runtime's connection, beside its name.
