@@ -137,6 +137,33 @@ export interface Intent { verb: string; kind?: string; target?: string; selector
 /** WHAT THIS CALL WILL DO, for the approval card — deterministic, from the tool's own `action` render
  *  rather than from a model's description of itself. Null when the tool supplies none, which is when the
  *  utility model is asked to paraphrase instead. */
+/**
+ * WHAT THE AGENT WANTS TO DO, in a sentence — "Agent wants to fetch <url>", "Agent wants to click the button
+ * “Search”" — with the part a person actually judges picked out.
+ *
+ * The consent surface's one job is to be READ, and a question naming the TOOL ("Approve running `fetch_url`?")
+ * fails at it: the tool is the least interesting thing about the call. The host, the element, the text being typed
+ * — those are what someone says yes or no to.
+ *
+ * Shared by both approval surfaces (the off-mode card and the transcript's step), because two wordings for one
+ * decision is how the quieter one ends up being the one nobody reads.
+ */
+export function IntentSentence({ intent }: { intent: Intent }) {
+    const isType = intent.verb.toLowerCase() === "type";
+    return (
+        <div class="action-sentence">
+            {intent.link
+                ? <>Agent wants to <span class="action-verb">{intent.verb.toLowerCase()}</span> <span class="action-link">{intent.target}</span></>
+                : <>Agent wants to <span class="action-verb">{intent.verb.toLowerCase()}</span>
+                    {isType ? <> “<b class="action-target">{truncate(intent.input || "", 100)}</b>” into</> : null}
+                    {" the "}{intent.kind || "element"}
+                    {intent.target ? <> <b class="action-target">“{intent.target}”</b></> : null}
+                    {isType && intent.submit ? <> and <span class="action-submit">submit</span> it</> : null}</>}
+            {intent.note ? <span class="action-note"> · {intent.note}</span> : null}.
+        </div>
+    );
+}
+
 export function intentFor(st: AgentStep): Intent | null {
     // Whether a `type` will ALSO press Enter — a materially bigger action (it submits the form/search), so the
     // approval must call it out. Read from the raw args (the ground truth), regardless of the render path.

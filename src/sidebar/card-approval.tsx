@@ -9,7 +9,7 @@ import { truncate } from "./format";
 import { IconWarn } from "./icons";
 import { Code, SheetChip, highlightApprove, highlightPos, clearHighlight, inlineJson, stepKey } from "./ui-kit";
 import { RenderPanel } from "./render-panel";
-import { intentFor, codeOf, ensureCodeSummary, ensureActionSummary, codeSummaries } from "./summaries";
+import { IntentSentence, intentFor, codeOf, ensureCodeSummary, ensureActionSummary, codeSummaries } from "./summaries";
 import { HostAccessNote, OutputRaiseNote, externalSheetGrant } from "./agent-detail";
 
 /** THE CONSENT SURFACE for a gated call — what the agent wants to do, said as an intent sentence with
@@ -44,20 +44,10 @@ export function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; 
                   </div>
                 : intent
                     ? <div class="action-card">
-                        <div class="action-sentence">
-                            {/* navigate: "Agent wants to go to <url>", the URL styled like a significant action
-                                (warm + dotted) — leaving for another page is worth calling out. */}
-                            {intent.link
-                                ? <>Agent wants to <span class="action-verb">{intent.verb.toLowerCase()}</span> <span class="action-link">{intent.target}</span></>
-                                : <>Agent wants to <span class="action-verb">{intent.verb.toLowerCase()}</span>
-                                    {isType ? <> “<b class="action-target">{truncate(intent.input || "", 100)}</b>” into</> : null}
-                                    {" the "}{intent.kind || "element"}
-                                    {intent.target ? <> <b class="action-target">“{intent.target}”</b></> : null}
-                                    {/* type + submit is a bigger action (presses Enter → sends the form). Call it out with a
-                                        dotted underline so the human sees it's not just typing. */}
-                                    {isType && intent.submit ? <> and <span class="action-submit">submit</span> it</> : null}</>}
-                            {intent.note ? <span class="action-note"> · {intent.note}</span> : null}.
-                        </div>
+                        {/* The sentence is SHARED with the transcript's approval (summaries.tsx): one decision,
+                            one wording. `link` (navigate, fetch) styles the URL as a significant action — leaving
+                            for another page, or sending a request off this one, is worth calling out. */}
+                        <IntentSentence intent={intent} />
                         {intent.selector ? <div class="action-loc"><span class="loc-dot" aria-hidden="true" />Highlighted on the page{pos ? <> · <b>{pos}</b></> : null}</div> : null}
                         {/* CROSS-ORIGIN iframe = the one privileged case: a real debugger click reaching INTO
                             embedded third-party content that uses your session there. Chrome's debug banner only

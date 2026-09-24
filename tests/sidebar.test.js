@@ -512,6 +512,45 @@ test("host access (fetch_url): a first-time origin shows the note; approving req
     assert.ok(posted.find(m => m.__mlSidebarApp === "approval" && m.decision === true), "and the approval was still posted");
 });
 
+test("an approval SAYS what it will do, and says it once", async () => {
+    // The consent surface's one job is to be read. Naming the TOOL ("Approve running fetch_url?") named the least
+    // interesting part of the call — the host is what a person judges — and unfurling the arguments underneath a
+    // sentence that already carries the host stated the same fact twice.
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("say", "fetch it"));
+    await w.dispatch(agentStep("say", 1, {
+        seq: 1, pending: true, awaitingApproval: true, tool: "fetch_url",
+        arguments: { url: "https://transavia.example/fare-rules/" },
+        renderIn: { type: "action", verb: "fetch", target: "https://transavia.example/fare-rules/" },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.flush();
+    const card = w.shadow.querySelector(".astep-approve");
+    assert.match(card.textContent, /Agent wants to fetch/, "the sentence, not the tool name");
+    assert.match(card.textContent, /transavia\.example/, "and the host it is judged on");
+    assert.doesNotMatch(card.textContent, /Approve running/, "the tool-name question is gone where a sentence exists");
+    // Said ONCE: the arguments are not also unfurled beside it.
+    assert.equal(w.shadow.querySelectorAll(".astep.tool .io").length, 0, "the In does not auto-open behind the sentence");
+    // Both answers are still there, and Deny is still called Deny — it is a decision, not a step being skipped.
+    assert.ok(w.shadow.querySelector(".astep-approve .appr-btn.yes"), "approve");
+    assert.match(w.shadow.querySelector(".astep-approve .appr-btn.no").textContent, /Deny/);
+});
+
+test("an approval with no sentence to give still shows what it would run", async () => {
+    // A code tool has no deterministic intent, and you cannot approve code you cannot see: there the arguments must
+    // still open themselves. This is the half that the rule above must not take away.
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("code", "run it"));
+    await w.dispatch(agentStep("code", 1, {
+        seq: 1, pending: true, awaitingApproval: true, tool: "exec",
+        arguments: { js: "document.title" },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.flush();
+    assert.ok(w.shadow.querySelectorAll(".astep.tool .io").length > 0, "the In opens itself when nothing else says what will run");
+    assert.match(w.shadow.querySelector(".astep-approve").textContent, /Approve running/, "and the plain question stands in");
+});
+
 test("host access (fetch_url): an ALREADY-granted origin shows no note", async () => {
     const w = await loadSidebarWorld();
     w.window.chrome.permissions = { contains: async () => true, request: async () => true };

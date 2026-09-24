@@ -1238,13 +1238,16 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
 
 /* Design A: a background-hosted call blocked on the human gate. A warn-edged bar with approve/deny —
    the decision is made HERE (extension iframe), unforgeable by the page. */
-.astep.tool.awaiting { border-left-color: var(--warn); }
-.astep-approve { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 6px; padding: 6px 8px; border-radius: 6px;
-    background: color-mix(in srgb, var(--warn) 14%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); }
+.astep.tool.awaiting { border-left-color: var(--notice); }
+/* ONE container, not three. The step already carries a rail saying it is unfinished; this had a tinted background
+   AND a hard border of the same colour inside it, so a single decision was wrapped three times and read as an alert
+   nested in an alert. The tint alone marks it. */
+.astep-approve { display: flex; flex-direction: column; gap: 8px; margin: 6px 0; padding: 9px 11px; border-radius: 10px;
+    background: var(--panel); border: none; }
 .astep-approve .appr-row { display: flex; align-items: center; gap: 8px; }
 .astep-approve .appr-note { display: flex; align-items: flex-start; gap: 6px; font-size: 0.82em; color: var(--fg);
     padding-bottom: 5px; border-bottom: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); }
-.astep-approve .appr-note svg { flex: none; width: 13px; height: 13px; margin-top: 1px; color: var(--warn); }
+.astep-approve .appr-note svg { flex: none; width: 13px; height: 13px; margin-top: 1px; color: var(--notice); }
 .astep-approve .appr-note b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 /* Google Docs-style smart chip for a Sheet reference: icon + friendly name, hoverable for the id. */
@@ -1257,13 +1260,19 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
 .sheet-chip-name { font-weight: 500; }
 .astep-approve .appr-ask { color: var(--fg); font-size: 0.9em; }
 .astep-approve .appr-ask b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.appr-btn { font-size: 0.82em; font-weight: 700; padding: 3px 12px; border-radius: 6px; border: 1px solid; cursor: pointer; background: none; }
-.appr-btn.yes { color: var(--accent-fg); background: var(--ok); border-color: var(--ok); }
-.appr-btn.no { color: var(--err); border-color: var(--err); }
+/* DELIBERATE, not alarming. A solid green against an outlined red read as a traffic light — the loudest thing on a
+   page of prose, and the colours carried a meaning ("this is dangerous") that the card cannot know: most approvals
+   are routine. What the control must keep is that the two answers are TOLD APART instantly and that neither is the
+   one your eye slides onto. So: the page's own primary chip for yes, a quiet outline for no.
+   Deny is NOT softened to "Skip" — denying is a decision about what the agent may do, not stepping past a wizard. */
+.appr-btn { font-size: 0.82em; font-weight: 600; padding: 4px 13px; border-radius: 999px; border: 1px solid transparent; cursor: pointer; background: none; }
+.appr-btn.yes { color: var(--bg); background: var(--fg); border-color: var(--fg); font-weight: 700; }
+.appr-btn.no { color: var(--fg-dim); border-color: var(--border); }
+.appr-btn.no:hover { color: var(--fg); border-color: var(--fg-dim); background: var(--panel-2); }
 .appr-btn:hover { filter: brightness(1.08); }
 /* "Keep" (approve + remember): a hollow variant of the yes button so the plain Approve stays primary. */
-.appr-btn.yes.remember { background: none; color: var(--ok); }
-.appr-btn.yes.remember:hover { background: color-mix(in srgb, var(--ok) 16%, transparent); }
+.appr-btn.yes.remember { background: none; color: var(--fg); border-color: var(--fg-dim); font-weight: 600; }
+.appr-btn.yes.remember:hover { background: var(--panel-2); }
 /* The collapsed grant CARD: what "Keep" will persist. Summary line always shown; expand for the exact items.
    Extensible — generic over grant kind (a warm card, since it establishes a session-long consent). */
 .appr-grant { border-radius: 6px; padding: 4px 8px;
@@ -1416,8 +1425,13 @@ details.io[open] > summary .io-preview { display: none; }
 .ctx-menu { position: fixed; min-width: 200px; padding: 4px; background: var(--panel, #1f2430); border: 1px solid var(--border);
     border-radius: 7px; box-shadow: 0 8px 28px rgba(0,0,0,.5); display: flex; flex-direction: column; }
 .ctx-item { display: block; width: 100%; text-align: left; padding: 6px 10px; border: none; border-radius: 4px; background: none;
-    color: var(--fg); font: inherit; font-size: 0.9em; cursor: default; white-space: nowrap; }
-.ctx-item:hover { background: var(--accent); color: var(--accent-fg); }
+    color: var(--fg); font: inherit; font-size: 0.9em; cursor: pointer; white-space: nowrap; }
+/* A raised surface, not a filled accent bar. This menu began as the panel's right-click menu, where a solid accent
+   row is the platform look; it is now also the page's, beside pickers whose rows highlight with `--panel-2`, and one
+   of the two had to give. The quieter one does — a menu row is a place to look, not the loudest thing on screen.
+   `cursor` was `default`, which said the row was not a control at all. */
+.ctx-item:hover { background: var(--panel-2); color: var(--fg); }
+.ctx-item:focus-visible { background: var(--panel-2); outline: 2px solid var(--accent); outline-offset: -2px; }
 .r-el-idx { color: var(--fg-faint); font: 0.8em ui-monospace, SFMono-Regular, Menlo, monospace; flex: 0 0 auto; }
 .r-el-text { color: var(--fg); }
 .r-el-path { color: var(--fg-dim); font: 0.82em ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
@@ -2698,7 +2712,7 @@ html[data-surface="card"] .appr-btn.no:hover {
    underlined dotted in the text's colour. Blue link text in the middle of an answer pulled the eye to every link
    before the sentence it sat in, and a citation looked exactly like a way off the page. Each says where it goes on
    hover (`cursorTipOn` for a citation, `data-tip` for a markdown link). */
-.answer-rendered .tok-link { color: var(--fg); text-decoration: underline dotted var(--ok); text-underline-offset: 3px; cursor: pointer; }
+.answer-rendered .tok-link { color: var(--fg); text-decoration: underline dotted var(--cite); text-underline-offset: 3px; cursor: pointer; }
 .answer-rendered .tok-link:hover { text-decoration-style: solid; }
 .answer-rendered .tok-link:focus-visible { outline: 2px solid var(--accent, #6366f1); outline-offset: 1px; border-radius: 2px; }
 /* The bottom-of-answer RESULT block (ResultBlock — the designated/auto-appended tool outputs, both surfaces). Its
@@ -2741,8 +2755,9 @@ html[data-surface="card"] .appr-btn.no:hover {
 /* The cursor-following tip. `.rc-tip` for the shared look; it only differs in following the pointer. */
 .cursor-tip { max-width: min(320px, 92vw); white-space: normal; }
 .cline.cline-fail .lno { color: var(--err); font-weight: 600; }
-/* The SAME green flash a cited step gets — it is the same gesture, "show me the thing this is about". */
-@keyframes clinePulse { 0% { background: color-mix(in srgb, var(--ok) 40%, transparent); } 100% { background: transparent; } }
+/* The SAME flash a cited step gets — it is the same gesture, "show me the thing this is about" — and it follows
+   `--cite`, so the confirmation of a click is the colour of the mark that was clicked. */
+@keyframes clinePulse { 0% { background: color-mix(in srgb, var(--cite) 40%, transparent); } 100% { background: transparent; } }
 /* The green flash a cited line gets when a citation or a traceback frame jumps to it — the confirmation
    that the click landed where it said. Its own class, not a colour on .cline, so a line can be marked and
    pulsed at once. */
@@ -2769,10 +2784,10 @@ html[data-surface="card"] .appr-btn.no:hover {
 .r-ranfor.live { color: var(--fg-dim); }
 
 /* Click-to-step: pulse the cited step green when you jump to it. */
-@keyframes astepPulse { 0% { background: color-mix(in srgb, var(--ok) 45%, transparent); }
+@keyframes astepPulse { 0% { background: color-mix(in srgb, var(--cite) 45%, transparent); }
     100% { background: transparent; } }
 .astep-pulse { animation: astepPulse 1.4s ease-out; }
-@media (prefers-reduced-motion: reduce) { .astep-pulse { animation: none; outline: 2px solid var(--ok); } }
+@media (prefers-reduced-motion: reduce) { .astep-pulse { animation: none; outline: 2px solid var(--cite); } }
 
 /* A caption above a rendered block saying it is not literally what the caller wrote — `exec` uses it for
    expanded pointer macros. Quiet: it explains the render, it is not part of it. */
