@@ -352,9 +352,11 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const dimmed = !!litSeqs && st.seq != null && !litSeqs.has(st.seq);
     // An approval that SAYS what it will do in words does not also need its arguments unfurled underneath: the
     // sentence names the same host or element, and showing both made the card state the one fact you are judging
-    // twice. Where there is no sentence (a code tool — you cannot approve code you cannot see) the In still opens
-    // itself. Either way the In stays one click away, which is the standing rule: quiet, never unavailable.
-    const open = expanded || (awaiting && !intent);
+    // twice. Only in FOCUS (the chat page's calm view), though — the busy view is the developer's projection of the
+    // run, where the raw call is the point and the same trace the DevTools panel shows must stay whole. Where there
+    // is no sentence at all (a code tool: you cannot approve code you cannot see) the In opens itself either way,
+    // and it is always one click from closed.
+    const open = expanded || (awaiting && !(intent && focusMode.value));
     // CLOSING A STEP, on a surface that animates it shut. The body is unmounted the moment it closes, so there is
     // nothing left to animate — the way to give it a way out is to keep it mounted for exactly as long as the
     // surface says its own animation lasts, and the surface says so in CSS (`--astep-close-ms`) rather than here.

@@ -1284,8 +1284,17 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-head-menu { position: fixed; z-index: 60; max-width: min(320px, calc(100vw - 16px)); }
 /* The session's title at the top of that menu: what the bar gave up for the model, a tap away. */
 .chat-head-menu-title { padding: 8px 10px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--border); font-weight: 600; color: var(--fg); white-space: normal; overflow-wrap: anywhere; }
-/* The phone bar's lead: the session's model, in the code face it is written in everywhere else. */
+/* The phone bar's lead: the session's model, in the code face it is written in everywhere else.
+   NO PILL HERE. In a narrow header the model does not sit BESIDE the title — it IS the title slot — and a filled,
+   rounded chip between a back chevron and a `⋮` reads as something floating in the bar rather than as the bar's own
+   heading. It keeps the caret, which is what says it can be changed, and the surface arrives on hover. */
 .chat-head-model { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; }
+.tp-pill.chat-head-model, .tp-pill.chat-head-model:hover, .tp-pill.chat-head-model[aria-expanded="true"] {
+    background: none; border-color: transparent; padding-left: 4px; padding-right: 4px;
+}
+/* Not even on hover: a heading that grows a surface under the pointer is a heading pretending to be a button in a
+   bar where the real buttons are round. The caret is what says it opens, and it is enough. */
+.tp-pill.chat-head-model:hover .tp-pill-text { color: var(--fg); }
 
 /* SOMETHING WAITING ON YOU IS THE ACCENT, not the warning yellow the panel uses (`--notice`, sidebar.css).
    TRYING THIS OUT — the phone app draws the same idea in the same accent, and the two surfaces showing one state in

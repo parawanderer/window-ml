@@ -137,6 +137,26 @@ export interface Intent { verb: string; kind?: string; target?: string; selector
 /** WHAT THIS CALL WILL DO, for the approval card — deterministic, from the tool's own `action` render
  *  rather than from a model's description of itself. Null when the tool supplies none, which is when the
  *  utility model is asked to paraphrase instead. */
+
+/**
+ * THE URL AN APPROVAL IS ABOUT, as a real link.
+ *
+ * It was a `<span>`, which is the one thing a URL must not be on a consent card: checking where something goes
+ * before allowing it is the whole gesture, and a span gives no hover, no right-click "open in new tab", and no
+ * long-press menu on a phone. An anchor gives all three from the platform, in each platform's own idiom.
+ *
+ * The click is INTERCEPTED rather than followed, because this surface is the client: navigating it away drops the
+ * hub connection. It goes to `services().openLink`, which opens a tab in a browser and hands the URL to the system
+ * browser from the phone app — whose WebView refuses outside navigation entirely, so an un-intercepted link there
+ * does nothing at all. `href` is still set, because that is what the platform's own menus read.
+ */
+function ActionLink({ url }: { url: string }) {
+    return (
+        <a class="action-link" href={url} target="_blank" rel="noopener noreferrer"
+            onClick={(e) => { e.preventDefault(); services().openLink(url); }}>{url}</a>
+    );
+}
+
 /**
  * WHAT THE AGENT WANTS TO DO, in a sentence — "Agent wants to fetch <url>", "Agent wants to click the button
  * “Search”" — with the part a person actually judges picked out.
@@ -153,7 +173,7 @@ export function IntentSentence({ intent }: { intent: Intent }) {
     return (
         <div class="action-sentence">
             {intent.link
-                ? <>Agent wants to <span class="action-verb">{intent.verb.toLowerCase()}</span> <span class="action-link">{intent.target}</span></>
+                ? <>Agent wants to <span class="action-verb">{intent.verb.toLowerCase()}</span> <ActionLink url={intent.target || ""} /></>
                 : <>Agent wants to <span class="action-verb">{intent.verb.toLowerCase()}</span>
                     {isType ? <> “<b class="action-target">{truncate(intent.input || "", 100)}</b>” into</> : null}
                     {" the "}{intent.kind || "element"}

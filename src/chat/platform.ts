@@ -19,6 +19,8 @@ export interface ClientPlatform {
     prefs: PlatformPrefs;
     /** show an image full size */
     openImage(src: string): void;
+    /** Open a URL away from this surface. The page is the client: navigating it away drops the connection. */
+    openLink(url: string): void;
     /** hand a file to the person: a download on the web, the share sheet on a phone */
     saveFile(name: string, data: Blob): void;
     copyText(text: string): Promise<boolean>;
@@ -50,6 +52,10 @@ export const webPlatform: ClientPlatform = {
         // Only images this page can show without navigating anywhere: the views pass data and blob URLs.
         if (/^(data:image\/|blob:)/.test(src)) lightboxSrc.value = src;
     },
+    // http(s) ONLY, and in a new tab. A `javascript:` or `data:` URL here would run in this origin, and the string
+    // came from a model — so the scheme is checked rather than trusted, and a refusal is silent (nothing to say to
+    // someone who did not ask for anything).
+    openLink: (url) => { if (/^https?:\/\//i.test(url)) window.open(url, "_blank", "noopener,noreferrer"); },
     saveFile: (name, data) => {
         const url = URL.createObjectURL(data);
         const a = document.createElement("a");

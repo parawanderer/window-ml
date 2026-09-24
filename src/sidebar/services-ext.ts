@@ -48,6 +48,9 @@ export const extensionServices: SidebarServices = {
     continueSession: (hash, maxSteps) => toParent({ __mlSidebarApp: "continueRun", hash, ...(maxSteps ? { maxSteps } : {}) }),
     highlight: (ref) => toParent({ __mlHighlight: ref }),
     openLightbox: (src) => toParent({ __mlLightbox: src }),
+    // `noopener` is not politeness here: without it the opened page gets a handle on this one, and this one is the
+    // extension's own surface.
+    openLink: (url) => { window.open(url, "_blank", "noopener,noreferrer"); },
     hostAccess: {
         has: async (pattern) => {
             if (typeof chrome === "undefined" || !chrome.permissions?.contains) return true;   // nothing to ask: say granted, so no note shows

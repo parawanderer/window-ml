@@ -128,6 +128,9 @@ const nativePlatform: ClientPlatform = {
     openImage: openInApp,
     saveFile: (name, data) => { void base64Of(data).then((b) => post({ type: "saveFile", name, mime: data.type || "application/octet-stream", base64: b })); },
     copyText: async (text) => { post({ type: "copyText", text }); return true; },
+    // The app opens it in the system browser. This WebView refuses every navigation outside its own directory
+    // (mobile/src/embed.tsx), so a link left to itself here does nothing at all — which reads as a broken link.
+    openLink: (url) => { if (/^https?:\/\//i.test(url)) post({ type: "openLink", url }); },
 };
 
 /**

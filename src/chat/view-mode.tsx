@@ -14,6 +14,7 @@
 // model-facing view may be quiet but never UNAVAILABLE (AGENTS.md §Showing a run).
 import { signal } from "@preact/signals";
 import { IconBrain, IconMenu } from "../sidebar/icons";
+import { focusMode } from "../sidebar/store";
 import type { PlatformPrefs } from "./platform";
 
 /** Preference keys, under the platform's own namespace. */
@@ -136,6 +137,10 @@ let store: PlatformPrefs | null = null;
 /** Mirror `calm` onto the document, where the shared views' own reading rules already live. */
 function applyCalm(): void {
     try { document.documentElement.toggleAttribute("data-focus", calm.value); } catch { /* no DOM (a unit test) */ }
+    // The shared views ask the STORE, not the document, whether they are being read quietly — a component cannot
+    // re-render from an attribute. The panel's own focus toggle already sets this signal and derives the attribute
+    // from it; calm is the same idea under another name, so it sets both and the two surfaces answer alike.
+    focusMode.value = calm.value;
 }
 
 /** Seed both from this device's stored preferences, before the first render so the page never paints the other

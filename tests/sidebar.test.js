@@ -529,8 +529,14 @@ test("an approval SAYS what it will do, and says it once", async () => {
     assert.match(card.textContent, /Agent wants to fetch/, "the sentence, not the tool name");
     assert.match(card.textContent, /transavia\.example/, "and the host it is judged on");
     assert.doesNotMatch(card.textContent, /Approve running/, "the tool-name question is gone where a sentence exists");
-    // Said ONCE: the arguments are not also unfurled beside it.
+    // THE BUSY VIEW keeps the whole debug render — it is the developer's projection of the run, the same trace the
+    // DevTools panel draws, and there the raw call is the point.
+    assert.ok(w.shadow.querySelectorAll(".astep.tool .io").length > 0, "the arguments are unfurled in the busy view");
+    // In FOCUS the sentence is enough: unfurling them too states the fact being judged twice.
+    w.shadow.querySelector('[aria-label="Focus mode"]').click();
+    await w.tick();
     assert.equal(w.shadow.querySelectorAll(".astep.tool .io").length, 0, "the In does not auto-open behind the sentence");
+    assert.match(w.shadow.querySelector(".astep-approve").textContent, /Agent wants to fetch/, "the sentence stays");
     // Both answers are still there, and Deny is still called Deny — it is a decision, not a step being skipped.
     assert.ok(w.shadow.querySelector(".astep-approve .appr-btn.yes"), "approve");
     assert.match(w.shadow.querySelector(".astep-approve .appr-btn.no").textContent, /Deny/);

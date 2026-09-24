@@ -53,6 +53,9 @@ export interface SidebarServices {
     highlight(ref: HighlightRef): void;
     /** show an image full-size */
     openLightbox(src: string): void;
+    /** Open a URL AWAY from this surface — a new tab in a browser, the system browser from the phone app. Never a
+     *  navigation of the surface itself: this page IS the client, and leaving it drops the hub connection. */
+    openLink(url: string): void;
     /** host-permission checks for a credentialed fetch; null where the host has no such permissions */
     hostAccess: { has(pattern: string): Promise<boolean>; request(pattern: string): Promise<void> } | null;
     /** a Google Sheet's title by id, or null when it cannot be read here */
@@ -96,6 +99,7 @@ const UNAVAILABLE: SidebarServices = {
     continueSession() {},
     highlight() {},
     openLightbox() {},
+    openLink() {},
     hostAccess: null,
     sheetTitle: async () => null,
     savePref() {},

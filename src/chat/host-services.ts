@@ -74,6 +74,7 @@ export function hostServices(store: ChatStore, platform: ClientPlatform): Sideba
             void store.send({ type: "page.highlight", session: ok.id, ref: target }, { quiet: true });
         },
         openLightbox: (src) => platform.openImage(src),
+        openLink: (url) => platform.openLink(url),
         hostAccess: null,
         sheetTitle: async () => null,
         savePref: (key, value) => platform.prefs.set(key, value),
