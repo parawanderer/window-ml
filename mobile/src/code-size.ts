@@ -5,7 +5,7 @@
 // AsyncStorage here and rides to the page on the theme message (`BridgeTheme.codeSize`), beside the scheme and the
 // insets — the other things the app decides and the page draws.
 //
-// The sizes themselves are `src/text-size.ts`, shared with the page, because a size the app offers that the page does
+// The sizes themselves are `src/native/text-size.ts`, shared with the page, because a size the app offers that the page does
 // not honour is a control that does nothing.
 //
 // PANEL TEXT SIZE, the page's other size setting, is deliberately absent: `--panel-fs` drives the docked panels — the
@@ -14,7 +14,7 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useSyncExternalStore } from "react";
-import { CODE_DEFAULT, CODE_SIZES } from "../../src/text-size";
+import { CODE_DEFAULT, CODE_SIZES } from "../../src/native/text-size";
 
 const KEY = "wml-code-size";
 

@@ -12,7 +12,7 @@ import type { Routes } from "../routes";
 import { useEmbed } from "../embed";
 import { SIZE, ThemeChoiceContext, usePalette, type ThemeChoice } from "../theme";
 import { Dot, IconButton } from "../ui";
-import { CODE_SIZES } from "../../../src/text-size";
+import { CODE_SIZES } from "../../../src/native/text-size";
 import { setCodeSize, useCodeSize } from "../code-size";
 
 const THEMES: { value: ThemeChoice; label: string }[] = [

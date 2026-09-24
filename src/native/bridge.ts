@@ -22,7 +22,7 @@ export interface BridgeTheme {
     /** safe-area insets the page must keep clear of, in CSS pixels */
     insets: { top: number; bottom: number; left: number; right: number };
     reducedMotion: boolean;
-    /** The size code is set at in the transcript, in px (`src/text-size.ts`). The APP owns it — it is a setting on
+    /** The size code is set at in the transcript, in px (`src/native/text-size.ts`). The APP owns it — it is a setting on
      *  its Settings screen — and the page applies it, like the scheme above. Absent keeps the page's default. */
     codeSize?: number;
 }

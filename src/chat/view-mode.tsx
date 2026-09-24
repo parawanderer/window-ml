@@ -16,7 +16,7 @@ import { signal } from "@preact/signals";
 import { IconBrain, IconMenu } from "../sidebar/icons";
 import { focusMode } from "../sidebar/store";
 import type { PlatformPrefs } from "./platform";
-import { CODE_DEFAULT, CODE_SIZES } from "../text-size";
+import { CODE_DEFAULT, CODE_SIZES } from "../native/text-size";
 
 /** Preference keys, under the platform's own namespace. */
 export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", PINNED_MODELS_KEY = "view.pinnedModels", CODE_KEY = "view.codeSize", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups", THEME_KEY = "view.theme";
