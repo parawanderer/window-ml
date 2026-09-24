@@ -29,7 +29,10 @@ export function DevicePicker({ runtimes, value, onChange }: { runtimes: readonly
     if (!chosen) return null;
     return (
         <>
-            <button {...p.pillProps} class="tp-pill tp-pill-device" aria-label={`Device: ${chosen.name}`}>
+            {/* It ARRIVES like the pills beside it. This is drawn only where there is a choice, so it appears and
+                disappears as the kind changes — and appearing instantly next to a tab pill that fades read as the row
+                jolting. `tp-pill-in` is a one-shot animation, so it plays on each mount and never on a re-render. */}
+            <button {...p.pillProps} class="tp-pill tp-pill-device tp-pill-in" aria-label={`Device: ${chosen.name}`}>
                 <span class="tp-pill-icon" aria-hidden="true"><IconDevice /></span>
                 <span class="tp-pill-text">{chosen.name}</span>
                 <svg class="tp-caret" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>

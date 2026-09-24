@@ -36,7 +36,7 @@ function side() {
         emit: (fn) => { for (const s of sinks) fn(s); },
         async command(c) {
             commands.push(c);
-            if (c.type === "runtime.info") return { ok: true, data: { kind: "browser", contractVersion: SESSION_CONTRACT_VERSION, capabilities: { chat: true, agent: true, localSettings: true }, nowMs: Date.now() } };
+            if (c.type === "runtime.info") return { ok: true, data: { kind: "browser", contractVersion: SESSION_CONTRACT_VERSION, capabilities: { chat: true, agent: true, localSettings: true, blankStart: { url: "https://pages.example/agent-start.html", granted: false, origins: ["https://a.example/*"], browser: "Brave", extensionId: "zz9" } }, nowMs: Date.now() } };
             if (c.type === "session.pin") return { ok: true, data: { session: c.session } };
             return { ok: false, error: { code: "unsupported", message: c.type } };
         },
@@ -73,6 +73,14 @@ test("a phone lists the runtime, sees its sessions under its principal, and is n
         const rt = await poll("the runtime to be described", () => runtimes.find((r) => r.id === w.id));
         assert.equal(rt.name, "Work laptop");
         assert.equal(rt.capabilities.localSettings, undefined, "a remote device never edits this runtime's settings");
+        // …but `blankStart` MUST cross, whole. It exists for the remote reader: a client cannot grant a permission on
+        // another machine, so the sites that machine already holds, and the browser to word the fix in, are the only
+        // things that make a blocked new-tab run actionable from here. Stripping it would leave the remote case with
+        // nothing to offer, and the failure would be silent — a capability that is simply never read.
+        assert.deepEqual(rt.capabilities.blankStart, {
+            url: "https://pages.example/agent-start.html", granted: false,
+            origins: ["https://a.example/*"], browser: "Brave", extensionId: "zz9",
+        }, "the whole answer reaches the device that has to act on it");
         assert.deepEqual(w.s.commands[0], { type: "runtime.info", runtime: "local" }, "addressed by principal, run by local id");
 
         const got = [];

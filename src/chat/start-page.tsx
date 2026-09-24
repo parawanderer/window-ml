@@ -13,13 +13,15 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ModelChoice, RuntimeInfo } from "../session-host";
 import { loadDraft, saveDraft } from "../sidebar/drafts";
-import { IconSend } from "../sidebar/icons";
+import { IconAgent, IconChat, IconSend, IconWarn } from "../sidebar/icons";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
 import { mayCommand } from "./grants";
 import { ModelPicker } from "./model-picker";
 import { KindPicker } from "./kind-picker";
 import { DevicePicker } from "./device-picker";
+import { blankStartState } from "./blank-start";
+import { BlankStartDialog } from "./blank-start-dialog";
 import { startableOn, useTargetPick, type StartKind } from "./new-session";
 
 /** Each runtime's model list as last answered, for the page's life: a start page opened again draws it at once. */
@@ -68,6 +70,7 @@ export function StartPage({ store, onStarted, initialKind, extras, narrow, back 
     // Saved as typed (drafts.ts) and kept until a start succeeds: leaving the page or losing the app loses nothing.
     const [text, setText] = useState(() => loadDraft("start"));
     const [busy, setBusy] = useState(false);
+    const [askingPage, setAskingPage] = useState(false);
     const pick = useTargetPick(store, rt, kind === "agent", extras);
     // The chosen runtime's models, asked once per runtime (the first answer costs it a capability probe per model,
     // cached after). "" is the runtime's own default, which sends no `model` at all, so its choice stands.
@@ -105,7 +108,15 @@ export function StartPage({ store, onStarted, initialKind, extras, narrow, back 
     }, [text]);
 
     if (!rt) return null;
-    const ready = !!text.trim() && !busy && rt.online && (kind === "chat" || pick.ready);
+    // CAN a new tab even be opened here? The runtime answers (`blankStart`), so this is known before anyone presses
+    // send rather than after the start is refused — and it is re-answered the moment a grant lands, with no polling.
+    const grantOrigin = extras?.grantOrigin?.bind(extras);
+    const canGrant = !!grantOrigin?.(rt.id, "https://x/*");
+    // Only where the run would use the RUNTIME'S OWN default page. Once a URL is named here the question has been
+    // answered — by picking one of the sites it already holds, or by someone typing one deliberately — and going on
+    // blocking it would make the way out unreachable, which is what the first version of this did.
+    const blocked = kind === "agent" && pick.blank && !pick.url ? blankStartState(rt, canGrant) : { kind: "ok" as const };
+    const ready = !!text.trim() && !busy && rt.online && (kind === "chat" || (pick.ready && blocked.kind === "ok"));
     const start = async (): Promise<void> => {
         if (!ready) return;
         setBusy(true);
@@ -153,7 +164,7 @@ export function StartPage({ store, onStarted, initialKind, extras, narrow, back 
                             <div class="chat-seg" role="radiogroup" aria-label="Kind">
                                 {kinds.map((k) => (
                                     <button key={k} role="radio" aria-checked={k === kind} class={`chat-seg-opt${k === kind ? " on" : ""}`}
-                                        onClick={() => setKind(k)}>{k === "agent" ? "Agent" : "Chat"}</button>
+                                        onClick={() => setKind(k)}>{k === "agent" ? <IconAgent /> : <IconChat />}{k === "agent" ? "Agent" : "Chat"}</button>
                                 ))}
                             </div>
                         ) : null}
@@ -163,12 +174,24 @@ export function StartPage({ store, onStarted, initialKind, extras, narrow, back 
                         {pick.inline}
                         {narrow ? null : modelTop}
                         {!rt.online ? <span class="chat-start-wait">Reconnecting…</span> : null}
+                        {/* Said in the row rather than only on send: the choice is already made by the time anyone
+                            types, and a send button that simply will not go is the thing this replaces. */}
+                        {blocked.kind !== "ok" ? (
+                            <button class="chat-start-blocked" onClick={() => setAskingPage(true)}>
+                                <IconWarn />New tab needs permission
+                            </button>
+                        ) : null}
                         <span class="sp" />
                         <button class="tt cbtn csend chat-start-send" disabled={!ready} onClick={() => void start()} aria-label={kind === "agent" ? "Start the run" : "Start the chat"}>
                             <IconSend /><span class="tt-pop above" role="tooltip">{busy ? "Starting…" : kind === "agent" ? "Start the run" : "Start the chat"}</span>
                         </button>
                     </div>
                 </div>
+                {askingPage && blocked.kind !== "ok" ? (
+                    <BlankStartDialog state={blocked} onClose={() => setAskingPage(false)}
+                        onUrl={(u) => pick.useUrl(u)} onTabs={() => { pick.useTabs(); setAskingPage(false); }}
+                        {...(canGrant && grantOrigin ? { grant: (o: string) => (grantOrigin(rt.id, o) ?? (async () => false))() } : {})} />
+                ) : null}
                 <div class="chat-start-hint">Enter to start · Shift+Enter for a new line · saved to the list as it starts</div>
             </div>
         </div>

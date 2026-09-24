@@ -131,6 +131,9 @@ export interface RuntimeCapabilities {
     /** the long-term session archive, present while it is switched on (`sessionArchive`). Reachable through
      *  `sessions.list` / `sessions.search` / `session.unarchive`; this says where its folder copy stands. */
     archive?: ArchiveCapability;
+    /** Where a run that asked for an EMPTY TAB would go on this runtime, and whether it may go there. Sent again
+     *  whenever the answer changes (a grant, a settings edit), so a client never polls and never guesses. */
+    blankStart?: BlankStartCapability;
     /**
      * What needs someone's hand on this runtime, as codes: `no-model`, `backend-unreachable`, `site-access`,
      * `tab-groups`, `no-utility-model`, `archive-folder-lapsed`, `archive-folder-unsupported`. Codes and not sentences:
@@ -138,6 +141,43 @@ export interface RuntimeCapabilities {
      * generally. Sent again whenever it changes, so a fix clears it without polling. Absent: nothing, or not reported.
      */
     attention?: string[];
+}
+
+/**
+ * Where a blank-tab run would begin on a runtime, and whether that runtime may actually open it.
+ *
+ * The coarse `site-access` attention code cannot answer this: it asks whether `<all_urls>` is held, so a runtime set
+ * to "on specific sites" reports it whether or not the one page that matters is among them. This is the precise
+ * answer for the one URL a blank run will actually use — the client's own URL is not in it, because the client knows
+ * that one already and can ask about it separately.
+ *
+ * It is here rather than behind a command because the client needs it at the moment someone CHOOSES a new tab, not
+ * after they press send, and because a grant made while the question is on screen should clear it without polling.
+ */
+export interface BlankStartCapability {
+    /** the page a blank run opens: this runtime's `agentStartPage`, else the published empty page */
+    url: string;
+    /** whether this runtime holds host access for that URL's origin. False: a blank run there will fail. */
+    granted: boolean;
+    /** what this runtime's browser calls itself ("Brave", "Chrome"), so a client can word the fix for the machine it
+     *  is actually about rather than for the one it is being read on. Absent: not reported. */
+    browser?: string;
+    /** the extension's id ON THAT RUNTIME, which makes the fix a link straight to its details page. Absent: the
+     *  client words the steps without one. */
+    extensionId?: string;
+    /**
+     * Origins this runtime ALREADY holds, where it holds some but not all — the sites a blank run could be pointed
+     * at that would work today. Sent only when `granted` is false and the runtime is on "specific sites", because it
+     * is only useful as an ANSWER to being blocked.
+     *
+     * It exists for the remote case, which has no other way out: a client cannot grant a permission on another
+     * machine, so without this its only advice is "go and change a setting over there". Capped, and http(s) only.
+     *
+     * This does put one device's granted-site list on another device of the same account. That is the user's own
+     * list on the user's own devices, and it is the whole point — but it is why the list is sent only while it is
+     * the answer to a question already being asked, and never as a general inventory.
+     */
+    origins?: string[];
 }
 
 /** Where a runtime's session archive and its folder copy stand. Sent again whenever it changes (a pick, a re-grant,

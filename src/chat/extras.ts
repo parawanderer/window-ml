@@ -35,4 +35,13 @@ export interface ChatExtras {
      * that lapses again was allowed only once. Worded as a repeat where the code has words for one (attention.ts).
      */
     fixedBefore?(runtime: RuntimeId, code: string): boolean;
+    /**
+     * Ask this device for host access to ONE origin, where this device IS the runtime. Separate from `fix` because
+     * `fix` answers a fixed code and this answers a URL that is only known at the moment of asking — and because the
+     * grant it asks for is deliberately narrow: the one site a blank run needs, not `<all_urls>`.
+     *
+     * Like `fix`, a function rather than a view: a browser opens a permission prompt only inside the click that asked
+     * for it. Null where this device is not that runtime, which is what makes the remote case draw its own routes.
+     */
+    grantOrigin?(runtime: RuntimeId, origin: string): (() => Promise<boolean>) | null;
 }
