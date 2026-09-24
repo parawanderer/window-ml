@@ -356,7 +356,10 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // run, where the raw call is the point and the same trace the DevTools panel shows must stay whole. Where there
     // is no sentence at all (a code tool: you cannot approve code you cannot see) the In opens itself either way,
     // and it is always one click from closed.
-    const open = expanded || (awaiting && !(intent && focusMode.value));
+    // A gate holds its own step open — EXCEPT in calm, where the intent line above says what is being asked and the
+    // card is reachable without the body. Named, because whether a step can close at all is asked twice.
+    const forcedOpen = awaiting && !(intent && focusMode.value);
+    const open = expanded || forcedOpen;
     // CLOSING A STEP, on a surface that animates it shut. The body is unmounted the moment it closes, so there is
     // nothing left to animate — the way to give it a way out is to keep it mounted for exactly as long as the
     // surface says its own animation lasts, and the surface says so in CSS (`--astep-close-ms`) rather than here.
@@ -371,7 +374,10 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
         return Number.isFinite(ms) && ms > 0 ? ms : 0;
     };
     const toggle = (): void => {
-        if (!open || awaiting) { setClosing(false); setExpanded((v) => !v); return; }
+        // `forcedOpen`, not `awaiting`: a step that CANNOT close has nothing to animate, but a gated step in calm
+        // closes like any other and was snapping shut while every step beside it eased. It read as a different
+        // control on the one step you are most likely to be poking at.
+        if (!open || forcedOpen) { setClosing(false); setExpanded((v) => !v); return; }
         const ms = closeMs();
         if (!ms) { setExpanded(false); return; }
         setClosing(true);
