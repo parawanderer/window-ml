@@ -161,7 +161,12 @@ html, body, #root { height: 100%; }
 .fade-edges::before, .fade-edges::after { opacity: 0; transition: opacity .12s linear; }
 .fade-edges.more-up::before, .fade-edges.more-down::after { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .fade-edges::before, .fade-edges::after { transition: none; } }
-.chat:not(.narrow) .chat-transcript > div { max-width: 920px; margin: 0 auto; }
+/* `width: 100%` is not redundant beside `margin: 0 auto`. The scroller is a flex COLUMN (`.fade-edges`, so the
+   bottom fade can be pushed to its edge), which makes this a flex item — and auto side margins on a flex item
+   centre it at its CONTENT width instead of filling to the cap. Every chat was then as wide as its own longest
+   line: three sessions measured 580, 672 and 488 in the same 960px scroller, so the column moved when you changed
+   session. `100%` restores the block behaviour the cap was written for; `max-width` still holds the reading measure. */
+.chat:not(.narrow) .chat-transcript > div { width: 100%; max-width: 920px; margin: 0 auto; }
 .chat-truncated, .chat-readonly { color: var(--fg-dim); font-size: .92em; }
 .chat-truncated { border: 1px dashed var(--border); border-radius: 7px; padding: 6px 10px; margin-bottom: 10px; }
 .chat-readonly { border-top: 1px solid var(--border); padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); }

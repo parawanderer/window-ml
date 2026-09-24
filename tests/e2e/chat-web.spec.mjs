@@ -1670,6 +1670,25 @@ test("a card that cannot be dismissed says why, by pointer and by tap", async ()
     await page.close();
 });
 
+// `width: 100%` is not redundant beside `margin: 0 auto`. The scroller is a flex COLUMN, so the column is a flex
+// item, and auto side margins on one centre it at its CONTENT width rather than filling to the cap — which made
+// every chat as wide as its own longest line, so the column moved when you changed session.
+test("every session's column is the same width, whatever is in it", async () => {
+    const { page, errors } = await open(DESKTOP);
+    const widths = [];
+    for (const key of [WAITING, CHAT, CAPPED]) {
+        await page.goto(`${server.url}#/s/${encodeURIComponent(key)}`);
+        await page.locator(".chat-transcript > div").waitFor();
+        await page.waitForTimeout(100);
+        widths.push(Math.round((await page.locator(".chat-transcript > div").boundingBox()).width));
+    }
+    expect(new Set(widths).size, `column widths differed: ${widths.join(", ")}`).toBe(1);
+    // And it is the reading measure, not whatever the content happened to need.
+    expect(widths[0]).toBeGreaterThan(600);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 // The notes sit UNDER the results, so one about a machine the filter has excluded reads as being about the results
 // above it: picking Lab box and being told to reconnect Work laptop's folder looks like Lab box is the one at fault.
 test("the archive-folder note follows the device filter, rather than speaking for every machine", async () => {
