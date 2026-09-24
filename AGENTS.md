@@ -599,6 +599,11 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   loop where you changed one pure module. `core` is DERIVED — everything the named genres do not claim — so
   a new test file runs by DEFAULT rather than falling out of every bucket and being silently skipped; the
   cost of that direction is that a new SLOW file quietly lands in `core`, which is what `--timings` is for.
+  The OTHER cost is a whole subsystem landing there one file at a time — thirteen `hub-*` tests and nine
+  `session-*` ones did, until "run the hub tests" meant running a hundred and twenty-three — so
+  **`node scripts/test.mjs --check-genres`** (pre-commit hook + CI's `tools` job) fails when four files sharing a
+  name prefix all sit in `core`: four files on one subject are a subject, and a subject gets a genre.
+  **`--files a.test.mjs b.test.mjs`** runs exactly those, which is what `scripts/test-cover.mjs` prints.
   Still run the full `npm test` before you commit; CI runs everything regardless.
 - **Tests: `npm test`** (Node ≥ 20, `node:test`). `tests/helpers.js` loads the
   real extension files into `node:vm` sandboxes with mocked `chrome`/`fetch`/

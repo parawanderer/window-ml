@@ -94,6 +94,18 @@ fi
 #
 #    Gated on the staged files, unlike the schema above: that one is ~40ms and regenerates in place, while
 #    these two shell out to git and print a list, so running them for a README edit is noise.
+# A SUBSYSTEM ACCUMULATING IN `core`. Cheap (it reads a table, runs nothing), and it catches the drift that makes
+# the genres useless: thirteen hub files and nine session ones had landed there one at a time.
+if echo "$staged" | grep -qE '^tests/.*\.(test|spec)\.(m?js|ts)$|^scripts/test\.mjs$'; then
+    if ! node scripts/test.mjs --check-genres; then
+        echo ""
+        echo "pre-commit: give it a genre in the GENRES table of scripts/test.mjs, with a sentence"
+        echo "            saying what it covers. \`core\` is everything unclaimed, and it is meant to stay"
+        echo "            the fast majority rather than the place subsystems go to be un-runnable."
+        exit 1
+    fi
+fi
+
 # A TEST THIS COMMIT ADDS, in a file that groups its tests, and under none of those groups. The tests are where the
 # knowledge about behaviour lives, and `tests/sidebar.test.js` is 407 of them behind ten section comments: nobody can
 # answer "is this covered?" without reading 150k tokens of it. One comment line is what keeps that from spreading.

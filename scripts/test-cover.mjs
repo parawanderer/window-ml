@@ -150,18 +150,21 @@ function reach(edges, start) {
     return seen;
 }
 
-/** The command that runs one test file, named exactly. */
+/** The command that runs one test file. A Playwright spec runs by path; everything else goes to the runner. */
 function commandFor(rel) {
-    if (rel.startsWith("tests/e2e/")) return `npx playwright test ${rel}`;
-    const text = readFileSync(join(ROOT, "scripts/test.mjs"), "utf8");
-    const base = rel.replace(/^tests\//, "");
-    const block = text.match(/const GENRES = \{([\s\S]*?)\n\};/);
-    if (block) {
-        for (const m of block[1].matchAll(/(\w+):\s*\{[^}]*files:\s*\[([^\]]*)\]/g)) {
-            if (m[2].includes(`"${base}"`)) return `node scripts/test.mjs ${m[1]}`;
-        }
-    }
-    return "node scripts/test.mjs core";
+    return rel.startsWith("tests/e2e/") ? `npx playwright test ${rel}` : `node scripts/test.mjs --files ${rel}`;
+}
+
+/** The commands for a SET of files, collapsed: one runner invocation for all the node tests, one per spec.
+ *  Named exactly rather than by genre — the genre containing a file in `core` is 105 files, which is not an
+ *  answer to "what should I run for this change". */
+function commandsFor(rels) {
+    const specs = rels.filter((r) => r.startsWith("tests/e2e/"));
+    const node = rels.filter((r) => !r.startsWith("tests/e2e/"));
+    return [
+        ...(node.length ? [`node scripts/test.mjs --files ${node.join(" ")}`] : []),
+        ...specs.map((s) => `npx playwright test ${s}`),
+    ];
 }
 
 // The CLI runs only when this file IS the command: `specifiersOf` is imported by its own test, and a module that
@@ -213,7 +216,7 @@ const whole = [...edges.keys()]
     .sort();
 
 if (flag("cmd")) {
-    for (const c of [...new Set(hits.map((h) => commandFor(h.test)))].sort()) console.log(c);
+    for (const c of commandsFor(hits.map((h) => h.test))) console.log(c);
 } else {
     for (const h of hits) {
         console.log(`${h.test}\t${commandFor(h.test)}`);
@@ -228,7 +231,7 @@ if (flag("cmd")) {
         else console.log(`${whole.length} test file(s) boot a whole BUILD (dist/, dist-web/…), so any source change can reach them. --all names them.`);
     }
     if (!hits.length && !whole.length) console.log("no test reaches those files — which is either a gap or a file nothing imports yet.");
-    else if (hits.length) console.error(`\ntest-cover: ${hits.length} test file(s) reach this code. Run them with:\n  ${[...new Set(hits.map((h) => commandFor(h.test)))].sort().join("\n  ")}`);
+    else if (hits.length) console.error(`\ntest-cover: ${hits.length} test file(s) reach this code. Run them with:\n  ${commandsFor(hits.map((h) => h.test)).join("\n  ")}`);
     else console.error(`\ntest-cover: no test IMPORTS this code; the ${whole.length} above reach it through a build.`);
 }
 }

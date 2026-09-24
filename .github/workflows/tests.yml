@@ -172,6 +172,11 @@ jobs:
       # check that ships red is one people learn to scroll past. Only what a PR ADDS is asked about.
       # JSDoc is PROSE to the TypeScript compiler in a .ts file — @param names and types are never checked. This
       # repo cares more than most, because contract.ts's JSDoc is lifted verbatim into what the MODEL reads.
+      # `core` is DERIVED — every test file no genre claims — which is the right direction and has one failure: a
+      # subsystem grows there file by file until running "just the hub tests" means running a hundred and twenty
+      # three. Mechanical so it cannot be argued with: four files sharing a name prefix are a subject.
+      - name: No subsystem is hiding in the core genre
+        run: node scripts/test.mjs --check-genres
       # The same ratchet for TESTS, and for the same reason one level along: the tests are where the knowledge
       # about behaviour lives, and the biggest file holds 407 of them behind ten section comments — which makes
       # "is this already covered?" a 150k-token question. Only what a PR ADDS is asked about; 1,826 existing tests

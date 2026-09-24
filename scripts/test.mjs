@@ -47,6 +47,37 @@ const GENRES = {
         about: "the chat page (src/chat/): store, hosts, view prefs, and the web bundle's no-chrome check",
         files: ["chat-core.test.mjs", "chat-web-bundle.test.mjs", "local-host.test.mjs", "drafts.test.mjs", "native-bridge.test.mjs"],
     },
+    // The hub is its own world — HPKE, certificates, sealed commands, the replay window — and thirteen files of it
+    // sat in `core`, where "run the hub tests" meant running a hundred and twenty-three. Named for the same reason
+    // panel and ext are: a subsystem you can change on its own is one you should be able to test on its own.
+    hub: {
+        about: "the hub client (src/hub/): HPKE, seals, keyring, pairing, revocation, streams",
+        files: ["hub-client.test.mjs", "hub-connection.test.mjs", "hub-host.test.mjs", "hub-hpke.test.mjs",
+            "hub-keyring-vault.test.mjs", "hub-pair-flow.test.mjs", "hub-pairing.test.mjs", "hub-revocation.test.mjs",
+            "hub-runtime.test.mjs", "hub-seal.test.mjs", "hub-stream.test.mjs", "hub-support.test.mjs",
+            "pairing-client.test.mjs"],
+    },
+    // The phone app's own logic and the bridge it speaks. Its SCREENS are Maestro's (tests/mobile/), which this
+    // runner never sees; what is here is what runs without a device.
+    mobile: {
+        about: "the phone app (mobile/): its list, its attachments, the native bridge and search",
+        files: ["mobile-attach.test.mjs", "mobile-imports.test.mjs", "mobile-list.test.mjs",
+            "native-bridge.test.mjs", "native-search.test.mjs", "tap-feedback.test.mjs"],
+    },
+    // THE SESSION CONTRACT and the worker's side of it: what a runtime answers, what the index records, what a
+    // relay forwards. Nine files that are one subject, and they were spread through `core` where nothing said so.
+    session: {
+        about: "the session contract (src/session-*.ts, sw-sessions): commands, index, relay, store, titles",
+        files: ["session-commands.test.mjs", "session-host.test.mjs", "session-index.test.mjs",
+            "session-publisher.test.mjs", "session-relay.test.mjs", "session-storage-stats.test.mjs",
+            "session-store.test.mjs", "session-title.test.mjs", "shell-session-relay.test.mjs",
+            "background-sessions.test.js", "sw-chat.test.mjs", "reducer-runtime-key.test.mjs"],
+    },
+    bench: {
+        about: "the benchmark harness (tests/e2e/bench/): its spec matrix, metrics, viewer and server",
+        files: ["bench-descriptor.test.mjs", "bench-metrics.test.mjs", "bench-serve.test.mjs",
+            "bench-specs.test.mjs", "bench-viewer.test.mjs"],
+    },
     python: { about: "real CPython in Pyodide (self-skips without dist/pyodide)", files: ["python.test.mjs"] },
     live: { about: "opt-in, hits the backend in .env", files: ["live.test.js"] },
 };
@@ -104,6 +135,47 @@ if (args.includes("--timings")) {
     process.exit(0);
 }
 
+// A SUBSYSTEM QUIETLY ACCUMULATING IN `core`. Genres are explicit and `core` is derived — everything unclaimed —
+// which is the right direction (a new file runs by default rather than falling out of every bucket) and has one
+// failure: a subsystem grows file by file, each one reasonably unclaimed, until "run the hub tests" means running a
+// hundred and twenty-three. That is not hypothetical; it is how thirteen `hub-*` files and nine `session-*` ones
+// came to live there. The rule is mechanical so it cannot be argued with: several files sharing a name prefix are a
+// subject, and a subject gets a genre.
+if (args.includes("--check-genres")) {
+    const MIN = 4;
+    const claimed = new Set(Object.entries(GENRES).filter(([n]) => n !== "core").flatMap(([, g]) => g.files));
+    const clusters = new Map();
+    for (const f of GENRES.core.files) {
+        const prefix = f.split("-")[0];
+        if (!f.includes("-") || prefix.length < 3) continue;
+        (clusters.get(prefix) ?? clusters.set(prefix, []).get(prefix)).push(f);
+    }
+    const found = [...clusters].filter(([, fs]) => fs.length >= MIN).sort((a, b) => b[1].length - a[1].length);
+    for (const [prefix, fs] of found) console.log(`${prefix}\t${fs.length} files in core\t${fs.join(" ")}`);
+    if (found.length) {
+        console.error(`\ntest.mjs: ${found.length} subsystem(s) with ${MIN}+ test files sitting in \`core\`, so there is no way to run`);
+        console.error("          just that subsystem — and `core` stops being the fast majority it is named for.");
+        console.error("          Give each a genre in the GENRES table, with a sentence saying what it covers.");
+        process.exit(1);
+    }
+    console.log(`test.mjs: no unnamed subsystem in core (${claimed.size} files across ${Object.keys(GENRES).length - 1} genres).`);
+    process.exit(0);
+}
+
+// `--files a.test.mjs tests/b.test.mjs` runs exactly those, whatever genre they fall in. It exists because
+// `scripts/test-cover.mjs` can name the handful of files a change can reach, and the honest command for that set is
+// the set — not the genre that happens to contain them, which for anything in `core` is a hundred and twenty-three.
+const fileArg = args.indexOf("--files");
+if (fileArg >= 0) {
+    const wanted = args.slice(fileArg + 1).filter((a) => !a.startsWith("-")).map((f) => f.replace(/^tests\//, ""));
+    const missing = wanted.filter((f) => !ALL.includes(f));
+    if (!wanted.length) { console.error("scripts/test.mjs: --files needs at least one test file."); process.exit(1); }
+    if (missing.length) { console.error(`scripts/test.mjs: no such test file(s): ${missing.join(", ")}`); process.exit(1); }
+    console.log(`${wanted.length} file(s), ${JOBS} at a time\n`);
+    spawn(process.execPath, [...NODE_ARGS, ...wanted.map((f) => `tests/${f}`)],
+        { cwd: ROOT, stdio: "inherit" }).on("exit", (c) => process.exit(c ?? 1));
+} else {
+
 const names = args.filter((a) => !a.startsWith("-") && !/^\d+$/.test(a));   // a bare number is --jobs' value
 for (const n of names) {
     if (!GENRES[n]) {
@@ -117,3 +189,4 @@ const files = names.length
 console.log(`${names.length ? names.join(" + ") : "all"} — ${files.length} file(s), ${JOBS} at a time\n`);
 spawn(process.execPath, [...NODE_ARGS, ...files.map((f) => `tests/${f}`)],
     { cwd: ROOT, stdio: "inherit" }).on("exit", (c) => process.exit(c ?? 1));
+}
