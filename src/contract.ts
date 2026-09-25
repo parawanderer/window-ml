@@ -128,7 +128,9 @@ export interface MlApi {
     /** Re-acquire a live agent handle by its session hash (the agent analogue of resumeChat) — read/mutate
      *  its `messages`, say()/run() to continue, fork() or cancel(). Same-tab createAgent / HUD-started runs
      *  only; a one-shot ml.agent(task) or a background run isn't handle-resumable (use ml.agent(task,
-     *  { resume }) to continue those). Throws if no handle-backed run exists for the hash. */
+     *  { resume }) to continue those). A distinct PREFIX of the hash works too, at least 8 characters, the way git
+     *  takes a short commit — ids are 32 hex characters and get copied, not retyped. Throws if no handle-backed run
+     *  exists for the hash, or if a prefix matches more than one (it names them rather than guessing). */
     resumeAgent(hash: string): MlAgentHandle;
     /** An approve() gate that auto-approves the first call, then denies. */
     approveOnce(): (req: ApprovalRequest) => boolean;

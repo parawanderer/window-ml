@@ -47,13 +47,18 @@ export const createAgent = function(this: MlApi, opts: AgentOptions = {}): MlAge
  * background/off-mode run (its history lives in the service worker) aren't handle-resumable this way —
  * the low-level `ml.agent(task, { resume: hash })` still CONTINUES those.
  *
- * @param {string} hash The run's session hash.
+ * A PREFIX of the hash works, the way `git` takes a short commit: ids are 32 hex characters now
+ * (`shortHash`), and nobody retypes one — they copy it, and then paste the part they can see. At least
+ * {@link RESUME_PREFIX_MIN} characters, and it must match exactly one run in this tab; two matches is an
+ * error naming both rather than a guess, because resuming the wrong run is silent and destructive.
+ *
+ * @param {string} hash The run's session hash, or a distinct prefix of it.
  * @returns {MlAgentHandle} the live handle (run/say/cancel/fork + hash/messages/maxSteps).
- * @throws {Error} If no handle-backed run exists for the hash in this tab.
+ * @throws {Error} If no handle-backed run exists for the hash in this tab, or a prefix matches several.
  */
 export const resumeAgent = function(this: MlApi, hash: string): MlAgentHandle {
     if (!hash || typeof hash !== "string") throw new Error("ml.resumeAgent needs a run hash string.");
-    const handle = handleRegistry.get(hash);
+    const handle = handleRegistry.get(hash) ?? handleByPrefix(hash);
     if (!handle) throw new Error(
         `No resumable agent handle "${hash}" in this tab. Handles come from ml.createAgent (or a ` +
         `HUD-started run); a one-shot ml.agent(task) or a background/off-mode run isn't handle-resumable ` +
@@ -61,6 +66,25 @@ export const resumeAgent = function(this: MlApi, hash: string): MlAgentHandle {
     );
     return handle;
 };
+
+/**
+ * How much of a hash is enough to name a run by its start. Eight is what an id USED to be in full, so a
+ * short id copied from an older session still resolves — and it is long enough that a stray string
+ * ("0", a title, an empty-ish variable) cannot collide with a run by accident, which is the failure
+ * worth designing against: resuming the WRONG run says nothing and loses the right one's next turn.
+ */
+export const RESUME_PREFIX_MIN = 8;
+
+/** The one live handle whose hash STARTS WITH `prefix`, or undefined where none does. Several is an error,
+ *  never a pick: the caller meant one run, and this cannot know which. */
+function handleByPrefix(prefix: string): MlAgentHandle | undefined {
+    if (prefix.length < RESUME_PREFIX_MIN) return undefined;
+    const hits = [...handleRegistry.keys()].filter((k) => k.startsWith(prefix));
+    if (hits.length > 1) throw new Error(
+        `"${prefix}" matches ${hits.length} runs in this tab (${hits.join(", ")}). Use more of the id.`
+    );
+    return hits.length === 1 ? handleRegistry.get(hits[0]) : undefined;
+}
 
 /**
  * A de-duplicating approval gate for {@link module:ml.agent}: prompts (via
