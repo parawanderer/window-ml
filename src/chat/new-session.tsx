@@ -20,6 +20,9 @@ import { Dialog } from "./dialog";
 import type { ChatExtras } from "./extras";
 import { mayStart } from "./grants";
 import { TabPicker } from "./tab-picker";
+import { blankStartState } from "./blank-start";
+import { BlankStartDialog } from "./blank-start-dialog";
+import { IconWarn } from "../sidebar/icons";
 
 /** What a new session can be. */
 export type StartKind = "chat" | "agent";
@@ -49,8 +52,10 @@ export interface TargetPick {
     ready: boolean;
     /** the form rows, to drop into a form */
     fields: preact.JSX.Element | null;
-    /** the same choice as one compact control (and a URL box when a new tab is picked), for a composer's row */
+    /** the same choice as one compact control, for a composer's row */
     inline: preact.JSX.Element | null;
+    /** the page a NEW tab opens at, where one is being picked: its own line under the row, never in it */
+    urlField: preact.JSX.Element | null;
     /** is a NEW tab what is currently chosen? (the one target whose page has to be opened, and so permitted) */
     blank: boolean;
     /** the page a new tab would open, where one was NAMED here. Empty means "whatever the runtime's setting says",
@@ -150,11 +155,15 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
                     sitesGrant={rt ? extras?.fix?.(rt.id, "site-access") : null}
                     groupsHint="Group names and colours need a browser permission, given on the computer these tabs are on."
                     onChange={(v) => { if (v === "blank") setWhere("blank"); else { setWhere("tab"); setTabId(v); } }} />
-                {where === "blank" ? (
-                    <input class="chat-pick-url" type="url" value={url} aria-label="Page to open" placeholder="https://… (optional)"
-                        onInput={(e: any) => setUrl(e.target.value)} />
-                ) : null}
             </>
+        ) : null,
+        // A LINE OF ITS OWN, not another item in the pills' row. It is the only control there that grows, so it took
+        // the room and left the device, the tab and the model reading "Desk …", "New t…", "qwen3:3…" — four labels
+        // cut to nothing so a placeholder could keep its width. It is also the rarest thing on the row now that a new
+        // tab has a page to open without being told one, which makes it the wrong thing to charge the others for.
+        urlField: enabled && where === "blank" ? (
+            <input class="chat-pick-url" type="url" value={url} aria-label="Page to open" placeholder="https://… (optional)"
+                onInput={(e: any) => setUrl(e.target.value)} />
         ) : null,
     };
 }
@@ -168,20 +177,31 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
  * and the form used to take the transcript away to ask it — so deciding meant leaving, and changing your mind meant
  * finding the ×. It leaves the same way every other dialog here does (Escape, the backdrop, Cancel).
  */
-export function ResumeSession({ store, rt, session, onResumed, onCancel }: {
+export function ResumeSession({ store, rt, session, onResumed, onCancel, extras }: {
     store: ChatStore;
     rt: RuntimeInfo;
     session: { runtime: string; hash: string };
     onResumed: () => void;
     onCancel: () => void;
+    /** what this device can fix here, for the permission a new tab may need (blank-start.ts) */
+    extras?: ChatExtras;
 }) {
     const [busy, setBusy] = useState(false);
     // The budget it carries on with. A resume that re-homes a run and leaves it stopped is two presses for one
     // intention — you came here to make it go — so the form asks how far, and the answer is what makes it go.
     const [steps, setSteps] = useState<number>(STEP_BUDGETS[1]);
     const pick = useTargetPick(store, rt, true);
+    const [askingPage, setAskingPage] = useState(false);
+    // THE SAME GATE THE START PAGE HAS. A resume lands on a page like any other run, so a runtime that may not open
+    // the blank one cannot resume onto it either — and this dialog is where that bites hardest: a run whose tab has
+    // closed, on a machine with no tabs left and no site access, has nowhere at all to go. Without this the button
+    // was enabled and the resume simply failed, which is the dead end the start page stopped having.
+    const grantOrigin = extras?.grantOrigin?.bind(extras);
+    const canGrant = !!grantOrigin?.(rt.id, "https://x/*");
+    const blocked = pick.blank && !pick.url ? blankStartState(rt, canGrant) : { kind: "ok" as const };
+    const ready = pick.ready && blocked.kind === "ok";
     const resume = async (): Promise<void> => {
-        if (!pick.ready || busy) return;
+        if (!ready || busy) return;
         setBusy(true);
         try {
             // A refusal is already on screen as a notice, so the form stays as it is: pick somewhere else and retry.
@@ -197,6 +217,20 @@ export function ResumeSession({ store, rt, session, onResumed, onCancel }: {
                 product's form the moment it sits beside them. */}
             <div class="chat-dialog-form">
                 <div class="chat-dialog-pick"><span class="chat-dialog-lead">Resume on</span>{pick.inline}</div>
+                {/* On its own row here too, and for the same reason: it is the widest thing either layout holds, and
+                    beside the pill it squeezed the page's name to nothing. This dialog is also where it matters most
+                    — a runtime with NO open tabs can only resume on a new one, so this is the whole answer then. */}
+                {pick.urlField ? <div class="chat-dialog-pick">{pick.urlField}</div> : null}
+                {blocked.kind !== "ok" ? (
+                    <button class="chat-start-blocked" onClick={() => setAskingPage(true)}>
+                        <IconWarn />A new tab needs permission
+                    </button>
+                ) : null}
+                {askingPage && blocked.kind !== "ok" ? (
+                    <BlankStartDialog state={blocked} onClose={() => setAskingPage(false)}
+                        onUrl={(u) => pick.useUrl(u)} onTabs={() => { pick.useTabs(); setAskingPage(false); }}
+                        {...(canGrant && grantOrigin ? { grant: (o: string) => (grantOrigin(rt.id, o) ?? (async () => false))() } : {})} />
+                ) : null}
                 <div class="chat-dialog-pick"><span class="chat-dialog-lead">And give it</span>
                     <div class="chat-seg" role="radiogroup" aria-label="Steps to carry on with">
                         {STEP_BUDGETS.map((n) => (
@@ -214,7 +248,7 @@ export function ResumeSession({ store, rt, session, onResumed, onCancel }: {
             </div>
             <div class="chat-dialog-actions">
                 <button class="btn" onClick={onCancel}>Cancel</button>
-                <button class="btn primary" disabled={!pick.ready || busy} onClick={() => void resume()}>{busy ? "Resuming…" : "Resume and go"}</button>
+                <button class="btn primary" disabled={!ready || busy} onClick={() => void resume()}>{busy ? "Resuming…" : "Resume and go"}</button>
             </div>
         </Dialog>
     );

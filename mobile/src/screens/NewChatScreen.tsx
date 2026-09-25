@@ -8,10 +8,11 @@ import { useEffect, useRef, useState } from "react";
 import { Image, Keyboard, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import type { BottomSheetModal } from "@gorhom/bottom-sheet";
 import { AppWindow, ArrowUp, Bot, ChevronLeft, Cpu, Globe, MessageCircle, MonitorSmartphone, Plus, TriangleAlert } from "lucide-react-native";
 import type { ModelChoice } from "../../../src/session-host";
+import type { Routes } from "../routes";
 import { draftOf, saveDraft } from "../drafts";
 import { useEmbed } from "../embed";
 import { useSessionLayer } from "../layer";
@@ -25,7 +26,7 @@ import { faviconSrc, tabHost } from "../../../src/chat/tab-tree";
 // The SAME reading the chat page makes (src/chat/blank-start.ts), not a second copy of the rules: which state the
 // choice is in is a fact about the runtime's answer, and two surfaces disagreeing about it is the drift AGENTS.md's
 // one-design-language rule exists to stop. Only the drawing below is this screen's.
-import { blankStartState } from "../../../src/chat/blank-start";
+import { blankBlockedReason, blankStartState } from "../../../src/chat/blank-start";
 
 /** The new-session screen. */
 export function NewChatScreen() {
@@ -38,7 +39,10 @@ export function NewChatScreen() {
     const [kindPick, setKind] = useState<"chat" | "agent">("chat");
     const kind = kinds.includes(kindPick) ? kindPick : kinds[0] ?? "chat";
     const startable = e.runtimes.filter((r) => e.startable[kind].includes(r.id));
-    const [runtimeId, setRuntimeId] = useState(startable[0]?.id ?? "");
+    // The device the start BEGAN at, where it began at one (a runtime's `+` in the list). Honoured only while that
+    // machine can start this kind: falling back beats arriving on a device that cannot take the run.
+    const askedRuntime = useRoute<RouteProp<Routes, "NewChat">>().params?.runtime;
+    const [runtimeId, setRuntimeId] = useState((askedRuntime && startable.some((r) => r.id === askedRuntime) ? askedRuntime : startable[0]?.id) ?? "");
     const rt = startable.find((r) => r.id === runtimeId) ?? startable[0];
     const [models, setModels] = useState<ModelChoice[] | null | undefined>(undefined);
     const [model, setModel] = useState("");
@@ -180,7 +184,11 @@ export function NewChatScreen() {
                 <Text style={[s.none, { color: p.fgDim }]}>No runtime this device may start a session on is online.</Text>
             )}
             <AttachSheet att={att} />
-            <TabSheet ref={tabSheet} list={tabs} value={where ?? "blank"} onPick={(c) => { setWhere(c); tabSheet.current?.dismiss(); }} />
+            {/* The same answer the chip above carries, on the row it is about: a new tab that cannot be opened is not
+                a choice, and the picker should not take a tap it cannot honour. */}
+            <TabSheet ref={tabSheet} list={tabs} value={where ?? "blank"}
+                blankBlocked={blankBlockedReason(blocked)}
+                onPick={(c) => { setWhere(c); tabSheet.current?.dismiss(); }} />
             {/* The ways out, as a sheet: this is a picker (which page shall it be?) wearing an explanation, and a
                 picker is the one thing that stays a sheet on this device. There is no "grant" row — a phone cannot
                 raise a permission prompt on another machine, which is the whole shape of the remote case. */}

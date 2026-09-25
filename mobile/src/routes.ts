@@ -4,7 +4,9 @@
 /** Each screen's parameters. */
 export type Routes = {
     List: undefined;
-    NewChat: undefined;
+    /** `runtime`: the device to arrive with already chosen, where the start began at one (a runtime's `+` in the
+     *  list). Absent starts where the screen would have anyway. */
+    NewChat: { runtime?: string } | undefined;
     Search: undefined;
     Attention: undefined;
     Settings: undefined;

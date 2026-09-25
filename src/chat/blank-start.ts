@@ -70,3 +70,21 @@ export function siteAccessSteps(cap: BlankStartCapability, runtime: string): str
         : `open ${scheme}://extensions , find "window.ml" and click "Details"`;
     return `On ${runtime}, in ${browser}: ${where}, then under "Site access" choose "On all sites" — or add ${originPattern(cap.url)} under "On specific sites".`;
 }
+
+/**
+ * THE SAME REFUSAL IN ONE SENTENCE, for a surface with room for a line rather than a dialog: a picker's row, a chip.
+ *
+ * Shared because the phone and the page must refuse for the same reason in the same words — the phone's resume sheet
+ * said it in a sentence written inline, which is exactly how two surfaces start explaining one rule differently.
+ * Undefined where nothing is wrong, so a caller can pass it straight through to an optional prop.
+ *
+ * `grantable` returns undefined deliberately: where this device IS the runtime there is a prompt to raise, so the
+ * answer is an offer and not a refusal, and a row is the wrong place for it.
+ */
+export function blankBlockedReason(state: BlankStartState): string | undefined {
+    if (state.kind === "propose") {
+        return `${state.runtime} may not open a new page — pick one of its tabs, or a site it already has access to.`;
+    }
+    if (state.kind === "elsewhere") return `${state.runtime} may not open a new page. ${state.steps}`;
+    return undefined;
+}
