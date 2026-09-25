@@ -32,9 +32,14 @@ self.addEventListener("fetch", (e) => {
     try { url = new URL(req.url); } catch { return; }
     // Another origin is none of this worker's business: the hub, an image a page sent, anything the client fetches.
     if (url.origin !== self.location.origin) return;
-    // EVERY navigation is answered with the app's page, whatever path it names. The client is a single page whose
-    // addresses are hashes, so a deep link that arrives as a path (a host that rewrote it, a shortcut) has nothing
-    // else here to be served, and a 404 from the network would be the wrong answer while the app itself is cached.
+    // …EXCEPT the agent start page, which is a REAL page at a real path and the one thing here a run navigates to.
+    // The fallback below would hand it the client instead, so a run that asked for an empty tab would land in the
+    // chat app — and only for people who had opened this app before, which is the worst way to find a bug. It is
+    // precached like the rest, so an installed copy still has it with no network.
+    if (url.pathname.endsWith("/agent-start.html")) { e.respondWith(caches.match(req, { cacheName: CACHE, ignoreSearch: true }).then((hit) => hit ?? fetch(req))); return; }
+    // EVERY OTHER navigation is answered with the app's page, whatever path it names. The client is a single page
+    // whose addresses are hashes, so a deep link that arrives as a path (a host that rewrote it, a shortcut) has
+    // nothing else here to be served, and a 404 from the network would be the wrong answer while the app is cached.
     if (req.mode === "navigate") { e.respondWith(shell()); return; }
     e.respondWith(caches.match(req, { cacheName: CACHE, ignoreSearch: true }).then((hit) => hit ?? fetch(req)));
 });

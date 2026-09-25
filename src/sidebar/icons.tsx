@@ -52,6 +52,15 @@ export const IconAgent = () => (
         <path d="M2 14h2M20 14h2M15 13v2M9 13v2" />
     </svg>
 );
+/** A device — a screen and a phone beside it, for the pills and rows that name WHICH MACHINE something runs on.
+ *  Lucide's `monitor-smartphone` (ISC, https://lucide.dev), which is the glyph the phone app already draws on its
+ *  own device pill, so the two surfaces name a device with the same mark. */
+export const IconDevice = () => (
+    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M18 8V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h8" />
+        <path d="M10 19v-3.96M7 19h5" /><rect x="16" y="12" width="6" height="10" rx="2" />
+    </svg>
+);
 export const IconInbox = () => (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z" />

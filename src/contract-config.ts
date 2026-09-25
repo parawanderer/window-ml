@@ -118,8 +118,8 @@ export interface MlConfig {
     /** Move a session the store evicts (by retention or by the budget) into the long-term SQLite archive instead of
      *  deleting it. Off by default: it changes what "delete after N days" means. */
     sessionArchive: boolean;
-    /** The page a run started "on a blank tab" opens, when the client names no URL of its own. Empty: the client
-     *  must name one, since the extension cannot run on the browser's own new-tab page. */
+    /** The page a run started "on a blank tab" opens, when the client names no URL of its own. Empty falls back to
+     *  `AGENT_START_PAGE`, since the extension cannot run on the browser's own new-tab page. */
     agentStartPage: string;
     /** Small "utility" model for cheap side tasks (e.g. session-title summaries).
      *  Empty → fall back to the main `model`. numCtx/forceCpu apply only when set. */
@@ -314,3 +314,17 @@ export type MlPublicConfig = Pick<MlConfig,
      *  list is NEVER sent to the page — only this one boolean for the page's own origin. */
     pageApprovalAllowed?: boolean;
 };
+
+/**
+ * WHERE A RUN STANDS WHEN IT ASKED FOR AN EMPTY TAB and nobody named a page.
+ *
+ * A run has to begin on a real http(s) page: Chrome refuses to let an extension touch its own new-tab page
+ * (`chrome://newtab` — "Cannot access a chrome:// URL") or a top-level `about:blank` (an opaque origin, refused even
+ * with `<all_urls>`), and an extension's OWN page is a privileged origin where the model's `exec` would reach
+ * `chrome.storage` and the API key with it. So the floor is an ordinary web page on an origin this project publishes:
+ * no extension privilege, nothing to configure, and nothing on it to read.
+ *
+ * `MlConfig.agentStartPage` overrides it, and a client naming its own URL overrides them both — this is only the
+ * answer when nobody gave one. The page is published from `dist-app/` by CI and is linked from nowhere.
+ */
+export const AGENT_START_PAGE = "https://parawanderer.github.io/window-ml/agent-start.html";

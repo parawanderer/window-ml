@@ -1191,7 +1191,7 @@ export function Settings() {
                     <input type="url" placeholder="https://example.com" value={c.agentStartPage}
                         onChange={(e: any) => setField("agentStartPage", e.target.value.trim())} />
                 </label>
-                <div class="set-hint">Where a run started from the chat page “on a blank tab” begins. The browser's own new-tab page cannot be used: the extension is not allowed to run there, so an agent would open on a page it cannot see.</div>
+                <div class="set-hint">Where a run started from the chat page “on a blank tab” begins. The browser's own new-tab page cannot be used: the extension is not allowed to run there, so an agent would open on a page it cannot see. Leave it empty and runs begin on a blank page published with this project, which holds nothing and links nowhere — set this to keep them on a page of your own instead.</div>
                 </Section>
 
                 <Section id="storage" title="Storage">

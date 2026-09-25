@@ -256,9 +256,11 @@ test("phone: starting a chat from the list, and the start page asks only what it
     await kinds.getByRole("option", { name: /^Chat/ }).click();
     await expect(page.getByRole("button", { name: "Kind: Chat" })).toBeVisible();
 
-    // One runtime can hold a chat here — the lab box has `agent` and no `chat`, the old Mac is offline — so there is
-    // nothing to choose between and the page does not ask; a chat has no "where" either.
-    await expect(page.getByRole("combobox", { name: "Runtime" })).toHaveCount(0);
+    // One runtime can hold a chat here — the lab box and the desk PC have `agent` and no `chat`, the old Mac is
+    // offline — so there is nothing to choose between and the page does not ask; a chat has no "where" either.
+    // Named by the DEVICE pill rather than by the `<select>` this used to be: asserting the absence of a control that
+    // no longer exists anywhere would pass whatever the page did.
+    await expect(page.getByRole("button", { name: /^Device/ })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /^Where it runs/ })).toHaveCount(0);
 
     await box.fill("what is a shared worker?");
@@ -338,6 +340,107 @@ test("desktop: with nothing open the page is a start box; an agent run picks a t
     // The compose button brings it back from an open session.
     await page.locator(".chat-list .chat-start").click();
     await expect(page.locator(".chat-start-box textarea")).toBeFocused();
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// The device is what decides which models there are, so it is picked FIRST and the model list follows it. It was a
+// bare `<select>` in a row of pills until the phone's own start screen had had a proper device pill for months, which
+// is the drift AGENTS.md's one-design-language rule exists to catch.
+test("the start page picks a device before a model, and starts the run on the one picked", async () => {
+    const { page, errors } = await open(DESKTOP);
+    // Nothing open IS the start page on a desktop; no compose button to press first.
+    await expect(page.locator(".chat-start-box")).toBeVisible();
+
+    // Two machines can run an agent here (the laptop and the desk PC), so there is something to ask.
+    const devicePill = page.getByRole("button", { name: /^Device:/ });
+    await expect(devicePill).toHaveAccessibleName("Device: Work laptop");
+    // It sits BEFORE the model pill in the row, not after it.
+    const order = await page.locator(".chat-start-row .tp-pill").evaluateAll((els) => els.map((e) => e.className));
+    expect(order.findIndex((c) => c.includes("tp-pill-device"))).toBeLessThan(order.findIndex((c) => c.includes("tp-pill-model")));
+
+    await devicePill.click();
+    const devices = page.getByRole("listbox", { name: "Device" });
+    await expect(devices.getByRole("option")).toHaveText(["Work laptopA browser: a run works on its tabs.", "Desk PCA desktop machine."]);
+    await devices.getByRole("option", { name: /^Desk PC/ }).click();
+    await expect(devicePill).toHaveAccessibleName("Device: Desk PC");
+
+    // The model list is the CHOSEN device's, not the one the page opened on.
+    await expect(page.getByRole("button", { name: /^Model:/ })).toBeVisible();
+
+    await page.locator(".chat-start-box textarea").fill("check the build");
+    await page.locator(".chat-start-box textarea").press("Enter");
+    await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "agent.start", runtime: "desk-pc", task: "check the build" });
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// A choice of one is not a choice: asking which device to run on when only one can is a control that reads as
+// configurable and is not. The boundary is the whole rule, so it is tested by CROSSING it rather than by opening two
+// different worlds — the pill is on screen, a device goes away, and it goes with it.
+test("the device pill is drawn only where there is more than one device to choose", async () => {
+    const { page, errors } = await open(DESKTOP);
+    const devicePill = page.getByRole("button", { name: /^Device:/ });
+    await expect(devicePill).toHaveCount(1);
+
+    // The desk PC drops off, so the laptop is the only machine that can start an agent.
+    await page.evaluate(() => globalThis.__chatFake.setRuntime("desk-pc", { online: false }));
+    await expect(devicePill).toHaveCount(0);
+    // The rest of the row is untouched: losing the choice does not lose the start box.
+    await expect(page.locator(".chat-start-box textarea")).toBeVisible();
+    await expect(page.getByRole("button", { name: /^Model:/ })).toBeVisible();
+
+    // And it comes back with the machine, rather than needing the page reopened.
+    await page.evaluate(() => globalThis.__chatFake.setRuntime("desk-pc", { online: true }));
+    await expect(devicePill).toHaveCount(1);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// A tab id means nothing on another machine, so changing device drops the target rather than carrying it. It used to
+// keep it, and the pill then said "That tab closed · pick another" about a tab that is open and fine on the machine
+// you just left — and on a device with no tabs, no list was ever coming that could clear it.
+test("changing device goes back to a new tab, rather than keeping a tab the new one never had @mobile", async () => {
+    const { page, errors } = await open(PHONE);
+    await page.locator(".chat-start").first().click();
+    // It starts on the laptop's own foreground tab.
+    const tabPill = page.getByRole("button", { name: /^Where it runs/ });
+    await expect(tabPill).toContainText("The front page");
+
+    await page.getByRole("button", { name: /^Device:/ }).click();
+    await page.getByRole("listbox", { name: "Device" }).getByRole("option", { name: /^Desk PC/ }).click();
+
+    // A new tab, not the laptop's tab and not a complaint about it.
+    await expect(tabPill).toContainText("New tab");
+    await expect(page.getByText("That tab closed")).toHaveCount(0);
+    // "New tab" is the target that actually gets sent, not merely what the pill says.
+    await page.locator(".chat-start-box textarea").fill("check the build");
+    await page.locator(".chat-start-box textarea").press("Enter");
+    await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "agent.start", runtime: "desk-pc", target: { kind: "blank" } });
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// The start page's top bar IS a session's top bar: same markup, same rule under it, the model as the heading. It had
+// been a lone solid pill on an otherwise empty page, which read as a control someone had left behind rather than as
+// the bar's title (AGENTS.md: the phone app and the calm view are one design language).
+test("the phone start page's bar is the same bar a session has, with the model as its heading @mobile", async () => {
+    const { page, errors } = await open(PHONE);
+    await page.locator(".chat-start").first().click();
+    const bar = page.locator(".chat-start-top");
+    await expect(bar).toHaveClass(/(^|\s)head(\s|$)/);
+    await expect(bar).toHaveClass(/chat-head/);
+    // The model is the heading, drawn the way a session's header draws it: no pill surface under it.
+    const model = bar.getByRole("button", { name: /^Model:/ });
+    await expect(model).toHaveClass(/chat-head-model/);
+    expect(await model.evaluate((el) => getComputedStyle(el).backgroundImage === "none" && getComputedStyle(el).backgroundColor)).toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
+
+    // And it is the same bar a real session draws: same classes, same back button beside it.
+    await expect(bar.locator(".chat-sheet-back")).toHaveCount(1);
+    await page.goto(server.url + `#/s/${encodeURIComponent(CHAT)}`);
+    const real = page.locator(".chat-head").first();
+    await expect(real.locator(".chat-sheet-back")).toHaveCount(1);
+    await expect(real.getByRole("button", { name: /^Model:/ })).toHaveClass(/chat-head-model/);
     expect(errors).toEqual([]);
     await page.close();
 });
@@ -887,6 +990,31 @@ test("the model pill waits as a placeholder of its own size and slides in; a sec
     await page.locator(".chat-list .chat-start").click();
     await expect(pill).toBeVisible();
     await expect(pill).not.toHaveClass(/tp-pill-in/);
+    await page.close();
+});
+
+// The tab pill fills in the same way, because it sits next to the model pill and used to do something else: a pressable
+// pill reading "Loading tabs…", which looks like a CHOSEN value and opens onto an empty list. One row, one idea of what
+// "not ready" looks like. Unlike the model list, a tab list is not remembered across a remount — it is what the browser
+// has open right now — so this asserts the first load only, and not that a second open skips it.
+test("the tab pill waits as the same placeholder as the model pill, rather than as pressable text", async () => {
+    const page = await browser.newPage({ viewport: DESKTOP });
+    await page.addInitScript(() => { globalThis.__chatFakeLatencyMs = 700; });
+    await page.goto(server.url);
+
+    const wait = page.getByRole("status", { name: "Loading tabs" });
+    await expect(wait).toBeVisible();
+    // The shimmer, not the word: nothing to read and nothing to press while there is no list behind it.
+    await expect(wait).toHaveClass(/tp-pill-wait/);
+    await expect(page.getByRole("button", { name: /^Where it runs/ })).toHaveCount(0);
+    await expect(page.getByText("Loading tabs…")).toHaveCount(0);
+    // It waits as the same animation the model pill is waiting with, right beside it.
+    await expect(page.getByRole("status", { name: "Loading models" })).toHaveClass(/tp-pill-wait/);
+
+    const pill = page.getByRole("button", { name: /^Where it runs/ });
+    await expect(pill).toBeVisible();
+    await expect(wait).toHaveCount(0);
+    await expect(pill).toHaveClass(/tp-pill-in/);
     await page.close();
 });
 

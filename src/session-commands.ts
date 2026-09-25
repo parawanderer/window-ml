@@ -7,6 +7,7 @@
 // every command's decisions are tested in Node without a browser (tests/session-commands.test.mjs).
 import type { NeutralMessage } from "./contract-chat";
 import { MAX_CONTINUE_STEPS } from "./step-budget";
+import { AGENT_START_PAGE } from "./contract-config";
 import type { MlDebugEvent } from "./contract-debug";
 import type { SessionHistory } from "./session-store";
 import type { Command, CommandError, CommandResult, CommandType, ListedSession, ModelChoice, SessionId, SessionSummary, StorageReport, TabGroupInfo, TabInfo } from "./session-host";
@@ -196,13 +197,17 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
             return { tabId: target.tabId, url: tab.url };
         }
         if (target?.kind === "blank") {
-            const url = (typeof target.url === "string" && target.url.trim()) || deps.startPage();
-            if (!url) return { error: fail("invalid", "a blank target needs a url, or a start page set in this browser's settings") };
+            // The client's own URL, else this browser's configured start page, else the published empty page. There is
+            // no "none" case: a blank target used to be REFUSED when neither was set, which is a dead end you reach by
+            // choosing the obvious option, and the UI could not know it was offering one.
+            const url = (typeof target.url === "string" && target.url.trim()) || deps.startPage() || AGENT_START_PAGE;
             if (!/^https?:\/\//i.test(url)) return { error: fail("invalid", "a start page must be an http(s) url") };
             // The url is carried back rather than read off the tab afterwards: a tab this call just opened may not
             // be reportable yet, and the page a resume landed on is the one that was asked for either way.
             try { return { tabId: await deps.openTab(url), url }; }
-            catch (err) { return { error: fail("failed", `could not open a tab at ${url}: ${(err as Error)?.message || err}`) }; }
+            // The inner message already says WHY (tab-ready.ts) and names the origin where that is the point, so this
+            // says only where it was trying to go — repeating the URL twice in one sentence reads as a stack trace.
+            catch (err) { return { error: fail("failed", `could not start on ${url} — ${(err as Error)?.message || err}`) }; }
         }
         if (target?.kind === "headless") return { error: fail("unsupported", "this browser has no headless runtime") };
         return { error: fail("invalid", "a run needs a target: a tab, or a blank tab") };

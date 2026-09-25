@@ -9,7 +9,7 @@ import { IconCheck, IconPlus, IconWarn } from "../sidebar/icons";
 import { truncate } from "../sidebar/format";
 import { cursorTipOn } from "../sidebar/ui-kit";
 import { cutTip } from "./cut-tip";
-import { useState } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 import { usePickerPop } from "./pop-picker";
 import { groupFolds, setGroupFold } from "./view-mode";
 import { faviconSrc, tabHost, tabMatches, tabTree, type TabGroupView, type TabTreeItem, type TabView } from "./tab-tree";
@@ -60,7 +60,7 @@ function TabIcon({ tab }: { tab: TabView }) {
  * `groupsHint` is said under the list when some group is only known to be together (no names or colours).
  * Keyboard: arrows move, Enter picks, Escape closes; typing goes to the filter.
  */
-export function TabPicker({ tabs, groups, value, onChange, onOpen, groupsHint, groupsGrant, runtime, withheld = 0, sitesGrant }: {
+export function TabPicker({ tabs, groups, value, onChange, onOpen, groupsHint, groupsGrant, runtime, withheld = 0, sitesGrant, loading }: {
     tabs: readonly TabView[] | null;
     groups?: readonly TabGroupView[];
     value: TabChoice;
@@ -75,6 +75,10 @@ export function TabPicker({ tabs, groups, value, onChange, onOpen, groupsHint, g
     withheld?: number;
     /** asks for access to every site, where this device can (the fix for `withheld`) */
     sitesGrant?: (() => Promise<boolean>) | null;
+    /** the FIRST list is still on its way, and this runtime has tabs to list: draw the placeholder rather than a
+     *  choice. The caller decides, because only it knows whether a null list means "not yet" or "never" — a runtime
+     *  with no tabs never gets one, and would shimmer for ever. */
+    loading?: boolean;
 }) {
     const [asking, setAsking] = useState<"" | "groups" | "sites">("");
     // A group starts folded as the browser's strip has it, then as it was last left here; typing opens every group,
@@ -105,21 +109,33 @@ export function TabPicker({ tabs, groups, value, onChange, onOpen, groupsHint, g
             </button>
         );
     }
+    // The first list has not landed yet. Not conditioned on what is CHOSEN: nothing has been chosen yet, and the pill
+    // used to spend the wait reading "New tab" — a definite answer that then silently became a different tab as the
+    // list landed. A placeholder says the true thing, which is that the question cannot be answered yet.
+    const waiting = !!loading;
+    // Whether a placeholder was ever drawn: only then does the real pill fade in, the way the model pill does.
+    const waited = useRef(false);
+    if (waiting) waited.current = true;
+
     const isFolded = (g: TabGroupView) => foldedFor(g, p.q.trim());
     const fold = (g: TabGroupView) => setGroupFold(foldKey(g), !isFolded(g));
     const unnamed = items.some((i) => i.kind === "group" && !i.described);
 
     return (
         <>
-            {/* Only a CHOSEN tab's title can be long enough to be cut. "New tab" and the two notices always fit, and a
-                tip with nothing in it is what attaching this unconditionally would give them. */}
-            <button {...p.pillProps} {...(chosen ? cutTip(chosen.title || tabHost(chosen.url)) : {})} class="tp-pill tp-pill-tab" aria-label={`Where it runs: ${chosen ? chosen.title || tabHost(chosen.url) : value === "blank" ? "a new tab" : "a tab that has closed"}`}>
-                {tabs === null && value !== "blank" ? <span class="tp-pill-text dim">Loading tabs…</span>
-                    : value !== "blank" && !chosen ? <span class="tp-pill-text tp-gone">That tab closed · pick another</span>
+            {/* WAITING FOR THE FIRST LIST: the model pill's shimmering placeholder, not the word "Loading" inside a
+                pill that can be pressed. The two pills sit beside each other and were filling in differently — one
+                shimmered, one read as a chosen value that happened to say "Loading tabs…" — and a pill you can open
+                onto an empty list is worse than one that plainly is not ready yet. A REFRESH keeps the list it has
+                (`load(false)` never sets null), so this is the first load only, and the real pill fades in after it. */}
+            {waiting ? <span class="tp-pill tp-pill-tab tp-pill-wait" role="status" aria-label="Loading tabs" /> : (
+            <button {...p.pillProps} {...(chosen ? cutTip(chosen.title || tabHost(chosen.url)) : {})} class={`tp-pill tp-pill-tab${waited.current ? " tp-pill-in" : ""}`} aria-label={`Where it runs: ${chosen ? chosen.title || tabHost(chosen.url) : value === "blank" ? "a new tab" : "a tab that has closed"}`}>
+                {value !== "blank" && !chosen ? <span class="tp-pill-text tp-gone">That tab closed · pick another</span>
                     : chosen ? <><TabIcon tab={chosen} /><span class="tp-pill-text">{chosen.title || tabHost(chosen.url)}</span></>
                         : <><span class="tp-fav tp-new" aria-hidden="true"><IconPlus /></span><span class="tp-pill-text">New tab</span></>}
                 <svg class="tp-caret" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
             </button>
+            )}
             {p.open && p.popProps ? (
                 <div {...p.popProps} class="chat-menu tp-pop" aria-label="Where it runs">
                     <input {...p.filterProps} placeholder="Filter tabs" aria-label="Filter tabs" />

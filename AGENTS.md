@@ -327,6 +327,14 @@ learned by shipping the wrong version first.
   and the system prompt; the worker has no second way to start one. The extension-only views (the resource panel,
   the Python bench) reach the chat page through `ChatExtras`, asked PER RUNTIME: the runtime says the capability
   exists and the device says it can draw it, and a page that answers only one of the two shows nothing.
+- **A run never starts on a page WE own.** A run that asked for an empty tab has to open some real http(s) page, and
+  the three obvious candidates are all wrong: Chrome refuses an extension on `chrome://newtab` and on a top-level
+  `about:blank` (an opaque origin, refused even with `<all_urls>` — both checked against the real browser), and the
+  extension's OWN page is a PRIVILEGED origin, where the model's `exec` reaches `chrome.storage` and the API key with
+  it. So the floor is `AGENT_START_PAGE` (contract-config.ts), an ordinary web page published from `dist-app/`, where
+  `window.ml` loads and `chrome.*` is undefined. `MlConfig.agentStartPage` overrides it and a client's own URL beats
+  both. The page is exempt from the PWA worker's navigate-to-shell fallback (`src/chat/pwa/sw.js`), or an installed
+  copy would answer it with the chat client — a failure only people who had opened the app would ever see.
 - **Exports.** Diff two runs with `run.json` after stripping `VOLATILE_FIELDS` and running `canonicalizeText()`.
 
 ## Showing a run: the log, the exports and tooltips

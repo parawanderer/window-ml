@@ -46,3 +46,27 @@ test("the hosted app is installable: a manifest, a worker with no placeholders l
     assert.match(html, /serviceWorker.*register\("sw\.js"\)/, "and nothing caches without the registration");
     assert.match(html, /apple-touch-icon/, "iOS takes its home-screen icon from this, not from the manifest alone");
 });
+
+// --- the agent's empty start page, which is published here and reachable only by URL ---
+
+test("the published agent start page is built, precached, and exempt from the worker's navigation fallback", async () => {
+    // THE TRAP: the worker answers EVERY navigation with the app's shell, so without an exemption a run that asked
+    // for an empty tab would land in the chat client instead — and only for people who had opened this app before,
+    // which is the worst possible way to meet a bug. Asserted on the BUILT worker, since that is what ships.
+    const app = new URL("../dist-app/", import.meta.url);
+    if (!existsSync(app)) return;   // built by `npm run build:web`; the test above skips the same way
+    const { AGENT_START_PAGE } = await import("../src/contract-config.ts");
+    const name = new URL(AGENT_START_PAGE).pathname.split("/").pop();
+
+    assert.ok(existsSync(new URL(name, app)), "the page the runtime points runs at must actually be published");
+    const sw = readFileSync(new URL("sw.js", app), "utf8");
+    assert.ok(sw.includes(`endsWith("/${name}")`), "the worker must let this path through its navigation fallback");
+    assert.ok(sw.indexOf(`endsWith("/${name}")`) < sw.indexOf('req.mode === "navigate"'), "and before the fallback, or it never runs");
+    assert.match(sw, new RegExp(`"${name}"`), "and hold it, so an installed copy has it with no network");
+
+    // It carries nothing that needs a build, and nothing that links anywhere: it is reachable by URL alone.
+    const page = readFileSync(new URL(name, app), "utf8");
+    assert.ok(!/<script/i.test(page), "an empty page an agent stands on has no reason to run anything");
+    assert.ok(!/<a\s/i.test(page), "nothing here links onward; the run navigates itself");
+    assert.match(page, /noindex/, "and it asks not to be indexed");
+});
