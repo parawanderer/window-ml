@@ -48,6 +48,25 @@ export function useHeldTrue(on: boolean, ms: number): boolean {
 }
 
 /**
+ * The colour actually PAINTED behind `el`: the nearest ancestor with an opaque background, as `rgb(…)`.
+ *
+ * The shader fills this rather than compositing over it, so a colour one shade out is not a subtle error — it is a
+ * rectangle you can see the edges of. It was read from `--bg` on `document.documentElement` before, which is the
+ * PANEL's `#1e1f24`: this page redefines the token on `.chat.calm` (chat.css) and sits on `#121316`, so the field
+ * was painted on a grey twelve levels off the one around it. Reading the token off an ancestor would fix that one
+ * case; asking who actually paints answers the question that was being got wrong, whoever sets the colour and
+ * wherever the token is defined. Falls back to the token, and then to the shader's own default.
+ */
+function groundOf(el: HTMLElement): string {
+    for (let n: HTMLElement | null = el.parentElement; n; n = n.parentElement) {
+        const c = getComputedStyle(n).backgroundColor;
+        const m = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:[\s,/]+([\d.]+))?/.exec(c);
+        if (m && Number(m[4] ?? 1) > 0) return c;
+    }
+    return getComputedStyle(el).getPropertyValue("--bg");
+}
+
+/**
  * The ambient field behind the start box: a shader where WebGL runs, nothing where it does not.
  *
  * The canvas is only shown once the context is up, so a machine that refuses WebGL sees the page it always saw
@@ -61,9 +80,7 @@ function Ambient({ target }: { target: { current: HTMLElement | null } }) {
         if (!el) return;
         const still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
         const light = typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: light)").matches;
-        // The page's own ground, read from the stylesheet rather than repeated here, so a theme change is one place.
-        const bg = getComputedStyle(document.documentElement).getPropertyValue("--bg");
-        const run = startAmbient(el, { still, light, target: target.current, bg });
+        const run = startAmbient(el, { still, light, target: target.current, bg: groundOf(el) });
         setGl(!!run);
         return () => run?.stop();
     }, []);

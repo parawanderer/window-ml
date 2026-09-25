@@ -1609,5 +1609,19 @@ button.chat-page-go:hover { color: var(--fg); }
    page it always had rather than a black rectangle. */
 .chat-start-page { position: relative; }
 .chat-start-col { position: relative; z-index: 1; }
-.chat-ambient-gl { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; display: none; }
+/* THE FIELD SPANS THE WHOLE PAGE, not the pane it is mounted in. `fixed` rather than `absolute` because the canvas
+   lives inside the start pane (start-page.tsx) while what it is a background FOR is the window: confined to the pane
+   it stopped dead at the session list's border, which put a hard vertical seam down a field whose whole job is not to
+   have edges. With the list away it now runs under the rail to the left edge of the screen. Nothing here contains a
+   fixed element — `.chat` is `position: relative`, which does not, and no ancestor has a transform or a filter.
+   The SIZE is explicit, because `inset: 0` is not enough on its own: a canvas is a REPLACED element, so `width: auto`
+   resolves to its intrinsic size instead of stretching to the offsets the way a div would — and the script sizes the
+   drawing buffer FROM the layout box, so the two wind each other down to 1x1 and the field disappears with nothing in
+   the console to say why. */
+.chat-ambient-gl { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; display: none; }
 .chat-ambient-gl.on { display: block; }
+/* And the list is lifted over it. A grid item paints with the block backgrounds, UNDER every positioned element, so
+   a fixed canvas at z-index 0 covers it — the list needs a layer of its own to sit on. Its own opacity transition
+   (the slide, above) is what fades the ground back in as it arrives, which is all the readability it needs: the
+   field is behind a solid colour the moment the list is on screen. */
+.chat-list { position: relative; z-index: 1; }

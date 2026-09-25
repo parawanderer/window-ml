@@ -10,8 +10,8 @@
 //   DITHER — a smooth gradient on an 8-bit display bands, and blur does not hide it because banding IS smooth. A
 //   pixel of noise under the quantiser removes it, and there is no way to say that in CSS.
 //
-// It is DECORATION, so nothing here is allowed to cost anything that matters: one fullscreen triangle, no texture, no
-// depth buffer, no library. It stops entirely when the page is hidden, when the element scrolls away, and when the
+// It is DECORATION, so nothing here is allowed to cost anything that matters: one fullscreen triangle, an 8x8 texture,
+// no depth buffer, no library. It stops entirely when the page is hidden, when the element scrolls away, and when the
 // reader asked for less motion — in that last case it draws ONE frame and holds it, because the objection is to the
 // movement and not to the colour. Anything unsupported or lost returns false and the caller keeps the CSS field.
 
@@ -28,7 +28,7 @@ const PALETTE = ["#4f4fd8", "#6b3fd0", "#2478b4", "#b8407a", "#3a3a96", "#1f5590
 const TEX = 8;
 
 /** One triangle covering the viewport. A quad needs two and a rectangle's diagonal is a seam the rasteriser can see. */
-const VERT = `#version 300 es
+const VERT = /* glsl */ `#version 300 es
 void main() {
     vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
     gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
@@ -36,7 +36,7 @@ void main() {
 
 // NO BACKTICKS BELOW THIS LINE. The whole shader is a template literal, so one in a comment ends it, and the error
 // it produces points at the JavaScript after the string rather than at the comment that broke it.
-const FRAG = `#version 300 es
+const FRAG = /* glsl */ `#version 300 es
 precision highp float;
 out vec4 outColor;
 uniform vec2 uRes;
@@ -92,6 +92,23 @@ float fbm(vec2 p) {
 vec3 toSrgb(vec3 c) {
     return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c));
 }
+
+// HOW SLOWLY THE INNER GLOW BREATHES, and by how little. A period of about forty seconds at a tenth of its own
+// strength — under the threshold at which anyone catches it happening, and over the one at which a live page and a
+// screenshot of it look like the same thing. Both numbers were tried louder first: at a quarter depth it reads as a
+// notification pulsing, which is a decoration asking to be looked at.
+const float PULSE_RATE = 0.157;
+const float PULSE_DEPTH = 0.10;
+
+// THE CLOUDS OUT AT THE EDGES: how large the shapes are, how fast they drift, how far the noise is allowed to push
+// the depth around (which is what makes a cloud arrive and leave at all), the level it has to clear to be a cloud,
+// how soft that edge is, and how bright the whole thing may get.
+const float CLOUD_SCALE = 0.42;
+const float CLOUD_DRIFT = 0.10;
+const float CLOUD_IMPACT = 1.25;
+const float CLOUD_LEVEL = 0.34;
+const float CLOUD_SOFT = 0.30;
+const float CLOUD_GAIN = 0.16;
 
 void main() {
     vec2 uv = gl_FragCoord.xy / uRes;
@@ -154,8 +171,36 @@ void main() {
     vec3 soft = mix(col, vec3(dot(col, vec3(0.30, 0.42, 0.28))), 0.55);   // the bloom, with its variation flattened out: fewer colours, further apart
     // The weights are low because the page has ONE sentence on it and the glow sits under it. Twice this and the
     // hint line under the box could not be read, which is a decoration that has started competing with the content.
-    float aRim = rim * 0.30 * mix(1.0, 0.55, uLight);
+    // THE RIM BREATHES. A sine on the inner layer's weight alone — not the bloom, which is the part already doing
+    // the slow churning, and not the colour, because brightening a hue shifts it. The phase comes from the clock the
+    // seed already wound forward, so two loads are not in step with each other either.
+    float aRim = rim * 0.30 * mix(1.0, 0.55, uLight) * (1.0 + PULSE_DEPTH * sin(uTime * PULSE_RATE));
     float aBloom = bloom * 0.17 * mix(1.0, 0.55, uLight);
+
+    // ===== THE CLOUDS OUT AT THE EDGES =====
+    // Distance fog, taken from how a 3D scene does it: a DEPTH, and that depth wobbled by noise. Distance out from the
+    // box is this page's depth — the composer is where the camera stands and the corners of the window are the far end
+    // — which is what puts the clouds at the edges STRUCTURALLY. A vignette masking a noise field was the first
+    // version, and it looks like what it is: a frame around the picture, moving at one rate while the thing behind it
+    // moves at another.
+    float far = max(d, 0.0) / max(uRes.y, 1.0);
+    // THE NOISE'S AMPLITUDE GROWS WITH THAT DEPTH — the one idea worth taking from a fog shader. A constant amplitude
+    // wobbles the near field too, which reads as a texture crawling over the page rather than as weather happening
+    // some way off; multiplying by the depth means nothing near the box moves at all and only the far field clouds up.
+    // The warp is reused rather than recomputed, so the whole effect costs one fbm.
+    vec2 cp = p * CLOUD_SCALE + w * 0.45 + vec2(t * CLOUD_DRIFT, -t * 0.07);
+    float depth = far * (1.0 + CLOUD_IMPACT * (fbm(cp) - 0.5) * 2.0);
+    // AND THEN A LEVEL, which is the part a fog shader does not need. In a real scene the shapes come from the
+    // geometry the fog is tinting; there is none here, so an exponential falloff over that depth is just a vignette —
+    // brightest at the corners, smooth all the way round, moving as one piece. A level is what makes an EDGE, and
+    // because only distance can lift the field over it, the shapes appear at the edges without anything masking them
+    // there. Where the field is high a cloud reaches in; where it is low the corner is the page's own colour again.
+    float cloud = smoothstep(CLOUD_LEVEL, CLOUD_LEVEL + CLOUD_SOFT, depth);
+    vec3 cloudCol = texture(uTex, cp * 0.55 + vec2(3.1, 7.4)).rgb;
+    // Flattened further than the bloom is: a cloud at the edge of vision has no hue separation left in it, and the
+    // full palette out there read as a second coloured subject on a page whose subject is one input box.
+    cloudCol = mix(cloudCol, vec3(dot(cloudCol, vec3(0.30, 0.42, 0.28))), 0.45);
+    float aCloud = cloud * CLOUD_GAIN * mix(1.0, 0.5, uLight);
 
     // THE PAGE'S BACKGROUND IS PAINTED HERE, and the light is ADDED to it, in linear space.
     //
@@ -168,7 +213,7 @@ void main() {
     // Adding to a filled background has no such relationship to break: everything happens in linear light, there is
     // one gamma encode at the very end, and the dither lands under the quantiser rather than on a colour that is
     // about to be divided by its alpha.
-    vec3 lit = uBg + (col * aRim + soft * aBloom) * inside;
+    vec3 lit = uBg + (col * aRim + soft * aBloom + cloudCol * aCloud) * inside;
 
     lit = toSrgb(max(lit, vec3(0.0)));
     lit += (hash(gl_FragCoord.xy) - 0.5) / 255.0;   // dither, under the quantiser: this is what stops the banding
@@ -218,7 +263,7 @@ export function startAmbient(canvas: HTMLCanvasElement, opts: { light?: boolean;
     const uBoxR = gl.getUniformLocation(prog, "uBoxR");
     const uBoxRad = gl.getUniformLocation(prog, "uBoxRad");
     gl.uniform1f(gl.getUniformLocation(prog, "uLight"), opts.light ? 1 : 0);
-    const bg = linearOf(opts.bg || "#1e1f24");
+    const bg = linearOf(opts.bg || "#121316");
     gl.uniform3f(gl.getUniformLocation(prog, "uBg"), bg[0], bg[1], bg[2]);
     gl.activeTexture(gl.TEXTURE0);
     // A FRESH START EACH VISIT. The arrangement of colours and the phase of the warp both come from this, so the page
@@ -283,16 +328,27 @@ export function startAmbient(canvas: HTMLCanvasElement, opts: { light?: boolean;
     } };
 }
 
-/** A `#rgb` / `#rrggbb` colour as LINEAR light, which is the space the shader adds in. Anything unparseable comes
- *  back as the dark theme's background rather than as black: a wrong-but-plausible ground beats a hole in the page. */
+/** A `#rgb` / `#rrggbb` / `rgb(…)` colour as LINEAR light, which is the space the shader adds in. `rgb()` is here
+ *  because the ground is found by asking an element what it PAINTS, and that is the form a computed style comes back
+ *  in. Anything unparseable comes back as the dark theme's background rather than as black: a wrong-but-plausible
+ *  ground beats a hole in the page. */
 function linearOf(css: string): [number, number, number] {
-    const hex = css.trim().replace(/^#/, "");
-    const full = hex.length === 3 ? hex.split("").map((c) => c + c).join("") : hex;
-    if (!/^[0-9a-f]{6}$/i.test(full)) return linearOf("#1e1f24");
-    const srgb = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16) / 255);
+    const srgb = channelsOf(css);
+    if (!srgb) return linearOf("#121316");
     // The real sRGB transfer function, not a 2.2 power: they differ most in the darks, which is all this page is.
     const lin = srgb.map((c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)));
     return [lin[0], lin[1], lin[2]];
+}
+
+/** The three channels of a `#rgb`, `#rrggbb` or `rgb()/rgba()` colour, each 0-1, or null if it is neither. */
+function channelsOf(css: string): [number, number, number] | null {
+    const s = css.trim();
+    const fn = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i.exec(s);
+    if (fn) return [Number(fn[1]) / 255, Number(fn[2]) / 255, Number(fn[3]) / 255];
+    const hex = s.replace(/^#/, "");
+    const full = hex.length === 3 ? hex.split("").map((c) => c + c).join("") : hex;
+    if (!/^[0-9a-f]{6}$/i.test(full)) return null;
+    return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16) / 255) as [number, number, number];
 }
 
 /**
@@ -346,10 +402,8 @@ function paletteTexture(gl: WebGL2RenderingContext, palette: readonly string[], 
     return tex;
 }
 
-/** A `#rrggbb` colour as three 0-255 bytes. */
+/** A palette colour as three 0-255 bytes, for the texture upload. */
 function bytesOf(css: string): [number, number, number] {
-    const hex = css.trim().replace(/^#/, "");
-    const full = hex.length === 3 ? hex.split("").map((c) => c + c).join("") : hex;
-    if (!/^[0-9a-f]{6}$/i.test(full)) return [40, 40, 90];
-    return [parseInt(full.slice(0, 2), 16), parseInt(full.slice(2, 4), 16), parseInt(full.slice(4, 6), 16)];
+    const c = channelsOf(css);
+    return c ? [c[0] * 255, c[1] * 255, c[2] * 255] : [40, 40, 90];
 }
