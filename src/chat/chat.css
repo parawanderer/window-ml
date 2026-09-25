@@ -1177,8 +1177,14 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-set-sample { margin: 4px 12px 0; }
 /* A segmented choice: the options side by side in one pill, the chosen one filled. */
 .chat-seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 999px; background: var(--panel); }
+/* The kind's glyph, in the row's list and in the segmented control: a robot and a speech bubble, so the pair is told
+   apart at a glance rather than by reading two lines that differ in one word. Sized and dimmed like every other
+   leading glyph here; it never takes the row's colour from the label beside it. */
+.tp-kind-icon { display: flex; flex: 0 0 auto; align-items: center; align-self: flex-start; margin-top: 2px; color: var(--fg-dim); }
+.chat-seg-opt svg { flex: 0 0 auto; }
 .chat-seg-opt {
-    border: none; border-radius: 999px; padding: 6px 14px; background: none; color: var(--fg-dim); font: inherit;
+    display: inline-flex; align-items: center; gap: 6px;
+    border: none; border-radius: 999px; padding: 6px 12px; background: none; color: var(--fg-dim); font: inherit;
     font-size: .92em; cursor: pointer;
 }
 .chat-seg-opt:hover { color: var(--fg); }
@@ -1540,3 +1546,26 @@ button.chat-page-go:hover { color: var(--fg); }
 .tp-note.tp-switch-note { margin: 2px 4px 6px; padding: 8px 10px; border-radius: 8px; background: var(--panel-2); color: var(--fg-dim); white-space: normal; }
 /* A model that cannot be picked yet: listed, readable, visibly not a choice. */
 .tp-row.off { cursor: default; opacity: .7; }
+
+/* THE NEW-TAB PERMISSION STATE (blank-start.ts). A choice that cannot proceed says so in the row where it was made,
+   rather than as a refusal after send: the chip is the whole warning, and opens the dialog with the ways out. */
+.chat-start-blocked {
+    display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; padding: 6px 10px;
+    border: none; border-radius: 999px; background: var(--panel-2); color: var(--warn); font: inherit; font-size: .88em; cursor: pointer;
+}
+.chat-start-blocked:hover { background: var(--panel-2-hover); }
+/* Three buttons do not fit one phone-width row, and a button that breaks its own label reads as two buttons. The row
+   wraps instead, and each button stays whole; the "spread" first child keeps its place at the left of whichever line
+   it lands on. */
+.chat-dialog-actions { flex-wrap: wrap; row-gap: 8px; }
+.chat-dialog .btn { white-space: nowrap; }
+/* The page in question is a URL, so it wraps where it must rather than pushing the dialog wider than the screen. */
+.chat-bs-url { overflow-wrap: anywhere; padding: 1px 5px; border-radius: 5px; background: var(--panel-2); }
+.chat-bs-note, .chat-bs-steps { color: var(--fg-dim); font-size: .92em; margin: 8px 0 0; }
+.chat-bs-steps { padding: 8px 10px; border-radius: 8px; background: var(--panel-2); overflow-wrap: anywhere; }
+.chat-bs-refused { color: var(--warn); font-size: .92em; margin: 8px 0 0; }
+.chat-bs-choices { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.chat-bs-choices .btn { display: flex; align-items: center; gap: 8px; width: 100%; justify-content: flex-start; text-align: left; overflow-wrap: anywhere; }
+.chat-bs-choices .btn svg { flex: 0 0 auto; color: var(--fg-dim); }
+/* The "or type one" row: the dialog's own field (`.chat-dialog-field`) under a label saying what it is for. */
+.chat-bs-field { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; font-size: .92em; color: var(--fg-dim); }

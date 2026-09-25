@@ -287,7 +287,12 @@ export class HubRuntime {
 }
 
 /** What a remote device is told about this runtime: never that its settings are editable from there, and that it
- *  manages the account's devices when it keeps the allowlist. */
+ *  manages the account's devices when it keeps the allowlist.
+ *
+ *  Everything else crosses whole, deliberately — `blankStart` above all, which is the one capability that exists FOR
+ *  the remote reader. A client cannot grant a permission on another machine, so the sites that machine already holds
+ *  and the browser to word the fix in are the only things that make a blocked new-tab run actionable from here.
+ *  Stripping it would not break anything loudly; it would just leave the remote case with nothing to offer. */
 function remoteDescription(result: CommandResult<CommandType>, devices: boolean): CommandResult<CommandType> {
     if (!result.ok) return result;
     const data = result.data as { capabilities?: Record<string, unknown> };

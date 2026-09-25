@@ -7,13 +7,14 @@ import { type MlDebugEvent } from "./contract-debug";
 import { createCommandHandler, type CommandDeps, type PageOutcome } from "./session-commands";
 import { cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat, sendBackgroundChat, setBackgroundChatModel, startBackgroundChat } from "./sw-chat";
 import { type StoredSession } from "./contract-messages";
-import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type ArchiveCapability, type RuntimeInfo, type SessionSummary, type TabGroupInfo, type TabInfo } from "./session-host";
+import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type ArchiveCapability, type BlankStartCapability, type RuntimeInfo, type SessionSummary, type TabGroupInfo, type TabInfo } from "./session-host";
 import { FaviconCache, stripOrder } from "./tab-favicons";
 import { tabReadyFailure } from "./tab-ready";
+import { browserInfo } from "./util";
 import { SessionIndex, type IngestSource } from "./session-index";
 import { SESSIONS_PORT, SessionServer } from "./session-server";
 import { STORE_MAX_SESSIONS, SessionStore, indexedDbBackend, type SessionHistory } from "./session-store";
-import { DEFAULT_CONFIG, modelFilterAllows } from "./contract-config";
+import { AGENT_START_PAGE, DEFAULT_CONFIG, modelFilterAllows } from "./contract-config";
 import type { NeutralMessage } from "./contract-chat";
 import { cleanTitle, titleMessages } from "./session-title";
 import { bgRuns, trackRun, untrackRun } from "./sw-runs";
@@ -83,10 +84,64 @@ function localRuntime(): RuntimeInfo {
         // backend behind it); `pythonBench` is MEASURED, because a checkout without the wheels builds a bundle whose
         // bench would fail at run time. `localSettings`: this browser's pages may edit its settings, which only the
         // extension's own pages can (a phone over the hub reports the capability and holds nothing to edit with).
-        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled, localSettings: true, switchModel: true, ...archiveCapability(), ...(attentionCodes().length ? { attention: attentionCodes() } : {}) },
+        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled, localSettings: true, switchModel: true, ...archiveCapability(), ...blankStartCapability(), ...(attentionCodes().length ? { attention: attentionCodes() } : {}) },
         // This browser's own pages hold every scope.
         grants: [{ scope: "view" }, { scope: "drive" }, { scope: "approve" }, { scope: "screen" }],
     };
+}
+
+/** Where a blank run goes, and whether this browser may open it — the PRECISE answer the coarse `site-access`
+ *  attention code cannot give, since that one asks only whether `<all_urls>` is held. Read from a cache the
+ *  permission listeners refresh, because assembling a runtime's description must not await anything. */
+function blankStartCapability(): { blankStart?: BlankStartCapability } {
+    const url = (agentStartPage || "").trim() || AGENT_START_PAGE;
+    if (!/^https?:\/\//i.test(url)) return {};
+    return { blankStart: {
+        url, granted: blankStartGranted,
+        ...(blankStartGranted || !blankStartOrigins.length ? {} : { origins: blankStartOrigins }),
+        ...(browserName ? { browser: browserName } : {}),
+        ...(chrome.runtime?.id ? { extensionId: chrome.runtime.id } : {}),
+    } };
+}
+
+/** What this browser calls itself, for a client wording the fix for THIS machine while reading it on another. */
+const browserName = browserInfo().name;
+
+/** Where this browser COULD start a blank run today, when it may not start one at the configured page: the origins
+ *  it already holds. Empty while everything is granted (there is nothing to propose) and while nothing is. */
+let blankStartOrigins: string[] = [];
+
+/** How many already-granted sites are worth proposing. A list this long is a picker; longer is an inventory. */
+const PROPOSE_MAX = 20;
+
+/** Host access for the blank-start page's origin, as last read. Starts true so nothing is accused before the first
+ *  answer: a warning that turns out to be wrong costs more than one that arrives a moment late. */
+let blankStartGranted = true;
+
+/** Re-read it and announce the runtime again when the answer moved. Called at start, on a permission change, and
+ *  when the start page setting is edited — a new URL is a new origin, and the old answer does not carry over. */
+export async function refreshBlankStart(): Promise<void> {
+    const url = (agentStartPage || "").trim() || AGENT_START_PAGE;
+    let next = true;
+    try {
+        const origin = new URL(url).origin + "/*";
+        next = typeof chrome.permissions?.contains === "function"
+            ? await chrome.permissions.contains({ origins: [origin] }).catch(() => true)
+            : true;
+    } catch { next = true; }   // not a URL we can ask about: do not accuse it
+    // Blocked: what CAN this browser open? On a remote runtime that is the only route out, since no client can
+    // grant a permission on another machine. Read only while blocked, so a working runtime ships no site list.
+    let origins: string[] = [];
+    if (!next) {
+        const all = await chrome.permissions?.getAll?.().catch(() => null);
+        origins = (all?.origins ?? [])
+            .filter((o) => /^https?:\/\//i.test(o) && o !== "<all_urls>")
+            .slice(0, PROPOSE_MAX);
+    }
+    if (next === blankStartGranted && origins.join() === blankStartOrigins.join()) return;
+    blankStartGranted = next;
+    blankStartOrigins = origins;
+    sessionServer.runtimeChanged();
 }
 
 /** The archive's entry in the capabilities: absent while it is off, and "none" until its folder was first read. */
@@ -420,6 +475,12 @@ onFolderChange(() => { sessionServer.runtimeChanged(); recomputeAttention(); });
 // `pythonMissing` reads the measured bundle check below: false until measured, so an unmeasured build is not flagged.
 let archiveKnown = false;
 watchAttention({ archiveOn: () => (archiveKnown ? archiveOn : null), onChange: () => sessionServer.runtimeChanged(), pythonMissing: () => pythonMeasured && !pythonBundled });
+// A grant made while someone is looking at the question should answer it, without polling and without a reload.
+try {
+    chrome.permissions?.onAdded?.addListener(() => void refreshBlankStart());
+    chrome.permissions?.onRemoved?.addListener(() => void refreshBlankStart());
+    void refreshBlankStart();
+} catch { /* no permissions API (a test harness) */ }
 // Whether the archive is on is read at start like everything else; until it is, "archive-off" would be a guess.
 void settingsRead.then(() => { archiveKnown = true; recomputeAttention(); });
 // A lapsed grant shows only after a restart, which is also when this runs.
@@ -472,10 +533,12 @@ try {
         utilityModelSet = !!String(cfg?.utilityModel ?? "").trim();
         agentStartPage = String(cfg?.agentStartPage ?? "").trim();
         sessionServer.runtimeChanged();
+        void refreshBlankStart();
     });
     chrome.storage.onChanged?.addListener((changes, area) => {
         if (area !== "sync") return;
-        if (changes.agentStartPage) agentStartPage = String(changes.agentStartPage.newValue ?? "").trim();
+        // A new start page is a new ORIGIN, so the old answer about it does not carry over.
+        if (changes.agentStartPage) { agentStartPage = String(changes.agentStartPage.newValue ?? "").trim(); void refreshBlankStart(); }
         if (changes.autoTitles) autoTitles = changes.autoTitles.newValue !== false;
         if (changes.sessionArchive) { archiveOn = changes.sessionArchive.newValue === true; archiveToggled(); }
         // A shorter retention applies now, not on the next write: someone who just lowered it expects the list to

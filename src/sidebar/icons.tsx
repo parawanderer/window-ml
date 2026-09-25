@@ -61,6 +61,21 @@ export const IconDevice = () => (
         <path d="M10 19v-3.96M7 19h5" /><rect x="16" y="12" width="6" height="10" rx="2" />
     </svg>
 );
+/** A speech bubble — a CHAT, the counterpart to `IconAgent` wherever the two kinds are offered side by side. Lucide's
+ *  `message-circle` (ISC, https://lucide.dev); the phone app draws the same glyph beside the same word. */
+export const IconChat = () => (
+    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" />
+    </svg>
+);
+/** A globe — a SITE, for the rows and chips that name one. Lucide's `globe` (ISC, https://lucide.dev), which is the
+ *  glyph the phone app draws beside the same rows, so one design language covers both (mobile/AGENTS.md). */
+export const IconGlobe = () => (
+    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" /><path d="M3 12h18" />
+        <path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18" />
+    </svg>
+);
 export const IconInbox = () => (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z" />

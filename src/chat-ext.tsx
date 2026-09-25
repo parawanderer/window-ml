@@ -107,6 +107,11 @@ const extras: ChatExtras = {
     housekeeping: (id) => (localRuntimes.has(id) ? <HousekeepingView /> : null),
     fixedBefore: (id, code) => localRuntimes.has(id) && code === "archive-folder-lapsed" && regrantedBefore(),
     fix: (id, code) => (localRuntimes.has(id) && FIXES[code] ? FIXES[code] : null),
+    // The narrow grant: one origin, asked for inside the click. `<all_urls>` would also unblock it and is the wrong
+    // thing to ask for — a page to start runs on is not a reason to read every site.
+    grantOrigin: (id, origin) => (localRuntimes.has(id) && /^https?:\/\//i.test(origin)
+        ? () => chrome.permissions.request({ origins: [origin] }).catch(() => false)
+        : null),
 };
 
 // One port for the page's life, reconnected by `LocalHost` itself: an MV3 worker is evicted when idle, which drops

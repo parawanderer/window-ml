@@ -7,7 +7,7 @@ import { ActivityIndicator, Animated, Platform, Pressable, StyleSheet, Text, Tex
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import { BottomSheetBackdrop, BottomSheetModal, BottomSheetScrollView, BottomSheetTextInput, type BottomSheetBackdropProps } from "@gorhom/bottom-sheet";
-import { Check, ChevronDown, Pin, Search, X } from "lucide-react-native";
+import { Check, ChevronDown, ChevronRight, Pin, Search, X } from "lucide-react-native";
 import { SIZE, usePalette, type Palette } from "./theme";
 
 /** A round icon-only button, 44pt: the page's header buttons. `label` is its accessible name. */
@@ -168,7 +168,7 @@ export function Chip({ text, on, onPress }: { text: string; on: boolean; onPress
 }
 
 /** One row of a sheet: a title, an optional line under it, and a check when it is the chosen one. */
-export function SheetRow({ title, detail, chosen, disabled, onPress, mono, danger, pin, icon }: {
+export function SheetRow({ title, detail, chosen, disabled, onPress, mono, danger, pin, icon, go }: {
     title: string; detail?: string; chosen?: boolean; disabled?: boolean; onPress?: () => void; mono?: boolean; danger?: boolean;
     /** A glyph before the words, in a column of its own so a sheet of ACTIONS reads as the page's menu does — the
      *  labels line up whatever their icons, and a row is recognised by its shape before it is read. A picker's rows
@@ -176,6 +176,10 @@ export function SheetRow({ title, detail, chosen, disabled, onPress, mono, dange
     icon?: (color: string) => ReactNode;
     /** a pin at the row's end: whether it is on, and what a tap does. Absent means the row has none */
     pin?: { on: boolean; toggle: () => void };
+    /** a chevron at the row's end: this row DOES something rather than choosing something. A picker needs none — the
+     *  sheet's title already says what is being chosen — but a row sitting among prose has nothing else to say it can
+     *  be pressed, and reads as another paragraph. */
+    go?: boolean;
 } & Pick<PressableProps, "onPress">) {
     const p = usePalette();
     return (
@@ -187,6 +191,7 @@ export function SheetRow({ title, detail, chosen, disabled, onPress, mono, dange
                 {detail ? <Text style={[s.sheetRowDetail, { color: p.fgDim }]}>{detail}</Text> : null}
             </View>
             {chosen ? <Check size={20} color={p.accent} /> : null}
+            {go ? <ChevronRight size={18} color={p.fgFaint} /> : null}
             {/* `pin` sits INSIDE the row's Pressable, so its own Pressable takes the touch first (React Native hit
                 testing goes to the deepest view) and the row's onPress never fires for a tap on the pin. */}
             {pin ? (

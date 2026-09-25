@@ -335,6 +335,17 @@ learned by shipping the wrong version first.
   `window.ml` loads and `chrome.*` is undefined. `MlConfig.agentStartPage` overrides it and a client's own URL beats
   both. The page is exempt from the PWA worker's navigate-to-shell fallback (`src/chat/pwa/sw.js`), or an installed
   copy would answer it with the chat client — a failure only people who had opened the app would ever see.
+- **Whether a new tab can be opened is the RUNTIME's answer, not the client's guess** (`capabilities.blankStart`,
+  `src/chat/blank-start.ts`). A browser with limited site access will not run the extension on that page, and the
+  coarse `site-access` attention code cannot tell you: it asks whether `<all_urls>` is held, so it fires for a
+  runtime on "specific sites" whether or not the one page that matters is among them. The capability carries the URL,
+  whether it is permitted, and — only while it is NOT — the origins that runtime already holds. That list exists for
+  the REMOTE reader, which is why `remoteDescription` (hub-runtime.ts) must never strip it: no client can grant a
+  permission on another machine, so the sites it already holds, and its own browser's name for wording the fix, are
+  the only actionable things left. ABSENT IS NOT BLOCKED — an older runtime reports nothing here, and refusing to
+  start on one that never claimed a problem breaks every run on it. The block applies only where the run would use
+  the runtime's DEFAULT page: once a URL is named by the client the question has been answered, and going on blocking
+  it makes the way out unreachable.
 - **Exports.** Diff two runs with `run.json` after stripping `VOLATILE_FIELDS` and running `canonicalizeText()`.
 
 ## Showing a run: the log, the exports and tooltips

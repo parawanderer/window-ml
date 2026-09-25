@@ -51,6 +51,15 @@ export interface TargetPick {
     fields: preact.JSX.Element | null;
     /** the same choice as one compact control (and a URL box when a new tab is picked), for a composer's row */
     inline: preact.JSX.Element | null;
+    /** is a NEW tab what is currently chosen? (the one target whose page has to be opened, and so permitted) */
+    blank: boolean;
+    /** the page a new tab would open, where one was NAMED here. Empty means "whatever the runtime's setting says",
+     *  which is the only case a client can be told about in advance. */
+    url: string;
+    /** point a new-tab run at `url`. For an answer to "that page cannot be opened": the chooser picks another. */
+    useUrl(url: string): void;
+    /** send the chooser back to the runtime's open tabs, which need no page opened and so no permission. */
+    useTabs(): void;
 }
 
 /**
@@ -103,6 +112,10 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
     return {
         target: () => (where === "tab" && tabId != null ? { kind: "tab", tabId } : { kind: "blank", ...(url.trim() ? { url: url.trim() } : {}) }),
         ready: where === "blank" || (tabId != null && !closed),
+        blank: where === "blank",
+        url: url.trim(),
+        useUrl: (u) => { setWhere("blank"); setUrl(u); },
+        useTabs: () => { setWhere("tab"); },
         fields: enabled ? (
             <>
                 <label class="chat-new-field" data-field="where"><span>Where</span>

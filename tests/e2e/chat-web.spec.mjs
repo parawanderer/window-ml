@@ -397,6 +397,96 @@ test("the device pill is drawn only where there is more than one device to choos
     await page.close();
 });
 
+// Two rows of prose differing in one word are told apart by READING; a robot beside a speech bubble is told apart at
+// a glance. The pair is drawn wherever the kinds appear, and the phone app draws the same two — one design language.
+test("the kind is marked by a glyph in both of its controls, and the pills arrive the same way", async () => {
+    const { page, errors } = await open(DESKTOP);
+    // WIDE: the segmented control, a glyph in each segment.
+    for (const name of ["Agent", "Chat"]) {
+        await expect(page.getByRole("radio", { name }).locator("svg")).toHaveCount(1);
+    }
+
+    // The device pill ARRIVES rather than appearing: it is drawn only where there is a choice, so switching kind
+    // mounts and unmounts it, and popping in beside a tab pill that fades read as the row jolting.
+    await page.getByRole("radio", { name: "Chat" }).click();
+    await expect(page.getByRole("button", { name: /^Device:/ })).toHaveCount(0);
+    await page.getByRole("radio", { name: "Agent" }).click();
+    const device = page.getByRole("button", { name: /^Device:/ });
+    await expect(device).toBeVisible();
+    // Not "every pill animates identically": a pill whose list was already cached has nothing to wait for and simply
+    // is there, which is right. The device pill is the one that was appearing from nothing beside one that faded.
+    expect(await device.evaluate((e) => getComputedStyle(e).animationName)).toBe("chat-pill-in");
+
+    // NARROW: the same pair on the pill and in its list.
+    const phone = await browser.newPage({ viewport: PHONE });
+    await phone.goto(server.url);
+    await phone.locator(".chat-start").first().click();
+    const kind = phone.getByRole("button", { name: /^Kind:/ });
+    await expect(kind.locator("svg")).toHaveCount(2, "the glyph and the caret");
+    await kind.click();
+    for (const name of [/^Agent/, /^Chat/]) {
+        // The GLYPH's own slot: the chosen row also carries a check, so counting every svg in the row counts that too.
+        await expect(phone.getByRole("listbox", { name: "Kind" }).getByRole("option", { name }).locator(".tp-kind-icon svg")).toHaveCount(1);
+    }
+    await phone.close();
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// A new-tab run opens a real page, and a browser with limited site access will not let the extension run there. The
+// runtime answers that (`blankStart`), so the choice is blocked BEFORE send rather than refused after it — and what
+// is offered depends on who could actually fix it, which is the reason this is a state machine and not a warning.
+test("a new tab that cannot be opened blocks the start and offers the routes that exist @mobile", async () => {
+    const { page, errors } = await open(PHONE);
+    await page.locator(".chat-start").first().click();
+    await page.getByRole("button", { name: /^Where it runs/ }).click();
+    await page.getByRole("listbox", { name: "Where it runs" }).getByRole("option", { name: "New tab" }).click();
+
+    // REMOTE and holding other sites: those sites are the offer, because nothing here can grant anything there.
+    await page.evaluate(() => globalThis.__chatFake.setRuntime("laptop", {
+        capabilities: { chat: true, agent: true, tabs: true, screenshots: true, highlight: true, sideCalls: true, persistence: true, switchModel: true,
+            blankStart: { url: "https://pages.example/agent-start.html", granted: false, origins: ["https://a.example/*"], browser: "Brave", extensionId: "zz9" } },
+    }));
+    const chip = page.getByRole("button", { name: /New tab needs permission/ });
+    await expect(chip).toBeVisible();
+    // The start is stopped here, not after send: the dead end is what this replaces.
+    await page.locator(".chat-start-box textarea").fill("go and look");
+    await expect(page.locator(".chat-start-send")).toBeDisabled();
+
+    await chip.click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toContainText("https://pages.example/agent-start.html");
+    // The web client is not the runtime, so there is no prompt it could raise.
+    await expect(dialog.getByRole("button", { name: "Grant access" })).toHaveCount(0);
+    await dialog.getByRole("button", { name: "https://a.example/" }).click();
+    await expect(dialog).toHaveCount(0);
+    // Picking one sets the page the run will actually use.
+    await page.locator(".chat-start-box textarea").press("Enter");
+    await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "agent.start", target: { kind: "blank", url: "https://a.example/" } });
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("a runtime that holds no other site is explained in ITS browser, not the reader's @mobile", async () => {
+    const { page, errors } = await open(PHONE);
+    await page.locator(".chat-start").first().click();
+    await page.evaluate(() => globalThis.__chatFake.setRuntime("laptop", {
+        capabilities: { chat: true, agent: true, tabs: true, screenshots: true, highlight: true, sideCalls: true, persistence: true, switchModel: true,
+            blankStart: { url: "https://pages.example/agent-start.html", granted: false, browser: "Brave", extensionId: "zz9" } },
+    }));
+    await page.getByRole("button", { name: /^Where it runs/ }).click();
+    await page.getByRole("listbox", { name: "Where it runs" }).getByRole("option", { name: "New tab" }).click();
+    await page.getByRole("button", { name: /New tab needs permission/ }).click();
+
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toContainText("Work laptop");
+    await expect(dialog).toContainText("brave://extensions/?id=zz9");
+    // A run's own tabs need no page opened, so that route is always offered.
+    await expect(dialog.getByRole("button", { name: /Use one of its tabs/ })).toBeVisible();
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 // A tab id means nothing on another machine, so changing device drops the target rather than carrying it. It used to
 // keep it, and the pill then said "That tab closed · pick another" about a tab that is open and fine on the machine
 // you just left — and on a device with no tabs, no list was ever coming that could clear it.

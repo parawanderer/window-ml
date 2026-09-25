@@ -121,7 +121,15 @@ test("an unknown command is answered unsupported", T, async () => {
     // `resourcePanel`/`pythonBench` are not commands: they say this browser's box can be DRAWN and its sandbox
     // driven, which a client offers only where it also holds something to draw with (the chat page's `ChatExtras`).
     // `pythonBench: false` because this harness has no Pyodide bundle to find: it is measured, never assumed.
-    assert.deepEqual(port.messages[0].runtime.capabilities, { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: false, persistence: false, resourcePanel: true, pythonBench: false, localSettings: true, switchModel: true });
+    // `blankStart` says where a run that asked for an EMPTY TAB would go and whether this browser may open it —
+    // the precise answer the coarse `site-access` attention code cannot give, and the one a client needs BEFORE
+    // someone presses send. `granted` is true here because the harness's permissions mock holds everything; a
+    // browser with limited site access reports false, and then also the origins it does hold.
+    const caps = port.messages[0].runtime.capabilities;
+    assert.deepEqual(caps.blankStart, {
+        url: "https://parawanderer.github.io/window-ml/agent-start.html", granted: true, browser: caps.blankStart.browser,
+    });
+    assert.deepEqual({ ...caps, blankStart: undefined }, { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: false, persistence: false, resourcePanel: true, pythonBench: false, localSettings: true, switchModel: true, blankStart: undefined });
 });
 
 test("a live background run, driven from the chat page: steered while its gate is open, then approved through approval.answer", T, async () => {

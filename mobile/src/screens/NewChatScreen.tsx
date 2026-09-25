@@ -5,12 +5,12 @@
 // grant this app reads for itself.
 
 import { useEffect, useRef, useState } from "react";
-import { Image, Keyboard, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Image, Keyboard, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import type { BottomSheetModal } from "@gorhom/bottom-sheet";
-import { ArrowUp, ChevronLeft, Cpu, MonitorSmartphone, Plus } from "lucide-react-native";
+import { AppWindow, ArrowUp, Bot, ChevronLeft, Cpu, Globe, MessageCircle, MonitorSmartphone, Plus, TriangleAlert } from "lucide-react-native";
 import type { ModelChoice } from "../../../src/session-host";
 import { draftOf, saveDraft } from "../drafts";
 import { useEmbed } from "../embed";
@@ -22,6 +22,10 @@ import { togglePinnedModel, usePinnedModels } from "../pinned-models";
 import { AttachButton, AttachedStrip, AttachSheet, useAttachments } from "../attach-ui";
 import { TabSheet, type TabChoice, type TabList } from "../tab-sheet";
 import { faviconSrc, tabHost } from "../../../src/chat/tab-tree";
+// The SAME reading the chat page makes (src/chat/blank-start.ts), not a second copy of the rules: which state the
+// choice is in is a fact about the runtime's answer, and two surfaces disagreeing about it is the drift AGENTS.md's
+// one-design-language rule exists to stop. Only the drawing below is this screen's.
+import { blankStartState } from "../../../src/chat/blank-start";
 
 /** The new-session screen. */
 export function NewChatScreen() {
@@ -47,6 +51,7 @@ export function NewChatScreen() {
     const rtSheet = useRef<BottomSheetModal>(null);
     const modelSheet = useRef<BottomSheetModal>(null);
     const tabSheet = useRef<BottomSheetModal>(null);
+    const blankSheet = useRef<BottomSheetModal>(null);
     // An agent's tab: the runtime's own list, asked when the runtime changes and again when the picker opens.
     const [tabs, setTabs] = useState<TabList>({ tabs: null, groups: [], withheld: 0 });
     const [where, setWhere] = useState<TabChoice | null>(null);
@@ -81,7 +86,12 @@ export function NewChatScreen() {
 
     const chosenTab = typeof where === "number" ? tabs.tabs?.find((t) => t.tabId === where) : undefined;
     const closed = typeof where === "number" && !!tabs.tabs && !chosenTab;
-    const ready = kind === "chat" || where === "blank" || (typeof where === "number" && !closed);
+    // A PHONE IS ALWAYS A REMOTE CLIENT: it can never raise a permission prompt on the machine the run would go to,
+    // so `canGrant` is false here by construction and the states this screen can meet are "propose" and "elsewhere".
+    // That makes this the surface that needs it MOST — a new tab is this screen's default (above), so without it the
+    // ordinary path is the one that fails, on the one device that can do nothing about it.
+    const blocked = kind === "agent" && where === "blank" && !url.trim() ? blankStartState(rt, false) : { kind: "ok" as const };
+    const ready = (kind === "chat" || where === "blank" || (typeof where === "number" && !closed)) && blocked.kind === "ok";
     const start = async () => {
         if (!rt || !text.trim() || busy || !ready) return;
         setBusy(true);
@@ -114,6 +124,10 @@ export function NewChatScreen() {
                         {kinds.map((k) => (
                             <Pressable key={k} accessibilityRole="tab" accessibilityState={{ selected: k === kind }} onPress={() => setKind(k)}
                                 style={[s.kind, k === kind && { backgroundColor: p.bg }]}>
+                                {/* The same pair the page draws (kind-picker.tsx): a robot and a speech bubble, so the
+                                    two kinds are told apart at a glance and mean the same thing on both surfaces. */}
+                                {k === "chat" ? <MessageCircle size={14} color={k === kind ? p.fg : p.fgDim} />
+                                    : <Bot size={14} color={k === kind ? p.fg : p.fgDim} />}
                                 <Text style={[s.kindText, { color: k === kind ? p.fg : p.fgDim }]}>{k === "chat" ? "Chat" : "Agent"}</Text>
                             </Pressable>
                         ))}
@@ -133,6 +147,13 @@ export function NewChatScreen() {
                             : models === undefined ? <Pill text="…" label="Loading models" /> : null}
                         {kind === "agent" ? <Pill text={whereText} label={`Runs on: ${whereText}`} icon={whereIcon} onPress={() => { loadTabs(false); show(tabSheet); }} /> : null}
                     </View>
+                    {blocked.kind !== "ok" ? (
+                        <Pressable onPress={() => show(blankSheet)} accessibilityRole="button"
+                            accessibilityLabel="A new tab needs permission" style={[s.blocked, { backgroundColor: p.panel }]}>
+                            <TriangleAlert size={14} color={p.warn} />
+                            <Text style={[s.blockedText, { color: p.warn }]}>A new tab needs permission</Text>
+                        </Pressable>
+                    ) : null}
                     {kind === "agent" && where === "blank" ? (
                         <TextInput value={url} onChangeText={setUrl} placeholder="https://… (optional: the runtime's start page)" placeholderTextColor={p.fgFaint}
                             autoCapitalize="none" autoCorrect={false} keyboardType="url" style={[s.url, { color: p.fg, borderColor: p.border }]} accessibilityLabel="Page to open" />
@@ -160,6 +181,44 @@ export function NewChatScreen() {
             )}
             <AttachSheet att={att} />
             <TabSheet ref={tabSheet} list={tabs} value={where ?? "blank"} onPick={(c) => { setWhere(c); tabSheet.current?.dismiss(); }} />
+            {/* The ways out, as a sheet: this is a picker (which page shall it be?) wearing an explanation, and a
+                picker is the one thing that stays a sheet on this device. There is no "grant" row — a phone cannot
+                raise a permission prompt on another machine, which is the whole shape of the remote case. */}
+            <Sheet ref={blankSheet} title="A new tab needs permission">
+                {blocked.kind !== "ok" ? (
+                    <Text style={[s.note, { color: p.fgDim }]}>
+                        {"A run on a new tab opens "}
+                        {/* The address is a THING, not prose: set apart the way the page sets it apart (`.chat-bs-url`),
+                            so it can be read character by character instead of scanned as part of a sentence. */}
+                        <Text style={[s.code, { color: p.fg, backgroundColor: p.panel }]}>{blocked.url}</Text>
+                        {`, and ${blocked.kind === "grantable" ? "this device" : blocked.runtime} is not allowed to run there.`}
+                    </Text>
+                ) : null}
+                {blocked.kind === "propose" ? (
+                    <>
+                        <Text style={[s.note, { color: p.fgDim }]}>{`${blocked.runtime} can already open these:`}</Text>
+                        {/* Rows with a GLYPH, which is what a sheet of actions looks like here (ui.tsx): a picker's
+                            rows take none, and without one these read as more of the paragraph above them. */}
+                        {/* GROUPED, on their own ground, with a chevron each. Left as bare rows they sat at the same
+                            left edge, size and background as the paragraphs above and read as more prose — there was
+                            nothing on them that said they could be pressed. */}
+                        <View style={[s.actions, { backgroundColor: p.panel }]}>
+                            {blocked.choices.map((c) => (
+                                <SheetRow key={c.origin} title={c.url} mono go icon={(col) => <Globe size={17} color={col} />}
+                                    onPress={() => { setUrl(c.url); blankSheet.current?.dismiss(); }} />
+                            ))}
+                        </View>
+                    </>
+                ) : null}
+                {blocked.kind === "elsewhere" ? <Text style={[s.note, { color: p.fgDim }]}>{blocked.steps}</Text> : null}
+                {blocked.kind !== "ok" ? (
+                    <View style={[s.actions, { backgroundColor: p.panel }]}>
+                        <SheetRow title="Use one of its tabs" go icon={(col) => <AppWindow size={17} color={col} />}
+                            detail="A page it already has open needs no permission"
+                            onPress={() => { blankSheet.current?.dismiss(); loadTabs(false); show(tabSheet); }} />
+                    </View>
+                ) : null}
+            </Sheet>
             <Sheet ref={rtSheet} title="Runtime">
                 {startable.map((r) => <SheetRow key={r.id} title={r.name} chosen={r.id === rt?.id} onPress={() => { setRuntimeId(r.id); rtSheet.current?.dismiss(); }} />)}
             </Sheet>
@@ -180,6 +239,15 @@ export function NewChatScreen() {
 }
 
 const s = StyleSheet.create({
+    // A new tab that cannot be opened, said in the row where the choice was made rather than after the start fails.
+    // The web draws the same thing as a chip in its start row (`.chat-start-blocked`).
+    blocked: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", marginHorizontal: 12, marginTop: 4, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 999 },
+    // Its words, in the warning colour: the chip is the whole warning, and the sheet behind it carries the ways out.
+    blockedText: { fontSize: SIZE.text },
+    // The tappable rows in the permission sheet, grouped away from the prose they sit among.
+    actions: { marginHorizontal: 12, marginTop: 6, marginBottom: 4, borderRadius: 12, overflow: "hidden" },
+    // An address inside a sentence, set apart the way the chat page sets it apart: monospace, on its own ground.
+    code: { fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), fontSize: SIZE.text - 1 },
     // What the sheet says when a filter matches nothing.
     note: { paddingHorizontal: 12, paddingVertical: 14, fontSize: SIZE.text },
     // The site's icon inside the tab pill: the size of the glyphs beside it, with the same rounding as the sheet's.
@@ -205,7 +273,9 @@ const s = StyleSheet.create({
     // Chat / Agent, a small segmented control at the bar's right.
     kinds: { flexDirection: "row", borderRadius: 18, padding: 3, marginRight: 8 },
     // One of the two.
-    kind: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 15 },
+    // ROW, explicitly: React Native lays a view out as a COLUMN by default, so the glyph stacked above its word and
+    // the two tabs grew a line taller than the bar they sit in. The web's segmented control says the same thing.
+    kind: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 15 },
     // Its word.
     kindText: { fontSize: SIZE.small, fontWeight: "600" },
     // The page a new tab opens at, under the pills.
