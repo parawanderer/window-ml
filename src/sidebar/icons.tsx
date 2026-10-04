@@ -22,6 +22,16 @@ export const IconCheck = () => (
     </svg>
 );
 // Warning triangle (an SVG — the native ⚠ emoji renders inconsistently and off-baseline).
+/** A circled "i" — an explanation is available here, and nothing is wrong. Drawn at the warning triangle's weight
+ *  so the two read as the same family where they sit on one card, and deliberately NOT in its colour. */
+export const IconInfo = () => (
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="8" cy="8" r="6.4" />
+        <path d="M8 7.2v4" />
+        <path d="M8 4.7h0.01" />
+    </svg>
+);
+
 export const IconWarn = () => (
     <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
         <path d="M8 2 15 14H1z" />

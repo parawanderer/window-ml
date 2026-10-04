@@ -323,6 +323,56 @@ test("Settings CDP toggle: flag ON but the debugger permission is INACTIVE → a
 
 // --- what an approval SAYS it will do, and the raise it is asking for ------------------------------------
 
+test("the mechanics of the three buttons are OFFERED, not printed on every card", async () => {
+    // What each button does is true of every approval and read once: it was the only explanation a card carried
+    // about ITSELF rather than about the call, and it was a native `title` on one button, which is the slowest and
+    // least reachable way to say anything. It moves behind a control that offers it both ways — the pointer gets a
+    // tip, a click opens the same sentences — so that a card stays the one thing being judged.
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("mech", "fetch stuff"));
+    await w.dispatch(grantStep("mech"));
+    w.shadow.querySelector(".row").click();
+    await w.flush();
+    const card = w.shadow.querySelector(".astep-approve");
+    // The grant card's own summary STAYS: what Keep would grant, and that it lasts the session, is the consequence
+    // being judged rather than a mechanic to learn — and it is already one line over a collapsed list.
+    assert.match(card.textContent, /rest of this session/, "what is being granted still says so on the card");
+    const info = card.querySelector(".appr-info");
+    assert.ok(info, "the control is there");
+    assert.equal(info.getAttribute("aria-expanded"), "false");
+    // And it is a REAL control, not a hover: this card is drawn on a phone too, where there is no pointer at all.
+    info.click();
+    await w.flush();
+    const why = w.shadow.querySelector(".astep-approve .appr-why");
+    assert.ok(why, "clicking opens the explanation");
+    assert.match(why.textContent, /Approve runs this one call/);
+    assert.match(why.textContent, /Deny refuses this call/);
+    assert.match(why.textContent, /rest of this session/, "and what Keep does, since Keep is offered here");
+    assert.equal(w.shadow.querySelector(".astep-approve .appr-info").getAttribute("aria-expanded"), "true");
+    // The old native title is gone: an explanation that waits a second and cannot be reached by keyboard is not one.
+    assert.equal(w.shadow.querySelector(".astep-approve .appr-btn.remember").getAttribute("title"), null);
+});
+
+test("Keep's sentence is absent where Keep is not offered", async () => {
+    // The mechanics describe the buttons that are THERE. A card with no grants has no Keep, so explaining it would
+    // be describing a control the reader cannot see.
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("nokeep", "click it"));
+    await w.dispatch(agentStep("nokeep", 1, {
+        seq: 1, pending: true, awaitingApproval: true, tool: "click",
+        arguments: { selector: "#go" },
+        renderIn: { type: "action", verb: "click", target: "#go" },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.flush();
+    assert.ok(!w.shadow.querySelector(".astep-approve .appr-btn.remember"), "no Keep on this card");
+    w.shadow.querySelector(".astep-approve .appr-info").click();
+    await w.flush();
+    const why = w.shadow.querySelector(".astep-approve .appr-why");
+    assert.match(why.textContent, /Approve runs this one call/);
+    assert.doesNotMatch(why.textContent, /rest of this session/, "and nothing about a button that is not drawn");
+});
+
 test("an approval SAYS what it will do, and says it once", async () => {
     // The consent surface's one job is to be read. Naming the TOOL ("Approve running fetch_url?") named the least
     // interesting part of the call — the host is what a person judges — and unfurling the arguments underneath a

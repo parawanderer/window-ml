@@ -1250,6 +1250,21 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
 html[data-focus] .astep-approve { gap: 8px; margin: 6px 0; padding: 9px 11px; border-radius: 10px;
     background: var(--panel); border: none; }
 .astep-approve .appr-row { display: flex; align-items: center; gap: 8px; }
+/* The info control sits at the FAR end from the buttons, which is what keeps it out of the way of the decision:
+   a glyph beside Approve reads as a third thing to press. Quiet by default and only as loud as the dim text on
+   hover — nothing is wrong, there is simply more to know. */
+.appr-info {
+    display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px;
+    padding: 0; border: none; border-radius: 50%; background: none; color: var(--fg-faint); cursor: pointer;
+}
+.appr-info:hover, .appr-info:focus-visible { color: var(--fg-dim); background: var(--panel-2); outline: none; }
+/* The glyph stays small, the TARGET does not — a finger needs 40px and the repo's touch probe enforces it, which is
+   how this was caught rather than shipped. The circle grows; the icon inside it does not. */
+@media (pointer: coarse) { .appr-info { width: 40px; height: 40px; } }
+/* What the pointer gets from the tip, for everyone else: opened by the control, under the row it explains. */
+.appr-why { margin-top: 6px; }
+.appr-why-list { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px;
+    color: var(--fg-dim); font-size: 0.86em; line-height: 1.4; }
 .astep-approve .appr-note { display: flex; align-items: flex-start; gap: 6px; font-size: 0.82em; color: var(--fg);
     padding-bottom: 5px; border-bottom: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); }
 .astep-approve .appr-note svg { flex: none; width: 13px; height: 13px; margin-top: 1px; color: var(--notice); }
