@@ -25,12 +25,17 @@ export const NOTIFY_WHAT = "Before this device's access to the account runs out,
  *
  * In a browser a refusal is undone in that browser's site settings. On an iOS or iPadOS web app added to the Home
  * Screen there is no second ask at all: the permission belongs to that installed copy, and the only way to be asked
- * again is to remove it and add it again. Telling someone to look in settings they do not have is how a dead end
- * becomes a wasted half hour, and the iPad is the one surface here where the hosted client IS the app.
+ * again is to remove it and add it again.
+ *
+ * AND THAT IS NOT A FREE ACTION, which is the part worth a sentence of its own. An installed web app's storage is its
+ * own container, separate from the browser's, and removing it from the Home Screen takes the container with it. This
+ * device's keys live there, so the way back from a refused notification is also what makes it a stranger to the
+ * account. Telling someone to remove and re-add it without saying that is handing them a one-tap way to lose their
+ * pairing over a notification they could have lived without.
  */
 export function notifyDeniedNote(env: { ios: boolean; installed: boolean }): string {
     return env.ios && env.installed
-        ? "Turned off for this app. iOS gives an installed web app no second ask, so the only way back is to remove it from the Home Screen and add it again."
+        ? "Turned off for this app. iOS gives an installed web app no second ask: the only way back is to remove it from the Home Screen and add it again, which also clears this device's keys, so it would have to be paired again. Not worth it for a notification."
         : "This browser has them turned off for this site, and its own site settings are the only way back.";
 }
 

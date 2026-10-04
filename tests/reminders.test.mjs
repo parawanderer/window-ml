@@ -4,7 +4,7 @@
 // section is the hosted client's own timer, over a stubbed Notification and storage (docs/spec/NOTIFICATIONS.md).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { approvalAlert, approvalCounts, certReminders, dueReminders, nextReminderMs, reminderPlanId, reminderShownKey } from "../src/chat/reminders.ts";
+import { approvalAlert, approvalCounts, certReminders, dueReminders, nextReminderMs, notifyDeniedNote, reminderPlanId, reminderShownKey } from "../src/chat/reminders.ts";
 import { CERT_URGENT_MS, CERT_WARN_MS } from "../src/chat/attention.ts";
 
 const DAY = 86_400_000;
@@ -148,6 +148,28 @@ test("what is remembered carries the date, so a renewal's new threshold is not t
 test("an empty plan has nothing due and nothing to wait for", () => {
     assert.deepEqual(dueReminders([], [], NOW), []);
     assert.equal(nextReminderMs([], [], NOW), null);
+});
+
+// --- the way back from a refusal, which is not the same way everywhere ---
+
+test("in a browser a refusal is undone in that browser's own site settings", () => {
+    const note = notifyDeniedNote({ ios: false, installed: false });
+    assert.match(note, /site settings/);
+    assert.doesNotMatch(note, /Home Screen/);
+});
+
+test("an installed iOS web app has no second ask, and the way back costs this device its pairing", () => {
+    // The permission belongs to that installed copy, and removing it from the Home Screen takes its storage
+    // container with it. This device's keys live there, so the remedy is also what unpairs it. Saying the first half
+    // without the second is a one-tap way to lose an account over a notification.
+    const note = notifyDeniedNote({ ios: true, installed: true });
+    assert.match(note, /Home Screen/);
+    assert.match(note, /paired again/);
+    assert.doesNotMatch(note, /site settings/);
+});
+
+test("an iPad still in a browser tab gets the browser's answer, not the installed app's", () => {
+    assert.equal(notifyDeniedNote({ ios: true, installed: false }), notifyDeniedNote({ ios: false, installed: false }));
 });
 
 // --- an approval arriving while you are elsewhere ---

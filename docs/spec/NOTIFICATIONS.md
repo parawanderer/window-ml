@@ -95,8 +95,22 @@ Asked **only on a press**, on a Settings row that says what allowing it gets you
 "no" and then, on both platforms, cannot be asked again from inside the app. The row says what it will and will not
 say, because "allow notifications" alone is a question nobody can answer.
 
-`denied` is a dead end the row names: the phone's own settings, or the browser's site settings, are the only way
-back.
+`denied` is a dead end the row names, and it is a DIFFERENT dead end per surface (`notifyDeniedNote`):
+
+- In a browser, that browser's own site settings.
+- On the phone app, the phone's settings.
+- **On an installed iOS or iPadOS web app, there is no second ask at all.** The permission belongs to that installed
+  copy, and the only way to be asked again is to remove it from the Home Screen and add it again. That is not a free
+  action: an installed web app's storage is its own container, separate from the browser's, and removing it takes the
+  container with it. This device's keys live there, so the remedy is also what makes it a stranger to the account.
+  The row says so and says it is not worth it for a notification.
+
+The same container split is a trap in the other direction, and nothing warns about it yet: pairing the hosted client
+in a Safari **tab** and then adding it to the Home Screen gives an installed copy with an empty container, which has
+to be paired on its own. Worth a sentence on the `add-to-home` item (`attention.ts`), not done here.
+
+Home-screen web apps are otherwise a sound place to keep an identity: they are exempt from Safari's seven-day cap on
+script-writable storage, which a site in a tab is not, so the keyring is not evicted for being unused.
 
 ## No iOS push entitlement
 
@@ -125,6 +139,29 @@ The one gap is an approval reaching a device with the app **killed**. Closing it
 
 Until then the badge is honest while the app runs and stale while it does not, and the certificate, which is the
 deadline that actually matters, does not depend on any of it.
+
+## The thing that would make these a backstop rather than the mechanism
+
+A certificate is issued for 90 days (`MAX_CERTIFICATE_MS`), and a renewal is refused outside the last 14
+(`RENEW_WITHIN_MS`). Renewal is only ever a button press: `renewSelf` has exactly one caller, the inbox's `apply`.
+
+So what the product asks of a person today is to **open the app and press Renew inside one particular fortnight every
+90 days**. These reminders exist to make that ask survivable, and on the phone they do. They cannot make it a good
+ask.
+
+**Auto-renew on connect would almost remove it.** A device that connects at all inside the renewal window renews
+itself silently: the same operation as the press, the same subject, scopes, role and `mayPair`, with only the window
+moving. The hub's gate already constrains it to self-only, inside 14 days, with a cooldown, so nothing new has to be
+trusted, and `may_revoke` holders and delegate-issued certificates stay excluded exactly as they are now. Any device
+someone actually uses would then stay current with no press and no notification, and these reminders would be the
+backstop for a genuinely unused device rather than the thing holding an account together.
+
+It would also make the web's one real limitation stop mattering for the certificate: opening the installed client
+once a month would keep it current, whether or not a notification could ever have reached it while closed.
+
+Worth noting that `attention.ts` already describes the world as though this existed: "a device that keeps connecting
+keeps itself current, so the only signal left is a person being told." The code does not do that. One of the two is
+wrong, and it is probably the code.
 
 ## Tests
 

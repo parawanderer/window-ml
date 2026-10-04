@@ -1,9 +1,16 @@
 # notify-settings.yaml — the React Native app's DEMO build (`install --demo`): the NOTIFICATIONS row in Settings.
-# What is asserted is the part that is a product decision rather than OS plumbing: the row says what allowing it will
-# and will not put on a lock screen BEFORE it is pressed, and it is the press that asks. The OS dialog itself is not
-# driven here on purpose: tapping a system permission sheet is the flakiest thing Maestro does, and what it would
-# prove is that expo-notifications works. What a notification SAYS, and when, is tests/reminders.test.mjs.
-# Needs the demo world: `node scripts/ios.mjs flows tests/mobile/notify-settings.yaml`.
+#
+# It asserts the PROMISE, which is the part that is a product decision: the row says what allowing notifications will
+# put on a lock screen, and the one thing it will never put there, whether or not they have been allowed yet.
+#
+# It deliberately does NOT assert which of the three states the row is in, because that is the OS's answer and not
+# this app's: an emulator grants POST_NOTIFICATIONS at install, so the row there reads "On" before anything has been
+# pressed, while a real phone on Android 13+ reads "Allow notifications" until someone does. A flow that pinned one
+# of those would fail on the other machine and say nothing about the app. The OS permission sheet is not driven for
+# the same reason: what that would prove is that expo-notifications works.
+#
+# What a notification SAYS, and when, is tests/reminders.test.mjs. Needs the demo world:
+# `node scripts/android.mjs flows tests/mobile/notify-settings.yaml` (or scripts/ios.mjs, same command).
 appId: dev.wander.windowml
 ---
 - launchApp:
@@ -13,10 +20,6 @@ appId: dev.wander.windowml
     timeout: 60000
 - tapOn: "Settings"
 - assertVisible: "NOTIFICATIONS"
-# Nothing has been asked yet, so the row is the ask, and it carries the promise rather than a bare "Allow".
-- assertVisible: "Allow notifications"
+# One Text, so Maestro matches it whole: both halves of the promise have to be in it.
 - assertVisible:
-    text: ".*access to the account runs out.*approval is waiting.*"
-# And the one thing it promises NOT to do, which is the reason this row has words at all.
-- assertVisible:
-    text: ".*Never what a session is doing.*"
+    text: ".*access to the account runs out.*approval is waiting.*Never what a session is doing.*"
