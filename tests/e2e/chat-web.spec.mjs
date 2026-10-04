@@ -2423,41 +2423,29 @@ test("continuing a capped run carries it on, and the offer goes with it", async 
     await page.close();
 });
 
-// WATCHING A RUN THINK is the only thing on the page that tells a slow step from a stuck one, so it is on by
-// default. It costs something only over a wire: every `agent-stream` event carries the whole answer so far rather
-// than the part that is new, so for a machine on the account it is a choice, and a remembered one. On this browser
-// it is free and nothing is asked — that half is in chat-page.spec.mjs, which has a local runtime to ask about.
-test("a run streams its thinking by default, and the choice is this device's to remember", async () => {
+// WATCHING A RUN THINK is the only thing on the page that tells a slow step from a stuck one, so it is simply on.
+// It was a CHOICE for a machine on the account, because every `agent-stream` event carried the whole answer so far
+// rather than the part that is new — 118 MB for a five-minute turn. A remote preview now carries a bounded tail at a
+// fixed rate, which measured 1.70 MB for the same turn and does not grow with it, so there is nothing left to choose
+// between and the control that asked is gone. What is pinned here is that the flag is still SENT.
+test("a run streams its thinking, with nothing to ask about it", async () => {
     const { page, errors } = await open(DESKTOP);
     await page.locator(".chat-start-box textarea").waitFor();
-
-    // A PICKER, NOT A SWITCH WITH AN `ⓘ`: the reason to pick either side is a sentence, and a sentence belongs
-    // beside the option rather than behind a second press — which is also the only shape that works on a phone,
-    // where the panel's tooltip is dismissed by the same pointerdown a tap begins with.
-    const pill = page.getByRole("button", { name: /^Thinking:/ });
-    await expect(pill).toContainText("Live");
-    await pill.click();
-    const list = page.getByRole("listbox", { name: "Thinking" });
-    await expect(list.getByRole("option")).toHaveText([/Live.*slow step from a stuck run/s, /Quiet.*leave alone/s]);
-    await page.keyboard.press("Escape");
+    await expect(page.getByRole("button", { name: /^Thinking:/ })).toHaveCount(0);
 
     await page.locator(".chat-start-box textarea").fill("summarise this");
     await page.locator(".chat-start-box textarea").press("Enter");
     await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "agent.start", stream: true });
 
-    // Quiet is the opposite, and it STAYS chosen: a device that always wants one answer should say so once.
+    // A CHAT is not an agent run and never asked: it streams its reply through its own path, so the flag that
+    // belongs to a run's thinking must not appear on one.
     await page.locator(".chat-list .chat-start").click();
-    await page.getByRole("button", { name: /^Thinking:/ }).click();
-    await page.getByRole("listbox", { name: "Thinking" }).getByRole("option").filter({ hasText: "Quiet" }).click();
-    await page.locator(".chat-start-box textarea").fill("summarise this quietly");
+    await page.getByRole("button", { name: /^Kind:/ }).click();
+    await page.getByRole("listbox", { name: "Kind" }).getByRole("option").filter({ hasText: "Chat" }).click();
+    await page.locator(".chat-start-box textarea").fill("just a question");
     await page.locator(".chat-start-box textarea").press("Enter");
-    const quiet = (await commands(page)).at(-1);
-    expect(quiet).toMatchObject({ type: "agent.start", task: "summarise this quietly" });
-    expect(quiet.stream, "no flag at all, rather than a false one").toBe(undefined);
-
-    await page.reload();
-    await page.locator(".chat-start-box textarea").waitFor();
-    await expect(page.getByRole("button", { name: /^Thinking:/ })).toContainText("Quiet");
+    const chat = (await commands(page)).at(-1);
+    expect(chat.stream, "no flag at all, rather than a false one").toBe(undefined);
     expect(errors).toEqual([]);
     await page.close();
 });
