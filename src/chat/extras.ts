@@ -30,6 +30,15 @@ export interface ChatExtras {
      */
     fix?(runtime: RuntimeId, code: string): (() => Promise<boolean>) | null;
     /**
+     * Renew THIS DEVICE's own certificate (`renew.ts`): ask a runtime that will, install what it answers with.
+     * Resolves to a sentence when it did not happen, or null when it did — including the case where the runtime found
+     * it not yet due, which is a success with nothing to keep.
+     *
+     * Separate from `fix` because that is addressed to a runtime and this is about the device the page is drawn on,
+     * which has no runtime id to pass.
+     */
+    renewSelf?(): Promise<string | null>;
+    /**
      * Has this device fixed this code on this runtime before, so its coming back is a REPEAT? Only the device that
      * fixed it can know: the browser says `granted` for "allow this time" and "allow on every visit" alike, and a folder
      * that lapses again was allowed only once. Worded as a repeat where the code has words for one (attention.ts).

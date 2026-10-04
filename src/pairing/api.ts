@@ -111,6 +111,15 @@ export interface PairingApi {
     devices?(): Promise<DeviceInfo[]>;
     /** remove a device from the account, by its principal (hex) */
     revoke?(principal: string): Promise<RevokeOutcome>;
+    /**
+     * Install a renewed certificate chain for THIS device, as `device.renew` answered with (base64, leaf first).
+     * Checked here before it is kept, however the runtime behaved: it must verify to the account root this device
+     * already holds, and its leaf must be this device's own key. A runtime that answered with somebody else's chain,
+     * or one under another account, would otherwise take this device off its account with a single reply.
+     *
+     * Absent where a surface keeps no keyring of its own.
+     */
+    install?(chain: readonly string[]): Promise<Membership>;
     /** the role this device takes when it joins: a browser runtime, or a client (a phone, a web page) */
     readonly joinsAs: PairRole;
     /** what to call this device if the person does not say ("This browser", "Pixel 8") */

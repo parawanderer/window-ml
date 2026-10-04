@@ -8,6 +8,7 @@
 // principal that is connected, so opening one here would knock the app's own off.
 
 import type { HubClient } from "../hub/client";
+import { decodeChain, verifyChain } from "../hub/keys";
 import { Keyring } from "../hub/keyring";
 import * as flow from "../hub/pair-flow";
 import { PAIRING_WINDOW_MS } from "../hub/pairing";
@@ -28,6 +29,9 @@ export interface ClientPairingOptions {
     /** the membership changed (created, joined, left): the app reconnects with it */
     onChanged?: () => void;
 }
+
+/** Two public keys, compared in constant length: a renewed certificate must be for THIS device's key and no other. */
+const sameKey = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((x, i) => x === b[i]);
 
 /** Ask the browser to keep this origin's storage through pressure: the root key is in it. False where it will not say. */
 async function keepStorage(): Promise<boolean> {
@@ -92,6 +96,23 @@ export function clientPairing(o: ClientPairingOptions): PairingApi {
         lookupScanned: async (text) => shown(await flow.lookupScanned(connected(), text)),
         async confirmOffer(found: FoundOffer, grant: Grant) {
             await flow.confirmOffer(connected(), await issuer(), found.ref as flow.FoundOffer, grant);
+        },
+
+        async install(chain) {
+            const ring = await keyring();
+            const me = await ring.load();
+            if (!me?.membership) throw new Error("This device is in no account, so there is nothing to renew.");
+            const certs = decodeChain(chain);
+            // VERIFIED HERE, not merely accepted because a runtime said so. It is the account's own root that decides,
+            // and it is the one this device already holds — so a runtime answering with a chain under another account,
+            // or for another device, is refused rather than installed. `device.renew` is answered by a machine this
+            // device trusts for routing and for very little else.
+            const checked = await verifyChain(me.membership.accountRoot, certs, Date.now());
+            if (!sameKey(checked.leafKey, me.identity.publicKey)) {
+                throw new Error("That certificate is for another device. Nothing was changed.");
+            }
+            await ring.savePaired({ ...me.membership, chain: certs });
+            return await changed();
         },
 
         async leave() {
