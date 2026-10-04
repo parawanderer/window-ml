@@ -1277,6 +1277,14 @@ html[data-focus] .astep-approve { gap: .55em; margin: 6px 0; padding: .82em .95e
 /* The glyph stays small, the TARGET does not — a finger needs 40px and the repo's touch probe enforces it, which is
    how this was caught rather than shipped. The circle grows; the icon inside it does not. */
 @media (pointer: coarse) { .appr-info { width: 40px; height: 40px; } }
+/* AND THE TARGET IS NOT WHAT GIVES. With Keep on it the row is exactly as wide as the card on a 390px phone, and
+   flex took the difference out of the only item that could shrink — this circle, to 39.8px. That is a sixth of a
+   pixel, which is to say it is not about this card at all: the next word added anywhere on the row comes out of the
+   same place, silently. So the circle is fixed, the gaps are what give on touch, and the row wraps (right-aligned,
+   so the answers stay together) on anything narrower still. */
+.appr-info { flex: 0 0 auto; }
+.astep-approve .appr-row { flex-wrap: wrap; justify-content: flex-end; }
+@media (pointer: coarse) { .astep-approve .appr-row { gap: 6px; } }
 /* DENY, SPLIT. The two halves read as one control: they sit flush, share the outline, and only the inner edge
    divides them — the same shape `.continue-run`/`.continue-more` uses for Continue, because they are the same idea
    (the common answer under the thumb, the wordier one behind a chevron) and two shapes for it would be two things
@@ -1346,7 +1354,10 @@ html[data-focus] .appr-btn.no:hover { color: var(--fg); border-color: var(--fg-d
 .appr-btn:hover { filter: brightness(1.08); }
 /* "Keep" (approve + remember): a hollow variant of the yes button so the plain Approve stays primary. */
 .appr-btn.yes.remember { background: none; color: var(--ok); }
-html[data-focus] .appr-btn.yes.remember { color: var(--fg); border-color: var(--fg-dim); font-weight: 600; }
+/* `background: none` RESTATED, not inherited. `.appr-btn.yes.remember` above already clears the filled
+   background, but `html[data-focus] .appr-btn.yes` outranks it (an attribute + an element), so in the focus
+   view Keep kept the solid `--fg` pill and then took `color: var(--fg)` on top of it: white on white. */
+html[data-focus] .appr-btn.yes.remember { background: none; color: var(--fg); border-color: var(--fg-dim); font-weight: 600; }
 .appr-btn.yes.remember:hover { background: color-mix(in srgb, var(--ok) 16%, transparent); }
 html[data-focus] .appr-btn.yes.remember:hover { background: var(--panel-2); }
 /* The collapsed grant CARD: what "Keep" will persist. Summary line always shown; expand for the exact items.

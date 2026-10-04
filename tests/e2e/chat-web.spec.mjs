@@ -14,7 +14,7 @@ const ROOT = path.resolve(process.env.E2E_DIST_WEB || "dist-web");
 
 const PHONE = { width: 390, height: 844 };
 const DESKTOP = { width: 1280, height: 800 };
-const WAITING = "laptop:3f9a0c21", CHAT = "laptop:7b21d4e8", WATCHED = "lab-box:1d2e3f40", CAPPED = "laptop:c0ffee12";
+const WAITING = "laptop:3f9a0c21", CHAT = "laptop:7b21d4e8", WATCHED = "lab-box:1d2e3f40", CAPPED = "laptop:c0ffee12", POINTERS = "laptop:5e6f7a80";
 // A capped run whose tab is still OPEN, against CAPPED, whose page has gone: the two offer different things.
 const CAPPED_HERE = "laptop:beef1234";
 
@@ -83,8 +83,10 @@ test("phone: the list first, a session on its own, approve through the runtime, 
     await row(page, WAITING).click();
     await expect(page.locator(".chat-list")).toHaveCount(0);
     await expect(page).toHaveURL(/#\/s\/laptop%3A3f9a0c21$/);
-    const approve = page.locator(".astep-approve .appr-btn.yes");
+    // `.yes` is TWO buttons on a gate that can be remembered — Approve and Keep — and a thumb needs both.
+    const approve = page.locator(".astep-approve .appr-btn.yes:not(.remember)");
     await expect(approve).toBeVisible();
+    expect((await page.locator(".astep-approve .appr-btn.remember").boundingBox()).height).toBeGreaterThanOrEqual(40);
     // Touch-sized, at a phone's width.
     const box = await approve.boundingBox();
     expect(box.height).toBeGreaterThanOrEqual(40);
@@ -843,15 +845,88 @@ test("the two answers to an approval are both legible, measured rather than eyeb
     // — drawn, and effectively invisible. That is the wrong thing for one of two answers to a question about what an
     // agent may do, and it is the kind of wrong that looks fine to whoever chose the colour. So it is measured:
     // WCAG wants 3:1 for a non-text UI boundary and 4.5:1 for body-sized text.
+    // EVERY answer, not the one that was wrong once. Keep is the third, and it was unreadable in this view for the
+    // same class of reason the outline was: `html[data-focus] .appr-btn.yes` outranks the `.remember` rule that
+    // clears the filled background, so Keep kept a solid `--fg` pill and drew `--fg` text on it. Contrast 1:1 —
+    // a button with nothing on it. Measuring one of three is what let that through, so this measures all three
+    // against the ground each actually sits on (its own background when it has one, else the card's).
     const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(WAITING)}`);
     const seen = await page.evaluate(() => {
-        const btn = document.querySelector(".astep-approve .appr-btn.no");
         const card = document.querySelector(".astep-approve");
-        const cs = getComputedStyle(btn);
-        return { text: cs.color, border: cs.borderTopColor, card: getComputedStyle(card).backgroundColor };
+        const cardBg = getComputedStyle(card).backgroundColor;
+        return [...card.querySelectorAll(".appr-btn")].map((btn) => {
+            const cs = getComputedStyle(btn);
+            const own = cs.backgroundColor;
+            const filled = !/rgba\(.*,\s*0\)$/.test(own) && own !== "transparent";
+            // A FILLED button's edge is its fill; an outlined one's is its border. Asking the same question of both
+            // would fail Approve, whose border is its own fill by design and so is 1:1 against itself.
+            return { label: btn.textContent.trim() || btn.getAttribute("aria-label") || "(icon)", text: cs.color, edge: filled ? own : cs.borderTopColor, ground: filled ? own : cardBg, card: cardBg };
+        });
     });
-    expect(contrast(seen.border, seen.card)).toBeGreaterThanOrEqual(3);
-    expect(contrast(seen.text, seen.card)).toBeGreaterThanOrEqual(4.5);
+    // The three answers are all there: without the fixture's `grants` there is no Keep, and a measurement that
+    // cannot see a button cannot report it as invisible.
+    expect(seen.map((b) => b.label)).toContain("Keep");
+    for (const b of seen) {
+        expect(contrast(b.edge, b.card), `${b.label}: edge against the card`).toBeGreaterThanOrEqual(3);
+        expect(contrast(b.text, b.ground), `${b.label}: label against its own ground`).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// TWO THINGS CLAIM THE TOP-RIGHT CORNER of a wide calm page. There is no header band there, so the session's ⋮ is a
+// floating button in the corner — and the approval bar, when the gate has scrolled out of reach, is the first
+// in-flow element of the same pane. The ⋮ landed on the band, a pixel from "Review ›". Both are still reachable, so
+// nothing fails and nothing throws: it is only wrong to look at, which is why it is measured.
+test("the ⋮ and the approval bar share the corner without landing on each other", async () => {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 400 } });
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto(`${server.url}#/s/${encodeURIComponent(WAITING)}`);
+    await page.locator(".chat-main").waitFor();
+    // The bar's whole condition is the gate being out of reach, and the view opens parked on it — so scroll back to
+    // the top of the run, which is what a person reading what it did before the gate would do.
+    await page.locator(".astep-approve").waitFor();
+    await page.evaluate(() => { document.querySelector(".chat-transcript").scrollTop = 0; });
+    await page.locator(".chat-waiting").waitFor();
+    const seen = await page.evaluate(() => {
+        const box = (sel) => { const e = document.querySelector(sel); return e ? e.getBoundingClientRect().toJSON() : null; };
+        return { bar: box(".chat-waiting"), go: box(".chat-waiting-go"), corner: box(".chat-more-corner .hbtn") || box(".chat-more-corner") };
+    });
+    expect(seen.corner).not.toBeNull();
+    expect(seen.go.right, "Review sits clear of the ⋮").toBeLessThanOrEqual(seen.corner.left);
+    // On the band's one line rather than hanging off it: a 36px button centred on a ~40px strip.
+    expect(seen.corner.top).toBeGreaterThanOrEqual(seen.bar.top - 1);
+    expect(seen.corner.bottom).toBeLessThanOrEqual(seen.bar.bottom + 1);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// The calm view SAVES A ROW by pulling the pointer chip up onto the `ran in 1.6s` line with a negative margin. That
+// line is not always drawn — `RanFor` renders nothing without a tool time — and when it is missing the chip was
+// pulled onto the output cell instead and sat over the last lines of the result. Geometry is the only way to ask
+// this: both arrangements have exactly the same DOM, and the one that is wrong is wrong by 1.6em.
+test("the pointer chip joins the footer line when there is one, and keeps its own row when there is not", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(POINTERS)}`);
+    const steps = page.locator(".astep.tool");
+    await steps.first().waitFor();
+    const n = await steps.count();
+    // Steps open collapsed, and nothing inside one is in the DOM until it is opened.
+    for (let i = 0; i < n; i++) await steps.nth(i).locator(".astep-head").click();
+    await expect(page.locator(".astep-token").first()).toBeVisible();
+    const seen = await page.evaluate(() => [...document.querySelectorAll(".astep.tool")].map((s) => {
+        const box = (e) => (e ? { top: e.getBoundingClientRect().top, bottom: e.getBoundingClientRect().bottom } : null);
+        return { chip: box(s.querySelector(".astep-token")), out: box([...s.querySelectorAll(".io")].pop()), ran: box(s.querySelector(".r-ranfor")) };
+    }));
+    expect(seen.length).toBeGreaterThan(1);
+    // Both arrangements are on this page, or the test is only checking one of them.
+    expect(seen.some((x) => x.ran)).toBe(true);
+    expect(seen.some((x) => !x.ran)).toBe(true);
+    for (const x of seen) {
+        if (!x.chip) continue;
+        if (x.ran) expect(Math.abs(x.chip.top - x.ran.top)).toBeLessThan(6);          // tucked onto that line
+        else expect(x.chip.top).toBeGreaterThanOrEqual(x.out.bottom - 1);             // clear of the output cell
+    }
     expect(errors).toEqual([]);
     await page.close();
 });

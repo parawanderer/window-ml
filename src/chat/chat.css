@@ -718,7 +718,15 @@ button.chat-page-go:hover { color: var(--fg); }
 /* THE POINTER AND THE CLOCK SHARE A LINE. `ran in 1.6s` and `@tool:a1b2c3d` are both the step's own footnotes,
    and stacked they cost two rows and an awkward gap between them for one short sentence's worth of fact. */
 .chat.calm .astep-body .r-ranfor { display: inline-block; }
-.chat.calm .astep-token { display: inline-flex; float: right; margin-top: -1.6em; }
+/* ONLY WHERE THERE IS A LINE TO JOIN. The negative margin is how the chip reaches the ran-for row, and that row is
+   not always drawn: `RanFor` returns nothing without a `toolMs`, so a step that never recorded one had nothing on
+   that line and the chip was pulled up onto the output cell, over the last lines of the result. The three
+   conditions are all load-bearing. `.r-python > .r-ranfor` is the footer AFTER the last section — the other
+   placement tucks it inside the console, where the sections below it would be what the chip landed on. `:last-child`
+   is that same fact from the other side. And `+` means nothing (a feedback block) sits between the two. Fail any of
+   them and the chip keeps a row of its own, which costs a line and covers nothing. */
+.chat.calm .astep-token { display: inline-flex; float: right; }
+.chat.calm .astep-body > .io:has(.r-python > .r-ranfor:last-child) + .astep-token { margin-top: -1.6em; }
 
 /* A TABLE'S CONTROLS BELONG TO THE TABLE, so they appear when the pointer is on it instead of holding a row above
    it at all times. UNDER the grid, right-aligned: over it they cover the last row, and the top left is where the
@@ -1028,6 +1036,12 @@ button.chat-page-go:hover { color: var(--fg); }
    is in none of them, so it fell back to a 22px one — and on top of that it was faded to a third, on the reasoning
    that it is "the only chrome left". That is true of a page with nothing down its left edge; with the rail there it
    is five bright glyphs and one dim, small one, which reads as a different KIND of control rather than a quiet one. */
+/* WHILE THE APPROVAL BAR IS UP, THE ⋮ RIDES ON IT. Both claim the same corner — the bar is the first in-flow
+   element of a header-less calm page, and this floats over it — so the ⋮ landed on the band, overlapping
+   "Review ›". The bar reserves the width instead, and the button centres on its one line, which reads as one
+   strip with two controls rather than two things fighting for a corner. */
+.chat-main:has(> .chat-waiting) > .chat-more-corner { top: 2px; }
+.chat-main:has(> .chat-more-corner) > .chat-waiting { padding-right: 52px; }
 .chat-more-corner { position: absolute; top: 8px; right: 10px; z-index: 3; }
 .chat-more-corner .hbtn { min-width: 36px; min-height: 36px; border-radius: 50%; }
 .chat-more-float { transition: opacity .12s linear; }
