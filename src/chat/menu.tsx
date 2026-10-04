@@ -9,15 +9,21 @@ import { IconCheck, IconChevron } from "../sidebar/icons";
  *  word at the right — WHICH thing the row acts on, where the label alone would not say. It is the slot the theme
  *  row already used for its current choice (`.chat-menu-val`), so a row that must name a device says it the same
  *  way rather than growing the label into a sentence. */
-export function MenuItem({ icon, label, detail, on, sub, onPick }: { icon: ComponentChildren; label: string; detail?: string; on?: boolean;
+export function MenuItem({ icon, label, detail, note, on, sub, off, onPick }: { icon: ComponentChildren; label: string; detail?: string;
+    /** a dim second LINE under the label. Where `off` is set this is the reason, which is the whole point of showing
+     *  a row that cannot be used: a tooltip would be pointer-only, and a disabled control is not hoverable anyway. */
+    note?: string; on?: boolean;
     /** drawn as a child of an open `MenuGroup`: `i` is its place in the stagger, `open` whether it can be reached */
-    sub?: { i: number; open: boolean }; onPick: () => void }) {
+    sub?: { i: number; open: boolean };
+    /** cannot be used from here. `aria-disabled` rather than `disabled`, so it keeps its place in the tab order and
+     *  a reader still hears the row and its reason instead of meeting a hole where an option used to be. */
+    off?: boolean; onPick: () => void }) {
     return (
-        <button class={`chat-menu-item${sub ? " chat-menu-sub" : ""}`} role={on === undefined ? "menuitem" : "menuitemcheckbox"} aria-checked={on}
-            {...(sub ? { style: `--i:${sub.i}`, tabIndex: sub.open ? 0 : -1 } : {})}
-            aria-label={detail ? `${label} — ${detail}` : undefined} onClick={onPick}>
+        <button class={`chat-menu-item${sub ? " chat-menu-sub" : ""}${off ? " off" : ""}`} role={on === undefined ? "menuitem" : "menuitemcheckbox"} aria-checked={on}
+            {...(sub ? { style: `--i:${sub.i}`, tabIndex: sub.open ? 0 : -1 } : {})} aria-disabled={off || undefined}
+            aria-label={detail ? `${label} — ${detail}` : undefined} onClick={off ? undefined : onPick}>
             <span class="chat-menu-ico" aria-hidden="true">{icon}</span>
-            <span class="chat-menu-label">{label}</span>
+            <span class="chat-menu-label">{label}{note ? <span class="chat-menu-note">{note}</span> : null}</span>
             {detail ? <span class="chat-menu-val">{detail}</span> : null}
             {on ? <span class="chat-menu-on" aria-hidden="true"><IconCheck /></span> : null}
         </button>

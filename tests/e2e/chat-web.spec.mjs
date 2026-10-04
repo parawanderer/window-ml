@@ -1016,6 +1016,48 @@ test("a runtime's older sessions sit under it and open the search page already o
     await page.close();
 });
 
+test("one session, one menu: the list's dots and the chat's offer the same things", async () => {
+    // These drifted into two sets for the same object — the list's offered pin, rename and delete, the chat's
+    // offered look, export and copy — so which options existed depended on which corner you had clicked. The phone
+    // had one sheet for both (mobile/src/session-actions.tsx); this keeps the page from drifting back.
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
+    const labels = async (sel) => page.locator(`${sel} .chat-menu-item .chat-menu-label`)
+        .evaluateAll((els) => els.map((e) => e.firstChild?.textContent?.trim()));
+
+    await page.locator(".chat-row-more").first().click();
+    expect(await labels(".chat-row-menu")).toEqual(["Pin to the top", "Rename…", "Look at the page", "Copy session id", "Delete…"]);
+    await page.keyboard.press("Escape");
+
+    // The open session's menu: the same list, plus the one thing that can only be done where a transcript is held.
+    await row(page, WAITING).click();
+    await page.locator(".chat-head-more").first().click();
+    expect(await labels(".chat-head-menu")).toEqual(["Pin to the top", "Rename…", "Look at the page", "Export chat…", "Copy session id", "Delete…"]);
+    // CALM VIEW IS NOT AMONG THEM. It is how the page reads, not something done to this session, and it lives in the
+    // gear with the other page-wide choices — it used to be here too, behind a condition on the window's width.
+    await expect(page.locator(".chat-head-menu")).not.toContainText("Calm view");
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("a thing that cannot be done stays on the menu and says why, in words, not a tooltip", async () => {
+    // Dropping the row taught nothing and made the menu a different shape every time; a greyed row with a tooltip
+    // would be worse again, since a disabled control is not hoverable and a phone has no hover at all. So the reason
+    // is a second line, and `aria-disabled` keeps the row in the tab order to be read.
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
+    const dots = page.locator(".chat-row-more");
+    await dots.nth((await dots.count()) - 1).click();
+    const look = page.locator(".chat-row-menu .chat-menu-item", { hasText: "Look at the page" });
+    await expect(look).toHaveAttribute("aria-disabled", "true");
+    await expect(look.locator(".chat-menu-note")).toHaveText(/not on a tab/);
+    // And it does nothing when pressed, rather than being merely painted grey. FORCED, because Playwright honours
+    // `aria-disabled` and will not click it otherwise — which is itself the evidence that the row is properly
+    // marked rather than just dimmed. The menu staying open is what says no handler ran.
+    await look.click({ force: true });
+    await expect(page.locator(".chat-row-menu")).toBeVisible();
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 test("the attention list: an inbox above the gear, problems counted, each said for where it is fixed, suggestions dismissable", async () => {
     const { page, errors } = await open(DESKTOP);
     // Two problems (the laptop's lapsed archive folder, the box's code this page does not know) and one suggestion.

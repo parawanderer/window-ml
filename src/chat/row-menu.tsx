@@ -7,14 +7,15 @@
 // command, and not before.
 import { signal } from "@preact/signals";
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { ArchiveCapability, RuntimeInfo, SessionSummary } from "../session-host";
-import { IconCompose, IconMore, IconPin, IconTrash } from "../sidebar/icons";
+import type { ArchiveCapability, RuntimeInfo, SessionId, SessionKey, SessionSummary } from "../session-host";
+import { IconCamera, IconCompose, IconCopy, IconExport, IconMore, IconPin, IconTrash } from "../sidebar/icons";
 import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
 import { Dialog } from "./dialog";
 import { mayCommand } from "./grants";
 import { MenuItem } from "./menu";
 import { addPin, dropPin, pinned } from "./view-mode";
+import { services } from "../sidebar/services";
 
 /** Which row's menu is open, and where: ONE for the whole list, so opening a second closes the first. Local state per
  *  row let every `⋮` think it was the only one, and a click on another row's `⋮` counted as a click inside a menu. */
@@ -59,6 +60,45 @@ async function setPin(store: ChatStore, s: SessionSummary, rt: RuntimeInfo, on: 
     if (!r.ok && on && r.error.code !== "unsupported") dropPin(key);
 }
 
+/**
+ * WHAT CAN BE DONE TO ONE SESSION, as menu rows — the same set wherever the session is reached from.
+ *
+ * The list's `⋮` offered pin, rename and delete; the open session's offered look, export and copy; and the two were
+ * the same session. Which options you were shown depended on which corner of the screen you had clicked, which is
+ * not a distinction anybody holds in their head. The phone had already worked this out (mobile/src/session-actions.tsx
+ * is one sheet with one list, opened from both places), so this is the page following it, per the rule that whichever
+ * side got it right is the one the other copies.
+ *
+ * `onExport` is the one honest difference and the phone draws the same one: a chat is written out of the transcript
+ * the page is holding, so it can only be offered where the session is OPEN. Everything else works from either place.
+ */
+export function SessionActions({ store, s, rt, title, onExport, onPicked }: {
+    store: ChatStore; s: SessionSummary; rt: RuntimeInfo; title: string;
+    /** present only on the open session, where there is a transcript to write out */
+    onExport?: () => void;
+    /** close the menu this is drawn in; each surface owns its own */
+    onPicked: () => void;
+}) {
+    const key: SessionKey = `${s.id.runtime}:${s.id.hash}`;
+    const peek = usePeek(store, s.id, rt, key, s);
+    const pinnedNow = isPinned(s);
+    const act = (run: () => void) => () => { onPicked(); run(); };
+    return (
+        <>
+            <MenuItem icon={<IconPin />} label={pinnedNow ? "Unpin" : "Pin to the top"} onPick={act(() => void setPin(store, s, rt, !pinnedNow))} />
+            {mayRename(rt) ? <MenuItem icon={<IconCompose />} label="Rename…" onPick={act(() => { renaming.value = { s, rt, title }; })} /> : null}
+            {/* KEPT AND GREYED rather than dropped. A row that disappears teaches nothing and makes the menu a
+                different shape every time; one that stays says what is in the way, which is usually something the
+                reader can change (bring the runtime back, open the run on a tab). */}
+            <MenuItem icon={<IconCamera />} label="Look at the page" off={!!peek.why} note={peek.why}
+                onPick={act(peek.peek)} />
+            {onExport ? <MenuItem icon={<IconExport />} label="Export chat…" onPick={act(onExport)} /> : null}
+            <MenuItem icon={<IconCopy />} label="Copy session id" onPick={act(() => void navigator.clipboard?.writeText(s.id.hash).catch(() => {}))} />
+            {mayDelete(rt) ? <MenuItem icon={<IconTrash />} label="Delete…" onPick={act(() => { confirming.value = { s, rt, title }; })} /> : null}
+        </>
+    );
+}
+
 /** A row's `⋮` and the small menu it opens. The menu is placed FIXED from the button's own rect, because the list
  *  scrolls and clips, and a menu on the last row would otherwise open into nothing. */
 export function RowMenu({ store, s, rt, title }: { store: ChatStore; s: SessionSummary; rt: RuntimeInfo; title: string }) {
@@ -68,7 +108,6 @@ export function RowMenu({ store, s, rt, title }: { store: ChatStore; s: SessionS
     const setAt = (v: { top: number; left: number; up: boolean } | null) => { openMenu.value = v ? { key, ...v } : (openMenu.value?.key === key ? null : openMenu.value); };
     const btn = useRef<HTMLButtonElement>(null);
     const menu = useRef<HTMLDivElement>(null);
-    const pinnedNow = isPinned(s);
     useEffect(() => {
         if (!at) return;
         const close = () => setAt(null);
@@ -93,7 +132,6 @@ export function RowMenu({ store, s, rt, title }: { store: ChatStore; s: SessionS
         const up = r.bottom + 110 > window.innerHeight;   // not enough room below: open upwards
         setAt({ top: up ? r.top - 4 : r.bottom + 4, left: Math.max(8, r.right - 190), up });
     };
-    const act = (run: () => void) => { setAt(null); run(); };
     return (
         <>
             <button ref={btn} class={`chat-row-more hbtn${at ? " on" : ""}`} aria-label={`Options for ${truncate(title, 60)}`}
@@ -102,9 +140,7 @@ export function RowMenu({ store, s, rt, title }: { store: ChatStore; s: SessionS
             </button>
             {at ? (
                 <div ref={menu} class={`chat-menu chat-row-menu${at.up ? " up" : ""}`} role="menu" style={`top:${at.top}px;left:${at.left}px`}>
-                    <MenuItem icon={<IconPin />} label={pinnedNow ? "Unpin" : "Pin to the top"} onPick={() => act(() => void setPin(store, s, rt, !pinnedNow))} />
-                    {mayRename(rt) ? <MenuItem icon={<IconCompose />} label="Rename…" onPick={() => act(() => { renaming.value = { s, rt, title }; })} /> : null}
-                    {mayDelete(rt) ? <MenuItem icon={<IconTrash />} label="Delete…" onPick={() => act(() => { confirming.value = { s, rt, title }; })} /> : null}
+                    <SessionActions store={store} s={s} rt={rt} title={title} onPicked={() => setAt(null)} />
                 </div>
             ) : null}
         </>
@@ -186,4 +222,36 @@ export function RenameDialog({ store }: { store: ChatStore }) {
             </div>
         </Dialog>
     );
+}
+
+/**
+ * What the tab looks like RIGHT NOW, into the same full-size view an image in a transcript opens in.
+ *
+ * Offered only where there is still a TAB to capture — `page.tabId` absent is the tell that the one the run worked
+ * in has closed, the same tell `resumableHere` reads — and where the runtime says it can capture and this client
+ * holds the scope for it. The browser can only
+ * capture the tab its window is SHOWING, so a run working in a background tab answers `conflict` and the store puts
+ * the runtime's own sentence on screen — which is the rule stated once, where it is met, rather than a button that
+ * quietly does nothing.
+ */
+/** Look at the page a run is on, as it is now: its capture, shown full size. Null where it cannot be (no tab, the runtime
+ *  offline or without screenshots, or this client without the grant to ask). */
+export function usePeek(store: ChatStore, id: SessionId | null, rt: RuntimeInfo | undefined, sessionKey: SessionKey, summary?: SessionSummary): { busy: boolean; peek: () => void; why?: string } {
+    const [busy, setBusy] = useState(false);
+    // WHY, not whether. This returned null for five different situations and the row simply vanished; offered as a
+    // greyed row instead, "it is not available" with no reason is a worse answer than no row at all. Each branch
+    // names the one thing that is in the way, in the words of the thing the reader can do something about.
+    const no = (why: string) => ({ busy: false, peek: () => {}, why });
+    if (!id || !rt) return no("This session has no runtime to ask.");
+    if (summary?.page?.tabId == null) return no("This run is not on a tab — there is no page to look at.");
+    if (!rt.online) return no(`${rt.name} is offline, so it cannot take a picture of the page.`);
+    if (!rt.capabilities.screenshots) return no(`${rt.name} does not offer screenshots.`);
+    if (!mayCommand(rt, "tab.screenshot", { key: sessionKey, summary }, store.host.self)) return no(`This device may only watch ${rt.name}, and a capture has to be asked for.`);
+    const peek = (): void => {
+        setBusy(true);
+        void store.send({ type: "tab.screenshot", runtime: rt.id, target: { session: id } })
+            .then((r) => { if (r.ok) services().openLightbox(r.data.image); })
+            .finally(() => setBusy(false));
+    };
+    return { busy, peek };
 }

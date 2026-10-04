@@ -1057,6 +1057,11 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-menu-ico { display: inline-flex; color: var(--fg-dim); }
 .chat-menu-ico svg { width: 18px; height: 18px; }
 .chat-menu-label { flex: 1 1 auto; }
+/* The reason a row cannot be used, under its own label. A SECOND LINE rather than a tooltip: a tooltip is
+   pointer-only, and a row that cannot be used is exactly the one a finger or a screen reader most needs told. */
+.chat-menu-note { display: block; color: var(--fg-faint); font-size: .84em; line-height: 1.3; margin-top: 1px; white-space: normal; }
+.chat-menu-item.off { cursor: default; opacity: .62; }
+.chat-menu-item.off:hover { background: none; }
 .chat-menu-on { display: inline-flex; color: var(--fg); }
 /* A menu row's current value, dim at its right (the theme row: "Dark"), and its caret, turned down while open. */
 .chat-menu-val { margin-left: auto; color: var(--fg-faint); font-size: .92em; }
