@@ -407,21 +407,6 @@ test("the attention list proposes the archive: Keep them turns it on from the cl
     } finally { await ext.context.close(); }
 });
 
-// THIS BROWSER IS NOT ASKED. Streaming a run's thinking costs nothing without a wire in the way, so on a local
-// runtime it is simply on and the choice is not drawn — a control nobody has a reason to touch is one more pill in a
-// row that already holds four. The remote half, where it IS a choice, is in chat-web.spec.mjs.
-test("a run on this browser streams without asking, and the choice is not drawn", async () => {
-    const ext = await launchExtension();
-    try {
-        await configureExtension(ext.sw, { chatUrl: "http://127.0.0.1:1/x", apiKey: "", apiFormat: "openai", model: "m" });
-        const { page: chat, errors } = await openChatPage(ext);
-        await chat.locator(".chat-start-box textarea").waitFor();
-        await expect(chat.getByRole("button", { name: /^Where it runs/ })).toBeVisible();   // the row is drawn
-        await expect(chat.getByRole("button", { name: /^Thinking:/ })).toHaveCount(0);
-        expect(errors).toEqual([]);
-    } finally { await ext.context.close(); }
-});
-
 // A CONTENT SCRIPT LIVES AS LONG AS THE EXTENSION THAT INJECTED IT. Reload or update the extension and every tab
 // already open keeps its page and loses its listener, so the next message to it rejects with Chrome's "Could not
 // establish connection. Receiving end does not exist." That rejection escaped `agent.start` and reached the person

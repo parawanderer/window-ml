@@ -106,7 +106,6 @@ const extras: ChatExtras = {
     settings: (id) => (localRuntimes.has(id) ? <SettingsPane /> : null),
     housekeeping: (id) => (localRuntimes.has(id) ? <HousekeepingView /> : null),
     fixedTimes: (id, code) => (localRuntimes.has(id) && code === "archive-folder-lapsed" ? regrantCount() : 0),
-    nearby: (id) => localRuntimes.has(id),
     fix: (id, code) => (localRuntimes.has(id) && FIXES[code] ? FIXES[code] : null),
     // The narrow grant: one origin, asked for inside the click. `<all_urls>` would also unblock it and is the wrong
     // thing to ask for — a page to start runs on is not a reason to read every site.

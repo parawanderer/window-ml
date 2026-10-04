@@ -19,12 +19,10 @@ import type { ChatExtras } from "./extras";
 import { mayCommand } from "./grants";
 import { ModelPicker } from "./model-picker";
 import { KindPicker } from "./kind-picker";
-import { LivePicker } from "./live-picker";
 import { DevicePicker } from "./device-picker";
 import { blankStartState } from "./blank-start";
 import { BlankStartDialog } from "./blank-start-dialog";
 import { startableOn, useTargetPick, type StartKind } from "./new-session";
-import { liveThinking, setLiveThinking } from "./view-mode";
 
 /** Each runtime's model list as last answered, for the page's life: a start page opened again draws it at once. */
 const modelCache = new Map<string, ModelChoice[]>();
@@ -119,12 +117,12 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
     // answered — by picking one of the sites it already holds, or by someone typing one deliberately — and going on
     // blocking it would make the way out unreachable, which is what the first version of this did.
     const blocked = kind === "agent" && pick.blank && !pick.url ? blankStartState(rt, canGrant) : { kind: "ok" as const };
-    // STREAM THE THINKING. On this browser it is free, so it is simply on and nothing is asked; over a wire every
-    // `agent-stream` event carries the whole answer so far rather than the part that is new, so there it is a choice
-    // worth making — and a remembered one (`liveThinking`), since someone who always wants one answer should say so
-    // once. Only for an agent: a chat streams its reply through its own path and never asked.
-    const nearby = !!extras?.nearby?.(rt.id);
-    const streaming = kind === "agent" && (nearby || liveThinking.value);
+    // STREAM THE THINKING, always. It used to be a choice on a runtime reached over a wire, because every
+    // `agent-stream` event carried the whole answer so far rather than the part that is new — a five-minute turn
+    // was 118 MB. A remote preview now carries a bounded tail at a fixed rate (hub #330), which measured 1.70 MB
+    // for the same turn and does not grow with it, so there is nothing left to choose between. Only for an agent:
+    // a chat streams its reply through its own path and never asked.
+    const streaming = kind === "agent";
     const ready = !!text.trim() && !busy && rt.online && (kind === "chat" || (pick.ready && blocked.kind === "ok"));
     const start = async (): Promise<void> => {
         if (!ready) return;
@@ -165,7 +163,6 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
                 a machine after its model list would be choosing from a list the next choice replaces. */}
             {runtimes.length > 1 ? <DevicePicker runtimes={runtimes} value={rt.id} onChange={setRuntimeId} /> : null}
             {pick.inline}
-            {kind === "agent" && !nearby ? <LivePicker value={liveThinking.value} onChange={setLiveThinking} /> : null}
             {narrow ? null : modelTop}
             {!rt.online ? <span class="chat-start-wait">Reconnecting…</span> : null}
             {/* Said in the row rather than only on send: the choice is already made by the time anyone
