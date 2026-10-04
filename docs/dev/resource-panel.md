@@ -1,6 +1,6 @@
 # The resource panel and event lane
 
-Implementation notes for the VRAM/RAM panel (`resource-model.ts`, `resource-bands.ts`, `resource-topology.ts`, `resource-presets.ts`, `resource-gens.ts`, `resource-chart.tsx`, `vram.tsx`) and its event lane. The spec with ASCII mocks is docs/spec/RESOURCE_PANEL.md, moved out of AGENTS.md on 2026-09-12 so they are read when that code is being
+Implementation notes for the VRAM/RAM panel (`resource-model.ts`, `resource-bands.ts`, `resource-topology.ts`, `resource-presets.ts`, `resource-gens.ts`, the chart's files in `sidebar/`, `vram.tsx`) and its event lane. The spec with ASCII mocks is docs/spec/RESOURCE_PANEL.md, moved out of AGENTS.md on 2026-09-12 so they are read when that code is being
 changed rather than loaded into every session. AGENTS.md keeps the repository's working rules and the traps that
 bite; this file keeps how the subsystem works and why it is built that way. Paths name files by their bare name,
 as in AGENTS.md — they are all under `src/`.
@@ -14,7 +14,11 @@ HTML — which must read as "capacity unknown", never as zero. `LoadedModel` als
 
 **Resource panel (VRAM/RAM).** `resource-model.ts` is the pure, unit-tested layer (parsing, ceilings, residency,
 history segmentation), with `resource-topology.ts` holding the GPU link graph, `resource-presets.ts` the
-series/tracks/presets and the rules that judge a layout, and `resource-gens.ts` one generation's own edges; `src/sidebar/resource-chart.tsx` only draws. Spec + ASCII mocks +
+series/tracks/presets and the rules that judge a layout, and `resource-gens.ts` one generation's own edges; the drawing is in `src/sidebar/`. `resource-chart.tsx` is the chart's frame (the window, the axis, the tick, and
+which view draws each track); the views are `resource-device-view.tsx` (one pool) and `resource-box-views.tsx` (the
+whole box, utilization, overlaid lines); they draw with `resource-area.tsx` (the stacked area), `resource-overlays.tsx`
+(rules, crosshair, grid), `resource-tips.tsx` (the reading tooltips) and `chart-paint.ts` (viewBox, fills);
+`resource-scrub.tsx` is the strip under them, and `chart-interaction.ts` holds what the pointer and keys are on. Spec + ASCII mocks +
 live captures from both a CUDA box and a Metal Mac: `docs/spec/RESOURCE_PANEL.md`. **Read it before touching
 this** — several of the numbers are counter-intuitive and getting one wrong produces a confidently wrong
 display rather than an obvious bug:

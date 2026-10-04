@@ -8,15 +8,18 @@
 //
 // Two shapes on purpose. Signals for what a POINTER does, because a render must react to it. A plain `live`
 // holder for what the chart publishes as it draws, because that is written DURING render, where a signal either
-// warns or re-enters.
+// warns or re-enters. And the two READINGS of the pointer that the plot, its overlays and its tips all ask
+// (`snapUnder`, `cursorOn`), which live beside the signals they read so those files need not import each other.
+// Likewise the registry of which POOLS each surface drew (`notePools`), which the arrow keys step through.
 
 import { signal } from "@preact/signals";
 import type { Band } from "../resource-bands";
 import type { EventPlacement, ResourceEvent, ResourceSample } from "../resource-model";
-import type { Axis, RunGap } from "../resource-axis";
+import { snapFraction, type Axis, type RunGap } from "../resource-axis";
 import { lineageOf } from "../resource-lane";
-import { zoomRange, resWindowS, laneScoped, scopedHash } from "./store";
+import { zoomRange, resWindowS, laneScoped, scopedHash, crosshair, snapDot } from "./store";
 import { releaseFocus, kbPool } from "./vram-focus";
+import { hiddenPools, sampleGraceMs } from "./panel-state";
 
 /** The pool (card or host) currently hovered in the chart, and which models sit on it. The model rows below
  *  ARE the legend, so rows not on that pool grey out — reusing what is already on screen instead of injecting
@@ -210,3 +213,65 @@ export const eventHover = signal<{ p: EventPlacement; scope: string } | null>(nu
 /** The hovered GAP between two runs, and which surface owns it — the same arrangement as `eventHover`, and for the
  *  same reason: the plot's own reading stands down while it is pointed at (see `cursorOn`). */
 export const gapHover = signal<{ gap: RunGap; scope: string } | null>(null);
+
+/** WHICH SAMPLE the pointer is over, resolved from the LIVE data every time it is asked.
+ *
+ *  Deliberately a function of the current `runs` rather than a stored answer. The pointer is a position on
+ *  screen; which sample sits under it changes as the timeline advances, so holding the resolution pins the
+ *  mark to a sample that then walks out from under the cursor. Cheap enough to call per render — it is a
+ *  weighted walk over the segment list. */
+export const snapUnder = (runs: ResourceSample[][]) => {
+    const c = crosshair.value;
+    if (!snapDot.value || !c) return null;
+    // AN EVENT RULE OWNS THE POINTER while it is hovered. A dashed instant is a vertical mark of its own, a
+    // pixel or two from the crosshair and never on the same x — it names an INSTANT, the crosshair names the
+    // nearest SAMPLE — so drawn together they read as one thing that cannot decide where it is. The same rule
+    // the reading tooltips already follow (`cursorOn`), applied to the mark.
+    if (eventHover.value || gapHover.value) return null;   // …and so does a gap: there is no sample in one
+    return snapFraction(runs, c.frac, live.axis, sampleGraceMs());
+};
+
+/** The cursor for a surface, for the tips that READ THE PLOT (the sample stamp, a band, the pool rows) —
+ *  null while an EVENT on that same surface is hovered, because then the event's own tip is the answer.
+ *
+ *  A dashed instant rule is drawn INSIDE the plot, so pointing at one is also pointing at the plot: both tips
+ *  fired, both are placed at the pointer, and they stacked — with the one you actually pointed at underneath
+ *  the memory reading you did not ask for. The same "only the surface the pointer is on renders a tip" rule
+ *  as everywhere else in this panel, applied to two things sharing ONE surface. `cursorAt` is the unguarded
+ *  read, and only EventTip wants it. */
+export const cursorOn = (surface: string) =>
+    (eventHover.value?.scope === surface || gapHover.value?.scope === surface ? null : cursorAt(surface));
+
+/** Hovering a pool's line publishes WHICH POOL and WHAT IS ON IT. The model rows below the chart already list
+ *  every resident model, so they are the legend: rows not on this pool grey out, and a tooltip on the plot
+ *  names the device. That reuses what is on screen instead of injecting a row that pushes the layout around
+ *  under the cursor. */
+type PoolRef = { id: string; name: string; ceiling: number; color: string; bandsOf: (s: ResourceSample) => Band[] };
+
+/**
+ * THE LINES THE KEYS STEP THROUGH, published from the render that draws them — the key handler runs outside
+ * render, and "which pools are on screen" is a fact about what was just drawn. A plain ref for the same
+ * reason `live.runs` is one: written DURING render, and a signal written during render re-enters rendering.
+ */
+// PER SURFACE: the overlaid view and a whole-box track both draw POOLS, and a layout can hold both — one shared
+// list meant whichever rendered last owned the keys, and the whole-box view published none at all, so ↑↓ there
+// fell through to stepping MODELS (nothing, on an idle box) under a tip that said "↑↓ pick a line".
+const poolRefs = new Map<string, PoolRef[]>();
+
+/** Publish the pools the arrow keys step through on `surface` — call it from the render that DRAWS them. */
+export const notePools = (surface: string, pools: PoolRef[]): void => { poolRefs.set(surface, pools); };
+
+/** Does the view being read draw POOLS (the overlaid lines, a whole-box track)? Decides which list the keys step. */
+export const readingIsOverlay = (): boolean => readingSurface != null && poolRefs.has(readingSurface);
+
+/** Cycle the focused POOL in the view being read, wrapping through "nothing picked out" at index 0. Hidden
+ *  pools are skipped: switching one off takes it off the chart, so there is nothing left to point at. */
+export function stepPool(dir: number): void {
+    const shown = (poolRefs.get(readingSurface ?? "") ?? []).filter((p) => !hiddenPools.value.has(p.id));
+    const list: (PoolRef | null)[] = [null, ...shown];
+    const cur = kbPool.value ? kbPool.value.id : poolHover.value?.id ?? null;
+    const at = list.findIndex((p) => (p?.id ?? null) === (cur ?? null));
+    const next = list[((at < 0 ? 0 : at) + dir + list.length) % list.length];
+    kbPool.value = { id: next?.id ?? null };
+    if (next) enterPool(next); else leavePool();
+}

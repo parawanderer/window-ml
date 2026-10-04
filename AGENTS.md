@@ -444,8 +444,9 @@ never picks up the explanation of it.
   anything → the custom tip. When the prose must also be readable with no pointer at all, put a `.tt-pop`
   child in the DOM beside it, the way a marked code line does.
 
-  Not yet swept: `settings.tsx`, `hud-card.tsx`, `card-composer.tsx` and `resource-chart.tsx` still hold
-  native `title`s. New code follows the rule; those are a follow-up, not a licence.
+  Not yet swept: `settings.tsx`, `hud-card.tsx`, `card-composer.tsx`, `resource-scrub.tsx` and
+  `resource-device-view.tsx` still hold native `title`s. New code follows the rule; those are a follow-up, not a
+  licence.
 
 ## Conventions
 
