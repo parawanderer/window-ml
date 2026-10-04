@@ -12,6 +12,8 @@ const B = await import("../src/resource-bands.ts");
 const T = await import("../src/resource-topology.ts");
 // And the layout side: the series a box offers, the presets built from them, and the rules that judge both.
 const P = await import("../src/resource-presets.ts");
+// And capacity: the /api/info parse and the readings of what the box holds.
+const C = await import("../src/resource-capacity.ts");
 // And one generation as the lane draws it: the server's own edges, joined to the calls we made.
 const G = await import("../src/resource-gens.ts");
 const L = await import("../src/resource-lane.ts");
@@ -60,7 +62,7 @@ const METAL_PS_CPU = { name: "qwen3:0.6b", model: "qwen3:0.6b", size: 1018523810
     context_length: 4096, expires_at: "2026-09-02T16:33:04.541311+02:00" };
 
 test("parseInfo: reads a live CUDA body — discrete devices, host RAM, swap", () => {
-    const cap = M.parseInfo(CUDA_INFO);
+    const cap = C.parseInfo(CUDA_INFO);
     assert.equal(cap.devices.length, 2);
     assert.equal(cap.devices[0].name, "CUDA0");
     assert.equal(cap.devices[0].runner, "CUDA");
@@ -71,7 +73,7 @@ test("parseInfo: reads a live CUDA body — discrete devices, host RAM, swap", (
 });
 
 test("parseInfo: Metal is UNIFIED — the device total overlaps system RAM", () => {
-    const cap = M.parseInfo(METAL_INFO);
+    const cap = C.parseInfo(METAL_INFO);
     assert.equal(cap.devices[0].runner, "Metal", "the confirmed literal from a live Mac");
     assert.equal(cap.devices[0].name, "MTL0", "…and the device label the track header shows");
     assert.equal(cap.devices[0].unified, true);
@@ -82,23 +84,23 @@ test("parseInfo: Metal is UNIFIED — the device total overlaps system RAM", () 
     assert.equal(ceil.hardBytes, 17179869184, "the hard limit is the system's, not the device's");
     assert.equal(ceil.softBytes, 12712935424, "the device total survives as a soft working-set line");
     // A discrete card has exactly one, real ceiling.
-    const cudaCeil = M.ceilingsFor({ t: 1, models: [], capacity: M.parseInfo(CUDA_INFO) }, "0");
+    const cudaCeil = M.ceilingsFor({ t: 1, models: [], capacity: C.parseInfo(CUDA_INFO) }, "0");
     assert.equal(cudaCeil.hardBytes, 101972967424);
     assert.equal(cudaCeil.softBytes, null);
 });
 
 test("parseInfo: an unrecognised runner is treated as unified (the safe guess)", () => {
-    const cap = M.parseInfo({ compute: { system_compute: { total_memory: 8e9 }, supported_gpus: [{ gpu_id: "0", runner: "Vulkan", total_memory: 4e9, free_memory: 4e9 }] } });
+    const cap = C.parseInfo({ compute: { system_compute: { total_memory: 8e9 }, supported_gpus: [{ gpu_id: "0", runner: "Vulkan", total_memory: 4e9, free_memory: 4e9 }] } });
     assert.equal(cap.unified, true, "guessing discrete would produce a wrong SUM; guessing unified only declines to add");
-    assert.equal(M.isDiscrete("ROCm"), true, "ROCm is assumed to match CUDA (spec §2.2)");
+    assert.equal(C.isDiscrete("ROCm"), true, "ROCm is assumed to match CUDA (spec §2.2)");
 });
 
 test("parseInfo: a missing route returns null, never a zero capacity", () => {
     // Stock Ollama / unpatched OpenWebUI answers this route with the SPA's HTML.
-    assert.equal(M.parseInfo("<!doctype html><html><body>…"), null);
-    assert.equal(M.parseInfo({}), null);
-    assert.equal(M.parseInfo({ compute: {} }), null);
-    assert.equal(M.parseInfo(null), null);
+    assert.equal(C.parseInfo("<!doctype html><html><body>…"), null);
+    assert.equal(C.parseInfo({}), null);
+    assert.equal(C.parseInfo({ compute: {} }), null);
+    assert.equal(C.parseInfo(null), null);
 });
 
 test("residencyFrom: GPU-resident, CPU-resident, and unattributable placements", () => {
@@ -127,7 +129,7 @@ test("deviceBands: attributed / other / free — the middle band is the point", 
     // The live box, a few minutes before the idle capture: 18.2 GB free on card 0 with NOTHING of ours loaded.
     const busy = { compute: { ...CUDA_INFO.compute,
         supported_gpus: [{ ...CUDA_INFO.compute.supported_gpus[0], free_memory: 18196987904 }, CUDA_INFO.compute.supported_gpus[1]] } };
-    const sample = { t: 1, models: [], capacity: M.parseInfo(busy) };
+    const sample = { t: 1, models: [], capacity: C.parseInfo(busy) };
     const bands = B.deviceBands(sample, "0");
     const by = Object.fromEntries(bands.map((b) => [b.key, b.bytes]));
     assert.equal(by["m:anything"], undefined, "no models of ours are resident");
@@ -137,7 +139,7 @@ test("deviceBands: attributed / other / free — the middle band is the point", 
 });
 
 test("deviceBands: one band per model, plus an explicit unknown for an unattributable one", () => {
-    const cap = M.parseInfo(CUDA_INFO);
+    const cap = C.parseInfo(CUDA_INFO);
     // Card 0 holding two models (attributed) and one the server can't place.
     cap.devices[0].freeBytes = cap.devices[0].totalBytes - 41 * GB;
     const sample = { t: 1, capacity: cap, models: [
@@ -155,7 +157,7 @@ test("deviceBands: one band per model, plus an explicit unknown for an unattribu
 });
 
 test("deviceBands: a single DISCRETE device needs no attribution — the total IS the share", () => {
-    const cap = M.parseInfo({ compute: { system_compute: { total_memory: 64e9, free_memory: 32e9 },
+    const cap = C.parseInfo({ compute: { system_compute: { total_memory: 64e9, free_memory: 32e9 },
         supported_gpus: [{ gpu_id: "0", name: "CUDA0", total_memory: 24e9, free_memory: 19e9, runner: "CUDA" }] } });
     const sample = { t: 1, capacity: cap, models: [
         M.residencyFrom({ name: "solo", size: 5 * GB, size_vram: 5 * GB }),   // no gpus[] reported at all
@@ -167,7 +169,7 @@ test("deviceBands: a single DISCRETE device needs no attribution — the total I
 // The Mac capture's most important consequence. Its device reported 12.711 of 12.713 GB FREE while the system
 // was 13.5 GB deep in the very same memory — so occupancy read off the device would show a nearly-empty box.
 test("unified memory: occupancy comes from the HOST, and the model is attributed in FULL", () => {
-    const sample = { t: 1, capacity: M.parseInfo(METAL_INFO), models: [M.residencyFrom(METAL_PS_GPU)] };
+    const sample = { t: 1, capacity: C.parseInfo(METAL_INFO), models: [M.residencyFrom(METAL_PS_GPU)] };
     const bands = B.deviceBands(sample, "0");
     const model = bands.find((b) => b.kind === "model");
     // size == size_vram on Metal, so ramBytes is 0; attributing only the spill would show NOTHING resident.
@@ -194,7 +196,7 @@ test("Metal residency: GPU-resident reports gpus[]; CPU-forced omits it entirely
 });
 
 test("hostBands: a model's CPU spill is attributed, the rest is not ours", () => {
-    const sample = { t: 1, capacity: M.parseInfo(CUDA_INFO), models: [
+    const sample = { t: 1, capacity: C.parseInfo(CUDA_INFO), models: [
         M.residencyFrom({ name: "spilled", size: 10 * GB, size_vram: 6 * GB, gpus: [{ gpu_id: "0", size_vram: 6 * GB }] }),
     ] };
     const bands = B.hostBands(sample);
@@ -203,8 +205,8 @@ test("hostBands: a model's CPU spill is attributed, the rest is not ours", () =>
 });
 
 test("stackRefusal: stacking asserts a real total, so the false cases are refused", () => {
-    const cudaCap = M.parseInfo(CUDA_INFO);
-    const metalCap = M.parseInfo(METAL_INFO);
+    const cudaCap = C.parseInfo(CUDA_INFO);
+    const metalCap = C.parseInfo(METAL_INFO);
     const sample = { t: 1, capacity: cudaCap, models: [] };
     const cat = P.seriesCatalog(sample);
     const byId = (id) => cat.find((s) => s.id === id);
@@ -219,16 +221,16 @@ test("stackRefusal: stacking asserts a real total, so the false cases are refuse
 });
 
 test("seriesCatalog: generated from the devices the box actually reports", () => {
-    const two = P.seriesCatalog({ t: 1, capacity: M.parseInfo(CUDA_INFO), models: [] }).map((s) => s.id);
+    const two = P.seriesCatalog({ t: 1, capacity: C.parseInfo(CUDA_INFO), models: [] }).map((s) => s.id);
     assert.deepEqual(two, ["vram.0", "vram.1", "ram"], "two cards → two device series, no hardcoding");
     // Unified memory yields ONE capacity series, not a device/host pair — offering both would invite exactly
     // the double-count stackRefusal exists to block.
-    const cat = P.seriesCatalog({ t: 1, capacity: M.parseInfo(METAL_INFO), models: [M.residencyFrom(METAL_PS_GPU)] });
+    const cat = P.seriesCatalog({ t: 1, capacity: C.parseInfo(METAL_INFO), models: [M.residencyFrom(METAL_PS_GPU)] });
     assert.deepEqual(cat.map((s) => s.id), ["mem", "mem.qwen3:0.6b"], "one pool, one ceiling, plus the model");
     assert.match(cat[0].label, /MTL0/, "labelled with the device the machine reported");
 
     // A resident model on a DISCRETE box adds its own per-device and (when it spills) per-host series.
-    const withModel = P.seriesCatalog({ t: 1, capacity: M.parseInfo(CUDA_INFO), models: [
+    const withModel = P.seriesCatalog({ t: 1, capacity: C.parseInfo(CUDA_INFO), models: [
         M.residencyFrom({ name: "m", size: 10 * GB, size_vram: 6 * GB, gpus: [{ gpu_id: "0", size_vram: 6 * GB }] }),
     ] }).map((s) => s.id);
     assert.ok(withModel.includes("vram.0.m"), "the model is plottable on the device");
@@ -236,7 +238,7 @@ test("seriesCatalog: generated from the devices the box actually reports", () =>
 });
 
 test("presetsFor: the default layout follows the hardware", () => {
-    const multi = P.presetsFor({ t: 1, capacity: M.parseInfo(CUDA_INFO), models: [] });
+    const multi = P.presetsFor({ t: 1, capacity: C.parseInfo(CUDA_INFO), models: [] });
     // The default is the most COMPACT view that still hides nothing: one track, every pool overlaid — cards
     // AND the host, since a CPU-resident model holds no VRAM and would otherwise vanish from the chart.
     assert.equal(multi[0].id, "overview", "Overview leads — one track, and it omits no pool");
@@ -259,11 +261,11 @@ test("presetsFor: the default layout follows the hardware", () => {
     assert.deepEqual(box.tracks[0].series, ["vram.0", "vram.1", "ram"], "every pool, laid end to end");
     // A preset must never propose a layout `stackRefusal` would reject; `total` is judged separately because
     // it does not merge the pools into one — the walls between them are the point.
-    assert.equal(P.presetRefusal(box, { t: 1, capacity: M.parseInfo(CUDA_INFO), models: [] }), null);
+    assert.equal(P.presetRefusal(box, { t: 1, capacity: C.parseInfo(CUDA_INFO), models: [] }), null);
     assert.ok(!multi.some((p) => p.id === "placement"));
 
     // The Mac: ONE pool, so one preset with one track — not a GPU view and a RAM view of the same silicon.
-    const single = P.presetsFor({ t: 1, capacity: M.parseInfo(METAL_INFO), models: [] });
+    const single = P.presetsFor({ t: 1, capacity: C.parseInfo(METAL_INFO), models: [] });
     assert.deepEqual(single.map((p) => p.id), ["memory"]);
     assert.deepEqual(single[0].tracks.map((t) => t.series), [["mem"]], "the one pool, once");
     assert.ok(!single.some((p) => p.id === "placement"));
@@ -360,7 +362,7 @@ test("formatBytes: never a bare number — an unlabelled figure is a support tic
 // not claim to be other processes — or the reader goes hunting for a process that isn't there.
 test("the residual band is named by MAGNITUDE, so an idle card shows no phantom usage", () => {
     const mk = (usedBytes, modelBytes) => {
-        const cap = M.parseInfo(CUDA_INFO);
+        const cap = C.parseInfo(CUDA_INFO);
         cap.devices[0].freeBytes = cap.devices[0].totalBytes - usedBytes;
         const models = modelBytes ? [M.residencyFrom({ name: "m", size: modelBytes, size_vram: modelBytes, gpus: [{ gpu_id: "0", size_vram: modelBytes }] })] : [];
         return B.deviceBands({ t: 1, capacity: cap, models }, "0").find((b) => b.kind === "other");
@@ -387,7 +389,7 @@ test("ceilings: display the DRIVER total when reported, decide fit against ollam
     const withPhysical = { compute: { ...CUDA_INFO.compute, supported_gpus: [
         { ...CUDA_INFO.compute.supported_gpus[0], physical_memory: 102641958912 },   // 95.59 GiB — the driver framebuffer total nvidia-smi shows
     ] } };
-    const cap = M.parseInfo(withPhysical);
+    const cap = C.parseInfo(withPhysical);
     assert.equal(M.formatBytes(cap.devices[0].physicalBytes), "95.59 GiB", "the driver framebuffer total");
     assert.equal(M.formatBytes(cap.devices[0].totalBytes), "94.97 GiB", "…and ollama's, ~638 MiB below it");
 
@@ -398,7 +400,7 @@ test("ceilings: display the DRIVER total when reported, decide fit against ollam
 });
 
 test("ceilings: without physical_memory, fall back honestly rather than synthesising the nominal size", () => {
-    const cap = M.parseInfo(CUDA_INFO);   // today's server: no physical_memory
+    const cap = C.parseInfo(CUDA_INFO);   // today's server: no physical_memory
     assert.equal(cap.devices[0].physicalBytes, undefined);
     const c = M.ceilingsFor({ t: 1, models: [], capacity: cap }, "0");
     assert.equal(M.formatBytes(c.displayBytes), "94.97 GiB", "shows what IS reported");
@@ -424,7 +426,7 @@ test("DRIFT GUARD: every generated preset is valid under the stacking rule, on e
             system_compute: { cpu_cores: 16, total_memory: shape.hostTotal, free_memory: Math.round(shape.hostTotal / 2) },
             supported_gpus: shape.devices.map((d) => ({ ...d, free_memory: d.total_memory - shape.idleHeld })),
         } };
-        const sample = { t: 1, models: [], capacity: M.parseInfo(info) };
+        const sample = { t: 1, models: [], capacity: C.parseInfo(info) };
         const presets = P.presetsFor(sample);
         assert.ok(presets.length > 0, `${name}: no preset at all`);
         for (const p of presets) {
@@ -446,7 +448,7 @@ test("presets follow the SHAPE of the box, not its vendor or its card count", ()
             system_compute: { cpu_cores: 16, total_memory: shape.hostTotal, free_memory: Math.round(shape.hostTotal / 2) },
             supported_gpus: shape.devices.map((d) => ({ ...d, free_memory: d.total_memory - shape.idleHeld })),
         } };
-        const sample = { t: 1, models: [], capacity: M.parseInfo(info) };
+        const sample = { t: 1, models: [], capacity: C.parseInfo(info) };
         return { presets: P.presetsFor(sample), sample };
     };
 
@@ -479,7 +481,7 @@ test("presets follow the SHAPE of the box, not its vendor or its card count", ()
 });
 
 test("presets: ONE card plus host RAM is still two pools, so Overview overlays", () => {
-    const sample = { t: 1, models: [], capacity: M.parseInfo(ONE_CARD_INFO) };
+    const sample = { t: 1, models: [], capacity: C.parseInfo(ONE_CARD_INFO) };
     const overview = P.presetsFor(sample).find((p) => p.id === "overview");
     assert.deepEqual(overview.tracks[0].series, ["vram.0", "ram"]);
     assert.equal(overview.tracks[0].mode, "overlay",
@@ -490,24 +492,24 @@ test("presets: ONE card plus host RAM is still two pools, so Overview overlays",
 
     // …and a single-POOL machine still stacks, which is what the ternary was reaching for and got right only
     // by accident on the Mac.
-    const mac = { t: 1, models: [], capacity: M.parseInfo(METAL_INFO) };
+    const mac = { t: 1, models: [], capacity: C.parseInfo(METAL_INFO) };
     const only = P.presetsFor(mac)[0];
     assert.deepEqual(only.tracks[0].series, ["mem"]);
     assert.equal(only.tracks[0].mode, "stack");
 });
 
 test("presets: several cards are OVERLAID, never stacked into a total that isn't real", () => {
-    const sample = { t: 1, models: [], capacity: M.parseInfo(CUDA_INFO) };
+    const sample = { t: 1, models: [], capacity: C.parseInfo(CUDA_INFO) };
     const overview = P.presetsFor(sample).find((p) => p.id === "overview");
     assert.equal(overview.tracks[0].mode, "overlay", "two cards have no meaningful combined total");
     // On a single-device box there is nothing to overlay, so a stack is both valid and the clearer reading.
-    const mac = { t: 1, models: [], capacity: M.parseInfo(METAL_INFO) };
+    const mac = { t: 1, models: [], capacity: C.parseInfo(METAL_INFO) };
     assert.equal(P.presetsFor(mac).find((p) => p.id === "overview"), undefined,
         "a one-pool machine gets one preset — there is nothing to overlay or place");
 });
 
 test("presetRefusal: names a series the machine doesn't have (a layout saved on another box)", () => {
-    const mac = { t: 1, models: [], capacity: M.parseInfo(METAL_INFO) };
+    const mac = { t: 1, models: [], capacity: C.parseInfo(METAL_INFO) };
     // A layout saved on the 2-card server, restored onto a Mac: `vram.1` does not exist here.
     const stale = { id: "saved", label: "Saved", description: "", tracks: [{ id: "t", series: ["vram.1"], mode: "stack", heightPx: 96 }] };
     assert.match(P.presetRefusal(stale, mac), /doesn't have/);
@@ -517,23 +519,23 @@ test("presetRefusal: names a series the machine doesn't have (a layout saved on 
 // error waiting to happen. Those samples were measured against a 94.97 GiB ceiling on devices whose ids mean
 // different hardware; redrawn on a 11.84 GiB Mac, an 18 GiB band clips at 100% and looks like a READING.
 test("boxSignature: identifies the machine, and ignores what merely moves", () => {
-    const a = M.parseInfo(CUDA_INFO), b = M.parseInfo(CUDA_INFO);
+    const a = C.parseInfo(CUDA_INFO), b = C.parseInfo(CUDA_INFO);
     assert.equal(M.boxSignature(a), M.boxSignature(b), "the same box is the same box");
     // free_memory changes constantly — it must NOT count as a different machine.
     b.devices[0].freeBytes = 1234;
     assert.equal(M.boxSignature(a), M.boxSignature(b), "occupancy is not identity");
     // A different machine is.
-    assert.notEqual(M.boxSignature(a), M.boxSignature(M.parseInfo(METAL_INFO)));
+    assert.notEqual(M.boxSignature(a), M.boxSignature(C.parseInfo(METAL_INFO)));
     // So is losing a card, or the same card reporting a different size.
-    const oneCard = M.parseInfo(CUDA_INFO); oneCard.devices.pop();
+    const oneCard = C.parseInfo(CUDA_INFO); oneCard.devices.pop();
     assert.notEqual(M.boxSignature(a), M.boxSignature(oneCard));
-    const resized = M.parseInfo(CUDA_INFO); resized.devices[0].totalBytes = 42e9;
+    const resized = C.parseInfo(CUDA_INFO); resized.devices[0].totalBytes = 42e9;
     assert.notEqual(M.boxSignature(a), M.boxSignature(resized));
     assert.equal(M.boxSignature(null), "", "unknown capacity has no identity to compare");
 });
 
 test("sameBoxOnly: drops history measured on another machine, keeps the current box's", () => {
-    const cuda = M.parseInfo(CUDA_INFO), metal = M.parseInfo(METAL_INFO);
+    const cuda = C.parseInfo(CUDA_INFO), metal = C.parseInfo(METAL_INFO);
     const history = [
         { t: 1, models: [], capacity: cuda },
         { t: 2, models: [], capacity: cuda },
@@ -559,7 +561,7 @@ test("sameBoxOnly: drops history measured on another machine, keeps the current 
 // A single total hides how a model is placed: 18 GiB reads the same whether it sits on one card, is split
 // across two, or is partly offloaded to system RAM — and the last of those is why it can be unexpectedly slow.
 test("placementOf: names the devices and shows how a model was split", () => {
-    const cap = M.parseInfo(CUDA_INFO);
+    const cap = C.parseInfo(CUDA_INFO);
     const fmt = M.formatBytes;
     const res = (over) => M.residencyFrom({ name: "m", size: 20 * GB, size_vram: 20 * GB, ...over });
 
@@ -585,29 +587,29 @@ test("placementOf: names the devices and shows how a model was split", () => {
     assert.match(M.placementOf(odd, cap, fmt), /CUDA1 \(unknown\)/);
 
     // A single-device box with nothing to report gets no line rather than a redundant one.
-    const solo = M.parseInfo(METAL_INFO);
+    const solo = C.parseInfo(METAL_INFO);
     assert.equal(M.placementOf(M.residencyFrom({ name: "m", size: 5 * GB, size_vram: 5 * GB }), solo, fmt), null);
 });
 
 test("holdCapacity: a silent poll never unlearns the box", () => {
-    const box = M.parseInfo({ compute: {
+    const box = C.parseInfo({ compute: {
         system_compute: { cpu_cores: 8, total_memory: 34359738368, free_memory: 8589934592, free_swap: 0 },
         supported_gpus: [{ gpu_id: "0", name: "CUDA0", runner: "CUDA", total_memory: 25769803776, free_memory: 25769803776 }],
     } });
     assert.ok(box);
     // Nothing known yet, nothing answered → still nothing. The panel degrades honestly.
-    assert.equal(M.holdCapacity(null, null), null);
+    assert.equal(C.holdCapacity(null, null), null);
     // First answer is adopted.
-    assert.equal(M.holdCapacity(null, box), box);
+    assert.equal(C.holdCapacity(null, box), box);
     // A poll that answers with nothing leaves what was measured in place — this is the whole point: a box
     // does not lose its hardware because one request came back empty.
-    assert.equal(M.holdCapacity(box, null), box);
+    assert.equal(C.holdCapacity(box, null), box);
     // A real answer always wins, including one describing a different machine (the switch is handled after).
-    const other = M.parseInfo({ compute: {
+    const other = C.parseInfo({ compute: {
         system_compute: { cpu_cores: 10, total_memory: 17179869184, free_memory: 3682385920, free_swap: 0 },
         supported_gpus: [{ gpu_id: "0", name: "MTL0", runner: "Metal", total_memory: 12712935424, free_memory: 12711886848 }],
     } });
-    assert.equal(M.holdCapacity(box, other), other);
+    assert.equal(C.holdCapacity(box, other), other);
 });
 
 test("formatShare: the bytes and the fraction, never one without the other", () => {
@@ -984,7 +986,7 @@ test("scopeToSpan: a block's own extent, widened only when it is too short to fr
 // That is an INCIDENT, and the samples leading up to it are the most valuable ones on screen — so it must not
 // be treated as "a different machine", which is what drops the history.
 test("boxChange: a vanished card is not a different box", () => {
-    const box = (gpus, hostBytes = 130142785536) => M.parseInfo({ compute: {
+    const box = (gpus, hostBytes = 130142785536) => C.parseInfo({ compute: {
         system_compute: { cpu_cores: 32, total_memory: hostBytes, free_memory: 8 * GB },
         supported_gpus: gpus,
     } });
@@ -1015,7 +1017,7 @@ test("boxChange: a vanished card is not a different box", () => {
 });
 
 test("placementOf: a model on a card that stopped being reported says so", () => {
-    const cap = M.parseInfo({ compute: {
+    const cap = C.parseInfo({ compute: {
         system_compute: { cpu_cores: 8, total_memory: 68719476736, free_memory: 8 * GB },
         supported_gpus: [{ gpu_id: "0", name: "CUDA0", runner: "CUDA", total_memory: 25 * GB, free_memory: 6 * GB }],
     } });
@@ -1662,7 +1664,7 @@ test("deviceBands: a residual a LOAD explains is named as the load, not as unatt
         { ...CUDA_INFO.compute.supported_gpus[0], free_memory: CUDA_INFO.compute.supported_gpus[0].total_memory - 87.82 * GB },
         CUDA_INFO.compute.supported_gpus[1],
     ] } };
-    const cap = M.parseInfo(mid);
+    const cap = C.parseInfo(mid);
 
     const blind = B.deviceBands({ t: 1, models: [], capacity: cap }, "0");
     assert.equal(blind.find((b) => b.key === "other").label, B.OTHER_BAND_LABEL,
@@ -1680,7 +1682,7 @@ test("deviceBands: a residual a LOAD explains is named as the load, not as unatt
 
     // The FLOOR still wins. An idle card holds ~0.55 GiB of ollama's own discovery context, and a load
     // starting elsewhere must not relabel that as this card loading something.
-    const idle = M.parseInfo(CUDA_INFO);
+    const idle = C.parseInfo(CUDA_INFO);
     const quiet = B.deviceBands({ t: 1, models: [], capacity: idle, loading: ["something"] }, "0");
     assert.equal(quiet.find((b) => b.key === "other").label, B.DRIVER_BAND_LABEL,
         "a sub-GiB residual is the driver's context whatever is loading");
@@ -2078,7 +2080,7 @@ const FAULT_INFO = {
 };
 
 test("unavailableFrom: a faulted card is carried, and never becomes a device", () => {
-    const cap = M.parseInfo(FAULT_INFO);
+    const cap = C.parseInfo(FAULT_INFO);
     assert.equal(cap.devices.length, 1, "the faulted card is NOT a device — it is absent from the list");
     assert.equal(cap.unavailable.length, 1);
     const g = cap.unavailable[0];
@@ -2096,16 +2098,16 @@ test("unavailableFrom: a faulted card is carried, and never becomes a device", (
 test("unavailableFrom: the shapes that are NOT a fault, and the ones with nothing to read", () => {
     // `not_offered_by_backend` is a HEALTHY card that answers every query and that no backend claimed —
     // usually CUDA_VISIBLE_DEVICES. A warning triangle there tells someone to reseat working hardware.
-    const idle = M.unavailableFrom([{ pci_id: "0000:01:00.0", name: "CUDA1", reason: "not_offered_by_backend" }]);
+    const idle = C.unavailableFrom([{ pci_id: "0000:01:00.0", name: "CUDA1", reason: "not_offered_by_backend" }]);
     assert.equal(idle.length, 1, "still reported — the panel may want to say why a card is not in use");
-    assert.equal(M.isGpuFault(idle[0]), false, "…but it is not a fault");
-    assert.equal(M.isGpuFault({ reason: "reset_required" }), true);
-    assert.equal(M.isGpuFault({ reason: "not_reported_by_driver" }), true);
+    assert.equal(C.isGpuFault(idle[0]), false, "…but it is not a fault");
+    assert.equal(C.isGpuFault({ reason: "reset_required" }), true);
+    assert.equal(C.isGpuFault({ reason: "not_reported_by_driver" }), true);
 
     // `not_reported_by_driver`: the kernel enumerates the card and the driver does not describe it, so
     // there is no name and no uuid to read. They stay ABSENT rather than becoming empty strings — "" would
     // render as a nameless card instead of a card whose name is unknown.
-    const mute = M.unavailableFrom([{ pci_id: "0000:03:00.0", reason: "not_reported_by_driver",
+    const mute = C.unavailableFrom([{ pci_id: "0000:03:00.0", reason: "not_reported_by_driver",
         detail: "the kernel enumerates this GPU but the driver does not report it",
         bus: { present: true, power_state: "D0", max_link_width: 16, pcie_fatal_errors: 0 } }]);
     assert.equal(mute[0].name, undefined);
@@ -2114,37 +2116,37 @@ test("unavailableFrom: the shapes that are NOT a fault, and the ones with nothin
 
     // The PCI address is the IDENTITY — two cards in one machine share a `name` — so an entry without one
     // cannot be attributed and is dropped rather than drawn against the wrong card.
-    assert.deepEqual(M.unavailableFrom([{ reason: "lost", name: "CUDA0" }]), []);
+    assert.deepEqual(C.unavailableFrom([{ reason: "lost", name: "CUDA0" }]), []);
     // Absent, not-an-array and a stock server all mean the same thing here, and none of them mean "healthy".
-    assert.deepEqual(M.unavailableFrom(undefined), []);
-    assert.deepEqual(M.unavailableFrom("nope"), []);
-    assert.deepEqual(M.parseInfo(CUDA_INFO).unavailable, [], "a server that says nothing reports nothing");
+    assert.deepEqual(C.unavailableFrom(undefined), []);
+    assert.deepEqual(C.unavailableFrom("nope"), []);
+    assert.deepEqual(C.parseInfo(CUDA_INFO).unavailable, [], "a server that says nothing reports nothing");
 });
 
 test("unavailableFrom: an AMD fault — no name, no uuid, and a reset in progress is not a dead card", () => {
     // The shape `gpuhealth5` serves for AMD: read from PCI sysfs rather than a vendor library, so there is no
     // name and no uuid, ever — keyed on `pci_id` like every other entry.
-    const [busy, dead] = M.unavailableFrom([
+    const [busy, dead] = C.unavailableFrom([
         { pci_id: "0000:0c:00.0", reason: "reset_in_progress", detail: "EBUSY" },
         { pci_id: "0000:0d:00.0", reason: "unresponsive", detail: "ETIMEDOUT" },
     ]);
     assert.equal(busy.name, undefined);
     assert.equal(busy.uuid, undefined);
-    assert.equal(M.isGpuFault(busy), true, "it cannot take work right now, so it is still reported");
-    assert.equal(M.isGpuFault(dead), true);
+    assert.equal(C.isGpuFault(busy), true, "it cannot take work right now, so it is still reported");
+    assert.equal(C.isGpuFault(dead), true);
     // A reset usually completes in seconds. Drawn identically to `reset_required` it sends someone to power-
     // cycle a machine that is fixing itself, so it carries a note saying when it stops being transient.
-    assert.match(M.gpuFaultNote(busy), /usually clears within seconds/);
-    assert.equal(M.gpuFaultNote(dead), null, "an unresponsive card gets the driver's words and nothing reassuring");
-    assert.equal(M.gpuFaultNote({ reason: "reset_required" }), null);
+    assert.match(C.gpuFaultNote(busy), /usually clears within seconds/);
+    assert.equal(C.gpuFaultNote(dead), null, "an unresponsive card gets the driver's words and nothing reassuring");
+    assert.equal(C.gpuFaultNote({ reason: "reset_required" }), null);
 });
 
 test("a faulted card is an INCIDENT, not a different machine — the history survives it", () => {
     // This is the mid-session half. A card vanishing changes the device list, and if that read as "you
     // pointed at another box" the samples leading up to the fault — the most valuable ones on screen —
     // would be dropped at the exact moment they became evidence.
-    const before = M.parseInfo(CUDA_INFO);            // two healthy cards
-    const after = M.parseInfo(FAULT_INFO);            // one, and a fault report
+    const before = C.parseInfo(CUDA_INFO);            // two healthy cards
+    const after = C.parseInfo(FAULT_INFO);            // one, and a fault report
     assert.equal(M.boxChange(before, after), "shrank", "a card that vanishes is an incident, not a switch");
     assert.notEqual(M.boxChange(before, after), "switched");
     // And coming back is equally not a switch: nothing measured before is invalidated by a card returning.
@@ -2338,7 +2340,7 @@ test("topologyFrom: a pair list, normalised, with coverage checked against the s
 test("the REAL /api/info capture: ceilings, pci_id and the PCIe pair, as gpubox serves them", async () => {
     const { readFileSync } = await import("node:fs");
     const info = JSON.parse(readFileSync(new URL("./fixtures/hw/info-ceilings-and-topology-2026-09-11.json", import.meta.url), "utf8"));
-    const cap = M.parseInfo(info);
+    const cap = C.parseInfo(info);
     const [c0, c1] = cap.devices;
     assert.equal(c0.pciId, "0000:01:00.0");
     assert.equal(c1.pciId, "0000:03:00.0");
@@ -2352,7 +2354,7 @@ test("the REAL /api/info capture: ceilings, pci_id and the PCIe pair, as gpubox 
     // A DERIVED rate is a peak (measured peer-to-peer: 27.7 GB/s against 31.5 derived), and says so.
     assert.equal(T.linkPhrase(l), "PCIe, through the CPU's host bridge (PHB) · 31.5 GB/s peak");
     // Utilization, when present: each figure independent, 0 kept as idle, out-of-range dropped.
-    const u = M.parseInfo({ ...info, compute: { ...info.compute, supported_gpus: [
+    const u = C.parseInfo({ ...info, compute: { ...info.compute, supported_gpus: [
         { ...info.compute.supported_gpus[0], utilization: { gpu_percent: 99, memory_percent: 90 } },
         { ...info.compute.supported_gpus[1], utilization: { gpu_percent: 0 } }] } });
     assert.deepEqual(u.devices.map((d) => d.utilization), [{ gpuPercent: 99, memoryPercent: 90 }, { gpuPercent: 0 }]);
@@ -2387,10 +2389,10 @@ test("parseInfo: pci_id joins a drawn card to its links, and topology rides /api
             { gpu_id: "0", pci_id: pci(0), name: "CUDA0", runner: "CUDA", total_memory: 2.5e10, free_memory: 2e10 },
             { gpu_id: "1", pci_id: pci(1), name: "CUDA1", runner: "CUDA", total_memory: 2.5e10, free_memory: 2e10 }],
         topology: { status: "measured", gpus: [pci(0), pci(1)], links: [{ a: pci(0), b: pci(1), type: "pcie", path: "PHB" }] } } };
-    const cap = M.parseInfo(info);
+    const cap = C.parseInfo(info);
     assert.deepEqual(cap.devices.map((d) => d.pciId), [pci(0), pci(1)]);
     assert.equal(T.linkBetween(cap.topology, cap.devices[0].pciId, cap.devices[1].pciId).type, "pcie");
-    assert.equal(M.parseInfo({ compute: { system_compute: { total_memory: 1 }, supported_gpus: [] } }).topology, null);
+    assert.equal(C.parseInfo({ compute: { system_compute: { total_memory: 1 }, supported_gpus: [] } }).topology, null);
 });
 
 test("bridgeOrder: directly-linked cards sit side by side, and only a measured topology reorders", () => {
@@ -2439,7 +2441,7 @@ test("linkPhrase: a link said plainly, in the vendor's own vocabulary", () => {
 });
 
 test("utilization: its own series, its own preset where a card reports it, and never mixed with memory", () => {
-    const sampleOf = (box) => ({ t: 1, capacity: M.parseInfo({ compute: {
+    const sampleOf = (box) => ({ t: 1, capacity: C.parseInfo({ compute: {
         system_compute: { total_memory: box.hostTotal, free_memory: box.hostTotal / 2, cpu_cores: 16 },
         supported_gpus: box.devices.map((d) => ({ ...d, free_memory: d.total_memory / 2 })) } }), models: [] });
     // CUDA reports both figures; the AMD shape reports only GPU busy — still a series, still the preset.
@@ -2452,7 +2454,7 @@ test("utilization: its own series, its own preset where a card reports it, and n
         assert.deepEqual(act.tracks[0].series, ["util.0", "util.1"]);
         assert.equal(P.presetRefusal(act, s), null, "and the rule accepts what the preset proposes");
     }
-    assert.deepEqual(M.parseInfo({ compute: { system_compute: { total_memory: 1 },
+    assert.deepEqual(C.parseInfo({ compute: { system_compute: { total_memory: 1 },
         supported_gpus: [{ ...BOXES.amd.devices[0], free_memory: 1 }] } }).devices[0].utilization, { gpuPercent: 40 }, "the absent figure stays absent");
     // A machine whose cards report nothing gets no series and no preset — a preset of lines that are never
     // drawn would read as an idle box.
@@ -2587,24 +2589,24 @@ test("pendingAllocation: a loading model's memory is its own before the runner e
 const hwJson = (name) => JSON.parse(readFileSync(new URL(`./fixtures/hw/${name}`, import.meta.url), "utf8"));
 
 test("parseInfo: a card's processes, and the scope that says what the list CAN contain", () => {
-    const cap = M.parseInfo(hwJson("runner-pids-other-processes-2026-09-11.json"));
+    const cap = C.parseInfo(hwJson("runner-pids-other-processes-2026-09-11.json"));
     const [c0, c1] = cap.devices;
     assert.equal(c0.processesScope, "pid_namespace");
     assert.deepEqual(c0.processes, [{ pid: 317, usedBytes: 6348079104, name: "llama-server", runner: { model: "qwen3.5:0.8b", loading: false }, helper: false }]);
     // A llama-server started by hand inside ollama's container: listed and named, and neither a runner nor a helper.
     assert.deepEqual(c1.processes, [{ pid: 417, usedBytes: 3164602368, name: "llama-server", helper: false }]);
     // A scope with NO list is an empty list (the server omits an empty array) — a reading, not an absence.
-    const idle = M.parseInfo(hwJson("runner-pids-context-band-2026-09-11.json").info);
+    const idle = C.parseInfo(hwJson("runner-pids-context-band-2026-09-11.json").info);
     assert.ok(idle.devices.every((d) => Array.isArray(d.processes)));
-    const bare = M.parseInfo({ compute: { system_compute: { total_memory: 8e9 }, supported_gpus: [{ gpu_id: "0", runner: "CUDA", total_memory: 4e9, free_memory: 3e9, processes_scope: "pid_namespace" }] } });
+    const bare = C.parseInfo({ compute: { system_compute: { total_memory: 8e9 }, supported_gpus: [{ gpu_id: "0", runner: "CUDA", total_memory: 4e9, free_memory: 3e9, processes_scope: "pid_namespace" }] } });
     assert.deepEqual([bare.devices[0].processes, bare.devices[0].processesScope], [[], "pid_namespace"]);
     // An older build reports neither, and nothing is invented for it.
-    assert.equal("processes" in M.parseInfo(CUDA_INFO).devices[0], false);
+    assert.equal("processes" in C.parseInfo(CUDA_INFO).devices[0], false);
 });
 
 test("deviceBands: a runner's overhead is measured per runner, and is not a constant", () => {
     const { ps, info } = hwJson("runner-pids-context-band-2026-09-11.json");
-    const sample = { t: 1, capacity: M.parseInfo(info), models: ps.models.map(M.residencyFrom) };
+    const sample = { t: 1, capacity: C.parseInfo(info), models: ps.models.map(M.residencyFrom) };
     const ctx = (id, model) => B.deviceBands(sample, id).find((b) => b.key === `ctx:${model}`);
     // used_memory minus the model's size_vram on that card, both from the same instant.
     assert.equal(ctx("0", "qwen3.5:0.8b").bytes, 6348079104 - 5883004189);
@@ -2623,7 +2625,7 @@ test("deviceBands: a runner's overhead is measured per runner, and is not a cons
 
 test("deviceBands: a process ollama cannot see is named as unseen, and one it can see as a tenant", () => {
     const raw = hwJson("runner-pids-other-processes-2026-09-11.json");
-    const sample = { t: 1, capacity: M.parseInfo(raw), models: [] };
+    const sample = { t: 1, capacity: C.parseInfo(raw), models: [] };
     const bands = B.deviceBands(sample, "1");
     const g = raw.compute.supported_gpus[1];
     const tenant = bands.find((b) => b.key === "proc:417");
@@ -2637,14 +2639,14 @@ test("deviceBands: a process ollama cannot see is named as unseen, and one it ca
     // With every process listed (`all`), what is left owns no process: the driver's own.
     const all = structuredClone(raw);
     for (const d of all.compute.supported_gpus) d.processes_scope = "all";
-    assert.equal(B.deviceBands({ t: 1, capacity: M.parseInfo(all), models: [] }, "1").find((b) => b.key === "other").label, B.DRIVER_BAND_LABEL);
+    assert.equal(B.deviceBands({ t: 1, capacity: C.parseInfo(all), models: [] }, "1").find((b) => b.key === "other").label, B.DRIVER_BAND_LABEL);
 });
 
 test("deviceBands: through a load, helpers are not tenants and the loading runner IS the allocation", () => {
     // Every process entry one 100 ms poll saw across one load, each placed alone on a one-card box.
     const lines = readFileSync(new URL("./fixtures/hw/runner-pids-during-load-2026-09-11.ndjson", import.meta.url), "utf8").trim().split("\n").map((l) => JSON.parse(l));
     const TOTAL = 101972967424;
-    const at = (p) => ({ t: 1, models: [], capacity: M.parseInfo({ compute: { system_compute: { total_memory: 8e9 },
+    const at = (p) => ({ t: 1, models: [], capacity: C.parseInfo({ compute: { system_compute: { total_memory: 8e9 },
         supported_gpus: [{ gpu_id: "0", runner: "CUDA", total_memory: TOTAL, free_memory: TOTAL - p.used_memory, processes_scope: "pid_namespace", processes: [p] }] } }) });
     const kinds = lines.map((p) => B.deviceBands(at(p), "0").find((b) => b.kind === "other" && b.bytes > 0).key);
     // The fit probe (`llama-server`) and device discovery (`ollama`) are ollama's own, and never read as a stranger.
@@ -2670,7 +2672,7 @@ test("deviceBands: a process list with no scope is an EARLIER build's, and names
     // entries — no scope, no runner marks — so pid 956 is ollama's own runner and must not become a tenant.
     const frames = JSON.parse(readFileSync(new URL("./e2e/fixtures/events-load-lifecycle.json", import.meta.url), "utf8"));
     const f = frames.filter((x) => x.kind === "sample" && x.info).at(-1);
-    const sample = { t: 1, capacity: M.parseInfo(f.info), models: (f.ps?.models || []).map(M.residencyFrom) };
+    const sample = { t: 1, capacity: C.parseInfo(f.info), models: (f.ps?.models || []).map(M.residencyFrom) };
     const bands = B.deviceBands(sample, "0");
     assert.ok(!bands.some((b) => b.key.startsWith("proc:")), `no tenant invented: ${bands.map((b) => b.key)}`);
     assert.notEqual(bands.find((b) => b.key === "other").label, B.OUTSIDE_VIEW_LABEL, "and the size rule still names the residual");
@@ -2706,7 +2708,7 @@ test("loadTrace: through a real load, the runner's peak beside where it settled"
     // lists processes, after a baseline reading from before the load began.
     const lines = readFileSync(new URL("./fixtures/hw/runner-pids-during-load-2026-09-11.ndjson", import.meta.url), "utf8").trim().split("\n").map((l) => JSON.parse(l));
     const TOTAL = 101972967424, BASE = 600 * MiB;
-    const cap = (procs, used) => M.parseInfo({ compute: { system_compute: { total_memory: 8e9 },
+    const cap = (procs, used) => C.parseInfo({ compute: { system_compute: { total_memory: 8e9 },
         supported_gpus: [{ gpu_id: "0", runner: "CUDA", total_memory: TOTAL, free_memory: TOTAL - used, processes_scope: "pid_namespace", processes: procs }] } });
     const samples = [{ t: 0, models: [], capacity: cap([], BASE) },
         ...lines.map((p, i) => ({ t: 100 * (i + 1), models: [], capacity: cap([p], BASE + p.used_memory) }))];
@@ -2724,7 +2726,7 @@ test("loadTrace: through a real load, the runner's peak beside where it settled"
 });
 
 test("loadTrace: with no runner to read, the cards' growth — peak above where it settled", () => {
-    const cap = (used0) => M.parseInfo({ compute: { system_compute: { total_memory: 8e9 },
+    const cap = (used0) => C.parseInfo({ compute: { system_compute: { total_memory: 8e9 },
         supported_gpus: [{ gpu_id: "0", runner: "CUDA", total_memory: 100 * GB, free_memory: 100 * GB - used0 }, { gpu_id: "1", runner: "CUDA", total_memory: 100 * GB, free_memory: 100 * GB }] } });
     const s = (t, used) => ({ t, models: [], capacity: cap(used) });
     // 1 GB before; the load overshoots to 14 GB (a transient buffer) and settles at 11.
@@ -2796,20 +2798,20 @@ test("AMD's fabric (xGMI) is a bridge like NVLink: a pair, a full mesh, and said
 });
 
 test("naming a card: its description, the label a faulted one had, and what each address was last seen as", () => {
-    const cap = M.parseInfo({ compute: { system_compute: { total_memory: 8e9 }, supported_gpus: [
+    const cap = C.parseInfo({ compute: { system_compute: { total_memory: 8e9 }, supported_gpus: [
         { gpu_id: "0", name: "CUDA0", runner: "CUDA", total_memory: 4e9, free_memory: 4e9, pci_id: "0000:01:00.0", description: "NVIDIA RTX PRO 6000 Blackwell Workstation Edition" },
         { gpu_id: "1", name: "CUDA1", runner: "CUDA", total_memory: 4e9, free_memory: 4e9, pci_id: "0000:03:00.0" }] } });
     assert.equal(cap.devices[0].description, "NVIDIA RTX PRO 6000 Blackwell Workstation Edition");
     assert.equal("description" in cap.devices[1], false, "absent stays absent — never derived from `name`");
     // The server's own memory of a faulted card's label, when it sends it.
-    assert.equal(M.unavailableFrom([{ pci_id: "0000:03:00.0", reason: "reset_required", last_name: "CUDA1" }])[0].lastName, "CUDA1");
-    assert.equal("lastName" in M.unavailableFrom([{ pci_id: "0000:03:00.0", reason: "reset_required" }])[0], false);
+    assert.equal(C.unavailableFrom([{ pci_id: "0000:03:00.0", reason: "reset_required", last_name: "CUDA1" }])[0].lastName, "CUDA1");
+    assert.equal("lastName" in C.unavailableFrom([{ pci_id: "0000:03:00.0", reason: "reset_required" }])[0], false);
     // What each bus address was last seen as — the same object back when nothing changed, so it can gate a write.
-    const seen = M.noteSeenCards({}, cap);
+    const seen = C.noteSeenCards({}, cap);
     assert.deepEqual(seen, { "0000:01:00.0": { name: "CUDA0", description: "NVIDIA RTX PRO 6000 Blackwell Workstation Edition" }, "0000:03:00.0": { name: "CUDA1" } });
-    assert.equal(M.noteSeenCards(seen, cap), seen);
+    assert.equal(C.noteSeenCards(seen, cap), seen);
     // After CUDA1 faults, the survivor is still CUDA0 — and the faulted address keeps what it was last seen as.
-    const after = M.noteSeenCards(seen, { ...cap, devices: [cap.devices[0]] });
+    const after = C.noteSeenCards(seen, { ...cap, devices: [cap.devices[0]] });
     assert.equal(after["0000:03:00.0"].name, "CUDA1");
 });
 
@@ -2817,7 +2819,7 @@ test("a residual is explained in ITS backend's terms — CUDA on NVIDIA, HIP on 
     // Every machine shape, per the rule: a note that names another vendor's context is a fact about another box.
     for (const [key, shape] of Object.entries(BOXES)) {
         const d0 = shape.devices[0];
-        const cap = M.parseInfo({ compute: {
+        const cap = C.parseInfo({ compute: {
             system_compute: { total_memory: shape.hostTotal, free_memory: Math.round(shape.hostTotal * 0.6) },
             supported_gpus: shape.devices.map((d, i) => ({ ...d, free_memory: d.total_memory - (i === 0 ? 3 * GB : 0.2 * GB) })) } });
         const sample = { t: 1, capacity: cap, models: [] };
@@ -2885,15 +2887,15 @@ test("the REAL capture with one card faulted: the healthy card's product name, a
     // `ollama-slop:devicenames`, off the box with GPU1 faulted. The fault predates the first build that remembers
     // names, so `last_name` is correctly ABSENT — the server never saw that address healthy, and never guesses.
     const raw = JSON.parse(readFileSync(new URL("./fixtures/hw/gpu-description-one-card-faulted-2026-09-12.json", import.meta.url), "utf8"));
-    const cap = M.parseInfo(raw);
+    const cap = C.parseInfo(raw);
     assert.equal(cap.devices.length, 1, "the faulted card is not a device");
     assert.equal(cap.devices[0].description, "NVIDIA RTX PRO 6000 Blackwell Workstation Edition");
     assert.equal(cap.devices[0].name, "CUDA0", "`name` is still the backend's label");
-    const [fault] = M.unavailableFrom(raw.compute.unavailable_gpus);
+    const [fault] = C.unavailableFrom(raw.compute.unavailable_gpus);
     assert.equal(fault.pciId, "0000:03:00.0");
     assert.ok(!("lastName" in fault) && !("lastSeen" in fault));
     // The shape as built, when the server did see it healthy: the label AND when.
-    const known = M.unavailableFrom([{ ...raw.compute.unavailable_gpus[0], last_name: "CUDA1", last_seen: "2026-09-12T08:22:22Z" }])[0];
+    const known = C.unavailableFrom([{ ...raw.compute.unavailable_gpus[0], last_name: "CUDA1", last_seen: "2026-09-12T08:22:22Z" }])[0];
     assert.deepEqual([known.lastName, known.lastSeen], ["CUDA1", Date.parse("2026-09-12T08:22:22Z")]);
 });
 
@@ -2973,7 +2975,7 @@ test("placement: the id decides, not the name — an old build's runner-relative
 // ---- Measured decode speed (ollama-slop:correction, real captures 2026-09-13) ----
 
 test("box profile: each card's measured decode bandwidth is joined to it by pci_id, beside the rated one", () => {
-    const cap = M.parseInfo(hwJson("info-box-profile-2026-09-13.json"));
+    const cap = C.parseInfo(hwJson("info-box-profile-2026-09-13.json"));
     assert.equal(cap.profile.state, "measured");
     assert.equal(cap.profile.measuredAt, Date.parse("2026-09-13T06:51:30.269Z"));
     const [a, b] = cap.devices;
@@ -2982,7 +2984,7 @@ test("box profile: each card's measured decode bandwidth is joined to it by pci_
     assert.equal(a.decodeProfile.layerOverheadUs, 25.121);
     assert.equal(b.decodeProfile.bandwidth, 1607856341423, "the other card gets ITS figure, not the first card's");
     assert.equal(Math.round((a.decodeProfile.bandwidth / a.memoryBandwidth) * 100), 90, "90% of rated, as the server says");
-    assert.equal(M.parseInfo({ compute: { system_compute: { total_memory: 1 }, supported_gpus: [] } }).profile, undefined, "absent → absent");
+    assert.equal(C.parseInfo({ compute: { system_compute: { total_memory: 1 }, supported_gpus: [] } }).profile, undefined, "absent → absent");
 });
 
 test("expected_decode: the three real shapes parse, and the wording follows the basis", () => {

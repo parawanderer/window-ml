@@ -7,7 +7,8 @@
 import { useLayoutEffect } from "preact/hooks";
 import { sampleAtFraction } from "../resource-axis";
 import { type Band, OUTSIDE_VIEW_LABEL } from "../resource-bands";
-import { type ResourceSample, type MemoryBreakdown, memoryParts, formatBytes, percentOf, type LayerPlacement, layersOnCard, type DeviceCapacity } from "../resource-model";
+import { type ResourceSample, type MemoryBreakdown, memoryParts, formatBytes, percentOf, type LayerPlacement, layersOnCard } from "../resource-model";
+import { type DeviceCapacity } from "../resource-capacity";
 import { cursorOn, live, poolHover, gapHover, cursorAt, eventHover } from "./chart-interaction";
 import { partFill, bandFill } from "./chart-paint";
 import { ModelFacts, CostFacts } from "./panel-facts";

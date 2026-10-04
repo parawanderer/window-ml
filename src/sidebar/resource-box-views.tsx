@@ -6,7 +6,8 @@
 
 import { segments, runFrac } from "../resource-axis";
 import { hostBands, deviceBands, type Band } from "../resource-bands";
-import { type ResourceSample, type ResourceEvent, ceilingsFor, formatBytes, formatShare, type DeviceCapacity } from "../resource-model";
+import { type ResourceSample, type ResourceEvent, ceilingsFor, formatBytes, formatShare } from "../resource-model";
+import { type DeviceCapacity } from "../resource-capacity";
 import { type TrackDef, boxAxis } from "../resource-presets";
 import { bridgeOrder, bridgeWalls, linkPhrase } from "../resource-topology";
 import { noteRuns, notePools, trackCursor, hoverAt, hoverPool, enterPool, leavePool, snapUnder, poolHover } from "./chart-interaction";

@@ -10,7 +10,8 @@
 // band explains itself in its OWN backend's terms, which is why the notes are constants here and not strings
 // at the call site: CUDA, HIP, host RAM and unified memory are four different explanations of the same gap.
 
-import { MemoryBreakdown, ModelResidency, ResourceSample, DeviceCapacity } from "./resource-model";
+import { MemoryBreakdown, ModelResidency, ResourceSample } from "./resource-model";
+import { DeviceCapacity } from "./resource-capacity";
 
 /** What a band IS, which decides how it draws and whether it can be explained. `unknown` is the one that
  *  earns its place: a per-device figure of 0 under a non-zero total means the server did not attribute it,
