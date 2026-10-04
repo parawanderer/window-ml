@@ -7,7 +7,8 @@
 import { signal } from "@preact/signals";
 import { useRef, useState, useLayoutEffect } from "preact/hooks";
 import { scrubIntent, TAIL_SLACK_MS, scrubExtent, segments, scrubZone, scrubResize, scrubTo, scrubPinch, wheelScrubFraction, scrubNudge } from "../resource-axis";
-import type { ResourceSample, ResourceEvent } from "../resource-model";
+import type { ResourceSample } from "../resource-model";
+import type { ResourceEvent } from "../resource-timeline";
 import { sampleGapMs, colorFor } from "./panel-state";
 import { zoomRange, resWindowS, RESWIN_KEY, laneEnabled, showLane } from "./store";
 

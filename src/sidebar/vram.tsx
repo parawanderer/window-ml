@@ -24,7 +24,8 @@ import { fmtAge, hhmmss } from "./timestamps";
 // cannot import this module (it would be a cycle — this one imports RenderPanel).
 export { lsGet, lsSet } from "./store";
 import { eventsFrom, laneEvents, type UsageSource } from "./model-stats";
-import { formatBytes, boxSignature, residencyEvents, type ResourceEvent } from "../resource-model";
+import { formatBytes, boxSignature } from "../resource-model";
+import { residencyEvents, type ResourceEvent } from "../resource-timeline";
 import { isGpuFault, gpuFaultNote } from "../resource-capacity";
 import { presetsFor } from "../resource-presets";
 import { chartWindow, windowSamples } from "../resource-axis";

@@ -17,7 +17,8 @@
 
 import { Fragment } from "preact";
 import { useMemo, useState, useEffect } from "preact/hooks";
-import { ceilingsFor, isCpuResident, type ResourceEvent, type ResourceSample } from "../resource-model";
+import { ceilingsFor, isCpuResident, type ResourceSample } from "../resource-model";
+import { type ResourceEvent } from "../resource-timeline";
 import { type Capacity } from "../resource-capacity";
 import { presetsFor, type TrackDef } from "../resource-presets";
 import { chartWindow, axisOf, scrubExtent, scrubPinch, windowSamples, scrubNudge, wheelScrubFraction, runWeight, runGap } from "../resource-axis";

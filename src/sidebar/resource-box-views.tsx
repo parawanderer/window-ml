@@ -6,7 +6,8 @@
 
 import { segments, runFrac } from "../resource-axis";
 import { hostBands, deviceBands, type Band } from "../resource-bands";
-import { type ResourceSample, type ResourceEvent, ceilingsFor, formatBytes, formatShare } from "../resource-model";
+import { type ResourceSample, ceilingsFor, formatBytes, formatShare } from "../resource-model";
+import { type ResourceEvent } from "../resource-timeline";
 import { type DeviceCapacity } from "../resource-capacity";
 import { type TrackDef, boxAxis } from "../resource-presets";
 import { bridgeOrder, bridgeWalls, linkPhrase } from "../resource-topology";

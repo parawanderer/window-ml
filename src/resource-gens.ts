@@ -5,7 +5,8 @@
 // than by model and end time. Pure.
 
 import type { Wire, DecodePrediction, GenerationTimings, RequestHint } from "./events-wire";
-import { GenTimings, PhaseKind, ResourceEvent, ResourceSample, normModel } from "./resource-model";
+import { ResourceSample, normModel } from "./resource-model";
+import { GenTimings, PhaseKind, ResourceEvent } from "./resource-timeline";
 
 /**
  * WHAT THE SERVER PREDICTED THIS GENERATION WOULD DECODE AT, made before it ran (`gen.end.predicted_decode`). Made

@@ -16,6 +16,8 @@ const P = await import("../src/resource-presets.ts");
 const C = await import("../src/resource-capacity.ts");
 // And what a model should decode at and is doing now: expected decode, roofline, activity, KV occupancy.
 const D = await import("../src/resource-decode.ts");
+// And the events the lane and the plots draw: what a ResourceEvent is, and the readings that place one.
+const E = await import("../src/resource-timeline.ts");
 // And one generation as the lane draws it: the server's own edges, joined to the calls we made.
 const G = await import("../src/resource-gens.ts");
 const L = await import("../src/resource-lane.ts");
@@ -321,8 +323,8 @@ test("runGap: what a break stands for — how long, and whether the server said 
 test("eventsIn: only the window, in time order", () => {
     const ev = (t, label) => ({ t, kind: "note", label });
     const all = [ev(50, "late"), ev(10, "early"), ev(500, "outside"), ev(1, "before")];
-    assert.deepEqual(M.eventsIn(all, 5, 100).map((e) => e.label), ["early", "late"]);
-    assert.deepEqual(M.eventsIn(all, 0, 0).map((e) => e.label), []);
+    assert.deepEqual(E.eventsIn(all, 5, 100).map((e) => e.label), ["early", "late"]);
+    assert.deepEqual(E.eventsIn(all, 0, 0).map((e) => e.label), []);
 });
 
 // Every memory figure this API returns is raw bytes, and every one of them is BINARY. Dividing by 1000³ makes
@@ -641,7 +643,7 @@ test("eventsIn: a span counts when it OVERLAPS the window, an instant when it is
         { t: 550, until: 5000, kind: "gen", label: "straddles the end" },
         { t: 10, until: 90, kind: "gen", label: "entirely before" },
     ];
-    const got = M.eventsIn(evs, 200, 800).map((e) => e.label);
+    const got = E.eventsIn(evs, 200, 800).map((e) => e.label);
     assert.deepEqual(got, ["straddles the start", "inside", "straddles the end"],
         "membership is overlap for spans; clipping to the window is the renderer's job");
 });
@@ -690,7 +692,7 @@ test("residencyEvents: an eviction is a diff; a load already told as a span isn'
     ];
     // A load span already covers d — nothing reports an eviction, but a load DOES report itself.
     const loads = [{ t: 6000, until: 6900, kind: "load", label: "loading d", model: "d" }];
-    const evs = M.residencyEvents(samples, loads);
+    const evs = E.residencyEvents(samples, loads);
     const labels = evs.map((e) => e.label);
     assert.ok(labels.includes("b evicted"), "a model leaving ps is only knowable as a diff");
     assert.ok(labels.includes("c appeared"), "…and one arriving with no load span behind it comes from nowhere otherwise");
@@ -2535,17 +2537,17 @@ test("loadEdges: a server-split load rules its two steps through the plot, with 
     // gemma4:31b off the user's dump: weights in after 1.0 s (17.37 GiB), KV cache and compute after 1.5 s more.
     const load = { t: 1000, until: 3517, kind: "load", label: "loading gemma4:31b", model: "gemma4:31b", via: "server",
         phases: [{ kind: "weights", until: 2002 }, { kind: "context", until: 3517 }], weightsBytes: 18654282383, loadBytes: 46006565599 };
-    const [w, c] = M.loadEdges(load);
+    const [w, c] = E.loadEdges(load);
     assert.deepEqual([w.t, c.t], [2002, 3517], "at the two steps the device trace draws");
     assert.equal(w.until, undefined, "instants — rules, not spans");
     assert.match(w.label, /^gemma4:31b weights loaded \(17\.37 GiB\)$/);
     assert.match(c.label, /^gemma4:31b KV cache and compute buffers allocated \(25\.47 GiB\) — ready to serve$/);
     assert.equal(w.via, "server");
     // An inferred load has no boundary, so no rules: a rule is a claim about WHEN something happened.
-    assert.deepEqual(M.loadEdges({ t: 0, until: 5000, kind: "load", label: "x", model: "m" }), []);
-    assert.deepEqual(M.loadEdges({ t: 0, kind: "evict", label: "x", model: "m" }), []);
+    assert.deepEqual(E.loadEdges({ t: 0, until: 5000, kind: "load", label: "x", model: "m" }), []);
+    assert.deepEqual(E.loadEdges({ t: 0, kind: "evict", label: "x", model: "m" }), []);
     // Bytes unreported → the edges still say what they are.
-    assert.match(M.loadEdges({ ...load, weightsBytes: undefined, loadBytes: undefined })[1].label, /allocated — ready to serve$/);
+    assert.match(E.loadEdges({ ...load, weightsBytes: undefined, loadBytes: undefined })[1].label, /allocated — ready to serve$/);
     void GiB;
 });
 
