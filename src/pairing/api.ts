@@ -143,6 +143,54 @@ export const SCOPES: { id: string; label: string; detail: string }[] = [
     { id: "install", label: "Install packages", detail: "Add Python packages a later run can use." },
 ];
 
+/**
+ * A NAMED STARTING POINT for what a new device may do, so the choice a person actually makes is "how much do I trust
+ * this thing" rather than six independent switches. The switches stay, under `custom`: this is what sits above them.
+ *
+ * It names SCOPES and nothing else, deliberately. Pairing rights are a separate question (a device that may pair is a
+ * device that can grow the account without asking here), and signing revocations is not a choice at all: exactly one
+ * principal may hold it, the list's `version` is monotonic per account, so two signers race and the loser's revocation
+ * is refused as stale (window-ml-hub docs/design/revocation.md). A checkbox that could be ticked twice would
+ * manufacture the worst way a revocation can fail, so placing it is its own act and never a profile.
+ */
+export interface GrantProfile {
+    id: string;
+    label: string;
+    detail: string;
+    /** the scopes it grants; `null` for `custom`, which grants whatever the editor is showing */
+    scopes: string[] | null;
+}
+
+/** The profiles, widest-trust last so the list reads as an increasing amount of trust rather than a menu. */
+export const GRANT_PROFILES: readonly GrantProfile[] = [
+    { id: "watch", label: "Watch only", detail: "Read its sessions and follow them as they run. It cannot start or steer anything.", scopes: ["view"] },
+    { id: "use", label: "Use it", detail: "Read its sessions, and start, steer and stop them. What most devices need.", scopes: ["view", "drive"] },
+    { id: "custom", label: "Custom", detail: "Choose each one.", scopes: null },
+];
+
+/** The default a screen starts on, which is the same choice `defaultGrant` makes for a client. */
+export const DEFAULT_PROFILE = "use";
+
+/**
+ * Which profile a set of scopes IS, so a screen can open on the one that matches instead of always on `custom`, and so
+ * a grant that came from somewhere else (a delegate's narrowed default, a device paired by an older build) is still
+ * named rather than shown as a bare list. Order-independent, since a grant's scopes are a set.
+ */
+export function profileOf(scopes: readonly string[]): string {
+    const have = [...new Set(scopes)].sort().join(",");
+    return GRANT_PROFILES.find((p) => p.scopes && [...p.scopes].sort().join(",") === have)?.id ?? "custom";
+}
+
+/**
+ * The profiles this device can actually offer. A delegate may pass on only what it holds, so a profile it cannot
+ * grant in full is dropped rather than shown and then refused by the hub, which would arrive as an error about a
+ * certificate long after the tick. `custom` always survives: whatever is left, the editor can still express.
+ */
+export function profilesFor(grantable?: readonly string[] | null): GrantProfile[] {
+    if (!grantable) return [...GRANT_PROFILES];
+    return GRANT_PROFILES.filter((p) => !p.scopes || p.scopes.every((s) => grantable.includes(s)));
+}
+
 /** What a role is called on screen. */
 export function roleName(role: PairRole | string): string {
     return role === "runtime" ? "a browser runtime" : role === "client" ? "a device" : role === "box-connector" ? "a box" : "a device";

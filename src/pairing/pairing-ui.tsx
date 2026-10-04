@@ -10,7 +10,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { encode } from "uqr";
 import { ConnectionHistory, DevicesList } from "./devices-ui";
 import { QrScanner, canScan } from "./qr-scan";
-import { groupFour, pairingProblem, roleName, SCOPES, type FoundOffer, type Grant, type HubConnectionView, type Membership, type OfferHandle, type PairingApi } from "./api";
+import { groupFour, pairingProblem, profileOf, profilesFor, roleName, SCOPES, type FoundOffer, type Grant, type HubConnectionView, type Membership, type OfferHandle, type PairingApi } from "./api";
 
 /** A fingerprint as both screens draw it: four-character groups in the code face, large enough to compare. */
 export function Fingerprint({ value }: { value: string }) {
@@ -168,16 +168,33 @@ export function CreateAccount({ api, onCreated, onCancel }: { api: PairingApi; o
     );
 }
 
-/** What the new device may do: the scopes this device may grant, and pairing others. */
+/** What the new device may do: a named profile to start from, the scopes this device may grant, and pairing others. */
 function GrantEditor({ found, grant, onChange }: { found: FoundOffer; grant: Grant; onChange: (g: Grant) => void }) {
     const known = SCOPES.filter((s) => !found.grantable || found.grantable.includes(s.id));
     // A scope in the default this page has no words for is still shown, by name, rather than dropped unseen.
     const extra = grant.scopes.filter((id) => !SCOPES.some((s) => s.id === id)).map((id) => ({ id, label: id, detail: "" }));
     const toggle = (id: string, on: boolean) => onChange({ ...grant, scopes: on ? [...grant.scopes, id] : grant.scopes.filter((s) => s !== id) });
     const days = Math.round(grant.validityMs / 86_400_000);
+    // WHICH PROFILE IS SELECTED IS DERIVED, never held: the scopes are the state, and the profile is the name for the
+    // set they currently are. So ticking a box moves the selection to Custom by itself, and there is no second copy of
+    // the answer to fall out of step with the first. `custom` is a LABEL here rather than a button, because choosing
+    // it would do nothing — the scopes already are whatever they are — and a control that does nothing reads as broken.
+    const picked = profileOf(grant.scopes);
+    const choices = profilesFor(found.grantable).filter((p) => p.scopes);
     return (
         <fieldset class="pair-grant">
             <legend class="pair-field-label">What it may do</legend>
+            {choices.length ? (
+                <div class="pair-profiles" role="radiogroup" aria-label="What it may do">
+                    {choices.map((p) => (
+                        <button key={p.id} type="button" class={`pair-profile${picked === p.id ? " on" : ""}`} role="radio" aria-checked={picked === p.id}
+                            onClick={() => onChange({ ...grant, scopes: [...p.scopes!] })}>
+                            <b>{p.label}</b><span class="pair-hint">{p.detail}</span>
+                        </button>
+                    ))}
+                    {picked === "custom" ? <span class="pair-profile on custom" role="radio" aria-checked="true"><b>Custom</b><span class="pair-hint">Chosen one by one, below.</span></span> : null}
+                </div>
+            ) : null}
             {[...known, ...extra].map((s) => (
                 <label key={s.id} class="pair-check">
                     <input type="checkbox" checked={grant.scopes.includes(s.id)} onChange={(e) => toggle(s.id, (e.target as HTMLInputElement).checked)} />
