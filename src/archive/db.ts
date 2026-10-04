@@ -112,6 +112,16 @@ export function migrate(db: ArchiveDb, schema = "main"): void {
 export interface ArchiveInput {
     summary: SessionSummary;
     events: MlDebugEvent[];
+    /**
+     * Each event's position in the session's HISTORY, parallel to `events`; the index is used where one is absent.
+     *
+     * `pos` in this database is a history position, not an offset into whatever array was handed over. For a session
+     * filed whole from its first event the two are the same number, which is why nothing had to say so until now —
+     * but a client keeping a WINDOW of a long session holds events that start part-way in, and an index would claim
+     * they were the session's first. It is the same quantity `MlDebugEvent`'s envelope calls `pos` and the same one
+     * `session.backfill` pages by, so a copy can say where it begins and be paged back from there.
+     */
+    positions?: (number | undefined)[];
     history?: SessionHistory | null;
     split?: SessionBytes;
     bytes: number;
@@ -180,6 +190,52 @@ export async function prepareSession(input: ArchiveInput): Promise<PreparedSessi
     return { input, bodies, texts, images };
 }
 
+/** One event's position in the session's history: what the caller said, or its index when it said nothing. */
+export const posAt = (p: PreparedSession, i: number): number => p.input.positions?.[i] ?? i;
+
+/**
+ * Add events to a session ALREADY in the archive, without rewriting what is there.
+ *
+ * `writeSession` deletes every event row and reinserts them, which is right for filing a finished session and wrong
+ * for a client keeping a live one: the phone saves a few hundred milliseconds after each change, and rewriting the
+ * whole history each time is the O(session)-per-save that made its JSON copy expensive in the first place.
+ *
+ * Positions are the history's, so an event that arrives twice (a replayed ring, a reconnect) lands on the row it
+ * already had instead of being appended again. Returns how many rows the session now holds.
+ */
+export function appendEvents(db: ArchiveDb, p: PreparedSession): number {
+    const hash = p.input.summary.id.hash;
+    return db.transaction(() => {
+        const d = db as unknown as ArchiveDb;
+        for (const [sha, img] of p.images) {
+            d.exec({ sql: "INSERT OR IGNORE INTO images(sha, mime, data) VALUES (?, ?, ?)", bind: [sha, img.mime, img.data] });
+            d.exec({ sql: "INSERT OR IGNORE INTO image_refs(hash, sha) VALUES (?, ?)", bind: [hash, sha] });
+        }
+        const ev = d.prepare("INSERT OR REPLACE INTO events(hash, pos, kind, ts, body) VALUES (?, ?, ?, ?, ?)");
+        try {
+            p.bodies.forEach((body, i) => {
+                const e = p.input.events[i];
+                const pos = posAt(p, i);
+                ev.bind([hash, pos, e.kind, typeof e.ts === "number" ? e.ts : null, body]).stepReset();
+                if (p.texts[i]) {
+                    // FTS5 has no upsert: the old row for this position goes first, or a replayed event is indexed twice.
+                    d.exec({ sql: "DELETE FROM event_text WHERE hash = ? AND pos = ?", bind: [hash, pos] });
+                    d.exec({ sql: "INSERT INTO event_text(hash, pos, text) VALUES (?, ?, ?)", bind: [hash, pos, p.texts[i]] });
+                }
+            });
+        } finally { ev.finalize(); }
+        // The month it WAS in is dirty too, exactly as a rewrite marks it: a live session whose activity crosses a
+        // month boundary leaves the old month's file holding a stale copy of it.
+        const was = d.selectValue("SELECT last_ts FROM sessions WHERE hash = ?", [hash]);
+        if (was != null) markDirty(d, Number(was));
+        const n = Number(d.selectValue("SELECT COUNT(*) FROM events WHERE hash = ?", [hash]) ?? 0);
+        d.exec({ sql: "UPDATE sessions SET events = ?, last_ts = MAX(last_ts, ?), summary = ? WHERE hash = ?",
+            bind: [n, p.input.summary.lastTs, JSON.stringify(p.input.summary), hash] });
+        markDirty(d, p.input.summary.lastTs);
+        return n;
+    });
+}
+
 /**
  * Write a prepared session, replacing whatever the archive held for it. One transaction: a session is in the archive
  * whole or not at all, which is what lets the live store forget it only after this returns.
@@ -205,10 +261,11 @@ export function writeSession(db: ArchiveDb, p: PreparedSession, archivedTs: numb
         const ev = db.prepare("INSERT INTO events(hash, pos, kind, ts, body) VALUES (?, ?, ?, ?, ?)");
         const tx = db.prepare("INSERT INTO event_text(hash, pos, text) VALUES (?, ?, ?)");
         try {
-            p.bodies.forEach((body, pos) => {
-                const e = p.input.events[pos];
+            p.bodies.forEach((body, i) => {
+                const e = p.input.events[i];
+                const pos = posAt(p, i);
                 ev.bind([hash, pos, e.kind, typeof e.ts === "number" ? e.ts : null, body]).stepReset();
-                if (p.texts[pos]) tx.bind([hash, pos, p.texts[pos]]).stepReset();
+                if (p.texts[i]) tx.bind([hash, pos, p.texts[i]]).stepReset();
             });
         } finally { ev.finalize(); tx.finalize(); }
         for (const [sha, img] of p.images) {
@@ -262,16 +319,19 @@ function toBase64(data: Uint8Array): string {
 }
 
 /** An archived session read back: its row, its events with images restored, and what it would be continued from. */
-export function readArchived(db: ArchiveDb, hash: string): { summary: SessionSummary; events: MlDebugEvent[]; history: SessionHistory | null } | null {
+export function readArchived(db: ArchiveDb, hash: string): { summary: SessionSummary; events: MlDebugEvent[]; positions: number[]; history: SessionHistory | null } | null {
     const row = db.selectObjects("SELECT summary, history FROM sessions WHERE hash = ?", [hash])[0];
     if (!row) return null;
     const images = new Map<string, string>();
     for (const img of db.selectObjects("SELECT i.sha, i.mime, i.data FROM image_refs r JOIN images i ON i.sha = r.sha WHERE r.hash = ?", [hash])) {
         images.set(String(img.sha), `data:${img.mime};base64,${toBase64(img.data as Uint8Array)}`);
     }
-    const events = db.selectObjects("SELECT body FROM events WHERE hash = ? ORDER BY pos", [hash]).map((r) =>
+    const rows = db.selectObjects("SELECT pos, body FROM events WHERE hash = ? ORDER BY pos", [hash]);
+    const events = rows.map((r) =>
         JSON.parse(String(r.body), (_k, v) => (typeof v === "string" && v.startsWith(IMG_MARK) ? images.get(v.slice(IMG_MARK.length)) ?? v : v)) as MlDebugEvent);
-    return { summary: JSON.parse(String(row.summary)), events, history: row.history ? JSON.parse(String(row.history)) : null };
+    // The positions come back too: a copy holding a WINDOW of a long session needs to say where its first event sits
+    // in the history, and that number is what pages the rest back.
+    return { summary: JSON.parse(String(row.summary)), events, positions: rows.map((r) => Number(r.pos)), history: row.history ? JSON.parse(String(row.history)) : null };
 }
 
 /** Remove a session from the archive, and any image no other session still references. Its month's folder file is then

@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import init from "@sqlite.org/sqlite-wasm";
-import { ARCHIVE_SCHEMA, wasmDb, archiveStats, listArchived, migrate, prepareSession, readArchived, removeArchived, writeSession } from "../src/archive/db.ts";
+import { ARCHIVE_SCHEMA, appendEvents, wasmDb, archiveStats, listArchived, migrate, prepareSession, readArchived, removeArchived, writeSession } from "../src/archive/db.ts";
 
 const sqlite3 = await init();
 // WRAPPED THE WAY THE WORKER WRAPS IT. The shared SQL runs over a neutral surface now (`ArchiveDb`) so the phone's
@@ -137,4 +137,50 @@ test("a search row carries a plain-text snippet with the match marked", async ()
     const [row] = listArchived(db, { query: "40 euros" });
     assert.match(row.snippet, /«40» «euros»|«40 euros»/);
     assert.equal(listArchived(db)[0].snippet, undefined, "no query, no snippet");
+});
+
+// --- a live session: appended as it goes, and held as a window of a long history ---
+
+test("appendEvents adds to a session without rewriting what is already there", async () => {
+    // `writeSession` deletes every event row and reinserts. That is right for filing a finished session and wrong for
+    // a client keeping a live one, which saves again a few hundred milliseconds after every change.
+    const db = fresh();
+    await put(db, "cccc0001", 100);
+    const before = db.selectValue("SELECT COUNT(*) FROM events WHERE hash = ?", ["cccc0001"]);
+
+    const more = [{ kind: "agent-step", id: "cccc0001", ts: 9, session: { hash: "cccc0001", turn: 0 }, step: 3, seq: 3, tool: "exec", result: "a zeppelin, finally" }];
+    const n = appendEvents(db, await prepareSession({
+        summary: summary("cccc0001", 300), events: more, positions: [4], history: null, bytes: 999,
+    }));
+    assert.equal(n, Number(before) + 1, "one more row, and the others were not touched");
+    const back = readArchived(db, "cccc0001");
+    assert.deepEqual(back.events.slice(0, 4), events("cccc0001"), "everything that was there is unchanged");
+    assert.equal(back.events[4].result, "a zeppelin, finally");
+    assert.equal(back.summary.lastTs, 300, "and the session's own row caught up");
+    // It is searchable at once, which is the half an append could silently skip.
+    assert.deepEqual(listArchived(db, { query: "zeppelin" }).map((r) => r.summary.id.hash), ["cccc0001"]);
+});
+
+test("an event that arrives twice lands on the row it already had", async () => {
+    // A reconnect replays a ring, so the same event comes back. Positions are the history's, so this is an overwrite
+    // rather than a second copy — the test a plain INSERT would fail.
+    const db = fresh();
+    await put(db, "cccc0002", 100);
+    const again = { summary: summary("cccc0002", 100), events: [events("cccc0002")[2]], positions: [2], history: null, bytes: 999 };
+    const n = appendEvents(db, await prepareSession(again));
+    assert.equal(n, 4, "still four rows");
+    assert.equal(listArchived(db, { query: "euros" }).length, 1, "and indexed once, not twice");
+});
+
+test("pos is the HISTORY position, so a window says where it begins", async () => {
+    // The archive used to write the array index. For a session filed whole from its first event those are the same
+    // number; for a copy holding the end of a long session they are not, and an index would claim it started there.
+    const db = fresh();
+    const tail = events("cccc0003").slice(2);
+    writeSession(db, await prepareSession({
+        summary: summary("cccc0003", 100), events: tail, positions: [820, 821], history: null, bytes: 999,
+    }), 5000);
+    const back = readArchived(db, "cccc0003");
+    assert.deepEqual(back.positions, [820, 821], "the positions come back as given");
+    assert.deepEqual(back.events, tail, "and the events are still in order");
 });
