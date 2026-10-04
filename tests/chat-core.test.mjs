@@ -616,9 +616,18 @@ test("certItems: a button only where pressing one would work, and a different se
     assert.deepEqual(ready.fix, { kind: "act", label: "Renew" });
     assert.match(ready.detail, /changes nothing else/);
 
+    // THE SIGNER now earns a button too, of a different kind: signing revocations is the one grant a renewal may
+    // never re-issue, so its remedy is a refreshed pairing — which IS something this device can start, by showing a
+    // code. It used to say "only the root key may renew. Open that one", which was true of the rule and useless as an
+    // instruction, since nothing on the root renews anything. The rule above is unchanged: a button only where
+    // pressing one works. What changed is that pressing one now works here.
+    const signer = one({ mayRevoke: true });
+    assert.deepEqual(signer.fix, { kind: "devices", label: "Refresh pairing" });
+    assert.match(signer.detail, /refreshes its pairing/);
+    assert.match(signer.detail, /Nothing is lost/);
+    assert.doesNotMatch(signer.detail, /Open that one/);
+
     const no = {
-        // It signs the account's revocations, which only the root may renew: a delegate may neither issue nor renew it.
-        signer: [one({ mayRevoke: true }), /root key may renew/],
         // Paired BY another device, so it has no root-signed predecessor and never will.
         delegated: [one({ renewable: false }), /nothing to renew/],
         // Renewable in principle, but nothing is awake to sign it.
@@ -635,7 +644,7 @@ test("certItems: a button only where pressing one would work, and a different se
     // `canRenew` absent is the same as false: a surface that has not wired it up offers nothing.
     assert.equal(certItems({ notAfterMs: now + 60_000, renewable: true, issuerOnline: true }, now)[0].fix, undefined);
     // And they all count in the badge: they are problems, not suggestions.
-    assert.equal(attentionCount([ready, ...Object.values(no).map(([i]) => i)]), 5);
+    assert.equal(attentionCount([ready, signer, ...Object.values(no).map(([i]) => i)]), 5);
 });
 
 test("attentionItems: a lapse says something new each time it comes back, and stops asking once it cannot work", async () => {
@@ -780,7 +789,7 @@ test("renewSelf: tries each browser that is awake, installs what comes back, and
     // AND A KEPT CERTIFICATE SAYS SO, so whatever is showing the old window re-reads at once. The keyring is
     // otherwise only re-read hourly, and nothing told the inbox that the thing it was warning about had just been
     // fixed: the card kept saying "your access runs out in 5 days", which reads as a press that did nothing.
-    const { certChanged } = await import("../src/chat/renew.ts");
+    const { certChanged } = await import("../src/pairing/api.ts");
     const before = certChanged.value;
     w = world(() => ok());
     await renewSelf(w.host, w.pairing, [rt("a")], "p");

@@ -330,3 +330,34 @@ test("an old account's extra signers are visible to the pairing screen, so it st
     const { Role } = await import("../src/hub/wire.ts");
     assert.equal(defaultGrant(Role.ROLE_RUNTIME, undefined, true).mayRevoke, false);
 });
+
+// --- the signer's quarterly re-pairing, which is the one chore left ---
+
+test("the signer is told to REFRESH ITS PAIRING, and told what that costs, which is nothing", async () => {
+    // It used to say "only the device holding the account's root key may renew. Open that one" — true of the rule and
+    // useless as an instruction, since nothing on the root renews anything. The one device that needs a human was the
+    // one being misdirected.
+    //
+    // And the word matters as much as the button: "pair it again" makes a person ask what they lose. A device keeps
+    // its keys across pairings and its sessions are its own browser's storage, so the answer is nothing, and the
+    // sentence says so rather than leaving them to wonder.
+    const { certItems } = await import("../src/chat/attention.ts");
+    const [item] = certItems({ notAfterMs: NOW + 5 * DAY, renewable: true, mayRevoke: true, issuerOnline: true }, NOW);
+    assert.deepEqual(item.fix, { kind: "devices", label: "Refresh pairing" });
+    assert.match(item.detail, /refreshes its pairing/);
+    assert.match(item.detail, /Nothing is lost/);
+    assert.doesNotMatch(item.detail, /Open that one/);
+    assert.doesNotMatch(item.fix.label, /re-?pair/i, "the label never asks somebody to re-pair anything");
+});
+
+test("refreshing the SIGNER's pairing keeps its grant: the same principal arriving again is not a second signer", async () => {
+    // A device keeps its keys across pairings (keyring.ts), so the signer's quarterly re-pairing is the same
+    // principal. Treating that as "the account already has a signer" would hand it a certificate without the grant
+    // and leave the account unable to sign any removal — at the one moment somebody was deliberately tending to it.
+    const { defaultGrant } = await import("../src/hub/pair-flow.ts");
+    const { Role } = await import("../src/hub/wire.ts");
+    // `signerKnown` is what the pairing screen computes AFTER excluding the offer's own device, so re-pairing the
+    // signer reaches this as false and a DIFFERENT browser reaches it as true.
+    assert.equal(defaultGrant(Role.ROLE_RUNTIME, undefined, false).mayRevoke, true, "the signer, paired again");
+    assert.equal(defaultGrant(Role.ROLE_RUNTIME, undefined, true).mayRevoke, false, "some other browser");
+});

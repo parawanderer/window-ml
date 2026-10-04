@@ -46,6 +46,8 @@ export type AttentionCode =
 export type AttentionFix =
     | { kind: "act"; label: string }
     | { kind: "settings"; label: string; where: string }
+    /** open Settings → Devices on THIS surface, where a pairing both starts and is confirmed */
+    | { kind: "devices"; label: string }
     | { kind: "run"; label: string; run: () => void };
 
 /** One line of the list about a STATE of something, which is every line the phone's inbox is given. */
@@ -296,9 +298,20 @@ export function certItems(cert: CertState | null, nowMs: number): StateAttention
     const level: StateAttentionLevel = left <= CERT_URGENT_MS ? "blocks" : "limits";
     const tail = "After that it has to be paired again from scratch.";
     if (cert.mayRevoke) {
+        // PAIR IT AGAIN, which is the only thing that works and the one thing this did not say. It read "only the
+        // device holding the account's root key may renew. Open that one" — true of the rule and useless as an
+        // instruction, because nothing on the root device renews anything: `device.renew` refuses a `may_revoke`
+        // certificate outright and no root-side renewal was ever built. Signing the account's revocations is the one
+        // grant a renewal may never re-issue, so this device's quarter is a refreshed pairing rather than a press.
+        //
+        // IT IS CALLED REFRESHING, NOT RE-PAIRING, because "pair it again" makes a person ask what they lose and the
+        // answer is nothing: a device keeps its keys across pairings (keyring.ts), so the same principal arrives
+        // again under a new certificate, and its sessions were never the account's to take — they are this browser's
+        // own storage (`ml_session_<hash>`), untouched by any of it.
         return [{ ...base, level, key: "this-device:cert-expiring", code: "cert-expiring",
             title: `This device's access runs out ${when}`,
-            detail: `It signs this account's revocations, which only the device holding the account's root key may renew. Open that one. ${tail}` }];
+            detail: "It signs this account's revocations, which is the one grant a renewal may never re-issue, so this device refreshes its pairing instead. Nothing is lost: the same keys, the same name, and every session stay as they are. It takes a code shown here, scanned or typed on the device you pair devices from.",
+            fix: { kind: "devices", label: "Refresh pairing" } }];
     }
     if (!cert.renewable) {
         return [{ ...base, level, key: "this-device:cert-expiring", code: "cert-expiring",

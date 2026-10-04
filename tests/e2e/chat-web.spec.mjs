@@ -2576,3 +2576,48 @@ test("a run streams its thinking, with nothing to ask about it", async () => {
     expect(errors).toEqual([]);
     await page.close();
 });
+
+test("the signer refreshes its pairing from the inbox: one press to the code, saying who should scan it", async () => {
+    // The one device on an account that cannot renew itself is the one that signs revocations, and its quarter is a
+    // refreshed pairing. The inbox used to send it to "the device holding the account's root key", which has no
+    // button for this, so the single device needing a human was the one being misdirected.
+    const { page, errors } = await open(DESKTOP);
+
+    // This device is now the signer, with its window closing.
+    await page.evaluate(() => {
+        globalThis.__pairFake.setMembership({
+            label: "Shane's phone", role: "client", hubUrl: "wss://hub.example", fingerprint: "5ab0e19c44d2",
+            root: false, mayPair: true, principal: "5ab0e19c".repeat(8),
+            mayRevoke: true, renewable: true, notAfterMs: Date.now() + 5 * 86_400_000,
+        });
+    });
+
+    // The inbox says it, in the words that do not make somebody wonder what they lose.
+    await page.locator(".chat-att-btn, .chat-gear-btn").first().click();
+    const card = page.locator(".chat-att-item", { hasText: "access runs out" }).first();
+    await expect(card).toContainText("refreshes its pairing");
+    await expect(card).toContainText("Nothing is lost");
+    await expect(card).not.toContainText("Open that one");
+
+    // ONE PRESS to the code, not to a list: the item says what to do and this is it being done.
+    await card.getByRole("button", { name: "Refresh pairing" }).click();
+    const refresh = page.locator("section[aria-label='Refresh pairing']");
+    await expect(refresh).toContainText("the one grant a renewal may never re-issue");
+    // TYPING IS A ROUTE, and on a laptop-only account it is the only sane one: the signer is the extension runtime
+    // and the root is the standalone client, two browsers on one machine with no camera pointed at either screen.
+    // A heading that said only "scan" read as though scanning were the only way, which this would have caught.
+    await expect(refresh).toContainText("Nothing is lost");
+
+    await refresh.getByRole("button", { name: "Show the code" }).click();
+    // The code, and WHO IS SUPPOSED TO SCAN IT: a device that may pair, which is not this one.
+    await expect(page.locator("section[aria-label='Refresh pairing'] p", { hasText: "Settings → Devices → Pair a device" }))
+        .toContainText("On Work laptop");
+    await expect(page.locator("section[aria-label='Refresh pairing'] h3")).toContainText("or type the code");
+    await expect(page.locator("section[aria-label='Refresh pairing'] .pair-code")).toBeVisible();
+    // The QR itself, by its own class and with real modules in it: `svg` alone would match any icon on the page.
+    const qr = page.locator("section[aria-label='Refresh pairing'] svg.pair-qr");
+    await expect(qr).toBeVisible();
+    expect(Number(await qr.getAttribute("data-modules"))).toBeGreaterThan(50);
+    expect(errors).toEqual([]);
+    await page.close();
+});

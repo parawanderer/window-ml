@@ -13,12 +13,11 @@ import { exportTaskItems, exportTasks } from "./export-tasks";
 import { deviceEnv } from "./app-badge";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
-import type { Membership, PairingApi } from "../pairing/api";
+import { devicesStep, type Membership, type PairingApi, certChanged } from "../pairing/api";
 import { cursorTipOn } from "../sidebar/ui-kit";
 import { mainView, useEscapeCloses } from "./nav";
 import { SheetHead, settingsTab } from "./settings-page";
 import { dismiss, dismissed } from "./view-mode";
-import { certChanged } from "./renew";
 
 /** No codes of this device's own: every runtime reports its own now (`capabilities.attention`). */
 const NONE: ReadonlyMap<string, readonly string[]> = new Map();
@@ -124,12 +123,17 @@ export function AttentionPage({ items, extras }: { items: AttentionItem[]; extra
         // runtime to address, so it takes its own path; before this one existed the choke point below silently
         // swallowed it, and the card drew a button that did nothing.
         if (!it.runtime) {
+            // Straight to the code, not to a list: the item says what to do and this is it being done.
+            if (fix.kind === "devices") { devicesStep.value = "refresh"; settingsTab.value = "devices"; mainView.value = "settings"; return; }
             const act = extras?.renewSelf;
             if (!act) return;
             setBusy(it.key);
             void act().then((problem) => { setBusy(""); if (problem) setWhy(it.key); });
             return;
         }
+        // THIS surface's Devices screen, where a pairing both starts and is confirmed. The one item that uses it is
+        // the revocation signer's, whose quarter is a re-pairing rather than a press (attention.ts).
+        if (fix.kind === "devices") { devicesStep.value = "refresh"; settingsTab.value = "devices"; mainView.value = "settings"; return; }
         if (fix.kind === "settings") { settingsTab.value = "extension"; mainView.value = "settings"; return; }
         // Called synchronously in the click: a browser shows a permission prompt or a folder picker only inside one.
         const ask = extras?.fix?.(it.runtime.id, it.code);

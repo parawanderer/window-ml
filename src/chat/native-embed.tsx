@@ -23,7 +23,8 @@ import { agentTarget, attentionForApp, runtimeStorage, sessionChrome, startableF
 import type { PairingApi } from "../pairing/api";
 import type { CertState } from "./attention";
 import { certReminders } from "./reminders";
-import { certChanged, renewSelf } from "./renew";
+import { renewSelf } from "./renew";
+import { certChanged } from "../pairing/api";
 import { startAutoRenew } from "./auto-renew";
 import { installServices, services } from "../sidebar/services";
 import { installTooltipLayer } from "../sidebar/tooltip-layer";

@@ -6,19 +6,8 @@
 //
 // Why a device asks for its own: a certificate lives in the keyring of the device it is about and nothing can push one
 // there, so the asker has to be the recipient (docs/spec/SESSION_CONTRACT.md, `device.renew`).
-import { signal } from "@preact/signals";
-import type { PairingApi } from "../pairing/api";
+import { certChanged, type PairingApi } from "../pairing/api";
 import type { RuntimeInfo, SessionHost } from "../session-host";
-
-/**
- * Bumped whenever this device's certificate has been REPLACED, so whatever is showing its end re-reads at once.
- *
- * Without it the keyring is only re-read on a timer (`CERT_POLL_MS`, an hour), and nothing told the inbox that the
- * thing it was warning about had just been fixed: a successful renewal left the card saying "your access runs out in
- * 5 days" for up to an hour, which reads as a press that did nothing. That was true of the button before anything
- * renewed itself, and silent renewal would have made it the normal case.
- */
-export const certChanged = signal(0);
 
 /** What came of it, in the words a surface can show without rewording a failure it does not understand. */
 export type RenewOutcome =

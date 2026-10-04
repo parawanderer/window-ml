@@ -4,6 +4,7 @@
 // cannot fake from one screen: the other device answering a join, or the hub giving up on it.
 
 import type { DeviceInfo } from "../session-host";
+import { certChanged } from "./api";
 import type { FoundOffer, Grant, HubLogLine, Membership, OfferHandle, PairingApi, PairRole, RevokeOutcome } from "./api";
 
 /** The error shape the library's `PairingError` has: a reason the screens turn into words. */
@@ -117,7 +118,14 @@ export function fakePairing(o: {
                 return "revoked";
             },
         } : {}),
-        setMembership(m) { membership = m; },
+        setMembership(m) {
+            membership = m;
+            // A real membership change REPLACES this device's certificate, and `install` announces that so whatever
+            // is showing the old window re-reads at once (pairing/api.ts). The fake owes the same announcement, or a
+            // surface watching the certificate shows the one from before the swap until something else redraws it —
+            // which is a race, and the kind a test passes by luck on one machine and fails on another.
+            certChanged.value++;
+        },
         addOffer(code, offer) { offers.set(norm(code), offer); },
         get waiting() { return join ? { code: join.code, fingerprint: join.fingerprint } : null; },
         answer(asLabel) {
