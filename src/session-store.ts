@@ -259,16 +259,6 @@ export class SessionStore {
         return this.rows.has(hash);
     }
 
-    /**
-     * Where the next event queued for `hash` will sit in its stored history, counted as `session.backfill` counts it:
-     * what is written, in flight and queued. Undefined until the rows have been read, since a row created before then
-     * starts at 0 and `open` replaces it with the one on disk.
-     */
-    nextPos(hash: string): number | undefined {
-        if (!this.loaded) return undefined;
-        return (this.rows.get(hash)?.count ?? 0) + (this.pending.get(hash)?.length ?? 0);
-    }
-
     /** Queue one event. Returns at once; the write happens on the next flush. */
     put(summary: SessionSummary, event: MlDebugEvent): void {
         const hash = summary.id.hash;
@@ -383,8 +373,8 @@ export class SessionStore {
         // turn is readable and not continuable until something else happens to it.
         for (const hash of this.dirty) if (!batches.some(([h]) => h === hash)) batches.push([hash, []]);
         this.dirty.clear();
-        // Counted for every batch BEFORE any is written: `pending` is already empty, so a batch not yet counted would be
-        // in neither, and `nextPos` would hand a live event a position an earlier one is about to take.
+        // Counted for every batch BEFORE any is written: `pending` is already empty, so a batch not yet counted would
+        // be in neither, and a reader asking how much is stored would miss it for the length of the write.
         const writes: [StoredSessionRow, number, MlDebugEvent[]][] = [];
         for (const [hash, events] of batches) {
             const row = this.rows.get(hash);

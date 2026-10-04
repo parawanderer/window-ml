@@ -393,7 +393,8 @@ test("a kept session's live events say where they sit, and session.backfill coun
     port.send({ type: "events", sub: 1, hash: "dddd0001" });
     await flush();
     for (let i = 1; i <= 4; i++) void bg.send({ type: "ML_DEBUG_EVENT", event: ev("dddd0001", "agent-step", { step: i, seq: i, tool: "exec", result: `r${i}` }) }, tab(7));
-    // An unkept session's events carry no position: nothing stored is there to page from.
+    // An unkept session's events carry a position too, counted by the INDEX rather than the store: its history is
+    // the ring, and `session.backfill` pages that, so a client can read back to its start as long as it is held.
     void bg.send({ type: "ML_DEBUG_EVENT", event: start("eeee0001") }, tab(8));
     port.send({ type: "events", sub: 2, hash: "eeee0001" });
     void bg.send({ type: "ML_DEBUG_EVENT", event: ev("eeee0001", "agent-step", { step: 1, seq: 1, tool: "exec", result: "x" }) }, tab(8));
@@ -405,7 +406,15 @@ test("a kept session's live events say where they sit, and session.backfill coun
     assert.deepEqual(live.map((m) => m.pos), [1, 2, 3, 4]);
     const other = port.messages.filter((m) => m.type === "stream" && m.sub === 2 && m.message.type === "event" && m.message.event.kind === "agent-step");
     assert.equal(other.length, 1);
-    assert.equal(other[0].message.pos, undefined);
+    assert.equal(other[0].message.pos, 1, "the second event of a session the runtime does not keep");
+
+    port.send({ type: "cmd", id: 8, command: { type: "session.backfill", session: { runtime: "local", hash: "eeee0001" } } });
+    let unkept = null;
+    for (let i = 0; i < 100 && !unkept; i++) { await flush(); unkept = port.messages.find((m) => m.type === "result" && m.id === 8)?.result; }
+    assert.equal(unkept.ok, true, JSON.stringify(unkept));
+    assert.equal(unkept.data.events.length, 2, "the start and the step, out of the ring");
+    assert.equal(unkept.data.from, 0);
+    assert.equal(unkept.data.truncated, false, "nothing of it has been lost, so nothing is reported lost");
 
     port.send({ type: "cmd", id: 9, command: { type: "session.backfill", session: { runtime: "local", hash: "dddd0001" }, before: 3, limit: 2 } });
     let page = null;

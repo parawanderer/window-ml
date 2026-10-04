@@ -377,3 +377,35 @@ test("a pin is a field on the row: set and cleared once, counted, and carried th
     next.restore([{ summary: ix.get("aaaa0001"), count: 1 }]);
     assert.equal(next.get("aaaa0001").pinned, true);
 });
+
+test("heldEvents: what the ring still has, and where in the session it begins", () => {
+    // The count is the session's OWN history, not the runtime-wide cursor, and it is taken before the caps run — so
+    // trimming the ring loses the event and never its place. That difference is what tells "there is no more" from
+    // "there is more and it is gone", which is the whole of `truncated` on an unkept session's backfill.
+    const ix = index({ perSessionEvents: 4 });
+    assert.equal(ix.heldEvents("aaaa0001"), null, "a session it is not holding: nothing can be served, ever");
+
+    assert.equal(ix.ingest(start("aaaa0001"), bg()).pos, 0, "the first event of a session sits at 0");
+    for (let i = 1; i <= 3; i++) assert.equal(ix.ingest(step("aaaa0001", i), bg()).pos, i);
+    let held = ix.heldEvents("aaaa0001");
+    assert.equal(held.from, 0, "nothing trimmed yet, so the ring is the whole history");
+    assert.equal(held.seen, 4, "and `seen` is how long that history is, trimmed or not");
+    assert.deepEqual(held.events.map((e) => e.seq ?? 0), [0, 1, 2, 3]);
+
+    for (let i = 4; i <= 9; i++) ix.ingest(step("aaaa0001", i), bg());
+    held = ix.heldEvents("aaaa0001");
+    assert.equal(held.events.length, 4, "the cap");
+    assert.equal(held.from, 6, "ten events in, four held: the first of them is the seventh");
+    assert.deepEqual(held.events.map((e) => e.seq), [6, 7, 8, 9]);
+
+    // Each session counts its own history. A second one starting now starts at 0, however much the first has seen.
+    assert.equal(ix.ingest(start("aaaa0002"), bg()).pos, 0);
+    assert.equal(ix.heldEvents("aaaa0002").from, 0);
+
+    // A restored session's events are on disk, not in the ring, and its count continues from what was stored —
+    // otherwise a live event after a restart would claim a position an older one already holds.
+    const next = index();
+    next.restore([{ summary: ix.get("aaaa0001"), count: 40 }]);
+    assert.deepEqual(next.heldEvents("aaaa0001"), { events: [], from: 40, seen: 40 });
+    assert.equal(next.ingest(step("aaaa0001", 99), bg()).pos, 40);
+});

@@ -241,24 +241,34 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
             if (!deps.storedEvents) return fail("unsupported", "this browser keeps no history to page through");
             const limit = c.limit == null ? BACKFILL_PAGE : Math.min(Math.max(1, Math.floor(c.limit)), BACKFILL_PAGE);
             if (c.before != null && (!Number.isInteger(c.before) || c.before < 0)) return fail("invalid", "before must be a position in this session's history");
-            // A session this runtime does not KEEP has no durable history: the only copy was the ring, which the
-            // subscription already served, and what fell out of it is gone. Saying so is the whole point of
-            // `truncated` — a client that got an empty page would otherwise wait for a page that is never coming.
+            // TWO HISTORIES, PAGED THE SAME WAY. A session this runtime KEEPS is read from the store. One it does not
+            // keep was never written anywhere, so its only copy is the index's ring — which is still a history, just
+            // one that starts wherever it has been trimmed back to. Serving it is what lets a phone that joined a run
+            // late read its start at all; answering an empty page, as this did, threw away events the runtime held.
             const kept = !!deps.index.get(s.id.hash)?.saved;
-            const all = kept ? await deps.storedEvents(s.id.hash) : [];
+            // Never null for a session that got this far: `session(c)` refused one the index is not holding.
+            const held = deps.index.heldEvents(s.id.hash);
+            const all = kept ? await deps.storedEvents(s.id.hash) : (held?.events ?? []);
+            // WHERE `all[0]` SITS IN THE SESSION, which is not 0 whenever what we hold is a SUFFIX of the history. The
+            // ring says so itself. The store does not: it holds every event written since the session was saved, so
+            // its first is as far from the start as the session had already got — `seen - stored`, which is 0 for the
+            // ordinary session saved from its first event and positive for one saved late or evicted from since.
+            const base = kept ? Math.max(0, (held?.seen ?? all.length) - all.length) : (held?.from ?? 0);
             // A position past the end is not an error: a client that asked before the runtime had written its
             // newest events would otherwise be refused for being early rather than given the page it asked for.
-            const end = c.before == null ? all.length : Math.min(c.before, all.length);
-            const from = Math.max(0, end - limit);
+            const end = c.before == null ? base + all.length : Math.min(Math.max(c.before, base), base + all.length);
+            const from = Math.max(base, end - limit);
             return ok({
                 session: s.id,
                 epoch: deps.index.epochOf(s.id.hash),
-                events: all.slice(from, end),
+                events: all.slice(from - base, end - base),
                 from,
                 // `more` says another page exists BELOW this one. `truncated` says one does not and never will,
-                // which is a different sentence and the one a reader has to be told.
-                more: from > 0,
-                truncated: from === 0 && !kept,
+                // which is a different sentence and the one a reader has to be told: this page reaches the bottom of
+                // what is held and the session began before it. Only an unkept session can be in that position, and
+                // only once its ring has been trimmed; the store holds a kept one from 0, so `base` is 0 there.
+                more: from > base,
+                truncated: from === base && base > 0,
             });
         },
 
