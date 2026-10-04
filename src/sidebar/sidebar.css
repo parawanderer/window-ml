@@ -1265,13 +1265,25 @@ html[data-focus] .astep-approve { gap: 8px; margin: 6px 0; padding: 9px 11px; bo
    divides them — the same shape `.continue-run`/`.continue-more` uses for Continue, because they are the same idea
    (the common answer under the thumb, the wordier one behind a chevron) and two shapes for it would be two things
    to learn. */
-.appr-deny-wrap { display: inline-flex; }
-.appr-deny-wrap .appr-btn.no { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+/* THE WRAPPER CARRIES THE OUTLINE, and the two halves inside it carry none. Giving each half its own border and
+   pulling them together with a negative margin left two rings and a seam between them, so it read as two pills
+   rather than one control with a second way in. One border, one radius, a hairline between — the halves cannot
+   disagree about their own edges because they no longer have any. `inherit` keeps whatever the surface's own theme
+   put on `.appr-btn.no` (focus view restyles it) rather than restating the colour here and drifting from it. */
+.appr-deny-wrap { display: inline-flex; border: 1px solid; border-radius: 6px; overflow: hidden; color: var(--err); border-color: currentColor; }
+.appr-deny-wrap .appr-btn.no { border: none; border-radius: 0; color: inherit; }
 /* The chevron half of a split Deny: where the wordier answer lives, so the plain refusal stays one press. */
-.appr-deny-more { display: inline-flex; align-items: center; padding: 3px 6px; margin-left: -1px;
-    border-top-left-radius: 0; border-bottom-left-radius: 0; }
+/* THE DIVIDER IS A SHADOW, not a border. Focus view sets `border-color: transparent` on every `.appr-btn` at a
+   specificity this cannot reach without naming the theme, so a border here was drawn and then wiped — the two
+   halves ran together with nothing to say the chevron was its own press. An inset shadow is not a border and
+   nothing restyles it. */
+.appr-deny-more { display: inline-flex; align-items: center; padding: 3px 6px; border: none; border-radius: 0;
+    box-shadow: inset 1px 0 0 currentColor; color: inherit; }
 .appr-deny-more svg { width: 14px; height: 14px; transform: rotate(90deg); }
 @media (pointer: coarse) { .appr-deny-more { min-width: 40px; justify-content: center; } }
+/* Focus view draws its buttons as pills with no outline until they are needed; the wrapper follows, or a round
+   Approve would sit beside a square Deny. */
+html[data-focus] .appr-deny-wrap { border-radius: 999px; color: var(--fg-dim); }
 /* The message itself: a field that can hold a sentence, not a line. */
 .appr-say { min-height: 72px; resize: vertical; font: inherit; }
 /* What the pointer gets from the tip, for everyone else: opened by the control, under the row it explains. */
