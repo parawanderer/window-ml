@@ -341,6 +341,67 @@ test("a device paired by ANOTHER DEVICE cannot be renewed, and is told to pair a
     } finally { paired?.close(); await w.close(); }
 });
 
+test("device.scopes NARROWS at once, from the allowlist, and the certificate is not what is consulted", LIVE, async () => {
+    // Taking a scope away cannot wait for the device to come and ask: it would hold the wider set for as long as it
+    // stayed away. So it is the allowlist, like revocation — the certificate still says `view, drive` and nothing
+    // here can change that, which is exactly why the allowlist is what the runtime reads.
+    const w = await revocationWorld();
+    let admin, tablet;
+    try {
+        admin = await w.connect(w.admin);
+        tablet = await w.connect(w.tablet);
+        await poll("both seen", () => w.devices.list().length === 2);
+        assert.deepEqual(w.devices.list().find((d) => d.label === "tablet").scopes.sort(), [SCOPE.drive, SCOPE.view]);
+        // It can drive today.
+        const drive = { type: "session.pin", session: { runtime: w.id, hash: "aaaa0001" }, pinned: true };
+        assert.equal((await w.ask(tablet, SCOPE.drive, drive)).ok, true);
+
+        const r = await w.ask(admin, SCOPE.admin, { type: "device.scopes", runtime: w.id, principal: hex(w.tablet.principal), scopes: [SCOPE.view] });
+        assert.deepEqual([r.ok, r.data.scopes], [true, [SCOPE.view]]);
+
+        // At once, on the connection it already has: no reconnect, no new certificate.
+        const after = await w.ask(tablet, SCOPE.drive, drive);
+        assert.deepEqual([after.ok, after.error.code], [false, "forbidden"]);
+        assert.match(after.error.message, /no longer allowed `drive`/);
+        assert.equal((await w.ask(tablet, SCOPE.view, { type: "runtime.info", runtime: w.id })).ok, true, "what is left still works");
+
+        // The list says what it may ACTUALLY do, which is the question a person reading it is asking.
+        assert.deepEqual(w.devices.list().find((d) => d.label === "tablet").scopes, [SCOPE.view]);
+        assert.ok(w.getSaved().devices[hex(w.tablet.principal)].narrowed, "and it is persisted, so a restart keeps it");
+    } finally { admin?.close(); tablet?.close(); await w.close(); }
+});
+
+test("device.scopes refuses to WIDEN, and says where a wider certificate comes from", LIVE, async () => {
+    // A delegate may issue only scopes it holds, and a runtime holds none: scopes are what a client may do TO a
+    // runtime, so its own certificate carries an empty set. A renewal cannot carry a wider set either — re-issuing
+    // the same scopes is what buys a renewal its exemption. So this is permanent, and the message says the one thing
+    // that works rather than failing in general words.
+    const w = await revocationWorld();
+    let admin, tablet;
+    try {
+        admin = await w.connect(w.admin);
+        // A device is on the allowlist because it was SEEN, so it has to have connected before it can be narrowed.
+        tablet = await w.connect(w.tablet);
+        await poll("the tablet seen", () => w.devices.list().some((d) => d.label === "tablet"));
+        const wider = await w.ask(admin, SCOPE.admin, {
+            type: "device.scopes", runtime: w.id, principal: hex(w.tablet.principal), scopes: [SCOPE.view, SCOPE.drive, SCOPE.approve],
+        });
+        assert.deepEqual([wider.ok, wider.error.code], [false, "forbidden"]);
+        assert.match(wider.error.message, /approve/);
+        assert.match(wider.error.message, /root device/);
+        assert.deepEqual(w.devices.list().find((d) => d.label === "tablet").scopes.sort(), [SCOPE.drive, SCOPE.view], "and nothing changed");
+
+        // Narrowing and then widening back is the same refusal: what was taken away is gone until the root re-issues.
+        await w.ask(admin, SCOPE.admin, { type: "device.scopes", runtime: w.id, principal: hex(w.tablet.principal), scopes: [SCOPE.view] });
+        const back = await w.ask(admin, SCOPE.admin, { type: "device.scopes", runtime: w.id, principal: hex(w.tablet.principal), scopes: [SCOPE.view, SCOPE.drive] });
+        assert.deepEqual([back.ok, back.error.code], [false, "forbidden"]);
+
+        // The runtime does not narrow ITSELF: it answers every command and signs the list, and nothing could widen it back.
+        const self = await w.ask(admin, SCOPE.admin, { type: "device.scopes", runtime: w.id, principal: w.id, scopes: [] });
+        assert.deepEqual([self.ok, self.error.code], [false, "conflict"]);
+    } finally { admin?.close(); tablet?.close(); await w.close(); }
+});
+
 test("the revocation list is published signed on the runtime's revocations channel, and a publisher can verify it", LIVE, async () => {
     const w = await revocationWorld();
     let admin, reader;

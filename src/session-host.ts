@@ -503,11 +503,10 @@ export type Command =
     /** Unpair a device: it stops being answered at once, and the stream keys it held are rotated. Revoking the
      *  device this client IS logs this client out, which a UI says before it happens. */
     | { type: "device.revoke"; runtime: RuntimeId; principal: PrincipalId; idempotencyKey?: IdempotencyKey }
-    /** Narrow or widen what a device may do, never beyond what this client holds.
-     *
-     *  `approve`, `control` and `admin` are granted at the runtime alone, so a command carrying one is refused with
-     *  `forbidden` — the client asked for something it may not ask for — rather than being silently dropped from the
-     *  list. Scopes are an open enumeration, and these are the members that must never be settable over the wire. */
+    /** NARROW what a device may do. Widening is refused with `forbidden`: a delegate may issue only scopes it holds
+     *  and a runtime holds none, so the wider certificate comes from the root device, and a renewal re-issues the
+     *  same scopes by definition. Narrowing needs no certificate — it is enforced from the runtime's allowlist, like
+     *  revocation, and takes effect at once. Answers what the device may do now. */
     | { type: "device.scopes"; runtime: RuntimeId; principal: PrincipalId; scopes: Scope[] }
     /**
      * Bring a tab, and the window holding it, to the front. What a person at the machine is LOOKING AT, which is why
