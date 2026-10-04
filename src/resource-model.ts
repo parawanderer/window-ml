@@ -14,6 +14,10 @@
 //      therefore UNKNOWN, never zero, and must render as such.
 //   3. Metal is UNIFIED memory: the device "total" is a recommended working set that OVERLAPS system RAM, so
 //      device and host capacity must never be summed. `runner` is the discriminator.
+//
+// Split on 2026-10-04: what the box HAS (the `/api/info` parse) is resource-capacity.ts, how fast a model should run
+// and what it is doing is resource-decode.ts, and the events the lane draws are resource-timeline.ts. This file keeps
+// residency, memory parts, load estimates, ceilings, box identity and the byte formatting everything else uses.
 import type { Wire,
     LoadEstimate as WireLoadEstimate, MemoryBreakdown as WireMemoryBreakdown,
     ModelPlacement, ProcessModelResponse } from "./events-wire";
