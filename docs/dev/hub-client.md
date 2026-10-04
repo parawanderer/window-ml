@@ -246,21 +246,28 @@ point the UI offers to pair, the same way every other capability in this codebas
    `tests/fixtures/hub/`: the certificates, the hello signature, a sealed command and result, a wrapped key, a frame,
    and the channel names.
 3. `tests/hub-client.test.mjs` (and `hub-pairing.test.mjs`, with `wmlbox`) drives the REAL `wmlhub` binary over a real websocket: the handshake, a sealed command
-   and its result, and an encrypted stream. It self-skips when the binary is absent (CI here has no Rust toolchain),
-   so build it first, or point `WMLHUB_BIN` at one:
+   and its result, and an encrypted stream. Thirty tests across six files need it, and they self-skip with the reason
+   when it is absent. Get it once, after a clone:
 
    ```bash
-   git clone --branch v0.4.0 git@github.com:parawanderer/window-ml-hub.git ../window-ml-hub-v0.4.0
-   cd ../window-ml-hub-v0.4.0 && cargo build --release -p wmlhub -p wmlhub-connector
+   npm run fetch-hub
    ```
 
-   **The tag is the artifact, and the clone is your own.** `HUB_TAG` in `tests/fixtures/hub-harness.mjs` — the ONE place,
-   shared by every test that runs the hub — pins which hub release this client
-   is checked against. The default path deliberately does not look in a plain `../window-ml-hub`: that is somebody's
-   WORKING TREE, on whatever branch they are on this hour, so a test here could pass or fail because of what another
-   session is in the middle of, and the failure would read as ours. There is no published binary or image. Both
-   changes coming to the hub are additive, so a client pinned to a tag keeps working against a later hub; move
-   `HUB_TAG` when a later one is NEEDED, not when one exists.
+   That downloads the pinned tag's published binaries (`wmlhub` and `wmlbox`), checks the SHA-256 the release
+   publishes beside them, runs one of them to prove it starts on this machine, and puts both where the harness
+   already looks. `WMLHUB_BIN` still wins, which is what you want while changing the hub itself — point it at your own
+   `cargo build --release` and the tests run against that.
+
+   **The tag is the artifact.** `HUB_TAG` in `tests/fixtures/hub-harness.mjs` — the ONE place, shared by every test
+   that runs the hub, and what `fetch-hub` reads — pins which hub release this client is checked against. The default
+   path deliberately does not look in a plain `../window-ml-hub`: that is somebody's WORKING TREE, on whatever branch
+   they are on this hour, so a test here could pass or fail because of what another session is in the middle of, and
+   the failure would read as ours. Changes coming to the hub are additive, so a client pinned to a tag keeps working
+   against a later hub; move `HUB_TAG` when a later one is NEEDED, not when one exists.
+
+   **CI runs these, on PRs that touch what they cover** (the `hub` job, scoped by the `changes` filter). Before the
+   hub published binaries it could not, so these ran on one laptop and skipped everywhere else — which is the failure
+   worth remembering, because a skipped test and a passing one look identical on a green page.
 
 4. `scripts/gen-hub-vectors.mjs` writes the vectors for the other direction, which the Rust side opens. Regenerate
    them whenever the format changes:

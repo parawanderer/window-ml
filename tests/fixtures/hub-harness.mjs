@@ -1,8 +1,8 @@
 // hub-harness.mjs — a real `wmlhub` for a test to talk to, and the principals of one account.
 //
 // Shared because three test files needed the same four helpers and the third copy is where they start to disagree.
-// The hub is the pinned TAG built from your own clone, never somebody's working tree: see tests/hub-client.test.mjs
-// and docs/dev/hub-client.md §Checks for why and how to build it.
+// The hub is the pinned TAG's published binary, never somebody's working tree: `npm run fetch-hub` gets it, and
+// docs/dev/hub-client.md §Checks says why the tag rather than a clone.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
@@ -28,7 +28,7 @@ export const BOX_BIN =
     (BIN ? join(BIN, "..", "wmlbox") : undefined);
 export const HAVE_BOX = !!BOX_BIN && existsSync(BOX_BIN);
 /** A skip that does not say what is missing is a test nobody ever turns on. */
-export const NO_HUB = `no wmlhub ${HUB_TAG} binary: clone the tag and \`cargo build --release -p wmlhub\`, or set WMLHUB_BIN`;
+export const NO_HUB = `no wmlhub ${HUB_TAG} binary: run \`npm run fetch-hub\`, or set WMLHUB_BIN to a build of your own`;
 /** Options for a test that needs the hub: skipped, with the reason, when there is none. */
 export const LIVE = { skip: !HAVE_HUB && NO_HUB, timeout: 30_000 };
 
