@@ -12,8 +12,17 @@ on:
 # matrix + e2e behind the last one, so the answer you were waiting for arrived minutes after it
 # mattered. A superseded run is cancelled — except on main, where every commit's result is a record
 # worth keeping.
+#
+# ON MAIN THE GROUP IS PER COMMIT, and it has to be: `cancel-in-progress: false` does NOT mean "never
+# cancel". It means a new run QUEUES, and GitHub keeps at most ONE queued run per group — a third
+# arrival cancels the one waiting. Merging four PRs back to back therefore left two main commits with
+# a `tests` run that was cancelled before a single job started, which is CI going silent rather than
+# red: the exact failure `.github/workflows/conflicts.yml` was written for, in another costume.
+# Putting the SHA in the group costs nothing on an ordinary day (one merge, one run, nothing to
+# supersede) and spends its runners only on a batch, which is the day a red tip is least able to say
+# which change did it.
 concurrency:
-  group: tests-${{ github.workflow }}-${{ github.ref }}
+  group: tests-${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'ref' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
