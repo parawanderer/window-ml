@@ -918,6 +918,9 @@ button.chat-page-go:hover { color: var(--fg); }
     cursor: pointer; text-align: left;
 }
 .chat-older-go:hover { color: var(--fg-dim); text-decoration: underline; }
+/* Quiet to look at, still a thumb's worth to hit: the text stays where it is and the row grows around it. The touch
+   probe caught this the moment the dashed box went, which is what the box had been providing by accident. */
+@media (pointer: coarse) { .chat-older-go { display: flex; align-items: center; min-height: 40px; } }
 .chat-older-n { font-variant-numeric: tabular-nums; }
 
 /* A row's `⋮`. It arrives with the pointer, in the corner the timestamp was using — the time is what you read on a
@@ -1125,6 +1128,11 @@ button.chat-page-go:hover { color: var(--fg); }
 /* The search page's foot: what limits the search, such as an archive folder that needs reconnecting. One CARD per
    note, the attention inbox's shape and its "limits" stripe — this is the same kind of thing (nothing is lost, one
    path is paused until someone clicks), so it should not read as a different class of message. */
+/* The wait while an export fetches the rest of a session: a real bar, because the total is known before it starts
+   (`earlier.from` is exactly how many events precede what is held). A spinner would be hiding a number we have. */
+.chat-export-pull { display: flex; flex-direction: column; gap: 6px; margin: 0 0 14px; color: var(--fg-dim); font-size: .9em; }
+.chat-export-bar { width: 100%; height: 6px; accent-color: var(--accent); }
+
 /* Named `foot` from when it sat at the end of the page; it leads the results now (search-page.tsx says why). */
 .chat-search-foot { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
 .chat-search-foot p {

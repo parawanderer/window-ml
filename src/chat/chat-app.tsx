@@ -193,7 +193,7 @@ function SessionMenu({ store, s, rt, title, sessionKey, partial, floating }: {
                         it already lives in the gear's menu — where it was duplicated behind a condition on the window's
                         width, so whether the item existed depended on how wide the window was. */}
                     {s && rt ? <SessionActions store={store} s={s} rt={rt} title={title || "Session"} onPicked={() => setAt(null)}
-                        onExport={sessionKey ? () => (exportingChat.value = { key: sessionKey, title: title || "Session", partial }) : undefined} /> : null}
+                        onExport={sessionKey ? () => (exportingChat.value = { key: sessionKey, title: title || "Session", partial, store }) : undefined} /> : null}
                 </div>
             ) : null}
         </>
