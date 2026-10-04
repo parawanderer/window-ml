@@ -2488,12 +2488,17 @@ test("the signer refreshes its pairing from the inbox: one press to the code, sa
     await card.getByRole("button", { name: "Refresh pairing" }).click();
     const refresh = page.locator("section[aria-label='Refresh pairing']");
     await expect(refresh).toContainText("the one grant a renewal may never re-issue");
+    // TYPING IS A ROUTE, and on a laptop-only account it is the only sane one: the signer is the extension runtime
+    // and the root is the standalone client, two browsers on one machine with no camera pointed at either screen.
+    // A heading that said only "scan" read as though scanning were the only way, which this would have caught.
     await expect(refresh).toContainText("Nothing is lost");
 
     await refresh.getByRole("button", { name: "Show the code" }).click();
     // The code, and WHO IS SUPPOSED TO SCAN IT: a device that may pair, which is not this one.
     await expect(page.locator("section[aria-label='Refresh pairing'] p", { hasText: "Settings → Devices → Pair a device" }))
         .toContainText("On Work laptop");
+    await expect(page.locator("section[aria-label='Refresh pairing'] h3")).toContainText("or type the code");
+    await expect(page.locator("section[aria-label='Refresh pairing'] .pair-code")).toBeVisible();
     // The QR itself, by its own class and with real modules in it: `svg` alone would match any icon on the page.
     const qr = page.locator("section[aria-label='Refresh pairing'] svg.pair-qr");
     await expect(qr).toBeVisible();

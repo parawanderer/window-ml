@@ -110,8 +110,11 @@ export function JoinAccount({ api, onJoined, onCancel, refresh }: { api: Pairing
     if (offer) {
         return (
             <section class="pair-card" aria-label={refresh ? "Refresh pairing" : "Join an account"}>
+                {/* "OR TYPE THE CODE" is not padding: the root may be a standalone client in another browser on the
+                    same laptop, with no phone anywhere and no camera pointed at its own screen. Typing is the only
+                    sane route there, and a heading that only says "scan" reads as though it were the only one. */}
                 <h3 class="pair-h">{refresh
-                    ? (offer.qr ? "Scan this on the device you pair devices from" : "Type this code on the device you pair devices from")
+                    ? (offer.qr ? "Scan this, or type the code, on the device you pair devices from" : "Type this code on the device you pair devices from")
                     : (offer.qr ? "Scan this, or type the code, on a device already in your account" : "Type this code on a device already in your account")}</h3>
                 {/* WHO IS SUPPOSED TO SCAN IT. A code with no addressee is a puzzle: only a device holding the
                     account's root may re-grant this one, and naming the ones this device has actually seen beats

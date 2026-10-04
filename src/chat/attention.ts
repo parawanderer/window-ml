@@ -310,7 +310,7 @@ export function certItems(cert: CertState | null, nowMs: number): StateAttention
         // own storage (`ml_session_<hash>`), untouched by any of it.
         return [{ ...base, level, key: "this-device:cert-expiring", code: "cert-expiring",
             title: `This device's access runs out ${when}`,
-            detail: "It signs this account's revocations, which is the one grant a renewal may never re-issue, so this device refreshes its pairing instead. Nothing is lost: the same keys, the same name, and every session stay as they are. It takes a code shown here and scanned from the device you pair devices from.",
+            detail: "It signs this account's revocations, which is the one grant a renewal may never re-issue, so this device refreshes its pairing instead. Nothing is lost: the same keys, the same name, and every session stay as they are. It takes a code shown here, scanned or typed on the device you pair devices from.",
             fix: { kind: "devices", label: "Refresh pairing" } }];
     }
     if (!cert.renewable) {
