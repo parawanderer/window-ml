@@ -6,7 +6,7 @@ import type { AgentTarget, Principal, RuntimeInfo, SessionKey, SessionSummary, S
 import { formatBytes } from "../resource-model";
 import { mayCommand, mayStart, resumableHere } from "../chat/grants";
 import type { AttentionRow, RuntimeStorageView, SessionChrome } from "./bridge";
-import { attentionCount, attentionItems } from "../chat/attention";
+import { attentionCount, attentionItems, certItems, type CertState } from "../chat/attention";
 
 /** The chrome for one open session. `live` is the transcript's own view of it (a run in flight shows as `pending` there
  *  before the index says `running`); `pageOwnsModel` is true once the runtime refused a switch because a page script
@@ -60,12 +60,16 @@ export function sessionChrome(key: SessionKey, summary: SessionSummary | undefin
  * every fix is a click in the runtime's own browser or its Settings, so each item says which device, and the app
  * offers no button that could not work. Dismissed suggestions are the app's to remember; it gets them all.
  */
-export function attentionForApp(runtimes: readonly RuntimeInfo[]): { items: AttentionRow[]; count: number } {
-    const items = attentionItems(runtimes, new Map(), () => false);
+export function attentionForApp(runtimes: readonly RuntimeInfo[], cert?: CertState | null, nowMs: number = Date.now()): { items: AttentionRow[]; count: number } {
+    // The per-runtime codes, and THIS DEVICE'S OWN CERTIFICATE — which the phone needs more than the page does, since
+    // a phone is the device most likely to be away while its access runs out. `deviceItems` still does not travel:
+    // those are the page's install story, and the app's is the App Store's.
+    const items = [...attentionItems(runtimes, new Map(), () => false), ...certItems(cert ?? null, nowMs)];
     return {
-        // Every item this snapshot carries comes from `attentionItems`, which is per runtime; the device-level ones
-        // (`deviceItems`) are the page's own and never reach the app, whose install story is the App Store's.
-        items: items.map((i) => ({ key: i.key, runtime: i.runtime!.id, runtimeName: i.runtime!.name, level: i.level, title: i.title, detail: i.detail })),
+        items: items.map((i) => ({
+            key: i.key, level: i.level, title: i.title, detail: i.detail,
+            ...(i.runtime ? { runtime: i.runtime.id, runtimeName: i.runtime.name } : {}),
+        })),
         count: attentionCount(items),
     };
 }

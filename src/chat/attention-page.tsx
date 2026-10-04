@@ -5,13 +5,14 @@
 // The button shows only when there is something in the list, and its count only for problems, never suggestions, so
 // a page that is set up stays as quiet as it was. A fix is offered only where THIS device can apply it (one click,
 // `ChatExtras.fix`, or the extension's Settings it holds); elsewhere the item says on which runtime it is fixed.
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import type { RuntimeInfo } from "../session-host";
 import { IconInbox } from "../sidebar/icons";
-import { attentionCount, attentionItems, deviceItems, type AttentionFix, type AttentionItem } from "./attention";
+import { attentionCount, attentionItems, certItems, deviceItems, type AttentionFix, type AttentionItem, type CertState } from "./attention";
 import { deviceEnv } from "./app-badge";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
+import type { Membership, PairingApi } from "../pairing/api";
 import { cursorTipOn } from "../sidebar/ui-kit";
 import { mainView, useEscapeCloses } from "./nav";
 import { SheetHead, settingsTab } from "./settings-page";
@@ -20,17 +21,54 @@ import { dismiss, dismissed } from "./view-mode";
 /** No codes of this device's own: every runtime reports its own now (`capabilities.attention`). */
 const NONE: ReadonlyMap<string, readonly string[]> = new Map();
 
+/** How often the keyring is re-read for the certificate's end. An expiry moves at the speed of a calendar, so this is
+ *  about a long-lived page crossing a day boundary, not about catching a change. */
+const CERT_POLL_MS = 60 * 60_000;
+
+/**
+ * THIS DEVICE'S OWN CERTIFICATE, as `certItems` needs it: read off the keyring, with `issuerOnline` live because that
+ * is the half that changes while you watch — a browser going to sleep is what turns the one-press renewal into "open
+ * one of your machines".
+ */
+export function useOwnCert(pairing: PairingApi | undefined, store: ChatStore): CertState | null {
+    const [me, setMe] = useState<Membership | null>(null);
+    useEffect(() => {
+        if (!pairing) return;
+        let alive = true;
+        const read = () => void pairing.load().then((m) => { if (alive) setMe(m); }).catch(() => {});
+        read();
+        const t = setInterval(read, CERT_POLL_MS);
+        return () => { alive = false; clearInterval(t); };
+    }, [pairing]);
+    if (!me || typeof me.notAfterMs !== "number") return null;
+    return {
+        notAfterMs: me.notAfterMs,
+        ...(me.mayRevoke ? { mayRevoke: true } : {}),
+        // Absent means an older build that did not report it; treat that as renewable rather than telling someone to
+        // re-pair a device that may be perfectly renewable.
+        renewable: me.renewable !== false,
+        issuerOnline: store.runtimes.value.some((rt) => rt.online),
+    };
+}
+
 /**
  * The list, from what the runtimes report. It changes when a runtime's description does, which a fix causes: the
  * worker follows permissions and settings, so a grant clears its item without the page asking again.
  */
-export function useAttention(store: ChatStore, extras?: ChatExtras): { items: AttentionItem[] } {
+export function useAttention(store: ChatStore, extras?: ChatExtras, cert?: CertState | null): { items: AttentionItem[] } {
     const canFix = (rt: RuntimeInfo, fix: AttentionFix, code: string) =>
         fix.kind === "act" ? !!extras?.fix?.(rt.id, code) : !!rt.capabilities.localSettings && extras?.settings?.(rt.id) != null;
     const repeat = (rt: RuntimeInfo, code: string) => !!extras?.fixedBefore?.(rt.id, code);
     // This device's own suggestions come FIRST in the call and last in the list: `attentionItems` sorts by level and
     // a suggestion outranks nothing, so where they sit is the sort's business rather than this line's.
-    return { items: [...attentionItems(store.runtimes.value, NONE, canFix, dismissed.value, repeat), ...deviceItems(deviceEnv(), dismissed.value)] };
+    // THIS DEVICE'S OWN CERTIFICATE is not a runtime's code and does not come from one: it is read off the keyring
+    // this page is holding. It goes through no `canFix`, because whether a renewal can happen is a fact about the
+    // certificate rather than about this surface, and `certItems` already decides it.
+    return { items: [
+        ...attentionItems(store.runtimes.value, NONE, canFix, dismissed.value, repeat),
+        ...certItems(cert ?? null, Date.now()),
+        ...deviceItems(deviceEnv(), dismissed.value),
+    ] };
 }
 
 /** The inbox above the gear: absent with nothing to do, a count only for problems. `labelled` in the list's foot. */

@@ -573,6 +573,64 @@ test("deleteFolderNote: a delete names the archive folder only where it reaches 
     }
 });
 
+test("certItems: a button only where pressing one would work, and nothing at all until it is close", async () => {
+    // Renewal took away the thing that used to catch a forgotten device: a certificate lapsed and took the device out
+    // of the account with it. A device that keeps connecting now keeps itself current, so the only signal left is
+    // telling someone — early enough to act, and only while acting is still possible.
+    const { certItems, CERT_WARN_MS, CERT_URGENT_MS } = await import("../src/chat/attention.ts");
+    const now = Date.parse("2026-10-04T12:00:00Z");
+    const at = (ms, over = {}) => certItems({ notAfterMs: now + ms, renewable: true, issuerOnline: true, ...over }, now);
+    const one = (ms, over) => { const i = at(ms, over); assert.equal(i.length, 1, JSON.stringify(i)); return i[0]; };
+
+    assert.deepEqual(certItems(null, now), [], "no certificate: nothing to say");
+    assert.deepEqual(at(CERT_WARN_MS + 60_000), [], "plenty of time: silence, so the list stays about what needs a hand");
+
+    // Inside the window: one item, naming the remedy that exists.
+    const soon = one(CERT_WARN_MS - 60_000);
+    assert.equal(soon.level, "limits");
+    assert.equal(soon.runtime, undefined, "it is about THIS device, not a machine on the account");
+    assert.match(soon.title, /runs out in 1[34] days/);
+    assert.match(soon.detail, /pair it again/i);
+
+    // Close in, it stops being something to get round to: missing it costs a re-pairing, not a press.
+    assert.equal(one(CERT_URGENT_MS - 60_000).level, "blocks");
+    assert.match(one(86_400_000 - 1000).title, /runs out today/, "the last day is named, not rounded to zero");
+
+    // EXPIRED: nothing can renew it, because it can no longer prove who it is. No button, and the title says so.
+    const gone = one(-60_000);
+    assert.equal(gone.code, "cert-expired");
+    assert.equal(gone.level, "blocks");
+    assert.equal(gone.fix, undefined);
+    assert.match(gone.detail, /[Pp]air it again/);
+});
+
+test("certItems: no press is offered anywhere, because nothing on a screen can renew yet", async () => {
+    // A button that does nothing is worse than none in the one place a person is deciding how much time they have.
+    // `device.renew` exists over the contract; installing what it answers with is its own piece of work, so until
+    // then every branch names the remedy that does work and differs only in WHY there is nothing quicker.
+    const { certItems, attentionCount, CERT_WARN_MS } = await import("../src/chat/attention.ts");
+    const now = Date.parse("2026-10-04T12:00:00Z");
+    const one = (over) => certItems({ notAfterMs: now + CERT_WARN_MS - 60_000, renewable: true, issuerOnline: true, ...over }, now)[0];
+
+    const cases = {
+        // It signs the account's revocations, which only the root may renew: a delegate may neither issue nor renew it.
+        signer: [one({ mayRevoke: true }), /root key may renew/],
+        // Paired BY another device, so it has no root-signed predecessor and never will.
+        delegated: [one({ renewable: false }), /nothing to renew/],
+        // Renewable in principle, but nothing is awake to sign it.
+        away: [one({ issuerOnline: false }), /None of your browsers is awake/],
+        // Renewable and something IS awake — and still no press, because no screen asks for one.
+        ready: [one({}), /not something these screens can do yet/],
+    };
+    for (const [what, [item, why]] of Object.entries(cases)) {
+        assert.equal(item.fix, undefined, `${what} offers no button`);
+        assert.match(item.detail, why, what);
+        assert.match(item.detail, /pair(ed)?( it)? again/i, `${what} names the remedy that works`);
+    }
+    // And they all count in the badge: they are problems, not suggestions.
+    assert.equal(attentionCount(Object.values(cases).map(([i]) => i)), 4);
+});
+
 test("attentionItems: a lapse this device fixed before is worded as a repeat, with the lasting choice named", async () => {
     const { attentionItems } = await import("../src/chat/attention.ts");
     const rt = { id: "local", name: "This browser", kind: "browser", online: true, contractVersion: 1, grants: [], capabilities: { archive: { folder: "needs-grant" } } };

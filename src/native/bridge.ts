@@ -78,8 +78,10 @@ export interface RuntimeStorageView {
 export interface AttentionRow {
     /** `runtime:code`: what dismissing a suggestion remembers */
     key: string;
-    runtime: string;
-    runtimeName: string;
+    /** ABSENT on an item about THIS DEVICE rather than a machine on the account — its certificate running out. The
+     *  app then says nothing about where it is, because the answer is "here". */
+    runtime?: string;
+    runtimeName?: string;
     level: "blocks" | "limits" | "suggests";
     title: string;
     detail: string;

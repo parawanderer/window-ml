@@ -4,7 +4,7 @@
 
 import { CertificateBody } from "../proto/wmlhub/v1/identity.gen";
 import type { Principal } from "../hub/keyring";
-import { principalId } from "../hub/keys";
+import { principalId, renewalPredecessor } from "../hub/keys";
 import { pairingFingerprintHex } from "../hub/pairing";
 import { Role } from "../hub/wire";
 import type { Membership, PairRole } from "./api";
@@ -33,5 +33,10 @@ export async function membershipOf(me: Principal | null, fallbackLabel: string):
         root: !!me.root,
         mayPair: !!me.root || !!body?.mayPair,
         principal: hex(await principalId(me.identity.publicKey)),
+        ...(body ? { notAfterMs: Number(body.notAfterMs) } : {}),
+        ...(body?.mayRevoke ? { mayRevoke: true } : {}),
+        // Whether a RENEWAL is even possible for this device, decided by the same function the runtime decides it
+        // with: a renewal must embed a root-issued predecessor, and a device paired by a delegate has none.
+        ...(leaf ? { renewable: !!renewalPredecessor(leaf, me.membership.accountRoot) } : {}),
     };
 }
