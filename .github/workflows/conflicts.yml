@@ -1,0 +1,46 @@
+# A PR THAT CONFLICTS WITH ITS BASE HAS NO CHECKS AT ALL, which is a worse failure than a red one: GitHub builds a
+# `pull_request` run against the MERGE COMMIT, so while there is no merge commit there is no run, and pushes to the
+# branch look untested rather than failing. It cost this repo two commits on #313 the day this was written.
+#
+# `tests.yml` cannot hold this. It is a `pull_request` workflow, and a workflow cannot detect its own absence. So this
+# rides `push`, which fires whatever the mergeability, and asks a different question depending on where the push went.
+name: conflicts
+
+on:
+  push:
+
+concurrency:
+  # Per ref, superseded runs cancelled: the answer is about the branch as it is now, not as it was two pushes ago.
+  group: conflicts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # "Did I just push something that conflicts?" A branch with no PR yet is a PASS — every branch's first push happens
+  # before its PR exists, and failing those is how a check gets ignored.
+  mine:
+    if: github.ref != 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+      - run: node scripts/pr-conflicts.mjs --branch "${GITHUB_REF_NAME}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # "Did what just landed break somebody else's?" THE ONE THAT MATTERS: the PR that broke on #313's day had not been
+  # pushed to, so a branch-side check alone would have stayed silent through exactly the case that cost the two
+  # commits. It never fails the run — this is main's own push, and reddening it for a consequence that belongs to
+  # another branch helps nobody. The comment is the signal, and it reaches whoever can act on it.
+  others:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+      - run: node scripts/pr-conflicts.mjs --all
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -854,6 +854,13 @@ the e2e suite, three Node versions, or the real-CPython tests.
 runs per branch** so a fix supersedes the run it replaces instead of queueing behind it; main is exempt,
 because every commit there keeps its result.
 
+**A PR THAT CONFLICTS WITH ITS BASE HAS NO CHECKS AT ALL**, which is worse than red ones: a `pull_request` run is
+built against the MERGE COMMIT, so while there is none there is no run, and every push to that branch looks untested
+rather than failing. It happens to branches nobody touched — something lands on main and a PR becomes conflicting on
+its own. The `conflicts` workflow (`scripts/pr-conflicts.mjs`) asks from both ends, failing a push to a branch whose
+PR conflicts and commenting on each PR that a push to main just broke; `tests.yml` cannot hold it, because a workflow
+cannot detect its own absence. If `gh run list` shows nothing for a commit you pushed, suspect this first.
+
 **The `ci` skill (`.claude/skills/ci/SKILL.md`) is the playbook**: open the PR, watch it in the
 BACKGROUND (`gh pr checks --watch`, ~6 minutes for a full run, the slowest of the three e2e shards being the long pole), read only the failing steps
 (`gh run view <id> --log-failed`), fix forward on the branch, and — importantly — the list of
