@@ -76,6 +76,28 @@ come. For a mid-flight peek, one plain `gh pr checks <PR>` is a snapshot and exi
 The general discipline, and the `dist/`-rebuild hazard that goes with it, is the `background-work`
 skill.
 
+## NO checks is worse than red checks
+
+```bash
+node scripts/pr-conflicts.mjs --branch "$(git branch --show-current)"   # does my PR still merge?
+node scripts/pr-conflicts.mjs --all                                    # which open PRs stopped merging
+```
+
+If `gh run list` shows nothing for a commit you pushed, the first thing to suspect is that the PR CONFLICTS with
+its base. GitHub builds a `pull_request` run against the MERGE COMMIT, so while there is no merge commit there is
+no run at all: the checks do not go red, they stop existing, and every push after that looks untested. It cost
+this repo two commits on #313, and nothing anywhere was red.
+
+The nastier half is that it happens to a branch NOBODY TOUCHED: three PRs landed on main, and #313 became
+conflicting without a single push to it. So the `conflicts` workflow asks the question from both ends — on a push
+to a branch ("did I just break my own PR?") and on a push to main ("did what just landed break someone else's?",
+which comments on each affected PR and never reddens main's own run). `tests.yml` cannot hold this, because a
+workflow cannot detect its own absence.
+
+Mergeability is computed asynchronously, so GitHub answers `null` for a window after any push — after a push to
+main, for every open PR at once. Both the script and you should treat that as unknown and ask again, never as a
+conflict.
+
 ## Reading a failure
 
 ```bash
