@@ -22,7 +22,9 @@ export function MenuItem({ icon, label, detail, note, on, sub, off, onPick }: { 
         <button class={`chat-menu-item${sub ? " chat-menu-sub" : ""}${off ? " off" : ""}`} role={on === undefined ? "menuitem" : "menuitemcheckbox"} aria-checked={on}
             {...(sub ? { style: `--i:${sub.i}`, tabIndex: sub.open ? 0 : -1 } : {})} aria-disabled={off || undefined}
             aria-label={detail ? `${label} — ${detail}` : undefined} onClick={off ? undefined : onPick}>
-            <span class="chat-menu-ico" aria-hidden="true">{icon}</span>
+            {/* A child row carries no glyph: its group's own row above it already said what these are, and an icon
+                there pushed the label 30px past every other child's. */}
+            {icon ? <span class="chat-menu-ico" aria-hidden="true">{icon}</span> : null}
             <span class="chat-menu-label">{label}{note ? <span class="chat-menu-note">{note}</span> : null}</span>
             {detail ? <span class="chat-menu-val">{detail}</span> : null}
             {on ? <span class="chat-menu-on" aria-hidden="true"><IconCheck /></span> : null}

@@ -1077,8 +1077,11 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-menu-subs.open { grid-template-rows: 1fr; border-left-color: var(--border); }
 .chat-menu-subs-in { min-height: 0; overflow: hidden; display: flex; flex-direction: column; padding-left: 6px; }
 /* One choice: fades in and slides left to right, each a beat after the one above; closing runs them back at once. */
+/* A CHILD'S TEXT LINES UP WITH ITS PARENT'S LABEL (10px padding + an 18px glyph + the 12px gap = 40px), which the
+   guide line's own 19px + 6px leaves 15px short. It was 30px, putting a child's words further right than anything
+   else in the menu — and once the panel rows gained glyphs, further right again than the theme rows beside them. */
 .chat-menu-item.chat-menu-sub {
-    padding-left: 30px; opacity: 0; transform: translateX(-10px);
+    padding-left: 15px; opacity: 0; transform: translateX(-10px);
     transition: opacity .16s cubic-bezier(.4, 0, .2, 1), transform .16s cubic-bezier(.4, 0, .2, 1), background-color .1s;
 }
 .chat-menu-subs.open .chat-menu-sub {

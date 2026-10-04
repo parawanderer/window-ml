@@ -9,7 +9,7 @@ import { signal } from "@preact/signals";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { RuntimeInfo, SessionKey } from "../session-host";
-import { IconBench, IconBrain, IconCompose, IconDock, IconGear, IconMenu, IconSearch, IconVram } from "../sidebar/icons";
+import { IconBrain, IconCompose, IconDock, IconGear, IconMenu, IconSearch } from "../sidebar/icons";
 import { MenuGroup, MenuItem } from "./menu";
 import { benchOpen, openBench, view } from "../sidebar/store";
 import type { ChatStore } from "./chat-store";
@@ -111,8 +111,8 @@ export function GearMenu({ graphsRt, benchRt, labelled }: {
                     {graphsRt || benchRt ? (
                         <MenuGroup icon={<IconDock side="right" />} label="Panels">
                             {(sub) => <>
-                                {graphsRt ? <MenuItem sub={{ i: 0, open: sub }} icon={<IconVram />} label="Models and memory" detail={graphsRt.name} on={pane.value === "resource"} onPick={pick(() => setPane(pane.value === "resource" ? null : "resource"))} /> : null}
-                                {benchRt ? <MenuItem sub={{ i: 1, open: sub }} icon={<IconBench />} label="Python bench" detail={benchRt.name} on={benchOpen.value} onPick={pick(() => (benchOpen.value ? (benchOpen.value = false) : openBench()))} /> : null}
+                                {graphsRt ? <MenuItem sub={{ i: 0, open: sub }} icon={null} label="Models and memory" detail={graphsRt.name} on={pane.value === "resource"} onPick={pick(() => setPane(pane.value === "resource" ? null : "resource"))} /> : null}
+                                {benchRt ? <MenuItem sub={{ i: 1, open: sub }} icon={null} label="Python bench" detail={benchRt.name} on={benchOpen.value} onPick={pick(() => (benchOpen.value ? (benchOpen.value = false) : openBench()))} /> : null}
                             </>}
                         </MenuGroup>
                     ) : null}
