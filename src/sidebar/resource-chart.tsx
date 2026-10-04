@@ -9,19 +9,17 @@
 //     ~0.55 GiB of ollama's discovery context and calling that "other processes" invents a process.
 //   • HONEST GAPS. Polling is gated on the panel being open, so history is discontinuous. A line drawn across
 //     a ten-minute hole is a confident claim about memory nobody measured; `segments` breaks it instead.
+//
+// This file is the chart's FRAME: the window, the axis and the tick, and which view draws each track. The views
+// are resource-device-view (one pool) and resource-box-views (several); what they draw with is resource-area,
+// resource-overlays, resource-tips and chart-paint; the strip under them is resource-scrub; and what the pointer
+// and keyboard are on is chart-interaction.
+
 import { Fragment } from "preact";
 import { useMemo, useState, useEffect } from "preact/hooks";
-import {
-    ceilingsFor, isCpuResident,
-
-    type ResourceEvent,
-
-    type ResourceSample, type Capacity,
-} from "../resource-model";
+import { ceilingsFor, isCpuResident, type ResourceEvent, type ResourceSample, type Capacity } from "../resource-model";
 import { presetsFor, type TrackDef } from "../resource-presets";
-import {
-    chartWindow, axisOf, scrubExtent, scrubPinch,
-    windowSamples, scrubNudge, wheelScrubFraction, runWeight, runGap} from "../resource-axis";
+import { chartWindow, axisOf, scrubExtent, scrubPinch, windowSamples, scrubNudge, wheelScrubFraction, runWeight, runGap } from "../resource-axis";
 import { scopeToSpan, filterEvents, sessionWindow } from "../resource-lane";
 import { deviceBands, hostBands, residualRank } from "../resource-bands";
 import { editLayout, VRAM_POLL_MS, laneFilter, layout } from "./panel-state";
