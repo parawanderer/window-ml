@@ -151,6 +151,11 @@ export function SearchPage({ store, narrow }: { store: ChatStore; narrow: boolea
                             ))}
                         </div>
                     ) : null}
+                    {/* ABOVE THE RESULTS, because this page pages for as long as there is history: at the foot, a
+                        caveat about what the results are missing could only be read by someone who had scrolled to
+                        the end of years of sessions, which is nobody. It is about the list, so it sits where the
+                        list starts. */}
+                    <ArchiveFolderNotes store={store} device={device} />
                     <div class="chat-search-label">{q ? `${all.length}${anyMore ? "+" : ""} match${all.length === 1 && !anyMore ? "" : "es"}` : "Recent"}</div>
                     {q && !all.length && !loading && settledQ === q
                         ? <div class="chat-search-empty">Nothing{device ? ` on ${rtOf.get(device)?.name ?? "that device"}` : ""} matches “{truncate(query.trim(), 40)}”.</div>
@@ -177,7 +182,6 @@ export function SearchPage({ store, narrow }: { store: ChatStore; narrow: boolea
                     </ul>
                     {shown < all.length || anyMore ? <div ref={sentinel} class="chat-search-more" aria-hidden="true" /> : null}
                     {loading ? <div class="chat-search-empty">Looking further back…</div> : null}
-                    <ArchiveFolderNotes store={store} device={device} />
                 </div>
             </div>
         </main>

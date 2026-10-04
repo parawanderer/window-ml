@@ -1122,7 +1122,8 @@ button.chat-page-go:hover { color: var(--fg); }
 /* The search page's foot: what limits the search, such as an archive folder that needs reconnecting. One CARD per
    note, the attention inbox's shape and its "limits" stripe — this is the same kind of thing (nothing is lost, one
    path is paused until someone clicks), so it should not read as a different class of message. */
-.chat-search-foot { display: flex; flex-direction: column; gap: 10px; margin-top: 24px; }
+/* Named `foot` from when it sat at the end of the page; it leads the results now (search-page.tsx says why). */
+.chat-search-foot { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
 .chat-search-foot p {
     margin: 0; padding: 14px 16px; border-radius: 14px; background: var(--panel); box-shadow: inset 3px 0 0 var(--warn);
     color: var(--fg-dim); font-size: .92em; line-height: 1.5;
