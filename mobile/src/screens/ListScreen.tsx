@@ -118,7 +118,10 @@ export function ListScreen() {
                     </Pressable>
                 )}
                 renderSectionFooter={({ section }) => section.runtime && section.older && !folded.has(section.runtime.id) ? (
-                    <Pressable accessibilityRole="button" onPress={() => nav.navigate("Search")}
+                    // CARRYING THE RUNTIME. The row has just named one; opening the search screen on every device
+                    // made you choose it again, under the heading that said it. The header's search button above
+                    // deliberately does not pass one, because it is asking about everything.
+                    <Pressable accessibilityRole="button" onPress={() => nav.navigate("Search", { device: section.runtime!.id })}
                         style={({ pressed }) => [pressed && { backgroundColor: p.panel }]}>
                         <Text style={[s.older, { color: p.fgDim }]}>{section.older} older on this runtime</Text>
                     </Pressable>

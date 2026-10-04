@@ -17,7 +17,7 @@ import { truncate } from "../sidebar/format";
 import { view } from "../sidebar/store";
 import type { ChatStore } from "./chat-store";
 import { mayCommand } from "./grants";
-import { mainView, useEscapeCloses } from "./nav";
+import { mainView, searchDevice, useEscapeCloses } from "./nav";
 
 /** How many sessions are drawn at a time; scrolling to the end of them draws the next page. */
 const PAGE = 40;
@@ -52,7 +52,11 @@ export function SearchPage({ store, narrow }: { store: ChatStore; narrow: boolea
     const [query, setQuery] = useState("");
     // Which device to look on. Typing a runtime's name narrows too (`matches` reads it), but only by accident: a
     // session called "laptop benchmark" answers to it as well, and nothing says which devices there are to choose from.
-    const [device, setDevice] = useState<RuntimeId | null>(null);
+    // It is held in `searchDevice` (nav.tsx) rather than here, because the way IN sets it: a runtime's own "Older
+    // sessions" row opens this page already looking at that runtime. Local state would be set once on mount and
+    // then ignore a second row clicked while the page is already open, which on a wide screen it always is.
+    const device = searchDevice.value;
+    const setDevice = (id: RuntimeId | null) => { searchDevice.value = id; };
     const [shown, setShown] = useState(PAGE);
     const box = useRef<HTMLInputElement>(null);
     const sentinel = useRef<HTMLDivElement>(null);

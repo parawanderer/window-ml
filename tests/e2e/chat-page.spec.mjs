@@ -115,10 +115,15 @@ test("panels dock to an edge, share one as tabs, resize from their edge, and zoo
         const { page: chat, errors } = await openChatPage(ext);
         await expect(chat.locator(".chat-rt", { hasText: "This browser" })).toBeVisible();
         const gear = chat.locator(".chat-gear-btn");
-        await gear.click();
-        await chat.getByRole("menuitemcheckbox", { name: /is running/ }).click();
-        await gear.click();
-        await chat.getByRole("menuitemcheckbox", { name: "Python bench" }).click();
+        // Both docked panels hang off one "Panels" row, which has to be opened first: they are a different kind of
+        // thing from the rows around them (a surface opened ONTO a runtime), and each says which runtime that is.
+        const openPanel = async (name) => {
+            await gear.click();
+            await chat.getByRole("menuitem", { name: "Panels" }).click();
+            await chat.getByRole("menuitemcheckbox", { name }).click();
+        };
+        await openPanel(/Models and memory/);
+        await openPanel(/Python bench/);
         const top = chat.locator(".chat-dock.chat-dock-top"), bottom = chat.locator(".chat-dock.chat-dock-bottom");
         await expect(top.getByRole("tab", { name: "Resources" })).toBeVisible();
         // Docked panels read at the DevTools panel's base size, not the page's 15px reading size.
@@ -212,15 +217,19 @@ test("the box's panel and the Python bench are on this page, because THIS browse
         // Neither question is "is this local", and a phone reaching the same runtime would answer the second one no.
         // The page's tools live in the gear's menu at the bottom-left, with the settings beside them.
         const gear = chat.locator(".chat-gear-btn");
-        await gear.click();
-        const box = chat.getByRole("menuitemcheckbox", { name: /is running/ });
+        // Both panels hang off one "Panels" row: they are a surface opened ONTO a runtime rather than a setting of
+        // the page, and each names the runtime it would open on.
+        const panels = async () => { await gear.click(); await chat.getByRole("menuitem", { name: "Panels" }).click(); };
+        await panels();
+        const box = chat.getByRole("menuitemcheckbox", { name: /Models and memory/ });
         await expect(box).toBeVisible();
+        await expect(box).toHaveAccessibleName(/This browser/);
         await box.click();
         // Docked across the top by default, with its header row in the dock's tab bar rather than under it.
         await expect(chat.locator(".chat-dock.chat-dock-top .vram")).toBeVisible();
         await expect(chat.locator(".chat-dock.chat-dock-top .dock-bar .vram-head")).toBeVisible();
-        await gear.click();
-        await chat.getByRole("menuitemcheckbox", { name: /is running/ }).click();
+        await panels();
+        await chat.getByRole("menuitemcheckbox", { name: /Models and memory/ }).click();
         await expect(chat.locator(".chat-dock")).toHaveCount(0);
 
         // Settings are this browser's own, offered because the runtime reports `localSettings` and this page can
@@ -240,8 +249,8 @@ test("the box's panel and the Python bench are on this page, because THIS browse
 
         // The bench is not a picture of one: it runs, through this browser's own offscreen sandbox, from a page
         // that is not the panel. A drawer that opened and could not run would be worse than no drawer.
-        await gear.click();
-        await chat.getByRole("menuitemcheckbox", { name: "Python bench" }).click();
+        await panels();
+        await chat.getByRole("menuitemcheckbox", { name: /Python bench/ }).click();
         await expect(chat.locator(".chat-dock.chat-dock-bottom .bench")).toBeVisible();
         // One bar: the bench's own controls are in the dock's tab bar.
         await expect(chat.locator(".chat-dock.chat-dock-bottom .dock-bar .bench-play")).toBeVisible();

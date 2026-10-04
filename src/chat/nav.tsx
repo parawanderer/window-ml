@@ -9,8 +9,8 @@ import { signal } from "@preact/signals";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { RuntimeInfo, SessionKey } from "../session-host";
-import { IconBench, IconBrain, IconCompose, IconGear, IconMenu, IconSearch, IconVram } from "../sidebar/icons";
-import { MenuItem } from "./menu";
+import { IconBench, IconBrain, IconCompose, IconDock, IconGear, IconMenu, IconSearch, IconVram } from "../sidebar/icons";
+import { MenuGroup, MenuItem } from "./menu";
 import { benchOpen, openBench, view } from "../sidebar/store";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
@@ -21,8 +21,25 @@ import { calm, pane, setCalm, setListOpen, setPane } from "./view-mode";
  *  stored as a preference: it lives in the URL (route.ts), so a reload keeps it and a fresh page does not. */
 export const mainView = signal<"search" | "settings" | "attention" | null>(null);
 
-/** Open the search page (and close any session-level view that would sit on top of it). */
-export function openSearch(): void { mainView.value = "search"; }
+/** Which device the search page is looking on, or null for every one of them.
+ *
+ *  Not in the URL, unlike `mainView`: the rest of that page's filter state is not either, and this is set when the
+ *  page is OPENED rather than carried around. That is what makes the two ways in differ correctly — a runtime's own
+ *  "Older sessions" arrives looking at that runtime, and the header's search button arrives looking everywhere
+ *  instead of inheriting whichever row was clicked last. */
+export const searchDevice = signal<string | null>(null);
+
+/**
+ * Open the search page (and close any session-level view that would sit on top of it).
+ *
+ * `runtime` preselects the device filter. Call it as `() => openSearch()` from an event handler, never by passing
+ * the function itself: a handler would hand the MouseEvent over as the runtime, and the filter would quietly match
+ * nothing.
+ */
+export function openSearch(runtime?: string): void {
+    searchDevice.value = runtime ?? null;
+    mainView.value = "search";
+}
 
 /**
  * Escape closes a sheet (the search page, Settings) from ANYWHERE on it, not only from a focused input: clicking a
@@ -49,7 +66,7 @@ export function Rail({ store, onStart, gear }: { store: ChatStore; onStart: (kin
                 <IconMenu /><span class="tt-pop" role="tooltip">Show the session list</span>
             </button>
             <StartMenu store={store} onPick={onStart} icon={<IconCompose />} />
-            <button class={`tt hbtn${mainView.value === "search" ? " on" : ""}`} aria-label="Search sessions" onClick={openSearch}>
+            <button class={`tt hbtn${mainView.value === "search" ? " on" : ""}`} aria-label="Search sessions" onClick={() => openSearch()}>
                 <IconSearch /><span class="tt-pop" role="tooltip">Search sessions</span>
             </button>
             <span class="sp" />
@@ -85,8 +102,20 @@ export function GearMenu({ graphsRt, benchRt, labelled }: {
             {open ? (
                 <div class="chat-menu chat-gear-menu" role="menu" aria-label="Page menu">
                     <MenuItem icon={<IconBrain />} label="Calm view" on={calm.value} onPick={pick(() => setCalm(!calm.value))} />
-                    {graphsRt ? <MenuItem icon={<IconVram />} label={`What ${graphsRt.name} is running`} on={pane.value === "resource"} onPick={pick(() => setPane(pane.value === "resource" ? null : "resource"))} /> : null}
-                    {benchRt ? <MenuItem icon={<IconBench />} label="Python bench" on={benchOpen.value} onPick={pick(() => (benchOpen.value ? (benchOpen.value = false) : openBench()))} /> : null}
+                    {/* THE PANELS TOGETHER, under one row. These two are a different kind of thing from the rows
+                        around them: not how the page reads or what it is set to, but an extra surface opened ONTO a
+                        runtime — so each needs to say which device it would open on, and neither belongs beside
+                        "Calm view". Grouped, the device is said once by the rows themselves and the menu's top level
+                        stays four plain choices. Drawn with the same opening row as the theme choices, because a
+                        second disclosure that animated differently is how a menu ends up with two of them. */}
+                    {graphsRt || benchRt ? (
+                        <MenuGroup icon={<IconDock side="right" />} label="Panels">
+                            {(sub) => <>
+                                {graphsRt ? <MenuItem sub={{ i: 0, open: sub }} icon={<IconVram />} label="Models and memory" detail={graphsRt.name} on={pane.value === "resource"} onPick={pick(() => setPane(pane.value === "resource" ? null : "resource"))} /> : null}
+                                {benchRt ? <MenuItem sub={{ i: 1, open: sub }} icon={<IconBench />} label="Python bench" detail={benchRt.name} on={benchOpen.value} onPick={pick(() => (benchOpen.value ? (benchOpen.value = false) : openBench()))} /> : null}
+                            </>}
+                        </MenuGroup>
+                    ) : null}
                     <ThemeMenu />
                     <MenuItem icon={<IconGear />} label="Settings" onPick={pick(() => { mainView.value = "settings"; })} />
                 </div>
