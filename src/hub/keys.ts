@@ -424,3 +424,11 @@ function len32(n: number): Bytes {
 
 /** A role travels in the transcript as a four-byte big-endian signed integer, as protobuf numbers it. */
 const i32 = len32;
+
+/**
+ * How close to its end a certificate has to be before a renewal actually signs one. Asking earlier is answered with
+ * the window the device already has, which is what makes `device.renew` idempotent and rate-limited by construction:
+ * a device can only make this runtime sign by being genuinely near expiry, however often it asks. It is also the
+ * window a client should start showing the renewal in, so the two agree without a second constant.
+ */
+export const RENEW_WITHIN_MS = 14 * 86_400_000;

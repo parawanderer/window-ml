@@ -15,7 +15,7 @@ import { SessionPublisher, hubPublish } from "./session-publisher";
 import { IndexPublisher } from "./session-relay";
 import type { HubClient, HubEvent } from "./hub/client";
 import { bytes, type Bytes } from "./hub/hpke";
-import { encodeChain, issueCertificate, renewalPredecessor, verifyChain, MAX_CERTIFICATE_MS } from "./hub/keys";
+import { encodeChain, issueCertificate, renewalPredecessor, verifyChain, MAX_CERTIFICATE_MS, RENEW_WITHIN_MS } from "./hub/keys";
 import type { Membership } from "./hub/keyring";
 import { Certificate, CertificateBody } from "./proto/wmlhub/v1/identity.gen";
 import { ChannelKey, replyTo, type Opened } from "./hub/seal";
@@ -26,13 +26,6 @@ import { Kind, Role } from "./hub/wire";
 
 /** How far back a freshly issued window reaches, so a device whose clock runs a little behind is not refused. */
 const CLOCK_SKEW_MS = 5 * 60_000;
-/**
- * How close to its end a certificate has to be before a renewal actually signs one. Asking earlier is answered with
- * the window the device already has, which is what makes `device.renew` idempotent and rate-limited by construction:
- * a device can only make this runtime sign by being genuinely near expiry, however often it asks. It is also the
- * window a client should start showing the renewal in, so the two agree without a second constant.
- */
-export const RENEW_WITHIN_MS = 14 * 86_400_000;
 /**
  * How long a renewal's answer is kept and re-given instead of signing a second one. It is what `idempotencyKey`
  * means here, and it is a CACHE rather than a refusal on purpose: a device whose answer was lost to a dropped
