@@ -129,3 +129,59 @@ test("only a device whose verified leaf holds `view` is handed a session's key",
     ]).map((d) => d.id);
     assert.deepEqual(who, ["phone", "watcher"]);
 });
+
+// --- what a live preview costs over a hub ---
+
+const { LivePreview, LIVE_PREVIEW_CHARS, LIVE_PREVIEW_MS } = await import("../src/session-relay.ts");
+
+const S = { runtime: "rt", hash: "aaaa0001" };
+/** One `agent-stream` as the stream message that carries it, with `n` characters of accumulated reasoning. */
+const preview = (n, cursor = 1, key = "reasoning") => ({
+    type: "event", v: 1, session: S, epoch: "w1.0", cursor,
+    event: { kind: "agent-stream", id: S.hash, session: { hash: S.hash, turn: 0 }, step: 0, [key]: "x".repeat(n) },
+});
+const step = (cursor) => ({ type: "event", v: 1, session: S, epoch: "w1.0", cursor, event: { kind: "agent-step", id: S.hash, seq: 1 } });
+
+test("a remote preview carries a bounded TAIL, however long the turn gets", () => {
+    const p = new LivePreview({ now: () => 0, everyMs: 0 });
+    const small = p.forWire(S.hash, preview(10));
+    assert.equal(small.event.reasoning, "x".repeat(10), "under the cap, untouched");
+    assert.equal(small.event.elided, undefined);
+
+    // The shape this exists for: the accumulated text passes the cap and keeps growing, and the frame does not.
+    const sizes = [LIVE_PREVIEW_CHARS * 2, LIVE_PREVIEW_CHARS * 20, LIVE_PREVIEW_CHARS * 200].map((n) => {
+        const out = p.forWire(S.hash, preview(n));
+        assert.equal(out.event.elided, n - LIVE_PREVIEW_CHARS, "how much was left off");
+        assert.ok(out.event.reasoning.startsWith("… "), "marked as a tail in its own text, for every surface at once");
+        return JSON.stringify(out).length;
+    });
+    assert.ok(sizes[2] - sizes[0] < 100, `frames stay the same size: ${sizes.join(", ")}`);
+});
+
+test("each channel is cut on its own, so a long think does not mark a short answer", () => {
+    const p = new LivePreview({ now: () => 0, everyMs: 0 });
+    const m = { ...preview(LIVE_PREVIEW_CHARS * 2), event: { ...preview(LIVE_PREVIEW_CHARS * 2).event, content: "the answer" } };
+    const out = p.forWire(S.hash, m);
+    assert.ok(out.event.reasoning.startsWith("… "));
+    assert.equal(out.event.content, "the answer", "under the cap, and not marked as something it is not");
+    assert.equal(out.event.elided, LIVE_PREVIEW_CHARS);
+});
+
+test("previews are paced per session, and nothing else is paced at all", () => {
+    let now = 0;
+    const p = new LivePreview({ now: () => now });
+    assert.ok(p.forWire(S.hash, preview(10, 1)), "the first one goes");
+    now += LIVE_PREVIEW_MS - 1;
+    assert.equal(p.forWire(S.hash, preview(20, 2)), null, "the next one inside the window does not");
+    // A dropped preview leaves a cursor HOLE, which the contract allows: positions are strictly increasing, not
+    // contiguous. What must never be dropped is anything a reader needs whole.
+    assert.ok(p.forWire(S.hash, step(3)), "a step is not a preview");
+    assert.ok(p.forWire(S.hash, { type: "reset", session: S, epoch: "w1.0" }), "nor is the subscription protocol");
+    now += 1;
+    const after = p.forWire(S.hash, preview(30, 4));
+    assert.ok(after, "once the window is over, the newest text goes");
+    assert.equal(after.event.reasoning.length, 30, "and it is the newest, not the one that was held");
+
+    // Another session is another pace: two runs streaming at once must not starve each other.
+    assert.ok(p.forWire("bbbb0002", { ...preview(10, 5), session: { runtime: "rt", hash: "bbbb0002" } }));
+});

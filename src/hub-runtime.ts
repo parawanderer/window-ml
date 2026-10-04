@@ -12,7 +12,7 @@
 // chrome-free, over its inputs, so it is tested against the real hub; `sw-hub.ts` plugs it into the worker.
 import { COMMAND_SCOPE, type Command, type CommandResult, type CommandType, type SessionIndexUpdate, type SessionStreamMessage, type SessionSummary } from "./session-host";
 import { SessionPublisher, hubPublish } from "./session-publisher";
-import { IndexPublisher } from "./session-relay";
+import { IndexPublisher, LivePreview } from "./session-relay";
 import type { HubClient, HubEvent } from "./hub/client";
 import { bytes, type Bytes } from "./hub/hpke";
 import { encodeChain, issueCertificate, renewalPredecessor, verifyChain, MAX_CERTIFICATE_MS } from "./hub/keys";
@@ -171,13 +171,20 @@ export class HubRuntime {
         const channels = await ChannelKey.fromBytes(bytes(this.opts.membership.channelKey));
         const publisher = new SessionPublisher(hubPublish(client, Kind.KIND_SESSION_EVENTS), channels, client.principal, now);
         const index = new IndexPublisher(principal, (batch) => publisher.publishIndex(batch));
+        // What a streamed run costs over a hub, bounded here rather than at the loop that emits it: a reader in this
+        // browser pays a function call per preview and a remote one pays a sealed frame, a ring slot and a queue
+        // entry on every subscriber (session-relay.ts `LivePreview`).
+        const previews = new LivePreview();
         const devices = new Set<string>();
 
         // Watch first, then snapshot: a change landing between the two is in the snapshot or after it, never lost. A
         // failed publish (the socket closed under it) ends this connection through `next()`, so it is only logged.
         const stop = this.opts.side.watch({
             index: (u) => { void index.update(out(u)).catch(() => {}); },
-            stream: (hash, m) => { void publisher.publish(hash, out(m)).catch(() => {}); },
+            stream: (hash, m) => {
+                const wire = previews.forWire(hash, out(m));
+                if (wire) void publisher.publish(hash, wire).catch(() => {});
+            },
         });
         // The revocation list: on every connection (the ring then holds it for publishers reading while this runtime
         // is away), and re-signed daily so a publisher's 7-day freshness floor never bites while it is up.
