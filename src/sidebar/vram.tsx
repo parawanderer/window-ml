@@ -1,6 +1,10 @@
-// Model / VRAM diagnostics — the server model-list fetch, the Ollama /api/ps VRAM monitor panel + its
-// polling, per-model load-state, backend-health probing, and the Python sandbox bench. A separate,
-// self-contained surface from the run views. Extracted from app.tsx.
+// vram.tsx — the resource panel COMPONENT (`VramPanel`): the head, the chart, the model list, the event lane and
+// the track editor laid out together, plus the chart's key handling and the timeline the lane draws.
+//
+// The rest of the panel lives beside it: its data arrives through resource-feed.ts, its state is panel-state.ts,
+// the chart is resource-chart.tsx, the rows are model-rows.tsx, a model's load state is model-status.tsx, and the
+// panel's height is panel-size.ts. Extracted from app.tsx, and split on 2026-10-04.
+
 import { PanelHead } from "./panel-head";
 import { useState, useEffect, useRef } from "preact/hooks";
 import { signal, effect } from "@preact/signals";

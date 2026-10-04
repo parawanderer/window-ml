@@ -1,6 +1,6 @@
 # The resource panel and event lane
 
-Implementation notes for the VRAM/RAM panel (`resource-model.ts`, `resource-bands.ts`, `resource-topology.ts`, `resource-presets.ts`, `resource-gens.ts`, the chart's files in `sidebar/`, `vram.tsx`) and its event lane. The spec with ASCII mocks is docs/spec/RESOURCE_PANEL.md, moved out of AGENTS.md on 2026-09-12 so they are read when that code is being
+Implementation notes for the VRAM/RAM panel (`resource-model.ts`, `resource-bands.ts`, `resource-topology.ts`, `resource-presets.ts`, `resource-gens.ts`, the chart's files in `sidebar/`, `vram.tsx` and the files split out of it) and its event lane. The spec with ASCII mocks is docs/spec/RESOURCE_PANEL.md, moved out of AGENTS.md on 2026-09-12 so they are read when that code is being
 changed rather than loaded into every session. AGENTS.md keeps the repository's working rules and the traps that
 bite; this file keeps how the subsystem works and why it is built that way. Paths name files by their bare name,
 as in AGENTS.md — they are all under `src/`.
@@ -18,7 +18,9 @@ series/tracks/presets and the rules that judge a layout, and `resource-gens.ts` 
 which view draws each track); the views are `resource-device-view.tsx` (one pool) and `resource-box-views.tsx` (the
 whole box, utilization, overlaid lines); they draw with `resource-area.tsx` (the stacked area), `resource-overlays.tsx`
 (rules, crosshair, grid), `resource-tips.tsx` (the reading tooltips) and `chart-paint.ts` (viewBox, fills);
-`resource-scrub.tsx` is the strip under them, and `chart-interaction.ts` holds what the pointer and keys are on. Spec + ASCII mocks +
+`resource-scrub.tsx` is the strip under them, and `chart-interaction.ts` holds what the pointer and keys are on. The panel around the chart is `vram.tsx` (`VramPanel`), fed by
+`resource-feed.ts` (the ps poll, the event stream, capacity, health, machine events), with `model-rows.tsx` (the model
+list), `model-status.tsx` (a model's load state), `track-editor.tsx` and `panel-size.ts` (drag, floor, easing). Spec + ASCII mocks +
 live captures from both a CUDA box and a Metal Mac: `docs/spec/RESOURCE_PANEL.md`. **Read it before touching
 this** — several of the numbers are counter-intuitive and getting one wrong produces a confidently wrong
 display rather than an obvious bug:
@@ -142,7 +144,7 @@ per device, in bytes.
   proxy for memory and must not share a scale** — on an even split one card held MORE layers and LESS weight,
   because the output layer is large and carries no KV; and `swa_layers` is a list rather than a count because
   the pattern is irregular (`gemma2` alternates 1:1, `gemma4:31b` is 50 of 61).
-- **THE ARROW KEYS READ THE CHART, on the two axes the data actually has** (`kbFocus` in vram.tsx). The chart
+- **THE ARROW KEYS READ THE CHART, on the two axes the data actually has** (`kbFocus` in vram-focus.ts). The chart
   asks two questions of one pointer — x is WHEN, y is WHAT AM I READING — so changing one disturbs the other,
   and the y targets are a 10px hit stroke or a band three pixels tall. UP/DOWN steps along the LIST (the
   models the panel lists, wrapping through the overview at index 0); LEFT/RIGHT along the DEPTH (summary →
