@@ -263,21 +263,35 @@ test("a real hub reports who signs this account's revocations, and a client veri
     try {
         admin = await w.connect(w.admin);
         const rec = admin.revoker;
-        assert.equal(rec.known, true, "the hub reported a signer and it verified under the account root");
+        assert.equal(rec.state, "signer", "the hub reported a signer and it verified under the account root");
         assert.equal(rec.principal, hex(w.runtime.principal), "and it is the runtime that actually holds the grant");
         assert.equal(rec.label, "Work laptop");
     } finally { admin?.close(); await w.close(); }
 });
 
-test("an account whose runtime does NOT sign reports no signer, which is NOT the same as saying there is none", LIVE, async () => {
-    // Absent is "no record", and an older hub sends nothing here either, with no protocol number or capability to
-    // tell the two apart. So a reader may stop offering the grant on `known: true` and may NEVER conclude from
-    // `known: false` that an account has no signer. That is why there is still no "nothing signs here" warning.
+test("a real v0.4.3 hub says DEFINITIVELY that an account has no revocation signer, and that is what the inbox warns on", LIVE, async () => {
+    // The row the whole `features` field exists for, against the real binary. Before v0.4.3 this answer and "a hub
+    // too old to keep the record" were the same bytes, so no warning could be built on either; now the hub announces
+    // the name `revoker` and its silence about a signer means the account has none.
+    //
+    // This is the live half: the pure four-row table is in tests/hub-revocation.test.mjs, including the proof that a
+    // v0.4.2 hub still reads as `unknown` and fires nothing. What needs a real hub is that the name actually arrives
+    // in the Welcome and that a present certificate genuinely verifies, neither of which a fixture can show.
     const w = await revocationWorld({ runtimeSigns: false });
     let admin;
     try {
         admin = await w.connect(w.admin);
-        assert.deepEqual(admin.revoker, { known: false });
+        assert.deepEqual(admin.revoker, { state: "none" }, "nothing on this account can sign a removal, said definitely");
+
+        // And the sentence a person reads, from that answer alone: the item exists, it is about the ACCOUNT rather
+        // than a runtime, and it names the remedy that works. Asserted here because this is the one place the real
+        // hub's answer and the wording meet.
+        const { revokerItems } = await import("../src/chat/attention.ts");
+        const [item] = revokerItems(admin.revoker.state);
+        assert.equal(item.code, "no-revoker");
+        assert.equal(item.runtime, undefined, "the account is not a machine");
+        assert.match(item.detail, /go on trusting the removed device/, "it says what actually fails");
+        assert.match(item.detail, /root key/, "and points at the only thing that can fix it");
     } finally { admin?.close(); await w.close(); }
 });
 

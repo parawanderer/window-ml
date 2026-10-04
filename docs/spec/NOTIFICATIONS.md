@@ -194,16 +194,47 @@ in front of whoever is pairing it. A hub CLAIMING one that does not exist is not
 off, the account would never grant it, no list would ever be published, and nothing would say so. `may_revoke` is
 never delegable, so the certificate is root-signed, and a hub that invents a signer has to forge a root signature.
 
-**ABSENT IS NOT "NONE", and that is a real limit rather than caution.** An older hub sends nothing in that field
-either, and nothing distinguishes the two: #61 bumped no protocol major and added no capability flag. So "this
-account has no signer" and "this hub cannot say" are one answer to a reader. A caller may stop offering the grant on
-`known: true`; it may NEVER conclude from `known: false` that an account has none.
+**ABSENT ALONE IS NOT "NONE", and the fix was a feature NAME rather than a protocol major.** An absent `revoker` is
+the same bytes from a hub that holds no signer and from one too old to keep the record, and #61 bumped no protocol
+major, so for one version the two were a single answer to a reader. window-ml-hub v0.4.3 adds `Welcome.features`, a
+list of the optional behaviours a hub implements, carrying `"revoker"`: only a hub that announces the name is saying
+anything by omitting the certificate. The protocol major deliberately did NOT move, because `Hub::connect` refuses a
+hello below its own, so a major locks every older client out at the hub's next restart; announcing an optional
+behaviour is expressible additively, and this is what that looks like.
 
-What that still blocks: a **"no device signs removals on this account" inbox item**, which is the only honest fix for
-an account that reaches that state. Derived from presence it would cry wolf every time the signing laptop was shut,
-and derived from an absent record it would fire against every older hub. It needs either a protocol major the client
-can test, or a present-but-empty record meaning "I speak this and hold none" — which proto3 message presence can
-express. Raised with the hub session; not guessed at here.
+So `readRevoker` answers three things rather than two, and the third is the only one anything may warn on:
+
+| hub | `features` | `revoker` | answer |
+| --- | --- | --- | --- |
+| before v0.4.2 | `[]` | absent | `unknown` |
+| v0.4.2 | `[]` | either | `signer` where one verifies, else `unknown` |
+| v0.4.3 | `["revoker"]` | present | `signer` where it verifies, else `unknown` |
+| v0.4.3 | `["revoker"]` | absent | `none` |
+
+A PRESENT CERTIFICATE THAT DOES NOT VERIFY IS `unknown`, NEVER `none`, even from a hub announcing the name. That is a
+lying or broken hub, and reading it as "the account has none" would let one manufacture the warning with a few bad
+bytes. The name is tested for BY NAME, never by position: the list is the server's own and additive, so a fork may
+add its own and an unknown name is not an error.
+
+**What it unblocked: the "no device can remove another from this account" inbox item** (`revokerItems`,
+src/chat/attention.ts), on the page and on the phone. Its subject is that no device CURRENTLY holds the grant, not
+that the account can never revoke, because the root can grant it to one and that is what the item points at. It is a
+`limits` rather than a `blocks`: every removal still takes effect on the runtime you make it on, which is exactly why
+it needs saying — the obvious check looks like it worked, while `publishList` returns early without the grant and
+every other runtime and the box connector go on trusting the removed device.
+
+The bound on believing it, which is the hub session's own reasoning and worth keeping: a hub can withhold the feature,
+which yields `unknown` and no warning; or announce it and withhold a certificate that exists, which yields a FALSE
+warning whose prompted action — granting `may_revoke` to another device — is then refused at that device's own login,
+loudly, in front of whoever is pairing it. So the worst case is a confusing loop rather than a silent loss, and every
+action the warning prompts is independently checked. The direction that would have been irresponsible is the opposite
+one, a hub asserting a signer where none exists, and that is unreachable here because the field carries a root-signed
+certificate.
+
+The older-hub case is a DECODE SHAPE rather than a deployment: the rule is a pure function of `(features, revoker)`,
+so all four rows are asserted with no hub at all (`tests/hub-revocation.test.mjs`), which is what proves no warning
+fires against v0.4.2. One live test covers the two v0.4.3 rows against the real binary
+(`tests/hub-runtime.test.mjs`), where the name has to actually arrive and the certificate has to actually verify.
 
 **Both halves of it are encoded as tests rather than left as prose** (`tests/auto-renew.test.mjs`, the last section).
 They take `defaultGrant` and `autoRenewSkip` as their oracle rather than a copy of the reasoning, so they cannot drift

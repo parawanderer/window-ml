@@ -837,7 +837,8 @@ thing. The parts:
   Narrated demos (watched, never asserting):
   `approval-demo`, `resource-demo` (`BOX=`), `line-map-demo`, `cursor-demo`, `panel-news-demo`, `whole-box-demo`,
   `stream-demo`, `bench-editor-demo`, `bench-completion-demo`, `pairing-demo` (the named grants and their switches,
-  then the one device that refreshes its pairing rather than renewing; serves `dist-web/`, so it needs no extension),
+  the one device that refreshes its pairing rather than renewing, and an account with nobody left to sign a removal;
+  serves `dist-web/`, so it needs no extension),
   `table-demo` (fetching CSV/Parquet, then
   scanning, surveying and analysing them through pipe / readonly exec / full exec / python_exec; part two is the
   Arrow + cross-runtime pointer TARGET, captioned with what actually happened). Acceptance specs for unbuilt

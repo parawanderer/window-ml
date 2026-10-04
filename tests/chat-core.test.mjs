@@ -764,6 +764,33 @@ test("deviceItems: an iPhone or iPad reading the hosted client in a tab is offer
     assert.deepEqual(deviceItems(here, new Set(["this-device:add-to-home"])), [], "and it stays dismissed");
 });
 
+test("revokerItems: only a hub that KEEPS the record and holds none warns, and it points at the root", async () => {
+    const { revokerItems, attentionCount } = await import("../src/chat/attention.ts");
+
+    // The two silences. `unknown` is an older hub, a record that did not verify, and an account nobody has asked
+    // about yet — all the same from here, and none of them a reason to tell somebody their removals do not work.
+    assert.deepEqual(revokerItems("unknown"), [], "a warning that fires against every older hub is one people dismiss");
+    assert.deepEqual(revokerItems("signer"), [], "a signer exists: nothing to say");
+
+    const [it] = revokerItems("none");
+    assert.equal(it.code, "no-revoker");
+    assert.equal(it.key, "this-account:no-revoker");
+    assert.equal(it.runtime, undefined, "it is about the ACCOUNT, not one of its machines");
+    assert.equal(it.level, "limits", "every removal still works where you make it; what fails is reaching the others");
+    assert.equal(attentionCount([it]), 1, "and it counts, because it is a problem rather than a suggestion");
+
+    // THE SUBJECT IS THAT NO DEVICE CURRENTLY HOLDS THE GRANT, not that the account can never revoke: the root can
+    // grant it to one, and that is the whole point of saying anything.
+    assert.match(it.title, /No device can remove another/);
+    assert.match(it.detail, /root key/, "the remedy, which is the only reason to raise it");
+    assert.doesNotMatch(it.detail, /never|cannot be fixed|permanent/i, "it is a thing to go and do, not a defect");
+    // What it costs, said plainly, because nothing else on the page shows it: the removal LOOKS like it worked.
+    assert.match(it.detail, /go on trusting the removed device/);
+    assert.equal(it.fix.kind, "devices", "pairing is where a grant is given, on this surface");
+
+    assert.deepEqual(revokerItems("none", new Set(["this-account:no-revoker"])), [], "and it stays dismissed");
+});
+
 // --- renewing this device's own certificate: asking a runtime, and keeping only what checks out ---
 
 test("renewSelf: tries each browser that is awake, installs what comes back, and stops dead on a chain that does not check out", async () => {

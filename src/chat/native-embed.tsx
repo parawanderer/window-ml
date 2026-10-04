@@ -24,7 +24,7 @@ import type { PairingApi } from "../pairing/api";
 import type { CertState } from "./attention";
 import { certReminders } from "./reminders";
 import { renewSelf } from "./renew";
-import { certChanged } from "../pairing/api";
+import { accountRevoker, certChanged } from "../pairing/api";
 import { startAutoRenew } from "./auto-renew";
 import { installServices, services } from "../sidebar/services";
 import { installTooltipLayer } from "../sidebar/tooltip-layer";
@@ -228,7 +228,7 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
         ownCert = typeof m?.notAfterMs === "number"
             ? { notAfterMs: m.notAfterMs, ...(m.mayRevoke ? { mayRevoke: true } : {}), renewable: m.renewable !== false, issuerOnline: false }
             : null;
-        post({ type: "attention", ...attentionForApp(store.runtimes.value, live(ownCert)) });
+        post({ type: "attention", ...attentionForApp(store.runtimes.value, live(ownCert), Date.now(), accountRevoker.value) });
         // AND THE DATES, for the app to hand the OS. Not the same thing as the inbox item: that one is read when
         // someone opens the app, and these are what reach them when they do not. The plan is derived from the
         // durable half of the certificate only, so it stays true until it fires (reminders.ts).
@@ -262,7 +262,7 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
             },
         });
     }
-    effect(() => post({ type: "attention", ...attentionForApp(store.runtimes.value, live(ownCert)) }));
+    effect(() => post({ type: "attention", ...attentionForApp(store.runtimes.value, live(ownCert), Date.now(), accountRevoker.value) }));
     /** The chrome for any session: the open one's, and a list row's when the app asks (`chromeFor`). */
     const chromeOf = (key: SessionKey) => {
         const id = parseSessionKey(key);
