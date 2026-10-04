@@ -15,6 +15,7 @@ import { createFrameReader } from "../protostream";
 import { AgreementKey, Bytes, bytes } from "./hpke";
 import { Identity, accountId, helloTranscript, principalId, sign, LABEL } from "./keys";
 import { Grant, Opened, Receiver, Recipient, Sender, sealCommand, sealResult } from "./seal";
+import { readRevoker, type RevokerRecord } from "./revocation";
 import { hubCryptoReason, hubCryptoSupported } from "./support";
 import { Envelope, Frame, HubErrorFrame, Kind, Limits, Role, encodeFrames } from "./wire";
 import type { Position, StreamRef } from "./wire";
@@ -121,6 +122,12 @@ export class HubClient {
         readonly account: Bytes,
         readonly limits: Limits,
         private readonly receiver: Receiver,
+        /**
+         * Who the hub says signs this account's revocations, ALREADY VERIFIED against the account root (`readRevoker`).
+         * `known: false` covers no record, a record that did not verify, and a hub too old to send the field, which
+         * are one answer from here: it does not mean the account has no signer.
+         */
+        readonly revoker: RevokerRecord = { known: false },
     ) {}
 
     /** Connect, check the hub's name, answer its challenge, and wait for the welcome. */
@@ -219,7 +226,10 @@ export class HubClient {
         const receiver = await Receiver.create(config.identity, config.agreement, config.accountRoot);
         const limits = answer.welcome.limits;
         if (!limits) throw new ConnectError("protocol", "the hub's welcome carried no limits");
-        const client = new HubClient(socket, config, principal, account, limits, receiver);
+        // Verified HERE, once, at the point it arrives: what the rest of the client sees is the answer, never the
+        // hub's claim. A hub that invents a signer has to forge a root signature to be believed.
+        const revoker = await readRevoker(config.accountRoot, answer.welcome.revoker, Date.now());
+        const client = new HubClient(socket, config, principal, account, limits, receiver, revoker);
         client.adopt(reader, incoming);
         return client;
     }

@@ -183,9 +183,26 @@ The expiry cliff is the milder symptom. The worse one is that `src/hub-devices.t
 two signers race and the one whose state or clock trails the other has its list refused as stale: a removal of a lost
 device can silently fail, which that doc names as the worst possible way for a revocation to fail.
 
-Handed to the hub session (`window-ml-hub/tmp/handover-one-revocation-signer.md`), because the invariant can only be
-enforced where every device on an account is visible without a runtime online. The window-ml half, once the rule is
-settled, is `defaultGrant` no longer returning `mayRevoke: true` and the grant editor explaining the one signer.
+Handed to the hub session and settled: window-ml-hub #60 records the first principal to log in holding `may_revoke`
+and refuses a different one its login, and #61 reports that record in the `Welcome` as the signer's CERTIFICATE. Our
+half shipped as one signer per account chosen where somebody is standing, plus `readRevoker` (`src/hub/revocation.ts`).
+
+**The record is VERIFIED, never believed**, and the asymmetry is why it carries a certificate rather than a principal
+id. A hub HIDING a signer it has is safe: the grant is offered to another device, which is refused at its own login,
+in front of whoever is pairing it. A hub CLAIMING one that does not exist is not: a client would default the grant
+off, the account would never grant it, no list would ever be published, and nothing would say so. `may_revoke` is
+never delegable, so the certificate is root-signed, and a hub that invents a signer has to forge a root signature.
+
+**ABSENT IS NOT "NONE", and that is a real limit rather than caution.** An older hub sends nothing in that field
+either, and nothing distinguishes the two: #61 bumped no protocol major and added no capability flag. So "this
+account has no signer" and "this hub cannot say" are one answer to a reader. A caller may stop offering the grant on
+`known: true`; it may NEVER conclude from `known: false` that an account has none.
+
+What that still blocks: a **"no device signs removals on this account" inbox item**, which is the only honest fix for
+an account that reaches that state. Derived from presence it would cry wolf every time the signing laptop was shut,
+and derived from an absent record it would fire against every older hub. It needs either a protocol major the client
+can test, or a present-but-empty record meaning "I speak this and hold none" — which proto3 message presence can
+express. Raised with the hub session; not guessed at here.
 
 **Both halves of it are encoded as tests rather than left as prose** (`tests/auto-renew.test.mjs`, the last section).
 They take `defaultGrant` and `autoRenewSkip` as their oracle rather than a copy of the reasoning, so they cannot drift

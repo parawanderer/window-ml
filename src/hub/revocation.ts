@@ -109,3 +109,40 @@ export async function verifyRevocations(root: Bytes, list: RevocationList, nowMs
 
 /** The encoded list, as it travels on the revoker's channel (signed, not sealed). */
 export const encodeRevocations = (list: RevocationList): Bytes => bytes(RevocationList.encode(list).finish());
+
+/** What a hub's `Welcome.revoker` establishes about this account, which is two answers rather than three. */
+export type RevokerRecord =
+    /** no record, OR a record that did not verify, OR a hub too old to send the field: all the same from here */
+    | { known: false }
+    /** verified under the account root: this principal signs, and `label` is its own words for itself */
+    | { known: true; principal: string; label: string };
+
+/**
+ * Read the hub's record of who signs this account's revocations: VERIFY IT, never believe it.
+ *
+ * The field carries the certificate and not the principal id on purpose, and the asymmetry is the reason. A hub
+ * HIDING a signer it has is safe: the grant gets offered to another device, which is then refused at its own login,
+ * in front of whoever is pairing it. A hub CLAIMING a signer that does not exist is not: a client would default the
+ * grant off, the account would never grant it, no list would ever be published, and nothing would say so — the hub
+ * would have removed revocation as a capability, silently, which is a lever it otherwise does not have.
+ *
+ * `may_revoke` is never delegable, so this certificate is signed by the account ROOT: one `verifyChain` against the
+ * root the client already holds, and a hub that invents a signer has to forge a root signature.
+ *
+ * ABSENT IS NOT "NONE", and that is a real limit rather than caution. An older hub sends nothing here either, and
+ * no protocol number or capability distinguishes the two, so "no record" and "cannot say" are the same answer to a
+ * reader. A caller may use `known: true` to stop offering the grant; it may NOT conclude from `known: false` that an
+ * account has no signer. See docs/spec/NOTIFICATIONS.md for what that still blocks.
+ */
+export async function readRevoker(accountRoot: Bytes, cert: Certificate | undefined, nowMs: number): Promise<RevokerRecord> {
+    if (!cert) return { known: false };
+    try {
+        const verified = await verifyChain(accountRoot, [cert], nowMs);
+        // A record whose certificate does not actually carry the grant is not a record of anything.
+        if (!verified.leaf.mayRevoke) return { known: false };
+        return { known: true, principal: hex(await principalId(bytes(verified.leaf.subject))), label: verified.leaf.label || "" };
+    } catch {
+        // A lying or broken hub. Treated exactly as silence: nothing is said that would not be said without it.
+        return { known: false };
+    }
+}

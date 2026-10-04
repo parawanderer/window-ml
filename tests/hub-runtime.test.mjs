@@ -155,13 +155,16 @@ const { generateAgreementKey } = await import("../src/hub/hpke.ts");
 const { CertificateBody } = await import("../src/proto/wmlhub/v1/identity.gen.ts");
 
 /** A runtime that keeps an allowlist and signs revocations, an admin phone, and a second phone to revoke. */
-async function revocationWorld({ runtimeMs = 3_600_000 } = {}) {
+async function revocationWorld({ runtimeMs = 3_600_000, runtimeSigns = true } = {}) {
     const hub = await startHub();
     const root = await generateIdentity();
     // `runtimeMs` is how long the RUNTIME's own certificate lasts, which bounds every renewal it signs
     // (`OutlivesIssuer`). The default is short, as the other tests want; the renewal ones ask for a long one so a
     // renewal has room to actually extend, and one of them keeps the default to check the clamp.
-    const runtime = await device(root, Role.ROLE_RUNTIME, [], "Work laptop", { mayPair: true, mayRevoke: true, notAfterMs: Date.now() + runtimeMs });
+    // `runtimeSigns` exists because the hub admits ONE `may_revoke` principal per account (v0.4.2): a test that needs
+    // a may_revoke CLIENT cannot also have a may_revoke runtime, since whichever connects first takes the record and
+    // the other is refused its login. The default is the real shape, where the runtime signs.
+    const runtime = await device(root, Role.ROLE_RUNTIME, [], "Work laptop", { mayPair: true, mayRevoke: runtimeSigns, notAfterMs: Date.now() + runtimeMs });
     const admin = await device(root, Role.ROLE_CLIENT, [SCOPE.view, SCOPE.drive, SCOPE.admin], "root phone");
     const tablet = await device(root, Role.ROLE_CLIENT, [SCOPE.view, SCOPE.drive], "tablet");
     const common = { url: hub.url, hubName: HUB, accountRoot: root.publicKey };
@@ -250,8 +253,39 @@ test("a device renews ITSELF, and the chain it is answered with verifies to the 
     } finally { tablet?.close(); await w.close(); }
 });
 
-test("renewal is the asker's own, is not signed again when it is not due, and is refused for the revocation signer", LIVE, async () => {
+test("a real hub reports who signs this account's revocations, and a client verifies it rather than believing it", LIVE, async () => {
+    // The end-to-end half of `readRevoker` (tests/hub-revocation.test.mjs has the forged and absent cases): the hub
+    // records the first principal to log in holding `may_revoke` and reports its CERTIFICATE in the Welcome, and a
+    // client checks that against the account root it already holds. This is what covers the case presence cannot —
+    // a signer that exists but is asleep — which is why the pairing screen can stop offering the grant correctly.
     const w = await revocationWorld();
+    let admin;
+    try {
+        admin = await w.connect(w.admin);
+        const rec = admin.revoker;
+        assert.equal(rec.known, true, "the hub reported a signer and it verified under the account root");
+        assert.equal(rec.principal, hex(w.runtime.principal), "and it is the runtime that actually holds the grant");
+        assert.equal(rec.label, "Work laptop");
+    } finally { admin?.close(); await w.close(); }
+});
+
+test("an account whose runtime does NOT sign reports no signer, which is NOT the same as saying there is none", LIVE, async () => {
+    // Absent is "no record", and an older hub sends nothing here either, with no protocol number or capability to
+    // tell the two apart. So a reader may stop offering the grant on `known: true` and may NEVER conclude from
+    // `known: false` that an account has no signer. That is why there is still no "nothing signs here" warning.
+    const w = await revocationWorld({ runtimeSigns: false });
+    let admin;
+    try {
+        admin = await w.connect(w.admin);
+        assert.deepEqual(admin.revoker, { known: false });
+    } finally { admin?.close(); await w.close(); }
+});
+
+test("renewal is the asker's own, is not signed again when it is not due, and is refused for the revocation signer", LIVE, async () => {
+    // The runtime does NOT sign here, so the "spare signer" below can be the account's one `may_revoke` holder and
+    // get in: with both holding it the hub refuses whichever connects second, and the rule under test is the
+    // RUNTIME's refusal to renew such a certificate, which needs that device connected to ask.
+    const w = await revocationWorld({ runtimeSigns: false });
     let tablet, admin;
     try {
         tablet = await w.connect(w.tablet);
