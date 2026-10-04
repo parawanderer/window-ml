@@ -5,6 +5,10 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
     testDir: "./tests/e2e",
+    // Refuses the run when a built directory is older than the source it was built from. Every spec hands a BUNDLE
+    // to a browser, so a source edit without a rebuild is invisible — the suite tests the previous build and its
+    // result looks exactly like a real one. Here rather than in each spec, so no spec can forget.
+    globalSetup: "./tests/e2e/global-setup.mjs",
     testMatch: /.*\.spec\.mjs$/,
     timeout: 60_000,
     // Every test launches its own browser (a fresh temp profile) and its own fake servers on port 0, so

@@ -619,6 +619,15 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   anything threw. The consequence to remember: a build you silenced (`npm run build >/dev/null 2>&1`) that
   FAILED now looks exactly like one that worked, and everything you run next tests the previous bundle —
   which will mislead a bisect. It exits non-zero and says so on stderr; do not discard that stream.
+- **A STALE bundle is now CHECKED rather than remembered** (`scripts/check-dist-fresh.mjs`, wired in as the
+  Playwright suite's `globalSetup`). Every spec hands a built directory to a real browser, so a source edit
+  without a rebuild used to run the previous build and report a result that looked exactly like a real one. The
+  check refuses the run and names the directory and the command; it never rebuilds, because that would clobber a
+  `dist/` someone has loaded in a window, from inside a test runner where nobody is watching. `E2E_DIST=<dir>`
+  skips it (that bundle was built elsewhere on purpose) and `E2E_STALE_OK=1` overrides it. The same hole was in
+  the npm scripts, not just in hand-run commands: `test:chat` built only `dist-web/` while running two specs that
+  load `dist/` and `dist-native/`, and `pretest:e2e` built only `dist/` while the suite reads `dist-web/` too —
+  both now run **`npm run build:all`**, which is the one command that builds every bundle.
 - **Iterating? Run a GENRE, not the suite: `npm run test:core`** (~8s, 1,394 tests) — `node scripts/test.mjs`
   with `core` / `panel` / `ext` / `chat` / `python` / `live`, `--list` to see what each holds, `--timings` for
   per-file durations slowest-first (`npm run test:chat` is the chat page's suite by name: that genre plus its two
