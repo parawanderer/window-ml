@@ -6,6 +6,10 @@
 //   node --import tsx scripts/hub-root.mjs confirm "ABCD 1234"
 //   node --import tsx scripts/hub-root.mjs show
 //
+// THE SCREENS EXIST NOW, so this is not how an account's root works in practice: the real root lives on a CLIENT —
+// the phone app, or the hosted client on an iPad — through `src/pairing/client-pairing.ts`, which is the only
+// implementation with `createAccount`. No runtime ever holds it. See AGENTS.md, "WHO THE ROOT IS".
+//
 // It runs the same calls the screens will (`createAccount`, `lookupOffer`, `confirmOffer` in src/hub/pair-flow.ts)
 // over the same Keyring, on fake-indexeddb in memory, loaded from and saved to a state file (`--state`, default
 // ~/.config/window-ml/hub-root.json, mode 0600). The difference that matters: a device keeps its keys NON-EXTRACTABLE,
