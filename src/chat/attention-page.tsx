@@ -13,12 +13,11 @@ import { exportTaskItems, exportTasks } from "./export-tasks";
 import { deviceEnv } from "./app-badge";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
-import { devicesStep, type Membership, type PairingApi } from "../pairing/api";
+import { devicesStep, type Membership, type PairingApi, certChanged } from "../pairing/api";
 import { cursorTipOn } from "../sidebar/ui-kit";
 import { mainView, useEscapeCloses } from "./nav";
 import { SheetHead, settingsTab } from "./settings-page";
 import { dismiss, dismissed } from "./view-mode";
-import { certChanged } from "./renew";
 
 /** No codes of this device's own: every runtime reports its own now (`capabilities.attention`). */
 const NONE: ReadonlyMap<string, readonly string[]> = new Map();
