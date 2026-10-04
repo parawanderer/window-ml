@@ -72,6 +72,10 @@ failure cannot be overridden.
 
 ## Gotchas
 
+- **`--to` an EXISTING file appends, and says nothing about whether it should.** The plan, the typecheck and the
+  cycle check all pass, and you get one module holding two subjects under a header describing one. Run
+  `node scripts/index.mjs '<name>' --kind file` on the target name before the first move: `resource-events.ts`
+  already held the event-stream frame reader when the panel's `ResourceEvent` was nearly appended to it.
 - **It is a dry run until you drop `--dry-run`**, and a blocked run writes nothing either way.
 - **The new file has no header comment.** Write one saying what the module is for; that is the one part of
   a move that is not mechanical. **Leave a blank line after it.** A `//` run touching the first declaration
