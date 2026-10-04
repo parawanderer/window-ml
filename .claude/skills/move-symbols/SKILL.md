@@ -96,6 +96,10 @@ failure cannot be overridden.
 - **The in-memory check runs TypeScript 6** (bundled by `@ts-morph/common`, because 7.x is the Go port and has
   no JS API or move refactor yet) over the files around the move. The whole-project `tsc` after writing is
   the repo's own 7.x, and it has the last word.
+  Its standard library comes from `@ts-morph/common`'s in-memory lib files (`project.mjs`): before that was wired
+  up it saw no `Map` or `Omit` at all, and the typecheck gate blocked moves on reworded noise. What still differs
+  from 7.x is small and stable (`tests/md-ladder.test.mjs` assigning `globalThis.chrome` reads as a declaration of
+  the global to 6.x), and the gate compares by message, so it never blocks on it.
 - **A moved `const x = compute()` runs earlier than before**: when the target is first imported, not when the
   rest of the source runs. The plan prints a `note` for any moved initializer that calls something.
 - **Tests are not moved.** If a test file covers only what moved, split or rename it yourself; the imports

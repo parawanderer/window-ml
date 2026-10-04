@@ -336,6 +336,18 @@ test("moving into an EXISTING file appends verbatim and refuses a name it alread
     assert.deepStrictEqual(kinds(clash.report), ["conflict"]);
 });
 
+test("the in-memory checker sees TypeScript's standard library", (t) => {
+    // `@ts-morph/common` ships the lib files as strings, and the default lib path points at a folder that is not on
+    // disk. Without serving them, `Map` and `Omit` were unknown in every file, the typecheck gate diffed hundreds of
+    // errors by message, and a move that merely re-worded one (a union printed in another order) was blocked.
+    const f = fixture({
+        "src/a.ts": "export type Slim = Omit<{ a: number; b: string }, \"b\">;\nexport const seen = new Map<string, Slim>();\nexport const first = [...seen.values()].at(0);\n",
+    });
+    t.after(f.cleanup);
+    const project = new Project(f.root);
+    assert.deepStrictEqual(project.diagnostics([project.abs("src/a.ts")]), []);
+});
+
 test("moving code INTO the module it imports from does not leave the target importing itself", (t) => {
     // TypeScript's refactor copies the moved code's imports into the target as they were, so a helper that read
     // `Sample` from `./model` and moves INTO model.ts arrived with `import type { Sample } from "./model"` on top:
