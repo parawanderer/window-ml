@@ -6,5 +6,5 @@ const { getDefaultConfig } = require("expo/metro-config");
 const path = require("node:path");
 
 const config = getDefaultConfig(__dirname);
-config.watchFolders = ["native", "pairing", "chat"].map((d) => path.resolve(__dirname, "..", "src", d));
+config.watchFolders = ["native", "pairing", "chat", "archive"].map((d) => path.resolve(__dirname, "..", "src", d));
 module.exports = config;

@@ -9,10 +9,66 @@
 //   the event holds a marker in its place. The same screenshot in a hundred steps costs one blob;
 // - each event's text is copied into an FTS5 table, so a search over years of history is one query.
 import type { Database, Sqlite3Static } from "@sqlite.org/sqlite-wasm";
-import type { MlDebugEvent } from "./contract-debug";
-import type { SessionSummary } from "./session-host";
-import type { SessionHistory } from "./session-store";
-import type { SessionBytes } from "./session-storage-stats";
+import type { MlDebugEvent } from "../contract-debug";
+import type { SessionSummary } from "../session-host";
+import type { SessionHistory } from "../session-store";
+import type { SessionBytes } from "../session-storage-stats";
+
+/** A value SQLite will store or hand back. */
+export type SqlValue = string | number | null | Uint8Array;
+
+/**
+ * THE SMALL SQLITE SURFACE THIS MODULE NEEDS, so one set of SQL serves two drivers.
+ *
+ * Each driver is wrapped to meet it — `wasmDb` in the archive worker, the phone's in its own store. Neither is made
+ * to satisfy it structurally: sqlite-wasm's `exec` is a pile of overloads and `expo-sqlite` is a different shape
+ * again, so a surface that happened to fit one of them would be that driver's API wearing a neutral name.
+ *
+ * It was written against sqlite-wasm's own `Database`, which is what the extension's archive worker runs over OPFS.
+ * The phone keeps the same archive — same schema, same tables, same FTS index — over `expo-sqlite`, whose API is a
+ * different shape, so naming the surface is what lets the SQL be shared rather than copied. A copy would be two
+ * schemas that happen to agree today.
+ *
+ * It is deliberately the SYNCHRONOUS subset: every statement here runs inside `transaction`, and a driver whose calls
+ * returned promises could not be sequenced inside one without rewriting all of this around async. `expo-sqlite` has
+ * sync variants (`execSync`, `getAllSync`, `runSync`), so this costs the phone nothing.
+ *
+ * `sqlite-wasm`'s `Database` satisfies it structurally, so the extension passes its handle unchanged.
+ */
+export interface ArchiveDb {
+    exec(sql: string | { sql: string; bind?: SqlValue[] }): unknown;
+    selectValue(sql: string, bind?: SqlValue[]): SqlValue | undefined;
+    selectValues(sql: string, bind?: SqlValue[]): SqlValue[];
+    selectObjects(sql: string, bind?: SqlValue[]): Record<string, SqlValue>[];
+    transaction<T>(fn: (db: never) => T): T;
+    prepare(sql: string): ArchiveStmt;
+}
+
+/** One prepared statement, bound and stepped per row — the write path's hot loop. */
+export interface ArchiveStmt {
+    bind(values: SqlValue[]): ArchiveStmt;
+    stepReset(): ArchiveStmt;
+    finalize(): unknown;
+}
+
+/**
+ * sqlite-wasm's `Database` as the surface above.
+ *
+ * A forwarding object rather than a cast, because the two disagree in one place that matters: this module calls
+ * `exec({ sql, bind })`, which sqlite-wasm takes at run time but types as a different overload from `exec(sql)`. A
+ * cast would paper over that and over anything else that drifts; forwarding states the mapping once, where a change
+ * on either side fails to compile instead of failing in the archive.
+ */
+export function wasmDb(db: Database): ArchiveDb {
+    return {
+        exec: (sql) => (typeof sql === "string" ? db.exec(sql) : db.exec(sql.sql, { bind: sql.bind as never })),
+        selectValue: (sql, bind) => db.selectValue(sql, bind as never) as SqlValue | undefined,
+        selectValues: (sql, bind) => db.selectValues(sql, bind as never) as SqlValue[],
+        selectObjects: (sql, bind) => db.selectObjects(sql, bind as never) as Record<string, SqlValue>[],
+        transaction: (fn) => db.transaction(fn as never) as never,
+        prepare: (sql) => db.prepare(sql) as unknown as ArchiveStmt,
+    };
+}
 
 /** The schema this module writes. A newer one is migrated to in `migrate`; an older build refuses a newer file. */
 export const ARCHIVE_SCHEMA = 1;
@@ -26,7 +82,7 @@ const TEXT_PER_EVENT = 8_000;
 
 /** Create or upgrade the schema in `schema` (the main database, or an attached month file). Safe to call on every
  *  open. */
-export function migrate(db: Database, schema = "main"): void {
+export function migrate(db: ArchiveDb, schema = "main"): void {
     const S = schema;
     db.exec(`
         CREATE TABLE IF NOT EXISTS ${S}.meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -128,7 +184,7 @@ export async function prepareSession(input: ArchiveInput): Promise<PreparedSessi
  * Write a prepared session, replacing whatever the archive held for it. One transaction: a session is in the archive
  * whole or not at all, which is what lets the live store forget it only after this returns.
  */
-export function writeSession(db: Database, p: PreparedSession, archivedTs: number): void {
+export function writeSession(db: ArchiveDb, p: PreparedSession, archivedTs: number): void {
     const s = p.input.summary;
     const hash = s.id.hash;
     db.transaction(() => {
@@ -177,7 +233,7 @@ export interface ArchivedRow {
  * so a client pages by handing back the last row's `lastTs`. `query` searches every event's text with FTS5 syntax
  * quoted into a phrase, so a person's words are never parsed as operators.
  */
-export function listArchived(db: Database, o: { before?: number; limit?: number; query?: string } = {}): ArchivedRow[] {
+export function listArchived(db: ArchiveDb, o: { before?: number; limit?: number; query?: string } = {}): ArchivedRow[] {
     const limit = Math.min(Math.max(1, o.limit ?? 40), 200);
     const before = o.before ?? Number.MAX_SAFE_INTEGER;
     const q = o.query?.trim();
@@ -206,7 +262,7 @@ function toBase64(data: Uint8Array): string {
 }
 
 /** An archived session read back: its row, its events with images restored, and what it would be continued from. */
-export function readArchived(db: Database, hash: string): { summary: SessionSummary; events: MlDebugEvent[]; history: SessionHistory | null } | null {
+export function readArchived(db: ArchiveDb, hash: string): { summary: SessionSummary; events: MlDebugEvent[]; history: SessionHistory | null } | null {
     const row = db.selectObjects("SELECT summary, history FROM sessions WHERE hash = ?", [hash])[0];
     if (!row) return null;
     const images = new Map<string, string>();
@@ -220,7 +276,7 @@ export function readArchived(db: Database, hash: string): { summary: SessionSumm
 
 /** Remove a session from the archive, and any image no other session still references. Its month's folder file is then
  *  dirty, so the next sync rewrites it without the session: a delete reaches the folder too. */
-export function removeArchived(db: Database, hash: string): boolean {
+export function removeArchived(db: ArchiveDb, hash: string): boolean {
     let removed = false;
     db.transaction(() => {
         const was = db.selectValue("SELECT last_ts FROM sessions WHERE hash = ?", [hash]);
@@ -233,7 +289,7 @@ export function removeArchived(db: Database, hash: string): boolean {
 }
 
 /** How big the archive is, for the Storage page. */
-export function archiveStats(db: Database): { sessions: number; events: number; bytes: number; images: number; imageBytes: number } {
+export function archiveStats(db: ArchiveDb): { sessions: number; events: number; bytes: number; images: number; imageBytes: number } {
     const s = db.selectObjects("SELECT count(*) AS n, coalesce(sum(events), 0) AS e, coalesce(sum(bytes), 0) AS b FROM sessions")[0];
     const i = db.selectObjects("SELECT count(*) AS n, coalesce(sum(length(data)), 0) AS b FROM images")[0];
     return { sessions: Number(s.n), events: Number(s.e), bytes: Number(s.b), images: Number(i.n), imageBytes: Number(i.b) };
@@ -250,22 +306,22 @@ export function monthRange(month: string): [number, number] {
     return [Date.UTC(y, m - 1, 1), Date.UTC(y, m, 1)];
 }
 
-function markDirty(db: Database, ts: number): void {
+function markDirty(db: ArchiveDb, ts: number): void {
     db.exec({ sql: "INSERT OR IGNORE INTO dirty_months(month) VALUES (?)", bind: [monthOf(ts)] });
 }
 
 /** Months whose folder file no longer matches the archive, oldest first. */
-export function dirtyMonths(db: Database): string[] {
+export function dirtyMonths(db: ArchiveDb): string[] {
     return db.selectValues("SELECT month FROM dirty_months ORDER BY month").map(String);
 }
 
 /** A month's file was written: it matches again. */
-export function markClean(db: Database, month: string): void {
+export function markClean(db: ArchiveDb, month: string): void {
     db.exec({ sql: "DELETE FROM dirty_months WHERE month = ?", bind: [month] });
 }
 
 /** Every month that has sessions, for a first sync to a newly picked folder. */
-export function allMonths(db: Database): string[] {
+export function allMonths(db: ArchiveDb): string[] {
     return [...new Set(db.selectValues("SELECT last_ts FROM sessions").map((t) => monthOf(Number(t))))].sort();
 }
 
@@ -274,7 +330,7 @@ export function allMonths(db: Database): string[] {
  * and the images they reference. What the folder's `YYYY-MM.sqlite` holds, so the file opens on its own in any
  * SQLite tool and can be imported back.
  */
-export function copyMonth(db: Database, into: string, month: string): number {
+export function copyMonth(db: ArchiveDb, into: string, month: string): number {
     const [from, to] = monthRange(month);
     db.transaction(() => {
         db.exec({ sql: `INSERT INTO ${into}.sessions SELECT * FROM main.sessions WHERE last_ts >= ? AND last_ts < ?`, bind: [from, to] });
@@ -291,7 +347,7 @@ export function copyMonth(db: Database, into: string, month: string): number {
  * already has: a restore into a fresh profile, and harmless to run twice. Imported months are not marked dirty, since
  * the folder already matches them. Refuses a file from a newer schema.
  */
-export function importFrom(db: Database, from: string): number {
+export function importFrom(db: ArchiveDb, from: string): number {
     const theirs = Number(db.selectValue(`SELECT value FROM ${from}.meta WHERE key = 'schema'`) ?? 0);
     if (theirs > ARCHIVE_SCHEMA) throw new Error(`that archive file was written by a newer version (schema ${theirs})`);
     let added = 0;
@@ -314,25 +370,27 @@ const SQLITE_MAGIC = [0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66, 0x6f, 0x72
 
 /** One month as a standalone SQLite file's bytes: built in an attached in-memory database and serialized, so no
  *  temporary file is involved. The memory it costs is one month's archive. */
-export function exportMonth(sqlite3: Sqlite3Static, db: Database, month: string): { bytes: Uint8Array; sessions: number } {
+export function exportMonth(sqlite3: Sqlite3Static, raw: Database, month: string): { bytes: Uint8Array; sessions: number } {
+    const db = wasmDb(raw);
     db.exec("ATTACH DATABASE ':memory:' AS snap");
     try {
         migrate(db, "snap");
         db.exec("DELETE FROM snap.dirty_months");
         const sessions = copyMonth(db, "snap", month);
-        return { bytes: sqlite3.capi.sqlite3_js_db_export(db.pointer!, "snap"), sessions };
+        return { bytes: sqlite3.capi.sqlite3_js_db_export(raw.pointer!, "snap"), sessions };
     } finally { db.exec("DETACH DATABASE snap"); }
 }
 
 /** Import a month file's bytes (a folder snapshot) into the live archive; returns how many sessions were new. */
-export function importBytes(sqlite3: Sqlite3Static, db: Database, bytes: Uint8Array): number {
+export function importBytes(sqlite3: Sqlite3Static, raw: Database, bytes: Uint8Array): number {
+    const db = wasmDb(raw);
     // Checked before anything is attached: SQLite accepts any bytes into `deserialize` and fails only at the first
     // read, which then leaves an attachment it will not detach.
     if (bytes.byteLength < 100 || !SQLITE_MAGIC.every((b, i) => bytes[i] === b)) throw new Error("not an archive file");
     db.exec("ATTACH DATABASE ':memory:' AS imp");
     try {
         const p = sqlite3.wasm.allocFromTypedArray(bytes);
-        const rc = sqlite3.capi.sqlite3_deserialize(db.pointer!, "imp", p, bytes.byteLength, bytes.byteLength,
+        const rc = sqlite3.capi.sqlite3_deserialize(raw.pointer!, "imp", p, bytes.byteLength, bytes.byteLength,
             sqlite3.capi.SQLITE_DESERIALIZE_FREEONCLOSE | sqlite3.capi.SQLITE_DESERIALIZE_READONLY);
         if (rc !== 0) { sqlite3.wasm.dealloc(p); throw new Error(`not an archive file (sqlite error ${rc})`); }
         return importFrom(db, "imp");
@@ -340,17 +398,17 @@ export function importBytes(sqlite3: Sqlite3Static, db: Database, bytes: Uint8Ar
 }
 
 /** Every month with sessions is dirty: a folder was just picked (or re-picked), and holds none of them yet. */
-export function markAllDirty(db: Database): void {
+export function markAllDirty(db: ArchiveDb): void {
     for (const m of allMonths(db)) db.exec({ sql: "INSERT OR IGNORE INTO dirty_months(month) VALUES (?)", bind: [m] });
 }
 
 /** A value kept in `meta` (the last sync, for Settings). */
-export function metaGet(db: Database, key: string): string | null {
+export function metaGet(db: ArchiveDb, key: string): string | null {
     const v = db.selectValue("SELECT value FROM meta WHERE key = ?", [key]);
     return v == null ? null : String(v);
 }
 
 /** Keep a value in `meta`, replacing the old one. */
-export function metaSet(db: Database, key: string, value: string): void {
+export function metaSet(db: ArchiveDb, key: string, value: string): void {
     db.exec({ sql: "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", bind: [key, value] });
 }

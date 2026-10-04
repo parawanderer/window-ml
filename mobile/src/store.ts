@@ -9,11 +9,16 @@ import { Directory, File, Paths } from "expo-file-system";
 import type { ToNative, ToWeb } from "../../src/native/bridge";
 import { STORE_NAME } from "../../src/native/store-bridge";
 
-/** The folder a record lives in. The page's copies of sessions (`ev…`, src/chat/event-cache.ts) go to the CACHE
- *  directory: out of backups, and the OS may purge it under pressure, which is what a cache promises. Pairing records
- *  go to documents, where the app keeps what it must not lose. */
+/** The folder a record lives in. BOTH are now documents, and the sessions moving there is a promise rather than a
+ *  tidy-up: history you have already pulled should still be readable on a plane, and in the cache directory the OS
+ *  could take it whenever it liked. What makes that affordable is that the copies BOUND THEMSELVES — a session over
+ *  the cap is trimmed to its newest events (event-cache.ts), and past `CACHE_SESSIONS` the least recently opened
+ *  goes — so this is a bounded archive and not a folder that grows until the phone is full.
+ *
+ *  Anything already written under the cache directory is simply not found and refetched once; it was a cache, and
+ *  nothing promised it would still be there. */
 const dirFor = (name: string): Directory => {
-    const d = name.startsWith("ev") ? new Directory(Paths.cache, "events") : new Directory(Paths.document, "store");
+    const d = new Directory(Paths.document, name.startsWith("ev") ? "events" : "store");
     if (!d.exists) d.create({ intermediates: true });
     return d;
 };
