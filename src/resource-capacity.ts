@@ -5,6 +5,7 @@
 // did not report is UNKNOWN, which is why the types keep those fields optional. Split out of resource-model.ts.
 
 import type { Wire, UnavailableGPU, GPUInfo, GPUProcess, BoxProfile as WireBoxProfile, ProfileDevice, ProfileFailure, InfoResponse } from "./events-wire";
+import type { ResourceSample } from "./resource-model";
 import { Topology, topologyFrom } from "./resource-topology";
 
 /** The backend a device runs on, as the server names it; the open string admits one we do not know yet. */
@@ -382,3 +383,6 @@ export function parseInfo(raw: unknown): Capacity | null {
         ...(prof ? { profile: prof.profile } : {}),
     };
 }
+
+/** The utilization figures a sample carries for one card, or undefined — "not read", never idle. */
+export const utilOf = (s: ResourceSample, id: string) => s.capacity?.devices.find((d) => d.id === id)?.utilization;
