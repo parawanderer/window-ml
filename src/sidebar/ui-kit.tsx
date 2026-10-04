@@ -424,11 +424,17 @@ export const cursorTipOn = (content: string | ComponentChildren, opts?: { delayM
                 }, delay);
             },
             onPointerLeave: () => { clearTimeout(pendingTimer); pendingEl = null; clearCursorTip(); },
+            "data-tip": "",
         };
     }
     return {
         onPointerMove: (e: PointerEvent) => show(e.currentTarget as Element | null, e.clientX, e.clientY),
         onPointerLeave: () => { clearCursorTip(); },
+        // THE MARKER THAT MAKES THIS AUDITABLE. Everything here is pointer events, so an explanation reachable only
+        // by hovering left no trace in the DOM and nothing could check for one — which is how a tooltip ships as the
+        // only route to something on a surface that has no pointer. `data-tip` is what the touch probe looks for
+        // (tests/e2e/touch-probe.mjs): on a phone, every one of these must have another way to the same words.
+        "data-tip": "",
     };
 };
 /** The delayed mode's one pending tip: its trigger, its timer, and where the pointer last was over it. */

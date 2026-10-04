@@ -51,10 +51,12 @@ function newest(p) {
     return max;
 }
 
-/** Which bundles are older than the source they were built from, with the command that would fix each. */
-export function staleBundles() {
+/** Which bundles are older than the source they were built from, with the command that would fix each. `only` narrows
+ *  it to the directories a particular run will actually load — the fast suite boots `dist/` and never `dist-web/`, and
+ *  stopping it over a bundle nothing is about to open is how a check earns a reputation for being in the way. */
+export function staleBundles(only) {
     const src = Math.max(...SOURCES.map(newest));
-    return BUNDLES.flatMap((b) => {
+    return BUNDLES.filter((b) => !only || only.includes(b.dir)).flatMap((b) => {
         const built = newest(b.dir);
         if (built === 0) return [{ ...b, reason: "has never been built" }];
         // A whole second of slack: a build writes its files over a short span, and a source touched within the same
@@ -73,13 +75,13 @@ function ago(ms) {
 }
 
 /** The message, or null when everything is current. Separate from printing it, so `globalSetup` can throw it. */
-export function stalenessReport() {
+export function stalenessReport(only) {
     if (process.env.E2E_DIST || process.env.E2E_STALE_OK) return null;
-    const stale = staleBundles();
+    const stale = staleBundles(only);
     if (!stale.length) return null;
     const lines = stale.map((b) => `  ${b.dir}/ (${b.what}) ${b.reason}\n    fix: ${b.cmd}`);
     return [
-        "A browser test would run against a STALE BUNDLE, so its result would describe the previous build.",
+        "A test would run against a STALE BUNDLE, so its result would describe the previous build.",
         ...lines,
         "",
         "Run the command(s) above, then the tests again. E2E_STALE_OK=1 skips this check; E2E_DIST=<dir> skips it too,",

@@ -8,6 +8,7 @@ import { test, expect, chromium } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 import { serveStatic } from "./static-server.mjs";
+import { pointerOnlyInfo, newPointerOnly } from "./touch-probe.mjs";
 
 const ROOT = path.resolve(process.env.E2E_DIST_WEB || "dist-web");
 
@@ -48,6 +49,26 @@ test("it runs with no extension: no chrome global, and the bundle loaded nothing
     const { page, errors } = await open(DESKTOP);
     expect(await page.evaluate(() => typeof globalThis.chrome?.runtime)).toBe("undefined");
     await expect(row(page, WAITING)).toBeVisible();
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("phone: nothing says its piece only on hover @mobile", async () => {
+    // The sibling of the tap-target checks above: those ask whether a finger can REACH a control, this asks whether
+    // anything the page only says on hover is still sayable with no pointer at all. A web-only affordance is a
+    // defect here rather than a difference, because this page IS the phone app's transcript (mobile/AGENTS.md).
+    const { page, errors } = await open(PHONE);
+    const onList = await pointerOnlyInfo(page);
+    expect(onList.scanned, "the list draws tips at all, so a clean result means something").toBeGreaterThan(0);
+    expect(newPointerOnly(onList.unreachable), "a new hover-only explanation on the phone's list").toEqual([]);
+
+    // And inside a session, where the approval card, the steps and the page chip are drawn.
+    await row(page, WAITING).click();
+    await expect(page.locator(".astep-approve")).toBeVisible();
+    const inSession = await pointerOnlyInfo(page);
+    expect(inSession.scanned, "the session draws tips at all").toBeGreaterThan(0);
+    expect(newPointerOnly(inSession.unreachable), "a new hover-only explanation inside a session").toEqual([]);
+
     expect(errors).toEqual([]);
     await page.close();
 });
