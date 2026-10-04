@@ -816,6 +816,17 @@ button.chat-page-go:hover { color: var(--fg); }
    the component reads it and waits, and a surface that sets nothing closes in the same tick it always has. */
 .chat.calm .astep-body { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); --astep-close-ms: 200; }
 .chat.calm .astep-body.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; }
+/* THE GRANT CARD IS NOT A WARNING HERE. In the panel it is a warm card because it establishes a session-long
+   consent, and the panel is a debugging surface where an amber block reads as one more marked thing among many. In
+   the reading view it is the only coloured block on a quiet page, so it took the eye first — ahead of the sentence
+   saying what is actually being approved, which is the thing to read. It keeps its outline and its glyph, because
+   the glyph is what says this one is different from an ordinary approval; it loses the fill and the amber border.
+   The ⚠ stays `--warn`: one small mark is the right amount of alarm for "this will go on applying". */
+.chat.calm .appr-grant {
+    background: color-mix(in srgb, var(--fg) 4%, transparent);
+    border-color: var(--border);
+}
+
 /* THE GATE CARD GOES THE SAME WAY as the body under it. It is the largest thing on a step and the thing you were
    reading, so blinking it out on the click left you looking for where the call went. Inert while it leaves —
    a card mid-exit is not a control, and a second click on it would decide an answered gate. */

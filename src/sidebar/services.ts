@@ -60,6 +60,16 @@ export interface SidebarServices {
      * The panel says yes: it is attached to the tab that holds the run. Read during render, like `sideCalls`.
      */
     canContinue(session: string): boolean;
+    /**
+     * Is this session still something the runtime would STOP? The composer's stop button is drawn from this
+     * client's own reduction of the event stream, and `session.cancel` is judged by the runtime's index — two
+     * separate reducers over the same events, which disagree whenever a run dies without emitting a terminal
+     * event. The client then shows `pending` for ever, the stop button stays, and pressing it answers "the session
+     * is not running". A control that can only refuse should not be drawn.
+     *
+     * The panel says yes: its own stream IS the runtime's. Read during render, like `canContinue`.
+     */
+    canCancel(session: string): boolean;
     /** outline something on the session's page; `null` clears it. A host with no page does nothing. */
     highlight(ref: HighlightRef): void;
     /** show an image full-size */
@@ -128,6 +138,7 @@ const UNAVAILABLE: SidebarServices = {
     cancelSession() {},
     continueSession() {},
     canContinue: () => false,
+    canCancel: () => false,
     highlight() {},
     openLightbox() {},
     openLink() {},

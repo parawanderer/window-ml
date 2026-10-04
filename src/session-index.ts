@@ -599,7 +599,14 @@ export class SessionIndex {
                 s.owner = undefined;
                 if (s.summary.page) delete s.summary.page.tabId;
             }
-            if (s.hostedBy === "page" && !s.interrupted && (s.kind === "agent" ? !s.ended : s.openTurns.size > 0)) {
+            // A BACKGROUND-hosted run was taken to report its own end, and that holds only while something is still
+            // driving it. Its tab CLOSING takes the document every page tool is delegated into, so it cannot take
+            // another step: it is picked up on a new page or it is over. Leaving it `waiting` kept a gate in the
+            // list that nothing could answer — the bar said an approval was pending across reloads and tab
+            // switches, and the press that would have cleared it was refused. A NAVIGATION stays excluded, because
+            // a background run surviving one is the whole of cross-page. Self-correcting either way: any later
+            // event from the run clears `interrupted` again, and marking it is also what offers the resume.
+            if ((s.hostedBy === "page" || opts.closed) && !s.interrupted && (s.kind === "agent" ? !s.ended : s.openTurns.size > 0)) {
                 s.interrupted = true;
                 s.gates.clear();
                 s.openTurns.clear();

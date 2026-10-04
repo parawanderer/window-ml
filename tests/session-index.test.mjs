@@ -205,6 +205,32 @@ test("a tab's document going away interrupts the runs it hosted, not the backgro
     assert.equal(ix.ingest(base("aaaa0001", "agent-say", { text: "resumed here" }), page(TAB_B)).accepted, true);
     assert.equal(ix.get("aaaa0001").status, "running");
     assert.equal(ix.ingest(step("bbbb0002", 1), page(TAB_B)).accepted, false);
+    // …and the BACKGROUND one is interrupted by the close, which the navigation above deliberately did not do. Its
+    // tab held the document every page tool is delegated into, so it cannot take another step.
+    assert.equal(ix.get("bbbb0002").status, "interrupted");
+});
+
+test("a background run whose tab closed stops claiming an approval nobody can answer", () => {
+    // The state a real run reached: a delegated tool hung, the page went, and the run never emitted a result. The
+    // gate stayed in the index, so `pendingApprovals` stayed 1 — the bar said an approval was pending across
+    // reloads and tab switches, with no card to reach and the one press that would clear it refused.
+    const ix = index();
+    ix.ingest(start("aaaa0001"), bg(TAB_A));
+    ix.ingest(step("aaaa0001", 1, { pending: true, awaitingApproval: true }), bg(TAB_A));
+    assert.equal(ix.get("aaaa0001").status, "waiting");
+    assert.equal(ix.get("aaaa0001").pendingApprovals, 1);
+
+    // A NAVIGATION must not do it: a background run surviving one is the whole of cross-page.
+    ix.pageGone(TAB_A, { closed: false });
+    assert.equal(ix.get("aaaa0001").pendingApprovals, 1, "a navigation leaves a background run alone");
+
+    ix.pageGone(TAB_A, { closed: true });
+    assert.equal(ix.get("aaaa0001").status, "interrupted");
+    assert.equal(ix.get("aaaa0001").pendingApprovals, 0, "the gate goes with the page it would have been answered on");
+
+    // Self-correcting: if the run turns out to be alive after all, its own next event takes it back.
+    ix.ingest(base("aaaa0001", "agent-say", { text: "still here" }), bg(TAB_B));
+    assert.equal(ix.get("aaaa0001").status, "running");
 });
 
 test("a restored session is listed, is not running any more, and its events are known to be on disk", () => {
