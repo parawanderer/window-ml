@@ -1,0 +1,44 @@
+# pair-grant.yaml — the React Native app's DEMO build (`install --demo`): the NAMED GRANTS on the pairing screen.
+# Settings → Devices → Pair a device, find the tablet the demo keeps waiting under a code, and check that the profiles
+# the page offers are the ones the phone offers: one tap sets the scopes, and flicking a switch by hand moves the
+# selection to Custom, because which profile is lit is derived from the switches rather than held beside them.
+# The same behaviour on the page is tests/e2e/chat-web.spec.mjs "a named grant is one tap". Needs the demo world, so
+# name it when you run `flows`: `node scripts/ios.mjs flows tests/mobile/pair-grant.yaml`.
+appId: dev.wander.windowml
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "KV cache size at 32k"
+    timeout: 60000
+- tapOn: "Settings"
+- tapOn: "Devices"
+- tapOn: "Pair a device"
+# By id: the field's accessibility label is "Its code", which the Text above it carries too.
+- tapOn:
+    id: "code-field"
+- inputText: "7K3M Q9XD"
+- hideKeyboard
+- tapOn: "Find it"
+- extendedWaitUntil:
+    visible: "Living-room tablet"
+    timeout: 20000
+# This phone passes on view, drive and screen, so both profiles it can grant IN FULL are offered.
+- assertVisible: "Watch only"
+- assertVisible: "Use it"
+# The default grant is view + drive, which is "Use it" — so nothing is Custom yet.
+- assertNotVisible: "Custom"
+- tapOn: "Watch only"
+- assertNotVisible: "Custom"
+# A switch flicked by hand is no longer any named grant, and the row says so rather than staying on a stale name.
+- tapOn:
+    id: "scope-screen"
+- extendedWaitUntil:
+    visible: "Custom"
+    timeout: 10000
+- assertVisible: "Chosen one by one, below."
+- tapOn: "They match: pair it"
+- extendedWaitUntil:
+    visible: "Paired"
+    timeout: 20000
+- assertVisible: "Living-room tablet is in the account now."

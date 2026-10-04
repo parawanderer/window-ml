@@ -20,6 +20,11 @@ import { Button, Card, Field } from "../ui";
 import { Bar } from "./AccountScreens";
 import { QrScanner } from "../scanner";
 
+/** The chosen named grant's fill: the palette's accent at a tenth, as the page tints it (`.pair-profile.on`). A neutral
+ *  grey read as DISABLED rather than as chosen, which is the opposite of what a selected row is for. Alpha rather than
+ *  a mixed colour, because it has to sit on whichever theme's surface is under it. */
+const selectedTint = (accent: string) => `${accent}1a`;
+
 /** A scope's name in words, or the id itself for one this app does not know. */
 const scopeLabel = (id: string) => SCOPES.find((x) => x.id === id)?.label ?? id;
 
@@ -172,14 +177,14 @@ export function PairScreen() {
                             return (
                                 <Pressable key={pr.id} accessibilityRole="radio" accessibilityState={{ checked: on }} accessibilityLabel={pr.label}
                                     onPress={() => setScopes([...pr.scopes!])}
-                                    style={[s.profile, { borderColor: on ? p.accent : p.border, backgroundColor: on ? p.panel2 : "transparent" }]}>
+                                    style={[s.profile, { borderColor: on ? p.accent : p.border, backgroundColor: on ? selectedTint(p.accent) : "transparent" }]}>
                                     <Text style={[s.body, { color: p.fg, fontWeight: "600" }]}>{pr.label}</Text>
                                     <Text style={[s.hint, { color: p.fgFaint }]}>{pr.detail}</Text>
                                 </Pressable>
                             );
                         })}
                         {profileOf(scopes) === "custom" ? (
-                            <View style={[s.profile, { borderColor: p.accent, backgroundColor: p.panel2 }]}>
+                            <View style={[s.profile, { borderColor: p.accent, backgroundColor: selectedTint(p.accent) }]}>
                                 <Text style={[s.body, { color: p.fg, fontWeight: "600" }]}>Custom</Text>
                                 <Text style={[s.hint, { color: p.fgFaint }]}>Chosen one by one, below.</Text>
                             </View>
@@ -190,7 +195,9 @@ export function PairScreen() {
                                     <Text style={[s.body, { color: p.fg }]}>{sc.label}</Text>
                                     <Text style={[s.hint, { color: p.fgFaint }]}>{sc.detail}</Text>
                                 </View>
-                                <Switch value={scopes.includes(sc.id)} onValueChange={(on) => setScopes((x) => on ? [...x, sc.id] : x.filter((y) => y !== sc.id))}
+                                {/* `testID` so a flow taps the SWITCH: its accessibility label is the scope's name, which the
+                                    Text beside it also carries, and the first match is the label, where a tap does nothing. */}
+                                <Switch testID={`scope-${sc.id}`} value={scopes.includes(sc.id)} onValueChange={(on) => setScopes((x) => on ? [...x, sc.id] : x.filter((y) => y !== sc.id))}
                                     trackColor={{ true: p.accent, false: p.panel2 }} thumbColor="#ffffff" ios_backgroundColor={p.panel2} accessibilityLabel={sc.label} />
                             </View>
                         ))}
@@ -202,7 +209,7 @@ export function PairScreen() {
                     <Card>
                         <Text style={[s.body, { color: p.fgDim }]}>{e.pairingInfo?.canScan ? "On the new device, choose Join an account. It shows a QR code and a typed code: scan the first, or type the second here." : "On the new device, choose Join an account. It shows a code: type it here."}</Text>
                         {e.pairingInfo?.canScan ? <Button primary title="Scan its QR code" busy={busy && scanning} onPress={() => { Keyboard.dismiss(); setScanning(true); }} /> : null}
-                        <Field label="Its code" value={code} onChangeText={setCode} placeholder="7K3M Q9XD" autoCapitalize="characters" mono autoFocus={!e.pairingInfo?.canScan} />
+                        <Field testID="code-field" label="Its code" value={code} onChangeText={setCode} placeholder="7K3M Q9XD" autoCapitalize="characters" mono autoFocus={!e.pairingInfo?.canScan} />
                         {error ? <Text style={[s.error, { color: p.err }]}>{error}</Text> : null}
                         <Button primary={!e.pairingInfo?.canScan} title="Find it" busy={busy} disabled={code.replace(/[\s-]/g, "").length < 4} onPress={lookup} />
                     </Card>
