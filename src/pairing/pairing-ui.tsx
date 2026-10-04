@@ -10,7 +10,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { encode } from "uqr";
 import { ConnectionHistory, DevicesList } from "./devices-ui";
 import { QrScanner, canScan } from "./qr-scan";
-import { groupFour, pairingProblem, profileOf, profilesFor, roleName, SCOPES, type FoundOffer, type Grant, type HubConnectionView, type Membership, type OfferHandle, type PairingApi } from "./api";
+import { devicesStep, groupFour, pairingProblem, profileOf, profilesFor, roleName, SCOPES, type FoundOffer, type Grant, type HubConnectionView, type Membership, type OfferHandle, type PairingApi } from "./api";
 
 /** A fingerprint as both screens draw it: four-character groups in the code face, large enough to compare. */
 export function Fingerprint({ value }: { value: string }) {
@@ -65,11 +65,19 @@ function Field({ label, hint, value, onInput, placeholder, mono }: { label: stri
     );
 }
 
+/** What a REFRESH needs to say that a first join does not: why it is happening, and who can answer the code. */
+export interface RefreshContext {
+    /** the one sentence explaining why this device cannot simply renew */
+    why: string;
+    /** labels of devices that may pair, so the code has an addressee rather than being a puzzle */
+    scanners: string[];
+}
+
 /**
  * JOINING AN ACCOUNT, on the new device: name it, then show the code and this device's fingerprint while the person
  * types the code on a device that may pair. It resolves by itself when that device answers.
  */
-export function JoinAccount({ api, onJoined, onCancel }: { api: PairingApi; onJoined: (m: Membership) => void; onCancel?: () => void }) {
+export function JoinAccount({ api, onJoined, onCancel, refresh }: { api: PairingApi; onJoined: (m: Membership) => void; onCancel?: () => void; refresh?: RefreshContext }) {
     const [label, setLabel] = useState(api.defaultLabel);
     const [hubUrl, setHubUrl] = useState(api.defaultHubUrl);
     const [offer, setOffer] = useState<OfferHandle | null>(null);
@@ -101,15 +109,37 @@ export function JoinAccount({ api, onJoined, onCancel }: { api: PairingApi; onJo
     const cancel = () => { const h = live.current; live.current = null; h?.cancel(); setOffer(null); onCancel?.(); };
     if (offer) {
         return (
-            <section class="pair-card" aria-label="Join an account">
-                <h3 class="pair-h">{offer.qr ? "Scan this, or type the code, on a device already in your account" : "Type this code on a device already in your account"}</h3>
-                <p class="pair-p">There: Settings → Devices → Pair a device.</p>
+            <section class="pair-card" aria-label={refresh ? "Refresh pairing" : "Join an account"}>
+                <h3 class="pair-h">{refresh
+                    ? (offer.qr ? "Scan this on the device you pair devices from" : "Type this code on the device you pair devices from")
+                    : (offer.qr ? "Scan this, or type the code, on a device already in your account" : "Type this code on a device already in your account")}</h3>
+                {/* WHO IS SUPPOSED TO SCAN IT. A code with no addressee is a puzzle: only a device holding the
+                    account's root may re-grant this one, and naming the ones this device has actually seen beats
+                    "a device already in your account", which includes the device you are looking at. */}
+                {refresh && refresh.scanners.length
+                    ? <p class="pair-p">On <b>{refresh.scanners.join(" or ")}</b>: Settings → Devices → Pair a device.</p>
+                    : <p class="pair-p">There: Settings → Devices → Pair a device.</p>}
+                {refresh ? <p class="pair-hint">Nothing here is lost by this: the same keys, the same name, and every session stay as they are. Only the window moves.</p> : null}
                 {offer.qr ? <PairingQr text={offer.qr} /> : null}
                 <PairingCode code={offer.code} />
                 <p class="pair-p">{offer.qr ? "Typed, it then shows a fingerprint to compare; it must be exactly this one:" : "It will then show a fingerprint. It must be exactly this one:"}</p>
                 <Fingerprint value={offer.fingerprint} />
                 <p class="pair-hint" role="status">Waiting for it to be confirmed there. The code works for {left}.</p>
                 <div class="pair-actions"><button class="btn" onClick={cancel}>Cancel</button></div>
+            </section>
+        );
+    }
+    if (refresh) {
+        return (
+            <section class="pair-card" aria-label="Refresh pairing">
+                <h3 class="pair-h">Refresh this device's pairing</h3>
+                <p class="pair-p">{refresh.why}</p>
+                <p class="pair-hint">Nothing is lost: the same keys, the same name, and every session stay as they are. Only the window moves.</p>
+                {problem ? <p class="pair-bad" role="alert">{problem}</p> : null}
+                <div class="pair-actions">
+                    <button class="btn primary" disabled={busy} onClick={() => void start()}>{busy ? "Starting…" : "Show the code"}</button>
+                    {onCancel ? <button class="btn" onClick={() => onCancel()}>Not now</button> : null}
+                </div>
             </section>
         );
     }
@@ -392,10 +422,26 @@ function LeaveAccount({ api, onLeft }: { api: PairingApi; onLeft: () => void }) 
  */
 export function AccountPanel({ api }: { api: PairingApi }) {
     const [m, setM] = useState<Membership | null | undefined>(undefined);
-    const [step, setStep] = useState<"join" | "create" | "pair" | null>(null);
+    const [step, setStep] = useState<"join" | "create" | "pair" | "refresh" | null>(null);
+    // WHO COULD ANSWER THIS DEVICE'S CODE, so a refresh names them instead of saying "a device already in your
+    // account", which includes the one you are reading. Only devices that may pair can, and an empty answer is fine:
+    // the copy falls back to the general sentence rather than asserting there is nobody.
+    const [scanners, setScanners] = useState<{ principal: string; label: string }[]>([]);
+    // The inbox's "Refresh pairing" lands here (attention.ts `fix.kind === "devices"`), so the step opens from the
+    // signal rather than only from a press on this screen.
+    useEffect(() => {
+        if (devicesStep.value !== "refresh") return;
+        devicesStep.value = null;
+        setStep("refresh");
+    }, [devicesStep.value]);
     useEffect(() => {
         let on = true;
         void api.load().then((v) => { if (on) setM(v); }, () => { if (on) setM(null); });
+        // `mayPair` is the whole test: only a device that may issue a certificate can answer this code. THIS device
+        // is dropped at render, where the membership says which principal it is.
+        void api.devices?.().then((ds) => {
+            if (on) setScanners(ds.filter((d) => d.mayPair && d.label).map((d) => ({ principal: d.principal, label: d.label })));
+        }).catch(() => {});
         return () => { on = false; };
     }, [api]);
     const joined = (v: Membership) => { setM(v); setStep(null); };
@@ -416,6 +462,13 @@ export function AccountPanel({ api }: { api: PairingApi }) {
                 </div>
             </section>
         );
+    }
+    if (step === "refresh") {
+        return <JoinAccount api={api} onJoined={joined} onCancel={() => setStep(null)}
+            refresh={{
+                why: "This device signs the account's revocations, and that is the one grant a renewal may never re-issue. So its window is extended by showing a code rather than by a press.",
+                scanners: scanners.filter((d) => d.principal !== m.principal).map((d) => d.label),
+            }} />;
     }
     if (step === "pair") return <PairDevice api={api} onDone={() => setStep(null)} />;
     return (

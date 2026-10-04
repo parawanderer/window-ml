@@ -8,13 +8,16 @@
 // principal that is connected, so opening one here would knock the app's own off.
 
 import type { HubClient } from "../hub/client";
-import { decodeChain, verifyChain } from "../hub/keys";
+import { decodeChain, principalId, verifyChain } from "../hub/keys";
 import { Keyring } from "../hub/keyring";
 import * as flow from "../hub/pair-flow";
 import { PAIRING_WINDOW_MS } from "../hub/pairing";
 import { Role } from "../hub/wire";
 import type { FoundOffer, Grant, Membership, PairingApi } from "./api";
 import { membershipOf, roleOf } from "./keyring-view";
+
+/** Lowercase hex, for comparing a principal with the one the hub has on record. */
+const hex = (b: Uint8Array): string => [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
 
 /** What a client's platform supplies: its keyring, its live hub connection, and how to describe where keys live. */
 export interface ClientPairingOptions {
@@ -35,7 +38,7 @@ export interface ClientPairingOptions {
      * second must not be minted, and an account with NONE cannot publish a revocation at all. Absent reads as "no
      * signer known", which is the right answer for a first browser and recoverable for a signer that is asleep.
      */
-    signer?: () => string | null;
+    signer?: () => { principal: string; label: string } | null;
 }
 
 /** Two public keys, compared in constant length: a renewed certificate must be for THIS device's key and no other. */
@@ -66,13 +69,21 @@ export function clientPairing(o: ClientPairingOptions): PairingApi {
     const shown = async (found: flow.FoundOffer): Promise<FoundOffer> => {
         const from = await issuer();
         // Who already signs, which both chooses the default and is what the screen says about it.
-        const signer = o.signer?.() ?? null;
+        //
+        // A SIGNER THAT IS THIS VERY DEVICE DOES NOT COUNT, and that is the whole reason this compares principals.
+        // A device keeps its keys across pairings (keyring.ts), so the signer's quarterly re-pairing is the same
+        // principal arriving again — and treating it as "the account already has one" would hand it a certificate
+        // without the grant and leave the account with nobody able to sign a removal, at the one moment somebody was
+        // deliberately tending to it.
+        const held = o.signer?.() ?? null;
+        const mine = hex(await principalId(found.offer.identityKey));
+        const signer = held && held.principal !== mine ? held : null;
         return {
             label: found.offer.label,
             role: roleOf(found.offer.role),
             fingerprint: found.fingerprint,
             grant: flow.defaultGrant(found.offer.role, from, !!signer),
-            ...(signer ? { signer } : {}),
+            ...(signer ? { signer: signer.label } : {}),
             grantable: from.scopes ?? null,
             ref: found,
             ...(found.checked ? { checked: true } : {}),
