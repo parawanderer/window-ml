@@ -174,7 +174,7 @@ test("resource tracks: the hovered band outlines itself, and single-sample runs 
 // "Not resident" and "we don't know yet" are different claims — the orb says "Awakening…" for the first and
 // must say nothing for the second.
 test("residentNow: knows loaded from not-loaded, and unknown from either", async () => {
-    const { residentNow } = await import("../src/sidebar/vram.tsx");
+    const { residentNow } = await import("../src/sidebar/model-status.tsx");
     const { loadedModels } = await import("../src/sidebar/store.ts");
     const before = loadedModels.value;
     try {
@@ -450,7 +450,7 @@ test("history: an evicted model keeps its colour, and says it is gone", async ()
 // VRAM_COLORS[i % 8] gave card 0 and System RAM the same indigo — in a legend whose only job is telling the
 // lines apart. (The 4×3090 NVLink rig, five pools, is the common version of this.)
 test("many pools: every pool gets its own colour, past the curated palette", async () => {
-    const { VRAM_COLORS } = await import("../src/sidebar/vram.tsx");
+    const { VRAM_COLORS } = await import("../src/sidebar/panel-state.ts");
     const { poolColor } = await import("../src/sidebar/panel-state.ts");
     // Inside the palette, the hand-picked colours are used as-is.
     assert.equal(poolColor(0, 5), VRAM_COLORS[0]);
@@ -1213,7 +1213,7 @@ test("resource panel: badge tooltips aren't clipped by the resizable panel", asy
 // A panel dragged too small cannot fit its header, plot and rows — the content spilled over the session list
 // below rather than shrinking. Both the drag and the stylesheet enforce a floor.
 test("resource panel: the floor is MEASURED, not summed from parts", async () => {
-    const { shortfall, measureFloor, layoutKey } = await import("../src/sidebar/vram.tsx");
+    const { shortfall, measureFloor, layoutKey } = await import("../src/sidebar/panel-size.ts");
     // Summing the parts is a guess about which parts exist and how tall they are — it goes stale the moment a
     // track grows a row or a name wraps, and the symptom is content rendering on top of itself. The shortfall
     // is what does not fit, whatever that content turns out to be.
@@ -1253,7 +1253,7 @@ test("resource panel: the floor is MEASURED, not summed from parts", async () =>
 // A programmatic resize (switching views changes the floor) EASES; a drag must not, because easing the
 // pointer would feel like lag. Driven by rAF, so the test steps the clock rather than waiting.
 test("resize easing: eases to the target over time, and never snaps mid-flight", async () => {
-    const { easeVramH } = await import("../src/sidebar/vram.tsx");
+    const { easeVramH } = await import("../src/sidebar/panel-size.ts");
     const { vramH } = await import("../src/sidebar/store.ts");
     const frames = [];
     const realRaf = globalThis.requestAnimationFrame;
@@ -1281,7 +1281,7 @@ test("resize easing: eases to the target over time, and never snaps mid-flight",
 });
 
 test("resize easing: a tiny or first-time change is applied directly, not animated", async () => {
-    const { easeVramH } = await import("../src/sidebar/vram.tsx");
+    const { easeVramH } = await import("../src/sidebar/panel-size.ts");
     const { vramH } = await import("../src/sidebar/store.ts");
     const realRaf = globalThis.requestAnimationFrame;
     let scheduled = 0;

@@ -228,7 +228,7 @@ broken:
   hedged "keep-alive ran out, or another load displaced it" for an older server or an unknown reason. The same
   build puts `memory_host` on an `/api/ps` row (absent = nothing spilled) and `at_ms` (wall clock) on every frame. `sw-events.ts` holds ONE
   connection per worker while a panel is open, `resource-events.ts` is the pure frame model + NDJSON
-  reader, and `machineEventFrom` (vram.tsx) turns edges into lane spans. **The frame is TYPED from the fork's own
+  reader, and `machineEventFrom` (resource-feed.ts) turns edges into lane spans. **The frame is TYPED from the fork's own
   schema**, `api/events.proto`, vendored and pinned at `src/proto/events.proto` (`events.proto.pin.json`) and generated
   into `src/proto/events.gen.ts` by `npm run gen-proto`; `events-wire.ts` reads it as `Wire<T>` (every key may be absent
   or null, because frames are kept verbatim), and `tests/events-proto.test.mjs` checks every captured frame against the
