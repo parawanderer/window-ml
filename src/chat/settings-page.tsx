@@ -8,7 +8,6 @@
 // `chrome`.
 import { signal } from "@preact/signals";
 import type { ComponentChildren } from "preact";
-import { useState } from "preact/hooks";
 import type { PairingApi } from "../pairing/api";
 import { AccountPanel } from "../pairing/pairing-ui";
 import { IconBack } from "../sidebar/icons";
@@ -18,6 +17,9 @@ import { RuntimeSheet } from "./runtime-sheet";
 import { ThemeSeg } from "./theme-pick";
 import { PANEL_SIZES, codeSize, panelSize, setCodeSize, setPanelSize } from "./view-mode";
 import { CODE_SIZES } from "../native/text-size";
+import { askNotify, notifyAllowed, notifyState, type NotifyState } from "./notify";
+import { NOTIFY_WHAT, notifyDeniedNote } from "./reminders";
+import { deviceEnv } from "./app-badge";
 
 /** Which half of the settings is showing. Not stored: the sheet opens on this page's own, which is the half that is
  *  always there. */
@@ -78,6 +80,7 @@ export function SettingsPage({ browser, housekeeping, pairing, store }: { browse
                                 </div>
                             </div>
                             <pre class="code chat-set-sample" aria-hidden="true">{"for i in range(3):\n    print(f\"{i} hello\")"}</pre>
+                            <NotifyRow />
                             <div class="chat-set-row">
                                 <div class="chat-set-label">
                                     <span>Panel text size</span>
@@ -117,6 +120,39 @@ export function SheetHead({ title, back }: { title: string; back: string }) {
                 <IconBack /><span class="tt-pop" role="tooltip">{back}</span>
             </button>
             <h1 class="chat-sheet-title">{title}</h1>
+        </div>
+    );
+}
+
+/**
+ * NOTIFICATIONS, as the four states a browser can be in about them.
+ *
+ * Asked only on a press. A prompt nobody opened is how a browser learns to refuse this app for good, and `denied`
+ * cannot be asked again from here — only in the browser's own site settings, which is why that state says so rather
+ * than offering a button that does nothing.
+ *
+ * It says what it CANNOT do on a page, because the honest answer differs by surface: with the app closed a web page
+ * has no timer and nothing fires, which the installed phone app does not suffer (docs/spec/NOTIFICATIONS.md).
+ */
+export function NotifyRow() {
+    // The signal is what the rest of the page acts on, so this reads it rather than keeping a second answer: a row
+    // that said "On" while the timer was still off is the one way this can lie.
+    const state: NotifyState = notifyAllowed.value ? "granted" : notifyState();
+    if (state === "unsupported") return null;
+    const hint = state === "granted"
+        ? `${NOTIFY_WHAT} With this app closed a browser cannot wake itself, so a reminder waits until it is next open.`
+        : state === "denied"
+            ? `${NOTIFY_WHAT} ${notifyDeniedNote(deviceEnv())}`
+            : NOTIFY_WHAT;
+    return (
+        <div class="chat-set-row">
+            <div class="chat-set-label">
+                <span>Notifications</span>
+                <span class="chat-set-hint">{hint}</span>
+            </div>
+            {state === "default"
+                ? <button class="chat-att-fix" onClick={() => void askNotify()}>Allow</button>
+                : <span class="chat-set-hint">{state === "granted" ? "On" : "Off"}</span>}
         </div>
     );
 }

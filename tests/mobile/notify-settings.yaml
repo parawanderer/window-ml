@@ -1,0 +1,22 @@
+# notify-settings.yaml — the React Native app's DEMO build (`install --demo`): the NOTIFICATIONS row in Settings.
+# What is asserted is the part that is a product decision rather than OS plumbing: the row says what allowing it will
+# and will not put on a lock screen BEFORE it is pressed, and it is the press that asks. The OS dialog itself is not
+# driven here on purpose: tapping a system permission sheet is the flakiest thing Maestro does, and what it would
+# prove is that expo-notifications works. What a notification SAYS, and when, is tests/reminders.test.mjs.
+# Needs the demo world: `node scripts/ios.mjs flows tests/mobile/notify-settings.yaml`.
+appId: dev.wander.windowml
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "KV cache size at 32k"
+    timeout: 60000
+- tapOn: "Settings"
+- assertVisible: "NOTIFICATIONS"
+# Nothing has been asked yet, so the row is the ask, and it carries the promise rather than a bare "Allow".
+- assertVisible: "Allow notifications"
+- assertVisible:
+    text: ".*access to the account runs out.*approval is waiting.*"
+# And the one thing it promises NOT to do, which is the reason this row has words at all.
+- assertVisible:
+    text: ".*Never what a session is doing.*"

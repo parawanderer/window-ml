@@ -339,6 +339,23 @@ test("the phone's inbox carries THIS PHONE's certificate too, which is the devic
     assert.deepEqual(B.parseToNative(B.encode({ type: "attention", items, count })), { type: "attention", items, count });
 });
 
+test("the certificate's DATES cross as well as its inbox line, because only the app can hand them to the OS", async () => {
+    // The inbox item is read when someone opens the app; these are what reach them when they do not. A WebView cannot
+    // be woken at a date, so the page computes the plan and the app schedules it (docs/spec/NOTIFICATIONS.md).
+    const { certReminders } = await import("../src/chat/reminders.ts");
+    const now = Date.parse("2026-10-04T12:00:00Z");
+    const plan = certReminders({ notAfterMs: now + 90 * 86_400_000, renewable: true }, now);
+    assert.ok(plan.length >= 3);
+    assert.deepEqual(B.parseToNative(B.encode({ type: "reminders", plan })), { type: "reminders", plan });
+    // An empty plan is a real message, not a missing one: it is what cancels whatever the app had.
+    assert.deepEqual(B.parseToNative(B.encode({ type: "reminders", plan: [] })), { type: "reminders", plan: [] });
+});
+
+test("a reminders message with no plan is dropped whole, like every other malformed one", () => {
+    assert.equal(B.parseToNative(JSON.stringify({ v: 1, type: "reminders" })), null);
+    assert.equal(B.parseToNative(JSON.stringify({ v: 1, type: "reminders", plan: "cert-warn" })), null);
+});
+
 test("the runtimes the app may start on are the page's rule: online, offering the kind, holding the grant", () => {
     const rts = [
         rt({ id: "both", capabilities: { chat: true, agent: true } }),

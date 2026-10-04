@@ -2,7 +2,7 @@
 // desktop tabs. The theme (the system's, or light or dark), this device's account, and the runtimes it can see with what
 // it may do on each. Pairing and the device list arrive as screens of their own.
 
-import { useContext } from "react";
+import { useContext, useEffect, useState } from "react";
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
@@ -14,6 +14,7 @@ import { SIZE, ThemeChoiceContext, usePalette, type ThemeChoice } from "../theme
 import { Dot, IconButton } from "../ui";
 import { CODE_SIZES } from "../../../src/native/text-size";
 import { setCodeSize, useCodeSize } from "../code-size";
+import { NOTIFY_WHAT, askNotify, notifyState, type NotifyPermission } from "../notify";
 
 const THEMES: { value: ThemeChoice; label: string }[] = [
     { value: "system", label: "Same as the phone" },
@@ -36,6 +37,10 @@ export function SettingsScreen() {
     const e = useEmbed();
     const { choice, setChoice } = useContext(ThemeChoiceContext);
     const code = useCodeSize();
+    // Read once: the answer only changes by a press here or a trip to the phone's own settings, and coming back
+    // from those remounts the screen.
+    const [notify, setNotify] = useState<NotifyPermission | null>(null);
+    useEffect(() => { void notifyState().then(setNotify); }, []);
     // Leaving forgets this phone's membership (never a root: a phone holding one keeps it) and starts over at Welcome.
     const leave = () => Alert.alert("Leave the account?", "This phone stops reaching your browsers. To come back, pair it again from a device in the account.",
         [{ text: "Stay", style: "cancel" }, { text: "Leave", style: "destructive", onPress: () => { void e.pairing("leave"); } }]);
@@ -72,6 +77,22 @@ export function SettingsScreen() {
                             {code === o.px ? <Check size={20} color={p.accent} /> : null}
                         </Pressable>
                     ))}
+                </View>
+
+                {/* NOTIFICATIONS, the one thing here that reaches someone with the app closed. Asked only on a press:
+                    an OS prompt nobody opened is answered "no" and then cannot be asked again. What it will say is on
+                    the row, because "allow notifications" alone is a question nobody can answer. */}
+                <Text style={[s.group, { color: p.fgDim }]}>Notifications</Text>
+                <View style={[s.card, { backgroundColor: p.scheme === "dark" ? p.panel : p.bg }]}>
+                    <Pressable testID="notify-row" accessibilityRole="button" disabled={notify !== "undetermined"}
+                        onPress={() => void askNotify().then(setNotify)}
+                        style={({ pressed }) => [s.row, pressed && notify === "undetermined" && { backgroundColor: p.panel2 }]}>
+                        <View style={{ flex: 1 }}>
+                            <Text style={[s.rowText, { color: p.fg }]}>{notify === "granted" ? "On" : notify === "denied" ? "Off" : "Allow notifications"}</Text>
+                            <Text style={{ color: p.fgDim, fontSize: SIZE.small, marginTop: 2 }}>{NOTIFY_WHAT}{notify === "denied" ? " Turned off for this app in the phone's settings, which is the only way back." : ""}</Text>
+                        </View>
+                        {notify === "granted" ? <Check size={20} color={p.accent} /> : notify === "undetermined" ? <ChevronRight size={20} color={p.fgFaint} /> : null}
+                    </Pressable>
                 </View>
 
                 <Text style={[s.group, { color: p.fgDim }]}>This device</Text>

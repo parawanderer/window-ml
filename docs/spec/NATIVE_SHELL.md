@@ -8,12 +8,14 @@ chrome, and keeps the web build for what it is good at: drawing a session.
 Agreed on 2026-09-21 and built over #237-#261: the list, the session chrome, the composer, settings, the runtimes,
 pairing and the ⋮ actions are native, and the transcript is the page. It reached parity on 2026-09-23, took over the app
 id `dev.wander.windowml`, and Capacitor was removed. What is not there yet: answering an approval from the waiting bar
-(by design, the card in the transcript answers it) and push. Where this spec and `mobile/AGENTS.md` disagree about a
-detail of the app, the code and AGENTS.md are what ships; this is why it is built that way.
+(by design, the card in the transcript answers it) and real push. Notifications themselves arrived on 2026-10-04: the
+certificate's deadlines are scheduled with the OS and an approval is posted while the app runs, which leaves only an
+approval reaching a KILLED app ([`NOTIFICATIONS.md`](NOTIFICATIONS.md)). Where this spec and `mobile/AGENTS.md`
+disagree about a detail of the app, the code and AGENTS.md are what ships; this is why it is built that way.
 
 It replaces the packaging half of "The phone app" in [`CHAT_PAGE.md`](CHAT_PAGE.md) (Capacitor, decided 2026-09-17).
-Everything else there stands: the hub serves no code, the app is built and signed here, pushes say only "an approval is
-waiting".
+Everything else there stands: the hub serves no code, the app is built and signed here, and a notification says only "an
+approval is waiting" ([`NOTIFICATIONS.md`](NOTIFICATIONS.md) keeps that rule for the local ones too).
 
 ## Scope: calm only
 

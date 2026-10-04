@@ -48,6 +48,15 @@ API from memory.** `expo-file-system` in particular is the `File` / `Directory` 
   without the module until launch, where it fails as "Cannot find native module" on a white screen. `install`
   fingerprints `package.json`, `app.json` and `plugins/` (`scripts/mobile-prebuild.mjs`) and re-runs `expo prebuild
   --clean` when they change; by hand, delete the platform folder.
+- **`expo-notifications` is installed and deliberately NOT in `app.json`'s plugins.** Its iOS config plugin writes
+  `aps-environment` and the `remote-notification` background mode, which are a push capability a free Apple signing
+  certificate cannot grant, so adding it breaks the simulator-and-sideload story for a feature that is local-only.
+  Autolinking links the module anyway, and Android gets `POST_NOTIFICATIONS` and `RECEIVE_BOOT_COMPLETED` from the
+  library's own manifest, which is everything a scheduled local notification needs. Adding the plugin entry is part of
+  real push, along with a paid Apple account and an FCM project (`docs/spec/NOTIFICATIONS.md`).
+- **The app schedules notifications; it never decides them.** The dates and every sentence arrive over the bridge as a
+  finished plan (`reminders`), computed by `src/chat/reminders.ts` so the page and the phone cannot word the same
+  promise differently. `mobile/src/notify.ts` is OS plumbing only.
 - **A scroll view with a field in it eats the first tap**: without `keyboardShouldPersistTaps="handled"` a tap while the
   keyboard is up only dismisses it, so a row picked after typing (a filtered model, Save on a rename) needs two taps and
   the first looks broken. `Sheet` sets it; any new scroller holding a field needs it too.

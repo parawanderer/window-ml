@@ -14,6 +14,7 @@ import * as Sharing from "expo-sharing";
 import { Directory, File, Paths } from "expo-file-system";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { encode, parseToNative, type AttentionRow, type BridgeAccount, type PairingCall, type PairingInfo, type RuntimeStorageView, type SessionChrome, type ToWeb } from "../../src/native/bridge";
+import { syncReminders, useNotices } from "./notify";
 import type { HostStatus, ListedSession, ModelChoice, RuntimeInfo, SessionSummary, TabGroupInfo, TabInfo } from "../../src/session-host";
 import { EMBED } from "./generated/embed";
 import { answerStore } from "./store";
@@ -216,6 +217,9 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
             case "account": setState((s) => ({ ...s, account: m.account })); return;
             case "status": setState((s) => ({ ...s, status: m.status })); return;
             case "attention": setState((s) => ({ ...s, attention: { items: m.items, count: m.count } })); return;
+            // The dates for this phone's certificate, handed straight to the OS: the page cannot be woken at one and
+            // this is the one deadline worth reaching someone with the app closed (notify.ts).
+            case "reminders": if (!EMBED.demo) void syncReminders(m.plan); return;
             case "index": setState((s) => ({ ...s, runtimes: m.runtimes, sessions: m.sessions, ...(m.startable ? { startable: m.startable } : {}) })); return;
             case "storageResult": { const r = pendingStorage.current.get(m.id); pendingStorage.current.delete(m.id); r?.({ storage: m.storage, ...(m.error ? { error: m.error } : {}) }); return; }
             case "tabsResult": { const r = pendingTabs.current.get(m.id); pendingTabs.current.delete(m.id); r?.(m); return; }
@@ -260,6 +264,9 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
         pendingSent.current.set(id, (r) => { clearTimeout(timer); resolve(r); });
         post(build(id));
     }), [post]);
+
+    // The icon's count, and the line an approval earns when this phone is not the thing being looked at.
+    useNotices(state.sessions, state.attention.count, state.demo);
 
     const api = useMemo<EmbedApi>(() => ({
         ...state,
