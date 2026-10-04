@@ -173,7 +173,11 @@ export class ChatStore {
             const feed = this.feeds.get(key)?.snapshot();
             const s = this.seen.get(key);
             if (!feed || !s) return;
-            void this.cache!.save({ v: 1, key, feed, events: s.events, earlier: s.earlier, truncated: s.truncated }).catch(() => undefined);
+            // The SUMMARY rides along, from the index this store already keeps: the phone's copy is an archive entry
+            // (summary, history, events), not a bag of events, so it reads back through the same reader the
+            // extension's archive uses instead of needing to be rebuilt into one.
+            const summary = this._index.value.get(key);
+            void this.cache!.save({ v: 1, key, feed, events: s.events, earlier: s.earlier, truncated: s.truncated, ...(summary ? { summary } : {}) }).catch(() => undefined);
         }, 800));
     }
 

@@ -25,7 +25,7 @@
 // not a folder that grows until the phone is full.
 
 import type { MlDebugEvent } from "../contract-debug";
-import type { SessionKey } from "../session-host";
+import type { SessionKey, SessionSummary } from "../session-host";
 import type { PlainStore } from "../native/store-bridge";
 import type { FeedSnapshot } from "./session-feed";
 
@@ -34,7 +34,13 @@ export const CACHE_MAX_BYTES = 1_500_000;
 /** How many sessions are kept; the least recently opened past this goes. */
 export const CACHE_SESSIONS = 40;
 
-/** One session as the phone last saw it. `earlier` is where the subscription's history began, when it had more. */
+/** One session as the phone last saw it. `earlier` is where the subscription's history began, when it had more.
+ *
+ *  It carries the SUMMARY as well as the events, which is what makes the phone's copy the same thing the extension
+ *  archives rather than a loose bag of events beside it: an archived session is a summary, a history and the events,
+ *  and a copy missing the first two could not be read back by the shared reader or handed to an export without being
+ *  rebuilt from somewhere. Absent where the session is not in the index — then there is nothing to list it by, and
+ *  the copy is not kept. */
 export interface CachedSession {
     v: 1;
     key: SessionKey;
@@ -42,6 +48,7 @@ export interface CachedSession {
     events: { pos?: number; event: MlDebugEvent }[];
     earlier: { from: number } | null;
     truncated: boolean;
+    summary?: SessionSummary;
 }
 
 /** Where a store keeps what it has seen. The phone's page gives one to its `ChatStore`; the web page does not. */
