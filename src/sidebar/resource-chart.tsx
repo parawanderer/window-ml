@@ -39,6 +39,7 @@ import { useTipPlacement } from "./use-tip";
 import { tileOffsets } from "./tip";   // where several track-anchored tips go when they would cover each other
 import { signal } from "@preact/signals";
 import { startBrush, BrushOverlay, EventTip, phaseFill, EventLane } from "./resource-lane-ui";
+import { bandIdentity, bandTint, W, H, partFill, bandFill } from "./chart-paint";
 
 /** Which part of the scrub window the pointer is over, so the cursor can say a handle is there before you
  *  try to use it. A resize affordance you can only discover by failing to pan is not an affordance. */
@@ -79,48 +80,6 @@ export function muteTip(): boolean {
  *  read, and only EventTip wants it. */
 const cursorOn = (surface: string) =>
     (eventHover.value?.scope === surface || gapHover.value?.scope === surface ? null : cursorAt(surface));
-
-const W = 300, H = 72;
-
-/** Which model each residual band is TINTED with (`Band.of`) — a runner's overhead, a load in flight. Kept
- *  apart from `bandIdentity` on purpose: identity makes a band hoverable, hideable and stepped as the model. */
-function bandTint(frames: Band[][]): Record<string, string | undefined> {
-    const by: Record<string, string | undefined> = {};
-    for (const bands of frames) for (const b of bands) if (b.of && !by[b.key]) by[b.key] = b.of;
-    return by;
-}
-
-/** Which model each band key belongs to, from ANY frame in the window. Read only from the LAST frame, a model
- *  that evicted before the newest sample had no entry there — so its whole history lost its colour and turned
- *  into anonymous grey, and it stopped being hoverable, exactly where the chart's job is to say what WAS
- *  there. The history is the point; a band keeps its identity for as long as it is drawn. */
-function bandIdentity(frames: Band[][]): Record<string, string | undefined> {
-    const by: Record<string, string | undefined> = {};
-    for (const bands of frames) for (const b of bands) if (b.model && !by[b.key]) by[b.key] = b.model;
-    return by;
-}
-
-const bandFill = (key: string, model: string | undefined, tint?: string): string => {
-    if (key === "free") return "transparent";
-    if (key === "other" || key === "unknown") return "var(--fg-faint)";
-    // A residual that BELONGS to a model (its runner's overhead, its load) takes a thin wash of that model's
-    // colour — related to the model at a glance, and never mistaken for the model's own memory.
-    if (!model && tint) return `color-mix(in srgb, ${colorFor(tint)} 30%, var(--fg-faint))`;
-    return model ? colorFor(model) : "var(--fg-faint)";
-};
-
-/** A memory PART, in the model's own colour so the decomposition still reads as that model rather than as a
- *  new set of things. The parts are told apart by WEIGHT, not by hue: weights keep the full colour (they are
- *  the model), context is lighter, and the overhead a user cannot act on is lighter still. A hue per part
- *  would put four unrelated colours inside one band and lose the identity the band exists to carry. */
-const PART_MIX: Record<keyof MemoryBreakdown, number> = {
-    weights: 100, kvCache: 62, recurrentState: 62, projector: 44, compute: 26, output: 18, other: 18,
-};
-const partFill = (model: string, key: keyof MemoryBreakdown): string => {
-    const c = colorFor(model);
-    const mix = PART_MIX[key];
-    return mix >= 100 ? c : `color-mix(in srgb, ${c} ${mix}%, transparent)`;
-};
 
 /**
  * WHAT ONE GENERATION LEFT IN THE KV CACHE, drawn inside the drilled-in cache part while its lane span is
