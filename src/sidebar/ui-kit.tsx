@@ -272,8 +272,8 @@ export const tokenHover = (s?: string): { onPointerEnter?: () => void; onPointer
 // (e.source === frame.contentWindow, unforgeable by the page) — forwards it to the background as
 // SET_APPROVAL. That authentication is the whole point: the decision is made HERE and the page can't
 // spoof it. Keyed by the run hash + the step's seq.
-export const sendApproval = (hash: string, seq: number, decision: boolean, persist = false) =>
-    services().answerApproval(hash, seq, decision, persist);
+export const sendApproval = (hash: string, seq: number, decision: boolean, persist = false, feedback?: string) =>
+    services().answerApproval(hash, seq, decision, persist, feedback);
 
 // The "https://host/*" host-permission pattern a step needs granted before it can run: a fetch_url's URL
 // (the background SW fetch needs the host) OR a navigate's destination (a cross-origin nav must RE-INJECT the
@@ -292,13 +292,13 @@ export function grantHostPattern(st: AgentStep): string | null {
 // gesture (so the SW fetch can reach it), then post the decision. Idempotent — Chrome no-ops when the host is
 // already granted (no prompt), so it's safe to always try. Degrades gracefully: the approval is sent whether
 // or not the grant succeeds (a denied host just yields the tool's actionable "grant On all sites" error).
-export async function decideGate(st: AgentStep, hash: string, seq: number, ok: boolean, persist: boolean): Promise<void> {
+export async function decideGate(st: AgentStep, hash: string, seq: number, ok: boolean, persist: boolean, feedback?: string): Promise<void> {
     if (ok) {
         const pat = grantHostPattern(st);
         const access = services().hostAccess;
         if (pat && access) await access.request(pat);   // dismissed or unsupported → the fetch returns the actionable error
     }
-    sendApproval(hash, seq, ok, persist);
+    sendApproval(hash, seq, ok, persist, feedback);
 }
 // Steps you've already approved/denied this session, keyed `hash:seq`. A step's own
 // awaitingApproval flag only clears when the DONE event lands — AFTER the tool runs — so without

@@ -323,6 +323,38 @@ test("Settings CDP toggle: flag ON but the debugger permission is INACTIVE → a
 
 // --- what an approval SAYS it will do, and the raise it is asking for ------------------------------------
 
+test("Deny splits: the plain press refuses, and the chevron sends the model a reason", async () => {
+    // A bare refusal tells the model nothing, so it guesses — often by trying the same thing a slightly different
+    // way. The contract has carried `feedback` on `approval.answer` the whole time and nothing ever sent one.
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("deny", "fetch it"));
+    await w.dispatch(agentStep("deny", 1, {
+        seq: 1, pending: true, awaitingApproval: true, tool: "fetch_url",
+        arguments: { url: "https://transavia.example/fare-rules/" },
+        renderIn: { type: "action", verb: "fetch", target: "https://transavia.example/fare-rules/" },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.flush();
+    const more = w.shadow.querySelector(".astep-approve .appr-deny-more");
+    assert.ok(more, "the chevron is there beside Deny");
+    assert.equal(more.getAttribute("aria-haspopup"), "dialog");
+
+    more.click();
+    await w.flush();
+    const field = w.shadow.querySelector(".chat-dialog .appr-say");
+    assert.ok(field, "it opens a field for the sentence");
+    field.value = "Not that site - use the airline's own domain.";
+
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    w.shadow.querySelector(".chat-dialog [type=submit]").click();
+    await w.flush();
+    const sent = posted.find((m) => m.__mlSidebarApp === "approval");
+    assert.ok(sent, "it posts a decision");
+    assert.equal(sent.decision, false, "it is still a denial");
+    assert.match(sent.feedback ?? "", /airline's own domain/, "and it carries what was typed");
+});
+
 test("the mechanics of the three buttons are OFFERED, not printed on every card", async () => {
     // What each button does is true of every approval and read once: it was the only explanation a card carried
     // about ITSELF rather than about the call, and it was a native `title` on one button, which is the slowest and

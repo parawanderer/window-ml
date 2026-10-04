@@ -1261,6 +1261,19 @@ html[data-focus] .astep-approve { gap: 8px; margin: 6px 0; padding: 9px 11px; bo
 /* The glyph stays small, the TARGET does not — a finger needs 40px and the repo's touch probe enforces it, which is
    how this was caught rather than shipped. The circle grows; the icon inside it does not. */
 @media (pointer: coarse) { .appr-info { width: 40px; height: 40px; } }
+/* DENY, SPLIT. The two halves read as one control: they sit flush, share the outline, and only the inner edge
+   divides them — the same shape `.continue-run`/`.continue-more` uses for Continue, because they are the same idea
+   (the common answer under the thumb, the wordier one behind a chevron) and two shapes for it would be two things
+   to learn. */
+.appr-deny-wrap { display: inline-flex; }
+.appr-deny-wrap .appr-btn.no { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+/* The chevron half of a split Deny: where the wordier answer lives, so the plain refusal stays one press. */
+.appr-deny-more { display: inline-flex; align-items: center; padding: 3px 6px; margin-left: -1px;
+    border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.appr-deny-more svg { width: 14px; height: 14px; transform: rotate(90deg); }
+@media (pointer: coarse) { .appr-deny-more { min-width: 40px; justify-content: center; } }
+/* The message itself: a field that can hold a sentence, not a line. */
+.appr-say { min-height: 72px; resize: vertical; font: inherit; }
 /* What the pointer gets from the tip, for everyone else: opened by the control, under the row it explains. */
 .appr-why { margin-top: 6px; }
 .appr-why-list { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px;
