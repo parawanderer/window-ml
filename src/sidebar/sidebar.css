@@ -3576,6 +3576,19 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 /* What a new device may do, chosen on the device pairing it: a checkbox per scope, its words beside it. */
 .pair-grant { display: flex; flex-direction: column; gap: 7px; margin: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
 .pair-grant legend { padding: 0 4px; }
+/* THE NAMED GRANTS above the checkboxes: how much to trust this device, as a few words rather than six switches. One
+   per row rather than a segmented strip, because each carries a sentence saying what it costs and a strip would have
+   to drop it. The checkboxes stay below, and ticking one moves the selection to Custom by itself. */
+.pair-profiles { display: flex; flex-direction: column; gap: 5px; margin-bottom: 3px; }
+/* One named grant: its name, then what it means, on a surface that says whether it is the one chosen. The `custom` row
+   is a span rather than a button, since there is nothing to choose: it is the name for whatever is ticked below. */
+.pair-profile { display: flex; flex-direction: column; gap: 1px; text-align: left; font: inherit; cursor: pointer;
+    padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--fg); }
+.pair-profile:hover { border-color: var(--fg-faint); }
+.pair-profile.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
+.pair-profile.custom { cursor: default; }
+.pair-profile b { font-weight: 600; }
+.pair-profile .pair-hint { display: block; }
 /* One scope's checkbox and its words in the grant editor. */
 .pair-check { display: flex; gap: 9px; align-items: flex-start; line-height: 1.45; cursor: pointer; }
 .pair-check input { margin-top: .25em; accent-color: var(--accent); }
