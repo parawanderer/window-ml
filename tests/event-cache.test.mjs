@@ -52,14 +52,47 @@ test("the cache keeps a session under a short name, and a copy of another sessio
     for (const name of st.m.keys()) assert.match(name, /^(ev:[0-9a-f]{16}|ev-index)$/, "names the app's store will accept");
 });
 
-test("a session too large to keep whole is not kept at all, and an older copy of it goes too", async () => {
+test("one event over the cap keeps nothing, and an older copy of that session goes too", async () => {
     const st = mapStore();
     const c = storeCache(st);
     const base = { v: 1, key: "laptop:big", feed: { epoch: "e", cursors: [1] }, earlier: null, truncated: false };
     await c.save({ ...base, events: [] });
     assert.ok(await c.load("laptop:big"));
+    // Nothing can be trimmed off a single event, so this is the honest floor rather than the general rule.
     await c.save({ ...base, events: [{ event: { content: "x".repeat(CACHE_MAX_BYTES) } }] });
-    assert.equal(await c.load("laptop:big"), null, "half a session would be worse than none");
+    assert.equal(await c.load("laptop:big"), null, "nothing of it can be kept");
+});
+
+test("an over-cap session is TRIMMED to its newest events, and says where they begin", async () => {
+    // It used to be dropped whole, which meant the biggest sessions — the ones most annoying to refetch over a hub —
+    // were the only ones kept at nothing. A trimmed copy is not a lie: `earlier.from` exists to say that history
+    // continues before what is held, and `feed` is the subscription's position at the NEW end, so it stays true.
+    const st = mapStore();
+    const c = storeCache(st);
+    const big = "y".repeat(20_000);
+    const events = Array.from({ length: 200 }, (_, i) => ({ pos: i, event: { content: `${i}:${big}` } }));
+    await c.save({ v: 1, key: "laptop:trim", feed: { epoch: "e", cursors: [9] }, events, earlier: null, truncated: false });
+
+    const got = await c.load("laptop:trim");
+    assert.ok(got, "something was kept");
+    assert.ok(JSON.stringify(got).length <= CACHE_MAX_BYTES, "and it fits the cap");
+    assert.ok(got.events.length > 0 && got.events.length < 200, "some of it, not all of it");
+    // The NEWEST end is what was kept: that is what a reader scrolls back from, and what `feed` resumes against.
+    assert.equal(got.events.at(-1).pos, 199, "the newest event is still there");
+    assert.deepEqual(got.feed, { epoch: "e", cursors: [9] }, "the subscription's position is untouched");
+    // And it states where it now begins, rather than claiming the session starts here.
+    assert.equal(got.earlier.from, got.events[0].pos, "earlier.from is the oldest event it holds");
+    assert.ok(got.earlier.from > 0, "which is not the session's first event");
+});
+
+test("an over-cap session whose events cannot say their position is not kept", async () => {
+    // Trimming without `pos` would leave a copy that cannot state where it starts: it would either claim the session
+    // begins there, or carry a `from` it invented. Keeping nothing is the only honest answer.
+    const st = mapStore();
+    const c = storeCache(st);
+    const events = Array.from({ length: 200 }, (_, i) => ({ event: { content: `${i}:${"z".repeat(20_000)}` } }));
+    await c.save({ v: 1, key: "laptop:nopos", feed: { epoch: "e", cursors: [1] }, events, earlier: null, truncated: false });
+    assert.equal(await c.load("laptop:nopos"), null);
 });
 
 test("past the limit, the least recently kept session goes first, and clear forgets everything", async () => {

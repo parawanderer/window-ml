@@ -6,9 +6,19 @@
 // store replays the copy and then SUBSCRIBES FROM THAT POSITION: the runtime sends only what is new, or answers `reset`
 // when the history changed while the app was closed, which clears the copy through the store's ordinary reset path.
 //
-// Bounded, because a phone is not an archive: a session larger than `CACHE_MAX_BYTES` is not kept at all (half a
-// session would be worse than none), and past `CACHE_SESSIONS` the least recently opened goes. The app keeps it in its
-// CACHE directory, not its documents: out of backups, and the OS may purge it, which is exactly what a cache promises.
+// Bounded, because a phone is not an archive: past `CACHE_SESSIONS` the least recently opened goes, and a session over
+// `CACHE_MAX_BYTES` is TRIMMED to its newest events rather than dropped. It used to be dropped whole, on the reasoning
+// that half a session is worse than none — which is true of a copy that lies about where it starts, and not true here,
+// because `earlier.from` exists to say exactly that. The old rule also inverted what anyone wants: the biggest
+// sessions, the ones most annoying to refetch over a hub, were the only ones kept at nothing.
+//
+// Trimming takes whole events off the OLD end, never anything out of an event. Dropping the images from a
+// screenshot-heavy run would fit far more of it, and would also make the copy claim a history it does not have: the
+// transcript would replay without the captures and nothing in the format can say they were left behind. A smaller
+// honest copy beats a larger one that misrepresents itself.
+//
+// The app keeps it in its CACHE directory, not its documents: out of backups, and the OS may purge it, which is
+// exactly what a cache promises.
 
 import type { MlDebugEvent } from "../contract-debug";
 import type { SessionKey } from "../session-host";
@@ -53,6 +63,46 @@ function nameFor(key: SessionKey): string {
     return `ev:${a.toString(16).padStart(8, "0")}${b.toString(16).padStart(8, "0")}`;
 }
 
+/** The serialized size of a copy, which is what the cap is about. */
+const sizeOf = (c: CachedSession): number => JSON.stringify(c).length;
+
+/** The newest `k` events of a copy, with `earlier` moved to say where they now begin, or null when the oldest one
+ *  kept cannot say its own position — a copy that cannot state where it starts is the one that would lie. */
+function newest(session: CachedSession, k: number): CachedSession | null {
+    if (k >= session.events.length) return session;
+    const events = session.events.slice(session.events.length - k);
+    const from = events[0]?.pos;
+    return from === undefined ? null : { ...session, events, earlier: { from } };
+}
+
+/**
+ * A copy that fits under `cap`, trimmed from the OLD end, or null when none can be kept honestly.
+ *
+ * Trimming the old end is what makes this safe: `feed` is the SUBSCRIPTION's position, at the new end, so dropping
+ * older events leaves it exactly as true as it was — the next launch still replays this copy and subscribes from
+ * where it left off. What changes is `earlier.from`, which is the field whose whole job is to say that history
+ * continues before what is held.
+ */
+export function trimToCap(session: CachedSession, cap: number): CachedSession | null {
+    if (sizeOf(session) <= cap) return session;
+    // The most events that FIT (monotonic in k, so a binary search is sound)…
+    let lo = 1, hi = session.events.length, fits = 0;
+    while (lo <= hi) {
+        const k = (lo + hi) >> 1;
+        const cand = newest(session, k);
+        if (cand && sizeOf(cand) <= cap) { fits = k; lo = k + 1; }
+        else if (!cand) { lo = k + 1; }      // this k cannot state its start; a larger one may
+        else { hi = k - 1; }
+    }
+    // …then back off until the oldest kept event can say where it sits. Fewer events is always smaller, so this
+    // cannot push it back over the cap.
+    for (let k = fits; k > 0; k--) {
+        const cand = newest(session, k);
+        if (cand && sizeOf(cand) <= cap) return cand;
+    }
+    return null;
+}
+
 /** The record listing what is kept, most recently opened last, for eviction. */
 const INDEX = "ev-index";
 
@@ -74,15 +124,16 @@ export function storeCache(store: PlainStore): EventCache {
             }
         },
         async save(session) {
-            const raw = JSON.stringify(session);
+            const keep = trimToCap(session, CACHE_MAX_BYTES);
             const keys = (await readIndex()).filter((k) => k !== session.key);
-            // Too large to keep whole: keep none of it, and forget any older copy, which would now be stale.
-            if (raw.length > CACHE_MAX_BYTES) {
+            // Nothing of it can be kept honestly (one event is itself over the cap, or the oldest that would fit
+            // cannot say where it sits): forget any older copy too, which would now be stale.
+            if (!keep) {
                 await store.delete(nameFor(session.key));
                 await writeIndex(keys);
                 return;
             }
-            await store.set(nameFor(session.key), raw);
+            await store.set(nameFor(session.key), JSON.stringify(keep));
             keys.push(session.key);
             while (keys.length > CACHE_SESSIONS) await store.delete(nameFor(keys.shift()!));
             await writeIndex(keys);
