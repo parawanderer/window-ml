@@ -27,6 +27,10 @@ interface Seen {
     scopes: string[];
     mayPair: boolean;
     mayRevoke: boolean;
+    /** What the account has NARROWED this device to, when it has. Kept beside the certificate's own scopes rather
+     *  than replacing them: the certificate is what other publishers verify and this runtime cannot change it, so the
+     *  two are different facts and the effective set is their intersection (`allowed`). */
+    narrowed?: string[];
     notAfterMs: number;
     lastSeenMs: number;
     /** hex principal of the issuer, when a delegate issued it */
@@ -92,6 +96,9 @@ export class DeviceRegistry {
         this.state.devices[principal] = {
             principal, label: leaf.label, role: ROLE[leaf.role] ?? "client", scopes: [...leaf.scopes],
             mayPair: leaf.mayPair, mayRevoke: leaf.mayRevoke, notAfterMs: Number(leaf.notAfterMs), lastSeenMs: nowMs,
+            // CARRIED THROUGH, because this runs on every connection: a device that reconnected would otherwise widen
+            // itself back to whatever its certificate says, which is the one thing narrowing must survive.
+            ...(this.state.devices[principal]?.narrowed ? { narrowed: this.state.devices[principal].narrowed } : {}),
             ...(issuer ? { grantedBy: hex(await principalId(bytes(issuer))) } : {}),
         };
         await this.persist();
@@ -105,10 +112,49 @@ export class DeviceRegistry {
             .map((d) => ({
                 principal: d.principal, label: d.label, role: d.role,
                 kind: d.role === "runtime" ? "browser" : d.role === "box-connector" ? "headless" : "phone",
-                scopes: d.scopes as DeviceInfo["scopes"], notAfterMs: d.notAfterMs, lastSeenMs: d.lastSeenMs,
+                // What it may ACTUALLY do, which is what a person reading the list is asking. A certificate this
+                // runtime cannot change still says the wider set; the narrowing is the account's and is enforced here.
+                scopes: this.allowed(d.principal, d.scopes) as DeviceInfo["scopes"], notAfterMs: d.notAfterMs, lastSeenMs: d.lastSeenMs,
                 ...(d.mayPair ? { mayPair: true } : {}), ...(d.mayRevoke ? { mayRevoke: true } : {}),
                 ...(d.grantedBy ? { grantedBy: d.grantedBy } : {}),
             }));
+    }
+
+    /**
+     * WHAT A DEVICE MAY ACTUALLY DO: the scopes its certificate carries, narrowed by whatever the account has taken
+     * away. The intersection rather than the override, so a narrowing can never hand a device something its
+     * certificate does not carry — this runtime cannot issue scopes (it holds none), and the allowlist must not
+     * become a way around that.
+     */
+    allowed(principal: string, certScopes: readonly string[]): string[] {
+        const narrowed = this.state.devices[principal.toLowerCase()]?.narrowed;
+        return narrowed ? certScopes.filter((s) => narrowed.includes(s)) : [...certScopes];
+    }
+
+    /**
+     * NARROW a device to `scopes`, and only narrow: widening is not this runtime's to do. A delegate may issue only
+     * scopes it holds and a runtime holds none, so the wider certificate a device would need can come from the root
+     * alone. Refusing here is the honest answer; the alternative is a setting that appears to work and changes
+     * nothing a publisher verifying the certificate would see.
+     *
+     * Immediate, like revocation and for the same reason: waiting for the device to come and ask would leave it
+     * holding the wider set for as long as it stayed away.
+     *
+     * Returns what it may do now, or null when the device is not held. Throws when asked to widen, naming what it
+     * would have to carry. The caller rotates when `view` was among what went.
+     */
+    async narrow(principal: string, scopes: readonly string[]): Promise<string[] | null> {
+        const p = principal.toLowerCase();
+        const d = this.state.devices[p];
+        if (!d || this.isRevoked(p)) return null;
+        const now = this.allowed(p, d.scopes);
+        const extra = scopes.filter((s) => !now.includes(s));
+        if (extra.length) {
+            throw new Error(`this runtime cannot grant ${extra.join(", ")}: it holds no scopes of its own, so a wider certificate comes from the root device. Pair it again with what it should have.`);
+        }
+        d.narrowed = [...new Set(scopes)];
+        await this.persist();
+        return this.allowed(p, d.scopes);
     }
 
     /**

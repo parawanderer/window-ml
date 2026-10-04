@@ -252,11 +252,18 @@ device lapse stops being a way to remove it**, since one that keeps connecting k
 allowlist rather than expiry is the authoritative act, and why a device not seen for a long time is worth putting in
 front of a person.
 
-**Narrowing a device takes effect at once; widening waits for its next renewal.** `device.scopes` is enforced from the
-runtime's allowlist, exactly as revocation is, so taking a scope away does not wait for the device to come and ask —
-waiting would leave it holding the wider set for as long as it stayed away, which is the opposite of what narrowing is
-for. Widening cannot work that way: other publishers verify the CERTIFICATE, not this runtime's allowlist, so a device
-cannot use a scope its certificate does not carry, and the wider set arrives when it next renews.
+**`device.scopes` NARROWS, and cannot widen.** Taking a scope away is enforced from the runtime's allowlist, exactly as
+revocation is, and is immediate for the same reason: waiting for the device to come and ask would leave it holding the
+wider set for as long as it stayed away. The certificate still carries the wider set, because no runtime can change a
+certificate; the allowlist is what is consulted, and `device.list` reports what a device may ACTUALLY do rather than
+what its certificate says. Removing `view` rotates the stream keys, since what it holds is a key and rotation is how
+one is taken back.
+
+Widening is refused with `forbidden`, naming what to do instead. A delegate may issue only scopes it holds, and a
+RUNTIME holds none — scopes are what a client may do TO a runtime, so a runtime's own certificate carries an empty
+set. The wider certificate a device would need can therefore come from the root device alone, and a renewal cannot
+carry it either: a renewal re-issues the same scopes by definition, which is what buys it its exemption. A setting
+that appeared to widen would change nothing any publisher verifying the certificate could see.
 
 **`runtime.info` exists because a TRANSPORT cannot answer it.** A hub carries a runtime's identity and liveness and
 deliberately nothing else: the moment it holds a claim about what a runtime can do, a client is trusting it for

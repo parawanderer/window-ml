@@ -239,7 +239,10 @@ export class HubRuntime {
         if (e.role !== Role.ROLE_CLIENT) return;
         devices.add(id);
         await publisher.deviceOnline({
-            id, scopes: verified.leaf.scopes,
+            // The narrowed set, not the certificate's: a device that lost `view` must stop being handed stream keys,
+            // and this is where they are handed out. (A box connector grants on the certificate alone and would not
+            // know — the same gap revocation has, which the signed list closes and this does not.)
+            id, scopes: reg ? reg.allowed(id, verified.leaf.scopes) : verified.leaf.scopes,
             recipient: { principal: e.principal, agreementKey: bytes(verified.leaf.agreementKey) },
         });
     }
@@ -260,6 +263,11 @@ export class HubRuntime {
         } else if (reg && (reg.isRevoked(hex(opened.from)) || (await reg.revokes(opened.chain)))) {
             // The allowlist is the authoritative revocation: immediate, and needing nothing from the hub.
             result = { ok: false, error: { code: "forbidden", message: "this device was revoked" } };
+        } else if (reg && !reg.allowed(hex(opened.from), CertificateBody.decode(opened.chain[0].body).scopes).includes(opened.scope)) {
+            // NARROWED since its certificate was issued. The certificate still carries the wider set and this runtime
+            // cannot change that, so the allowlist is what enforces it — the same place, and the same immediacy, as a
+            // revocation. Worded as the account's decision rather than as a broken certificate.
+            result = { ok: false, error: { code: "forbidden", message: `this device is no longer allowed \`${opened.scope}\` on this account` } };
         } else if (command.type.startsWith("device.")) {
             ({ result, rotate } = await this.device(command, principal, opened.chain, hex(opened.from)));
         } else {
@@ -285,7 +293,7 @@ export class HubRuntime {
     /** `device.list`, `device.revoke` and `device.renew`. Re-scoping is not built yet. */
     private async device(command: Command, principal: string, chain: readonly Certificate[], from: string): Promise<{ result: CommandResult<CommandType>; rotate: boolean }> {
         const reg = this.opts.devices;
-        const fail = (code: "unsupported" | "invalid" | "conflict", message: string) => ({ result: { ok: false, error: { code, message } } as CommandResult<CommandType>, rotate: false });
+        const fail = (code: "unsupported" | "invalid" | "conflict" | "forbidden" | "not-found", message: string) => ({ result: { ok: false, error: { code, message } } as CommandResult<CommandType>, rotate: false });
         if (!reg) return fail("unsupported", "this runtime keeps no device list");
         if (command.type === "device.list") return { result: { ok: true, data: { devices: reg.list() } } as CommandResult<CommandType>, rotate: false };
         if (command.type === "device.revoke") {
@@ -297,6 +305,22 @@ export class HubRuntime {
             return { result: { ok: true, data: {} } as CommandResult<CommandType>, rotate: changed };
         }
         if (command.type === "device.renew") return { result: await this.renew(command, from, chain), rotate: false };
+        if (command.type === "device.scopes") {
+            const target = String((command as { principal?: unknown }).principal ?? "").toLowerCase();
+            if (!/^[0-9a-f]{64}$/.test(target)) return fail("invalid", "a principal is 64 hex characters");
+            const want = (command as { scopes?: unknown }).scopes;
+            if (!Array.isArray(want) || want.some((x) => typeof x !== "string")) return fail("invalid", "scopes is a list of scope names");
+            // This runtime signs the account's list and answers every command; narrowing itself would be a runtime
+            // quietly removing its own ability to serve, with nothing left to widen it back.
+            if (target === principal) return fail("conflict", "a runtime does not narrow itself");
+            let scopes: string[] | null;
+            try { scopes = await reg.narrow(target, want as string[]); }
+            catch (e) { return fail("forbidden", (e as Error)?.message || "those scopes cannot be granted here"); }
+            if (!scopes) return fail("not-found", "no such device on this account");
+            // `view` gone means it must stop READING, and what it holds is a stream key. Rotating is how that is taken
+            // back — the same act a revocation performs, for the same reason.
+            return { result: { ok: true, data: { scopes } } as CommandResult<CommandType>, rotate: !scopes.includes("view") };
+        }
         return fail("unsupported", `${command.type} is not built yet`);
     }
 
