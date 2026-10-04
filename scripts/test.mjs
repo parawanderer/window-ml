@@ -15,12 +15,13 @@
 // a new test file lands in `core` and runs by default rather than falling out of every bucket and being
 // silently skipped, which is the failure mode a hand-kept list of ALL the genres would have. The cost is
 // that a new SLOW file lands in `core` and makes it less fast, which `--timings` is for.
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { stalenessReport } from "./check-dist-fresh.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ALL = readdirSync(path.join(ROOT, "tests"))
@@ -167,6 +168,28 @@ if (args.includes("--check-genres")) {
     process.exit(0);
 }
 
+/**
+ * Run exactly these test files, refusing first if any of them would boot a STALE bundle.
+ *
+ * Most of this suite loads the real sources into a `node:vm` and needs no build at all — but `loadSidebarWorld`
+ * boots `dist/sidebar-app.js`, so those files test whatever was built last. That is the same silent failure the
+ * Playwright suite guards (`check-dist-fresh.mjs`), one layer down, and it cost a session the day the Playwright
+ * guard was written. Scoped to the files in THIS run, and to `dist/` alone, so a run of pure-module tests is never
+ * stopped over a bundle nothing is about to open.
+ */
+function runFiles(list) {
+    const needsBundle = list.filter((f) => /loadSidebarWorld/.test(readFileSync(path.join(ROOT, "tests", f), "utf8")));
+    if (needsBundle.length) {
+        const report = stalenessReport(["dist"]);
+        if (report) {
+            console.error(`${report}\n\n  ${needsBundle.length} file(s) in this run boot dist/sidebar-app.js.`);
+            process.exit(1);
+        }
+    }
+    spawn(process.execPath, [...NODE_ARGS, ...list.map((f) => `tests/${f}`)],
+        { cwd: ROOT, stdio: "inherit" }).on("exit", (c) => process.exit(c ?? 1));
+}
+
 // `--files a.test.mjs tests/b.test.mjs` runs exactly those, whatever genre they fall in. It exists because
 // `scripts/test-cover.mjs` can name the handful of files a change can reach, and the honest command for that set is
 // the set — not the genre that happens to contain them, which for anything in `core` is a hundred and twenty-three.
@@ -177,8 +200,7 @@ if (fileArg >= 0) {
     if (!wanted.length) { console.error("scripts/test.mjs: --files needs at least one test file."); process.exit(1); }
     if (missing.length) { console.error(`scripts/test.mjs: no such test file(s): ${missing.join(", ")}`); process.exit(1); }
     console.log(`${wanted.length} file(s), ${JOBS} at a time\n`);
-    spawn(process.execPath, [...NODE_ARGS, ...wanted.map((f) => `tests/${f}`)],
-        { cwd: ROOT, stdio: "inherit" }).on("exit", (c) => process.exit(c ?? 1));
+    runFiles(wanted);
 } else {
 
 const names = args.filter((a) => !a.startsWith("-") && !/^\d+$/.test(a));   // a bare number is --jobs' value
@@ -192,6 +214,5 @@ const files = names.length
     ? [...new Set(names.flatMap((n) => GENRES[n].files))].sort()
     : ALL;
 console.log(`${names.length ? names.join(" + ") : "all"} — ${files.length} file(s), ${JOBS} at a time\n`);
-spawn(process.execPath, [...NODE_ARGS, ...files.map((f) => `tests/${f}`)],
-    { cwd: ROOT, stdio: "inherit" }).on("exit", (c) => process.exit(c ?? 1));
+runFiles(files);
 }
