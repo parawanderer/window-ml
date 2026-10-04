@@ -455,7 +455,14 @@ export class SessionIndex {
             const hash = summary.id?.hash;
             if (typeof hash !== "string" || !HASH_RE.test(hash) || this.sessions.has(hash)) continue;
             const status: SessionStatus = summary.status === "running" || summary.status === "waiting" ? "interrupted" : summary.status;
-            const restored: SessionSummary = { ...summary, id: { runtime: this.runtime, hash }, status, saved: true };
+            // `pendingApprovals: 0`, NOT whatever was persisted. A restored session holds no gates — `gates` below is
+            // empty by construction — so a count carried in from disk is a claim with nothing behind it, and the one
+            // thing that recomputes it (`refreshSummary`) runs on an EVENT, which a run that died with its worker
+            // will never send again. The result was a row that said an approval was pending for the rest of the
+            // browser's life: the bar above the transcript stayed up through reloads and tab switches, "Review"
+            // scrolled to no card, and answering some other gate could not clear it because it was never a gate.
+            // A gate open when the worker died cannot be answered anyway — the loop that posted it is gone.
+            const restored: SessionSummary = { ...summary, id: { runtime: this.runtime, hash }, status, saved: true, pendingApprovals: 0 };
             const s: Indexed = {
                 id: restored.id, kind: restored.kind, gen: 0, ring: [], seen: count, bytes: 0,
                 lostThrough: count, lastCursor: count,
