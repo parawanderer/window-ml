@@ -41,6 +41,8 @@ finds dependencies by eye, and never sees the tests that load a module by `await
    moved), `({ a } = await import("…"))` in a `before` hook, `(await import("…")).a`, `const M = await
    import("…"); M.a`, `.catch(() => null)` imports, destructured `require`, and re-exports
    (`export { a } from`, `export type { … } from`, `export * from`).
+   Also drops an import of the TARGET from itself: code moving INTO the module it imported from (`utilOf` into
+   `resource-model.ts`) arrives with the refactor's copy of that import, which conflicts with the local declaration.
 6. **Checks, in memory, before writing anything**:
    - `typecheck`: no new diagnostics in the source, the target and every file importing either.
    - `cycles`: no new import cycle, counting only imports that survive compilation (a type-only use of a

@@ -336,6 +336,24 @@ test("moving into an EXISTING file appends verbatim and refuses a name it alread
     assert.deepStrictEqual(kinds(clash.report), ["conflict"]);
 });
 
+test("moving code INTO the module it imports from does not leave the target importing itself", (t) => {
+    // TypeScript's refactor copies the moved code's imports into the target as they were, so a helper that read
+    // `Sample` from `./model` and moves INTO model.ts arrived with `import type { Sample } from "./model"` on top:
+    // an import declaration conflicting with the local one, refused as a type error. Seen moving `utilOf` into
+    // resource-model.ts.
+    const f = fixture({
+        "src/model.ts": "// model's header\n\nexport type Sample = { v: number };\nexport const scale = 2;\n",
+        "src/view.ts": 'import { type Sample, scale } from "./model";\n\nexport const read = (s: Sample) => s.v * scale;\nexport const show = (s: Sample) => String(read(s));\n',
+    });
+    t.after(f.cleanup);
+    const r = f.move({ from: "src/view.ts", symbols: ["read"], to: "src/model.ts" });
+    assert.deepStrictEqual(r.report.blocks, []);
+    assert.ok(r.report.verbatim);
+    assert.doesNotMatch(r.text("src/model.ts"), /from "\.\/model"/, "the target imports nothing from itself");
+    assert.match(r.text("src/model.ts"), /^\/\/ model's header\n\nexport type Sample/, "and keeps its header");
+    assert.match(r.text("src/view.ts"), /^import \{ (read, type Sample|type Sample, read) \} from "\.\/model";/, "`scale` went with `read`");
+});
+
 test("a file named as a string by a script blocks; a build entry is only reported", (t) => {
     const f = fixture({
         "src/a.ts": "export function load() { return 1; }\nexport const x = 2;\n",

@@ -196,6 +196,7 @@ export function moveSymbols(project, { from, symbols, to, pull = true }) {
     report.alsoRewritten.push(...reexports);
     for (const r of [...dyn.rewritten, ...reexports]) touched.add(project.abs(r.file));
     removeEmptyDestructuring(project, touched);
+    removeSelfImports(project, toAbs);
     for (const f of touched) mergeDuplicateImports(project, f);
     restoreHeaders(project, headers);
 
@@ -222,6 +223,33 @@ export function moveSymbols(project, { from, symbols, to, pull = true }) {
         if (gains.length) report.bundles.push({ entry, gains });
     }
     return report;
+}
+
+/**
+ * Drop any import in the target that resolves to the target itself. The refactor carries the moved code's imports
+ * over as they were, so code that read `Sample` from `./model` and moves INTO model.ts brings
+ * `import type { Sample } from "./model"` with it: a declaration that conflicts with the local one. Every name such
+ * an import binds is declared in the file, so the whole statement goes. Cut from the statement's own start, not its
+ * full start, so a header sitting on it as leading trivia stays.
+ * @param {import("./project.mjs").Project} project @param {string} file
+ */
+function removeSelfImports(project, file) {
+    const program = project.program();
+    const sf = program.getSourceFile(file);
+    if (!sf) return;
+    const self = path.resolve(sf.fileName);
+    const changes = [];
+    for (const st of sf.statements) {
+        if (!ts.isImportDeclaration(st) || !ts.isStringLiteral(st.moduleSpecifier)) continue;
+        const resolved = program.getResolvedModuleFromModuleSpecifier(st.moduleSpecifier, sf)?.resolvedModule;
+        if (!resolved || path.resolve(resolved.resolvedFileName) !== self) continue;
+        const start = st.getStart(sf);
+        let end = sf.text[st.getEnd()] === "\n" ? st.getEnd() + 1 : st.getEnd();
+        // An import the refactor set apart with a blank line on each side would leave two blank lines behind.
+        if (sf.text.slice(start - 2, start) === "\n\n" && sf.text[end] === "\n") end++;
+        changes.push({ span: { start, length: end - start }, newText: "" });
+    }
+    if (changes.length) project.apply([{ fileName: sf.fileName, textChanges: changes, isNewFile: false }]);
 }
 
 /**
