@@ -573,6 +573,63 @@ test("deleteFolderNote: a delete names the archive folder only where it reaches 
     }
 });
 
+test("certItems: a button only where pressing one would work, and nothing at all until it is close", async () => {
+    // Renewal took away the thing that used to catch a forgotten device: a certificate lapsed and took the device out
+    // of the account with it. A device that keeps connecting now keeps itself current, so the only signal left is
+    // telling someone — early enough to act, and only while acting is still possible.
+    const { certItems, CERT_WARN_MS, CERT_URGENT_MS } = await import("../src/chat/attention.ts");
+    const now = Date.parse("2026-10-04T12:00:00Z");
+    const at = (ms, over = {}) => certItems({ notAfterMs: now + ms, renewable: true, issuerOnline: true, ...over }, now);
+    const one = (ms, over) => { const i = at(ms, over); assert.equal(i.length, 1, JSON.stringify(i)); return i[0]; };
+
+    assert.deepEqual(certItems(null, now), [], "no certificate: nothing to say");
+    assert.deepEqual(at(CERT_WARN_MS + 60_000), [], "plenty of time: silence, so the list stays about what needs a hand");
+
+    // Inside the window: one item, with the button, and it says what pressing it costs (nothing).
+    const soon = one(CERT_WARN_MS - 60_000);
+    assert.equal(soon.level, "limits");
+    assert.deepEqual(soon.fix, { kind: "act", label: "Renew" });
+    assert.equal(soon.runtime, undefined, "it is about THIS device, not a machine on the account");
+    assert.match(soon.title, /runs out in 1[34] days/);
+
+    // Close in, it stops being something to get round to: missing it costs a re-pairing, not a press.
+    assert.equal(one(CERT_URGENT_MS - 60_000).level, "blocks");
+    assert.match(one(86_400_000 - 1000).title, /runs out today/, "the last day is named, not rounded to zero");
+
+    // EXPIRED: nothing can renew it, because it can no longer prove who it is. No button, and the title says so.
+    const gone = one(-60_000);
+    assert.equal(gone.code, "cert-expired");
+    assert.equal(gone.level, "blocks");
+    assert.equal(gone.fix, undefined);
+    assert.match(gone.detail, /[Pp]air it again/);
+});
+
+test("certItems: the three devices nothing here can renew each say what to open instead", async () => {
+    // A button that fails is worse than none in the one place a person is deciding whether they still have time.
+    const { certItems, CERT_WARN_MS } = await import("../src/chat/attention.ts");
+    const now = Date.parse("2026-10-04T12:00:00Z");
+    const one = (over) => certItems({ notAfterMs: now + CERT_WARN_MS - 60_000, renewable: true, issuerOnline: true, ...over }, now)[0];
+
+    // It signs the account's revocations, which only the root may renew: a delegate may neither issue nor renew it.
+    const signer = one({ mayRevoke: true });
+    assert.equal(signer.fix, undefined);
+    assert.match(signer.detail, /root key may renew/);
+
+    // Paired BY another device, so it has no root-signed predecessor and never will.
+    const delegated = one({ renewable: false });
+    assert.equal(delegated.fix, undefined);
+    assert.match(delegated.detail, /pair it again/);
+
+    // Renewable, but nothing is online to sign it right now. Still worth saying, since the answer is "open one".
+    const away = one({ issuerOnline: false });
+    assert.equal(away.fix, undefined);
+    assert.match(away.detail, /awake and reachable/);
+
+    // And all three still count in the badge: they are problems, not suggestions.
+    const { attentionCount } = await import("../src/chat/attention.ts");
+    assert.equal(attentionCount([signer, delegated, away]), 3);
+});
+
 test("attentionItems: a lapse this device fixed before is worded as a repeat, with the lasting choice named", async () => {
     const { attentionItems } = await import("../src/chat/attention.ts");
     const rt = { id: "local", name: "This browser", kind: "browser", online: true, contractVersion: 1, grants: [], capabilities: { archive: { folder: "needs-grant" } } };

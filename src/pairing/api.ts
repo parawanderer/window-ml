@@ -26,6 +26,13 @@ export interface Membership {
     mayPair: boolean;
     /** this device's own principal (hex), so a list of devices can say which row is this one */
     principal?: string;
+    /** when this device's own certificate stops being valid, for the inbox's renewal item (`certItems`) */
+    notAfterMs?: number;
+    /** it signs the account's revocations, which only the ROOT device may renew */
+    mayRevoke?: boolean;
+    /** its certificate was issued by the root, so a runtime holding `may_pair` can re-sign it. False for one paired BY
+     *  another device: it has no root-signed predecessor and never will, so it can only be paired again. */
+    renewable?: boolean;
 }
 
 /** What a new principal is given, chosen on the device that pairs it. `scopes` are names, open-ended. */
