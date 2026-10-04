@@ -9,14 +9,9 @@ import { Directory, File, Paths } from "expo-file-system";
 import type { ToNative, ToWeb } from "../../src/native/bridge";
 import { STORE_NAME } from "../../src/native/store-bridge";
 
-/** The folder a record lives in. BOTH are now documents, and the sessions moving there is a promise rather than a
- *  tidy-up: history you have already pulled should still be readable on a plane, and in the cache directory the OS
- *  could take it whenever it liked. What makes that affordable is that the copies BOUND THEMSELVES — a session over
- *  the cap is trimmed to its newest events (event-cache.ts), and past `CACHE_SESSIONS` the least recently opened
- *  goes — so this is a bounded archive and not a folder that grows until the phone is full.
- *
- *  Anything already written under the cache directory is simply not found and refetched once; it was a cache, and
- *  nothing promised it would still be there. */
+/** The folder a record lives in. Only the pairing records live here now: the sessions moved to the app's SQLite
+ *  archive (archive.ts), which is the same database the extension writes and is appended to rather than rewritten.
+ *  `ev` names are still routed, because a phone updated from a build that wrote them has files to be rid of. */
 const dirFor = (name: string): Directory => {
     const d = new Directory(Paths.document, name.startsWith("ev") ? "events" : "store");
     if (!d.exists) d.create({ intermediates: true });
