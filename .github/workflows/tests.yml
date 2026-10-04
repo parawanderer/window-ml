@@ -296,7 +296,7 @@ jobs:
       # The hosted client (dist-app/): the same standalone client, with a manifest, icons and a service worker, so a
       # phone can put it on its home screen and open it offline. It is uploaded on every run as a Pages artifact, and
       # published by the job below only from main.
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: dist-app/
 
@@ -324,7 +324,7 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - id: deploy
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 
   # End-to-end: load the BUILT extension in a real Chromium (Playwright) and drive the actual pipeline
   # (background loop → tool delegation → page) against a scripted fake-LLM — deterministic, no Ollama.
