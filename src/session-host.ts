@@ -485,8 +485,20 @@ export type Command =
     /** The devices paired with this runtime's account, as a person manages them. Needs `admin`, which is granted at
      *  the runtime and never passed on. */
     | { type: "device.list"; runtime: RuntimeId }
-    /** Issue a fresh certificate for a device that still holds a valid one. A device past its expiry cannot be
-     *  renewed — it can no longer prove who it is — and pairs again instead; the runtime answers `conflict`. */
+    /**
+     * Issue a fresh certificate for a device that still holds a valid one. A device past its expiry cannot be renewed
+     * — it can no longer prove who it is — and pairs again instead; the runtime answers `conflict`.
+     *
+     * A DEVICE RENEWS ITSELF, and `principal` is therefore its own: the answer carries the new chain, so the asker
+     * being the recipient is what makes delivery possible at all. Renewing somebody ELSE's certificate would need a
+     * way to push credential material at a device that never asked for it, which is both a larger attack surface and
+     * a piece of protocol that does not exist. The runtime answers `forbidden` for any other principal.
+     *
+     * It grants nothing: a renewal re-issues the SAME subject, agreement key, role, scopes and `may_pair`, and only
+     * the window differs (window-ml-hub `docs/design/revocation.md`). What it costs is that a device can no longer be
+     * removed by letting it lapse, since one that keeps connecting keeps itself current — which is why the allowlist
+     * rather than expiry is the authoritative act, and why a device not seen for a long time is worth surfacing.
+     */
     | { type: "device.renew"; runtime: RuntimeId; principal: PrincipalId; idempotencyKey?: IdempotencyKey }
     /** Unpair a device: it stops being answered at once, and the stream keys it held are rotated. Revoking the
      *  device this client IS logs this client out, which a UI says before it happens. */
@@ -543,7 +555,10 @@ export const COMMAND_SCOPE: { readonly [T in CommandType]: Scope } = {
     "runtime.info": "view",
     "tabs.list": "drive",
     "device.list": "admin",
-    "device.renew": "admin",
+    // NOT `admin`: a device renews ITSELF, so gating it on an administrative scope would lock the devices most likely
+    // to need it — a phone, a watch-only tablet — out of staying in the account at all. The runtime enforces that the
+    // principal is the asker's own, and a renewal cannot widen what the certificate already carries.
+    "device.renew": "view",
     "device.revoke": "admin",
     "device.scopes": "admin",
     "tab.focus": "drive",
@@ -757,8 +772,11 @@ export interface CommandResultData {
      *  some sites). Absent or 0 when it may read every site; a browser's own pages are left out without being counted. */
     "tabs.list": { tabs: TabInfo[]; groups?: TabGroupInfo[]; withheld?: number };
     "device.list": { devices: DeviceInfo[] };
-    /** the new window, so a list can say when it next needs attention without asking again */
-    "device.renew": { notAfterMs: number };
+    /** The new window, so a list can say when it next needs attention without asking again, and the new CHAIN, which
+     *  is the renewal itself: each certificate base64 of its protobuf encoding, leaf first, as a keyring holds one. A
+     *  certificate carries only public keys, so this is not secret material; it travels sealed because every answer
+     *  does. Absent from an older runtime that answered the window alone, which a client reads as "nothing to store". */
+    "device.renew": { notAfterMs: number; chain?: string[] };
     "device.revoke": Record<string, never>;
     "device.scopes": { scopes: Scope[] };
     "tab.focus": Record<string, never>;

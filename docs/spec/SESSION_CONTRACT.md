@@ -200,7 +200,7 @@ runtime answers a type or option it does not offer with `unsupported`.
 | `page.highlight`: a selector, a canvas token, or clear | drive | `highlight` | `__mlHighlight` → `ML_HL_REMOTE` |
 | `side.call`: a utility-model call about a session | drive | `sideCalls` | `FETCH_LLM` with `extend: "utility"` |
 | `device.list` | admin | `devices` | nothing |
-| `device.renew`: a fresh certificate for a device that still holds a valid one | admin | `devices` | nothing |
+| `device.renew`: a fresh certificate for the asking device, which still holds a valid one | view | `devices` | nothing |
 | `device.revoke`: unpair, and rotate the stream keys it held | admin | `devices` | nothing |
 | `device.scopes`: narrow or widen what a device may do; `approve`, `control` and `admin` are refused with `forbidden` | admin | `devices` | nothing |
 
@@ -237,6 +237,26 @@ events are counted the same way, so a client pages back through the two with one
 
 The page is capped by the runtime whatever a client asks for. It is a size decision wearing a count: forty events of
 a DOM run is nothing and forty screenshots is tens of megabytes.
+
+**A DEVICE RENEWS ITSELF, which is why `device.renew` is not an administrative command.** A certificate lives in the
+keyring of the device it is about, and nothing can push it a new one. So the asker has to be the recipient: a device
+connects with the certificate it still holds, asks the runtime (which holds `may_pair`) to re-sign it, and the answer
+carries the new chain. Renewing somebody else's would need a channel on which a device accepts credential material it
+never asked for, which is a larger surface than the thing it buys. The runtime answers `forbidden` for any principal
+but the asker's own, and a device past its expiry gets `conflict`: it can no longer prove who it is, and pairs again.
+
+A renewal grants nothing. The re-issued certificate carries the same subject, agreement key, role, scopes and
+`may_pair`, and differs only in its window; `may_revoke` is the one power a delegate may neither issue nor renew, so a
+certificate carrying it is renewed by the root alone. What this costs is stated rather than discovered: **letting a
+device lapse stops being a way to remove it**, since one that keeps connecting keeps itself current. That is why the
+allowlist rather than expiry is the authoritative act, and why a device not seen for a long time is worth putting in
+front of a person.
+
+**Narrowing a device takes effect at once; widening waits for its next renewal.** `device.scopes` is enforced from the
+runtime's allowlist, exactly as revocation is, so taking a scope away does not wait for the device to come and ask —
+waiting would leave it holding the wider set for as long as it stayed away, which is the opposite of what narrowing is
+for. Widening cannot work that way: other publishers verify the CERTIFICATE, not this runtime's allowlist, so a device
+cannot use a scope its certificate does not carry, and the wider set arrives when it next renews.
 
 **`runtime.info` exists because a TRANSPORT cannot answer it.** A hub carries a runtime's identity and liveness and
 deliberately nothing else: the moment it holds a claim about what a runtime can do, a client is trusting it for

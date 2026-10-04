@@ -150,12 +150,18 @@ const { DeviceRegistry } = await import("../src/hub-devices.ts");
 const { verifyRevocations } = await import("../src/hub/revocation.ts");
 const { RevocationList } = await import("../src/proto/wmlhub/v1/identity.gen.ts");
 const { Kind } = await import("../src/hub/wire.ts");
+const { decodeChain, issueCertificate, principalId, verifyChain } = await import("../src/hub/keys.ts");
+const { generateAgreementKey } = await import("../src/hub/hpke.ts");
+const { CertificateBody } = await import("../src/proto/wmlhub/v1/identity.gen.ts");
 
 /** A runtime that keeps an allowlist and signs revocations, an admin phone, and a second phone to revoke. */
-async function revocationWorld() {
+async function revocationWorld({ runtimeMs = 3_600_000 } = {}) {
     const hub = await startHub();
     const root = await generateIdentity();
-    const runtime = await device(root, Role.ROLE_RUNTIME, [], "Work laptop", { mayPair: true, mayRevoke: true });
+    // `runtimeMs` is how long the RUNTIME's own certificate lasts, which bounds every renewal it signs
+    // (`OutlivesIssuer`). The default is short, as the other tests want; the renewal ones ask for a long one so a
+    // renewal has room to actually extend, and one of them keeps the default to check the clamp.
+    const runtime = await device(root, Role.ROLE_RUNTIME, [], "Work laptop", { mayPair: true, mayRevoke: true, notAfterMs: Date.now() + runtimeMs });
     const admin = await device(root, Role.ROLE_CLIENT, [SCOPE.view, SCOPE.drive, SCOPE.admin], "root phone");
     const tablet = await device(root, Role.ROLE_CLIENT, [SCOPE.view, SCOPE.drive], "tablet");
     const common = { url: hub.url, hubName: HUB, accountRoot: root.publicKey };
@@ -214,6 +220,125 @@ test("the allowlist: devices seen are listed, a revoked one is refused at once, 
         assert.deepEqual([after.ok, after.error?.message], [false, "this device was revoked"]);
         assert.ok(w.getSaved().revoked.principals.includes(hex(w.tablet.principal)), "and it is persisted");
     } finally { admin?.close(); tablet?.close(); await w.close(); }
+});
+
+test("a device renews ITSELF, and the chain it is answered with verifies to the account root", LIVE, async () => {
+    // Nothing can push a certificate at a device, so the asker has to be the one that installs it. The answer is the
+    // delivery, which is the whole reason this is not an administrative command.
+    const w = await revocationWorld({ runtimeMs: 80 * 86_400_000 });
+    let tablet;
+    try {
+        tablet = await w.connect(w.tablet);
+        await poll("the tablet seen", () => w.devices.list().some((d) => d.label === "tablet"));
+        const before = CertificateBody.decode(w.tablet.chain[0].body).notAfterMs;
+
+        const r = await w.ask(tablet, SCOPE.view, { type: "device.renew", runtime: w.id, principal: hex(w.tablet.principal) });
+        assert.equal(r.ok, true, JSON.stringify(r));
+        assert.ok(r.data.notAfterMs > before, "a later window than the one it had");
+        assert.ok(Array.isArray(r.data.chain) && r.data.chain.length >= 2, "the leaf, then the runtime that signed it");
+
+        // What the device would do with it: decode, and check it before trusting it.
+        const chain = decodeChain(r.data.chain);
+        const verified = await verifyChain(w.root.publicKey, chain, Date.now());
+        assert.equal(hex(await principalId(verified.leaf.subject)), hex(w.tablet.principal), "the same device");
+        assert.deepEqual([...verified.leaf.scopes].sort(), [SCOPE.drive, SCOPE.view], "and the same scopes: a renewal grants nothing");
+        assert.equal(CertificateBody.decode(chain[0].body).notAfterMs, r.data.notAfterMs);
+        // It embeds the ROOT-issued original, which is what lets a delegate sign a renewal at all.
+        assert.ok(CertificateBody.decode(chain[0].body).renews, "the predecessor travels inside it");
+        // And the allowlist knows the new window, so the list a person reads does not still say it is about to lapse.
+        await poll("the row to carry the new window", () => w.devices.list().find((d) => d.label === "tablet")?.notAfterMs === r.data.notAfterMs);
+    } finally { tablet?.close(); await w.close(); }
+});
+
+test("renewal is the asker's own, is not signed again when it is not due, and is refused for the revocation signer", LIVE, async () => {
+    const w = await revocationWorld();
+    let tablet, admin;
+    try {
+        tablet = await w.connect(w.tablet);
+        admin = await w.connect(w.admin);
+        await poll("both seen", () => w.devices.list().length === 2);
+
+        // SOMEBODY ELSE'S is refused even from the device holding `admin`: there is nowhere to deliver it to.
+        const other = await w.ask(admin, SCOPE.view, { type: "device.renew", runtime: w.id, principal: hex(w.tablet.principal) });
+        assert.deepEqual([other.ok, other.error.code], [false, "forbidden"]);
+        assert.match(other.error.message, /renews only its own/);
+
+        // A device holding `may_revoke` is refused, because a delegate may neither issue nor renew it: only the root
+        // can. Asked by that device ITSELF, so it is the `may_revoke` rule being tested and not the self-only one.
+        const revoker = await device(w.root, Role.ROLE_CLIENT, [SCOPE.view], "spare signer", { mayRevoke: true });
+        const signer = await w.connect(revoker);
+        try {
+            const r = await w.ask(signer, SCOPE.view, { type: "device.renew", runtime: w.id, principal: hex(revoker.principal) });
+            assert.deepEqual([r.ok, r.error.code], [false, "forbidden"]);
+            assert.match(r.error.message, /only the root device may renew/);
+        } finally { signer.close(); }
+
+        // NOT DUE: answered with the window it already has, and nothing is signed. This is the rate limit and the
+        // whole of `idempotencyKey` — asking in a loop cannot make the runtime sign in a loop.
+        const far = await device(w.root, Role.ROLE_CLIENT, [SCOPE.view], "fresh tablet", { notAfterMs: Date.now() + 60 * 86_400_000 });
+        const fresh = await w.connect(far);
+        try {
+            const r = await w.ask(fresh, SCOPE.view, { type: "device.renew", runtime: w.id, principal: hex(far.principal) });
+            assert.equal(r.ok, true, JSON.stringify(r));
+            assert.equal(r.data.notAfterMs, CertificateBody.decode(far.chain[0].body).notAfterMs, "its own window, unchanged");
+            assert.equal(r.data.chain, undefined, "and nothing to install");
+        } finally { fresh.close(); }
+
+        // ASKED TWICE: the same answer, not a second signature. A live connection keeps presenting the chain it opened
+        // with, so the runtime cannot tell a repeat from a first ask by looking at the certificate — it remembers.
+        // Re-given rather than refused, because a device whose answer was lost to a dropped connection has to be able
+        // to ask again, or the renewal happened and the device expires anyway.
+        const first = await w.ask(tablet, SCOPE.view, { type: "device.renew", runtime: w.id, principal: hex(w.tablet.principal) });
+        const again = await w.ask(tablet, SCOPE.view, { type: "device.renew", runtime: w.id, principal: hex(w.tablet.principal) });
+        assert.ok(first.data.chain.length >= 2);
+        assert.deepEqual(again.data, first.data, "the same certificate, byte for byte, rather than a fresh signature");
+    } finally { tablet?.close(); admin?.close(); await w.close(); }
+});
+
+test("a renewal never outlives the runtime that signed it, so a runtime near its own expiry hands out shorter windows", LIVE, async () => {
+    // `OutlivesIssuer`. The root visit that renews the RUNTIME is the one that does not disappear, and until it
+    // happens every device it renews is cut to what the runtime has left. Nobody is told, which is the point: the
+    // device keeps working and the windows quietly shorten.
+    const w = await revocationWorld({ runtimeMs: 2 * 86_400_000 });
+    let tablet;
+    try {
+        tablet = await w.connect(w.tablet);
+        await poll("the tablet seen", () => w.devices.list().some((d) => d.label === "tablet"));
+        const r = await w.ask(tablet, SCOPE.view, { type: "device.renew", runtime: w.id, principal: hex(w.tablet.principal) });
+        assert.equal(r.ok, true, JSON.stringify(r));
+        const mine = CertificateBody.decode(w.runtime.chain[0].body).notAfterMs;
+        assert.equal(r.data.notAfterMs, mine, "cut to the runtime's own end, not the 90 days it would otherwise get");
+        // And it is still a valid chain: a clamped window is a shorter certificate, never an invalid one.
+        await verifyChain(w.root.publicKey, decodeChain(r.data.chain), Date.now());
+    } finally { tablet?.close(); await w.close(); }
+});
+
+test("a device paired by ANOTHER DEVICE cannot be renewed, and is told to pair again rather than left guessing", LIVE, async () => {
+    // A renewal's predecessor must verify under the ROOT, or a narrow renewal becomes a wide one. A device whose
+    // certificate was issued by a delegate has no such predecessor and never will, so this is permanent and the
+    // message says the only thing that works.
+    const w = await revocationWorld();
+    let paired;
+    try {
+        // A phone that MAY PAIR issues it, so its leaf is signed by that phone rather than by the root. (The admin
+        // phone cannot: `may_pair` is granted, not implied by holding `admin`.)
+        const pairer = await device(w.root, Role.ROLE_CLIENT, [SCOPE.view], "pairing phone", { mayPair: true });
+        const identity = await generateIdentity();
+        const agreement = await generateAgreementKey();
+        const leaf = await issueCertificate(pairer.identity, {
+            subject: identity.publicKey, agreementKey: agreement.publicKey, role: Role.ROLE_CLIENT,
+            scopes: [SCOPE.view], label: "pairs-from-phone",
+            // Strictly INSIDE the pairer's window: `OutlivesIssuer` compares the two, and taking `Date.now()` twice
+            // makes the second later than the first often enough to be a flake rather than a failure.
+            notBeforeMs: Date.now() - 3_600_000, notAfterMs: CertificateBody.decode(pairer.chain[0].body).notAfterMs - 1,
+        });
+        const sub = { identity, agreement, chain: [leaf, ...pairer.chain], principal: await principalId(identity.publicKey) };
+        paired = await w.connect(sub);
+        const r = await w.ask(paired, SCOPE.view, { type: "device.renew", runtime: w.id, principal: hex(sub.principal) });
+        assert.deepEqual([r.ok, r.error.code], [false, "unsupported"]);
+        assert.match(r.error.message, /paired by another device/);
+        assert.match(r.error.message, /pair it again/);
+    } finally { paired?.close(); await w.close(); }
 });
 
 test("the revocation list is published signed on the runtime's revocations channel, and a publisher can verify it", LIVE, async () => {
