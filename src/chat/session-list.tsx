@@ -102,14 +102,17 @@ function RuntimeHead({ store, rt, folded, onStart }: { store: ChatStore; rt: Run
 
 /** One session in the list, from its index row (the transcript is fetched only when it is opened). The row and its
  *  `⋮` are siblings in a wrapper rather than one inside the other, because a button cannot hold a button. */
-function IndexRow({ store, s, rt, active, moved, showRuntime, showPin }: { store: ChatStore; s: SessionSummary; rt: RuntimeInfo; active: boolean; moved: boolean; showRuntime?: boolean;
+function IndexRow({ store, s, rt, active, moved, showRuntime, showPin, reveal }: { store: ChatStore; s: SessionSummary; rt: RuntimeInfo; active: boolean; moved: boolean; showRuntime?: boolean;
     /** mark it pinned, for a row OUTSIDE the Pinned group — where being in that group is the mark */
-    showPin?: boolean }) {
+    showPin?: boolean;
+    /** this row was just REVEALED by "older on this runtime": its place in that page, which staggers the animation.
+     *  It plays on mount and never again, which is what makes it say "these are the new ones" rather than decorate. */
+    reveal?: number }) {
     const key = `${s.id.runtime}:${s.id.hash}`;
     const title = s.title || s.task || "(untitled)";
     const offset = rt.clockOffsetMs ?? 0;
     return (
-        <div class={`chat-row-wrap${active ? " active" : ""}`}>
+        <div class={`chat-row-wrap${active ? " active" : ""}${reveal != null ? " revealed" : ""}`} style={reveal != null ? { "--i": String(reveal) } : undefined}>
             <button class={`row chat-row${active ? " active" : ""}`} data-session={key} onClick={() => openSession(key)}>
                 <Dot status={DOT[s.status] ?? "pending"} warn={s.status === "capped" ? "Stopped at its step cap. Open it to give it more steps." : undefined} />
                 <span class="chat-row-body">
@@ -145,8 +148,25 @@ function IndexRow({ store, s, rt, active, moved, showRuntime, showPin }: { store
     );
 }
 
-/** How far back the list reaches. Everything older is on the search page, which holds the whole history. */
+/** How far back the list reaches. Everything older is revealed a page at a time, then on the search page. */
 const RECENT_DAYS = 30;
+
+/** How many older sessions one press of a runtime's "older" line reveals. */
+const OLDER_PAGE = 10;
+
+/**
+ * How many of each runtime's older sessions its group is currently showing, by runtime id.
+ *
+ * NOT a preference, so not in `view-mode.ts` with the pins and the folds: it answers "how far back have I looked
+ * just now", which is worth keeping while the page is open and nothing at all tomorrow. Reaching back into last
+ * month on Tuesday is no reason for Wednesday's list to open long.
+ */
+const shownOlder = signal<ReadonlyMap<string, number>>(new Map());
+
+/** Show the next {@link OLDER_PAGE} of a runtime's older sessions, in place. */
+function revealOlder(id: string): void {
+    shownOlder.value = new Map(shownOlder.value).set(id, (shownOlder.value.get(id) ?? 0) + OLDER_PAGE);
+}
 
 /** A session's last activity on THIS device's clock (the runtime's clock may be off; `clockOffsetMs` says by how much). */
 const localTs = (s: SessionSummary, rt: RuntimeInfo | undefined) => s.lastTs - (rt?.clockOffsetMs ?? 0);
@@ -180,12 +200,13 @@ export function SessionList({ store, activeKey, narrow, onStart, gear, gearWide 
     const needsYou = sessions.filter((s) => s.pendingApprovals > 0 && rtOf.has(s.id.runtime)).sort((a, b) => b.lastTs - a.lastTs);
     const upTop = new Set(needsYou.map(keyOf));
     const pinnedRows = sessions.filter((s) => isPinned(s) && !upTop.has(keyOf(s)) && rtOf.has(s.id.runtime));
-    /** How many of a runtime's sessions the list is not reaching back far enough to show. */
-    const olderOn = (id: string) => sessions.filter((s) => s.id.runtime === id && !isPinned(s) && !isRecent(s)).length;
-    const row = (s: SessionSummary, showRuntime = false, showPin = false) => {
+    /** A runtime's sessions from before the recent window, newest first — the list's own, not a round trip. */
+    const olderOn = (id: string) => sessions.filter((s) => s.id.runtime === id && !isPinned(s) && !isRecent(s));
+    const row = (s: SessionSummary, showRuntime = false, showPin = false, reveal?: number) => {
         const key = keyOf(s);
-        return <IndexRow key={key} store={store} s={s} rt={rtOf.get(s.id.runtime)!} active={activeKey === key} moved={moved.has(key)} showRuntime={showRuntime} showPin={showPin} />;
+        return <IndexRow key={key} store={store} s={s} rt={rtOf.get(s.id.runtime)!} active={activeKey === key} moved={moved.has(key)} showRuntime={showRuntime} showPin={showPin} reveal={reveal} />;
     };
+    const revealed = shownOlder.value;
     return (
         <aside class="chat-list" aria-label="Sessions">
             <div class="head">
@@ -214,6 +235,8 @@ export function SessionList({ store, activeKey, narrow, onStart, gear, gearWide 
                 ) : null}
                 {runtimes.map((rt) => {
                     const mine = sessions.filter((s) => s.id.runtime === rt.id && !isPinned(s) && !upTop.has(keyOf(s)) && isRecent(s));
+                    const older = olderOn(rt.id);
+                    const show = Math.min(revealed.get(rt.id) ?? 0, older.length);
                     const shut = folded.has(rt.id);
                     return (
                         <section class={`chat-group${shut ? " folded" : ""}`} key={rt.id}>
@@ -231,11 +254,27 @@ export function SessionList({ store, activeKey, narrow, onStart, gear, gearWide 
                                         opened a page looking at all of them — so finding the thing you were just looking
                                         at meant picking the device again, under the heading that had already said which
                                         one it was. The phone has had it this way (ListScreen's section footer); this is
-                                        the page catching up, which is the rule for anything drawn on both. */}
-                                    {olderOn(rt.id) ? (
-                                        <button class="chat-older-go" onClick={() => openSearch(rt.id)}>
-                                            <span class="chat-older-n">{olderOn(rt.id)}</span> older on this runtime
+                                        the page catching up, which is the rule for anything drawn on both.
+
+                                        IT OPENS IN PLACE. These sessions are already here — the index holds them and
+                                        the list is simply not reaching back far enough — so sending the reader to
+                                        another view to look at a row that was five pixels away was a round trip to
+                                        nowhere. The reveal animates because the rows appear BELOW the thing that was
+                                        clicked, where nothing moved at the press: the line has to be seen to do
+                                        something, or it reads as a press that failed.
+
+                                        The way to the search page arrives once the reader has shown they are looking
+                                        backwards, and stays once the list has nothing left to give. It is the honest
+                                        end of this line: what is held here is what the runtime still has in its
+                                        index, and only that page can go further (it asks). */}
+                                    {older.slice(0, show).map((s, i) => row(s, false, false, i % OLDER_PAGE))}
+                                    {show < older.length ? (
+                                        <button class="chat-older-go" onClick={() => revealOlder(rt.id)}>
+                                            <span class="chat-older-n">{older.length - show}</span> older on this runtime
                                         </button>
+                                    ) : null}
+                                    {show > 0 ? (
+                                        <button class="chat-older-go" onClick={() => openSearch(rt.id)}>Search all history on this runtime</button>
                                     ) : null}
                                 </div>
                             </div>

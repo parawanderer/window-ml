@@ -922,6 +922,23 @@ button.chat-page-go:hover { color: var(--fg); }
    probe caught this the moment the dashed box went, which is what the box had been providing by accident. */
 @media (pointer: coarse) { .chat-older-go { display: flex; align-items: center; min-height: 40px; } }
 .chat-older-n { font-variant-numeric: tabular-nums; }
+
+/* A ROW THAT WAS JUST REVEALED by the line above it. Those rows open BELOW the thing that was pressed, so at the
+   moment of the press nothing within sight moves: without this the line reads as a press that did nothing, and the
+   rows are found only by scrolling down to them. Staggered by `--i` (a row's place in the page that just arrived) so
+   they read as a group landing rather than one block appearing, and it plays on MOUNT only — a row already on screen
+   never replays it, which is what keeps the movement meaning "these are the new ones".
+
+   `chat-older-in`, not `chat-row-in`: that name is taken by the list PANE opening (further up this file), and two
+   keyframes of one name is the later one silently replacing the earlier. */
+@keyframes chat-older-in {
+    from { opacity: 0; transform: translateY(-5px); }
+    to { opacity: 1; transform: none; }
+}
+.chat-row-wrap.revealed { animation: chat-older-in 220ms ease-out both; animation-delay: calc(var(--i, 0) * 26ms); }
+/* And ONE movement, not two: the list pane's own entrance animates every `.chat-row` it mounts, which a revealed row
+   also is — the two together slid it diagonally, each on its own clock. */
+.chat-list .chat-row-wrap.revealed .chat-row { animation: none; }
 @media (prefers-reduced-motion: reduce) { .chat-row-wrap.revealed { animation: none; } }
 
 /* A row's `⋮`. It arrives with the pointer, in the corner the timestamp was using — the time is what you read on a

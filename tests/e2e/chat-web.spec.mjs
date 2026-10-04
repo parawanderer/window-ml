@@ -990,7 +990,7 @@ test("desktop: the list shows the last month, and the search page holds every se
     await page.close();
 });
 
-test("a runtime's older sessions sit under it and open the search page already on that device", async () => {
+test("a runtime's older sessions open in place, and the way past them carries that device", async () => {
     const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
     const list = page.locator(".chat-list");
 
@@ -1002,9 +1002,25 @@ test("a runtime's older sessions sit under it and open the search page already o
     await expect(groupOf("Work laptop").locator(".chat-older-go .chat-older-n")).toHaveText("48");
     await expect(groupOf("Desk PC").locator(".chat-older-go")).toHaveCount(0);
 
-    // And it CARRIES its runtime: the search page opens already filtered to it, so finding the session you were
-    // just looking at does not mean naming the device again under the heading that had just named it.
-    await groupOf("Work laptop").locator(".chat-older-go").click();
+    // IT OPENS IN PLACE. These sessions are already here — the index holds them and the list is simply not reaching
+    // back far enough — so sending the reader to another view to look at a row five pixels away was a round trip to
+    // nowhere.
+    const laptop = groupOf("Work laptop");
+    const rows = () => laptop.locator(".chat-row-wrap").count();
+    const before = await rows();
+    await laptop.getByRole("button", { name: /older on this runtime/ }).click();
+    expect(await rows()).toBe(before + 10);
+    await expect(laptop.locator(".chat-older-go .chat-older-n")).toHaveText("38");
+    await expect(page.locator(".chat-search")).toHaveCount(0, "and nothing navigated");
+    // The rows that just arrived say so, once: the line is at the BOTTOM of the group, so the press moves nothing
+    // within sight unless they do.
+    await expect(laptop.locator(".chat-row-wrap.revealed")).toHaveCount(10);
+
+    // And the way past what is held CARRIES its runtime: the search page opens already filtered to it, so finding
+    // the session you were just looking at does not mean naming the device again under the heading that had just
+    // named it. It appears once the reader has shown they are looking backwards, which is also the only point at
+    // which "search all of this one's history" is the question — before that the line answers it.
+    await laptop.getByRole("button", { name: "Search all history on this runtime" }).click();
     const devices = page.locator(".chat-search-devices");
     await expect(devices.getByRole("button", { name: "Work laptop" })).toHaveAttribute("aria-pressed", "true");
     await expect(devices.getByRole("button", { name: "All devices" })).toHaveAttribute("aria-pressed", "false");
