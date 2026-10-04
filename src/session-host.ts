@@ -218,6 +218,16 @@ export interface RuntimeInfo {
     /** estimated `runtime clock - client clock`, in ms; subtract it from a runtime timestamp to place it on the
      *  client's clock. Absent: same clock (the local host) or not yet estimated. */
     clockOffsetMs?: number;
+    /**
+     * Does this runtime SIGN the account's revocations? Read off its verified presence leaf, never from anything it
+     * said about itself, so it is the account root's word (`hub-connection.ts` `onPresence`).
+     *
+     * Exactly one principal on an account holds it, enforced at the hub, so the only thing a client does with it is
+     * avoid making a second one: the pairing screen reads it to know whether this account already has a signer, and
+     * says which device it is. ABSENT IS NOT "NO" — the local host never fills it, and a signer that is offline has
+     * no presence to read, so absent means "not seen from here" and a client must not conclude an account has none.
+     */
+    mayRevoke?: true;
 }
 
 /* ------------------------------ the session index ------------------------------ */

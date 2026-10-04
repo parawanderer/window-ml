@@ -35,6 +35,8 @@ export interface HubPeer {
     /** what it IS, from its verified leaf: only a runtime is listed as one. A phone's own presence arrives the same way,
      *  and without this it would appear in a runtime list as a runtime. */
     role: Role;
+    /** it signs the account's revocations, from its verified leaf. Absent is "not that, or not seen". */
+    mayRevoke?: true;
 }
 
 /** What one subscription hears about its stream. The payload is still SEALED: opening it needs a grant, which is the
@@ -298,8 +300,11 @@ export class HubConnection {
                 lastSeen: this.now(),
                 recipient: { principal: event.principal, agreementKey: verified.leaf.agreementKey as Bytes },
                 // From the VERIFIED leaf, not the presence frame's own `role`: the frame is the hub's word, the leaf
-                // is the account root's.
+                // is the account root's. Same for `mayRevoke`, which decides whether a pairing screen offers that
+                // grant to another device, so taking it from anything but the root's signature would be a way to
+                // talk a person into minting a second signer.
                 role: verified.leaf.role,
+                ...(verified.leaf.mayRevoke ? { mayRevoke: true as const } : {}),
             });
             this.announce();
         } catch {

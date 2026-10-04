@@ -439,6 +439,22 @@ never picks up the explanation of it.
 
 ## Conventions
 
+**RULE — when you change a rule, test the UPGRADE, not just the new behaviour.** A change to a default, an
+invariant or a wire rule leaves behind state the OLD code produced — accounts, certificates, signed lists, saved
+sessions, stored config — and the new code meets that state on somebody's machine rather than on a fresh one. "The
+new behaviour is correct" says nothing about the transition, and the transition is the only part a person who already
+used the thing experiences.
+
+The example this was written from: `may_revoke` defaulted to true for every runtime, so every account paired to date
+has two or more revocation signers. The hub now admits exactly one. Neither the old steady state (two signers racing)
+nor the new one (one signer) is what a real account does on the day it upgrades — what happens is that whichever
+browser connects first becomes the record and the others are refused at login, which is a third behaviour, and the
+one that needed a test. The hub session wrote it (`crates/hub/tests/auth.rs`: a NEWER second grant is the one refused,
+and the record survives a restart); the point is to notice that it is a separate case at all.
+
+The cheap form is a FIXTURE of what the old code wrote, read by the new code, asserting what a person sees. It is
+usually a few lines, and it is the only test that can fail for the right reason on an upgrade.
+
 **RULE — when one rule VALIDATES another's output, enumerate the inputs; do not sample them.** The resource
 panel GENERATES layouts (`presetsFor`) and JUDGES them (`stackRefusal`), and the invariant is that a preset
 may never propose a layout the rule then rejects. There is a drift guard for exactly that, and it shipped a

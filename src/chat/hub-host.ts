@@ -432,6 +432,18 @@ export class HubHost implements SessionHost {
         }
     }
 
+    /**
+     * The device this connection can SEE signing the account's revocations, by label, or null when none is visible.
+     *
+     * For the pairing screen, which must not offer that grant to a second device: exactly one principal may hold it
+     * and the hub refuses the rest their login. NULL IS NOT "NONE" — a signer that is offline has no presence to read
+     * from here, so this answers "not seen", and the cost of being wrong is the hub's refusal in front of whoever is
+     * pairing, rather than a silent second signer.
+     */
+    revocationSigner(): string | null {
+        return this.peers.find((p) => p.mayRevoke)?.name ?? null;
+    }
+
     private runtimeList(): RuntimeInfo[] {
         const grants = this.scopes.map((scope) => ({ scope: scope as RuntimeInfo["grants"][number]["scope"] }));
         const out: RuntimeInfo[] = [];
@@ -441,6 +453,7 @@ export class HubHost implements SessionHost {
             out.push({
                 id: p.id, name: p.name, kind: d.kind, online: p.online, lastSeen: p.lastSeen,
                 contractVersion: d.contractVersion, capabilities: d.capabilities, grants, clockOffsetMs: d.clockOffsetMs,
+                ...(p.mayRevoke ? { mayRevoke: true as const } : {}),
             });
         }
         return out;

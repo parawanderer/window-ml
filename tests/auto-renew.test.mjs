@@ -196,10 +196,10 @@ test("stopping it stops asking", async () => {
  * set as favourably as they ever get — inside the window, a browser awake, nothing tried recently — so the only
  * thing that can refuse is the certificate itself.
  */
-async function pathFor(role) {
+async function pathFor(role, { signerKnown = false } = {}) {
     const { defaultGrant } = await import("../src/hub/pair-flow.ts");
     const { Role } = await import("../src/hub/wire.ts");
-    const grant = defaultGrant(Role[role]);
+    const grant = defaultGrant(Role[role], undefined, signerKnown);
     const skip = autoRenewSkip(
         { notAfterMs: NOW + DAY, renewable: true, ...(grant.mayRevoke ? { mayRevoke: true } : {}) },
         NOW,
@@ -219,30 +219,32 @@ test("a BOX CONNECTOR keeps itself in the account too", async () => {
     assert.equal(skip, null);
 });
 
-test("KNOWN GAP: a RUNTIME paired on the defaults has NO self-service path, so every browser lapses at 90 days", async () => {
-    // This test passes while the defect exists and FAILS THE DAY IT IS FIXED, which is the point: the invariant is
-    // "every device can stay in the account", and the one exception should not survive as folklore in a chat log.
-    //
-    // `defaultGrant` gives every runtime `may_revoke`, and `device.renew` refuses a `may_revoke` certificate
-    // ("only the root device may renew"), so nothing renews a browser. window-ml-hub docs/design/revocation.md says
-    // `may_revoke` is "held by exactly one principal at a time" and "a second runtime that may revoke is the root's
-    // decision to re-place, not a default", so this default contradicts the design it implements. Handed to the hub
-    // session: window-ml-hub/tmp/handover-one-revocation-signer.md.
-    //
-    // WHEN THIS FAILS, the fix has landed. Then: assert `skip === null` like the two above, and delete this comment.
-    const { grant, skip } = await pathFor("ROLE_RUNTIME");
-    assert.equal(grant.mayRevoke, true, "every runtime is still granted may_revoke by default");
-    assert.equal(skip, "revocation-signer", "and so nothing can renew it");
+test("the FIRST runtime on an account signs revocations, and that is the one device with no self-service renewal", async () => {
+    // An account with no signer cannot publish a revocation at all (`publishList` returns early), so a first browser
+    // has to arrive holding it. The cost is that this one device cannot renew itself: `device.renew` refuses a
+    // `may_revoke` certificate, and both verifiers refuse `may_revoke` on anything a delegate issued, deliberately,
+    // because keeping a second holder alive by renewal is how two signers happen. So it visits the root each quarter.
+    const { grant, skip } = await pathFor("ROLE_RUNTIME", { signerKnown: false });
+    assert.equal(grant.mayRevoke, true, "a first runtime becomes the signer");
+    assert.equal(skip, "revocation-signer", "which is exactly why it cannot renew itself");
 });
 
-test("THE SET of devices with no renewal path is exactly one, and should become empty", async () => {
+test("a SECOND runtime is not offered the grant, so it keeps itself in the account like everything else", async () => {
+    // Exactly one principal may hold it: two race, the loser's removal of a lost device is refused as stale, and the
+    // hub now refuses the second one's login outright.
+    const { grant, skip } = await pathFor("ROLE_RUNTIME", { signerKnown: true });
+    assert.equal(grant.mayRevoke, false);
+    assert.equal(skip, null, "nothing in its certificate stops it renewing");
+});
+
+test("THE SET of devices with no renewal path is exactly the account's one revocation signer", async () => {
     const stuck = [];
     for (const role of ["ROLE_CLIENT", "ROLE_RUNTIME", "ROLE_BOX_CONNECTOR"]) {
-        if ((await pathFor(role)).skip !== null) stuck.push(role);
+        if ((await pathFor(role, { signerKnown: true })).skip !== null) stuck.push(role);
     }
-    // One line to change when the default is fixed, and a failure if a NEW role is added that cannot stay in the
-    // account — which is the regression this guards, rather than the known gap above.
-    assert.deepEqual(stuck, ["ROLE_RUNTIME"]);
+    // Once an account HAS a signer, nothing else paired into it is stuck. A failure here means a new role, or a
+    // changed default, has left some device unable to stay in the account — which is the regression this guards.
+    assert.deepEqual(stuck, []);
 });
 
 test("the inbox never offers a renewal the runtime would refuse, which would be a press that does nothing", () => {
@@ -299,4 +301,32 @@ test("KNOWN GAP: two signers do not produce the rising version a publisher requi
     // B signs a second later by its own clock, which is a second BEHIND A's: an utterly ordinary amount of skew.
     const vB = versionOf(await storeB.sign(b.id, b.chain, root.publicKey, NOW - 1000));
     assert.ok(vB <= vA, `B signed ${vB}, which a publisher holding ${vA} refuses as stale`);
+});
+
+// --- the UPGRADE: devices paired before the default moved (AGENTS.md, "test the UPGRADE") ---
+
+test("a runtime paired on the OLD default still reads as the signer, and still cannot renew itself", async () => {
+    // The old default gave `may_revoke` to EVERY runtime, so an account paired before this change has certificates
+    // this code did not issue and cannot reissue. Nothing here may treat them as the new default would: the facts
+    // come off the certificate, never off `defaultGrant`, which is what makes the transition a non-event for them.
+    const old = { notAfterMs: NOW + DAY, renewable: true, mayRevoke: true };
+    assert.equal(autoRenewSkip(old, NOW, { runtimeOnline: true }), "revocation-signer");
+});
+
+test("and a SECOND runtime from an old account renews itself as soon as its certificate is replaced, not before", async () => {
+    // The transition for an account with two signers is the hub's: the first to connect keeps the record, the others
+    // are refused their login until re-paired without the grant. Until that re-pairing their certificate still says
+    // `may_revoke`, so auto-renew must keep refusing them — it reads the certificate, not the account's new rule.
+    const stillOld = { notAfterMs: NOW + DAY, renewable: true, mayRevoke: true };
+    const rePaired = { notAfterMs: NOW + DAY, renewable: true };
+    assert.equal(autoRenewSkip(stillOld, NOW, { runtimeOnline: true }), "revocation-signer");
+    assert.equal(autoRenewSkip(rePaired, NOW, { runtimeOnline: true }), null);
+});
+
+test("an old account's extra signers are visible to the pairing screen, so it stops offering a third", async () => {
+    // `revocationSigner()` reads presence leaves rather than the local default, so an account that already has two
+    // signers from before this change still reports one, and a device paired now is not given a third.
+    const { defaultGrant } = await import("../src/hub/pair-flow.ts");
+    const { Role } = await import("../src/hub/wire.ts");
+    assert.equal(defaultGrant(Role.ROLE_RUNTIME, undefined, true).mayRevoke, false);
 });

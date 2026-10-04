@@ -29,7 +29,9 @@ export interface FakePairingControls {
 
 const norm = (typed: string) => typed.toUpperCase().replace(/[\s-]/g, "");
 
-/** The grant a role gets by default, cut to what `grantable` allows, as `defaultGrant` does. */
+/** The grant a role gets by default, cut to what `grantable` allows, roughly as `defaultGrant` does. It has no notion
+ *  of a second revocation signer, because the demo account holds one device of each kind and never pairs a second
+ *  browser: the real rule (`defaultGrant`, `signerKnown`) is tested in tests/auto-renew.test.mjs. */
 function defaultGrant(role: PairRole, grantable: string[] | null, root: boolean): Grant {
     const want = role === "client" ? ["view", "drive"] : [];
     return {

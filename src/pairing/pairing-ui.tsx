@@ -207,7 +207,15 @@ function GrantEditor({ found, grant, onChange }: { found: FoundOffer; grant: Gra
                     <span><b>Pair other devices</b><span class="pair-hint"> It can add devices to this account by itself, without asking here.</span></span>
                 </label>
             ) : null}
-            {grant.mayRevoke ? <p class="pair-hint">It also signs revocations for this account: removing a device goes through it.</p> : null}
+            {/* WHICH DEVICE SIGNS REMOVALS, said either way round, because the person has to understand a default they
+                did not choose. Exactly one principal on an account may hold it: two race and the loser's removal of a
+                lost device is refused as stale, and the hub refuses the second one's login outright. An account with
+                NONE cannot publish a revocation at all, which is why a first runtime arrives holding it. */}
+            {found.role === "runtime" && found.signer && !grant.mayRevoke
+                ? <p class="pair-hint">“{found.signer}” signs removals for this account, and only one device can, so this one will not.</p>
+                : grant.mayRevoke
+                    ? <p class="pair-hint">{found.signer ? "It also signs revocations for this account: removing a device goes through it." : "It will be the device that signs removals for this account. Exactly one does, and without it a removal reaches nothing."}</p>
+                    : null}
             {days > 0 ? <p class="pair-hint">Valid for {days} days, and renewed while a runtime lists it. It leaves the account only by being removed.</p> : null}
         </fieldset>
     );
