@@ -84,8 +84,10 @@ The failure path (`join.yaml`) needs no hub. To watch a phone actually join an a
 the other device yourself:
 
 ```bash
-~/git/window-ml-hub-v0.4.0/target/release/wmlhub serve --hub-name hub.local --registration open \
-    --state-dir /tmp/hubstate --listen 127.0.0.1:8799 &            # the binary tests/fixtures/hub-harness.mjs uses
+# `npm run fetch-hub` gets the binary (the pinned tag's, the one tests/fixtures/hub-harness.mjs uses); the path
+# below is where it puts it, so it tracks HUB_TAG rather than naming a version that goes stale here.
+~/git/window-ml-hub-v0.4.1/target/release/wmlhub serve --hub-name hub.local --registration open \
+    --state-dir /tmp/hubstate --listen 127.0.0.1:8799 &
 node --import tsx scripts/hub-root.mjs create ws://127.0.0.1:8799 --state /tmp/root.json   # the account's root
 # in the app: Join an account → hub ws://127.0.0.1:8799 → Show my code, then read the code off a screenshot
 echo yes | node --import tsx scripts/hub-root.mjs confirm "ZVJV FSQ0" --state /tmp/root.json
