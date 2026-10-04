@@ -19,13 +19,25 @@ import type { PlatformPrefs } from "./platform";
 import { CODE_DEFAULT, CODE_SIZES } from "../native/text-size";
 
 /** Preference keys, under the platform's own namespace. */
-export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", PINNED_MODELS_KEY = "view.pinnedModels", CODE_KEY = "view.codeSize", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups", THEME_KEY = "view.theme";
+export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", PINNED_MODELS_KEY = "view.pinnedModels", CODE_KEY = "view.codeSize", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups", THEME_KEY = "view.theme", LIVE_KEY = "view.live";
 
 /** Is the page in calm view? Read it in a render to re-render when it changes. */
 export const calm = signal(true);
 
 /** Is the session list pane open? Only a wide layout asks: a phone shows one pane at a time either way. */
 export const listOpen = signal(true);
+
+/**
+ * Stream a run's thinking as it happens, where that is a CHOICE — which is only on a runtime reached over a wire
+ * (`ChatExtras.nearby`). On this browser it is free and always on.
+ *
+ * On by default, because what it really buys is LIVENESS: a step that is taking a long time and a run that has hung
+ * look identical without it, and this is the only thing on the page that tells them apart. Turning it off is for a
+ * run you already know the shape of and mean to leave alone, where what matters is that it finishes cheaply.
+ *
+ * Remembered per device, like the rest of this file: someone who always wants one answer should decide once.
+ */
+export const liveThinking = signal(true);
 
 /**
  * What the pane on the RIGHT is showing, if anything.
@@ -143,6 +155,8 @@ export function installViewPrefs(prefs: PlatformPrefs): void {
     const l = prefs.get<boolean>(LIST_KEY);
     calm.value = typeof c === "boolean" ? c : true;
     listOpen.value = typeof l === "boolean" ? l : true;
+    const lv = prefs.get<boolean>(LIVE_KEY);
+    liveThinking.value = typeof lv === "boolean" ? lv : true;
     const pn = prefs.get<string>(PANE_KEY);
     pane.value = pn === "resource" ? pn : null;
     const f = prefs.get<string[]>(FOLDED_KEY);
@@ -232,6 +246,12 @@ export function setCalm(on: boolean): void {
 export function setListOpen(on: boolean): void {
     listOpen.value = on;
     store?.set(LIST_KEY, on);
+}
+
+/** Stream a run's thinking, or let it run quietly. See {@link liveThinking}. */
+export function setLiveThinking(on: boolean): void {
+    liveThinking.value = on;
+    store?.set(LIVE_KEY, on);
 }
 
 /** Show something in the right-hand pane, or close it. */

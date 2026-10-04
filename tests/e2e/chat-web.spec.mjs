@@ -2396,3 +2396,42 @@ test("continuing a capped run carries it on, and the offer goes with it", async 
     expect(errors).toEqual([]);
     await page.close();
 });
+
+// WATCHING A RUN THINK is the only thing on the page that tells a slow step from a stuck one, so it is on by
+// default. It costs something only over a wire: every `agent-stream` event carries the whole answer so far rather
+// than the part that is new, so for a machine on the account it is a choice, and a remembered one. On this browser
+// it is free and nothing is asked — that half is in chat-page.spec.mjs, which has a local runtime to ask about.
+test("a run streams its thinking by default, and the choice is this device's to remember", async () => {
+    const { page, errors } = await open(DESKTOP);
+    await page.locator(".chat-start-box textarea").waitFor();
+
+    // A PICKER, NOT A SWITCH WITH AN `ⓘ`: the reason to pick either side is a sentence, and a sentence belongs
+    // beside the option rather than behind a second press — which is also the only shape that works on a phone,
+    // where the panel's tooltip is dismissed by the same pointerdown a tap begins with.
+    const pill = page.getByRole("button", { name: /^Thinking:/ });
+    await expect(pill).toContainText("Live");
+    await pill.click();
+    const list = page.getByRole("listbox", { name: "Thinking" });
+    await expect(list.getByRole("option")).toHaveText([/Live.*slow step from a stuck run/s, /Quiet.*leave alone/s]);
+    await page.keyboard.press("Escape");
+
+    await page.locator(".chat-start-box textarea").fill("summarise this");
+    await page.locator(".chat-start-box textarea").press("Enter");
+    await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "agent.start", stream: true });
+
+    // Quiet is the opposite, and it STAYS chosen: a device that always wants one answer should say so once.
+    await page.locator(".chat-list .chat-start").click();
+    await page.getByRole("button", { name: /^Thinking:/ }).click();
+    await page.getByRole("listbox", { name: "Thinking" }).getByRole("option").filter({ hasText: "Quiet" }).click();
+    await page.locator(".chat-start-box textarea").fill("summarise this quietly");
+    await page.locator(".chat-start-box textarea").press("Enter");
+    const quiet = (await commands(page)).at(-1);
+    expect(quiet).toMatchObject({ type: "agent.start", task: "summarise this quietly" });
+    expect(quiet.stream, "no flag at all, rather than a false one").toBe(undefined);
+
+    await page.reload();
+    await page.locator(".chat-start-box textarea").waitFor();
+    await expect(page.getByRole("button", { name: /^Thinking:/ })).toContainText("Quiet");
+    expect(errors).toEqual([]);
+    await page.close();
+});
