@@ -9,8 +9,28 @@
 //
 // SYNCHRONOUS throughout, because the shared module runs every statement inside `transaction` and a driver returning
 // promises could not be sequenced in one. expo-sqlite's sync variants exist for exactly this.
+//
+// ENCRYPTED AT REST, and what that does and does not buy:
+//
+// The file is SQLCipher (`useSQLCipher` in app.json) with a 32-byte key made once and kept in the platform keystore
+// under `AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY` — the terms the keyring's own secrets are kept on, and the pattern
+// WhatsApp uses for its message store. The point of those terms is that the key is never restored onto another
+// phone, so a copy of this file is inert wherever it lands: a backup, a forensic image, a stolen disk.
+//
+// It is NOT protection from code running inside this app, or from someone holding the unlocked phone. The sandbox
+// and the platform's own full-disk encryption are what answer those, exactly as they did when this was a JSON file.
+//
+// ON BACKUPS. The copies moved from the app's cache directory to its documents so history survives, and documents
+// are backed up — a property the cache directory had for free and that move took away. Android gives it back
+// already: expo-secure-store's rules include only `sharedpref`, and an Auto Backup config with any `<include>`
+// backs up ONLY what it names, so the database and file domains are excluded on both auto-backup and device
+// transfer. iOS has no equivalent and neither expo-file-system nor expo-sqlite exposes
+// `NSURLIsExcludedFromBackupKey`, so the file does reach iCloud there — as ciphertext whose key is marked never to
+// leave this device. What is left is the size of it in someone's backup, not its contents.
 
 import { openDatabaseSync, type SQLiteDatabase } from "expo-sqlite";
+import * as SecureStore from "expo-secure-store";
+import { getRandomBytes } from "expo-crypto";
 import { appendEvents, metaGet, metaSet, migrate, prepareSession, readArchived, removeArchived, writeSession, type ArchiveDb, type SqlValue } from "../../src/archive/db";
 import { CACHE_MAX_BYTES, CACHE_SESSIONS, type EventCache } from "../../src/chat/event-cache";
 import type { FeedSnapshot } from "../../src/chat/session-feed";
@@ -20,6 +40,30 @@ import type { ToNative, ToWeb } from "../../src/native/bridge";
 
 /** The file the archive lives in, beside the app's other documents. */
 export const ARCHIVE_FILE = "archive.sqlite";
+
+/** Where the archive's key lives: the platform keystore, as every other secret on this phone does (vault.ts). */
+const KEY_NAME = "archive.key";
+/** Kept after the first unlock and NEVER restored onto another phone, which is what makes a backup of the database
+ *  inert: the file may travel, the key does not. Same terms the keyring's own secrets are kept on. */
+const KEY_OPTIONS: SecureStore.SecureStoreOptions = { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY };
+
+/**
+ * The archive's encryption key, made once and kept in the keystore.
+ *
+ * The database is SQLCipher (`useSQLCipher` in app.json), so what is on disk is ciphertext. This is the pattern
+ * WhatsApp uses for its own message store and the one this app already uses for the keyring: the key sits where the
+ * OS guards it, not beside what it protects.
+ *
+ * It is hex rather than a passphrase because `PRAGMA key` treats a quoted string as a passphrase to derive from, and
+ * deriving from 32 random bytes is work for nothing — the bytes ARE the key.
+ */
+async function archiveKey(): Promise<string> {
+    const found = await SecureStore.getItemAsync(KEY_NAME, KEY_OPTIONS);
+    if (found) return found;
+    const made = [...getRandomBytes(32)].map((b) => b.toString(16).padStart(2, "0")).join("");
+    await SecureStore.setItemAsync(KEY_NAME, made, KEY_OPTIONS);
+    return made;
+}
 
 /** `expo-sqlite` as the shared surface. Written out rather than cast: the two disagree about shapes (a select here
  *  returns rows as objects, a value is the first column of the first row), and stating the mapping once is what
@@ -54,11 +98,18 @@ export function expoDb(raw: SQLiteDatabase): ArchiveDb {
 /** The one open handle, or null before the first use. */
 let open: { raw: SQLiteDatabase; db: ArchiveDb } | null = null;
 
-/** Open the phone's archive, migrated and ready. One handle for the app's lifetime: SQLite serialises writers
- *  itself, and a second connection to the same file would only add a lock to contend for. */
-export function archive(): ArchiveDb {
+/**
+ * Open the phone's archive, decrypted, migrated and ready. One handle for the app's lifetime: SQLite serialises
+ * writers itself, and a second connection to the same file would only add a lock to contend for.
+ *
+ * ASYNC only because the key is: everything after it is synchronous, which is what the shared SQL requires. The
+ * `PRAGMA key` is the first statement on the connection and has to be — SQLCipher cannot read so much as the schema
+ * before it, so a missed one fails as "file is not a database" rather than as anything about encryption.
+ */
+export async function archive(): Promise<ArchiveDb> {
     if (!open) {
         const raw = openDatabaseSync(ARCHIVE_FILE);
+        raw.execSync(`PRAGMA key = "x'${await archiveKey()}'"`);
         const db = expoDb(raw);
         migrate(db);
         open = { raw, db };
@@ -94,8 +145,7 @@ const hashOf = (key: SessionKey): string => key.slice(key.lastIndexOf(":") + 1);
  * moving. Only events that carry a history position are kept: one that cannot say where it sits could not be paged
  * back from, and guessing an index for it is how a copy comes to claim a history it does not have.
  */
-export function archiveCache(): EventCache {
-    const db = archive();
+export function archiveCache(db: ArchiveDb): EventCache {
     return {
         async load(key) {
             const hash = hashOf(key);
@@ -169,15 +219,15 @@ export function archiveCache(): EventCache {
 /** Answer one `archive` request from the page (src/native/archive-bridge.ts). The page sends only the events past
  *  what the last answer said was held, so a live session's save stays small however long the session is. */
 export async function answerArchive(m: Extract<ToNative, { type: "archive" }>): Promise<Extract<ToWeb, { type: "archiveResult" }>> {
-    const cache = archiveCache();
     try {
+        const cache = archiveCache(await archive());
         if (m.op === "clear") { await cache.clear(); return { type: "archiveResult", id: m.id, ok: true }; }
         if (!m.key) return { type: "archiveResult", id: m.id, ok: false, error: "that request needs a session" };
         const key = m.key as SessionKey;
         if (m.op === "drop") { await cache.drop(key); return { type: "archiveResult", id: m.id, ok: true }; }
         if (m.op === "load") return { type: "archiveResult", id: m.id, ok: true, session: (await cache.load(key)) ?? undefined };
         await cache.save(m.session as CachedSession);
-        return { type: "archiveResult", id: m.id, ok: true, held: heldFor(key) };
+        return { type: "archiveResult", id: m.id, ok: true, held: await heldFor(key) };
     } catch (e) {
         // SAID OUT LOUD, because nothing downstream will. The store discards a failed save (`.catch(() => undefined)`),
         // so an archive that cannot write looks exactly like one that is working: sessions simply stop being kept and
@@ -189,7 +239,8 @@ export async function answerArchive(m: Extract<ToNative, { type: "archive" }>): 
 }
 
 /** The highest history position the archive now holds for a session, or -1 when it holds none. */
-function heldFor(key: SessionKey): number {
-    const hash = hashOf(key);
-    return Number(archive().selectValue("SELECT MAX(pos) FROM events WHERE hash = ?", [hash]) ?? -1);
+async function heldFor(key: SessionKey): Promise<number> {
+    const db = await archive();
+    return Number(db.selectValue("SELECT MAX(pos) FROM events WHERE hash = ?", [hash(key)]) ?? -1);
 }
+const hash = hashOf;
