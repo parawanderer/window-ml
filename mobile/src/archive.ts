@@ -28,7 +28,7 @@
 // `NSURLIsExcludedFromBackupKey`, so the file does reach iCloud there — as ciphertext whose key is marked never to
 // leave this device. What is left is the size of it in someone's backup, not its contents.
 
-import { openDatabaseSync, type SQLiteDatabase } from "expo-sqlite";
+import { deleteDatabaseSync, openDatabaseSync, type SQLiteDatabase } from "expo-sqlite";
 import * as SecureStore from "expo-secure-store";
 import { getRandomBytes } from "expo-crypto";
 import { appendEvents, metaGet, metaSet, migrate, prepareSession, readArchived, removeArchived, writeSession, type ArchiveDb, type SqlValue } from "../../src/archive/db";
@@ -108,13 +108,44 @@ let open: { raw: SQLiteDatabase; db: ArchiveDb } | null = null;
  */
 export async function archive(): Promise<ArchiveDb> {
     if (!open) {
-        const raw = openDatabaseSync(ARCHIVE_FILE);
-        raw.execSync(`PRAGMA key = "x'${await archiveKey()}'"`);
-        const db = expoDb(raw);
-        migrate(db);
-        open = { raw, db };
+        const key = await archiveKey();
+        try {
+            open = unlock(key);
+        } catch (e) {
+            // A FILE THIS KEY CANNOT OPEN, which is not a disaster here: the copy is a copy, and everything in it
+            // can be fetched again. It happens for two reasons worth telling apart in the log and treating the same
+            // — a database written before encryption was turned on (SQLCipher cannot read a plaintext file), and a
+            // key that is gone (reinstalled app, cleared keystore). Both leave bytes nothing can read, so they are
+            // discarded rather than left to fail every save forever.
+            console.warn(`[archive] could not open with this key, starting a new one: ${e instanceof Error ? e.message : String(e)}`);
+            deleteDatabaseSync(ARCHIVE_FILE);
+            open = unlock(key);
+        }
     }
     return open.db;
+}
+
+/**
+ * Open the file, decrypt it and bring the schema up to date. Throws where the key does not fit the bytes.
+ *
+ * It CLOSES THE HANDLE on its way out of a failure, which is not tidiness: SQLite will not delete a database that is
+ * still open, so a failed open that held on to its handle made the recovery below fail too — and the archive then
+ * failed every save for the life of the app, each one logged, none of them fixable.
+ */
+function unlock(key: string): { raw: SQLiteDatabase; db: ArchiveDb } {
+    const raw = openDatabaseSync(ARCHIVE_FILE);
+    try {
+        raw.execSync(`PRAGMA key = "x'${key}'"`);
+        // The first READ is what proves the key: `PRAGMA key` itself succeeds whatever you give it, and the failure
+        // surfaces on the first page SQLCipher has to decrypt. Reading the schema is the cheapest such read.
+        raw.execSync("SELECT count(*) FROM sqlite_master");
+        const db = expoDb(raw);
+        migrate(db);
+        return { raw, db };
+    } catch (e) {
+        try { raw.closeSync(); } catch { /* already gone: the delete is what matters */ }
+        throw e;
+    }
 }
 
 /** Forget the archive — joining or leaving an account, where a device must not replay the last one's sessions. */
