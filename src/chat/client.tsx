@@ -74,6 +74,8 @@ async function main(): Promise<void> {
             defaultLabel: deviceLabel(),
             rootKeptIn: "this site's data in this browser",
             onChanged: () => location.reload(),
+            // So a second browser is not offered the one grant only one device may hold (hub-host.ts).
+            signer: () => host?.revocationSigner() ?? null,
         }),
     };
     if (!me?.membership || !host) { render(<FirstRun platform={platform} />, root); return; }

@@ -39,11 +39,27 @@ export interface GrantChoice {
  * gets `view` and `drive`; `approve`, `screen` and the rest are opt-in, each a line the screen explains. A BOX
  * CONNECTOR relays telemetry and may hold neither. From a delegate (`issuer` with scopes), the defaults are cut to what it
  * may pass on.
+ *
+ * `signerKnown` IS THE ONE THING THAT MOVES `may_revoke`, and both answers are deliberate.
+ *
+ * Exactly one principal on an account may sign revocations: two race, and the loser's removal of a lost device is
+ * refused as stale, which that design doc calls the worst possible way for a revocation to fail. The hub now admits
+ * only the first holder and refuses the rest their login. So a SECOND runtime must not be offered the grant, and this
+ * returns false the moment one is known.
+ *
+ * But it defaults TRUE when none is known, which is the opposite of "off by default", because an account with NO
+ * signer fails quietly: `publishList` (hub-runtime.ts) returns early without one, so a removal changes that runtime's
+ * own allowlist and is published nowhere, and nobody is told. A first browser therefore arrives as the signer, which
+ * is the state the account needs, and the pairing screen says so rather than hiding it in a tickbox.
+ *
+ * ABSENT IS NOT "NO". A signer that is offline has no presence to read, so a caller that cannot see one has not
+ * established that there is none; the cost of being wrong is the hub refusing the new device with a message that
+ * says what to do, in front of whoever is pairing it.
  */
-export function defaultGrant(role: Role, issuer?: Issuer): GrantChoice {
+export function defaultGrant(role: Role, issuer?: Issuer, signerKnown?: boolean): GrantChoice {
     const validityMs = MAX_CERTIFICATE_MS;
     const choice: GrantChoice =
-        role === Role.ROLE_RUNTIME ? { scopes: [], mayPair: true, mayRevoke: true, validityMs }
+        role === Role.ROLE_RUNTIME ? { scopes: [], mayPair: true, mayRevoke: !signerKnown, validityMs }
         : role === Role.ROLE_CLIENT ? { scopes: [SCOPE.view, SCOPE.drive], mayPair: false, mayRevoke: false, validityMs }
         : { scopes: [], mayPair: false, mayRevoke: false, validityMs };
     // A delegate passes on only what it holds, never `may_revoke`: the defaults start inside what it may give.

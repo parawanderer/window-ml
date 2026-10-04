@@ -28,6 +28,14 @@ export interface ClientPairingOptions {
     rootKeptIn: string;
     /** the membership changed (created, joined, left): the app reconnects with it */
     onChanged?: () => void;
+    /**
+     * The device already signing this account's revocations, by label, or null when none is visible to this one.
+     *
+     * It decides whether a runtime being paired is offered `may_revoke`: exactly one principal may hold it, so a
+     * second must not be minted, and an account with NONE cannot publish a revocation at all. Absent reads as "no
+     * signer known", which is the right answer for a first browser and recoverable for a signer that is asleep.
+     */
+    signer?: () => string | null;
 }
 
 /** Two public keys, compared in constant length: a renewed certificate must be for THIS device's key and no other. */
@@ -57,11 +65,14 @@ export function clientPairing(o: ClientPairingOptions): PairingApi {
     /** An offer the library found, as the screens show it, with the grant this device starts from. */
     const shown = async (found: flow.FoundOffer): Promise<FoundOffer> => {
         const from = await issuer();
+        // Who already signs, which both chooses the default and is what the screen says about it.
+        const signer = o.signer?.() ?? null;
         return {
             label: found.offer.label,
             role: roleOf(found.offer.role),
             fingerprint: found.fingerprint,
-            grant: flow.defaultGrant(found.offer.role, from),
+            grant: flow.defaultGrant(found.offer.role, from, !!signer),
+            ...(signer ? { signer } : {}),
             grantable: from.scopes ?? null,
             ref: found,
             ...(found.checked ? { checked: true } : {}),

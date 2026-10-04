@@ -30,6 +30,8 @@ async function main(): Promise<void> {
         rootKeptIn: "this phone's keystore",
         // A device that joins or leaves an account replays nothing of the last one's sessions.
         onChanged: () => { void cache?.clear().catch(() => undefined).finally(() => setTimeout(() => location.reload(), 400)); },
+        // So a browser paired from this phone is not offered the one grant only one device may hold (hub-host.ts).
+        signer: () => host?.revocationSigner() ?? null,
     });
     runEmbed(host ?? new FakeHost({ runtimes: [] }), {
         account: m ? { label: "This phone", hubUrl: m.hubUrl, root: !!me?.root } : null,

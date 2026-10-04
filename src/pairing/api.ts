@@ -73,6 +73,9 @@ export interface FoundOffer {
     ref?: unknown;
     /** found by a SCANNED QR code whose full fingerprint already matched the offer's keys: nothing to compare by eye */
     checked?: boolean;
+    /** the device already signing this account's revocations, by label: why that grant is not offered here. Absent
+     *  means none is known, in which case a runtime paired here becomes the signer and the screen says so. */
+    signer?: string;
 }
 
 /** One line of this device's connection history, as the worker kept it ("online (2 devices)", "offline: <reason>"). */
