@@ -776,6 +776,22 @@ test("renewSelf: tries each browser that is awake, installs what comes back, and
     w = world(() => ok(), () => { throw new Error("That certificate is for another device. Nothing was changed."); });
     r = await renewSelf(w.host, w.pairing, [rt("a"), rt("b")], "p");
     assert.deepEqual([r.ok, w.asked], [false, ["a"]]);
+
+    // AND A KEPT CERTIFICATE SAYS SO, so whatever is showing the old window re-reads at once. The keyring is
+    // otherwise only re-read hourly, and nothing told the inbox that the thing it was warning about had just been
+    // fixed: the card kept saying "your access runs out in 5 days", which reads as a press that did nothing.
+    const { certChanged } = await import("../src/chat/renew.ts");
+    const before = certChanged.value;
+    w = world(() => ok());
+    await renewSelf(w.host, w.pairing, [rt("a")], "p");
+    assert.equal(certChanged.value, before + 1, "an installed renewal bumps it");
+
+    // The paths that keep NOTHING do not bump it: there is no new window for anyone to re-read.
+    w = world(() => ({ ok: true, data: { notAfterMs: 99 } }));
+    await renewSelf(w.host, w.pairing, [rt("a")], "p");
+    w = world(() => ({ ok: false, error: { code: "conflict", message: "no" } }));
+    await renewSelf(w.host, w.pairing, [rt("a")], "p");
+    assert.equal(certChanged.value, before + 1, "not due, and refused, change nothing");
     assert.match(r.problem, /for another device/);
 
     // A surface with no keyring to install into asks nobody.

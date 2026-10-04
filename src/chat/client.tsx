@@ -21,6 +21,7 @@ import { applyCodePrefs, initThemeStyle } from "../sidebar/prefs";
 import { ChatApp } from "./chat-app";
 import type { ChatExtras } from "./extras";
 import { renewSelf } from "./renew";
+import { startAutoRenew } from "./auto-renew";
 import { ChatStore } from "./chat-store";
 import type { HubHost } from "./hub-host";
 import { openClientHost } from "./client-host";
@@ -90,6 +91,18 @@ async function main(): Promise<void> {
             return r.ok ? null : r.problem;
         },
     };
+    // AND IT KEEPS ITSELF CURRENT, with nobody pressing anything: a device that connects inside the renewal window
+    // renews itself, which is the same operation as the press and nothing wider (auto-renew.ts).
+    startAutoRenew({
+        read: async () => {
+            const m = await platform.pairing!.load();
+            return typeof m?.notAfterMs === "number"
+                ? { notAfterMs: m.notAfterMs, ...(m.mayRevoke ? { mayRevoke: true } : {}), renewable: m.renewable !== false }
+                : null;
+        },
+        runtimeOnline: () => store.runtimes.value.some((rt) => rt.online),
+        renew: () => extras.renewSelf!(),
+    });
     render(<ChatApp store={store} platform={platform} extras={extras} />, root);
 }
 

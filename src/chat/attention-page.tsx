@@ -18,6 +18,7 @@ import { cursorTipOn } from "../sidebar/ui-kit";
 import { mainView, useEscapeCloses } from "./nav";
 import { SheetHead, settingsTab } from "./settings-page";
 import { dismiss, dismissed } from "./view-mode";
+import { certChanged } from "./renew";
 
 /** No codes of this device's own: every runtime reports its own now (`capabilities.attention`). */
 const NONE: ReadonlyMap<string, readonly string[]> = new Map();
@@ -33,6 +34,9 @@ const CERT_POLL_MS = 60 * 60_000;
  */
 export function useOwnCert(pairing: PairingApi | undefined, store: ChatStore, extras?: ChatExtras): CertState | null {
     const [me, setMe] = useState<Membership | null>(null);
+    // A renewal REPLACES the certificate, and the poll below is hourly: without following this the card kept warning
+    // about a window that had already moved, which reads as a press that did nothing (renew.ts).
+    const changed = certChanged.value;
     useEffect(() => {
         if (!pairing) return;
         let alive = true;
@@ -40,7 +44,7 @@ export function useOwnCert(pairing: PairingApi | undefined, store: ChatStore, ex
         read();
         const t = setInterval(read, CERT_POLL_MS);
         return () => { alive = false; clearInterval(t); };
-    }, [pairing]);
+    }, [pairing, changed]);
     if (!me || typeof me.notAfterMs !== "number") return null;
     return {
         notAfterMs: me.notAfterMs,
