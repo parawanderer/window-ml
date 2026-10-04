@@ -95,6 +95,39 @@ test("smoke: the extension loads and window.ml runs a one-shot agent @real-ok", 
     await page.close();
 });
 
+// A RUN'S TAB MUST NOT BE DISCARDED UNDER IT. The browser takes a background tab's document when memory is tight
+// (and, with Memory Saver on, for being in the background a while), which destroys the toolset the run delegates
+// to — with no navigation to notice and no close. One measured run lost 13m57s inside a single `pageInfo` to it.
+// `autoDiscardable: false` is the only hint Chrome offers, and the pin has to be released again or a tab the
+// person keeps is never discardable for the rest of the browser's life. Both halves are asserted, because only
+// the second one is easy to forget.
+(BACKEND ? test.skip : test)("a tab hosting a run is pinned against discard, and let go when the run ends", async () => {
+    await configureExtension(ext.sw, { debugMode: "devtools", agentHudInDevtools: false });
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    const tabId = await ext.sw.evaluate(async (u) => (await chrome.tabs.query({})).filter((t) => t.url?.startsWith(u)).pop()?.id, site.url);
+    const pinned = () => ext.sw.evaluate(async (id) => (await chrome.tabs.get(id)).autoDiscardable, tabId);
+    expect(await pinned()).toBe(true);   // an ordinary tab, before any of this
+
+    const before = fake.calls().length;
+    fake.setScript([
+        { tool: "fetch_url", args: { url: site.url + "/spa", rendered: true, credentials: true } },   // always gates: the run stays live
+        { content: "done" },
+    ]);
+    await page.evaluate(() => { window.ml.agent("Fetch it.", { env: false, approvalRouting: "external" }); return true; });
+
+    await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 15000 }).toBe(1);
+    expect(await pinned(), "while the run is hosted here").toBe(false);
+
+    const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
+    await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(2);
+    await expect.poll(pinned, { timeout: 10000 }).toBe(true);   // released, or the tab is pinned for good
+    await page.close();
+    await configureExtension(ext.sw, { debugMode: "off" });
+});
+
 // fetch_url { rendered: true } — loads the URL in a background tab so its JS runs, then returns the SETTLED
 // DOM. /spa's raw HTML is an empty shell ("Loading…"); only after the client script runs does the marker
 // appear. A raw GET would never see it. Gated like a credentialed fetch (always prompts) → resolved via IPC.

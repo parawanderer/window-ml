@@ -21,7 +21,8 @@ import { ensureHubRuntime, hubDevices, hubLog, hubState, revokeHubDevice, stopHu
 import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, senderOrigin } from "./sw-housekeeping";
 import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, pendingGrants, takeCredFetch } from "./sw-consent";
-import { runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel } from "./sw-runs";
+import { runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw-runs";
+import { moveTabKey } from "./tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw-debug";   // the DevTools panel's copy of the page debug stream
 import { startBackgroundRun, delegateStreams } from "./sw-run-host";
 import { pythonPrewarm, pythonExec, relayPyStdout } from "./sw-python";
@@ -57,6 +58,9 @@ const inflight = new Map<string, AbortController>();
 // respawn doesn't miss the in-flight run (the respawn race).
 // Logs this worker's start, and infers the previous one's eviction from a heartbeat it left in storage.session.
 void housekeeping.start();
+// A worker evicted mid-run leaves its tabs pinned against discard with nobody left who knows why. After the
+// rehydrate — so a run that came back keeps its own tab — release the ones that did not.
+void hydrationDone.then(() => reconcileTabPins());
 // The value store's idle sweep: now, and on an alarm, since a worker evicted mid-run never releases what its session held.
 startValueSweeps();
 
@@ -92,6 +96,17 @@ if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
 }
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
     chrome.tabs.onRemoved.addListener((tabId) => { tabPageUrl.delete(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseSessionValues(pageValueSession(tabId)); releaseDebugger(tabId); sessionServer.pageGone(tabId, { closed: true }); });
+}
+// THE THIRD THING A TAB CAN DO, besides navigate and close: come back under a new id. A discard the browser
+// restores, or a prerender swapped in, fires only this — so without it a run's tab state is left filed under an
+// id nothing will ever send again, and the restored page re-adopts nothing. The same list as onRemoved, moved
+// rather than dropped, because the tab is still there and the person is still waiting on what is running in it.
+if (typeof chrome !== "undefined" && chrome.tabs?.onReplaced) {
+    chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
+        retabRuns(removedTabId, addedTabId);
+        moveTabKey([fetchConsent, credFetchGrants, debugBuffer] as Array<Map<number, unknown>>, removedTabId, addedTabId);
+        sessionServer.pageGone(removedTabId, { closed: true });
+    });
 }
 
 /** SSRF denylist for the uncredentialed image fetch: refuse loopback / private / link-local / metadata

@@ -4,6 +4,8 @@
 // over and keeps the channel open until the run finishes.
 
 import { runBackgroundAgent } from "./agent-host";
+import { watchWhileWaiting, PageUnreachable } from "./page-reachable";
+import type { TabState } from "./page-reachable";
 import type { ToolMeta } from "./agent-loop";
 import type { NeutralMessage, ToolCall, TokenUsage } from "./contract-chat";
 import { UI_OUT_CAP } from "./contract-chat";
@@ -32,8 +34,31 @@ const STREAM_EMIT_MS = 90;   // min gap between live `agent-stream` deltas — s
 // EVERY RUN_TOOL_IN_PAGE send goes through this: it waits out any in-flight navigation on the tab before
 // delegating. On a tab with no navigation pending, whenReady resolves immediately (zero cost) — so a
 // single-page run is unaffected.
-const delegateSend = (tabId: number, msg: unknown): Promise<any> =>
-    navBarrier.whenReady(tabId).then(() => chrome.tabs.sendMessage(tabId, msg));
+//
+// …and then WATCHES the tab while it waits, because the send has a third outcome besides answering and
+// rejecting: a tab the browser put to sleep in the background still has a registered receiver, so the call
+// simply sits. One measured run spent 13m57s inside a `pageInfo` here and was released by the person opening
+// the tab. `page-reachable.ts` has the reasoning; what it costs a healthy call is one `chrome.tabs.get`.
+const tabState = async (tabId: number): Promise<TabState> => {
+    try { return (await chrome.tabs.get(tabId)).discarded ? "asleep" : "awake"; }
+    catch { return "gone"; }   // the id no longer resolves: closed, or replaced by a discard under a new id
+};
+const delegateSend = async (tabId: number, msg: unknown): Promise<any> => {
+    await navBarrier.whenReady(tabId);
+    try { return await watchWhileWaiting(chrome.tabs.sendMessage(tabId, msg), () => tabState(tabId)); }
+    catch (e) {
+        if (!(e instanceof PageUnreachable) || e.state !== "asleep") throw e;
+        // A DISCARDED tab has no document, so there is nothing to preserve and a reload costs nothing that is
+        // not already lost — which is the whole reason this is safe to do without asking. Reloading is also the
+        // one way to touch the tab that does not take the person's screen away from them, and the new document
+        // re-adopts the run on CONTENT_READY, which is exactly what the barrier waits for. One retry: if the
+        // page cannot answer after being rebuilt, the tool fails with a sentence instead of looping.
+        navBarrier.noteNavigating(tabId);
+        await chrome.tabs.reload(tabId).catch(() => { /* gone for good; the retry below reports it */ });
+        await navBarrier.whenReady(tabId);
+        return await watchWhileWaiting(chrome.tabs.sendMessage(tabId, msg), () => tabState(tabId));
+    }
+};
 
 // LIVE tool-output streaming on the BACKGROUND path: the in-flight delegated tool's onStream, keyed by runId.
 // The loop delegates tool calls SEQUENTIALLY (one in flight per run), so runId alone correlates a page-posted
