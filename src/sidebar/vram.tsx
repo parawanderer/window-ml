@@ -32,7 +32,7 @@ import type { LoadedModel } from "../contract-server";
 
 import { RenderPanel } from "./render-panel";
 import { hoverModel, kbFocus, stepFocus, stepDepth, noteFocusOrder } from "./vram-focus";
-import { capacity, resourceHistory, layout, streamLive, colorFor, frameFocused, VRAM_HISTORY, sessionModels, poolFacts, choosePreset, customTracks, presetId, restoreLayout } from "./panel-state";
+import { capacity, resourceHistory, layout, streamLive, colorFor, frameFocused, VRAM_HISTORY, sessionModels, poolFacts, choosePreset, customTracks, presetId, restoreLayout, hiddenModels, toggleHidden } from "./panel-state";
 import { rowTipSuppressed, ModelFacts, CostFacts } from "./panel-facts";
 import { loadSeenCards, unavailableGpus, seenCards, machineEvents, servingSince, pollPs, fetchCapacity, loadingModels, psLoading, capacityAsked } from "./resource-feed";
 import { modelKindLabel, probeCaps } from "./model-status";
@@ -96,17 +96,6 @@ function GpuFaults() {
         </div>
     );
 }
-
-// Models the user has hidden from the totals/graph (session-only; a signal so it
-// survives VramPanel remounts). Immutable Set updates so the signal notifies.
-export const hiddenModels = signal<Set<string>>(new Set());
-/** Hide one model from the chart — and from the event lane, since its rows ARE the legend and a colour
- *  with no row explains nothing. */
-export const toggleHidden = (model: string): void => {
-    const next = new Set(hiddenModels.value);
-    next.has(model) ? next.delete(model) : next.add(model);
-    hiddenModels.value = next;
-};
 
 /** Whether the model list is showing the models this session did NOT use. Off by default and NOT persisted:
  *  it answers a question you had once ("what else is on the box?"), not a preference. */

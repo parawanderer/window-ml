@@ -216,3 +216,15 @@ export function editLayout(tracks: TrackDef[]): void {
 export const VRAM_PALETTE_KEY = "ml_vram_palette";   // storage.local: which colour palette names the models
 
 export const VRAM_COLORS = VRAM_PALETTES.vivid;   // the default palette — a model keeps its colour for as long as it is DRAWN, not just while resident
+
+// Models the user has hidden from the totals/graph (session-only; a signal so it
+// survives VramPanel remounts). Immutable Set updates so the signal notifies.
+export const hiddenModels = signal<Set<string>>(new Set());
+
+/** Hide one model from the chart — and from the event lane, since its rows ARE the legend and a colour
+ *  with no row explains nothing. */
+export const toggleHidden = (model: string): void => {
+    const next = new Set(hiddenModels.value);
+    next.has(model) ? next.delete(model) : next.add(model);
+    hiddenModels.value = next;
+};
