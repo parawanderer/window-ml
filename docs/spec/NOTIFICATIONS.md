@@ -187,6 +187,20 @@ Handed to the hub session (`window-ml-hub/tmp/handover-one-revocation-signer.md`
 enforced where every device on an account is visible without a runtime online. The window-ml half, once the rule is
 settled, is `defaultGrant` no longer returning `mayRevoke: true` and the grant editor explaining the one signer.
 
+**Both halves of it are encoded as tests rather than left as prose** (`tests/auto-renew.test.mjs`, the last section).
+They take `defaultGrant` and `autoRenewSkip` as their oracle rather than a copy of the reasoning, so they cannot drift
+from the code:
+
+- Each role's renewal path, with the set of roles that have NONE pinned to exactly `["ROLE_RUNTIME"]`. It was checked
+  by applying the fix and watching it go red, so it is a guard rather than a test that happens to pass. It also fails
+  if a NEW role arrives that cannot stay in the account, which is the regression it is really there for.
+- The two-signer race, demonstrated: two `DeviceRegistry` instances sign, the second with a clock one second behind,
+  and its version is not above the first's, so a publisher holding the first refuses it.
+- That the inbox never offers a renewal the runtime would refuse (`CERT_WARN_MS <= RENEW_WITHIN_MS`). If the warning
+  were ever the wider of the two, a press in the gap would be answered "not due", which `renewSelf` reports as a
+  success with nothing installed, so the card would say nothing and leave the warning up: the dead-button failure
+  of #323 arriving by another route.
+
 ## Tests
 
 `tests/reminders.test.mjs` is the rule: the schedule at every threshold, what each line says on each branch, that a
