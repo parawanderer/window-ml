@@ -8,7 +8,8 @@
 import { useState } from "preact/hooks";
 import type { RuntimeInfo } from "../session-host";
 import { IconInbox } from "../sidebar/icons";
-import { attentionCount, attentionItems, deviceItems, type AttentionFix, type AttentionItem } from "./attention";
+import { attentionItems, attentionLabel, deviceItems, sortAttention, type AttentionFix, type AttentionItem } from "./attention";
+import { exportTaskItems, exportTasks } from "./export-tasks";
 import { deviceEnv } from "./app-badge";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
@@ -28,21 +29,28 @@ export function useAttention(store: ChatStore, extras?: ChatExtras): { items: At
     const canFix = (rt: RuntimeInfo, fix: AttentionFix, code: string) =>
         fix.kind === "act" ? !!extras?.fix?.(rt.id, code) : !!rt.capabilities.localSettings && extras?.settings?.(rt.id) != null;
     const repeat = (rt: RuntimeInfo, code: string) => !!extras?.fixedBefore?.(rt.id, code);
-    // This device's own suggestions come FIRST in the call and last in the list: `attentionItems` sorts by level and
-    // a suggestion outranks nothing, so where they sit is the sort's business rather than this line's.
-    return { items: [...attentionItems(store.runtimes.value, NONE, canFix, dismissed.value, repeat), ...deviceItems(deviceEnv(), dismissed.value)] };
+    // Where each of these sits in the list is the SORT's business rather than this line's — which is why the whole
+    // concatenation goes through it, and not just the runtimes' half: a detached export waiting on a click has to be
+    // able to rank above a runtime's lapsed grant, and an export still fetching below it.
+    return {
+        items: sortAttention([
+            ...attentionItems(store.runtimes.value, NONE, canFix, dismissed.value, repeat),
+            ...deviceItems(deviceEnv(), dismissed.value),
+            ...exportTaskItems(exportTasks.value),
+        ]),
+    };
 }
 
 /** The inbox above the gear: absent with nothing to do, a count only for problems. `labelled` in the list's foot. */
 export function AttentionButton({ items, labelled }: { items: AttentionItem[]; labelled?: boolean }) {
     if (!items.length) return null;
-    const n = attentionCount(items);
-    const label = n ? `${n} thing${n === 1 ? "" : "s"} need${n === 1 ? "s" : ""} attention` : "Suggestions";
+    const { word, count: n } = attentionLabel(items);
+    const label = n ? `${n} thing${n === 1 ? "" : "s"} need${n === 1 ? "s" : ""} attention` : word;
     const on = mainView.value === "attention";
     const open = () => { mainView.value = on ? null : "attention"; };
     return labelled ? (
         <button class={`chat-gear-wide chat-att-btn${on ? " on" : ""}`} aria-label={label} onClick={open}>
-            <IconInbox /><span>{n ? "Needs attention" : "Suggestions"}</span>{n ? <span class="chat-att-n">{n}</span> : null}
+            <IconInbox /><span>{word}</span>{n ? <span class="chat-att-n">{n}</span> : null}
         </button>
     ) : (
         <button class={`tt hbtn chat-att-btn${on ? " on" : ""}`} aria-label={label} onClick={open}>
@@ -63,8 +71,12 @@ export function AttentionPage({ items, extras }: { items: AttentionItem[]; extra
     const [why, setWhy] = useState("");
     const apply = (it: AttentionItem) => {
         const fix = it.fix;
-        // A device-level item has no runtime and never has a fix: the two go together, and this is the choke point.
-        if (!fix || !it.runtime) return;
+        if (!fix) return;
+        // An item this page raised about its own work brought its own action, so there is nothing to resolve and no
+        // runtime to resolve it against (`AttentionFix`). Before the guard below, which is about the other two kinds.
+        if (fix.kind === "run") { fix.run(); return; }
+        // A device-level item has no runtime and never has a fix of the other kinds: this is the choke point.
+        if (!it.runtime) return;
         if (fix.kind === "settings") { settingsTab.value = "extension"; mainView.value = "settings"; return; }
         // Called synchronously in the click: a browser shows a permission prompt or a folder picker only inside one.
         const ask = extras?.fix?.(it.runtime.id, it.code);
@@ -104,6 +116,7 @@ export function AttentionPage({ items, extras }: { items: AttentionItem[]; extra
                                             {it.fix?.kind === "settings" ? <> In Settings → {it.fix.where}.</> : null}
                                             {!it.fix && it.runtime && !it.runtime.capabilities.localSettings ? <> It is fixed on {it.runtime.name}.</> : null}
                                         </div>
+                                        {it.progress ? <progress class="chat-att-bar" value={it.progress.done} max={it.progress.total || 1} /> : null}
                                         {why === it.key && it.runtime ? <div class="chat-att-why-note">{stuckWhy(it.runtime.name)}</div> : null}
                                     </div>
                                     <div class="chat-att-acts">
@@ -112,7 +125,12 @@ export function AttentionPage({ items, extras }: { items: AttentionItem[]; extra
                                                 {busy === it.key ? "Asking…" : it.fix.label}
                                             </button>
                                         ) : null}
-                                        {it.level === "suggests" ? <button class="chat-att-dismiss" onClick={() => dismiss(it.key)}>Dismiss</button> : null}
+                                        {/* Two ways to clear a card, and the item says which it has. A SUGGESTION's
+                                            dismissal is stored, so the same advice is not given twice; a finished
+                                            export is simply dropped, because there is nothing left to remember it
+                                            about once the task is gone (and a stored key would pile up forever). */}
+                                        {it.dismiss ? <button class="chat-att-dismiss" onClick={it.dismiss}>Dismiss</button>
+                                            : it.level === "suggests" ? <button class="chat-att-dismiss" onClick={() => dismiss(it.key)}>Dismiss</button> : null}
                                     </div>
                                 </li>
                             ))}

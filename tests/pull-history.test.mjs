@@ -1,9 +1,11 @@
 // pull-history.test.mjs — fetching the REST of a paged session (src/chat/pull-history.ts), which is what an export
-// needs before it can claim to be the conversation rather than the end of one.
+// needs before it can claim to be the conversation rather than the end of one, and the TASK that carries one of
+// those past the dialog that started it (src/chat/export-tasks.ts).
 //
 // The happy path runs against the fake host with a short ring, so the paging is the contract's own. The two failure
 // paths are driven by a stub, because what they describe — a reader stopping it, and a runtime that answers without
-// making progress — is the loop's behaviour rather than any host's.
+// making progress — is the loop's behaviour rather than any host's. The task tests use the same stub: what they are
+// about is when the offer appears and what is written when, not how a page arrives.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -121,4 +123,81 @@ test("a session paged in event by event ends up identical to one delivered in a 
     assert.deepEqual(got.steps, want.steps, "and the same content, field for field");
     assert.equal(got.task, want.task);
     assert.equal(got.kind, want.kind);
+});
+
+// --- a pull that outlives its dialog ---
+
+test("the offer to go to the background is earned by what the pull has cost, not predicted from its size", async () => {
+    const { shouldOfferBackground, BG_AFTER_MS } = await import("../src/chat/export-tasks.ts");
+    // The whole point: a short session must never meet this mechanism, however many events it has, so the rule reads
+    // only elapsed time and the rate observed.
+    assert.equal(shouldOfferBackground({ done: 40, total: 25_000, elapsedMs: 200 }), false, "huge, but it has cost nothing yet");
+    assert.equal(shouldOfferBackground({ done: 8_000, total: 8_040, elapsedMs: 60_000 }), false, "slow, but it is all but done");
+    assert.equal(shouldOfferBackground({ done: 1_000, total: 25_000, elapsedMs: BG_AFTER_MS }), true, "slow, and most of it is still to come");
+    assert.equal(shouldOfferBackground({ done: 0, total: 100, elapsedMs: BG_AFTER_MS }), true, "not one page has landed, which is the slowest case there is");
+});
+
+test("a detached pull keeps going, shows in the inbox, and writes nothing until it is taken", async () => {
+    const tasks = await import("../src/chat/export-tasks.ts");
+    let wrote = 0;
+    // Three pages of ten, so the task is still running when it is let go of.
+    const store = stubStore(30, 10);
+    const id = tasks.startExportPull({ store, key: "laptop:aaaa0001", title: "a long one", verb: "Save", finish: () => { wrote++; } });
+    tasks.detachExport(id);
+    const mine = () => tasks.exportTaskItems(tasks.exportTasks.value.filter((t) => t.id === id));
+    const working = mine();
+    assert.equal(working.length, 1);
+    assert.equal(working[0].level, "working", "it is in the list, but it is not asking for anything");
+    assert.ok(working[0].progress, "and it says whether it is moving");
+
+    await flush(10);
+    const ready = mine();
+    assert.equal(ready.length, 1);
+    assert.equal(ready[0].level, "ready");
+    assert.equal(ready[0].fix.label, "Save", "the verb it was started with");
+    assert.equal(wrote, 0, "and it has still written nothing: a file appearing with nothing to explain it reads as a bug");
+
+    ready[0].fix.run();
+    assert.equal(wrote, 1, "taking it is what writes the file");
+    assert.equal(mine().length, 0, "and the task is gone");
+});
+
+test("a pull the dialog is still watching exports itself, and never appears in the inbox", async () => {
+    const tasks = await import("../src/chat/export-tasks.ts");
+    let wrote = 0;
+    const store = stubStore(20, 10);
+    const id = tasks.startExportPull({ store, key: "laptop:aaaa0001", title: "a short one", verb: "Save", finish: () => { wrote++; } });
+    const mine = () => tasks.exportTaskItems(tasks.exportTasks.value.filter((t) => t.id === id));
+    assert.deepEqual(mine(), [], "the dialog is saying it; the inbox would be saying it twice");
+    await flush(10);
+    assert.equal(wrote, 1, "it finished under someone's eyes, so making them press the button again would be a joke");
+    assert.deepEqual(mine(), []);
+});
+
+test("a detached pull that breaks off offers what it did fetch, rather than nothing", async () => {
+    const tasks = await import("../src/chat/export-tasks.ts");
+    let wrote = 0;
+    const store = stubStore(100, 0);   // answers, never moves: the guard in pullAllHistory ends it
+    const id = tasks.startExportPull({ store, key: "laptop:aaaa0001", title: "a stuck one", verb: "Print", finish: () => { wrote++; } });
+    tasks.detachExport(id);
+    await flush(10);
+    const [item] = tasks.exportTaskItems(tasks.exportTasks.value.filter((t) => t.id === id));
+    assert.equal(item.level, "ready", "it wants a hand: it is short of the whole session and only a person can decide that is fine");
+    assert.match(item.detail, /stopped sending/);
+    assert.match(item.fix.label, /^Print what was fetched$/);
+    item.fix.run();
+    assert.equal(wrote, 1);
+});
+
+test("stopping a detached pull forgets it without writing anything", async () => {
+    const tasks = await import("../src/chat/export-tasks.ts");
+    let wrote = 0;
+    const store = stubStore(1000, 1);
+    const id = tasks.startExportPull({ store, key: "laptop:aaaa0001", title: "too long", verb: "Save", finish: () => { wrote++; } });
+    tasks.detachExport(id);
+    const mine = () => tasks.exportTaskItems(tasks.exportTasks.value.filter((t) => t.id === id));
+    mine()[0].fix.run();   // "Stop"
+    await flush(6);
+    assert.deepEqual(mine(), []);
+    assert.equal(wrote, 0);
 });
