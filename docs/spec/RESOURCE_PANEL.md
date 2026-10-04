@@ -252,7 +252,9 @@ not a rounding artifact.
 ## 3. Data model
 
 `resource-model.ts` (root, pure — no DOM, no chrome, no preact, like `timestamps.ts` and
-`locate.ts`). The chart is a function of this; every derivation is unit-testable with no mounting.
+`locate.ts`), with the pieces split from it on 2026-10-04: `resource-capacity.ts` (`parseInfo` and the capacity
+types), `resource-decode.ts` (expected decode, roofline, activity) and `resource-timeline.ts` (`ResourceEvent`). The
+chart is a function of these; every derivation is unit-testable with no mounting.
 
 ```
 parseInfo(raw)            -> Capacity | null      null = capacity unknown (stock Ollama 404s → SPA HTML)

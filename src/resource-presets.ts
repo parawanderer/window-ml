@@ -5,7 +5,8 @@
 // off for, which has shipped once, on the commonest hardware there is. Pure; a drift guard runs both over
 // every shape in tests/fixtures/boxes.mjs.
 
-import { ResourceSample, isCpuResident, Capacity } from "./resource-model";
+import { ResourceSample, isCpuResident } from "./resource-model";
+import { Capacity } from "./resource-capacity";
 
 /** What a series MEASURES: a device's memory, the host's, or a device's UTILIZATION — a share of TIME, not
  *  of capacity, which is why it never shares a track with the other two (see `kindRefusal`). */

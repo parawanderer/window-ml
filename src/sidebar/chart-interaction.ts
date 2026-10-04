@@ -14,7 +14,8 @@
 
 import { signal } from "@preact/signals";
 import type { Band } from "../resource-bands";
-import type { EventPlacement, ResourceEvent, ResourceSample } from "../resource-model";
+import type { ResourceSample } from "../resource-model";
+import type { EventPlacement, ResourceEvent } from "../resource-timeline";
 import { snapFraction, type Axis, type RunGap } from "../resource-axis";
 import { lineageOf } from "../resource-lane";
 import { zoomRange, resWindowS, laneScoped, scopedHash, crosshair, snapDot } from "./store";

@@ -7,7 +7,8 @@
 import { useLayoutEffect } from "preact/hooks";
 import { sampleAtFraction } from "../resource-axis";
 import { type Band, OUTSIDE_VIEW_LABEL } from "../resource-bands";
-import { type ResourceSample, type MemoryBreakdown, memoryParts, formatBytes, percentOf, type LayerPlacement, layersOnCard, type DeviceCapacity } from "../resource-model";
+import { type ResourceSample, type MemoryBreakdown, memoryParts, formatBytes, percentOf, type LayerPlacement, layersOnCard } from "../resource-model";
+import { utilOf, type DeviceCapacity } from "../resource-capacity";
 import { cursorOn, live, poolHover, gapHover, cursorAt, eventHover } from "./chart-interaction";
 import { partFill, bandFill } from "./chart-paint";
 import { ModelFacts, CostFacts } from "./panel-facts";
@@ -499,9 +500,6 @@ export function PoolsTip({ pools, latest, at: hoverSample, fracOf, usedOf, surfa
         </div>
     );
 }
-
-/** The utilization figures a sample carries for one card, or undefined — "not read", never idle. */
-export const utilOf = (s: ResourceSample, id: string) => s.capacity?.devices.find((d) => d.id === id)?.utilization;
 
 /** Every card's two figures at the datapoint under the cursor — the same Grafana reading the pools tip gives,
  *  for utilization. A figure the card did not report says so rather than showing a 0. */

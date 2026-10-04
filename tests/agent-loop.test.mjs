@@ -559,7 +559,7 @@ test("after: a gate an ORCHESTRATOR resolved (the external channel) is not a per
 // on a server without /api/info, never zeros.
 test("chat_metadata: capacityLines lists each device, the VRAM total and system RAM in GiB; unknown is said", async () => {
     const { capacityLines } = await import("../src/agent-loop.ts");
-    const { parseInfo } = await import("../src/resource-model.ts");
+    const { parseInfo } = await import("../src/resource-capacity.ts");
     const GiB = 1024 ** 3;
     const card = (id, total, free) => ({ gpu_id: String(id), name: `CUDA${id}`, description: "NVIDIA RTX PRO 6000", runner: "CUDA", total_memory: total, free_memory: free });
     const cap = parseInfo({ compute: {
