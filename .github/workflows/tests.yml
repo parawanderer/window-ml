@@ -43,6 +43,7 @@ jobs:
     outputs:
       code: ${{ steps.filter.outputs.code }}
       hub: ${{ steps.filter.outputs.hub }}
+      phone: ${{ steps.filter.outputs.phone }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -61,6 +62,7 @@ jobs:
           if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
             echo "code=true" >> "$GITHUB_OUTPUT"
             echo "hub=true" >> "$GITHUB_OUTPUT"
+            echo "phone=true" >> "$GITHUB_OUTPUT"
             echo "Ran everything: no comparable base for \`${{ github.event_name }}\`." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -75,6 +77,18 @@ jobs:
           else
             echo "hub=false" >> "$GITHUB_OUTPUT"
             echo "Nothing the hub suite could notice changed, so \`hub\` was skipped." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # THE ANDROID BUILD IS THE LONG POLE: about ten minutes, where everything else finishes in four, so it alone
+          # decides what a PR costs to wait for. It builds an APK from `mobile/` plus the folders Metro watches
+          # (mobile/metro.config.js: src/native, src/pairing, src/chat) — a change outside those cannot alter the
+          # bundle. Generous in the same direction as the filters above, and never skipped on main, where the APK it
+          # publishes has to come from every commit that lands.
+          if [ "${{ github.ref }}" = "refs/heads/main" ] \
+             || echo "$files" | grep -qE '^(mobile/|src/(native|pairing|chat)/|package(-lock)?\.json|build-web\.mjs|\.github/workflows/tests\.yml)'; then
+            echo "phone=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "phone=false" >> "$GITHUB_OUTPUT"
+            echo "Nothing the phone's bundle is built from changed, so \`mobile-android\` was skipped." >> "$GITHUB_STEP_SUMMARY"
           fi
           # Prose, plus the OpenWebUI tool sources. Everything else — including any .json under
           # docs/ — counts as code. See the note above this job for why each entry is safe.
@@ -420,7 +434,7 @@ jobs:
   # bridge's unit tests, and the Maestro flows in tests/mobile/ against a device someone has.
   mobile-android:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.phone == 'true'
     runs-on: ubuntu-24.04
     # To re-point the rolling `android-latest` release at the APK this job just built. Every other job here reads.
     permissions:
