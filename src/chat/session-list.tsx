@@ -11,7 +11,7 @@ import { signal } from "@preact/signals";
 import { useRef, useEffect } from "preact/hooks";
 import type { SessionStatus, SessionKey, RuntimeInfo, SessionSummary } from "../session-host";
 import { truncate } from "../sidebar/format";
-import { IconChevron, IconPin, IconPlus, IconSearch, IconCompose, IconInbox } from "../sidebar/icons";
+import { IconChevron, IconHistory, IconPin, IconPlus, IconSearch, IconCompose, IconInbox } from "../sidebar/icons";
 import { AgentBadge } from "../sidebar/reply";
 import type { Status } from "../sidebar/store";
 import { Stamp, Dot, cursorTipOn } from "../sidebar/ui-kit";
@@ -172,6 +172,43 @@ function revealOlder(id: string): void {
 const localTs = (s: SessionSummary, rt: RuntimeInfo | undefined) => s.lastTs - (rt?.clockOffsetMs ?? 0);
 
 /**
+ * The foot of a runtime's group: how many of its sessions are older than the list reaches, and the way to the rest.
+ *
+ * ONE LINE, lined up with the titles above it. It was two left-aligned grey sentences hanging under the rows, which
+ * read as neither rows nor chrome — clickable text, indented differently from everything near it, taking two lines
+ * to say what is a count and a door.
+ *
+ * A control ALONE takes words; a control beside another takes its glyph and a tooltip. So while there is still
+ * something to reveal, the counter carries the line and searching is the icon at the end of it; once everything held
+ * is shown, searching is the only thing left and says so in full. That rule is what keeps a lone magnifying glass
+ * under a list of sessions from being the one thing on screen nobody can name.
+ */
+function OlderFoot({ rt, left }: { rt: RuntimeInfo; left: number }) {
+    const label = `Search all history on ${rt.name}`;
+    return (
+        <div class="chat-older">
+            {left > 0 ? (
+                <>
+                    {/* Revealing fetches NOTHING: these sessions are in the index already and the list is simply not
+                        reaching back far enough, which is why this is a press with no wait and no spinner. The one
+                        thing here that does ask a runtime is the search page, and it says so there while it waits. */}
+                    <button class="chat-older-more" onClick={() => revealOlder(rt.id)}>
+                        <IconHistory /><span class="chat-older-n">{left}</span> older
+                    </button>
+                    <button class="tt hbtn chat-older-all" aria-label={label} onClick={() => openSearch(rt.id)}>
+                        <IconSearch /><span class="tt-pop" role="tooltip">{label}</span>
+                    </button>
+                </>
+            ) : (
+                <button class="chat-older-more" aria-label={label} onClick={() => openSearch(rt.id)}>
+                    <IconSearch />Search all history
+                </button>
+            )}
+        </div>
+    );
+}
+
+/**
  * The session list: what is pinned, then each runtime's RECENT sessions, then a way to the rest.
  *
  * A session that is still running or waiting on you is recent however long ago it started — the list never files
@@ -268,14 +305,7 @@ export function SessionList({ store, activeKey, narrow, onStart, gear, gearWide 
                                         end of this line: what is held here is what the runtime still has in its
                                         index, and only that page can go further (it asks). */}
                                     {older.slice(0, show).map((s, i) => row(s, false, false, i % OLDER_PAGE))}
-                                    {show < older.length ? (
-                                        <button class="chat-older-go" onClick={() => revealOlder(rt.id)}>
-                                            <span class="chat-older-n">{older.length - show}</span> older on this runtime
-                                        </button>
-                                    ) : null}
-                                    {show > 0 ? (
-                                        <button class="chat-older-go" onClick={() => openSearch(rt.id)}>Search all history on this runtime</button>
-                                    ) : null}
+                                    {older.length ? <OlderFoot rt={rt} left={older.length - show} /> : null}
                                 </div>
                             </div>
                         </section>

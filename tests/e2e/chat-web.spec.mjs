@@ -941,7 +941,7 @@ test("desktop: the list shows the last month, and the search page holds every se
     const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
     const list = page.locator(".chat-list");
     await expect(list.locator(".chat-row", { hasText: "Tokyo in four days" })).toHaveCount(0);
-    await expect(list.locator(".chat-older-go .chat-older-n")).toHaveText("48");
+    await expect(list.locator(".chat-older-n")).toHaveText("48");
 
     // The HEADER's search button, not the runtime's "Older sessions" row: that row carries its runtime into the
     // device filter (its own test below), and this one is about the page holding every session there is.
@@ -999,18 +999,29 @@ test("a runtime's older sessions open in place, and the way past them carries th
     // Matched by its own HEADING, not by its text: "Needs you" holds a row that names the machine too, so a
     // hasText match lands on that group instead and quietly asserts nothing.
     const groupOf = (name) => list.locator(".chat-group").filter({ has: page.locator(".chat-rt", { hasText: name }) });
-    await expect(groupOf("Work laptop").locator(".chat-older-go .chat-older-n")).toHaveText("48");
-    await expect(groupOf("Desk PC").locator(".chat-older-go")).toHaveCount(0);
+    await expect(groupOf("Work laptop").locator(".chat-older-n")).toHaveText("48");
+    await expect(groupOf("Desk PC").locator(".chat-older")).toHaveCount(0);
 
     // IT OPENS IN PLACE. These sessions are already here — the index holds them and the list is simply not reaching
     // back far enough — so sending the reader to another view to look at a row five pixels away was a round trip to
     // nowhere.
     const laptop = groupOf("Work laptop");
+    // Beside the counter the way out is a GLYPH, with its words in a tooltip and an accessible name, and it ARRIVES
+    // WITH THE POINTER on the line it belongs to — permanently visible it was a third mark on the quietest line in
+    // the group. It is also the size of the row's own `⋮`, since the two sit in one column an inch apart.
+    const search = laptop.getByRole("button", { name: "Search all history on Work laptop" });
+    await expect(search.locator(".tt-pop")).toHaveCount(1);
+    await expect(search).toHaveCSS("opacity", "0");
+    await laptop.locator(".chat-older").hover();
+    await expect(search).toHaveCSS("opacity", "1");
+    const [sBox, mBox] = [await search.boundingBox(), await laptop.locator(".chat-row-more").first().boundingBox()];
+    expect([sBox.width, sBox.height]).toEqual([mBox.width, mBox.height]);
+
     const rows = () => laptop.locator(".chat-row-wrap").count();
     const before = await rows();
-    await laptop.getByRole("button", { name: /older on this runtime/ }).click();
+    await laptop.getByRole("button", { name: /^48 older$/ }).click();
     expect(await rows()).toBe(before + 10);
-    await expect(laptop.locator(".chat-older-go .chat-older-n")).toHaveText("38");
+    await expect(laptop.locator(".chat-older-n")).toHaveText("38");
     await expect(page.locator(".chat-search")).toHaveCount(0, "and nothing navigated");
     // The rows that just arrived say so, once: the line is at the BOTTOM of the group, so the press moves nothing
     // within sight unless they do.
@@ -1020,7 +1031,10 @@ test("a runtime's older sessions open in place, and the way past them carries th
     // the session you were just looking at does not mean naming the device again under the heading that had just
     // named it. It appears once the reader has shown they are looking backwards, which is also the only point at
     // which "search all of this one's history" is the question — before that the line answers it.
-    await laptop.getByRole("button", { name: "Search all history on this runtime" }).click();
+    // Beside the counter it is a GLYPH, with its words in a tooltip and an accessible name; they become visible only
+    // when it is the last control on the line, which is what stops a lone magnifying glass being unnameable. And it
+    // is the size of the row's own `⋮`, since the two sit in one column an inch apart.
+    await search.click();
     const devices = page.locator(".chat-search-devices");
     await expect(devices.getByRole("button", { name: "Work laptop" })).toHaveAttribute("aria-pressed", "true");
     await expect(devices.getByRole("button", { name: "All devices" })).toHaveAttribute("aria-pressed", "false");

@@ -181,7 +181,7 @@ export function SearchPage({ store, narrow }: { store: ChatStore; narrow: boolea
                         })}
                     </ul>
                     {shown < all.length || anyMore ? <div ref={sentinel} class="chat-search-more" aria-hidden="true" /> : null}
-                    {loading ? <div class="chat-search-empty">Looking further back…</div> : null}
+                    {loading ? <div class="chat-search-empty chat-wait" role="status"><span class="cspin" />Looking further back…</div> : null}
                 </div>
             </div>
         </main>

@@ -49,6 +49,17 @@ html, body, #root { height: 100%; }
 .chat-rt-head { display: flex; align-items: center; gap: 4px; }
 .chat-rt-head .chat-rt { flex: 1 1 auto; min-width: 0; }
 .chat-rt-add { flex: 0 0 auto; opacity: 0; transition: opacity .12s linear; }
+
+/* ONE SIZE AND ONE COLUMN for every icon button that sits on a LINE OF THE LIST: a runtime's `+`, a row's `⋮`, a
+   group's search. They are the same kind of thing — the one action that line offers — and they sit inches apart down
+   the same edge of the same panel, so a different size on each reads as a mistake rather than as a hierarchy. They
+   had three: `.hbtn`'s own 22px for the `+`, 28px for the `⋮`, and whatever the glyph came out at for the search.
+   The list HEAD's buttons stay bigger on purpose: that is a toolbar, not a line of the list. */
+.chat-rt-add, .chat-row-more, .chat-older-all { width: 28px; height: 28px; padding: 0; }
+/* The same 6px off the edge, for the two that are in flow. The `⋮` is positioned (`right: 6px`) and a margin on top
+   of that would move it twice — which it did, by exactly the inset, putting it in a column of its own. */
+.chat-rt-add, .chat-older-all { margin-right: 6px; }
+.chat-rt-add svg, .chat-row-more svg, .chat-older-all svg { width: 16px; height: 16px; flex: 0 0 auto; }
 .chat-rt-head:hover .chat-rt-add, .chat-rt-add:focus-visible { opacity: 1; }
 @media (pointer: coarse) { .chat-rt-add { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .chat-rt-add { transition: none; } }
@@ -677,14 +688,18 @@ button.chat-page-go:hover { color: var(--fg); }
    ONE delay for all of them, not a stagger down the list. A stagger makes the arrival itself the thing you watch,
    and the list is navigation — you are looking for a row, not at the animation. The order that matters is still
    there: the pane opens, and then its contents are in it. */
-.chat.list-hidden .chat-list .chat-row, .chat.list-hidden .chat-list .chat-rt { animation: none; }
+/* EVERY LINE IN THE LIST, not only the rows: a group's foot ("48 older") sat still while the rows and headings
+   around it slid in, which reads as a thing that does not belong to the list rather than as the end of one. */
+.chat.list-hidden .chat-list .chat-row, .chat.list-hidden .chat-list .chat-rt, .chat.list-hidden .chat-list .chat-older { animation: none; }
 .chat:not(.list-hidden) .chat-list .chat-row,
-.chat:not(.list-hidden) .chat-list .chat-rt {
+.chat:not(.list-hidden) .chat-list .chat-rt,
+.chat:not(.list-hidden) .chat-list .chat-older {
     animation: chat-row-in .28s cubic-bezier(.2, .7, .3, 1) both;
     animation-delay: 150ms;   /* after the pane's own .24s is most of the way through */
 }
 @media (prefers-reduced-motion: reduce) {
-    .chat:not(.list-hidden) .chat-list .chat-row, .chat:not(.list-hidden) .chat-list .chat-rt { animation: none; }
+    .chat:not(.list-hidden) .chat-list .chat-row, .chat:not(.list-hidden) .chat-list .chat-rt,
+    .chat:not(.list-hidden) .chat-list .chat-older { animation: none; }
 }
 
 /* ===================== WHAT IS LEFT INSIDE A STEP, AND AROUND AN ANSWER =====================
@@ -907,21 +922,45 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-row-pin { display: inline-flex; color: var(--fg-faint); }
 .chat-row-pin svg { width: 12px; height: 12px; }
 
-/** The way into the older view: the last thing in the recent list, quiet, with how many are behind it. */
-/* A QUIET LINE, not a panel. It carried a dashed box, a glyph, a label and a right-aligned count, which made the
-   least important thing in a runtime's group the loudest: four marks for a row that only says there is more, next to
-   session rows that are plain text. The phone had already settled this — its section footer is one dim sentence —
-   so the page follows it. What is left says the number first, because the number is the part worth reading. */
-.chat-older-go {
-    display: block; width: 100%; margin: 2px 0 10px; padding: 2px 10px 2px 0;
-    background: none; border: none; color: var(--fg-faint); font: inherit; font-size: .92em;
-    cursor: pointer; text-align: left;
+/** The foot of a runtime's group: how many sessions are older than the list reaches, and the way to the rest. */
+/* ONE LINE, LINED UP WITH THE TITLES ABOVE IT. This was a dashed panel with a glyph, a label and a right-aligned
+   count — four marks for the least important row in a group — then two left-aligned grey sentences, which was
+   quieter and still wrong: clickable text, indented differently from every row near it, two lines to say what is a
+   count and a door. It is now one 24px line that starts where a session's title starts.
+
+   The glyph takes the STATUS DOT'S column and the words take the titles', so the line reads as the end of the list
+   rather than as something parked under it. Those two columns are the row's own geometry (`.row`: 10px of padding
+   and a 1px border, a 0.67em dot, an 8px gap), spelled out here rather than inherited, because this is not a row and
+   must not quietly become one. The button's own box still reaches the row's left edge, so its hover lines up too. */
+.chat-older {
+    display: flex; align-items: center; gap: 4px; min-height: 24px;
+    margin: 0 0 10px; padding-left: 11px;
 }
-.chat-older-go:hover { color: var(--fg-dim); text-decoration: underline; }
-/* Quiet to look at, still a thumb's worth to hit: the text stays where it is and the row grows around it. The touch
-   probe caught this the moment the dashed box went, which is what the box had been providing by accident. */
-@media (pointer: coarse) { .chat-older-go { display: flex; align-items: center; min-height: 40px; } }
+.chat.narrow .chat-older { padding-left: 13px; }
+.chat-older-more {
+    display: inline-flex; align-items: center; gap: 4px; margin-left: -11px; padding: 3px 8px 3px 11px;
+    background: none; border: none; border-radius: 7px;
+    color: var(--fg-faint); font: inherit; font-size: .9em; cursor: pointer;
+}
+.chat-older-more:hover { color: var(--fg-dim); background: var(--panel); }
+.chat-older-more svg { width: 13px; height: 13px; flex: 0 0 auto; }
+/* The icon one sits at the far end of the line, in the column the row's own `⋮` uses (and at its size: see above),
+   and ARRIVES WITH THE POINTER like that one does. The standing rule is that anything you go looking for stays put
+   and only what belongs to the thing you are reading comes on hover — and this belongs to the line it is on: you are
+   already heading for "48 older" when it appears, which is the same discovery the `⋮` and the `+` get. Permanently
+   visible, it put a third mark on the quietest line in the group, which is what the line was redrawn to stop.
+
+   Not when it is ALONE. Once everything held is shown there is no counter beside it, so hiding it would leave an
+   empty line with nothing to hover — and in that state it is a button with words anyway, not a glyph. */
+.chat-older-all { margin-left: auto; opacity: 0; transition: opacity .12s linear; }
+.chat-older:hover .chat-older-all, .chat-older:focus-within .chat-older-all, .chat-older-all:focus-visible { opacity: 1; }
+/* No pointer to arrive with. The runtime's `+` has had this since it had a hover state. */
+@media (pointer: coarse) { .chat-older-all { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .chat-older-all { transition: none; } }
 .chat-older-n { font-variant-numeric: tabular-nums; }
+/* Quiet to look at, still a thumb's worth to hit: the text stays where it is and the line grows around it. The touch
+   probe caught this the moment the dashed box went, which is what the box had been providing by accident. */
+@media (pointer: coarse) { .chat-older { min-height: 44px; } .chat-older-more { min-height: 40px; } }
 
 /* A ROW THAT WAS JUST REVEALED by the line above it. Those rows open BELOW the thing that was pressed, so at the
    moment of the press nothing within sight moves: without this the line reads as a press that did nothing, and the
@@ -947,7 +986,7 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-row-wrap { position: relative; }
 /* Round, like the page's other icon buttons (the rail's, the gear, back): it was the hover button's 22px rounded square. */
 .chat-row-more {
-    width: 28px; height: 28px; padding: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
     position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
     opacity: 0; transition: opacity .15s ease;
 }
@@ -1280,6 +1319,12 @@ button.chat-page-go:hover { color: var(--fg); }
 /* The top of a transcript that does not reach its start (`EarlierEdge`): a quiet line that loads earlier events as it
    scrolls into view, or says why it cannot. Never styled like `.chat-truncated`, which says they are gone. */
 .chat-earlier { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 4px 0 18px; color: var(--fg-faint); font-size: .88em; }
+/* A WAIT THAT IS REALLY WAITING SAYS SO WITH A MOVING THING. Both of these ask a runtime for a page of history and
+   used to sit there as a motionless grey sentence, which reads the same whether it is working or stuck. The list's
+   "older" line has no spinner on purpose: those sessions are in the index already, so pressing it fetches nothing.
+   The shared spinner is `.cspin` (sidebar.css), small here because it rides a line of text. */
+.chat-earlier .cspin, .chat-wait .cspin { --spin: 12px; }
+.chat-wait { display: flex; align-items: center; gap: 8px; }
 .chat-earlier.err { color: var(--fg-dim); }
 /* THE BUTTON KEEPS ITS WORDS; the sentence beside it gives way. A flex item may shrink below its content, so on a
    phone "Try again" broke across two lines while the message beside it had room to wrap instead — a two-word button

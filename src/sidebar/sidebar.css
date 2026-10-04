@@ -934,7 +934,16 @@ textarea.cinput { resize: none; overflow-y: auto; line-height: 1.5; font: inheri
   border-radius: 50%; border: none; background: rgba(0, 0, 0, 0.55); color: #fff; cursor: pointer; font-size: 11px; padding: 0; }
 .cthumb-x:hover { background: rgba(0, 0, 0, 0.82); }
 .cthumb-load { display: flex; align-items: center; justify-content: center; }
-.cspin { width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: cspin 0.7s linear infinite; }
+/** THE SPINNER: a ring with one lit arc, for anywhere something is being fetched and there is no number to show. */
+/* Size it with `--spin` where the default 16px is wrong for the line it sits in; the border follows, so it stays a
+   ring rather than a disc at small sizes. It is the shared one deliberately — this repo already grew three
+   (`.card-tab-spin`, `.bench-play-spin` and this), which is how a fourth gets written. A wait that KNOWS how far
+   along it is takes a `<progress>` instead: a spinner there would be hiding a number we have. */
+.cspin {
+    width: var(--spin, 16px); height: var(--spin, 16px); flex: 0 0 auto;
+    border: max(1.5px, calc(var(--spin, 16px) / 8)) solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: cspin 0.7s linear infinite;
+}
 @keyframes cspin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .cspin { animation-duration: 2s; } }
 /* Right-click "ask about this" element pill: a removable chip; hover boxes the container on the page. */

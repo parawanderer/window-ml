@@ -253,7 +253,7 @@ function EarlierEdge({ store, sessionKey, scroller, rtName, truncated }: {
             </div>
         );
     }
-    if (at?.loading) return <div class="chat-earlier" role="status">Loading earlier events…</div>;
+    if (at?.loading) return <div class="chat-earlier" role="status"><span class="cspin" />Loading earlier events…</div>;
     if (more) return <div class="chat-earlier" ref={sentinel}><button class="chat-earlier-retry" onClick={load}>Earlier events</button></div>;
     if (truncated || at?.truncated) {
         return <div class="chat-truncated">Older events no longer exist on {rtName ?? "the runtime"}. What is shown here is what this device kept.</div>;
