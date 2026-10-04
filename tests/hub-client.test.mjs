@@ -7,24 +7,21 @@
 // It SELF-SKIPS when the binary is absent, the way the CPython tests skip without their wheels: CI here has no Rust
 // toolchain, and a test that cannot run should say so rather than fail.
 //
-// The hub is PINNED to a tag (`HUB_TAG`), and the binary is built from YOUR OWN clone of it:
-//
-//   git clone --branch v0.4.0 git@github.com:parawanderer/window-ml-hub.git ../window-ml-hub-v0.4.0
-//   cd ../window-ml-hub-v0.4.0 && cargo build --release -p wmlhub -p wmlhub-connector
-//
-// or point WMLHUB_BIN at one. The default deliberately does NOT look in a plain `../window-ml-hub`: that is somebody's
-// WORKING TREE, on whatever branch they are on this hour, so a test here could pass or fail because of what they are
-// in the middle of — and the failure would read as ours. A tag is the artifact; there is no published binary.
+// The hub is PINNED to a tag (`HUB_TAG`). `npm run fetch-hub` downloads that tag's published binaries, verifies the
+// checksum beside them and puts them where the harness looks; WMLHUB_BIN still wins, for a build of your own. The
+// default deliberately does NOT look in a plain `../window-ml-hub`: that is somebody's WORKING TREE, on whatever
+// branch they are on this hour, so a test here could pass or fail because of what they are in the middle of — and the
+// failure would read as ours. A tag is the artifact.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-// ONE pin for every test that runs the hub, in the shared harness: two copies of the tag that must agree is exactly the
-// drift the pins exist to prevent.
-import { HUB_TAG } from "./fixtures/hub-harness.mjs";
+// ONE pin, and ONE answer to "is there a hub?", in the shared harness: a second copy of either is exactly the drift
+// the pins exist to prevent. (This file keeps its own `startHub`, which starts it with different flags.)
+import { BIN, HAVE_HUB, HUB_TAG, NO_HUB } from "./fixtures/hub-harness.mjs";
 
 const { generateAgreementKey } = await import("../src/hub/hpke.ts");
 const { generateIdentity, issueCertificate, principalId, verifyChain, SCOPE } = await import("../src/hub/keys.ts");
@@ -33,14 +30,6 @@ const { HubClient, ConnectError } = await import("../src/hub/client.ts");
 const { Kind, Role } = await import("../src/hub/wire.ts");
 
 const HUB = "hub.test";
-const BIN =
-    process.env.WMLHUB_BIN ??
-    [`../../window-ml-hub-${HUB_TAG}/target/release/wmlhub`, `../../window-ml-hub-${HUB_TAG}/target/debug/wmlhub`]
-        .map((p) => new URL(p, import.meta.url).pathname)
-        .find((p) => existsSync(p));
-const HAVE_HUB = !!BIN && existsSync(BIN);
-// A skip that does not say what is missing is a test nobody ever turns on.
-const NO_HUB = `no wmlhub ${HUB_TAG} binary: clone the tag and \`cargo build --release -p wmlhub\`, or set WMLHUB_BIN`;
 
 /** A port nothing is listening on. Racy in principle; the hub is started immediately after. */
 const freePort = () =>

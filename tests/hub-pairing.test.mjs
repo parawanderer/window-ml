@@ -165,7 +165,7 @@ function wmlboxPair(url, stateDir) {
     return { printed, exited, kill: () => child.kill() };
 }
 
-test("the other implementation: this client answers `wmlbox pair`, whose fingerprint it computes and whose answer it seals", { ...LIVE, skip: LIVE.skip || (!HAVE_BOX && "no wmlbox beside the wmlhub binary: `cargo build --release -p wmlhub-connector` in the same tag") }, async () => {
+test("the other implementation: this client answers `wmlbox pair`, whose fingerprint it computes and whose answer it seals", { ...LIVE, skip: LIVE.skip || (!HAVE_BOX && "no wmlbox beside the wmlhub binary: `npm run fetch-hub` brings both") }, async () => {
     const hub = await startHub();
     const state = mkdtempSync(join(tmpdir(), "wmlbox-pair-"));
     const box = wmlboxPair(hub.url, state);

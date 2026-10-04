@@ -699,6 +699,13 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   `node_modules` rather than symlinking it. All three are ignored as plain names, so the symlinks cannot
   be committed — they previously had trailing slashes, which match a DIRECTORY only, and a `node_modules`
   symlink duly got committed and then replaced the real directory on the next pull.
+- **A FOURTH absence is the quietest of all: the `wmlhub` binary.** Thirty tests across six files talk to a real hub
+  rather than a mock, and without one they SKIP — so the suite is green and says nothing about the hub client. **`npm
+  run fetch-hub`** downloads the pinned tag's published binaries (`wmlhub` and `wmlbox`), verifies the checksum
+  published beside them, runs one to prove it starts here, and puts both where `tests/fixtures/hub-harness.mjs`
+  looks. `WMLHUB_BIN` still wins, for a build of your own while changing the hub itself. CI runs them in the `hub`
+  job, on PRs that touch what they cover; before the hub published binaries it could not, which is why a skipped test
+  and a passing one looking identical on a green page is worth remembering.
 - **Coverage: `npm run coverage`** — Node's built-in coverage (no dependency), writing
   `coverage/lcov.info` (the **Coverage Gutters** VSCode extension reads it with no configuration) plus a
   table on stdout. `node scripts/coverage-lines.mjs <file>` prints the gaps AS SOURCE, separating **NEVER
