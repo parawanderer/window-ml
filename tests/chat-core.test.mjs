@@ -405,6 +405,34 @@ test("services: highlight goes to the open session's page, only where the runtim
     store.dispose();
 });
 
+// --- continuing a capped run: the client must offer what the runtime will accept ---
+
+test("Continue is offered only where the RUNTIME agrees the run stopped at its cap", async () => {
+    // The step pill is drawn from this client's own reduction of the event stream, and `session.continue` is
+    // judged by the runtime's index — two separate reducers over the same events, which can disagree. They did,
+    // on a run whose delegated tool hung: the index said the session was still going while the last
+    // `agent-result` still carried `hitCap`, so the button appeared and then refused when pressed, with "only a
+    // run that stopped at its step limit can be continued". `canContinue` asks the summary, which is the same
+    // store the worker will consult, so the offer cannot outrun the rule again.
+    const { fake, store } = world();
+    const svc = hostServices(store, { kind: "web", prefs: { get: () => undefined, set() {} }, openImage() {}, saveFile() {}, copyText: async () => true });
+    const page = { url: "https://a.example/", tabId: 7 };
+    fake.addSession(summary("laptop", "cap00001", { status: "capped", page }), [agentStart("cap00001")]);
+    fake.addSession(summary("laptop", "run00001", { status: "running", page }), [agentStart("run00001")]);
+    fake.addSession(summary("laptop", "wait0001", { status: "waiting", page }), [agentStart("wait0001")]);
+    fake.addSession(summary("laptop", "notab001", { status: "capped" }), [agentStart("notab001")]);
+    await flush();
+
+    assert.equal(svc.canContinue("laptop:cap00001"), true);
+    // Still going by the runtime's reckoning — whatever this client's own last result says.
+    assert.equal(svc.canContinue("laptop:run00001"), false);
+    assert.equal(svc.canContinue("laptop:wait0001"), false);
+    // Capped, but `session.continue` is delivered THROUGH the page, so with no tab the press would do nothing.
+    assert.equal(svc.canContinue("laptop:notab001"), false);
+    assert.equal(svc.canContinue("laptop:nosuch01"), false);
+    store.dispose();
+});
+
 // --- offering a resume: the one thing that works when a run's page has gone (slice 5) ---
 
 test("a resume is offered only where it would DO something, and refused where the composer already works", () => {

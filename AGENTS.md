@@ -313,6 +313,16 @@ learned by shipping the wrong version first.
   reuse them; an entry point installs the implementation before rendering. Gate an affordance on the seam's questions
   (`sideCalls(session)`, `bench`), never on this browser's `config`. A session's key is `Session.hash`, which is
   `runtime:hash` in a multi-runtime client: split keys on the LAST `:`.
+- **A delegated tool has a THIRD outcome, and it is the one that hurts.** `chrome.tabs.sendMessage` to a tab the
+  browser has put to sleep in the background neither answers nor rejects — the content script is registered, the
+  renderer is simply not running it — so the send sits. A measured run spent 13m57s inside one `pageInfo` and was
+  released by the person opening the tab. Every send goes through `delegateSend` (sw-run-host.ts), which watches
+  the tab while it waits (`page-reachable.ts`): a `discarded` tab is reloaded in place and retried once (it has no
+  document, so a reload costs nothing already lost), and a frozen one, which the browser labels as nothing unusual,
+  is bounded by a deliberately generous cap. A tab hosting a run is also pinned (`autoDiscardable: false`) and
+  released when it ends. And a tab can come back under a NEW id: `chrome.tabs.onReplaced` is the only notice, since
+  no navigation commits and nothing is removed, so everything keyed by tab is re-filed there or the run is orphaned
+  under an id nothing will send again.
 - **Hub client.** A hub is trusted with nothing, including who sent something: what a runtime acts on is the signature
   inside the seal, never `Envelope.sender`. The checks in `seal.ts` are in a deliberate order and the nonce is last, so
   only an authenticated command inside its clock window can fill the replay window. Bytes reaching WebCrypto are

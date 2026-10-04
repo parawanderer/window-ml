@@ -61,10 +61,21 @@ export function hostServices(store: ChatStore, platform: ClientPlatform): Sideba
             const id = idOf(key);
             if (id) void store.send({ type: "session.continue", session: id, ...(maxSteps ? { maxSteps } : {}) });
         },
-        // The page has to STILL HOLD the run: `session.continue` is delivered through it. Without a tab the answer
-        // is "the page no longer holds this run", so the button would be a press that does nothing — and the run's
-        // own bar is already offering the thing that does work.
-        canContinue: (key) => !!summaryOf(key as SessionKey)?.page?.tabId,
+        // TWO CONDITIONS, AND BOTH ARE THE RUNTIME'S ANSWER rather than ours. The page has to STILL HOLD the run,
+        // because `session.continue` is delivered through it — without a tab the answer is "the page no longer holds
+        // this run", so the button would be a press that does nothing, and the run's own bar is already offering the
+        // thing that does work. And the runtime has to agree the run STOPPED AT ITS CAP, because that is the exact
+        // precondition `session.continue` refuses on ("only a run that stopped at its step limit can be continued").
+        //
+        // That second one is here rather than left to the caller because the caller reads a DIFFERENT store. The
+        // step pill is drawn from this client's own reduction of the event stream and the command is judged by the
+        // runtime's index, and the two are separate reducers that can disagree — they did, on a run whose delegated
+        // tool hung, which left the index saying "pending" while the last `agent-result` still said `hitCap`. The
+        // button appeared and then refused when pressed. Asking the summary is asking the same store the worker will.
+        canContinue: (key) => {
+            const s = summaryOf(key as SessionKey);
+            return !!s?.page?.tabId && s.status === "capped";
+        },
         highlight: (ref) => {
             // The shared views outline things on "the session's page" without naming it, because in a panel there is
             // only one. Here that is the session being read.
