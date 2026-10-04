@@ -28,7 +28,7 @@ const NONE: ReadonlyMap<string, readonly string[]> = new Map();
 export function useAttention(store: ChatStore, extras?: ChatExtras): { items: AttentionItem[] } {
     const canFix = (rt: RuntimeInfo, fix: AttentionFix, code: string) =>
         fix.kind === "act" ? !!extras?.fix?.(rt.id, code) : !!rt.capabilities.localSettings && extras?.settings?.(rt.id) != null;
-    const repeat = (rt: RuntimeInfo, code: string) => !!extras?.fixedBefore?.(rt.id, code);
+    const repeat = (rt: RuntimeInfo, code: string) => extras?.fixedTimes?.(rt.id, code) ?? 0;
     // Where each of these sits in the list is the SORT's business rather than this line's — which is why the whole
     // concatenation goes through it, and not just the runtimes' half: a detached export waiting on a click has to be
     // able to rank above a runtime's lapsed grant, and an export still fetching below it.
@@ -130,7 +130,7 @@ export function AttentionPage({ items, extras }: { items: AttentionItem[]; extra
                                             export is simply dropped, because there is nothing left to remember it
                                             about once the task is gone (and a stored key would pile up forever). */}
                                         {it.dismiss ? <button class="chat-att-dismiss" onClick={it.dismiss}>Dismiss</button>
-                                            : it.level === "suggests" ? <button class="chat-att-dismiss" onClick={() => dismiss(it.key)}>Dismiss</button> : null}
+                                            : it.level === "suggests" || it.hideable ? <button class="chat-att-dismiss" onClick={() => dismiss(it.key)}>Dismiss</button> : null}
                                     </div>
                                 </li>
                             ))}

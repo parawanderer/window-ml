@@ -34,7 +34,7 @@ export interface ChatExtras {
      * fixed it can know: the browser says `granted` for "allow this time" and "allow on every visit" alike, and a folder
      * that lapses again was allowed only once. Worded as a repeat where the code has words for one (attention.ts).
      */
-    fixedBefore?(runtime: RuntimeId, code: string): boolean;
+    fixedTimes?(runtime: RuntimeId, code: string): number;
     /**
      * Ask this device for host access to ONE origin, where this device IS the runtime. Separate from `fix` because
      * `fix` answers a fixed code and this answers a URL that is only known at the moment of asking — and because the

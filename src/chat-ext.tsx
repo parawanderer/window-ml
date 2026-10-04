@@ -20,7 +20,7 @@ import { applyCodePrefs, initThemeStyle } from "./sidebar/prefs";
 import { installTooltipLayer } from "./sidebar/tooltip-layer";
 import { installViewPrefs } from "./chat/view-mode";
 import { installPageTheme } from "./chat/page-theme";
-import { pickFolder, regrantFolder, regrantedBefore } from "./archive-folder";
+import { pickFolder, regrantCount, regrantFolder } from "./archive-folder";
 import { VRAM_POLL_MS } from "./sidebar/panel-state";
 import { BACKEND_HEALTH_MS, VramPanel, connectResourceStream, fetchModels, pollBackendHealth, pollPs } from "./sidebar/vram";
 import { PythonBench } from "./sidebar/vram-bench";
@@ -105,7 +105,7 @@ const extras: ChatExtras = {
     bench: (id) => (localRuntimes.has(id) ? <PythonBench /> : null),
     settings: (id) => (localRuntimes.has(id) ? <SettingsPane /> : null),
     housekeeping: (id) => (localRuntimes.has(id) ? <HousekeepingView /> : null),
-    fixedBefore: (id, code) => localRuntimes.has(id) && code === "archive-folder-lapsed" && regrantedBefore(),
+    fixedTimes: (id, code) => (localRuntimes.has(id) && code === "archive-folder-lapsed" ? regrantCount() : 0),
     fix: (id, code) => (localRuntimes.has(id) && FIXES[code] ? FIXES[code] : null),
     // The narrow grant: one origin, asked for inside the click. `<all_urls>` would also unblock it and is the wrong
     // thing to ask for — a page to start runs on is not a reason to read every site.

@@ -76,11 +76,19 @@ export interface AttentionItem {
      * level.
      */
     dismiss?: () => void;
+    /** this one may be put away with the stored dismissal although it is not a suggestion: it has already said that
+     *  nothing more can be done about it (see `settled` in `KNOWN`) */
+    hideable?: boolean;
 }
 
-/** Each known code: its level, its words, and how it is fixed on the runtime's own device (`add-to-home` is about
- *  THIS device and has no fix: Apple gives a page no way to offer installing as a button — see `deviceItems`). */
-const KNOWN: Record<AttentionCode, { level: RuntimeAttentionLevel; title: string; detail: string; fix?: AttentionFix; again?: { title: string; detail: string } }> = {
+/** Each known code's words, and how it is fixed on the runtime's own device (`add-to-home` is about THIS device and
+ *  has no fix: Apple gives a page no way to offer installing as a button — see `deviceItems`). */
+/** One code: its level, its words, how it is fixed — and the words for a lapse that has come back DESPITE being
+ *  fixed. `again` is the second telling, which names what to do differently; `settled` is the third, for when that
+ *  has been done and it came back anyway, and is the only wording a non-suggestion can be put away from. */
+interface Known { level: RuntimeAttentionLevel; title: string; detail: string; fix?: AttentionFix; again?: { title: string; detail: string }; settled?: { title: string; detail: string } }
+
+const KNOWN: Record<AttentionCode, Known> = {
     "no-model": {
         level: "blocks", title: "No model is chosen",
         detail: "Nothing can run until the extension has a model to send to.",
@@ -98,11 +106,15 @@ const KNOWN: Record<AttentionCode, { level: RuntimeAttentionLevel; title: string
     },
     "archive-folder-lapsed": {
         level: "limits", title: "The archive folder needs reconnecting",
-        detail: "It lost the browser's permission, so old sessions are no longer copied into it. They are still kept and searchable in the browser. When the browser asks, choose Always allow (Allow on every visit), or this comes back after every restart.",
+        detail: "It lost the browser's permission, so old sessions are no longer copied into it. They are still kept and searchable in the browser. If the browser's prompt offers to allow it on every visit, choose that, or this comes back after every restart.",
         fix: { kind: "act", label: "Reconnect" },
         again: {
             title: "The archive folder lapsed again",
-            detail: "Last time it was allowed only until the browser restarted. Reconnect, and this time choose Always allow (Allow on every visit) in the browser's prompt, so it stays connected.",
+            detail: "It was allowed only until the browser restarted. Reconnect, and look in the prompt for a lasting choice (Always allow, or Allow on every visit). Not every browser offers one, and one that has had the prompt dismissed a few times stops offering it: the extension's Settings say how to get it back.",
+        },
+        settled: {
+            title: "This browser will not keep the archive folder",
+            detail: "It has asked again after every restart, whichever option was chosen, so there is nothing further to do about it here. Nothing is lost: the archive itself is in the browser and every word of it is still searchable, and only the copy on disk waits. Reconnect whenever you want that copy brought up to date.",
         },
     },
     "archive-folder-unsupported": {
@@ -162,8 +174,9 @@ export function attentionItems(
     local: ReadonlyMap<string, readonly string[]>,
     canFix: (runtime: RuntimeInfo, fix: AttentionFix, code: string) => boolean,
     hidden: ReadonlySet<string> = new Set(),
-    /** has this code come back after this device fixed it once? Then it is worded as a repeat (the codes with `again`) */
-    repeat: (runtime: RuntimeInfo, code: string) => boolean = () => false,
+    /** HOW MANY TIMES this device has fixed this code already, for one that has come back: 0 is the first telling,
+     *  1 says what to do differently (`again`), and 2 or more is the admission that it did not work (`settled`). */
+    repeat: (runtime: RuntimeInfo, code: string) => number = () => 0,
 ): RuntimeAttentionItem[] {
     const out: RuntimeAttentionItem[] = [];
     for (const rt of runtimes) {
@@ -172,12 +185,17 @@ export function attentionItems(
             const k = KNOWN[code as AttentionCode];
             const key = `${rt.id}:${code}`;
             const level = k?.level ?? "limits";
-            if (level === "suggests" && hidden.has(key)) continue;
-            const words = k?.again && repeat(rt, code) ? k.again : k;
+            const fixed = repeat(rt, code);
+            const words = (fixed >= 2 && k?.settled) || (fixed >= 1 && k?.again) || k;
+            // The ONE non-suggestion that can be put away, and only once it has said there is nothing left to do:
+            // a card that cannot be acted on and cannot be dismissed is a permanent mark for a permanent fact.
+            const hideable = fixed >= 2 && !!k?.settled;
+            if ((level === "suggests" || hideable) && hidden.has(key)) continue;
             out.push({
                 key, runtime: rt, code, level,
                 title: words?.title ?? "Something needs attention",
                 detail: words?.detail ?? `${rt.name} reported "${code.slice(0, 40)}", which this page does not know. Its own Settings will say more.`,
+                ...(hideable ? { hideable } : {}),
                 ...(k?.fix && canFix(rt, k.fix, code) ? { fix: k.fix } : {}),
             });
         }

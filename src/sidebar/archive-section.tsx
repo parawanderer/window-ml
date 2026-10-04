@@ -8,7 +8,7 @@
 // (months wait, marked pending), and one click with "Allow on every visit" chosen makes it stay connected.
 import { useEffect, useState } from "preact/hooks";
 import type { FolderReport } from "../archive-worker";
-import { canPickFolder, pickFolder, regrantFolder, regrantedBefore, saveFolder } from "../archive-folder";
+import { canPickFolder, pickFolder, regrantCount, regrantFolder, saveFolder } from "../archive-folder";
 
 /** The browser-specific way to turn folder access on, when there is one. */
 export const BRAVE_FLAG = "brave://flags/#file-system-access-api";
@@ -61,21 +61,29 @@ export function ArchiveFolderBody(p: {
         </div>
     );
 
+    // HOW MANY TIMES THIS HAS BEEN DONE ALREADY decides what there is to say. None: the prompt may offer a lasting
+    // choice, so name it. Once: it was allowed for this session only, so say what to look for and why it may be
+    // missing. Twice or more: the advice has been followed and the grant lapsed anyway, and claiming a third time
+    // that the right option exists is the thing that makes this read as a loop with no exit.
+    const tried = regrantCount();
     if (r.state === "needs-grant") return (
         <div class="arch">
-            <div class="set-warn">The archive folder{r.name ? <> <b>{r.name}</b></> : null} {regrantedBefore() ? "lapsed again" : "needs permission again"}.</div>
-            <div class="set-hint">{regrantedBefore()
-                ? <>Last time it was allowed only until the browser restarted. Reconnect, and this time choose <b>Always allow</b> (<b>Allow on every visit</b> in Chrome) so it stays connected.</>
-                : <>The browser asks again after a restart unless it was allowed for good. Reconnect, and in the prompt choose <b>Always allow</b> (<b>Allow on every visit</b> in Chrome) so it stays connected.</>}</div>
+            <div class="set-warn">The archive folder{r.name ? <> <b>{r.name}</b></> : null} {tried ? "lapsed again" : "needs permission again"}.</div>
+            <div class="set-hint">{tried >= 2
+                ? <>This browser has asked again after every restart, whichever option was chosen, so there may be no lasting choice to make here. Nothing is lost while it is disconnected: the archive is in the browser and still searchable. Reconnect when you want the copy on disk brought up to date.</>
+                : tried === 1
+                    ? <>It was allowed only until the browser restarted. Reconnect, and look in the prompt for a lasting choice (<b>Always allow</b>, or <b>Allow on every visit</b> in Chrome). Not every browser offers one.</>
+                    : <>The browser asks again after a restart unless it was allowed for good. Reconnect, and if the prompt offers <b>Always allow</b> (<b>Allow on every visit</b> in Chrome), choose it.</>}</div>
             {asks("Reconnect", "Asking…", "regrant", p.onRegrant, true)}
             {/* Said only once the lasting choice has demonstrably not been taken. Chrome STOPS offering "Allow on
                 every visit" for an origin after the prompt is dismissed or denied a few times, and reverts to the
                 one-time question with no sign that it has done so — which reads as the lasting option never having
                 existed. Nothing here can re-enable it; resetting the site's permissions can. */}
-            {regrantedBefore() ? (
+            {tried ? (
                 <div class="set-hint">Only offered <b>Allow this time</b>? A browser stops offering the lasting choice
                     for a site once the prompt has been dismissed a few times. Reset this page's permissions in the
-                    address bar (the icon left of the address → Site settings → Reset permissions), then reconnect.</div>
+                    address bar (the icon left of the address → Site settings → Reset permissions), then reconnect.
+                    Some builds, Brave among them, do not offer it at all.</div>
             ) : null}
             {pending}{off}{note}
         </div>
@@ -86,7 +94,7 @@ export function ArchiveFolderBody(p: {
             <div class="set-field"><span>Folder</span><div><b>{r.name}</b>, written {ago(r.lastSync)}</div></div>
             {/* The browser never says whether the grant lasts, and a first pick is only ever granted until a restart:
                 the lasting choice is offered on the NEXT ask. Said once, here, so that ask is not a surprise. */}
-            {regrantedBefore() ? null : <div class="set-hint">After a browser restart it may ask for this folder again. Choose <b>Always allow</b> then, and it stays connected.</div>}
+            {tried ? null : <div class="set-hint">After a browser restart it may ask for this folder again. Choose <b>Always allow</b> then, if it is offered, and it stays connected.</div>}
             {pending}
             <div class="arch-actions">
                 {btn("Write now", "Writing…", "sync", p.onSync)}
