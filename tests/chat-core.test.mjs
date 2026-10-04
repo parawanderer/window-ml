@@ -434,11 +434,11 @@ test("Continue is offered only where the RUNTIME agrees the run stopped at its c
     // The STOP button asks the same way, against `session.cancel`'s own precondition. The failure this closes: a
     // run that died without emitting a terminal event leaves this client reducing to `pending` for ever while the
     // runtime's index has moved on, so the button stayed and answered "the session is not running" when pressed.
-    assert.equal(svc.canCancel("laptop:run00001"), true);
-    assert.equal(svc.canCancel("laptop:wait0001"), true);
-    assert.equal(svc.canCancel("laptop:cap00001"), false);
+    assert.equal(svc.stillLive("laptop:run00001"), true);
+    assert.equal(svc.stillLive("laptop:wait0001"), true);
+    assert.equal(svc.stillLive("laptop:cap00001"), false);
     // No summary yet is NOT a refusal: the first paint of a real run must not be the one with no way to stop it.
-    assert.equal(svc.canCancel("laptop:nosuch01"), true);
+    assert.equal(svc.stillLive("laptop:nosuch01"), true);
     store.dispose();
 });
 

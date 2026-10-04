@@ -926,6 +926,27 @@ test("what eases open eases shut: a think block, and the gate you just answered"
     await gated.page.close();
 });
 
+// A GATE THE RUNTIME NO LONGER HOLDS still had live buttons. `approval.answer` does not refuse one it has
+// forgotten — it resolves nothing and reports `resolved: false` — so pressing Approve did nothing at all and said
+// nothing, which is worse than being told no. The step's own `awaitingApproval` is this client's reduction of an
+// event stream that never got a terminal event, so it stays true for ever; the runtime's status is the other
+// reading, and it is the one that decides whether the controls are drawn.
+test("a gate the run ended without answering keeps what was asked and loses the buttons", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(WAITING)}`);
+    await expect(page.locator(".astep-approve .appr-btn.yes")).toHaveCount(2);   // Approve and Keep, while it is live
+    await expect(page.locator(".appr-dead")).toHaveCount(0);
+
+    // The runtime settles the session without ever resolving the gate — a run that died with its host.
+    await page.evaluate((k) => globalThis.__chatFake.updateSummary(k, { status: "interrupted", pendingApprovals: 0 }), WAITING);
+
+    await expect(page.locator(".astep-approve .appr-btn")).toHaveCount(0);
+    await expect(page.locator(".appr-dead")).toHaveText(/nothing left to approve/);
+    // What was ASKED is still on screen: the card is the only place the intent sentence lives.
+    await expect(page.locator(".astep-approve")).toContainText("transavia.com");
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 // TWO THINGS CLAIM THE TOP-RIGHT CORNER of a wide calm page. There is no header band there, so the session's ⋮ is a
 // floating button in the corner — and the approval bar, when the gate has scrolled out of reach, is the first
 // in-flow element of the same pane. The ⋮ landed on the band, a pixel from "Review ›". Both are still reachable, so

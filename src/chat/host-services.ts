@@ -78,9 +78,9 @@ export function hostServices(store: ChatStore, platform: ClientPlatform): Sideba
         },
         // The runtime's OWN reading, which is what `session.cancel` checks. Its precondition is exactly these two
         // statuses, so asking anything else here would be inventing a second rule. A session with no summary yet is
-        // allowed: the composer has already decided it looks live, and the first paint of a real run must not be the
-        // one where stopping is missing.
-        canCancel: (key) => {
+        // allowed: the caller has already decided it looks live, and the first paint of a real run must not be the
+        // one with no way to stop it or answer it.
+        stillLive: (key) => {
             const st = summaryOf(key as SessionKey)?.status;
             return st === undefined || st === "running" || st === "waiting";
         },

@@ -505,6 +505,10 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // `gate`, not `awaiting`: everything the card SAYS has to stay put while it animates away, or its last beat
     // on screen is a different card — the intent sentence replaced by the generic question, the grant note gone.
     const gate = awaiting || fading;
+    // Whether the RUNTIME would still act on it — the other reducer over the same events. A run that died without a
+    // terminal event leaves this client's step `awaitingApproval` for ever, so the card is drawn with live buttons
+    // over a gate nothing holds.
+    const live = !hash || services().stillLive(hash);
     const sheetGrants = gate ? externalSheetGrant(st.arguments) : [];
     const showGrants = gate && hasPersistGrants(st.grants);
     return (
@@ -587,7 +591,13 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                     {intent
                         ? <IntentSentence intent={intent} />
                         : <span class="appr-ask">Approve running <b>{st.tool}</b>?</span>}
-                    <ApprovalRow grants={!!showGrants} decide={decide} />
+                    {/* THE REQUEST STAYS, THE BUTTONS GO, when the runtime no longer holds this gate. `approval.answer`
+                        does not refuse one it has forgotten — it resolves nothing and reports it — so the buttons sat
+                        there and silently did nothing, which is worse than being told no. What was ASKED is still
+                        worth reading, so only the row is replaced. */}
+                    {live
+                        ? <ApprovalRow grants={!!showGrants} decide={decide} />
+                        : <span class="appr-dead">This run ended before anyone answered, so there is nothing left to approve.</span>}
                 </div>
                 : null}
         </div>

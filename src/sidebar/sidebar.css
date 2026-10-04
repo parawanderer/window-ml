@@ -1304,6 +1304,9 @@ html[data-focus] .astep-approve { gap: .55em; margin: 6px 0; padding: .82em .95e
    pixel, which is to say it is not about this card at all: the next word added anywhere on the row comes out of the
    same place, silently. So the circle is fixed, the gaps are what give on touch, and the row wraps (right-aligned,
    so the answers stay together) on anything narrower still. */
+/** What stands in for the approve/deny row on a gate the runtime no longer holds: the request is still worth
+ *  reading, the buttons would do nothing. Quiet — this is a fact about the run, not a new thing to act on. */
+.appr-dead { display: block; color: var(--fg-faint); font-size: 0.86em; font-style: italic; padding: 2px 0; }
 .appr-info { flex: 0 0 auto; }
 .astep-approve .appr-row { flex-wrap: wrap; justify-content: flex-end; }
 @media (pointer: coarse) { .astep-approve .appr-row { gap: 6px; } }

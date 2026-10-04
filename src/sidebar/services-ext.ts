@@ -50,7 +50,7 @@ export const extensionServices: SidebarServices = {
     continueSession: (hash, maxSteps) => toParent({ __mlSidebarApp: "continueRun", hash, ...(maxSteps ? { maxSteps } : {}) }),
     // This frame is attached to the tab the run is in: if it were gone, so would this panel be.
     canContinue: () => true,
-    canCancel: () => true,   // this panel is attached to the tab that holds the run; its reduction IS the runtime's
+    stillLive: () => true,   // this panel is attached to the tab that holds the run; its reduction IS the runtime's
     highlight: (ref) => toParent({ __mlHighlight: ref }),
     openLightbox: (src) => toParent({ __mlLightbox: src }),
     // `noopener` is not politeness here: without it the opened page gets a handle on this one, and this one is the

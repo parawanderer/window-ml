@@ -61,15 +61,18 @@ export interface SidebarServices {
      */
     canContinue(session: string): boolean;
     /**
-     * Is this session still something the runtime would STOP? The composer's stop button is drawn from this
-     * client's own reduction of the event stream, and `session.cancel` is judged by the runtime's index — two
-     * separate reducers over the same events, which disagree whenever a run dies without emitting a terminal
-     * event. The client then shows `pending` for ever, the stop button stays, and pressing it answers "the session
-     * is not running". A control that can only refuse should not be drawn.
+     * Would the runtime still ACT on this session? Named for the fact rather than for one action, because two
+     * controls depend on it and they fail differently: stopping is REFUSED ("the session is not running"), while
+     * answering an approval is not refused at all — `approval.answer` resolves a gate the runtime no longer holds
+     * and reports `resolved: false`, so the buttons sit there and silently do nothing, which is worse.
+     *
+     * Both are drawn from this client's own reduction of the event stream, and the runtime's index is the other
+     * reducer over the same events. They disagree whenever a run dies without emitting a terminal event: the client
+     * reduces to `pending` for ever while the index has settled. A control that cannot work should not be drawn.
      *
      * The panel says yes: its own stream IS the runtime's. Read during render, like `canContinue`.
      */
-    canCancel(session: string): boolean;
+    stillLive(session: string): boolean;
     /** outline something on the session's page; `null` clears it. A host with no page does nothing. */
     highlight(ref: HighlightRef): void;
     /** show an image full-size */
@@ -138,7 +141,7 @@ const UNAVAILABLE: SidebarServices = {
     cancelSession() {},
     continueSession() {},
     canContinue: () => false,
-    canCancel: () => false,
+    stillLive: () => false,
     highlight() {},
     openLightbox() {},
     openLink() {},
