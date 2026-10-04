@@ -17,7 +17,7 @@ import { surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, sh
 import type { Session, AgentStep, Status } from "./store";
 import { pretty, truncate, markdown, collapsedPreview } from "./format";
 import { sessionProfile } from "./model";
-import { IconChevron, IconWarn, IconCopy, IconCheck, IconIn, IconOut } from "./icons";
+import { IconChevron, IconWarn, IconInfo, IconCopy, IconCheck, IconIn, IconOut } from "./icons";
 import { usageSamples, liveOutTokens } from "./usage";
 import { fmtDur } from "./timestamps";
 import {
@@ -186,6 +186,53 @@ export function externalSheetGrant(args?: Record<string, unknown>): string[] {
 // grant the host in the same gesture (decideGate) — this note tells the user a Chrome permission prompt will
 // appear, so it isn't a surprise. Asks the host (`services().hostAccess`); renders nothing when already granted,
 // or where the host has no host permissions (a phone), so a normal already-allowed fetch stays silent.
+
+/**
+ * What approving THIS call sets in motion beyond the call itself — the mechanics, in the order the buttons sit.
+ *
+ * It is the part you need once. Every card already says what is being approved, and some carry a warning about an
+ * escalation (arguments leaving the machine, a privileged click into a cross-origin frame, a fetch that runs as
+ * you); those stay on the card, because the whole reason they are drawn is that they must not be missed. What was
+ * repeated on every card and read only the first time is what each BUTTON then does — above all that "Keep" is not
+ * "Approve harder" but a standing grant for the rest of the session. That moves behind the info control.
+ *
+ * Pure and exported so a test can read the sentences without rendering an approval.
+ */
+export function approvalMechanics({ grants }: { grants: boolean }): string[] {
+    return [
+        "Approve runs this one call. The agent asks again the next time it wants something.",
+        "Deny refuses this call. The run carries on and the agent may try another way.",
+        ...(grants ? ["Keep approves it AND stops the agent asking for these URLs for the rest of this session; what it fetches is cached."] : []),
+    ];
+}
+
+/**
+ * The approval's buttons, with a quiet info control at the other end of the row.
+ *
+ * The explanation is offered BOTH ways on purpose: the pointer gets it on hover, which is what makes it free to
+ * consult and free to ignore, and a click opens the same sentences underneath for anyone without a pointer — the
+ * cursor tip is pointer-only, and this card is drawn on a phone too. One list, two presentations, so they cannot
+ * drift. The control is deliberately not a warning colour: nothing is wrong, there is simply more to know.
+ */
+function ApprovalRow({ grants, decide }: { grants: boolean; decide: (ok: boolean, persist?: boolean) => void }) {
+    const [why, setWhy] = useState(false);
+    const lines = approvalMechanics({ grants });
+    const list = <ul class="appr-why-list">{lines.map((l) => <li key={l}>{l}</li>)}</ul>;
+    return (
+        <>
+            <div class="appr-row">
+                <button class="appr-info" aria-label="What these choices do" aria-expanded={why}
+                    {...cursorTipOn(list)} onClick={() => setWhy((v) => !v)}><IconInfo /></button>
+                <span class="sp" />
+                <button class="appr-btn no" onClick={() => decide(false)}>Deny</button>
+                <button class="appr-btn yes" onClick={() => decide(true)}>Approve</button>
+                {grants ? <button class="appr-btn yes remember" onClick={() => decide(true, true)}>Keep</button> : null}
+            </div>
+            {why ? <div class="appr-why">{list}</div> : null}
+        </>
+    );
+}
+
 export function HostAccessNote({ st }: { st: AgentStep }) {
     const pat = grantHostPattern(st);
     const [missing, setMissing] = useState(false);
@@ -489,12 +536,7 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                     {intent
                         ? <IntentSentence intent={intent} />
                         : <span class="appr-ask">Approve running <b>{st.tool}</b>?</span>}
-                    <div class="appr-row">
-                        <span class="sp" />
-                        <button class="appr-btn no" onClick={() => decide(false)}>Deny</button>
-                        <button class="appr-btn yes" onClick={() => decide(true)}>Approve</button>
-                        {showGrants ? <button class="appr-btn yes remember" title="Approve — and let the agent fetch these URLs WITHOUT approval for the rest of this session (results are cached)" onClick={() => decide(true, true)}>Keep</button> : null}
-                    </div>
+                    <ApprovalRow grants={!!showGrants} decide={decide} />
                 </div>
                 : null}
         </div>
