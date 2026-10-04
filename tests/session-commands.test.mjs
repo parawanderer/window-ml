@@ -18,6 +18,9 @@ const png = (w, h, pad = 0) => "data:image/png;base64," + b64([0x89, 0x50, 0x4e,
 /** A JPEG with an APP0 segment before its frame header. */
 const jpeg = (w, h) => "data:image/jpeg;base64," + b64([0xff, 0xd8, 0xff, 0xe0, 0, 16, ...new Array(14).fill(0), 0xff, 0xc0, 0, 17, 8, h >> 8, h & 255, w >> 8, w & 255, 3, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1]);
 
+/** What the store holds for a session saved only once its ring had been trimmed: the tail, not the whole history. */
+const TAIL = Array.from({ length: 4 }, (_, i) => ev("aaaa0002", "agent-step", { step: i + 6, seq: i + 6, tool: "exec", result: String(i + 6) }));
+
 /** A saved session's whole history, as the store holds it: oldest first. */
 const STORED = Array.from({ length: 95 }, (_, i) => ev("aaaa0001", "agent-step", { step: i + 1, seq: i + 1, tool: "exec", result: String(i) }));
 
@@ -29,8 +32,8 @@ const AGENT_HISTORY = {
 };
 
 /** A handler over a fresh index, with every dependency recorded and scriptable. */
-function world(over = {}) {
-    const index = new SessionIndex({ runtime: "local", spawn: "w1" });
+function world(over = {}, indexOpts = {}) {
+    const index = new SessionIndex({ runtime: "local", spawn: "w1", ...indexOpts });
     const calls = [];
     const rec = (name, ret) => (...args) => { calls.push([name, ...args]); return typeof ret === "function" ? ret(...args) : ret; };
     const deps = {
@@ -680,17 +683,56 @@ test("session.backfill pages a saved session's history upwards, newest page firs
     assert.equal(first.data.truncated, false, "the runtime has the whole history; nothing is missing");
 });
 
-test("a session this runtime does not KEEP says its history is gone, rather than answering with nothing", async () => {
-    // The only copy was the ring, which the subscription already served. A client given an empty page with no
-    // `truncated` would wait for a page that is never coming.
+test("a session this runtime does not KEEP is paged out of the ring it is still holding", async () => {
+    // It was never written anywhere, so the ring IS its history. Answering an empty page threw away events the
+    // runtime still had, which is what left a phone that joined a run late looking at a transcript with no start.
     const w = world();
     w.index.ingest(start("aaaa0002"), { tabId: TAB, trusted: true });
+    for (let i = 1; i <= 5; i++) w.index.ingest(ev("aaaa0002", "agent-step", { step: i, seq: i, tool: "exec", result: String(i) }), { tabId: TAB, trusted: true });
 
     const r = await w.run({ type: "session.backfill", session: sid("aaaa0002") });
-    assert.deepEqual(r.data.events, []);
-    assert.equal(r.data.truncated, true);
+    assert.equal(r.data.events.length, 6, "the start and every step after it");
+    assert.equal(r.data.from, 0, "the ring still reaches the session's first event");
     assert.equal(r.data.more, false);
+    assert.equal(r.data.truncated, false, "nothing is missing, so nothing is lost");
     assert.equal(w.named("storedEvents").length, 0, "and it did not go to disk for a session it does not keep");
+});
+
+test("an unkept session the ring has been trimmed says the rest is GONE, not merely absent", async () => {
+    // The distinction the client acts on: `more` means page again, `truncated` means stop. An unkept session whose
+    // start has fallen out of the ring is the one case where there is a page below and it no longer exists.
+    const w = world({}, { perSessionEvents: 4 });
+    w.index.ingest(start("aaaa0002"), { tabId: TAB, trusted: true });
+    for (let i = 1; i <= 9; i++) w.index.ingest(ev("aaaa0002", "agent-step", { step: i, seq: i, tool: "exec", result: String(i) }), { tabId: TAB, trusted: true });
+
+    const r = await w.run({ type: "session.backfill", session: sid("aaaa0002") });
+    assert.equal(r.data.events.length, 4, "only what the ring still holds");
+    assert.equal(r.data.from, 6, "which begins at its own place in the session, not at 0");
+    assert.equal(r.data.events[0].step, 6);
+    assert.equal(r.data.more, false);
+    assert.equal(r.data.truncated, true, "the start was trimmed and was never written anywhere else");
+
+    // Paging below what is held is answered with an empty page that says the same thing, rather than an error.
+    const below = await w.run({ type: "session.backfill", session: sid("aaaa0002"), before: r.data.from });
+    assert.deepEqual(below.data.events, []);
+    assert.equal(below.data.from, 6);
+    assert.equal(below.data.truncated, true);
+});
+
+test("a session KEPT after its ring was trimmed is paged where it actually sits, not from 0", async () => {
+    // The store holds a SUFFIX: a session saved late was written from whatever the ring still had, so its first
+    // stored event is already some way into the history. Counting that page from 0 would have put it under positions
+    // the client had just been given for other events, and the two copies would have shown twice.
+    const w = world({ storedEvents: async () => TAIL }, { perSessionEvents: 4 });
+    w.index.ingest(start("aaaa0002"), { tabId: TAB, trusted: true });
+    for (let i = 1; i <= 9; i++) w.index.ingest(ev("aaaa0002", "agent-step", { step: i, seq: i, tool: "exec", result: String(i) }), { tabId: TAB, trusted: true });
+    w.index.markSaved("aaaa0002");
+
+    const r = await w.run({ type: "session.backfill", session: sid("aaaa0002") });
+    assert.equal(r.data.events.length, 4);
+    assert.equal(r.data.from, 6, "ten events happened and four were kept: the stored ones begin at 6");
+    assert.equal(r.data.more, false);
+    assert.equal(r.data.truncated, true, "the six before them were never written anywhere and are gone");
 });
 
 test("session.backfill caps the page whatever is asked, and refuses a position that is not one", async () => {

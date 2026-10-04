@@ -228,9 +228,12 @@ rest until it arrives, so a ring without it shows nothing. The runtime re-publis
 facing a runtime that does not pages back on its own, a bounded number of times, until the start arrives.
 
 `more` says another page exists below this one. `truncated` says one does not and never will, which is a different
-sentence: a session the runtime does not KEEP has no durable history at all, its only copy having been the ring the
-subscription already served, and a client given an empty page without being told would wait for a page that is never
-coming.
+sentence, and a client given an empty page without being told would wait for a page that is never coming. A kept
+session is paged from the runtime's store, which holds it from its first event, so it is never truncated. One the
+runtime does not keep is paged from the ring it holds in memory, which is that session's only copy: it is served like
+any other history, and it is truncated once the ring has been trimmed past the session's start, because what fell out
+of it was written nowhere else. `from` is then where the ring begins rather than 0, and the positions on its live
+events are counted the same way, so a client pages back through the two with one rule.
 
 The page is capped by the runtime whatever a client asks for. It is a size decision wearing a count: forty events of
 a DOM run is nothing and forty screenshots is tens of megabytes.
