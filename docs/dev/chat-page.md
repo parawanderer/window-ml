@@ -213,6 +213,30 @@ five seconds, so a streaming run does not upsert the list on every delta.
 in-flight commands `unavailable`, marks the runtime offline, reconnects with backoff, asks for the index again, and
 re-subscribes each open session from the last position it delivered.
 
+### A tab whose content script is gone
+
+A content script lives as long as the extension that injected it. Reload or update the extension and every tab already
+open keeps its page and loses its listener, so the next `chrome.tabs.sendMessage` to it rejects with Chrome's "Could
+not establish connection. Receiving end does not exist." Nothing is wrong with the tab, the message or the run: the
+extension moved underneath them, and this is the ordinary state of every open tab after a reload.
+
+That rejection used to escape `agent.start` and reach the person as Chrome's string, which names no cause and no
+remedy. It also skipped the sentence already written for it in `session-commands.ts` ("the page did not answer; it may
+still be loading, or the extension cannot run there"), because a THROW never reaches the branch that reads the
+outcome. `askPage` (sw-sessions.ts) now puts the content scripts back from the MANIFEST's own list, waits for the main
+world's `window.ml` rather than for the content script (the listener is registered before `injected.js` runs), asks
+once more, and answers `undefined` on any further failure so the caller's sentence is reached.
+
+What re-injection cannot give back: `shadow-patch.js` runs at `document_start` to record shadow roots as the page
+makes them, so injected after a load it only sees roots attached from then on. A closed root created earlier stays
+unreachable until the tab is reloaded.
+
+The regression test is in `tests/e2e/chat-page.spec.mjs`, and it builds the condition by loading a bundle whose
+content scripts match nothing rather than by reloading the extension: `chrome.runtime.reload()` leaves a Playwright
+persistent context with no usable extension at all. It asserts both halves of the precondition (the tab IS scriptable,
+and nothing answers) before driving anything, because a tab that could not be scripted would make it pass for the
+wrong reason.
+
 ## The local commands
 
 `src/session-commands.ts` maps each contract command onto a path the extension already has, over injected
