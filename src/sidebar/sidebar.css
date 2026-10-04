@@ -1256,7 +1256,14 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
    this had a tinted background AND a hard border of the same colour inside it — one decision wrapped three times,
    reading as an alert nested in an alert. The busy view keeps all of it: there the card sits among the other
    instrumentation, matching the bar above it, and it is the same trace the DevTools panel draws. */
-html[data-focus] .astep-approve { gap: 8px; margin: 6px 0; padding: 9px 11px; border-radius: 10px;
+/* ROOM TO READ. The padding was 9px/11px against a 15.6px reading size, so the sentence sat a hair off three
+   borders — and it is the longest line in the card, since a URL wraps to the full width, which made the one thing
+   on the page you are meant to read carefully the most cramped. It belongs on the CARD and not on the sentence:
+   padding the sentence alone would indent it out of line with the buttons underneath it.
+
+   In `em`, because this rule is also the DevTools panel's focus mode, where the base is 12px and the old figures
+   were right. The same proportion gives ~13px/15px at reading size and ~10px/11px there. */
+html[data-focus] .astep-approve { gap: .55em; margin: 6px 0; padding: .82em .95em; border-radius: 10px;
     background: var(--panel); border: none; }
 .astep-approve .appr-row { display: flex; align-items: center; gap: 8px; }
 /* The info control sits at the FAR end from the buttons, which is what keeps it out of the way of the decision:
