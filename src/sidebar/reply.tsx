@@ -3,6 +3,7 @@
 // app.tsx; a leaf view layer over ui-kit + answer-render (no agent-detail / HUD deps, so agent-detail
 // can import ReplyBubble without a cycle).
 import { SentImages, UserActions, UserText } from "./user-text";
+import { cssDurationMs } from "./use-close";
 import { services, bareHash } from "./services";
 import { useRef, useState } from "preact/hooks";
 import type { ExtendProfile } from "../contract-chat";
@@ -85,12 +86,7 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
     const bodyRef = useRef<HTMLDivElement>(null);
     const [closing, setClosing] = useState(false);
     const [opening, setOpening] = useState(false);
-    const swapMs = (): number => {
-        const el = bodyRef.current;
-        if (!el || typeof getComputedStyle !== "function") return 0;
-        const ms = parseFloat(getComputedStyle(el).getPropertyValue("--asst-close-ms"));
-        return Number.isFinite(ms) && ms > 0 ? ms : 0;
-    };
+    const swapMs = (): number => cssDurationMs(bodyRef.current, "--asst-close-ms");
     const toggleCollapsed = (): void => {
         const ms = swapMs();
         if (!ms) { setCollapsed((v) => !v); return; }

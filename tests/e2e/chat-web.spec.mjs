@@ -874,6 +874,58 @@ test("the two answers to an approval are both legible, measured rather than eyeb
     await page.close();
 });
 
+// A DISCLOSURE THAT EASES OPEN AND SNAPS SHUT reads as two different controls. Three of them had their own copy
+// of "keep the body mounted for as long as the surface animates it", one had none, and deciding on a gate had none
+// either — so the card you had just read to approve it blinked out from under you. Recorded with an observer
+// rather than polled: the window is 200ms, and a poll that lands either side of it reports the opposite of what
+// it measured. What is asserted is the MECHANISM — the node carried `closing` before it was removed — not a
+// duration, which would be a flake on a loaded machine.
+test("what eases open eases shut: a think block, and the gate you just answered", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CAPPED)}`);
+    await page.addInitScript(() => {
+        globalThis.__closed = [];
+        new MutationObserver((rs) => {
+            for (const r of rs) for (const n of r.removedNodes) {
+                if (n.nodeType !== 1) continue;
+                for (const el of [n, ...n.querySelectorAll?.("*") ?? []]) {
+                    if (el.matches?.(".astep-body, .astep-approve")) globalThis.__closed.push(`${el.classList.contains("astep-approve") ? "gate" : "body"}:${el.classList.contains("closing")}`);
+                }
+            }
+        }).observe(document, { childList: true, subtree: true });
+    });
+    await page.reload();
+    const think = page.locator(".athought .astep-head").first();
+    await think.waitFor();
+    await think.click();
+    await expect(page.locator(".athought .astep-body")).toHaveCount(1);
+    await think.click();
+    await expect(page.locator(".athought .astep-body")).toHaveCount(0);
+    expect(await page.evaluate(() => globalThis.__closed)).toContain("body:true");
+
+    // The gate: open the step as a reader would, answer it, and watch the card leave rather than vanish.
+    const gated = await open(DESKTOP, `#s=${encodeURIComponent(WAITING)}`);
+    await gated.page.addInitScript(() => {
+        globalThis.__closed = [];
+        new MutationObserver((rs) => {
+            for (const r of rs) for (const n of r.removedNodes) {
+                if (n.nodeType !== 1) continue;
+                for (const el of [n, ...n.querySelectorAll?.("*") ?? []]) {
+                    if (el.matches?.(".astep-approve")) globalThis.__closed.push(`gate:${el.classList.contains("closing")}`);
+                }
+            }
+        }).observe(document, { childList: true, subtree: true });
+    });
+    await gated.page.reload();
+    await gated.page.locator(".astep-approve").waitFor();
+    await gated.page.locator(".astep-approve .appr-btn.yes:not(.remember)").click();
+    await expect(gated.page.locator(".astep-approve")).toHaveCount(0);
+    expect(await gated.page.evaluate(() => globalThis.__closed)).toContain("gate:true");
+    expect(errors).toEqual([]);
+    expect(gated.errors).toEqual([]);
+    await page.close();
+    await gated.page.close();
+});
+
 // TWO THINGS CLAIM THE TOP-RIGHT CORNER of a wide calm page. There is no header band there, so the session's ⋮ is a
 // floating button in the corner — and the approval bar, when the gate has scrolled out of reach, is the first
 // in-flow element of the same pane. The ⋮ landed on the band, a pixel from "Review ›". Both are still reachable, so

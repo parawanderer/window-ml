@@ -18,6 +18,7 @@ import type { Session, AgentStep, Status } from "./store";
 import { pretty, truncate, markdown, collapsedPreview } from "./format";
 import { sessionProfile } from "./model";
 import { Dialog } from "./dialog";
+import { useCloseAnimation } from "./use-close";
 import { IconChevron, IconWarn, IconInfo, IconCopy, IconCheck, IconIn, IconOut } from "./icons";
 import { usageSamples, liveOutTokens } from "./usage";
 import { fmtDur } from "./timestamps";
@@ -106,13 +107,17 @@ export const StepPill = ({ step, max }: { step: number; max?: number }) =>
 export function ThoughtBlock({ thought, live, tokens }: { thought: string; live?: boolean; tokens?: number }) {
     const [open, setOpen] = useState(false);
     const bodyRef = useRef<HTMLDivElement>(null);
+    // The SAME way out a tool step has. Without it this one disclosure eased open and snapped shut, which reads
+    // as a different control on the row most likely to be opened and closed repeatedly while reading a run.
+    const { closing, close, cancel } = useCloseAnimation(bodyRef);
+    const toggleThought = (): void => { if (!open) { cancel(); setOpen(true); } else close(() => setOpen(false)); };
     // While LIVE (streaming), keep the expanded body scrolled to the newest text.
     useEffect(() => { if (live && open && bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight; });
     // The engine's count when there is one; chars/4 only when there is not, and then marked `~` as the guess it is.
     const tokLabel = tokens != null ? `${tokens.toLocaleString("en-US")} tokens` : `~${Math.max(1, Math.round(thought.length / 4)).toLocaleString("en-US")} tokens`;
     return (
         <div class={`athought athinking${live ? " live" : ""}`}>
-            <button class="astep-head" onClick={() => setOpen(v => !v)}>
+            <button class="astep-head" onClick={toggleThought}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 <span class="who">thinking</span>
                 {/* The ~token estimate is a debug detail — hidden in the user-facing HUD card, EXCEPT while live,
@@ -128,8 +133,8 @@ export function ThoughtBlock({ thought, live, tokens }: { thought: string; live?
             {/* Live: plain text (partial markdown mid-stream renders ugly); finished: markdown. */}
             {open
                 ? (live
-                    ? <div class="astep-body live-scroll" ref={bodyRef}>{thought}</div>
-                    : <div class="md astep-body" dangerouslySetInnerHTML={{ __html: markdown(thought, { math: true }) }} />)
+                    ? <div class={`astep-body live-scroll${closing ? " closing" : ""}`} ref={bodyRef}>{thought}</div>
+                    : <div class={`md astep-body${closing ? " closing" : ""}`} ref={bodyRef} dangerouslySetInnerHTML={{ __html: markdown(thought, { math: true }) }} />)
                 : null}
         </div>
     );
@@ -387,6 +392,7 @@ function TokenChip({ token }: { token: string }) {
 export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const [expanded, setExpanded] = useState(false);
     const [decided, setDecided] = useState(false);   // hide the controls the instant we click (before the DONE lands)
+    const [fading, setFading] = useState(false);     // …but keep the CARD on screen while it animates away
     const args = st.arguments && Object.keys(st.arguments).length ? st.arguments : null;
     // The run's def for THIS tool — its summary (hover on the name) + its parameter schema (the raw In view
     // annotates each arg key with its schema description). Absent on older debug events (names only).
@@ -420,7 +426,7 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // the step seq to correlate; without them (a page-loop run) fall back to the plain pending view.
     const awaiting = !!(st.awaitingApproval && st.pending && !decided && hash && st.seq != null);
     // What the call WANTS, deterministically, from the tool's own render — null for a tool that offers none.
-    const intent = awaiting ? intentFor(st) : null;
+    const intent = (awaiting || fading) ? intentFor(st) : null;
     // A pending approval AUTO-UNFURLS the In so you review the call before deciding (no extra click).
     // So does being the step someone just navigated TO — from a lane block or an answer citation, both of
     // which say "open this step". Landing on a collapsed row that merely pulses is the promise half-kept:
@@ -450,22 +456,17 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // A surface that sets nothing (the panel, the overlay) reads 0 and closes in the same tick it always did, so
     // this costs them neither a frame nor a behaviour change.
     const bodyRef = useRef<HTMLDivElement>(null);
-    const [closing, setClosing] = useState(false);
-    const closeMs = (): number => {
-        const el = bodyRef.current;
-        if (!el || typeof getComputedStyle !== "function") return 0;
-        const ms = parseFloat(getComputedStyle(el).getPropertyValue("--astep-close-ms"));
-        return Number.isFinite(ms) && ms > 0 ? ms : 0;
-    };
+    // The duration is read from the STEP ROOT, not the body: in calm a gated step is not forced open, so there may
+    // be no body mounted to read it from at the moment the gate has to animate away. The property inherits, so the
+    // body still sees the same number.
+    const rootRef = useRef<HTMLDivElement>(null);
+    const { closing, close, cancel } = useCloseAnimation(rootRef);
     const toggle = (): void => {
         // `forcedOpen`, not `awaiting`: a step that CANNOT close has nothing to animate, but a gated step in calm
         // closes like any other and was snapping shut while every step beside it eased. It read as a different
         // control on the one step you are most likely to be poking at.
-        if (!open || forcedOpen) { setClosing(false); setExpanded((v) => !v); return; }
-        const ms = closeMs();
-        if (!ms) { setExpanded(false); return; }
-        setClosing(true);
-        setTimeout(() => { setClosing(false); setExpanded(false); }, ms);
+        if (!open || forcedOpen) { cancel(); setExpanded((v) => !v); return; }
+        close(() => setExpanded(false));
     };
     // Keep the step expanded after you decide (setExpanded), so it doesn't collapse when `awaiting`
     // clears — you see the Out result fill in on the same open cell.
@@ -475,8 +476,18 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // permanently widens the transcript you came to read. It collapses to its one-line preview instead,
     // which still fills in with the result. Deciding is also the one moment a collapse cannot lose you
     // anything — you have just read the call in order to approve it.
+    //
+    // THROUGH THE SAME CLOSE the header toggle uses, or deciding is the one collapse on the page that snaps:
+    // `decided` clears `awaiting` in the same render, so the body unmounted in one tick and a card you had just
+    // been reading became a one-line row with no motion between the two. You are not told where it went.
     const decide = (ok: boolean, persist = false, feedback?: string) => {
-        setExpanded(!focusMode.value); setDecided(true);
+        setDecided(true);
+        // `fading` keeps the GATE CARD mounted for the same beat. It is the biggest thing on the step and it is
+        // what you were looking at, so animating only the body left the card itself blinking out. A flag of its
+        // own rather than reusing `closing`, which is also how a long-decided step collapses — that must not
+        // conjure the card back.
+        if (focusMode.value) { setFading(true); close(() => { setFading(false); setExpanded(false); }); }
+        else setExpanded(true);
         if (hash && st.seq != null) decidedSteps.add(stepKey(hash, st.seq));
         void decideGate(st, hash!, st.seq!, ok, persist, feedback);   // fetch_url: grant its host in-gesture, then post
         rev.value++;   // re-render the run footer so it drops "waiting for your approval" at once
@@ -491,10 +502,13 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // Consent scope: approving a python_exec that loads an EXTERNAL Google Sheet caches that
     // spreadsheet for the rest of the page-session (later calls to it won't re-prompt). Tell the
     // human the approval is a session-scoped grant, not a one-shot.
-    const sheetGrants = awaiting ? externalSheetGrant(st.arguments) : [];
-    const showGrants = awaiting && hasPersistGrants(st.grants);
+    // `gate`, not `awaiting`: everything the card SAYS has to stay put while it animates away, or its last beat
+    // on screen is a different card — the intent sentence replaced by the generic question, the grant note gone.
+    const gate = awaiting || fading;
+    const sheetGrants = gate ? externalSheetGrant(st.arguments) : [];
+    const showGrants = gate && hasPersistGrants(st.grants);
     return (
-        <div data-astep-seq={st.seq} class={`astep tool${dimmed ? " away" : ""}${open ? " open" : ""}${closing ? " closing" : ""}${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}>
+        <div ref={rootRef} data-astep-seq={st.seq} class={`astep tool${dimmed ? " away" : ""}${open ? " open" : ""}${closing ? " closing" : ""}${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}>
             <button class="astep-head" onClick={toggle}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 <Dot status={st.pending ? "pending" : toolFailed(st.result) ? "err" : "ok"} />
@@ -558,8 +572,8 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                 : null}
             {/* Approval bar at the BOTTOM — after In/Out — so you review the call (its rendered In)
                 before the approve/deny controls, and it reads as the last thing to act on. */}
-            {awaiting
-                ? <div class="astep-approve" ref={approveRef}>
+            {gate
+                ? <div class={`astep-approve${fading ? " closing" : ""}`} ref={approveRef}>
                     {sheetGrants.length
                         ? <div class="appr-note"><IconWarn /><span>Approving grants this run access to {sheetGrants.map((id, i) => <SheetChip key={i} id={id} />)} for the rest of this session — later calls to {sheetGrants.length === 1 ? "it" : "them"} won't re-prompt.</span></div>
                         : null}
