@@ -32,14 +32,12 @@ import type { LoadedModel } from "../contract-server";
 
 import { RenderPanel } from "./render-panel";
 import { hoverModel, kbFocus, stepFocus, stepDepth, noteFocusOrder } from "./vram-focus";
-import { VRAM_PALETTES, capacity, resourceHistory, layout, streamLive, colorFor, frameFocused, vramPalette, VRAM_HISTORY, sessionModels, poolFacts, choosePreset, customTracks, editLayout, presetId, restoreLayout } from "./panel-state";
+import { VRAM_PALETTES, capacity, resourceHistory, layout, streamLive, colorFor, frameFocused, vramPalette, VRAM_HISTORY, sessionModels, poolFacts, choosePreset, customTracks, editLayout, presetId, restoreLayout, VRAM_PALETTE_KEY } from "./panel-state";
 import { rowTipSuppressed, ModelFacts, CostFacts } from "./panel-facts";
 import { loadSeenCards, unavailableGpus, seenCards, machineEvents, servingSince, pollPs, fetchCapacity, loadingModels, psLoading, capacityAsked } from "./resource-feed";
 import { modelKindLabel, probeCaps } from "./model-status";
 import { layoutKey, dragging, dragStale, measureFloor, easeVramH, cancelEase, noteDrag } from "./panel-size";
 
-export const VRAM_PALETTE_KEY = "ml_vram_palette";   // storage.local: which colour palette names the models
-export const VRAM_COLORS = VRAM_PALETTES.vivid;   // the default palette — a model keeps its colour for as long as it is DRAWN, not just while resident
 /** A machine-level banner for GPUs the server can see and cannot use.
  *
  *  MACHINE-LEVEL, NOT A PER-CARD BADGE, because there is no card to badge: a faulted GPU is absent from

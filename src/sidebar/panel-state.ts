@@ -212,3 +212,7 @@ export function editLayout(tracks: TrackDef[]): void {
     customTracks.value = tracks;   // kept so a detour through a preset doesn't destroy it
     saveLayout();
 }
+
+export const VRAM_PALETTE_KEY = "ml_vram_palette";   // storage.local: which colour palette names the models
+
+export const VRAM_COLORS = VRAM_PALETTES.vivid;   // the default palette — a model keeps its colour for as long as it is DRAWN, not just while resident
