@@ -257,6 +257,7 @@ learned by shipping the wrong version first.
 | the chat page (`src/chat/`): the client store, hosts, stream rules, the web build | `docs/dev/chat-page.md` (+ `docs/spec/CHAT_PAGE.md`, `docs/spec/SESSION_CONTRACT.md`) |
 | the session archive (SQLite over OPFS, the offscreen worker, move-instead-of-delete) | `docs/dev/archive.md` |
 | the hub client (`src/hub/`): HPKE over WebCrypto, certificates, sealed commands, encrypted streams | `docs/dev/hub-client.md` |
+| notifications: what reaches someone with the app closed, on which surface, and what a real push would still add | `docs/spec/NOTIFICATIONS.md` |
 | the patched Ollama/OpenWebUI features and how the client reads them | `docs/FORKED-BACKENDS.md` |
 | the e2e harness, observe, the bench, live probes, demos | `docs/dev/e2e-harness.md` (+ each tool's skill in `.claude/skills/`) |
 
@@ -299,6 +300,13 @@ learned by shipping the wrong version first.
   screens: same palette, same glyphs, same order, unless a device fact (a thumb, a sheet, a back gesture) makes one
   wrong. A change to the page's colours or icons is a change to `mobile/` in the same breath. The rule and how the two
   drifted the first time: `mobile/AGENTS.md`.
+- **Notifications.** The certificate's deadlines are handed to the OS **in advance** (one pure plan, `src/chat/reminders.ts`),
+  which is why they reach a closed app and a push could not; an approval is posted only while this device is already
+  running, and only while nobody is looking at it. Only the DURABLE half of a certificate may reach a reminder
+  (`notAfterMs`, `mayRevoke`, `renewable`) — `issuerOnline` and `canRenew` are readings of now, and a sentence
+  scheduled for next month must still be true when it arrives. Nothing about a session, a task or a page ever goes on
+  a lock screen. `expo-notifications` is installed but deliberately NOT in `app.json`'s plugins: its iOS plugin writes
+  a push entitlement a free signing certificate cannot grant.
 - **Sidebar.** One app, two surfaces: a new app→parent message must also be handled in `panel.ts`, and anything
   that acts back on the page needs the reverse channel (panel → background → content shell). The shared session
   views call `services()` (`services.ts`), never `chrome.*` or the parent frame, because the chat page and a phone app

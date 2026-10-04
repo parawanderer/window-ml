@@ -9,6 +9,7 @@
 // one feature instead of misreading each other. Every message carries the bridge version `v`; a different major is
 // refused whole.
 
+import type { Reminder } from "../chat/reminders";
 import type { HostStatus, ListedSession, ModelChoice, RuntimeInfo, SessionKind, SessionStatus, SessionSummary, TabGroupInfo, TabInfo } from "../session-host";
 
 /** The bridge's version. Bump it when a message changes shape in a way an older peer would misread. */
@@ -114,6 +115,15 @@ export type ToNative =
     | { type: "status"; status: HostStatus }
     /** What the runtimes need a hand with, most urgent first; `count` is the problems only, what the inbox badge says. */
     | { type: "attention"; items: AttentionRow[]; count: number }
+    /**
+     * The notifications to have waiting for THIS DEVICE'S CERTIFICATE, as dates and finished sentences
+     * (`src/chat/reminders.ts`). The app hands them to the OS, which is the one thing a WebView cannot do: a page
+     * has no way to be woken at a date, and this is the one deadline worth reaching someone with the app closed.
+     *
+     * The whole plan every time, replacing whatever the app had. An empty one means there is nothing to say yet,
+     * which is the normal answer for a certificate with months left, and cancels anything left from before.
+     */
+    | { type: "reminders"; plan: Reminder[] }
     /** `startable`: the runtimes this device may start each kind of session on, by the page's rule (grants.ts `mayStart`). */
     | { type: "index"; runtimes: RuntimeInfo[]; sessions: SessionSummary[]; startable?: { chat: string[]; agent: string[] } }
     | { type: "session"; chrome: SessionChrome | null }
@@ -214,6 +224,7 @@ const TO_NATIVE: Record<ToNative["type"], Shape> = {
     account: { account: "object|null" },
     status: { status: "object" },
     attention: { items: "array", count: "number" },
+    reminders: { plan: "array" },
     index: { runtimes: "array", sessions: "array", startable: "object?" },
     session: { chrome: "object|null" },
     chromeOf: { id: "string", chrome: "object|null" },

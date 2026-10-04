@@ -22,6 +22,7 @@ import { Keyring } from "../hub/keyring";
 import { agentTarget, attentionForApp, runtimeStorage, sessionChrome, startableFor } from "../native/snapshot";
 import type { PairingApi } from "../pairing/api";
 import type { CertState } from "./attention";
+import { certReminders } from "./reminders";
 import { installServices, services } from "../sidebar/services";
 import { installTooltipLayer } from "../sidebar/tooltip-layer";
 import { applyCodePrefs, applyTheme, initThemeStyle, pageTheme } from "../sidebar/prefs";
@@ -225,6 +226,10 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
             ? { notAfterMs: m.notAfterMs, ...(m.mayRevoke ? { mayRevoke: true } : {}), renewable: m.renewable !== false, issuerOnline: false }
             : null;
         post({ type: "attention", ...attentionForApp(store.runtimes.value, live(ownCert)) });
+        // AND THE DATES, for the app to hand the OS. Not the same thing as the inbox item: that one is read when
+        // someone opens the app, and these are what reach them when they do not. The plan is derived from the
+        // durable half of the certificate only, so it stays true until it fires (reminders.ts).
+        post({ type: "reminders", plan: certReminders(ownCert, Date.now()) });
     }).catch(() => {});
     /** `issuerOnline` is the one part that is live: a browser going to sleep turns a one-press renewal into "open one". */
     const live = (c: CertState | null) => c && { ...c, issuerOnline: store.runtimes.value.some((rt) => rt.online) };

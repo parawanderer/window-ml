@@ -1,0 +1,25 @@
+# notify-settings.yaml — the React Native app's DEMO build (`install --demo`): the NOTIFICATIONS row in Settings.
+#
+# It asserts the PROMISE, which is the part that is a product decision: the row says what allowing notifications will
+# put on a lock screen, and the one thing it will never put there, whether or not they have been allowed yet.
+#
+# It deliberately does NOT assert which of the three states the row is in, because that is the OS's answer and not
+# this app's: an emulator grants POST_NOTIFICATIONS at install, so the row there reads "On" before anything has been
+# pressed, while a real phone on Android 13+ reads "Allow notifications" until someone does. A flow that pinned one
+# of those would fail on the other machine and say nothing about the app. The OS permission sheet is not driven for
+# the same reason: what that would prove is that expo-notifications works.
+#
+# What a notification SAYS, and when, is tests/reminders.test.mjs. Needs the demo world:
+# `node scripts/android.mjs flows tests/mobile/notify-settings.yaml` (or scripts/ios.mjs, same command).
+appId: dev.wander.windowml
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "KV cache size at 32k"
+    timeout: 60000
+- tapOn: "Settings"
+- assertVisible: "NOTIFICATIONS"
+# One Text, so Maestro matches it whole: both halves of the promise have to be in it.
+- assertVisible:
+    text: ".*access to the account runs out.*approval is waiting.*Never what a session is doing.*"

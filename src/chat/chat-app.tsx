@@ -23,6 +23,7 @@ import { START_GRACE_MS, StartPage, useHeldTrue } from "./start-page";
 import { AttentionButton, AttentionPage, useAttention, useOwnCert } from "./attention-page";
 import { attentionCount } from "./attention";
 import { setAppBadge } from "./app-badge";
+import { useNotifications } from "./notify";
 import { useFadeEdges } from "./fade-edges";
 import { ExportChat, exportingChat, type PartialWhy } from "./export-dialog";
 import { ViewToggle, calm, codeSize, panelSize, listOpen, pane, setCalm, setPane } from "./view-mode";
@@ -631,7 +632,11 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
     // Held through a worker restart (START_GRACE_MS): the page does not trade the start page for "Pick a session" and
     // back each time the browser stops an idle worker.
     const canStart = useHeldTrue(startableOn(store, "agent").length > 0 || startableOn(store, "chat").length > 0, START_GRACE_MS);
-    const att = useAttention(store, extras, useOwnCert(platform.pairing, store, extras));
+    const cert = useOwnCert(platform.pairing, store, extras);
+    const att = useAttention(store, extras, cert);
+    // WHAT REACHES SOMEONE WHO IS NOT LOOKING AT THIS PAGE: the certificate's deadlines while the page is alive, and
+    // an approval arriving while they are elsewhere. Silent until the Settings row has been pressed (notify.ts).
+    useNotifications(cert, store.index);
     // THE SAME COUNT, ON THE ICON, where this page is installed as an app: the badge is what the inbox says, so a
     // phone or an iPad on a home screen shows a run waiting without being opened. A tab and a packaged app are both
     // left alone (app-badge.ts).

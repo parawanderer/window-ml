@@ -200,6 +200,32 @@ test("calm view is what the page opens in, and the toggle hands the panel's deta
     await page.close();
 });
 
+test("notifications: the row says what it will put on a lock screen before it asks, and what a web page cannot do", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
+    const openSettings = async () => {
+        await page.locator(".chat-gear-btn").first().click();
+        await page.getByRole("menuitem", { name: "Settings" }).click();
+    };
+    await openSettings();
+    // Not asked yet: the promise, both halves of it, and the one press that asks. A prompt nobody opened is answered
+    // "no" and then cannot be asked again, so nothing here asks on its own (docs/spec/NOTIFICATIONS.md).
+    const row = page.locator(".chat-set-row", { hasText: "Notifications" });
+    await expect(row).toContainText("access to the account runs out");
+    await expect(row).toContainText("Never what a session is doing");
+    await expect(row.getByRole("button", { name: "Allow" })).toBeVisible();
+    // Allowed: the row says so, and names the limit that is the web's and not the phone app's. A page cannot be woken
+    // at a date, so with the app closed nothing fires and a missed reminder waits.
+    await page.context().grantPermissions(["notifications"]);
+    await page.reload();
+    await page.locator(".chat").waitFor();
+    await openSettings();
+    const after = page.locator(".chat-set-row", { hasText: "Notifications" });
+    await expect(after).toContainText("cannot wake itself");
+    await expect(after.getByRole("button", { name: "Allow" })).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 test("the page's code size is a setting of its own, and the prose keeps its size", async () => {
     const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
     const size = () => page.evaluate(() => getComputedStyle(document.querySelector(".chat")).getPropertyValue("--code-fs").trim());
