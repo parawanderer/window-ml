@@ -744,11 +744,23 @@ resume and reset already are the reconciliation.
 - **What is saved is the subscription's history, not `applied`.** A page of older events REWRITES `applied`, and a
   copy saved from it would claim a history the saved position does not start at. `seen` records only what the
   subscription delivered, and where that history began (`earlier`), which older pages never move.
-- **Bounded.** A session over `CACHE_MAX_BYTES` is not kept at all, since half a session is worse than none, and
-  past `CACHE_SESSIONS` the least recently saved goes. A screenshot-heavy agent run simply refetches.
+- **Bounded, by TRIMMING.** A session over `CACHE_MAX_BYTES` is cut down to its newest events rather than dropped,
+  and past `CACHE_SESSIONS` the least recently saved goes. It used to be dropped whole, on the reasoning that half a
+  session is worse than none — true of a copy that lies about where it starts, and not true here, because
+  `earlier.from` exists to say that history continues before what is held and is already persisted. The old rule
+  also inverted what anyone wants: the biggest sessions are the most annoying to refetch over a hub, and they were
+  the only ones kept at nothing. Trimming takes WHOLE EVENTS off the old end, which is what keeps it safe — `feed`
+  is the subscription's position at the new end, so it stays as true as it was. Nothing is taken out of an event:
+  dropping a screenshot-heavy run's images would fit far more and would make the copy misrepresent itself, with no
+  way in the format to say the captures were left behind. Two honest floors remain — a single event over the cap,
+  and events that cannot say their `pos`, since a copy that cannot state where it begins would have to claim the
+  session starts there.
 - **A slow cache is an empty cache.** An open waits at most `CACHE_LOAD_MS` for the copy, then opens normally: the
   page outside the app, where nothing answers the store, used to sit on "Loading…" for the store's 15 s timeout.
-- **Where the phone keeps it:** the app's CACHE directory (`mobile/src/store.ts`, names starting `ev`), out of
-  backups and purgeable by the OS. Joining or leaving an account clears it (`native-embed-app.tsx`), so a device
-  never replays the last account's sessions. Checked on the iOS simulator: two opened sessions land in
-  `Library/Caches/events/`, and a relaunch reopens one through the reset path with exactly one copy of each turn.
+- **Where the phone keeps it:** the app's DOCUMENTS (`mobile/src/store.ts`, names starting `ev`, under
+  `Documents/events/`). It was the cache directory, out of backups and purgeable by the OS, which is the right
+  promise for an optimisation and the wrong one for history a reader relies on with no signal. What makes that
+  affordable is that the copies bound themselves (above), so this is an archive with a ceiling rather than a folder
+  that grows until the phone is full. Anything left under the old cache path is simply not found and refetched once.
+  Joining or leaving an account clears it (`native-embed-app.tsx`), so a device never replays the last account's
+  sessions.

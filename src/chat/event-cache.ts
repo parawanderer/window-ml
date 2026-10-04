@@ -17,8 +17,12 @@
 // transcript would replay without the captures and nothing in the format can say they were left behind. A smaller
 // honest copy beats a larger one that misrepresents itself.
 //
-// The app keeps it in its CACHE directory, not its documents: out of backups, and the OS may purge it, which is
-// exactly what a cache promises.
+// IT IS KEPT IN THE APP'S DOCUMENTS, not its cache directory. History you have already pulled should still be
+// readable with no signal, and in the cache directory the OS could take it at any moment — which is a fine promise
+// for an optimisation and the wrong one for something a reader relies on. It is still a cache in the sense that
+// matters (never the truth, only a copy the runtime can invalidate by epoch); what changed is that it is no longer
+// allowed to vanish on its own. The bounds above are what make that affordable: this is an archive with a ceiling,
+// not a folder that grows until the phone is full.
 
 import type { MlDebugEvent } from "../contract-debug";
 import type { SessionKey } from "../session-host";

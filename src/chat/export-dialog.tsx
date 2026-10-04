@@ -13,7 +13,13 @@ import { truncate } from "../sidebar/format";
 import { Dialog } from "./dialog";
 
 /** The session whose export is being chosen, or null. Set by the header's `⋮`. */
-export const exportingChat = signal<{ key: SessionKey; title: string; partial: boolean } | null>(null);
+export const exportingChat = signal<{ key: SessionKey; title: string; partial?: PartialWhy } | null>(null);
+
+/** WHY an export would be short of the whole session, which decides what there is to say about it. `"more"` can be
+ *  acted on — the rest is still on the runtime; `"gone"` cannot, and telling someone to load what no longer exists
+ *  is worse than saying nothing. They were one boolean before, wired to `"gone"` and worded for `"more"`, so the
+ *  warning appeared exactly when it could not be followed and stayed silent when it could. */
+export type PartialWhy = "more" | "gone";
 
 /** One shape a session can leave in: what the file is, and who it is for. */
 interface Format { id: string; label: string; hint: string; run: (key: string) => void; needsPrint?: boolean }
@@ -48,7 +54,8 @@ export function ExportChat() {
             </div>
             {/* A long session is paged: what is in hand is the end of it, and a file that quietly holds only that
                 would be read as the whole conversation. Said here rather than after the download. */}
-            {it.partial ? <p class="chat-dialog-hint">Only the part of this session loaded here. Show earlier turns first to export them too.</p> : null}
+            {it.partial === "more" ? <p class="chat-dialog-hint">Only the part of this session loaded here. Show earlier turns first to export them too.</p> : null}
+            {it.partial === "gone" ? <p class="chat-dialog-hint">Only part of this session: the rest no longer exists on the runtime, so this is what was kept.</p> : null}
             <div class="chat-dialog-actions">
                 <button type="button" class="btn" onClick={close}>Cancel</button>
                 <button type="submit" class="btn primary">Export</button>

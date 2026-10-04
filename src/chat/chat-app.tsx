@@ -24,7 +24,7 @@ import { AttentionButton, AttentionPage, useAttention } from "./attention-page";
 import { attentionCount } from "./attention";
 import { setAppBadge } from "./app-badge";
 import { useFadeEdges } from "./fade-edges";
-import { ExportChat, exportingChat } from "./export-dialog";
+import { ExportChat, exportingChat, type PartialWhy } from "./export-dialog";
 import { ViewToggle, calm, codeSize, panelSize, listOpen, pane, setCalm, setPane } from "./view-mode";
 import { MenuItem } from "./menu";
 import { SessionModelPicker } from "./model-picker";
@@ -167,7 +167,7 @@ function PagePeek({ peek }: { peek: { busy: boolean; peek: () => void; why?: str
  */
 function SessionMenu({ store, s, rt, title, sessionKey, partial, floating }: {
     store: ChatStore; s?: SessionSummary; rt?: RuntimeInfo; title?: string;
-    sessionKey?: SessionKey; partial?: boolean; floating?: boolean;
+    sessionKey?: SessionKey; partial?: PartialWhy; floating?: boolean;
 }) {
     const [at, setAt] = useState<{ top: number; right: number } | null>(null);
     const btn = useRef<HTMLButtonElement>(null);
@@ -193,7 +193,7 @@ function SessionMenu({ store, s, rt, title, sessionKey, partial, floating }: {
                         it already lives in the gear's menu — where it was duplicated behind a condition on the window's
                         width, so whether the item existed depended on how wide the window was. */}
                     {s && rt ? <SessionActions store={store} s={s} rt={rt} title={title || "Session"} onPicked={() => setAt(null)}
-                        onExport={sessionKey ? () => (exportingChat.value = { key: sessionKey, title: title || "Session", partial: !!partial }) : undefined} /> : null}
+                        onExport={sessionKey ? () => (exportingChat.value = { key: sessionKey, title: title || "Session", partial }) : undefined} /> : null}
                 </div>
             ) : null}
         </>
@@ -274,6 +274,11 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     const rt = id ? store.runtimes.value.find((x) => x.id === id.runtime) : undefined;
     const s = sessionMap.get(sessionKey);
     const truncated = store.truncated.value.has(sessionKey);
+    // WHAT WOULD BE MISSING FROM AN EXPORT, and which of the two it is. `more` is the common one and the one that
+    // used to go unsaid: pages exist on the runtime that this device simply has not fetched, so a file written now
+    // quietly holds the end of a conversation. `gone` is the one that used to be reported, under wording that told
+    // the reader to load what no longer exists anywhere.
+    const partial: PartialWhy | undefined = store.earlier.value.get(sessionKey)?.more ? "more" : truncated ? "gone" : undefined;
     const scroller = useRef<HTMLDivElement>(null);
     const content = useRef<HTMLDivElement>(null);
     const stuck = useRef(true);
@@ -375,7 +380,7 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
                 still need a door, or the calm view (the default) is the one with no way to export what is in it. A
                 single ⋮ in the corner is the least the page can put back and still answer "and this session?". */}
             {bare && !native
-                ? <div class="chat-more-corner"><SessionMenu store={store} s={summary} rt={rt} title={title} sessionKey={sessionKey} partial={truncated} floating /></div>
+                ? <div class="chat-more-corner"><SessionMenu store={store} s={summary} rt={rt} title={title} sessionKey={sessionKey} partial={partial} floating /></div>
                 : null}
             {bare
                 ? null
@@ -393,7 +398,7 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
                     </span>
                     <span class="sp" />
                     {!narrow && !modelBelow && summary?.model && rt ? <ModelTop store={store} rt={rt} model={summary.model} sessionKey={sessionKey} summary={summary} /> : null}
-                    {narrow ? <SessionMenu store={store} s={summary} rt={rt} title={summary?.model ? title : undefined} sessionKey={sessionKey} partial={truncated} />
+                    {narrow ? <SessionMenu store={store} s={summary} rt={rt} title={summary?.model ? title : undefined} sessionKey={sessionKey} partial={partial} />
                         : <>
                             <DeviceViews extras={extras} rt={rt} />
                             <ViewToggle />
@@ -401,7 +406,7 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
                             {/* IN-CHAT options, beside (not inside) the page-wide ones: looking at this session's
                                 page, exporting this session. `Look at the page` was a camera icon of its own here,
                                 which spent a header button on the one action and left the rest nowhere to go. */}
-                            <SessionMenu store={store} s={summary} rt={rt} title={title} sessionKey={sessionKey} partial={truncated} />
+                            <SessionMenu store={store} s={summary} rt={rt} title={title} sessionKey={sessionKey} partial={partial} />
                         </>}
                 </div>}
             {!native && waiting && (gateAway || !calm.value) ? <button class="chat-waiting" onClick={jumpToApproval}>Waiting on your approval<span class="chat-waiting-go">Review ›</span></button> : null}
