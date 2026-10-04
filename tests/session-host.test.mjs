@@ -29,13 +29,20 @@ test("approving is its own scope, never drive", () => {
     assert.deepEqual(approving, ["approval.answer"]);
 });
 
-test("administering devices is its own scope, never approve or drive", async () => {
+// --- the scope each command needs, and which of them are about the ACCOUNT rather than a session ---
+
+test("administering devices is its own scope, never approve or drive — and renewing yourself is not administering", async () => {
     const { COMMAND_SCOPE: SCOPES } = await import("../src/session-host.ts");
-    // A phone that may approve a click must not thereby be able to pair another phone, so every device.* command
-    // takes `admin` and nothing else does.
+    // A phone that may approve a click must not thereby be able to pair another phone, so acting ON the account's
+    // devices takes `admin` and nothing else does.
     const admin = Object.entries(SCOPES).filter(([, s]) => s === "admin").map(([t]) => t).sort();
-    assert.deepEqual(admin, ["device.list", "device.renew", "device.revoke", "device.scopes"]);
+    assert.deepEqual(admin, ["device.list", "device.revoke", "device.scopes"]);
     for (const t of admin) assert.notEqual(SCOPES[t], "drive", t);
+    // `device.renew` is DELIBERATELY not among them. A device renews ITSELF — the answer carries the new chain, so
+    // the asker has to be the recipient — and gating that on an administrative scope would lock a phone or a
+    // watch-only tablet out of staying in the account at all. The runtime enforces the self-only rule, and a renewal
+    // re-issues the same scopes, so the loosened scope grants nothing.
+    assert.equal(SCOPES["device.renew"], "view");
 });
 
 test("every command names a scope, so a new one cannot arrive unguarded", async () => {
