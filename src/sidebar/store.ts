@@ -105,7 +105,7 @@ export interface Session {
     // Live model output for the CURRENT step while it streams (opt-in stream:true) — the accumulated
     // reasoning/content so far, shown as a live "thinking" block until the step's real events land (which
     // clear it). Transient; not persisted in the transcript. See the agent-stream reducer + LiveStream UI.
-    liveStream?: { step: number; localStep?: number; reasoning?: string; content?: string; /** the engine's own running count, when sent */ tokens?: number; /** that count while the call was thinking */ reasoningTokens?: number };
+    liveStream?: { step: number; localStep?: number; reasoning?: string; content?: string; /** the engine's own running count, when sent */ tokens?: number; /** that count while the call was thinking */ reasoningTokens?: number; /** characters a hub left off the FRONT of this preview, so a surface can mark it a tail */ elided?: number };
     /** A model call is in flight RIGHT NOW: when it started, and (streamed runs) what it has been emitting.
      *  Transient like {@link liveStream} — cleared the moment the step lands — and the only thing that lets a
      *  timeline draw a generation while it happens instead of back-dating the finished block. */

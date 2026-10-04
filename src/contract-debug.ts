@@ -125,7 +125,12 @@ export interface DebugAgentStream extends DebugBase { kind: "agent-stream"; step
     tokens?: number;
     /** The same running count, frozen when the call LEFT its thinking phase: how many tokens the thinking took.
      *  Present once a count arrived during thinking; it stops moving when the answer or a tool call starts. */
-    reasoningTokens?: number; }
+    reasoningTokens?: number;
+    /** Characters dropped from the FRONT of `reasoning` and `content` together, because this event crossed a HUB: a
+     *  remote live preview carries a bounded tail rather than everything so far (`LivePreview`, session-relay.ts).
+     *  Absent means nothing was dropped, which is every event on the runtime's own surfaces. A reader shows what it
+     *  has and says it is a tail; the authoritative text arrives in the step, as it always did. */
+    elided?: number; }
 
 /** A model call is UNDERWAY. Emitted the instant the turn's request goes out, and again whenever the
  *  generation changes phase, so a surface can draw the call while it is happening instead of back-dating a

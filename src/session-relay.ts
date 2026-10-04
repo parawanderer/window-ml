@@ -170,6 +170,102 @@ export function decodeStreamFrame(batch: Bytes): SessionStreamMessage | null {
     return null;
 }
 
+/**
+ * How much of a live preview's text one REMOTE frame carries, per channel (`reasoning` and `content` each).
+ *
+ * `agent-stream` carries the text ACCUMULATED so far, and the UI replaces rather than appends, which is what makes a
+ * dropped or reordered event harmless. Over a hub it is also what makes the cost QUADRATIC in a turn's length: a
+ * 5-minute turn emits 3,333 of them 90 ms apart, averaging half the final text, and that was measured over a real
+ * hub at 118 MB uploaded to deliver 73 KB of model output. Capped, the same turn is 10 MB and every frame is the same
+ * size whatever the turn does.
+ *
+ * It is a TAIL, because this text is a preview of something being written and the end is the part being written. What
+ * it costs is on screen only mid-stream and only remotely: the authoritative text arrives in `agent-step` /
+ * `agent-result` regardless, and `elided` says how much is missing so a reader can mark it rather than imply the
+ * answer starts there.
+ */
+export const LIVE_PREVIEW_CHARS = 2048;
+
+/**
+ * How often one session's live preview goes out to a hub.
+ *
+ * `STREAM_EMIT_MS` (90 ms, sw-run-host.ts) is tuned for a reader in this browser, where an event costs a function
+ * call. A remote frame is sealed, signed, published, retained in a ring of 512 per stream and queued for every
+ * subscriber, and the hub neither coalesces session events nor drops them: a subscriber that falls behind is
+ * DISCONNECTED as a slow consumer (window-ml-hub docs/PROTOCOL.md), which is what a phone on a slow link would get.
+ * At 90 ms a single long turn also fills that 512-envelope ring in 46 seconds, pushing the session's own steps out of
+ * it, so a device that wakes mid-run backfills previews of one step and no history.
+ *
+ * At 500 ms a preview still reads as live text appearing, the ring covers four minutes, and the frames are a sixth.
+ */
+export const LIVE_PREVIEW_MS = 500;
+
+/**
+ * The live previews of one connection's streams, bounded for the wire.
+ *
+ * Two bounds, both LOSSY ON PURPOSE and neither visible to the contract: each frame carries a tail
+ * ({@link LIVE_PREVIEW_CHARS}) instead of everything so far, and at most one goes out per session per
+ * {@link LIVE_PREVIEW_MS}. Nothing else is touched, so this is a wire encoding rather than a change to the event: the
+ * reducer still REPLACES what a preview carries, the index still coalesces by superseding, and a client that misses
+ * one simply gets the next.
+ *
+ * It is the LEADING edge and keeps no timer. A trailing flush would need one per session in a service worker that can
+ * be evicted between the schedule and the fire, and it would have to be ordered against the step that follows it, to
+ * buy the last 500 ms of a preview that `agent-step` supersedes in the same breath.
+ *
+ * A cursor it drops leaves a HOLE, which the contract allows: positions are "strictly increasing within one epoch,
+ * not necessarily contiguous" (session-host.ts). Its state is one timestamp per session, for the life of one hub
+ * connection, which is the same lifetime `SessionPublisher` keeps its streams for.
+ */
+export class LivePreview {
+    private readonly sent = new Map<string, number>();
+    private readonly chars: number;
+    private readonly everyMs: number;
+    private readonly now: () => number;
+
+    constructor(opts: { chars?: number; everyMs?: number; now?: () => number } = {}) {
+        this.chars = opts.chars ?? LIVE_PREVIEW_CHARS;
+        this.everyMs = opts.everyMs ?? LIVE_PREVIEW_MS;
+        this.now = opts.now ?? Date.now;
+    }
+
+    /** One message as it should go out, or null when this preview is paced away. Anything that is not a live preview
+     *  is returned untouched: a step, a say, a result and the whole subscription protocol are what a reader needs
+     *  WHOLE, and they are a handful per turn. */
+    forWire(hash: string, m: SessionStreamMessage): SessionStreamMessage | null {
+        if (m.type !== "event" || m.event?.kind !== "agent-stream") return m;
+        const last = this.sent.get(hash);
+        if (last != null && this.now() - last < this.everyMs) return null;
+        this.sent.set(hash, this.now());
+        return { ...m, event: tail(m.event as import("./contract-debug").DebugAgentStream, this.chars) };
+    }
+}
+
+/**
+ * One preview event with each channel cut to its last `chars`, and `elided` saying how much of both went.
+ *
+ * The cut channel is MARKED in its own text, with a leading ellipsis, rather than left to each surface to mark from
+ * `elided`. Three surfaces render this text (the sidebar's live thought block, the HUD card's streaming answer, the
+ * chat page through the same components) and a phone app renders its own; marking it here is the one place that
+ * knows WHICH channel was cut, where `elided` is a single number for both. What `elided` is for is a reader that
+ * wants to say how much, or to tell a tail from a short answer without parsing prose.
+ */
+function tail(ev: import("./contract-debug").DebugAgentStream, chars: number): import("./contract-debug").DebugAgentStream {
+    const over = (s: string | undefined): number => Math.max(0, (s?.length ?? 0) - chars);
+    const elided = over(ev.reasoning) + over(ev.content);
+    if (!elided) return ev;
+    const cut = (s: string): string => (s.length > chars ? `${MARK}${s.slice(-chars)}` : s);
+    return {
+        ...ev,
+        ...(ev.reasoning ? { reasoning: cut(ev.reasoning) } : {}),
+        ...(ev.content ? { content: cut(ev.content) } : {}),
+        elided: (ev.elided ?? 0) + elided,
+    };
+}
+
+/** What a cut channel opens with, so text that starts mid-sentence reads as the end of something being written. */
+const MARK = "… ";
+
 /** A device the runtime can see, as far as deciding whether to hand it a session's key is concerned. */
 export interface Grantee {
     /** principal id, hex */
