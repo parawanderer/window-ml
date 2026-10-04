@@ -123,6 +123,10 @@ export function demoHost(now = Date.now(), opts: { latencyMs?: number } = {}): F
         agentStart(k, now - 3 * 60 * min, "Tabulate the prices from the three fare cards and plot them", 2),
         {
             ...base(k, now - 179 * min, 1), kind: "agent-step", step: 1, seq: 1, tool: "python_exec", approval: "sandbox", toolMs: 1840,
+            // A SEPARATE REASONING CHANNEL, which no demo session had — so the `thinking` disclosure, the one a
+            // reader opens and closes most while following a run, was not on screen anywhere to be tested. Here
+            // rather than on the pointer run, whose height a backfill test depends on.
+            reasoning: "The page lists three fares and I already have their prices. Sorting them in pandas rather than in the page keeps the numbers typed, and leaves a dataframe to plot from in the next step.",
             arguments: { code: PY_CODE },
             result: "  airline  price\n1      HV     96\n0      TP    118\n2      KL    131",
             renderIn: { type: "python-in", mode: "script", code: PY_CODE },

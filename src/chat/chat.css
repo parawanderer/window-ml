@@ -816,9 +816,17 @@ button.chat-page-go:hover { color: var(--fg); }
    the component reads it and waits, and a surface that sets nothing closes in the same tick it always has. */
 .chat.calm .astep-body { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); --astep-close-ms: 200; }
 .chat.calm .astep-body.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; }
+/* THE GATE CARD GOES THE SAME WAY as the body under it. It is the largest thing on a step and the thing you were
+   reading, so blinking it out on the click left you looking for where the call went. Inert while it leaves —
+   a card mid-exit is not a control, and a second click on it would decide an answered gate. */
+.chat.calm .astep-approve.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; pointer-events: none; }
+/* The step root carries the duration too, because a gated step in calm is not forced open: there may be no body
+   mounted to read it from at the moment the card has to leave. It inherits, so the body reads the same number. */
+.chat.calm .astep.tool { --astep-close-ms: 200; }
 @media (prefers-reduced-motion: reduce) {
     .chat.calm .astep-body { animation: none; --astep-close-ms: 0; }
-    .chat.calm .astep-body.closing { animation: none; }
+    .chat.calm .astep-body.closing, .chat.calm .astep-approve.closing { animation: none; }
+    .chat.calm .astep.tool { --astep-close-ms: 0; }
 }
 
 /* The full-size image's own controls, top right of the overlay and out of the picture's way. Icon buttons with
