@@ -155,7 +155,10 @@ const KNOWN: Record<AttentionCode, Known> = {
         level: "suggests", title: "Add this to your home screen",
         // What it actually buys, not a slogan: it opens full screen, and the icon can carry the same count the inbox
         // does — which in a tab is specified to do nothing at all (app-badge.ts).
-        detail: "Installed, it opens full screen and its icon can show the count of what needs you; in a browser tab that badge does nothing. Tap the Share button, then Add to Home Screen.",
+        // AND THE TRAP, which costs an account if it is not said: an installed web app's storage is its OWN container,
+        // separate from the browser's, so a device paired in this tab arrives on the home screen in no account at all
+        // and has to be paired again there. Saying it after the fact is saying it too late.
+        detail: "Installed, it opens full screen and its icon can show the count of what needs you; in a browser tab that badge does nothing. Tap the Share button, then Add to Home Screen. It starts its own storage, separate from this tab's, so it joins the account on its own: pair it once it is on the home screen, not before.",
     },
     "archive-off": {
         level: "suggests", title: "Old sessions are deleted, not kept",
