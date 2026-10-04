@@ -180,7 +180,8 @@ export function SessionList({ store, activeKey, narrow, onStart, gear, gearWide 
     const needsYou = sessions.filter((s) => s.pendingApprovals > 0 && rtOf.has(s.id.runtime)).sort((a, b) => b.lastTs - a.lastTs);
     const upTop = new Set(needsYou.map(keyOf));
     const pinnedRows = sessions.filter((s) => isPinned(s) && !upTop.has(keyOf(s)) && rtOf.has(s.id.runtime));
-    const olderCount = sessions.filter((s) => !isPinned(s) && !isRecent(s) && rtOf.has(s.id.runtime)).length;
+    /** How many of a runtime's sessions the list is not reaching back far enough to show. */
+    const olderOn = (id: string) => sessions.filter((s) => s.id.runtime === id && !isPinned(s) && !isRecent(s)).length;
     const row = (s: SessionSummary, showRuntime = false, showPin = false) => {
         const key = keyOf(s);
         return <IndexRow key={key} store={store} s={s} rt={rtOf.get(s.id.runtime)!} active={activeKey === key} moved={moved.has(key)} showRuntime={showRuntime} showPin={showPin} />;
@@ -190,7 +191,7 @@ export function SessionList({ store, activeKey, narrow, onStart, gear, gearWide 
             <div class="head">
                 <ListToggle narrow={narrow} /><b>Sessions</b><span class="sp" />
                 {status.state !== "online" ? <span class="chat-chip warn">{status.state === "connecting" ? "connecting…" : "offline"}</span> : null}
-                <button class={`tt hbtn${mainView.value === "search" ? " on" : ""}`} aria-label="Search sessions" onClick={openSearch}>
+                <button class={`tt hbtn${mainView.value === "search" ? " on" : ""}`} aria-label="Search sessions" onClick={() => openSearch()}>
                     <IconSearch /><span class="tt-pop" role="tooltip">Search sessions</span>
                 </button>
                 <StartMenu store={store} onPick={onStart} icon={<IconCompose />} />{narrow ? gear : null}
@@ -225,16 +226,22 @@ export function SessionList({ store, activeKey, narrow, onStart, gear, gearWide 
                                         : mine.length
                                             ? mine.map((s) => row(s))
                                             : <div class="chat-rt-empty">Nothing in the last {RECENT_DAYS} days.</div>}
+                                    {/* UNDER THE RUNTIME IT BELONGS TO, and carrying it. One row at the foot of the whole
+                                        list answered "older than a month" with a number spanning every machine, and then
+                                        opened a page looking at all of them — so finding the thing you were just looking
+                                        at meant picking the device again, under the heading that had already said which
+                                        one it was. The phone has had it this way (ListScreen's section footer); this is
+                                        the page catching up, which is the rule for anything drawn on both. */}
+                                    {olderOn(rt.id) ? (
+                                        <button class="chat-older-go" onClick={() => openSearch(rt.id)}>
+                                            <IconHistory /><span>Older sessions</span><span class="chat-older-n">{olderOn(rt.id)}</span>
+                                        </button>
+                                    ) : null}
                                 </div>
                             </div>
                         </section>
                     );
                 })}
-                {olderCount ? (
-                    <button class="chat-older-go" onClick={openSearch}>
-                        <IconHistory /><span>Older sessions</span><span class="chat-older-n">{olderCount}</span>
-                    </button>
-                ) : null}
             </div>
             {narrow ? null : <div class="chat-list-foot">{gearWide}</div>}
         </aside>

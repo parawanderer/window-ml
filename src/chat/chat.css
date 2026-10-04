@@ -208,7 +208,15 @@ html, body, #root { height: 100%; }
 /* Notices: a stack at the bottom, above the composer's reach but never over the send button for long. */
 /* `left` is the reading column's middle, set by `Notices` from the column itself; 50% is the fallback before it has. */
 .chat-notices { position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; z-index: 50; width: min(92vw, 460px); }
-.chat-notice { display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; box-shadow: 0 6px 20px rgb(0 0 0 / .3); }
+/* A notice RISES into place. It arrives unannounced, over whatever is being read, and at the bottom of the window
+   where nothing else moves — appearing fully formed in one frame reads as a glitch rather than as something new, and
+   the eye has nothing to follow to it. Fourteen pixels and a fade is enough to say "this just came in" without the
+   message being unreadable while it travels. It is not animated OUT, because the only thing that would buy is a
+   prettier departure for something the reader has already finished with. */
+.chat-notice { display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; box-shadow: 0 6px 20px rgb(0 0 0 / .3);
+    animation: chat-notice-in .24s cubic-bezier(0, 0, .2, 1) both; }
+@keyframes chat-notice-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .chat-notice { animation: none; } }
 .chat-notice.error { border-color: var(--err); }
 .chat-notice span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .chat-notice-x { background: none; border: none; color: var(--fg-dim); font-size: 1.2em; cursor: pointer; min-width: 32px; min-height: 32px; }

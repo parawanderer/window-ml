@@ -8,10 +8,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import { Bot, ChevronLeft, Search as SearchIcon, X } from "lucide-react-native";
 import type { ListedSession } from "../../../src/session-host";
 import { useEmbed } from "../embed";
+import type { Routes } from "../routes";
 import { STATUS_LABEL, STATUS_TONE } from "../format";
 import { useSessionLayer } from "../layer";
 import { SIZE, usePalette } from "../theme";
@@ -41,7 +42,10 @@ export function SearchScreen() {
     const e = useEmbed();
     const layer = useSessionLayer();
     const [query, setQuery] = useState("");
-    const [device, setDevice] = useState<string | null>(null);
+    // The runtime the list sent us to, if it sent us from one: "N older on this runtime" means that runtime, and
+    // arriving on "All devices" made you pick it again under a heading that had just named it.
+    const asked = useRoute<RouteProp<Routes, "Search">>().params?.device ?? null;
+    const [device, setDevice] = useState<string | null>(asked);
     const [rows, setRows] = useState<ListedSession[]>([]);
     const [more, setMore] = useState(false);
     const [busy, setBusy] = useState(true);

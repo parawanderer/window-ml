@@ -922,8 +922,9 @@ test("desktop: the list shows the last month, and the search page holds every se
     await expect(list.locator(".chat-row", { hasText: "Tokyo in four days" })).toHaveCount(0);
     await expect(list.locator(".chat-older-go .chat-older-n")).toHaveText("48");
 
-    // "Older sessions" opens the search page in the main pane, focused, newest first, drawn forty at a time.
-    await list.locator(".chat-older-go").click();
+    // The HEADER's search button, not the runtime's "Older sessions" row: that row carries its runtime into the
+    // device filter (its own test below), and this one is about the page holding every session there is.
+    await list.getByRole("button", { name: "Search sessions" }).click();
     const search = page.locator(".chat-search");
     await expect(search.locator("input")).toBeFocused();
     await expect(search.locator(".chat-search-row")).toHaveCount(40);
@@ -964,6 +965,32 @@ test("desktop: the list shows the last month, and the search page holds every se
     await search.locator(".chat-search-row").first().click();
     await expect(page.locator(".chat-search")).toHaveCount(0);
     await expect(page.locator(".chat-lede-title")).toHaveText("Tokyo in four days");
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("a runtime's older sessions sit under it and open the search page already on that device", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
+    const list = page.locator(".chat-list");
+
+    // UNDER THE RUNTIME, not at the foot of the whole list: the row counts that runtime's own history, so it is
+    // inside the group whose heading names the machine, and a runtime with nothing older has no row at all.
+    // Matched by its own HEADING, not by its text: "Needs you" holds a row that names the machine too, so a
+    // hasText match lands on that group instead and quietly asserts nothing.
+    const groupOf = (name) => list.locator(".chat-group").filter({ has: page.locator(".chat-rt", { hasText: name }) });
+    await expect(groupOf("Work laptop").locator(".chat-older-go .chat-older-n")).toHaveText("48");
+    await expect(groupOf("Desk PC").locator(".chat-older-go")).toHaveCount(0);
+
+    // And it CARRIES its runtime: the search page opens already filtered to it, so finding the session you were
+    // just looking at does not mean naming the device again under the heading that had just named it.
+    await groupOf("Work laptop").locator(".chat-older-go").click();
+    const devices = page.locator(".chat-search-devices");
+    await expect(devices.getByRole("button", { name: "Work laptop" })).toHaveAttribute("aria-pressed", "true");
+    await expect(devices.getByRole("button", { name: "All devices" })).toHaveAttribute("aria-pressed", "false");
+
+    // The HEADER's search button asks about everything, and never inherits whichever row was clicked last.
+    await list.getByRole("button", { name: "Search sessions" }).click();
+    await expect(devices.getByRole("button", { name: "All devices" })).toHaveAttribute("aria-pressed", "true");
     expect(errors).toEqual([]);
     await page.close();
 });

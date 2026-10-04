@@ -2,8 +2,8 @@
 // Theme setting is not Auto (when it is, following it IS following the system, and a fourth choice that means the
 // same as another would only be something to puzzle over). Two shapes of one choice: a row in the gear menu that
 // opens into a short list, and a segmented control in Settings → This page.
-import { useState } from "preact/hooks";
-import { IconCheck, IconChevron, IconTheme } from "../sidebar/icons";
+import { IconCheck, IconTheme } from "../sidebar/icons";
+import { MenuGroup } from "./menu";
 import { config } from "../sidebar/store";
 import { pageThemeMode, setPageThemeMode, type PageThemeMode } from "./view-mode";
 
@@ -23,31 +23,18 @@ export function themeChoices(): { choices: { id: PageThemeMode; label: string }[
 
 /** The gear menu's row: "Theme · Dark", opening into the choices as radio items. */
 export function ThemeMenu() {
-    const [open, setOpen] = useState(false);
     const { choices, chosen } = themeChoices();
     const now = choices.find((c) => c.id === chosen)?.label.replace(/^Like the extension.*/, "Extension") ?? "";
     return (
-        <>
-            <button class="chat-menu-item" role="menuitem" aria-haspopup="true" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-                <span class="chat-menu-ico" aria-hidden="true"><IconTheme /></span>
-                <span class="chat-menu-label">Theme for this page</span>
-                <span class="chat-menu-val">{now}</span>
-                <span class={`chat-menu-caret${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
-            </button>
-            {/* Always mounted, so closing animates too; `inert` and `aria-hidden` keep a closed list out of reach. */}
-            <div class={`chat-menu-subs${open ? " open" : ""}`} role="group" aria-label="Theme for this page"
-                aria-hidden={!open} inert={!open}>
-                <div class="chat-menu-subs-in">
-                    {choices.map((c, i) => (
-                        <button key={c.id} class="chat-menu-item chat-menu-sub" role="menuitemradio" aria-checked={c.id === chosen}
-                            style={`--i:${i}`} tabIndex={open ? 0 : -1} onClick={() => setPageThemeMode(c.id)}>
-                            <span class="chat-menu-label">{c.label}</span>
-                            {c.id === chosen ? <span class="chat-menu-on" aria-hidden="true"><IconCheck /></span> : null}
-                        </button>
-                    ))}
-                </div>
-            </div>
-        </>
+        <MenuGroup icon={<IconTheme />} label="Theme for this page" detail={now}>
+            {(open) => choices.map((c, i) => (
+                <button key={c.id} class="chat-menu-item chat-menu-sub" role="menuitemradio" aria-checked={c.id === chosen}
+                    style={`--i:${i}`} tabIndex={open ? 0 : -1} onClick={() => setPageThemeMode(c.id)}>
+                    <span class="chat-menu-label">{c.label}</span>
+                    {c.id === chosen ? <span class="chat-menu-on" aria-hidden="true"><IconCheck /></span> : null}
+                </button>
+            ))}
+        </MenuGroup>
     );
 }
 
