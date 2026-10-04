@@ -24,16 +24,16 @@ import { kvFill, ribbonSpans, type RibbonSpan } from "../resource-gens";
 import { boxAxis, presetsFor, type TrackDef } from "../resource-presets";
 import { bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge } from "../resource-topology";
 import {
-    segments, chartWindow, axisFrac, axisGaps, axisOf, timeAtFraction, sampleAtFraction, scrubExtent, scrubTo, scrubPinch, snapFraction, TAIL_SLACK_MS,
+    segments, chartWindow, axisFrac, axisGaps, axisOf, timeAtFraction, sampleAtFraction, scrubExtent, scrubTo, scrubPinch, TAIL_SLACK_MS,
     scrubZone, scrubResize, scrubIntent, windowSamples, scrubNudge, wheelScrubFraction, runWeight, runFrac, gridStep, gridTimes, runGap, type RunGap
 } from "../resource-axis";
 import { placeEvents, scopeToSpan, filterEvents, sessionWindow } from "../resource-lane";
 import { deviceBands, hostBands, OTHER_BAND_NOTE, OUTSIDE_VIEW_LABEL, residualRank, pendingAllocation, stepBands, bandEdge, type Band, bandOrder } from "../resource-bands";
 import { editLayout, poolFacts, keysReach, resourceHistory, capacity, colorFor, poolColor, hiddenPools, togglePool, VRAM_POLL_MS, laneFilter, streamLive, sampleGapMs, sampleGraceMs, layout } from "./panel-state";
 import { ModelFacts, CostFacts } from "./panel-facts";
-import { barKey, chartHeld, cursorAt, enterPool, eventHover, eventKey, gapHover, HOLD_LAPSE_MS, holdAxis, holdKey, hotEvent, hoverAt, hoverPool, lastPointerAt, leavePool, litBy, live, noteRuns, poolHover, readingSurface, releaseAxis, tipMuted, trackCursor } from "./chart-interaction";
+import { barKey, chartHeld, cursorAt, cursorOn, enterPool, eventHover, eventKey, gapHover, HOLD_LAPSE_MS, holdAxis, holdKey, hotEvent, hoverAt, hoverPool, lastPointerAt, leavePool, litBy, live, noteRuns, poolHover, readingSurface, releaseAxis, snapUnder, tipMuted, trackCursor } from "./chart-interaction";
 import { hoverModel, kbFocus, kbPool, focusDepth } from "./vram-focus";
-import { scopedHash, loadedModels, resWindowS, RESWIN_KEY, zoomRange, crosshair, laneScoped, laneEnabled, showLane, snapDot, predictView, timeGrid } from "./store";
+import { scopedHash, loadedModels, resWindowS, RESWIN_KEY, zoomRange, crosshair, laneScoped, laneEnabled, showLane, predictView, timeGrid } from "./store";
 import { clockAt, hhmmss, hhmmssms, fmtDur, fmtAge } from "./timestamps";
 import { useTipPlacement } from "./use-tip";
 import { tileOffsets } from "./tip";   // where several track-anchored tips go when they would cover each other
@@ -44,22 +44,6 @@ import { bandIdentity, bandTint, W, H, partFill, bandFill } from "./chart-paint"
 /** Which part of the scrub window the pointer is over, so the cursor can say a handle is there before you
  *  try to use it. A resize affordance you can only discover by failing to pan is not an affordance. */
 const scrubGrab = signal<"from" | "to" | "pan" | "outside" | null>(null);
-/** WHICH SAMPLE the pointer is over, resolved from the LIVE data every time it is asked.
- *
- *  Deliberately a function of the current `runs` rather than a stored answer. The pointer is a position on
- *  screen; which sample sits under it changes as the timeline advances, so holding the resolution pins the
- *  mark to a sample that then walks out from under the cursor. Cheap enough to call per render — it is a
- *  weighted walk over the segment list. */
-const snapUnder = (runs: ResourceSample[][]) => {
-    const c = crosshair.value;
-    if (!snapDot.value || !c) return null;
-    // AN EVENT RULE OWNS THE POINTER while it is hovered. A dashed instant is a vertical mark of its own, a
-    // pixel or two from the crosshair and never on the same x — it names an INSTANT, the crosshair names the
-    // nearest SAMPLE — so drawn together they read as one thing that cannot decide where it is. The same rule
-    // the reading tooltips already follow (`cursorOn`), applied to the mark.
-    if (eventHover.value || gapHover.value) return null;   // …and so does a gap: there is no sample in one
-    return snapFraction(runs, c.frac, live.axis, sampleGraceMs());
-};
 
 /** Mute the cursor tip if one is showing, and say whether that happened — so the Esc handler can fall through
  *  to leaving the zoom when there was nothing to hide. The decision lives HERE, beside the signals it reads,
@@ -69,17 +53,6 @@ export function muteTip(): boolean {
     tipMuted.value = true;
     return true;
 }
-
-/** The cursor for a surface, for the tips that READ THE PLOT (the sample stamp, a band, the pool rows) —
- *  null while an EVENT on that same surface is hovered, because then the event's own tip is the answer.
- *
- *  A dashed instant rule is drawn INSIDE the plot, so pointing at one is also pointing at the plot: both tips
- *  fired, both are placed at the pointer, and they stacked — with the one you actually pointed at underneath
- *  the memory reading you did not ask for. The same "only the surface the pointer is on renders a tip" rule
- *  as everywhere else in this panel, applied to two things sharing ONE surface. `cursorAt` is the unguarded
- *  read, and only EventTip wants it. */
-const cursorOn = (surface: string) =>
-    (eventHover.value?.scope === surface || gapHover.value?.scope === surface ? null : cursorAt(surface));
 
 /**
  * WHAT ONE GENERATION LEFT IN THE KV CACHE, drawn inside the drilled-in cache part while its lane span is
