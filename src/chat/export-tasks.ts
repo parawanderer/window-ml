@@ -119,6 +119,11 @@ export function startExportPull(opts: { store: ChatStore; key: SessionKey; title
         // a progress bar for it — making them press the button again would be a joke. A FAILED one is left for the
         // dialog to show, because "this is short of the whole session" is the one thing it must not write silently.
         if (!now.detached && state === "ready") takeExport(id);
+    }, (e: unknown) => {
+        // The loop records a runtime's refusals on the session rather than raising them, so reaching here means
+        // something threw that nobody expected. Say so on the task: a pull that simply stopped, with the dialog
+        // still showing a bar, is the one failure a reader waits out instead of interrupting.
+        if (exportTask(id)) patch(id, { state: "failed", why: e instanceof Error ? e.message : "the pull stopped" });
     });
     return id;
 }

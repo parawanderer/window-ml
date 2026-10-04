@@ -42,6 +42,47 @@ Sessions are keyed `runtime:hash` in `sessionMap`, so the same hash on two runti
 selection is the store's `view` signal (`{ name: "detail", hash: key }`), because shared views read it too (the
 Python renderer names the driving model from it, and `highlight` targets the session being read).
 
+### Paging a history back, and what a replay costs
+
+A transcript that does not reach its session's start pages back with `session.backfill`, forty events at a time (the
+page size is a size decision wearing a count: forty screenshots is tens of megabytes). Each page is applied by
+FORGETTING the reduced session and replaying every event held, in history order, because the reducer appends a step
+it has not seen rather than inserting it in order — reduce only the page and a transcript comes out 46…50, 6…45, 1…5.
+That was tried; three existing tests caught it.
+
+Replaying is right. Replaying once per page is not, and for a long while it was the whole cost of an export, which
+fetches the rest of the session first. Measured on a synthetic session with no wire at all:
+
+| events | before | after |
+| --- | --- | --- |
+| 3,200 | 177 ms | 7 ms |
+| 12,800 | 1,169 ms | 19 ms |
+| 25,600 | 5,336 ms | 22 ms |
+| 102,400 | — | 54 ms |
+
+Two separate quadratics, both inside the reducer's step path, and neither visible in the obvious place:
+
+- `steps.findIndex(x => x.seq === ev.seq)`, the lookup that patches a pending step with its DONE, scans the whole
+  array for every step.
+- `s.steps = [...steps, step]` copies the whole array for every step.
+
+One at a time those are nothing, which is why they were there: a live run appends a step every few seconds. A replay
+does the same work for tens of thousands of events at once, so ONE rebuild of a 25,600-event session took 1.2
+seconds, and a pull that rebuilt after each of its 640 pages took 5.3. `batchReduce(fill)` (debug-reducer.ts) makes
+the reducer, for the duration of `fill`, write into one array per session and find a row by a `seq` index. The array
+is a copy taken at the first write, so the session's `steps` changes identity exactly once and whatever held the
+previous array never sees it grow — the same thing a single event would have done, which is what makes this a cost
+change and not a semantic one. Nothing renders in between: `rev` is bumped once, by the caller, afterwards.
+
+Both replay sites use it. On top of that, `loadEarlier(key, { defer: true })` fetches a page without reducing at all,
+and `applyEarlier(key)` reduces the lot in one pass — which is what a full pull does, since reducing after every page
+is work on a transcript nobody is watching. `applyEarlier` belongs in a `finally`: a session left deferred shows the
+tail it had before the pull with the rest fetched and invisible. It does nothing if the session was reset or
+re-subscribed in between, since replaying those pages over a different history would append every answer and user
+message a second time.
+
+The remaining limit is memory, not time: `applied` holds every event fetched, which is what a replay needs.
+
 ## The stream rules
 
 `SessionFeed` keeps an epoch and the SET of cursors applied in it, and drops, in this order: a message about another

@@ -23,15 +23,20 @@ const runtime = (id) => ({
 const summary = (hash) => ({ id: { runtime: "laptop", hash }, kind: "agent", status: "done", task: "t", createdTs: 1000, lastTs: 1000, pendingApprovals: 0, saved: true });
 const step = (hash, seq) => ({ kind: "agent-step", id: hash, ts: 1000 + seq, save: true, session: { hash, turn: seq }, step: seq, seq, tool: "exec", arguments: { js: "1" }, result: String(seq) });
 
-/** A store that holds `from` events it has not fetched, and whose pages move it by `per` — or not at all. */
+/** A store that holds `from` events it has not fetched, and whose pages move it by `per` — or not at all. `applied`
+ *  counts the calls that ended the deferral, which is what says the pull reduced once rather than per page. */
 function stubStore(from, per) {
     const state = { from, more: from > 0, truncated: false, loading: false };
+    const calls = { deferred: 0, plain: 0, applied: 0 };
     return {
+        calls,
         earlier: { value: new Map([["laptop:aaaa0001", state]]) },
-        async loadEarlier() {
+        async loadEarlier(_key, opts) {
+            if (opts?.defer) calls.deferred++; else calls.plain++;
             state.from = Math.max(0, state.from - per);
             state.more = state.from > 0;
         },
+        applyEarlier() { calls.applied++; },
     };
 }
 
@@ -78,6 +83,7 @@ test("a reader who cancels gets back how far it got, not a claim of completeness
     });
     assert.equal(out.kind, "cancelled");
     assert.equal(out.total, 100);
+    assert.equal(store.calls.applied, 1, "and what it did fetch was reduced on the way out");
     assert.ok(out.done >= 30 && out.done < 100, `stopped part way, at ${out.done}`);
 });
 
@@ -200,4 +206,26 @@ test("stopping a detached pull forgets it without writing anything", async () =>
     await flush(6);
     assert.deepEqual(mine(), []);
     assert.equal(wrote, 0);
+});
+
+// --- what a pull costs ---
+
+test("a pull reduces ONCE, however many pages it took", async () => {
+    // The replay in `loadEarlier` rebuilds the session from everything held. That is the right cost for the one page
+    // a reader asked for and quadratic for a pull: 25,600 events spent 5.3s of CPU rebuilding a transcript nobody
+    // was watching. The fix is not a cheaper replay, it is one replay — which is a thing to assert, because nothing
+    // about the result it produces would ever show that it had been done six hundred times.
+    const store = stubStore(400, 40);
+    assert.deepEqual(await pullAllHistory(store, "laptop:aaaa0001", {}), { kind: "complete" });
+    assert.equal(store.calls.deferred, 10, "ten pages");
+    assert.equal(store.calls.plain, 0, "none of them reduced on its own");
+    assert.equal(store.calls.applied, 1, "and one replay at the end");
+});
+
+test("a pull that ends badly still reduces what it fetched", async () => {
+    // Every way out has to pass through it: a session left deferred shows the tail it had before the pull, with the
+    // rest fetched and invisible, which is the worst of both and silent.
+    const store = stubStore(100, 0);
+    assert.equal((await pullAllHistory(store, "laptop:aaaa0001", {})).kind, "failed");
+    assert.equal(store.calls.applied, 1);
 });

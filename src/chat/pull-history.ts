@@ -33,6 +33,13 @@ export type PullOutcome =
  * IT MUST BE ABLE TO END. A runtime that answers every request with the same page — a bug, a truncated history
  * reported wrongly — would otherwise spin forever on a progress bar that never moves, which is worse than an error
  * because nobody interrupts a bar that looks like it is working. So a page that does not move `from` stops it.
+ *
+ * IT REDUCES ONCE, NOT PER PAGE. `loadEarlier` normally rebuilds the session from everything held, which is right
+ * for the one page a reader asked for (about 12ms at 25,600 events) and quadratic for the six hundred this asks
+ * for: a pull of that size spent 5.3 seconds of CPU on replays of a transcript nobody was watching. `defer` fetches
+ * without reducing and {@link ChatStore.applyEarlier} does it once. That call is in a `finally`, because a session
+ * left deferred shows the tail it had before the pull with the rest fetched and invisible — so every way out of the
+ * loop, including the two failures and the cancel, has to pass through it.
  */
 export async function pullAllHistory(
     store: ChatStore,
@@ -45,18 +52,22 @@ export async function pullAllHistory(
     const report = () => opts.onProgress?.({ done: done(), total });
 
     report();
-    while (at()?.more) {
-        if (opts.signal?.aborted) return { kind: "cancelled", done: done(), total };
-        const before = at()?.from ?? 0;
-        await store.loadEarlier(key);
-        const now = at();
-        if (now?.error) return { kind: "failed", done: done(), total, why: now.error };
-        // No movement and still claiming more: the runtime is not going to finish this, and a bar that never moves
-        // is the one failure a reader will wait out rather than interrupt.
-        if ((now?.from ?? 0) >= before && now?.more) {
-            return { kind: "failed", done: done(), total, why: "the runtime stopped sending earlier events" };
+    try {
+        while (at()?.more) {
+            if (opts.signal?.aborted) return { kind: "cancelled", done: done(), total };
+            const before = at()?.from ?? 0;
+            await store.loadEarlier(key, { defer: true });
+            const now = at();
+            if (now?.error) return { kind: "failed", done: done(), total, why: now.error };
+            // No movement and still claiming more: the runtime is not going to finish this, and a bar that never
+            // moves is the one failure a reader will wait out rather than interrupt.
+            if ((now?.from ?? 0) >= before && now?.more) {
+                return { kind: "failed", done: done(), total, why: "the runtime stopped sending earlier events" };
+            }
+            report();
         }
-        report();
+        return { kind: "complete" };
+    } finally {
+        store.applyEarlier(key);
     }
-    return { kind: "complete" };
 }
