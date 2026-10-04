@@ -1789,6 +1789,13 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
    `--r-ts-w` is the gutter's width, and the line sits inside its right edge (border-box). */
 .r-timed { display: block; position: relative; --r-ts-w: 56px; }
 .r-timed.short { --r-ts-w: 38px; }      /* mm:ss — the hour is the current one, shown on hover */
+/* THE GUTTER IS DRAWN IN THE SAME ELEMENT A PLAIN BLOCK IS — the inner `code.hljs`, which is what the
+   highlighter's theme actually paints. `.code` on the `pre` carries the font and the border; the background
+   and the text colour come from the theme's own rule, so a gutter drawn in a bare `div.code` sat on the
+   panel's colours while the same output with the gutter off sat on the theme's, and the toggle read as two
+   different renderers. Its left padding goes, exactly as the line-number gutter's does, so the stamps start
+   at the block's own edge and `.r-timed::after` lands between them and the text. */
+pre.code > code.hljs.r-timed { padding-left: 0; }
 .r-timed::after { content: ""; position: absolute; top: 0; bottom: 0; left: calc(var(--r-ts-w) - 1px);
                   width: 1px; background: var(--border); pointer-events: none; }
 .r-ts-row { display: flex; gap: 8px; white-space: pre; }
