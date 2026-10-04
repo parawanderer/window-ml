@@ -638,16 +638,34 @@ test("certItems: a button only where pressing one would work, and a different se
     assert.equal(attentionCount([ready, ...Object.values(no).map(([i]) => i)]), 5);
 });
 
-test("attentionItems: a lapse this device fixed before is worded as a repeat, with the lasting choice named", async () => {
+test("attentionItems: a lapse says something new each time it comes back, and stops asking once it cannot work", async () => {
+    // The failure this is for: a card that told someone to choose an option their browser does not offer, every
+    // restart, with no fix available and no way to put it away. The third telling has to be able to say so.
     const { attentionItems } = await import("../src/chat/attention.ts");
     const rt = { id: "local", name: "This browser", kind: "browser", online: true, contractVersion: 1, grants: [], capabilities: { archive: { folder: "needs-grant" } } };
-    const first = attentionItems([rt], new Map(), () => true);
-    assert.equal(first[0].title, "The archive folder needs reconnecting");
-    assert.match(first[0].detail, /choose Always allow/);
-    const again = attentionItems([rt], new Map(), () => true, new Set(), (r, code) => code === "archive-folder-lapsed");
-    assert.equal(again[0].title, "The archive folder lapsed again");
-    assert.match(again[0].detail, /allowed only until the browser restarted/);
-    assert.equal(again[0].fix.label, "Reconnect", "the same one-click fix either way");
+    const after = (n) => attentionItems([rt], new Map(), () => true, new Set(), () => n)[0];
+
+    const first = after(0);
+    assert.equal(first.title, "The archive folder needs reconnecting");
+    assert.match(first.detail, /if the browser's prompt offers/i, "offered as a possibility, never as a promise");
+
+    const again = after(1);
+    assert.equal(again.title, "The archive folder lapsed again");
+    assert.match(again.detail, /allowed only until the browser restarted/);
+    assert.match(again.detail, /Not every browser offers one/);
+
+    const settled = after(2);
+    assert.equal(settled.title, "This browser will not keep the archive folder");
+    assert.match(settled.detail, /nothing further to do about it here/);
+    assert.match(settled.detail, /still searchable/, "and what is NOT lost, since nothing can be done");
+    assert.equal(settled.fix.label, "Reconnect", "the same one-click fix at every stage");
+
+    // Only that last one can be put away, and only through the stored dismissal every suggestion uses.
+    assert.equal(first.hideable, undefined);
+    assert.equal(again.hideable, undefined);
+    assert.equal(settled.hideable, true);
+    assert.equal(attentionItems([rt], new Map(), () => true, new Set(["local:archive-folder-lapsed"]), () => 2).length, 0);
+    assert.equal(attentionItems([rt], new Map(), () => true, new Set(["local:archive-folder-lapsed"]), () => 1).length, 1, "and not before then");
 });
 
 test("pairing words: codes and fingerprints in fours as wmlbox prints them, and each failure says what to do next", async () => {

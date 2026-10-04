@@ -11,7 +11,7 @@
 import { signal, type ReadonlySignal } from "@preact/signals";
 import type { Command, CommandError, CommandResult, HostStatus, RuntimeId, RuntimeInfo, SessionHost, SessionId, SessionIndexUpdate, SessionKey, SessionSummary, Unsubscribe } from "../session-host";
 import { parseSessionKey, sessionKey } from "../session-host";
-import { awaitingStart, forgetSessionReduced, onDebug, titleTried } from "../sidebar/debug-reducer";
+import { awaitingStart, batchReduce, forgetSessionReduced, onDebug, titleTried } from "../sidebar/debug-reducer";
 import { rev, sessionMap, view } from "../sidebar/store";
 import { SessionFeed } from "./session-feed";
 import type { CachedSession, EventCache } from "./event-cache";
@@ -68,6 +68,16 @@ export class ChatStore {
      * while there is something to page to; the strings are the same objects the reducer keeps, not copies.
      */
     private readonly applied = new Map<SessionKey, { pos?: number; event: MlDebugEvent }[]>();
+
+    /**
+     * Sessions whose pages are being fetched WITHOUT being reduced yet (`loadEarlier({ defer: true })`): the pages
+     * themselves, newest-fetched first, and where the held history began when it started.
+     *
+     * The feed and epoch are the check that what finally gets replayed is still the history it was fetched for: a
+     * reset or a re-subscribe in between makes it a different one, and replaying these over it would append every
+     * answer and user message a second time.
+     */
+    private readonly deferred = new Map<SessionKey, { feed: SessionFeed; epoch: string; from: number; pages: { pos?: number; event: MlDebugEvent }[][] }>();
     /** notices to show, oldest first */
     readonly notices = signal<Notice[]>([]);
     /** the session whose events are subscribed, if any */
@@ -173,7 +183,11 @@ export class ChatStore {
             const feed = this.feeds.get(key)?.snapshot();
             const s = this.seen.get(key);
             if (!feed || !s) return;
-            void this.cache!.save({ v: 1, key, feed, events: s.events, earlier: s.earlier, truncated: s.truncated }).catch(() => undefined);
+            // The SUMMARY rides along, from the index this store already keeps: the phone's copy is an archive entry
+            // (summary, history, events), not a bag of events, so it reads back through the same reader the
+            // extension's archive uses instead of needing to be rebuilt into one.
+            const summary = this._index.value.get(key);
+            void this.cache!.save({ v: 1, key, feed, events: s.events, earlier: s.earlier, truncated: s.truncated, ...(summary ? { summary } : {}) }).catch(() => undefined);
         }, 800));
     }
 
@@ -245,8 +259,16 @@ export class ChatStore {
      * Load the page of events before the oldest one held, for a session whose transcript does not reach its start.
      * One at a time: a second call while one loads does nothing. A failure is recorded on the session's
      * {@link EarlierState} rather than raised as a notice, since it is shown where the page would have been.
+     *
+     * `defer` fetches the page WITHOUT reducing it, for a caller that is going to ask for many in a row (an export
+     * pulling a session back to its start, `pull-history.ts`). Each page is reduced by replaying everything held,
+     * which is the right cost for one page and the wrong one for six hundred: it makes a full pull quadratic, and a
+     * pull of 25,600 events spent 5.3 seconds of CPU here. Deferring makes the replay happen once.
+     *
+     * {@link applyEarlier} is what ends it, and the caller must reach it on every path — a session left deferred
+     * shows the tail it had before the pull, with the rest fetched and invisible.
      */
-    async loadEarlier(key: SessionKey): Promise<void> {
+    async loadEarlier(key: SessionKey, opts?: { defer?: boolean }): Promise<void> {
         const at = this._earlier.value.get(key);
         const feed = this.feeds.get(key);
         const id = parseSessionKey(key);
@@ -263,16 +285,62 @@ export class ChatStore {
         // The page covers [from, at.from). A held event inside that range is one the stream sent ahead of the tail
         // (the session's start, kept in a short ring), and the page has it in its proper place.
         const page = r.data.events.filter((e) => e?.session?.hash === id.hash).map((event, i) => ({ pos: r.data.from + i, event }));
-        const held = (this.applied.get(key) ?? []).filter((e) => e.pos == null || e.pos >= at.from);
-        const all = [...page, ...held];
-        // Replay: the reduced session goes, and everything comes back in history order.
-        forgetSessionReduced(key);
-        for (const e of all) this.reduce(id.runtime, e.event);
-        rev.value++;
-        if (r.data.more) this.applied.set(key, all);
-        else this.applied.delete(key);
+        // REPLAY, and it cannot simply be dropped. Reducing only the page is O(page) instead of O(held) and was
+        // tried: the reducer APPENDS a step it has not seen, so an earlier page lands after the later steps and the
+        // transcript comes out 46…50, 6…45, 1…5. Its "patches by `seq`" is about patching a step already there, not
+        // about inserting one in order.
+        //
+        // One replay is CHEAP — 25,600 events reduce in about 12ms — so the page a reader asks for while scrolling
+        // back costs nothing worth saving. What is expensive is doing it once per page for a whole pull, and so is
+        // rebuilding the held list each time around it; `defer` does neither, keeping the pages aside for one pass
+        // in {@link applyEarlier}. Nothing else here changes: the same events, in the same order, through the same
+        // reducer.
+        if (opts?.defer) {
+            const d = this.deferred.get(key);
+            if (d) d.pages.push(page);
+            else this.deferred.set(key, { feed, epoch, from: at.from, pages: [page] });
+        } else {
+            const all = [...page, ...this.heldFrom(key, at.from)];
+            forgetSessionReduced(key);
+            batchReduce(() => { for (const e of all) this.reduce(id.runtime, e.event); });
+            rev.value++;
+            if (r.data.more) this.applied.set(key, all);
+            else this.applied.delete(key);
+        }
         if (r.data.truncated) this.setTruncated(key, true);
         this.setEarlier(key, { from: r.data.from, more: r.data.more, truncated: r.data.truncated, loading: false });
+    }
+
+    /**
+     * Reduce what `loadEarlier({ defer: true })` fetched, in one pass, and end the deferral.
+     *
+     * Free and harmless when nothing was deferred, so a caller can put it in a `finally` and not reason about which
+     * way its loop left. It does NOTHING when the session has been reset, re-subscribed or closed since the pull
+     * began: that history is not this one, the live stream has already said so, and replaying the old pages over it
+     * would append every answer and user message a second time.
+     */
+    applyEarlier(key: SessionKey): void {
+        const d = this.deferred.get(key);
+        if (!d) return;
+        this.deferred.delete(key);
+        const id = parseSessionKey(key);
+        if (!id || this.feeds.get(key) !== d.feed || d.feed.currentEpoch !== d.epoch) return;
+        // The pages were fetched newest-first, so history order is the reverse of them, then what was already held
+        // when the deferral began — plus anything the live stream has appended since, which sorts after all of it.
+        const all = [...d.pages.reverse().flat(), ...this.heldFrom(key, d.from)];
+        forgetSessionReduced(key);
+        batchReduce(() => { for (const e of all) this.reduce(id.runtime, e.event); });
+        rev.value++;
+        // The replay buffer is kept only to page again; with nothing left behind it, it is just memory.
+        if (this._earlier.value.get(key)?.more) this.applied.set(key, all);
+        else this.applied.delete(key);
+    }
+
+    /** What is held for a session from history position `from` on. A held event BEFORE it is one the stream sent
+     *  ahead of the tail (the session's start, kept in a short ring), which the page being applied already has in
+     *  its proper place. An event with no position cannot be placed and is kept where it was. */
+    private heldFrom(key: SessionKey, from: number): { pos?: number; event: MlDebugEvent }[] {
+        return (this.applied.get(key) ?? []).filter((e) => e.pos == null || e.pos >= from);
     }
 
     /**
@@ -361,6 +429,9 @@ export class ChatStore {
     }
 
     private forgetReduced(key: SessionKey): void {
+        // Anything fetched but not yet reduced belongs to the history being thrown away: replaying it afterwards
+        // would rebuild a session that was reset out from under it, or one the runtime says is gone.
+        this.deferred.delete(key);
         forgetSessionReduced(key);
         titleTried.delete(key);
         rev.value++;

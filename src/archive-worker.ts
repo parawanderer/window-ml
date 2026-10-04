@@ -9,7 +9,7 @@
 //
 // chrome-free, like python-worker.ts: the wasm is found next to this script's own URL.
 import sqlite3InitModule, { type Database, type Sqlite3Static } from "@sqlite.org/sqlite-wasm";
-import { archiveStats, dirtyMonths, exportMonth, importBytes, listArchived, markAllDirty, markClean, metaGet, metaSet, migrate, prepareSession, readArchived, removeArchived, writeSession, type ArchiveInput } from "./archive-db";
+import { archiveStats, dirtyMonths, exportMonth, importBytes, listArchived, markAllDirty, markClean, metaGet, metaSet, migrate, prepareSession, readArchived, removeArchived, wasmDb, writeSession, type ArchiveDb, type ArchiveInput } from "./archive/db";
 import { folderState, monthFiles, writableFolder, writeMonthFile, type FolderState } from "./archive-folder";
 
 /** The operations this worker answers, and what each takes. */
@@ -43,7 +43,9 @@ export interface FolderReport {
     imported?: { files: number; sessions: number };
 }
 
-type Opened = { db: Database; sqlite3: Sqlite3Static; exportBytes: () => Uint8Array };
+/** `raw` is sqlite-wasm's own handle, which `exportMonth`/`importBytes` need for its pointer; `db` is the neutral
+ *  surface the shared SQL runs over (archive-db.ts), so the phone's archive can be the same database. */
+type Opened = { raw: Database; db: ArchiveDb; sqlite3: Sqlite3Static; exportBytes: () => Uint8Array };
 let opened: Promise<Opened> | null = null;
 
 /** Open (once) the archive database, creating or upgrading its schema. */
@@ -54,9 +56,10 @@ function open(): Promise<Opened> {
         const init = sqlite3InitModule as unknown as (o: { locateFile: (file: string) => string }) => ReturnType<typeof sqlite3InitModule>;
         const sqlite3 = await init({ locateFile: (file) => new URL(file, self.location.href).href });
         const pool = await sqlite3.installOpfsSAHPoolVfs({ name: "wml-archive" });
-        const db = new pool.OpfsSAHPoolDb("/archive.sqlite");
+        const raw = new pool.OpfsSAHPoolDb("/archive.sqlite");
+        const db = wasmDb(raw);
         migrate(db);
-        return { db, sqlite3, exportBytes: () => sqlite3.capi.sqlite3_js_db_export(db.pointer!) };
+        return { raw, db, sqlite3, exportBytes: () => sqlite3.capi.sqlite3_js_db_export(raw.pointer!) };
     })();
     // A failed open (no OPFS, a newer schema) is answered to every caller, then retried by the next request.
     opened.catch(() => { opened = null; });
@@ -65,7 +68,7 @@ function open(): Promise<Opened> {
 
 /** One request, answered. */
 async function run(req: ArchiveOp): Promise<unknown> {
-    const { db, sqlite3, exportBytes } = await open();
+    const { raw, db, sqlite3, exportBytes } = await open();
     switch (req.op) {
         case "put": writeSession(db, await prepareSession(req.args.input), req.args.archivedTs); return true;
         case "list": return listArchived(db, req.args);
@@ -74,19 +77,19 @@ async function run(req: ArchiveOp): Promise<unknown> {
         case "stats": return archiveStats(db);
         case "export": return exportBytes();
         case "folder": return folderReport(db);
-        case "resync": markAllDirty(db); return sync(db, sqlite3);
-        case "sync": return sync(db, sqlite3);
+        case "resync": markAllDirty(db); return sync(db, raw, sqlite3);
+        case "sync": return sync(db, raw, sqlite3);
         case "import": {
             const dir = await writableFolder();
             if (!dir) return folderReport(db);
             let files = 0, sessions = 0;
-            for (const f of await monthFiles(dir)) { sessions += importBytes(sqlite3, db, await f.read()); files++; }
+            for (const f of await monthFiles(dir)) { sessions += importBytes(sqlite3, raw, await f.read()); files++; }
             return { ...(await folderReport(db)), imported: { files, sessions } };
         }
     }
 }
 
-async function folderReport(db: Database): Promise<FolderReport> {
+async function folderReport(db: ArchiveDb): Promise<FolderReport> {
     const last = metaGet(db, "last_sync");
     return { ...(await folderState()), pending: dirtyMonths(db).length, lastSync: last ? Number(last) : null };
 }
@@ -95,12 +98,12 @@ async function folderReport(db: Database): Promise<FolderReport> {
  * Write every dirty month into the folder, when it is writable; otherwise nothing, and the months stay dirty until it
  * is. A month left with no sessions (all deleted) has its file removed, so a delete reaches the folder too.
  */
-async function sync(db: Database, sqlite3: Sqlite3Static): Promise<FolderReport> {
+async function sync(db: ArchiveDb, raw: Database, sqlite3: Sqlite3Static): Promise<FolderReport> {
     const dir = await writableFolder();
     if (!dir) return folderReport(db);
     const written: string[] = [], removed: string[] = [];
     for (const month of dirtyMonths(db)) {
-        const { bytes, sessions } = exportMonth(sqlite3, db, month);
+        const { bytes, sessions } = exportMonth(sqlite3, raw, month);
         if (sessions) { await writeMonthFile(dir, month, bytes); written.push(month); }
         else { await dir.removeEntry(`${month}.sqlite`).catch(() => { /* never written */ }); removed.push(month); }
         markClean(db, month);

@@ -12,7 +12,6 @@ import { parseSessionKey } from "../session-host";
 import { DetailView } from "../sidebar/session-detail";
 import { Composer } from "../sidebar/composer";
 import { IconBack, IconBench, IconBrain, IconCopy, IconCamera, IconClose, IconExport, IconMore, IconSave, IconVram } from "../sidebar/icons";
-import { services } from "../sidebar/services";
 import { ContextMenu, CursorTipLayer, Hash } from "../sidebar/ui-kit";
 import { benchOpen, openBench, rev, sessionMap, view } from "../sidebar/store";
 import { truncate } from "../sidebar/format";
@@ -25,11 +24,11 @@ import { AttentionButton, AttentionPage, useAttention, useOwnCert } from "./atte
 import { attentionCount } from "./attention";
 import { setAppBadge } from "./app-badge";
 import { useFadeEdges } from "./fade-edges";
-import { ExportChat, exportingChat } from "./export-dialog";
+import { ExportChat, exportingChat, type PartialWhy } from "./export-dialog";
 import { ViewToggle, calm, codeSize, panelSize, listOpen, pane, setCalm, setPane } from "./view-mode";
 import { MenuItem } from "./menu";
 import { SessionModelPicker } from "./model-picker";
-import { DeleteConfirm, RenameDialog } from "./row-menu";
+import { DeleteConfirm, RenameDialog, SessionActions, usePeek } from "./row-menu";
 import { GearMenu, Rail, mainView, openSession } from "./nav";
 import { SearchPage } from "./search-page";
 import { SettingsPage, settingsTab } from "./settings-page";
@@ -121,31 +120,6 @@ function useHashRoute(): void {
     }, [key, main, tab]);
 }
 
-/**
- * What the tab looks like RIGHT NOW, into the same full-size view an image in a transcript opens in.
- *
- * Offered only where there is still a TAB to capture — `page.tabId` absent is the tell that the one the run worked
- * in has closed, the same tell `resumableHere` reads — and where the runtime says it can capture and this client
- * holds the scope for it. The browser can only
- * capture the tab its window is SHOWING, so a run working in a background tab answers `conflict` and the store puts
- * the runtime's own sentence on screen — which is the rule stated once, where it is met, rather than a button that
- * quietly does nothing.
- */
-/** Look at the page a run is on, as it is now: its capture, shown full size. Null where it cannot be (no tab, the runtime
- *  offline or without screenshots, or this client without the grant to ask). */
-function usePeek(store: ChatStore, id: SessionId | null, rt: RuntimeInfo | undefined, sessionKey: SessionKey, summary?: SessionSummary): { busy: boolean; peek: () => void } | null {
-    const [busy, setBusy] = useState(false);
-    if (!id || !rt || summary?.page?.tabId == null) return null;
-    if (!rt.online || !rt.capabilities.screenshots || !mayCommand(rt, "tab.screenshot", { key: sessionKey, summary }, store.host.self)) return null;
-    const peek = (): void => {
-        setBusy(true);
-        void store.send({ type: "tab.screenshot", runtime: rt.id, target: { session: id } })
-            .then((r) => { if (r.ok) services().openLightbox(r.data.image); })
-            .finally(() => setBusy(false));
-    };
-    return { busy, peek };
-}
-
 /** Sessions whose runtime answered `unsupported` to a switch: their loop runs in a page, whose script owns the model. */
 const pageOwnsModel = signal<ReadonlySet<SessionKey>>(new Set());
 
@@ -174,8 +148,10 @@ function ModelTop({ store, rt, model, sessionKey, summary, quiet }: { store: Cha
 }
 
 /** The camera button in a wide header. */
-function PagePeek({ peek }: { peek: { busy: boolean; peek: () => void } | null }) {
-    if (!peek) return null;
+function PagePeek({ peek }: { peek: { busy: boolean; peek: () => void; why?: string } }) {
+    // A BUTTON still just goes, where the menu's row stays and says why: there is nothing beside a lone icon to
+    // carry a reason, and a dead one in the header is worse than none.
+    if (peek.why) return null;
     return (
         <button class="tt hbtn chat-peek" aria-label="Look at the page" disabled={peek.busy} onClick={peek.peek}>
             <IconCamera />
@@ -189,9 +165,9 @@ function PagePeek({ peek }: { peek: { busy: boolean; peek: () => void } | null }
  * view, copying the id). Three icons at 390px crowded the title into two words, and a brain glyph says nothing on its
  * own; in a menu each has its name.
  */
-function SessionMenu({ peek, hash, title, sessionKey, partial, calmShown, floating }: {
-    peek: { busy: boolean; peek: () => void } | null; hash?: string; title?: string;
-    sessionKey?: SessionKey; partial?: boolean; calmShown?: boolean; floating?: boolean;
+function SessionMenu({ store, s, rt, title, sessionKey, partial, floating }: {
+    store: ChatStore; s?: SessionSummary; rt?: RuntimeInfo; title?: string;
+    sessionKey?: SessionKey; partial?: PartialWhy; floating?: boolean;
 }) {
     const [at, setAt] = useState<{ top: number; right: number } | null>(null);
     const btn = useRef<HTMLButtonElement>(null);
@@ -213,12 +189,11 @@ function SessionMenu({ peek, hash, title, sessionKey, partial, calmShown, floati
             {at ? (
                 <div ref={menu} class="chat-menu chat-head-menu" role="menu" aria-label="Session options" style={`top:${at.top}px;right:${at.right}px`}>
                     {title ? <div class="chat-head-menu-title" role="presentation">{title}</div> : null}
-                    {peek ? <MenuItem icon={<IconCamera />} label="Look at the page" onPick={act(peek.peek)} /> : null}
-                    {/* Only where nothing beside it already switches the view: the wide header keeps its own toggle,
-                        and the same control twice in one bar reads as two different ones. */}
-                    {calmShown ? null : <MenuItem icon={<IconBrain />} label="Calm view" on={calm.value} onPick={act(() => setCalm(!calm.value))} />}
-                    {sessionKey ? <MenuItem icon={<IconExport />} label="Export chat…" onPick={act(() => (exportingChat.value = { key: sessionKey, title: title || "Session", partial: !!partial }))} /> : null}
-                    {hash ? <MenuItem icon={<IconCopy />} label="Copy session id" onPick={act(() => void navigator.clipboard?.writeText(hash).catch(() => {}))} /> : null}
+                    {/* CALM VIEW IS NOT HERE. It is how the whole page reads, not something done to this session, and
+                        it already lives in the gear's menu — where it was duplicated behind a condition on the window's
+                        width, so whether the item existed depended on how wide the window was. */}
+                    {s && rt ? <SessionActions store={store} s={s} rt={rt} title={title || "Session"} onPicked={() => setAt(null)}
+                        onExport={sessionKey ? () => (exportingChat.value = { key: sessionKey, title: title || "Session", partial, store }) : undefined} /> : null}
                 </div>
             ) : null}
         </>
@@ -278,7 +253,7 @@ function EarlierEdge({ store, sessionKey, scroller, rtName, truncated }: {
             </div>
         );
     }
-    if (at?.loading) return <div class="chat-earlier" role="status">Loading earlier events…</div>;
+    if (at?.loading) return <div class="chat-earlier" role="status"><span class="cspin" />Loading earlier events…</div>;
     if (more) return <div class="chat-earlier" ref={sentinel}><button class="chat-earlier-retry" onClick={load}>Earlier events</button></div>;
     if (truncated || at?.truncated) {
         return <div class="chat-truncated">Older events no longer exist on {rtName ?? "the runtime"}. What is shown here is what this device kept.</div>;
@@ -299,6 +274,11 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     const rt = id ? store.runtimes.value.find((x) => x.id === id.runtime) : undefined;
     const s = sessionMap.get(sessionKey);
     const truncated = store.truncated.value.has(sessionKey);
+    // WHAT WOULD BE MISSING FROM AN EXPORT, and which of the two it is. `more` is the common one and the one that
+    // used to go unsaid: pages exist on the runtime that this device simply has not fetched, so a file written now
+    // quietly holds the end of a conversation. `gone` is the one that used to be reported, under wording that told
+    // the reader to load what no longer exists anywhere.
+    const partial: PartialWhy | undefined = store.earlier.value.get(sessionKey)?.more ? "more" : truncated ? "gone" : undefined;
     const scroller = useRef<HTMLDivElement>(null);
     const content = useRef<HTMLDivElement>(null);
     const stuck = useRef(true);
@@ -390,7 +370,6 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     // transcript (`Lede`), navigation and the page's tools to the left edge (the rail and the gear, `nav.tsx`). A
     // phone keeps the bar: it holds the way back, and there is no room for a rail beside a 390px column.
     const bare = native || (calm.value && !narrow);
-    const peek = usePeek(store, id ?? null, rt, sessionKey, summary);
     // ON A WIDE PAGE THE MODEL SITS IN THE COMPOSER, beside send: it is what the NEXT message goes to, so it belongs
     // where that message is written, and a pill in a header read as a stray control. A phone keeps it in its bar
     // (there is no room in a 390px box), and so does a session with no composer, where it is only information.
@@ -401,7 +380,7 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
                 still need a door, or the calm view (the default) is the one with no way to export what is in it. A
                 single ⋮ in the corner is the least the page can put back and still answer "and this session?". */}
             {bare && !native
-                ? <div class="chat-more-corner"><SessionMenu peek={peek} hash={id?.hash} title={title} sessionKey={sessionKey} partial={truncated} floating /></div>
+                ? <div class="chat-more-corner"><SessionMenu store={store} s={summary} rt={rt} title={title} sessionKey={sessionKey} partial={partial} floating /></div>
                 : null}
             {bare
                 ? null
@@ -419,7 +398,7 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
                     </span>
                     <span class="sp" />
                     {!narrow && !modelBelow && summary?.model && rt ? <ModelTop store={store} rt={rt} model={summary.model} sessionKey={sessionKey} summary={summary} /> : null}
-                    {narrow ? <SessionMenu peek={peek} hash={id?.hash} title={summary?.model ? title : undefined} sessionKey={sessionKey} partial={truncated} />
+                    {narrow ? <SessionMenu store={store} s={summary} rt={rt} title={summary?.model ? title : undefined} sessionKey={sessionKey} partial={partial} />
                         : <>
                             <DeviceViews extras={extras} rt={rt} />
                             <ViewToggle />
@@ -427,7 +406,7 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
                             {/* IN-CHAT options, beside (not inside) the page-wide ones: looking at this session's
                                 page, exporting this session. `Look at the page` was a camera icon of its own here,
                                 which spent a header button on the one action and left the rest nowhere to go. */}
-                            <SessionMenu peek={peek} hash={id?.hash} title={title} sessionKey={sessionKey} partial={truncated} calmShown />
+                            <SessionMenu store={store} s={summary} rt={rt} title={title} sessionKey={sessionKey} partial={partial} />
                         </>}
                 </div>}
             {!native && waiting && (gateAway || !calm.value) ? <button class="chat-waiting" onClick={jumpToApproval}>Waiting on your approval<span class="chat-waiting-go">Review ›</span></button> : null}

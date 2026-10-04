@@ -4,6 +4,9 @@
 // and a command that reaches another tab's page.
 import { test, expect } from "@playwright/test";
 import { createServer } from "node:http";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
@@ -402,4 +405,94 @@ test("the attention list proposes the archive: Keep them turns it on from the cl
         await expect(chat.getByText("(above)")).toHaveCount(0);
         expect(errors).toEqual([]);
     } finally { await ext.context.close(); }
+});
+
+// THIS BROWSER IS NOT ASKED. Streaming a run's thinking costs nothing without a wire in the way, so on a local
+// runtime it is simply on and the choice is not drawn — a control nobody has a reason to touch is one more pill in a
+// row that already holds four. The remote half, where it IS a choice, is in chat-web.spec.mjs.
+test("a run on this browser streams without asking, and the choice is not drawn", async () => {
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: "http://127.0.0.1:1/x", apiKey: "", apiFormat: "openai", model: "m" });
+        const { page: chat, errors } = await openChatPage(ext);
+        await chat.locator(".chat-start-box textarea").waitFor();
+        await expect(chat.getByRole("button", { name: /^Where it runs/ })).toBeVisible();   // the row is drawn
+        await expect(chat.getByRole("button", { name: /^Thinking:/ })).toHaveCount(0);
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); }
+});
+
+// A CONTENT SCRIPT LIVES AS LONG AS THE EXTENSION THAT INJECTED IT. Reload or update the extension and every tab
+// already open keeps its page and loses its listener, so the next message to it rejects with Chrome's "Could not
+// establish connection. Receiving end does not exist." That rejection escaped `agent.start` and reached the person
+// as Chrome's own string, which names no cause and no remedy — and it skipped the sentence written for exactly this
+// in `session-commands.ts`, because a THROW never reaches the branch that reads the outcome.
+//
+// The condition is built here by loading a bundle whose content scripts match nothing, rather than by reloading the
+// extension: `chrome.runtime.reload()` leaves a Playwright persistent context without a usable extension at all.
+// What matters is reproduced exactly either way — a tab the extension MAY script, with no listener in it — and the
+// test asserts both halves of that before driving anything, because a tab that could not be scripted would make
+// this pass for the wrong reason.
+
+/** A copy of `dist/` whose content scripts match nothing, so a tab gets none. */
+function distWithoutContentScripts() {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wml-nocs-"));
+    // The same bundle the harness would have loaded, including an `E2E_DIST` someone built elsewhere on purpose.
+    fs.cpSync(path.resolve(process.env.E2E_DIST || "dist"), dir, { recursive: true });
+    const m = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8"));
+    for (const cs of m.content_scripts) cs.matches = ["https://nothing.invalid/*"];
+    fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify(m, null, 2));
+    return dir;
+}
+
+test("a run starts on a tab whose content script is gone, by putting it back", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const site = await startPageServer({});
+    const dist = distWithoutContentScripts();
+    const ext = await launchExtension({ dist });
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "overlay" });
+        fake.setScript([{ content: "the page is a demo" }]);
+
+        const target = await ext.context.newPage();
+        await target.goto(site.url + "/");
+        expect(await target.evaluate(() => !!window.ml), "no content script ran in the target tab").toBe(false);
+
+        const { page: chat, errors } = await openChatPage(ext);
+        // THE PRECONDITION, both halves. Scriptable and unanswering is the state an extension reload leaves behind;
+        // either half alone would make the rest of this test prove something else.
+        const before = await chat.evaluate(async () => {
+            const t = (await chrome.tabs.query({})).find((x) => x.url?.startsWith("http"));
+            const out = { id: t.id };
+            const [r] = await chrome.scripting.executeScript({ target: { tabId: t.id }, func: () => 1 });
+            out.scriptable = r.result === 1;
+            try { await chrome.tabs.sendMessage(t.id, { type: "ML_PING" }); out.answered = true; }
+            catch (e) { out.answered = false; out.why = String((e && e.message) || e); }
+            return out;
+        });
+        expect(before.scriptable, "the extension may script the tab").toBe(true);
+        expect(before.answered, "but nothing in it is listening").toBe(false);
+        expect(before.why).toMatch(/Receiving end does not exist|Could not establish connection/);
+
+        await chat.locator(".chat-start-box textarea").fill("what do you make of this page?");
+        await chat.getByRole("button", { name: /^Where it runs/ }).click();
+        await chat.getByRole("listbox", { name: "Where it runs" }).getByRole("option")
+            .filter({ hasText: /127\.0\.0\.1|localhost/ }).first().click();
+        await chat.getByRole("button", { name: "Start the run" }).click();
+
+        // It runs. Before the fix this was Chrome's string in a red notice and no session at all.
+        // It RUNS. Wait on the run reaching the model first: that is the thing this test is about, and it separates
+        // "the start was refused" from "the transcript is still catching up", which on a loaded machine running
+        // several browsers at once is a real difference of seconds.
+        await expect.poll(() => fake.calls().length, { timeout: 30000 }).toBe(1);
+        await expect(chat.locator(".chat-main")).toContainText("the page is a demo", { timeout: 30000 });
+        await expect(chat.getByText(/Receiving end does not exist/)).toHaveCount(0);
+        // And the tab really got its content script back, rather than the run going somewhere else.
+        expect(await target.evaluate(() => !!window.ml)).toBe(true);
+        expect(errors).toEqual([]);
+    } finally {
+        await ext.context.close();
+        fake.close?.(); site.close?.();
+        fs.rmSync(dist, { recursive: true, force: true });
+    }
 });

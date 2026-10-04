@@ -43,7 +43,7 @@ export interface ChatExtras {
      * fixed it can know: the browser says `granted` for "allow this time" and "allow on every visit" alike, and a folder
      * that lapses again was allowed only once. Worded as a repeat where the code has words for one (attention.ts).
      */
-    fixedBefore?(runtime: RuntimeId, code: string): boolean;
+    fixedTimes?(runtime: RuntimeId, code: string): number;
     /**
      * Ask this device for host access to ONE origin, where this device IS the runtime. Separate from `fix` because
      * `fix` answers a fixed code and this answers a URL that is only known at the moment of asking — and because the
@@ -53,4 +53,15 @@ export interface ChatExtras {
      * for it. Null where this device is not that runtime, which is what makes the remote case draw its own routes.
      */
     grantOrigin?(runtime: RuntimeId, origin: string): (() => Promise<boolean>) | null;
+    /**
+     * Is this runtime reached with no network in between — this browser itself, rather than a machine on the account?
+     *
+     * It decides what a CHOICE costs, not what is possible. Streaming a run's thinking is free here (same process, no
+     * wire) and expensive over a hub, where every `agent-stream` event carries the whole answer so far rather than the
+     * part that is new. So the page offers the choice where it is worth making and simply streams where it is not.
+     *
+     * Absent means NO: a client with no local runtime (the hosted page, the phone) reaches every runtime over a wire,
+     * which is the answer that costs nothing to be wrong about.
+     */
+    nearby?(runtime: RuntimeId): boolean;
 }

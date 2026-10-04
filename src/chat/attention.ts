@@ -9,8 +9,22 @@
 // read (a button on the laptop, "on Work laptop" on a phone). An unknown code is still counted, in general words.
 import type { RuntimeInfo } from "../session-host";
 
-/** How much it costs to leave it: nothing works, something is missing, or it would be nicer. */
-export type AttentionLevel = "blocks" | "limits" | "suggests";
+/**
+ * How much it costs to leave it: nothing works, something is missing, or it would be nicer — and the two levels
+ * that are not about a runtime at all but about WORK THIS PAGE IS DOING for you (`export-tasks.ts`): one finished
+ * and waiting for a hand (`ready`), one still running (`working`).
+ *
+ * Those two are here rather than in a second list because the inbox is already the answer to "what needs me", and
+ * a long export that finished while you were reading something else is exactly that. `working` is the one level
+ * that needs NOTHING: it is in the list so that stopping it is reachable, and it is left out of the count.
+ */
+export type AttentionLevel = StateAttentionLevel | "ready" | "working";
+
+/** The three an item about a STATE can take: a runtime's own codes, and this device's certificate. Named apart from
+ *  the two above because the phone's inbox carries only these (`src/native/snapshot.ts`): it is a native screen fed
+ *  those items, and the other two are about work the PAGE is doing — which on a phone happens inside the WebView and
+ *  is reported by the page's own list. */
+export type StateAttentionLevel = "blocks" | "limits" | "suggests";
 
 /** One code a runtime (or this device, for it) reports. OPEN: a code this page does not know is shown generally. */
 export type AttentionCode =
@@ -22,8 +36,20 @@ export type AttentionCode =
     /** THIS DEVICE's certificate: running out, and run out. See {@link certItems}. */
     | "cert-expiring" | "cert-expired";
 
-/** How it is fixed from here, when it can be: one click (`ChatExtras.fix`), or the extension's Settings. */
-export type AttentionFix = { kind: "act"; label: string } | { kind: "settings"; label: string; where: string };
+/**
+ * How it is fixed from here, when it can be: one click on the runtime (`ChatExtras.fix`), the extension's Settings,
+ * or — for an item this page raised about its own work — something this page just does (`run`).
+ *
+ * `run` carries its own function because such an item has no runtime to resolve one against: the two others are
+ * looked up by `(runtime, code)`, which is the whole reason they are described rather than given.
+ */
+export type AttentionFix =
+    | { kind: "act"; label: string }
+    | { kind: "settings"; label: string; where: string }
+    | { kind: "run"; label: string; run: () => void };
+
+/** One line of the list about a STATE of something, which is every line the phone's inbox is given. */
+export interface StateAttentionItem extends AttentionItem { level: StateAttentionLevel }
 
 /** One line of the list. `key` is `runtime:code`, what a dismissal remembers. */
 export interface AttentionItem {
@@ -37,11 +63,35 @@ export interface AttentionItem {
     detail: string;
     /** present only where THIS device can apply it */
     fix?: AttentionFix;
+    /**
+     * How far along, where the item is about work in progress rather than about a state.
+     *
+     * A count in the prose answers "how much" but not "is it moving" — which is the only question a reader of a
+     * background job actually has, and the one a bar answers without being read.
+     */
+    progress?: { done: number; total: number };
+    /**
+     * Clear it from HERE, where clearing is its own act rather than a fix.
+     *
+     * A dismissed SUGGESTION is remembered (`view-mode.ts`), because telling someone twice about a menu item they
+     * have decided against is nagging; a finished export is simply dropped, because there is nothing to remember
+     * once the task is gone. Two mechanisms, and the item says which it has rather than the list guessing from the
+     * level.
+     */
+    dismiss?: () => void;
+    /** this one may be put away with the stored dismissal although it is not a suggestion: it has already said that
+     *  nothing more can be done about it (see `settled` in `KNOWN`) */
+    hideable?: boolean;
 }
 
-/** Each known code: its level, its words, and how it is fixed on the runtime's own device (`add-to-home` is about
- *  THIS device and has no fix: Apple gives a page no way to offer installing as a button — see `deviceItems`). */
-const KNOWN: Record<AttentionCode, { level: AttentionLevel; title: string; detail: string; fix?: AttentionFix; again?: { title: string; detail: string } }> = {
+/** Each known code's words, and how it is fixed on the runtime's own device (`add-to-home` is about THIS device and
+ *  has no fix: Apple gives a page no way to offer installing as a button — see `deviceItems`). */
+/** One code: its level, its words, how it is fixed — and the words for a lapse that has come back DESPITE being
+ *  fixed. `again` is the second telling, which names what to do differently; `settled` is the third, for when that
+ *  has been done and it came back anyway, and is the only wording a non-suggestion can be put away from. */
+interface Known { level: StateAttentionLevel; title: string; detail: string; fix?: AttentionFix; again?: { title: string; detail: string }; settled?: { title: string; detail: string } }
+
+const KNOWN: Record<AttentionCode, Known> = {
     "no-model": {
         level: "blocks", title: "No model is chosen",
         detail: "Nothing can run until the extension has a model to send to.",
@@ -59,11 +109,15 @@ const KNOWN: Record<AttentionCode, { level: AttentionLevel; title: string; detai
     },
     "archive-folder-lapsed": {
         level: "limits", title: "The archive folder needs reconnecting",
-        detail: "It lost the browser's permission, so old sessions are no longer copied into it. They are still kept and searchable in the browser. When the browser asks, choose Always allow (Allow on every visit), or this comes back after every restart.",
+        detail: "It lost the browser's permission, so old sessions are no longer copied into it. They are still kept and searchable in the browser. If the browser's prompt offers to allow it on every visit, choose that, or this comes back after every restart.",
         fix: { kind: "act", label: "Reconnect" },
         again: {
             title: "The archive folder lapsed again",
-            detail: "Last time it was allowed only until the browser restarted. Reconnect, and this time choose Always allow (Allow on every visit) in the browser's prompt, so it stays connected.",
+            detail: "It was allowed only until the browser restarted. Reconnect, and look in the prompt for a lasting choice (Always allow, or Allow on every visit). Not every browser offers one, and one that has had the prompt dismissed a few times stops offering it: the extension's Settings say how to get it back.",
+        },
+        settled: {
+            title: "This browser will not keep the archive folder",
+            detail: "It has asked again after every restart, whichever option was chosen, so there is nothing further to do about it here. Nothing is lost: the archive itself is in the browser and every word of it is still searchable, and only the copy on disk waits. Reconnect whenever you want that copy brought up to date.",
         },
     },
     "archive-folder-unsupported": {
@@ -113,7 +167,16 @@ const KNOWN: Record<AttentionCode, { level: AttentionLevel; title: string; detai
     },
 };
 
-const RANK: Record<AttentionLevel, number> = { blocks: 0, limits: 1, suggests: 2 };
+// Most urgent first. A finished export sits above a runtime's `limits` because it is TRANSIENT — it is waiting on
+// one click and then it is gone, while a lapsed grant will still be there tomorrow — and `working` sits below them
+// both because it is a progress report, not a request.
+const RANK: Record<AttentionLevel, number> = { blocks: 0, ready: 1, limits: 2, working: 3, suggests: 4 };
+
+/** The list's order, shared by everything that contributes to it: level first, then the order it was added in
+ *  (`Array#sort` is stable, which is what keeps a runtime's own codes grouped as they were built). */
+export function sortAttention<T extends AttentionItem>(items: T[]): T[] {
+    return items.sort((a, b) => RANK[a.level] - RANK[b.level]);
+}
 
 /**
  * The list, most urgent first. `local` is this device's own codes per runtime (null for a runtime it cannot check);
@@ -125,27 +188,33 @@ export function attentionItems(
     local: ReadonlyMap<string, readonly string[]>,
     canFix: (runtime: RuntimeInfo, fix: AttentionFix, code: string) => boolean,
     hidden: ReadonlySet<string> = new Set(),
-    /** has this code come back after this device fixed it once? Then it is worded as a repeat (the codes with `again`) */
-    repeat: (runtime: RuntimeInfo, code: string) => boolean = () => false,
-): AttentionItem[] {
-    const out: AttentionItem[] = [];
+    /** HOW MANY TIMES this device has fixed this code already, for one that has come back: 0 is the first telling,
+     *  1 says what to do differently (`again`), and 2 or more is the admission that it did not work (`settled`). */
+    repeat: (runtime: RuntimeInfo, code: string) => number = () => 0,
+): StateAttentionItem[] {
+    const out: StateAttentionItem[] = [];
     for (const rt of runtimes) {
         const codes = new Set<string>([...reported(rt), ...(local.get(rt.id) ?? [])]);
         for (const code of codes) {
             const k = KNOWN[code as AttentionCode];
             const key = `${rt.id}:${code}`;
             const level = k?.level ?? "limits";
-            if (level === "suggests" && hidden.has(key)) continue;
-            const words = k?.again && repeat(rt, code) ? k.again : k;
+            const fixed = repeat(rt, code);
+            const words = (fixed >= 2 && k?.settled) || (fixed >= 1 && k?.again) || k;
+            // The ONE non-suggestion that can be put away, and only once it has said there is nothing left to do:
+            // a card that cannot be acted on and cannot be dismissed is a permanent mark for a permanent fact.
+            const hideable = fixed >= 2 && !!k?.settled;
+            if ((level === "suggests" || hideable) && hidden.has(key)) continue;
             out.push({
                 key, runtime: rt, code, level,
                 title: words?.title ?? "Something needs attention",
                 detail: words?.detail ?? `${rt.name} reported "${code.slice(0, 40)}", which this page does not know. Its own Settings will say more.`,
+                ...(hideable ? { hideable } : {}),
                 ...(k?.fix && canFix(rt, k.fix, code) ? { fix: k.fix } : {}),
             });
         }
     }
-    return out.sort((a, b) => RANK[a.level] - RANK[b.level]);
+    return sortAttention(out);
 }
 
 /** What the runtime itself reports: its `attention` codes, and the archive folder's state for one without them. */
@@ -157,9 +226,23 @@ function reported(rt: RuntimeInfo): string[] {
     return codes;
 }
 
-/** What the count on the button says: problems only, never the suggestions, so a set-up page shows no number. */
+/** What the count on the button says: what actually wants a hand. Never the suggestions, so a set-up page shows no
+ *  number — and never `working`, which wants nothing: a number that counts something already in progress asks the
+ *  reader to go and look at a thing they cannot help with. */
 export function attentionCount(items: readonly AttentionItem[]): number {
-    return items.filter((i) => i.level !== "suggests").length;
+    return items.filter((i) => i.level !== "suggests" && i.level !== "working").length;
+}
+
+/**
+ * What the inbox calls itself, which is whatever the most urgent thing in it is.
+ *
+ * It cannot be read off the count alone. A list holding nothing but a background export says "Suggestions" that way,
+ * which is a lie about the one thing in it — and the button exists at all only because the list is not empty.
+ */
+export function attentionLabel(items: readonly AttentionItem[]): { word: string; count: number } {
+    const count = attentionCount(items);
+    if (count) return { word: "Needs attention", count };
+    return { word: items.some((i) => i.level === "working") ? "In progress" : "Suggestions", count: 0 };
 }
 
 /** How long before a certificate runs out the inbox starts saying so. Early enough that the two devices a renewal
@@ -198,11 +281,11 @@ export interface CertState {
  *   - issued by a delegate: it has no root-signed predecessor and never will, so it can only be re-paired.
  *   - no runtime online: renewing needs one to sign. Say which device to open rather than offering a button that fails.
  */
-export function certItems(cert: CertState | null, nowMs: number): AttentionItem[] {
+export function certItems(cert: CertState | null, nowMs: number): StateAttentionItem[] {
     if (!cert || !Number.isFinite(cert.notAfterMs)) return [];
     const left = cert.notAfterMs - nowMs;
     if (left > CERT_WARN_MS) return [];
-    const base = { runtime: undefined, level: "blocks" as AttentionLevel };
+    const base = { runtime: undefined, level: "blocks" as StateAttentionLevel };
     if (left <= 0) {
         return [{ ...base, key: "this-device:cert-expired", code: "cert-expired", title: KNOWN["cert-expired"].title, detail: KNOWN["cert-expired"].detail }];
     }
@@ -210,7 +293,7 @@ export function certItems(cert: CertState | null, nowMs: number): AttentionItem[
     const when = days === 1 ? "today" : `in ${days} days`;
     // Inside the last few days it stops being something to get round to: the cost of missing it is re-pairing, which
     // is a different and larger job than pressing a button.
-    const level: AttentionLevel = left <= CERT_URGENT_MS ? "blocks" : "limits";
+    const level: StateAttentionLevel = left <= CERT_URGENT_MS ? "blocks" : "limits";
     const tail = "After that it has to be paired again from scratch.";
     if (cert.mayRevoke) {
         return [{ ...base, level, key: "this-device:cert-expiring", code: "cert-expiring",

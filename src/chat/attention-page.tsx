@@ -8,7 +8,8 @@
 import { useEffect, useState } from "preact/hooks";
 import type { RuntimeInfo } from "../session-host";
 import { IconInbox } from "../sidebar/icons";
-import { attentionCount, attentionItems, certItems, deviceItems, type AttentionFix, type AttentionItem, type CertState } from "./attention";
+import { attentionItems, attentionLabel, certItems, deviceItems, sortAttention, type AttentionFix, type AttentionItem, type CertState } from "./attention";
+import { exportTaskItems, exportTasks } from "./export-tasks";
 import { deviceEnv } from "./app-badge";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
@@ -61,29 +62,35 @@ export function useOwnCert(pairing: PairingApi | undefined, store: ChatStore, ex
 export function useAttention(store: ChatStore, extras?: ChatExtras, cert?: CertState | null): { items: AttentionItem[] } {
     const canFix = (rt: RuntimeInfo, fix: AttentionFix, code: string) =>
         fix.kind === "act" ? !!extras?.fix?.(rt.id, code) : !!rt.capabilities.localSettings && extras?.settings?.(rt.id) != null;
-    const repeat = (rt: RuntimeInfo, code: string) => !!extras?.fixedBefore?.(rt.id, code);
-    // This device's own suggestions come FIRST in the call and last in the list: `attentionItems` sorts by level and
-    // a suggestion outranks nothing, so where they sit is the sort's business rather than this line's.
+    const repeat = (rt: RuntimeInfo, code: string) => extras?.fixedTimes?.(rt.id, code) ?? 0;
+    // Where each of these sits in the list is the SORT's business rather than this line's — which is why the whole
+    // concatenation goes through it, and not just the runtimes' half: a certificate about to expire has to be able
+    // to rank with the problems, a detached export waiting on a click above a runtime's lapsed grant, and an export
+    // still fetching below both.
+    //
     // THIS DEVICE'S OWN CERTIFICATE is not a runtime's code and does not come from one: it is read off the keyring
     // this page is holding. It goes through no `canFix`, because whether a renewal can happen is a fact about the
     // certificate rather than about this surface, and `certItems` already decides it.
-    return { items: [
-        ...attentionItems(store.runtimes.value, NONE, canFix, dismissed.value, repeat),
-        ...certItems(cert ?? null, Date.now()),
-        ...deviceItems(deviceEnv(), dismissed.value),
-    ] };
+    return {
+        items: sortAttention([
+            ...attentionItems(store.runtimes.value, NONE, canFix, dismissed.value, repeat),
+            ...certItems(cert ?? null, Date.now()),
+            ...deviceItems(deviceEnv(), dismissed.value),
+            ...exportTaskItems(exportTasks.value),
+        ]),
+    };
 }
 
 /** The inbox above the gear: absent with nothing to do, a count only for problems. `labelled` in the list's foot. */
 export function AttentionButton({ items, labelled }: { items: AttentionItem[]; labelled?: boolean }) {
     if (!items.length) return null;
-    const n = attentionCount(items);
-    const label = n ? `${n} thing${n === 1 ? "" : "s"} need${n === 1 ? "s" : ""} attention` : "Suggestions";
+    const { word, count: n } = attentionLabel(items);
+    const label = n ? `${n} thing${n === 1 ? "" : "s"} need${n === 1 ? "s" : ""} attention` : word;
     const on = mainView.value === "attention";
     const open = () => { mainView.value = on ? null : "attention"; };
     return labelled ? (
         <button class={`chat-gear-wide chat-att-btn${on ? " on" : ""}`} aria-label={label} onClick={open}>
-            <IconInbox /><span>{n ? "Needs attention" : "Suggestions"}</span>{n ? <span class="chat-att-n">{n}</span> : null}
+            <IconInbox /><span>{word}</span>{n ? <span class="chat-att-n">{n}</span> : null}
         </button>
     ) : (
         <button class={`tt hbtn chat-att-btn${on ? " on" : ""}`} aria-label={label} onClick={open}>
@@ -105,6 +112,10 @@ export function AttentionPage({ items, extras }: { items: AttentionItem[]; extra
     const apply = (it: AttentionItem) => {
         const fix = it.fix;
         if (!fix) return;
+        // AN ITEM THIS PAGE RAISED ABOUT ITS OWN WORK brought its own action, so there is nothing to resolve and no
+        // runtime to resolve it against (`AttentionFix`). First, because the two guards below are about items that
+        // name a thing to be acted on elsewhere, and this one has already been handed what to do.
+        if (fix.kind === "run") { fix.run(); return; }
         // AN ITEM ABOUT THIS DEVICE rather than a machine on the account — its certificate running out. It has no
         // runtime to address, so it takes its own path; before this one existed the choke point below silently
         // swallowed it, and the card drew a button that did nothing.
@@ -154,6 +165,7 @@ export function AttentionPage({ items, extras }: { items: AttentionItem[]; extra
                                             {it.fix?.kind === "settings" ? <> In Settings → {it.fix.where}.</> : null}
                                             {!it.fix && it.runtime && !it.runtime.capabilities.localSettings ? <> It is fixed on {it.runtime.name}.</> : null}
                                         </div>
+                                        {it.progress ? <progress class="chat-att-bar" value={it.progress.done} max={it.progress.total || 1} /> : null}
                                         {why === it.key && it.runtime ? <div class="chat-att-why-note">{stuckWhy(it.runtime.name)}</div> : null}
                                     </div>
                                     <div class="chat-att-acts">
@@ -162,7 +174,12 @@ export function AttentionPage({ items, extras }: { items: AttentionItem[]; extra
                                                 {busy === it.key ? "Asking…" : it.fix.label}
                                             </button>
                                         ) : null}
-                                        {it.level === "suggests" ? <button class="chat-att-dismiss" onClick={() => dismiss(it.key)}>Dismiss</button> : null}
+                                        {/* Two ways to clear a card, and the item says which it has. A SUGGESTION's
+                                            dismissal is stored, so the same advice is not given twice; a finished
+                                            export is simply dropped, because there is nothing left to remember it
+                                            about once the task is gone (and a stored key would pile up forever). */}
+                                        {it.dismiss ? <button class="chat-att-dismiss" onClick={it.dismiss}>Dismiss</button>
+                                            : it.level === "suggests" || it.hideable ? <button class="chat-att-dismiss" onClick={() => dismiss(it.key)}>Dismiss</button> : null}
                                     </div>
                                 </li>
                             ))}

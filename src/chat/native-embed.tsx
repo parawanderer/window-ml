@@ -15,6 +15,7 @@ import { pairingBridge, pairingInfo } from "../native/pairing-bridge";
 import { bridgeVault } from "../native/vault-bridge";
 import { tapKind } from "../native/tap-feedback";
 import { bridgeStore, type PlainStore } from "../native/store-bridge";
+import { bridgeArchive } from "../native/archive-bridge";
 import type { EventCache } from "./event-cache";
 import { searchBridge } from "../native/search-bridge";
 import { Keyring } from "../hub/keyring";
@@ -53,7 +54,12 @@ const reportGate = (away: boolean) => { gateAway.value = away; };
 let settleVault: ((m: Extract<ToWeb, { type: "vaultResult" }>) => void) | null = null;
 /** The same for the app's plain store, which holds everything about pairing that is not a key. */
 let settleStore: ((m: Extract<ToWeb, { type: "storeResult" }>) => void) | null = null;
+/** And for the app's archive, which holds this phone's copy of each session. */
+let settleArchive: ((m: Extract<ToWeb, { type: "archiveResult" }>) => void) | null = null;
 const early: unknown[] = [];
+/** This phone's copy of each session, in the app's archive. Made alongside the keyring's stores, because the page
+ *  has one bridge and one place that is listening to it before `runEmbed`. */
+export let sessionArchive: EventCache | null = null;
 
 /**
  * Keep the keyring's secrets in the app's keystore (vault-bridge.ts). Called before the keyring is first opened, which
@@ -62,8 +68,11 @@ const early: unknown[] = [];
 export function keepKeysInApp(): PlainStore {
     const v = bridgeVault(post);
     const s = bridgeStore(post);
+    const a = bridgeArchive(post);
     settleVault = v.settle;
     settleStore = s.settle;
+    settleArchive = a.settle;
+    sessionArchive = a.cache;
     Keyring.keepSecretsIn(v.vault);
     // And everything about this device's pairing that is NOT a key: the phone's WebView then stores nothing at all.
     Keyring.keepRecordsIn(s.store);
@@ -71,6 +80,7 @@ export function keepKeysInApp(): PlainStore {
         const m = parseToWeb(raw);
         if (m?.type === "vaultResult") v.settle(m);
         else if (m?.type === "storeResult") s.settle(m);
+        else if (m?.type === "archiveResult") a.settle(m);
         else if (m) early.push(raw);
     };
     return s.store;
@@ -391,6 +401,7 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
         const m = parseToWeb(raw);
         if (m?.type === "vaultResult") settleVault?.(m);
         else if (m?.type === "storeResult") settleStore?.(m);
+        else if (m?.type === "archiveResult") settleArchive?.(m);
         else if (m) void receive(m);
     };
     (globalThis as { __wmlReceive?: (raw: unknown) => void }).__wmlReceive = onRaw;

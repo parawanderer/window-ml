@@ -43,9 +43,9 @@ export function hostServices(store: ChatStore, platform: ClientPlatform): Sideba
             const r = await store.send(cmd, { quiet: true });
             return r.ok ? { ok: true, content: r.data.content } : { ok: false, error: r.error.message || r.error.code };
         },
-        answerApproval: (key, seq, decision, persist) => {
+        answerApproval: (key, seq, decision, persist, feedback) => {
             const id = idOf(key);
-            if (id) void store.send({ type: "approval.answer", session: id, seq, decision: decision ? "approve" : "deny", ...(persist ? { persist } : {}) });
+            if (id) void store.send({ type: "approval.answer", session: id, seq, decision: decision ? "approve" : "deny", ...(persist ? { persist } : {}), ...(feedback ? { feedback } : {}) });
         },
         sendToSession: async (key, text, images) => {
             const id = idOf(key);

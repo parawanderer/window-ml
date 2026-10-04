@@ -9,11 +9,11 @@ import { Directory, File, Paths } from "expo-file-system";
 import type { ToNative, ToWeb } from "../../src/native/bridge";
 import { STORE_NAME } from "../../src/native/store-bridge";
 
-/** The folder a record lives in. The page's copies of sessions (`ev…`, src/chat/event-cache.ts) go to the CACHE
- *  directory: out of backups, and the OS may purge it under pressure, which is what a cache promises. Pairing records
- *  go to documents, where the app keeps what it must not lose. */
+/** The folder a record lives in. Only the pairing records live here now: the sessions moved to the app's SQLite
+ *  archive (archive.ts), which is the same database the extension writes and is appended to rather than rewritten.
+ *  `ev` names are still routed, because a phone updated from a build that wrote them has files to be rid of. */
 const dirFor = (name: string): Directory => {
-    const d = name.startsWith("ev") ? new Directory(Paths.cache, "events") : new Directory(Paths.document, "store");
+    const d = new Directory(Paths.document, name.startsWith("ev") ? "events" : "store");
     if (!d.exists) d.create({ intermediates: true });
     return d;
 };

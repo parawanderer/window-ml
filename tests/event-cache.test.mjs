@@ -4,17 +4,24 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { storeCache, CACHE_SESSIONS, CACHE_MAX_BYTES } = await import("../src/chat/event-cache.ts");
 const { SessionFeed } = await import("../src/chat/session-feed.ts");
 const { ChatStore } = await import("../src/chat/chat-store.ts");
 const { FakeHost } = await import("../src/chat/fake-host.ts");
 const { sessionMap } = await import("../src/sidebar/store.ts");
 const { SESSION_CONTRACT_VERSION } = await import("../src/session-host.ts");
 
-/** A plain store over a Map, as the app's files are to the page. */
+/** An `EventCache` over a Map: what these tests need of one is that it keeps a copy and gives it back, which is all
+ *  the store asks. The real implementation is the phone's SQLite archive (mobile/src/archive.ts), reached over the
+ *  bridge — it cannot run here, and these tests are about the STORE's behaviour with a cache rather than about it. */
 function mapStore() {
     const m = new Map();
-    return { m, get: async (k) => m.get(k) ?? null, set: async (k, v) => { m.set(k, v); }, delete: async (k) => { m.delete(k); } };
+    return {
+        m,
+        load: async (k) => m.get(k) ?? null,
+        save: async (c) => { m.set(c.key, c); },
+        drop: async (k) => { m.delete(k); },
+        clear: async () => { m.clear(); },
+    };
 }
 
 const flush = (ms = 20) => new Promise((r) => setTimeout(r, ms));
@@ -42,48 +49,17 @@ test("a feed's position survives a save and restore, and what it had applied is 
     assert.equal(g.handle(ev(4)).type, "apply", "and the next one applies");
 });
 
-test("the cache keeps a session under a short name, and a copy of another session is never read as this one", async () => {
-    const st = mapStore();
-    const c = storeCache(st);
-    const s = { v: 1, key: "laptop:abc", feed: { epoch: "e", cursors: [1] }, events: [], earlier: null, truncated: false };
-    await c.save(s);
-    assert.deepEqual(await c.load("laptop:abc"), s);
-    assert.equal(await c.load("laptop:other"), null);
-    for (const name of st.m.keys()) assert.match(name, /^(ev:[0-9a-f]{16}|ev-index)$/, "names the app's store will accept");
-});
-
-test("a session too large to keep whole is not kept at all, and an older copy of it goes too", async () => {
-    const st = mapStore();
-    const c = storeCache(st);
-    const base = { v: 1, key: "laptop:big", feed: { epoch: "e", cursors: [1] }, earlier: null, truncated: false };
-    await c.save({ ...base, events: [] });
-    assert.ok(await c.load("laptop:big"));
-    await c.save({ ...base, events: [{ event: { content: "x".repeat(CACHE_MAX_BYTES) } }] });
-    assert.equal(await c.load("laptop:big"), null, "half a session would be worse than none");
-});
-
-test("past the limit, the least recently kept session goes first, and clear forgets everything", async () => {
-    const st = mapStore();
-    const c = storeCache(st);
-    const s = (k) => ({ v: 1, key: `laptop:${k}`, feed: { epoch: "e", cursors: [] }, events: [], earlier: null, truncated: false });
-    for (let i = 0; i <= CACHE_SESSIONS; i++) await c.save(s(`s${i}`));
-    assert.equal(await c.load("laptop:s0"), null, "the oldest was evicted");
-    assert.ok(await c.load(`laptop:s${CACHE_SESSIONS}`));
-    await c.clear();
-    assert.equal(st.m.size, 0);
-});
-
 test("a later launch replays the copy at once, then resumes from it: the runtime sends only what is new", async () => {
     const host = new FakeHost({ runtimes: [rt], sessions: [{ summary: summary("c1"), events: [...turn("c1", 0, "first answer"), ...turn("c1", 1, "second answer")] }] });
     const st = mapStore();
-    const one = new ChatStore(host, { cache: storeCache(st) });
+    const one = new ChatStore(host, { cache: st });
     one.start();
     await flush();
     one.open("laptop:c1");
     await flush();
     assert.equal(sessionMap.get("laptop:c1")?.turns.length, 2);
     await flush(900);   // the copy is saved a moment after the session last changed
-    assert.ok([...st.m.keys()].some((k) => k.startsWith("ev:")), "the session was kept");
+    assert.deepEqual([...st.m.keys()], ["laptop:c1"], "the session was kept, under its own key");
     one.close();
 
     // The app is killed; the runtime moves on by one turn while it is gone.
@@ -95,7 +71,7 @@ test("a later launch replays the copy at once, then resumes from it: the runtime
     const subscribed = [];
     const events = host.events.bind(host);
     host.events = (id, l, opts) => { subscribed.push(opts?.since ?? null); return events(id, l, opts); };
-    const two = new ChatStore(host, { cache: storeCache(st) });
+    const two = new ChatStore(host, { cache: st });
     two.start();
     await flush();
     two.open("laptop:c1");
@@ -110,7 +86,7 @@ test("a later launch replays the copy at once, then resumes from it: the runtime
 test("a history that changed while the app was closed replaces the copy: the runtime's reset wins", async () => {
     const host = new FakeHost({ runtimes: [rt], sessions: [{ summary: summary("c2"), events: turn("c2", 0, "before") }] });
     const st = mapStore();
-    const one = new ChatStore(host, { cache: storeCache(st) });
+    const one = new ChatStore(host, { cache: st });
     one.start();
     await flush();
     one.open("laptop:c2");
@@ -123,7 +99,7 @@ test("a history that changed while the app was closed replaces the copy: the run
     host.emit("laptop:c2", turn("c2", 0, "after")[0]);
     host.emit("laptop:c2", turn("c2", 0, "after")[1]);
 
-    const two = new ChatStore(host, { cache: storeCache(st) });
+    const two = new ChatStore(host, { cache: st });
     two.start();
     await flush();
     two.open("laptop:c2");
@@ -137,7 +113,7 @@ test("a history that changed while the app was closed replaces the copy: the run
 test("forgetting the cache clears every kept session: a device that changes accounts replays none of the last one", async () => {
     const host = new FakeHost({ runtimes: [rt], sessions: [{ summary: summary("c3"), events: turn("c3", 0, "hi") }] });
     const st = mapStore();
-    const s = new ChatStore(host, { cache: storeCache(st) });
+    const s = new ChatStore(host, { cache: st });
     s.start();
     await flush();
     s.open("laptop:c3");

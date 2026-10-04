@@ -5,7 +5,7 @@
 // sites another machine already holds where it is not, and words to carry over when it holds none.
 
 import { useState } from "preact/hooks";
-import { Dialog } from "./dialog";
+import { Dialog } from "../sidebar/dialog";
 import { IconGlobe } from "../sidebar/icons";
 import { originPattern, type BlankStartState } from "./blank-start";
 

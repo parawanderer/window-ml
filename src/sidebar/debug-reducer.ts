@@ -13,7 +13,70 @@ import { cleanTitle, titleMessages } from "../session-title";
 
 // The highest (cumulative) step number seen so far — the position a say()/answer arriving NOW belongs at,
 // so the chat log interleaves user messages + answers with the turn step-groups in order.
-export const maxSessionStep = (s: Session): number => Math.max(0, ...(s.steps || []).map(x => x.step || 0));
+//
+// A LOOP rather than `Math.max(0, ...steps.map(…))`: spreading an array into a call passes one argument per element,
+// and past roughly 125,000 of them V8 throws `RangeError: Maximum call stack size exceeded` — so the old spelling
+// turned a long session from slow into broken, at a size a transcript can reach.
+export const maxSessionStep = (s: Session): number => {
+    let max = 0;
+    for (const x of s.steps || []) if ((x.step || 0) > max) max = x.step || 0;
+    return max;
+};
+
+// --- replaying many events at once -----------------------------------------
+// Everything below exists for ONE caller: `ChatStore.applyEarlier`, which rebuilds a session from every event held
+// after paging its history back. The reducer is written for events arriving one at a time, and two things it does
+// per step are O(steps) each — finding an existing row by `seq`, and copying the array to append. One at a time
+// those are nothing; over a replay they are the whole cost, and a 25,600-event session took 1.2 seconds to rebuild.
+//
+// Inside a batch the same reducer writes into ONE array per session and finds a row by an index. The array is a copy
+// taken at the batch's first write, so it is private to the batch: whoever held the previous one never sees it grow,
+// and the session's `steps` changes identity exactly once, which is what a single event would have done too. Nothing
+// renders in between (`rev` is bumped once, by the caller, afterwards). Outside a batch nothing here runs and the
+// reducer is unchanged.
+
+let batching = false;
+/** The array this batch is writing into for each session it has touched: see above for why it is a copy. */
+const batchOwn = new Map<Session, AgentStep[]>();
+/** Each batched session's `seq` → index into those steps, built once from what it already held. */
+const batchSeq = new Map<Session, Map<number, number>>();
+
+/**
+ * Run `fill` as one pass over a session's history, instead of as a stream of separate events.
+ *
+ * The caller still bumps `rev` itself afterwards, exactly as it would have; this only changes what the work costs.
+ */
+export function batchReduce(fill: () => void): void {
+    if (batching) return void fill();   // already inside one: the outer call owns the arrays and the clean-up
+    batching = true;
+    try {
+        fill();
+    } finally {
+        batching = false;
+        batchOwn.clear();
+        batchSeq.clear();
+    }
+}
+
+/** The steps array this batch owns for a session, copied from what it held the first time it is asked for. */
+function batchSteps(s: Session): AgentStep[] {
+    let arr = batchOwn.get(s);
+    if (!arr) { arr = (s.steps || []).slice(); batchOwn.set(s, arr); s.steps = arr; }
+    return arr;
+}
+
+/** Where a step with this `seq` sits, through the batch's index. The index is VERIFIED against the array before it
+ *  is trusted, so anything that rewrote `steps` from outside the reducer costs a rebuild rather than a wrong row. */
+function batchStepAt(s: Session, seq: number): number {
+    const steps = s.steps || [];
+    let at = batchSeq.get(s);
+    const hit = at?.get(seq);
+    if (at && (hit == null || steps[hit]?.seq === seq)) return hit ?? -1;
+    at = new Map<number, number>();
+    for (let i = 0; i < steps.length; i++) { const q = steps[i].seq; if (q != null) at.set(q, i); }
+    batchSeq.set(s, at);
+    return at.get(seq) ?? -1;
+}
 
 // Agent step/result events whose `agent` START hasn't arrived yet. On a cross-page re-adopt the REPLAY sends
 // the start first, but a live agent-result can momentarily beat it onto the fresh document — dropping it lost a
@@ -110,7 +173,7 @@ export function onDebug(ev: MlDebugEvent, runtime?: string): void {
         // In-flight: a tool step arrives twice — a pending START then the DONE, sharing a `seq`.
         // Patch the existing row in place (immutably) so it fills in; otherwise append. Thoughts
         // and single-emit steps have no seq → always append.
-        const i = ev.seq != null ? steps.findIndex(x => x.seq === ev.seq) : -1;
+        const i = ev.seq == null ? -1 : batching ? batchStepAt(s, ev.seq) : steps.findIndex(x => x.seq === ev.seq);
         // When patching the pending START with its DONE, COALESCE the render slots: a DENIED call's
         // DONE carries no renderIn/renderOut (the tool never ran → no envelope), which would blank
         // out the In preview the awaiting-approval START already showed. A render only ever appears,
@@ -122,7 +185,13 @@ export function onDebug(ev: MlDebugEvent, runtime?: string): void {
             ? { ...step, renderIn: step.renderIn ?? steps[i].renderIn, renderOut: step.renderOut ?? steps[i].renderOut,
                 streamMarks: step.streamMarks ?? steps[i].streamMarks }
             : step;
-        s.steps = i >= 0 ? steps.map((x, k) => k === i ? merged : x) : [...steps, step];
+        if (batching) {
+            // Into the batch's own copy, so the array a reader is holding is never the one being grown.
+            const arr = batchSteps(s);
+            if (i >= 0) arr[i] = merged;
+            else { arr.push(step); if (ev.seq != null) batchSeq.get(s)?.set(ev.seq, arr.length - 1); }
+            s.steps = arr;
+        } else s.steps = i >= 0 ? steps.map((x, k) => k === i ? merged : x) : [...steps, step];
         // A step means the agent is actively working — flip to pending so a follow-up turn on an already-
         // "done" session (whose prior summary still sits in s.summary) reads as WORKING, not terminal. This
         // covers the off/card path where the page-side agent-say bridge is dormant, so a step is the first

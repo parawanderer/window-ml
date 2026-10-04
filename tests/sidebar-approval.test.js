@@ -323,6 +323,38 @@ test("Settings CDP toggle: flag ON but the debugger permission is INACTIVE → a
 
 // --- what an approval SAYS it will do, and the raise it is asking for ------------------------------------
 
+test("Deny splits: the plain press refuses, and the chevron sends the model a reason", async () => {
+    // A bare refusal tells the model nothing, so it guesses — often by trying the same thing a slightly different
+    // way. The contract has carried `feedback` on `approval.answer` the whole time and nothing ever sent one.
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("deny", "fetch it"));
+    await w.dispatch(agentStep("deny", 1, {
+        seq: 1, pending: true, awaitingApproval: true, tool: "fetch_url",
+        arguments: { url: "https://transavia.example/fare-rules/" },
+        renderIn: { type: "action", verb: "fetch", target: "https://transavia.example/fare-rules/" },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.flush();
+    const more = w.shadow.querySelector(".astep-approve .appr-deny-more");
+    assert.ok(more, "the chevron is there beside Deny");
+    assert.equal(more.getAttribute("aria-haspopup"), "dialog");
+
+    more.click();
+    await w.flush();
+    const field = w.shadow.querySelector(".chat-dialog .appr-say");
+    assert.ok(field, "it opens a field for the sentence");
+    field.value = "Not that site - use the airline's own domain.";
+
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    w.shadow.querySelector(".chat-dialog [type=submit]").click();
+    await w.flush();
+    const sent = posted.find((m) => m.__mlSidebarApp === "approval");
+    assert.ok(sent, "it posts a decision");
+    assert.equal(sent.decision, false, "it is still a denial");
+    assert.match(sent.feedback ?? "", /airline's own domain/, "and it carries what was typed");
+});
+
 test("the mechanics of the three buttons are OFFERED, not printed on every card", async () => {
     // What each button does is true of every approval and read once: it was the only explanation a card carried
     // about ITSELF rather than about the call, and it was a native `title` on one button, which is the slowest and
@@ -343,12 +375,15 @@ test("the mechanics of the three buttons are OFFERED, not printed on every card"
     // And it is a REAL control, not a hover: this card is drawn on a phone too, where there is no pointer at all.
     info.click();
     await w.flush();
-    const why = w.shadow.querySelector(".astep-approve .appr-why");
+    // A DIALOG, not rows unfolding under the card: appending pushes the conversation down and holds the space for
+    // as long as it is open, which on a phone is most of the screen given to something read once.
+    const why = w.shadow.querySelector(".chat-dialog .appr-why");
     assert.ok(why, "clicking opens the explanation");
     assert.match(why.textContent, /Approve runs this one call/);
     assert.match(why.textContent, /Deny refuses this call/);
     assert.match(why.textContent, /rest of this session/, "and what Keep does, since Keep is offered here");
     assert.equal(w.shadow.querySelector(".astep-approve .appr-info").getAttribute("aria-expanded"), "true");
+    assert.equal(w.shadow.querySelector(".astep-approve .appr-info").getAttribute("aria-haspopup"), "dialog");
     // The old native title is gone: an explanation that waits a second and cannot be reached by keyboard is not one.
     assert.equal(w.shadow.querySelector(".astep-approve .appr-btn.remember").getAttribute("title"), null);
 });
@@ -368,7 +403,7 @@ test("Keep's sentence is absent where Keep is not offered", async () => {
     assert.ok(!w.shadow.querySelector(".astep-approve .appr-btn.remember"), "no Keep on this card");
     w.shadow.querySelector(".astep-approve .appr-info").click();
     await w.flush();
-    const why = w.shadow.querySelector(".astep-approve .appr-why");
+    const why = w.shadow.querySelector(".chat-dialog .appr-why");
     assert.match(why.textContent, /Approve runs this one call/);
     assert.doesNotMatch(why.textContent, /rest of this session/, "and nothing about a button that is not drawn");
 });

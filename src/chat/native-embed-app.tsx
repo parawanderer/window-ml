@@ -5,8 +5,7 @@
 import { clientPairing } from "../pairing/client-pairing";
 import { FakeHost } from "./fake-host";
 import { openClientHost } from "./client-host";
-import { keepKeysInApp, reportStartFailure, runEmbed } from "./native-embed";
-import { storeCache } from "./event-cache";
+import { sessionArchive, keepKeysInApp, reportStartFailure, runEmbed } from "./native-embed";
 
 declare const __BUNDLE__: string;
 
@@ -16,7 +15,9 @@ async function main(): Promise<void> {
     // The keys live in the phone's keystore, not the WebView's storage (WebKit cannot even store an X25519 key there).
     const kept = keepKeysInApp();
     // What this phone has already seen of each session, so reopening one after the OS killed the app is not a refetch.
-    const cache = storeCache(kept);
+    // It is the app's SQLite archive now, over the bridge (archive-bridge.ts): the same database the extension
+    // archives into, written incrementally, instead of a JSON file rewritten whole after every change.
+    const cache = sessionArchive ?? undefined;
     const { ring, me, host } = await openClientHost("Phone");
     const m = me?.membership;
     // Joining, creating or leaving changes who this device is: the page starts over as the new identity. After a moment,
@@ -28,7 +29,7 @@ async function main(): Promise<void> {
         defaultLabel: "Phone",
         rootKeptIn: "this phone's keystore",
         // A device that joins or leaves an account replays nothing of the last one's sessions.
-        onChanged: () => { void cache.clear().catch(() => undefined).finally(() => setTimeout(() => location.reload(), 400)); },
+        onChanged: () => { void cache?.clear().catch(() => undefined).finally(() => setTimeout(() => location.reload(), 400)); },
     });
     runEmbed(host ?? new FakeHost({ runtimes: [] }), {
         account: m ? { label: "This phone", hubUrl: m.hubUrl, root: !!me?.root } : null,

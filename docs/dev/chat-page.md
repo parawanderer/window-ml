@@ -42,6 +42,47 @@ Sessions are keyed `runtime:hash` in `sessionMap`, so the same hash on two runti
 selection is the store's `view` signal (`{ name: "detail", hash: key }`), because shared views read it too (the
 Python renderer names the driving model from it, and `highlight` targets the session being read).
 
+### Paging a history back, and what a replay costs
+
+A transcript that does not reach its session's start pages back with `session.backfill`, forty events at a time (the
+page size is a size decision wearing a count: forty screenshots is tens of megabytes). Each page is applied by
+FORGETTING the reduced session and replaying every event held, in history order, because the reducer appends a step
+it has not seen rather than inserting it in order — reduce only the page and a transcript comes out 46…50, 6…45, 1…5.
+That was tried; three existing tests caught it.
+
+Replaying is right. Replaying once per page is not, and for a long while it was the whole cost of an export, which
+fetches the rest of the session first. Measured on a synthetic session with no wire at all:
+
+| events | before | after |
+| --- | --- | --- |
+| 3,200 | 177 ms | 7 ms |
+| 12,800 | 1,169 ms | 19 ms |
+| 25,600 | 5,336 ms | 22 ms |
+| 102,400 | — | 54 ms |
+
+Two separate quadratics, both inside the reducer's step path, and neither visible in the obvious place:
+
+- `steps.findIndex(x => x.seq === ev.seq)`, the lookup that patches a pending step with its DONE, scans the whole
+  array for every step.
+- `s.steps = [...steps, step]` copies the whole array for every step.
+
+One at a time those are nothing, which is why they were there: a live run appends a step every few seconds. A replay
+does the same work for tens of thousands of events at once, so ONE rebuild of a 25,600-event session took 1.2
+seconds, and a pull that rebuilt after each of its 640 pages took 5.3. `batchReduce(fill)` (debug-reducer.ts) makes
+the reducer, for the duration of `fill`, write into one array per session and find a row by a `seq` index. The array
+is a copy taken at the first write, so the session's `steps` changes identity exactly once and whatever held the
+previous array never sees it grow — the same thing a single event would have done, which is what makes this a cost
+change and not a semantic one. Nothing renders in between: `rev` is bumped once, by the caller, afterwards.
+
+Both replay sites use it. On top of that, `loadEarlier(key, { defer: true })` fetches a page without reducing at all,
+and `applyEarlier(key)` reduces the lot in one pass — which is what a full pull does, since reducing after every page
+is work on a transcript nobody is watching. `applyEarlier` belongs in a `finally`: a session left deferred shows the
+tail it had before the pull with the rest fetched and invisible. It does nothing if the session was reset or
+re-subscribed in between, since replaying those pages over a different history would append every answer and user
+message a second time.
+
+The remaining limit is memory, not time: `applied` holds every event fetched, which is what a replay needs.
+
 ## The stream rules
 
 `SessionFeed` keeps an epoch and the SET of cursors applied in it, and drops, in this order: a message about another
@@ -171,6 +212,30 @@ five seconds, so a streaming run does not upsert the list on every delta.
 `chrome` reference and its tests run it against the real server over an in-memory port. On a disconnect it answers
 in-flight commands `unavailable`, marks the runtime offline, reconnects with backoff, asks for the index again, and
 re-subscribes each open session from the last position it delivered.
+
+### A tab whose content script is gone
+
+A content script lives as long as the extension that injected it. Reload or update the extension and every tab already
+open keeps its page and loses its listener, so the next `chrome.tabs.sendMessage` to it rejects with Chrome's "Could
+not establish connection. Receiving end does not exist." Nothing is wrong with the tab, the message or the run: the
+extension moved underneath them, and this is the ordinary state of every open tab after a reload.
+
+That rejection used to escape `agent.start` and reach the person as Chrome's string, which names no cause and no
+remedy. It also skipped the sentence already written for it in `session-commands.ts` ("the page did not answer; it may
+still be loading, or the extension cannot run there"), because a THROW never reaches the branch that reads the
+outcome. `askPage` (sw-sessions.ts) now puts the content scripts back from the MANIFEST's own list, waits for the main
+world's `window.ml` rather than for the content script (the listener is registered before `injected.js` runs), asks
+once more, and answers `undefined` on any further failure so the caller's sentence is reached.
+
+What re-injection cannot give back: `shadow-patch.js` runs at `document_start` to record shadow roots as the page
+makes them, so injected after a load it only sees roots attached from then on. A closed root created earlier stays
+unreachable until the tab is reloaded.
+
+The regression test is in `tests/e2e/chat-page.spec.mjs`, and it builds the condition by loading a bundle whose
+content scripts match nothing rather than by reloading the extension: `chrome.runtime.reload()` leaves a Playwright
+persistent context with no usable extension at all. It asserts both halves of the precondition (the tab IS scriptable,
+and nothing answers) before driving anything, because a tab that could not be scripted would make it pass for the
+wrong reason.
 
 ## The local commands
 
@@ -744,11 +809,23 @@ resume and reset already are the reconciliation.
 - **What is saved is the subscription's history, not `applied`.** A page of older events REWRITES `applied`, and a
   copy saved from it would claim a history the saved position does not start at. `seen` records only what the
   subscription delivered, and where that history began (`earlier`), which older pages never move.
-- **Bounded.** A session over `CACHE_MAX_BYTES` is not kept at all, since half a session is worse than none, and
-  past `CACHE_SESSIONS` the least recently saved goes. A screenshot-heavy agent run simply refetches.
+- **Bounded, by TRIMMING.** A session over `CACHE_MAX_BYTES` is cut down to its newest events rather than dropped,
+  and past `CACHE_SESSIONS` the least recently saved goes. It used to be dropped whole, on the reasoning that half a
+  session is worse than none — true of a copy that lies about where it starts, and not true here, because
+  `earlier.from` exists to say that history continues before what is held and is already persisted. The old rule
+  also inverted what anyone wants: the biggest sessions are the most annoying to refetch over a hub, and they were
+  the only ones kept at nothing. Trimming takes WHOLE EVENTS off the old end, which is what keeps it safe — `feed`
+  is the subscription's position at the new end, so it stays as true as it was. Nothing is taken out of an event:
+  dropping a screenshot-heavy run's images would fit far more and would make the copy misrepresent itself, with no
+  way in the format to say the captures were left behind. Two honest floors remain — a single event over the cap,
+  and events that cannot say their `pos`, since a copy that cannot state where it begins would have to claim the
+  session starts there.
 - **A slow cache is an empty cache.** An open waits at most `CACHE_LOAD_MS` for the copy, then opens normally: the
   page outside the app, where nothing answers the store, used to sit on "Loading…" for the store's 15 s timeout.
-- **Where the phone keeps it:** the app's CACHE directory (`mobile/src/store.ts`, names starting `ev`), out of
-  backups and purgeable by the OS. Joining or leaving an account clears it (`native-embed-app.tsx`), so a device
-  never replays the last account's sessions. Checked on the iOS simulator: two opened sessions land in
-  `Library/Caches/events/`, and a relaunch reopens one through the reset path with exactly one copy of each turn.
+- **Where the phone keeps it:** the app's DOCUMENTS (`mobile/src/store.ts`, names starting `ev`, under
+  `Documents/events/`). It was the cache directory, out of backups and purgeable by the OS, which is the right
+  promise for an optimisation and the wrong one for history a reader relies on with no signal. What makes that
+  affordable is that the copies bound themselves (above), so this is an archive with a ceiling rather than a folder
+  that grows until the phone is full. Anything left under the old cache path is simply not found and refetched once.
+  Joining or leaving an account clears it (`native-embed-app.tsx`), so a device never replays the last account's
+  sessions.

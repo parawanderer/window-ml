@@ -87,8 +87,13 @@ export async function pickFolder(): Promise<string | null> {
     }
 }
 
-/** Where a page remembers that the folder has been reconnected once. Page-side (extension pages share the origin),
- *  because only a page can re-grant, and the question is only ever asked by one. */
+/** Where a page remembers HOW MANY TIMES the folder has been reconnected. Page-side (extension pages share the
+ *  origin), because only a page can re-grant, and the question is only ever asked by one.
+ *
+ *  A count rather than a flag, because one re-grant and two mean different things. After one, the likely story is
+ *  that the browser's "allow this time" was chosen and the lasting option is worth naming. After two, that advice
+ *  has been followed and the grant lapsed anyway: this browser does not keep it, whatever is chosen, and saying so
+ *  is the only honest thing left. (Earlier builds stored a timestamp here; it reads back as one.) */
 const REGRANTED_KEY = "wml-archive-regranted";
 
 /** Re-grant a lapsed permission (a page, inside a click). True when it is granted now. */
@@ -96,15 +101,21 @@ export async function regrantFolder(): Promise<boolean> {
     const handle = await loadFolder();
     if (!handle) return false;
     const ok = (await (handle as Permissioned).requestPermission({ mode: "readwrite" })) === "granted";
-    // Remembered, because the browser never says which answer was given: "Allow this time" and "Allow on every visit"
-    // both come back `granted`. A folder that lapses AGAIN after this was only allowed once, and the next ask says so.
-    if (ok) try { localStorage.setItem(REGRANTED_KEY, String(Date.now())); } catch { /* storage unavailable */ }
+    // Counted, because the browser never says which answer was given: "Allow this time" and "Allow on every visit"
+    // both come back `granted`. What the count buys is in REGRANTED_KEY.
+    if (ok) try { localStorage.setItem(REGRANTED_KEY, String(regrantCount() + 1)); } catch { /* storage unavailable */ }
     return ok;
 }
 
-/** Has this browser's folder been reconnected before? If it lapses again, it was allowed only once last time. */
-export function regrantedBefore(): boolean {
-    try { return !!localStorage.getItem(REGRANTED_KEY); } catch { return false; }
+/** How many times this browser's folder has been reconnected. Each one that lapsed again says something more. */
+export function regrantCount(): number {
+    try {
+        const raw = localStorage.getItem(REGRANTED_KEY);
+        if (!raw) return 0;
+        // An earlier build wrote a timestamp. It means "once", and a count never reaches those numbers honestly.
+        const n = Number(raw);
+        return !Number.isFinite(n) || n > 1e6 ? 1 : Math.max(1, Math.round(n));
+    } catch { return 0; }
 }
 
 /** The folder, when it is writable from here; null otherwise. */

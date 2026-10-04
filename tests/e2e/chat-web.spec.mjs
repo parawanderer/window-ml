@@ -941,7 +941,7 @@ test("desktop: the list shows the last month, and the search page holds every se
     const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
     const list = page.locator(".chat-list");
     await expect(list.locator(".chat-row", { hasText: "Tokyo in four days" })).toHaveCount(0);
-    await expect(list.locator(".chat-older-go .chat-older-n")).toHaveText("48");
+    await expect(list.locator(".chat-older-n")).toHaveText("48");
 
     // The HEADER's search button, not the runtime's "Older sessions" row: that row carries its runtime into the
     // device filter (its own test below), and this one is about the page holding every session there is.
@@ -990,7 +990,7 @@ test("desktop: the list shows the last month, and the search page holds every se
     await page.close();
 });
 
-test("a runtime's older sessions sit under it and open the search page already on that device", async () => {
+test("a runtime's older sessions open in place, and the way past them carries that device", async () => {
     const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
     const list = page.locator(".chat-list");
 
@@ -999,12 +999,42 @@ test("a runtime's older sessions sit under it and open the search page already o
     // Matched by its own HEADING, not by its text: "Needs you" holds a row that names the machine too, so a
     // hasText match lands on that group instead and quietly asserts nothing.
     const groupOf = (name) => list.locator(".chat-group").filter({ has: page.locator(".chat-rt", { hasText: name }) });
-    await expect(groupOf("Work laptop").locator(".chat-older-go .chat-older-n")).toHaveText("48");
-    await expect(groupOf("Desk PC").locator(".chat-older-go")).toHaveCount(0);
+    await expect(groupOf("Work laptop").locator(".chat-older-n")).toHaveText("48");
+    await expect(groupOf("Desk PC").locator(".chat-older")).toHaveCount(0);
 
-    // And it CARRIES its runtime: the search page opens already filtered to it, so finding the session you were
-    // just looking at does not mean naming the device again under the heading that had just named it.
-    await groupOf("Work laptop").locator(".chat-older-go").click();
+    // IT OPENS IN PLACE. These sessions are already here — the index holds them and the list is simply not reaching
+    // back far enough — so sending the reader to another view to look at a row five pixels away was a round trip to
+    // nowhere.
+    const laptop = groupOf("Work laptop");
+    // Beside the counter the way out is a GLYPH, with its words in a tooltip and an accessible name, and it ARRIVES
+    // WITH THE POINTER on the line it belongs to — permanently visible it was a third mark on the quietest line in
+    // the group. It is also the size of the row's own `⋮`, since the two sit in one column an inch apart.
+    const search = laptop.getByRole("button", { name: "Search all history on Work laptop" });
+    await expect(search.locator(".tt-pop")).toHaveCount(1);
+    await expect(search).toHaveCSS("opacity", "0");
+    await laptop.locator(".chat-older").hover();
+    await expect(search).toHaveCSS("opacity", "1");
+    const [sBox, mBox] = [await search.boundingBox(), await laptop.locator(".chat-row-more").first().boundingBox()];
+    expect([sBox.width, sBox.height]).toEqual([mBox.width, mBox.height]);
+
+    const rows = () => laptop.locator(".chat-row-wrap").count();
+    const before = await rows();
+    await laptop.getByRole("button", { name: /^48 older$/ }).click();
+    expect(await rows()).toBe(before + 10);
+    await expect(laptop.locator(".chat-older-n")).toHaveText("38");
+    await expect(page.locator(".chat-search")).toHaveCount(0, "and nothing navigated");
+    // The rows that just arrived say so, once: the line is at the BOTTOM of the group, so the press moves nothing
+    // within sight unless they do.
+    await expect(laptop.locator(".chat-row-wrap.revealed")).toHaveCount(10);
+
+    // And the way past what is held CARRIES its runtime: the search page opens already filtered to it, so finding
+    // the session you were just looking at does not mean naming the device again under the heading that had just
+    // named it. It appears once the reader has shown they are looking backwards, which is also the only point at
+    // which "search all of this one's history" is the question — before that the line answers it.
+    // Beside the counter it is a GLYPH, with its words in a tooltip and an accessible name; they become visible only
+    // when it is the last control on the line, which is what stops a lone magnifying glass being unnameable. And it
+    // is the size of the row's own `⋮`, since the two sit in one column an inch apart.
+    await search.click();
     const devices = page.locator(".chat-search-devices");
     await expect(devices.getByRole("button", { name: "Work laptop" })).toHaveAttribute("aria-pressed", "true");
     await expect(devices.getByRole("button", { name: "All devices" })).toHaveAttribute("aria-pressed", "false");
@@ -1012,6 +1042,48 @@ test("a runtime's older sessions sit under it and open the search page already o
     // The HEADER's search button asks about everything, and never inherits whichever row was clicked last.
     await list.getByRole("button", { name: "Search sessions" }).click();
     await expect(devices.getByRole("button", { name: "All devices" })).toHaveAttribute("aria-pressed", "true");
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("one session, one menu: the list's dots and the chat's offer the same things", async () => {
+    // These drifted into two sets for the same object — the list's offered pin, rename and delete, the chat's
+    // offered look, export and copy — so which options existed depended on which corner you had clicked. The phone
+    // had one sheet for both (mobile/src/session-actions.tsx); this keeps the page from drifting back.
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
+    const labels = async (sel) => page.locator(`${sel} .chat-menu-item .chat-menu-label`)
+        .evaluateAll((els) => els.map((e) => e.firstChild?.textContent?.trim()));
+
+    await page.locator(".chat-row-more").first().click();
+    expect(await labels(".chat-row-menu")).toEqual(["Pin to the top", "Rename…", "Look at the page", "Copy session id", "Delete…"]);
+    await page.keyboard.press("Escape");
+
+    // The open session's menu: the same list, plus the one thing that can only be done where a transcript is held.
+    await row(page, WAITING).click();
+    await page.locator(".chat-head-more").first().click();
+    expect(await labels(".chat-head-menu")).toEqual(["Pin to the top", "Rename…", "Look at the page", "Export chat…", "Copy session id", "Delete…"]);
+    // CALM VIEW IS NOT AMONG THEM. It is how the page reads, not something done to this session, and it lives in the
+    // gear with the other page-wide choices — it used to be here too, behind a condition on the window's width.
+    await expect(page.locator(".chat-head-menu")).not.toContainText("Calm view");
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("a thing that cannot be done stays on the menu and says why, in words, not a tooltip", async () => {
+    // Dropping the row taught nothing and made the menu a different shape every time; a greyed row with a tooltip
+    // would be worse again, since a disabled control is not hoverable and a phone has no hover at all. So the reason
+    // is a second line, and `aria-disabled` keeps the row in the tab order to be read.
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
+    const dots = page.locator(".chat-row-more");
+    await dots.nth((await dots.count()) - 1).click();
+    const look = page.locator(".chat-row-menu .chat-menu-item", { hasText: "Look at the page" });
+    await expect(look).toHaveAttribute("aria-disabled", "true");
+    await expect(look.locator(".chat-menu-note")).toHaveText(/not on a tab/);
+    // And it does nothing when pressed, rather than being merely painted grey. FORCED, because Playwright honours
+    // `aria-disabled` and will not click it otherwise — which is itself the evidence that the row is properly
+    // marked rather than just dimmed. The menu staying open is what says no handler ran.
+    await look.click({ force: true });
+    await expect(page.locator(".chat-row-menu")).toBeVisible();
     expect(errors).toEqual([]);
     await page.close();
 });
@@ -2321,6 +2393,45 @@ test("continuing a capped run carries it on, and the offer goes with it", async 
     await expect(page.locator(".continue-wrap")).toHaveCount(0);
     // And it is not still asking: pressing again is what produced the refusal.
     await expect(page.locator(".chat-notice")).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// WATCHING A RUN THINK is the only thing on the page that tells a slow step from a stuck one, so it is on by
+// default. It costs something only over a wire: every `agent-stream` event carries the whole answer so far rather
+// than the part that is new, so for a machine on the account it is a choice, and a remembered one. On this browser
+// it is free and nothing is asked — that half is in chat-page.spec.mjs, which has a local runtime to ask about.
+test("a run streams its thinking by default, and the choice is this device's to remember", async () => {
+    const { page, errors } = await open(DESKTOP);
+    await page.locator(".chat-start-box textarea").waitFor();
+
+    // A PICKER, NOT A SWITCH WITH AN `ⓘ`: the reason to pick either side is a sentence, and a sentence belongs
+    // beside the option rather than behind a second press — which is also the only shape that works on a phone,
+    // where the panel's tooltip is dismissed by the same pointerdown a tap begins with.
+    const pill = page.getByRole("button", { name: /^Thinking:/ });
+    await expect(pill).toContainText("Live");
+    await pill.click();
+    const list = page.getByRole("listbox", { name: "Thinking" });
+    await expect(list.getByRole("option")).toHaveText([/Live.*slow step from a stuck run/s, /Quiet.*leave alone/s]);
+    await page.keyboard.press("Escape");
+
+    await page.locator(".chat-start-box textarea").fill("summarise this");
+    await page.locator(".chat-start-box textarea").press("Enter");
+    await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "agent.start", stream: true });
+
+    // Quiet is the opposite, and it STAYS chosen: a device that always wants one answer should say so once.
+    await page.locator(".chat-list .chat-start").click();
+    await page.getByRole("button", { name: /^Thinking:/ }).click();
+    await page.getByRole("listbox", { name: "Thinking" }).getByRole("option").filter({ hasText: "Quiet" }).click();
+    await page.locator(".chat-start-box textarea").fill("summarise this quietly");
+    await page.locator(".chat-start-box textarea").press("Enter");
+    const quiet = (await commands(page)).at(-1);
+    expect(quiet).toMatchObject({ type: "agent.start", task: "summarise this quietly" });
+    expect(quiet.stream, "no flag at all, rather than a false one").toBe(undefined);
+
+    await page.reload();
+    await page.locator(".chat-start-box textarea").waitFor();
+    await expect(page.getByRole("button", { name: /^Thinking:/ })).toContainText("Quiet");
     expect(errors).toEqual([]);
     await page.close();
 });

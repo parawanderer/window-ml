@@ -17,6 +17,7 @@ import { surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, sh
 import type { Session, AgentStep, Status } from "./store";
 import { pretty, truncate, markdown, collapsedPreview } from "./format";
 import { sessionProfile } from "./model";
+import { Dialog } from "./dialog";
 import { IconChevron, IconWarn, IconInfo, IconCopy, IconCheck, IconIn, IconOut } from "./icons";
 import { usageSamples, liveOutTokens } from "./usage";
 import { fmtDur } from "./timestamps";
@@ -210,25 +211,61 @@ export function approvalMechanics({ grants }: { grants: boolean }): string[] {
  * The approval's buttons, with a quiet info control at the other end of the row.
  *
  * The explanation is offered BOTH ways on purpose: the pointer gets it on hover, which is what makes it free to
- * consult and free to ignore, and a click opens the same sentences underneath for anyone without a pointer — the
- * cursor tip is pointer-only, and this card is drawn on a phone too. One list, two presentations, so they cannot
- * drift. The control is deliberately not a warning colour: nothing is wrong, there is simply more to know.
+ * consult and free to ignore, and the control OPENS A DIALOG for anyone without one — the cursor tip is
+ * pointer-only, and this card is drawn on a phone too. One list, two presentations, so they cannot drift.
+ *
+ * A dialog rather than the rows unfolding underneath, which is what this did first. Appending to the card pushes the
+ * conversation down and keeps the space for as long as it is open, and on a phone that is most of the screen given
+ * to something you read once. A dialog costs nothing until it is asked for and nothing after it is dismissed. The
+ * control is deliberately not a warning colour: nothing is wrong, there is simply more to know.
  */
-function ApprovalRow({ grants, decide }: { grants: boolean; decide: (ok: boolean, persist?: boolean) => void }) {
+function ApprovalRow({ grants, decide }: { grants: boolean; decide: (ok: boolean, persist?: boolean, feedback?: string) => void }) {
     const [why, setWhy] = useState(false);
+    const [saying, setSaying] = useState(false);
+    const note = useRef<HTMLTextAreaElement>(null);
     const lines = approvalMechanics({ grants });
     const list = <ul class="appr-why-list">{lines.map((l) => <li key={l}>{l}</li>)}</ul>;
     return (
         <>
             <div class="appr-row">
-                <button class="appr-info" aria-label="What these choices do" aria-expanded={why}
-                    {...cursorTipOn(list)} onClick={() => setWhy((v) => !v)}><IconInfo /></button>
+                <button class="appr-info" aria-label="What these choices do" aria-haspopup="dialog" aria-expanded={why}
+                    {...cursorTipOn(list)} onClick={() => setWhy(true)}><IconInfo /></button>
                 <span class="sp" />
-                <button class="appr-btn no" onClick={() => decide(false)}>Deny</button>
+                {/* DENY SPLITS, the way Continue does: the plain press is the common answer and stays one click, and
+                    the chevron is where the rarer, wordier one lives. A bare refusal tells the model nothing, so it
+                    guesses — often by trying the same thing a slightly different way. A sentence is what turns a
+                    denial into a redirection, and the contract has carried `feedback` the whole time. */}
+                <span class="appr-deny-wrap">
+                    <button class="appr-btn no" onClick={() => decide(false)}>Deny</button>
+                    <button class="appr-btn no appr-deny-more" aria-label="Deny with a message" aria-haspopup="dialog"
+                        onClick={() => setSaying(true)}><IconChevron /></button>
+                </span>
                 <button class="appr-btn yes" onClick={() => decide(true)}>Approve</button>
                 {grants ? <button class="appr-btn yes remember" onClick={() => decide(true, true)}>Keep</button> : null}
             </div>
-            {why ? <div class="appr-why">{list}</div> : null}
+            {saying ? (
+                <Dialog onClose={() => setSaying(false)} labelledBy="appr-say-h" initialFocus={note}
+                    onSubmit={() => { const t = note.current?.value.trim(); setSaying(false); decide(false, false, t || undefined); }}>
+                    <h2 id="appr-say-h">Deny, and say why</h2>
+                    <p>The run carries on, and the model is told this instead of only that it was refused — so it can try
+                        something else rather than guess at a bare no.</p>
+                    <textarea ref={note} class="chat-dialog-field appr-say" rows={3}
+                        placeholder="Not that site — use the fare rules page on the airline's own domain." />
+                    <div class="chat-dialog-actions">
+                        <button type="button" class="btn" onClick={() => setSaying(false)}>Cancel</button>
+                        <button type="submit" class="btn primary">Deny with this</button>
+                    </div>
+                </Dialog>
+            ) : null}
+            {why ? (
+                <Dialog onClose={() => setWhy(false)} labelledBy="appr-why-h">
+                    <h2 id="appr-why-h">What these choices do</h2>
+                    <div class="appr-why">{list}</div>
+                    <div class="chat-dialog-actions">
+                        <button type="button" class="btn" onClick={() => setWhy(false)}>Close</button>
+                    </div>
+                </Dialog>
+            ) : null}
         </>
     );
 }
@@ -438,10 +475,10 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // permanently widens the transcript you came to read. It collapses to its one-line preview instead,
     // which still fills in with the result. Deciding is also the one moment a collapse cannot lose you
     // anything — you have just read the call in order to approve it.
-    const decide = (ok: boolean, persist = false) => {
+    const decide = (ok: boolean, persist = false, feedback?: string) => {
         setExpanded(!focusMode.value); setDecided(true);
         if (hash && st.seq != null) decidedSteps.add(stepKey(hash, st.seq));
-        void decideGate(st, hash!, st.seq!, ok, persist);   // fetch_url: grant its host in-gesture, then post
+        void decideGate(st, hash!, st.seq!, ok, persist, feedback);   // fetch_url: grant its host in-gesture, then post
         rev.value++;   // re-render the run footer so it drops "waiting for your approval" at once
     };
     // When a step starts awaiting approval, scroll it into view so a gate mid-run isn't missed.

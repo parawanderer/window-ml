@@ -934,7 +934,16 @@ textarea.cinput { resize: none; overflow-y: auto; line-height: 1.5; font: inheri
   border-radius: 50%; border: none; background: rgba(0, 0, 0, 0.55); color: #fff; cursor: pointer; font-size: 11px; padding: 0; }
 .cthumb-x:hover { background: rgba(0, 0, 0, 0.82); }
 .cthumb-load { display: flex; align-items: center; justify-content: center; }
-.cspin { width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: cspin 0.7s linear infinite; }
+/** THE SPINNER: a ring with one lit arc, for anywhere something is being fetched and there is no number to show. */
+/* Size it with `--spin` where the default 16px is wrong for the line it sits in; the border follows, so it stays a
+   ring rather than a disc at small sizes. It is the shared one deliberately — this repo already grew three
+   (`.card-tab-spin`, `.bench-play-spin` and this), which is how a fourth gets written. A wait that KNOWS how far
+   along it is takes a `<progress>` instead: a spinner there would be hiding a number we have. */
+.cspin {
+    width: var(--spin, 16px); height: var(--spin, 16px); flex: 0 0 auto;
+    border: max(1.5px, calc(var(--spin, 16px) / 8)) solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: cspin 0.7s linear infinite;
+}
 @keyframes cspin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .cspin { animation-duration: 2s; } }
 /* Right-click "ask about this" element pill: a removable chip; hover boxes the container on the page. */
@@ -1247,7 +1256,14 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
    this had a tinted background AND a hard border of the same colour inside it — one decision wrapped three times,
    reading as an alert nested in an alert. The busy view keeps all of it: there the card sits among the other
    instrumentation, matching the bar above it, and it is the same trace the DevTools panel draws. */
-html[data-focus] .astep-approve { gap: 8px; margin: 6px 0; padding: 9px 11px; border-radius: 10px;
+/* ROOM TO READ. The padding was 9px/11px against a 15.6px reading size, so the sentence sat a hair off three
+   borders — and it is the longest line in the card, since a URL wraps to the full width, which made the one thing
+   on the page you are meant to read carefully the most cramped. It belongs on the CARD and not on the sentence:
+   padding the sentence alone would indent it out of line with the buttons underneath it.
+
+   In `em`, because this rule is also the DevTools panel's focus mode, where the base is 12px and the old figures
+   were right. The same proportion gives ~13px/15px at reading size and ~10px/11px there. */
+html[data-focus] .astep-approve { gap: .55em; margin: 6px 0; padding: .82em .95em; border-radius: 10px;
     background: var(--panel); border: none; }
 .astep-approve .appr-row { display: flex; align-items: center; gap: 8px; }
 /* The info control sits at the FAR end from the buttons, which is what keeps it out of the way of the decision:
@@ -1261,6 +1277,31 @@ html[data-focus] .astep-approve { gap: 8px; margin: 6px 0; padding: 9px 11px; bo
 /* The glyph stays small, the TARGET does not — a finger needs 40px and the repo's touch probe enforces it, which is
    how this was caught rather than shipped. The circle grows; the icon inside it does not. */
 @media (pointer: coarse) { .appr-info { width: 40px; height: 40px; } }
+/* DENY, SPLIT. The two halves read as one control: they sit flush, share the outline, and only the inner edge
+   divides them — the same shape `.continue-run`/`.continue-more` uses for Continue, because they are the same idea
+   (the common answer under the thumb, the wordier one behind a chevron) and two shapes for it would be two things
+   to learn. */
+/* THE WRAPPER CARRIES THE OUTLINE, and the two halves inside it carry none. Giving each half its own border and
+   pulling them together with a negative margin left two rings and a seam between them, so it read as two pills
+   rather than one control with a second way in. One border, one radius, a hairline between — the halves cannot
+   disagree about their own edges because they no longer have any. `inherit` keeps whatever the surface's own theme
+   put on `.appr-btn.no` (focus view restyles it) rather than restating the colour here and drifting from it. */
+.appr-deny-wrap { display: inline-flex; border: 1px solid; border-radius: 6px; overflow: hidden; color: var(--err); border-color: currentColor; }
+.appr-deny-wrap .appr-btn.no { border: none; border-radius: 0; color: inherit; }
+/* The chevron half of a split Deny: where the wordier answer lives, so the plain refusal stays one press. */
+/* THE DIVIDER IS A SHADOW, not a border. Focus view sets `border-color: transparent` on every `.appr-btn` at a
+   specificity this cannot reach without naming the theme, so a border here was drawn and then wiped — the two
+   halves ran together with nothing to say the chevron was its own press. An inset shadow is not a border and
+   nothing restyles it. */
+.appr-deny-more { display: inline-flex; align-items: center; padding: 3px 6px; border: none; border-radius: 0;
+    box-shadow: inset 1px 0 0 currentColor; color: inherit; }
+.appr-deny-more svg { width: 14px; height: 14px; transform: rotate(90deg); }
+@media (pointer: coarse) { .appr-deny-more { min-width: 40px; justify-content: center; } }
+/* Focus view draws its buttons as pills with no outline until they are needed; the wrapper follows, or a round
+   Approve would sit beside a square Deny. */
+html[data-focus] .appr-deny-wrap { border-radius: 999px; color: var(--fg-dim); }
+/* The message itself: a field that can hold a sentence, not a line. */
+.appr-say { min-height: 72px; resize: vertical; font: inherit; }
 /* What the pointer gets from the tip, for everyone else: opened by the control, under the row it explains. */
 .appr-why { margin-top: 6px; }
 .appr-why-list { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px;
@@ -3669,3 +3710,63 @@ button.chat-chip.on { background: var(--accent); color: var(--accent-fg); }
 .pair-scan-go { justify-content: flex-start; margin-top: 0; }
 /* "Scanned: the keys match": said in the ok colour, since it replaces the comparison a person would have made. */
 .pair-checked { color: var(--ok); }
+
+/* ======================= THE MODAL SHELL (sidebar/dialog.tsx) =======================
+   HERE RATHER THAN IN chat.css, because the panel loads only this sheet and the approval card is drawn on
+   both surfaces. The primitive's own header says it exists so a fourth dialog would not hand-roll a
+   backdrop, an Escape and a click-outside again; that argument only holds if everything that needs one can
+   reach it. The `chat-` prefix stays: renaming it would touch every dialog for no one's benefit. */
+/** The one confirmation a delete goes through: modal, centred, and focused on Cancel. */
+.chat-dialog-back {
+    position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 16px;
+    background: rgba(0, 0, 0, .45); animation: chat-fade .15s ease both;
+}
+.chat-dialog {
+    width: min(420px, 100%); padding: 20px 20px 16px; border-radius: 16px;
+    background: var(--panel); border: 1px solid var(--border); box-shadow: 0 18px 50px rgba(0, 0, 0, .45);
+    /* The entrance rises with `top`, not with a transform, and this is the whole reason it has its own keyframes.
+       A transform on this card makes it the containing block for every `position: fixed` descendant, and the
+       pickers inside place their popovers in VIEWPORT coordinates — so the list opened a card's width and height
+       away from the pill that summoned it. An identity matrix does it too, which `animation-fill-mode: both`
+       leaves behind for good, and so does a transform that is merely mid-flight, which is what a picker opened
+       during the entrance would have met. `position: relative` + `top` creates no containing block at all. The
+       0.98 scale went with it; the rise and the fade carry the entrance on their own. */
+    position: relative; animation: chat-dialog-in .18s cubic-bezier(.2, .7, .3, 1) backwards;
+}
+@keyframes chat-dialog-in { from { opacity: 0; top: 6px; } }
+/* A dialog that ASKS something rather than confirming it (resuming a run: where to). It needs the room the picker
+   rows want, and it is still the same card — a second shape would read as a different kind of thing. */
+.chat-dialog.wide { width: min(520px, 100%); }
+.chat-dialog:focus { outline: none; }
+.chat-dialog h2 { margin: 0 0 8px; font-size: 1.12em; font-weight: 600; }
+.chat-dialog p { margin: 0 0 18px; color: var(--fg-dim); line-height: 1.5; }
+.chat-dialog p b { color: var(--fg); font-weight: 600; }
+/* The form rows inside an asking dialog, spaced like the start page's — the same rows, in a card instead of a page. */
+.chat-dialog-form { display: flex; flex-direction: column; gap: 12px; margin-bottom: 18px; }
+/* The start page's inline pickers, which are laid out as one wrapping row there and want the same here. */
+.chat-dialog-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+/* What the pill beside it is choosing. One picker with no label is a control whose subject you infer. */
+.chat-dialog-lead { color: var(--fg-dim); }
+.chat-dialog-form > p:last-child { margin-bottom: 0; }
+.chat-dialog-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+/* A note that belongs with the buttons sits at the far left of the same row. */
+.chat-dialog-actions.spread > :first-child { margin-right: auto; }
+.chat-dialog .btn {
+    padding: 7px 14px; border-radius: 999px; font: inherit; cursor: pointer;
+    background: transparent; color: var(--fg); border: 1px solid var(--border);
+}
+.chat-dialog .btn:hover { background: var(--panel-2); }
+.chat-dialog .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* The confirming button is the filled one, not a red one: the dialog is the warning, and a red button in a calm
+   page shouts a second time about something the sentence above it has already said. */
+.chat-dialog .btn.primary { background: var(--fg); border-color: var(--fg); color: var(--bg); font-weight: 600; }
+.chat-dialog .btn.primary:hover { filter: brightness(.92); }
+.chat-dialog .btn:disabled { opacity: .6; cursor: default; }
+@media (prefers-reduced-motion: reduce) { .chat-dialog-back, .chat-dialog { animation: none; } }
+/* The rename dialog's field, and the line under it saying what an empty name does. */
+.chat-dialog-field {
+    width: 100%; box-sizing: border-box; margin: 4px 0 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
+    background: var(--bg); color: var(--fg); font: inherit; outline: none;
+}
+.chat-dialog-field:focus { border-color: var(--fg-dim); }
+.chat-dialog-hint { margin: 0 0 12px; color: var(--fg-faint); font-size: .9em; }

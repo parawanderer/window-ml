@@ -1,15 +1,21 @@
-// dialog.tsx — the page's ONE modal shell: a dimmed backdrop, a centred card, Escape and a click outside to leave.
+// dialog.tsx — THE ONE MODAL SHELL both surfaces use: a dimmed backdrop, a centred card, Escape and a click outside
+// to leave.
 //
 // It exists because the third dialog was about to hand-roll the same three things a fourth time, and each copy is a
 // place one of them can be forgotten — the resume form, before this, was not a dialog at all but a screen that
 // REPLACED the transcript, so leaving it meant finding the ×.
+//
+// It lives HERE rather than in `src/chat/` because that argument only holds if everything that needs one can reach
+// it: the DevTools panel loads `sidebar.css` and not `chat.css`, so a shell styled in the latter was unavailable to
+// a surface that draws the same approval card — which is precisely where the fourth copy was about to be written.
+// Its classes keep the `chat-` prefix; renaming them would touch every dialog for nobody's benefit.
 //
 // What it deliberately does NOT own is the buttons. A confirmation ends in Cancel/Delete, a rename in a submit, and
 // the resume form's footer carries a sentence beside its button; a shell that insisted on a shape would be argued
 // with by every one of them. It owns the frame and the ways out.
 
 import type { ComponentChildren } from "preact";
-import { useEffect, useRef } from "preact/hooks";
+import { useRef, useEffect } from "preact/hooks";
 
 /**
  * A modal card over the page.

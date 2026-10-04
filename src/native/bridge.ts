@@ -149,7 +149,16 @@ export type ToNative =
     /** What the app keeps for the page that is NOT secret (store-bridge.ts): a read, a write or a removal by name. */
     | { type: "store"; id: string; op: "get" | "set" | "delete"; name: string; value?: string }
     /** The keyring's secrets, kept in the phone's keystore (vault-bridge.ts): a read, a write or a removal by name. */
-    | { type: "vault"; id: string; op: "get" | "set" | "delete"; name: string; value?: string };
+    | { type: "vault"; id: string; op: "get" | "set" | "delete"; name: string; value?: string }
+    /**
+     * The page's copy of a session, in the app's SQLite archive (archive-bridge.ts).
+     *
+     * A `save` carries only the events PAST what the app last reported holding, which is the whole reason this is not
+     * the plain store: the copy of a long session is megabytes, it is written again a few hundred milliseconds after
+     * every change, and sending all of it each time would move the cost of rewriting the file onto the bridge rather
+     * than removing it.
+     */
+    | { type: "archive"; id: string; op: "load" | "save" | "drop" | "clear"; key?: string; session?: unknown };
 
 /** App → page. */
 export type ToWeb =
@@ -189,6 +198,9 @@ export type ToWeb =
     | { type: "storeResult"; id: string; ok: boolean; value?: string; error?: string }
     /** The keystore's answer to a `vault` request: `value` is what a `get` found, absent when there is nothing. */
     | { type: "vaultResult"; id: string; ok: boolean; value?: string; error?: string }
+    /** The archive's answer: `session` is what a `load` found, and `held` the highest history position it now has,
+     *  which is what lets the next `save` send only what is past it. */
+    | { type: "archiveResult"; id: string; ok: boolean; session?: unknown; held?: number; error?: string }
     /** Bring the approval the app's bar is about on screen: the card in the transcript is what answers it. */
     | { type: "showApproval" }
     /** Search history, on one runtime or on all of them; `more` asks for the next page of the search `id` already asked. */
@@ -221,6 +233,7 @@ const TO_NATIVE: Record<ToNative["type"], Shape> = {
     searchResult: { id: "string", rows: "array", more: "boolean", error: "string?" },
     store: { id: "string", op: "string", name: "string", value: "string?" },
     vault: { id: "string", op: "string", name: "string", value: "string?" },
+    archive: { id: "string", op: "string", key: "string?", session: "object?" },
 };
 const TO_WEB: Record<ToWeb["type"], Shape> = {
     theme: { theme: "object" },
@@ -246,6 +259,7 @@ const TO_WEB: Record<ToWeb["type"], Shape> = {
     pairing: { id: "string", call: "string", args: "object?" },
     storeResult: { id: "string", ok: "boolean", value: "string?", error: "string?" },
     vaultResult: { id: "string", ok: "boolean", value: "string?", error: "string?" },
+    archiveResult: { id: "string", ok: "boolean", session: "object?", held: "number?", error: "string?" },
     showApproval: {},
     search: { id: "string", query: "string", runtime: "string?", more: "boolean?" },
 };

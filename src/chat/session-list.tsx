@@ -11,7 +11,7 @@ import { signal } from "@preact/signals";
 import { useRef, useEffect } from "preact/hooks";
 import type { SessionStatus, SessionKey, RuntimeInfo, SessionSummary } from "../session-host";
 import { truncate } from "../sidebar/format";
-import { IconChevron, IconPin, IconPlus, IconSearch, IconCompose, IconInbox, IconHistory } from "../sidebar/icons";
+import { IconChevron, IconHistory, IconPin, IconPlus, IconSearch, IconCompose, IconInbox } from "../sidebar/icons";
 import { AgentBadge } from "../sidebar/reply";
 import type { Status } from "../sidebar/store";
 import { Stamp, Dot, cursorTipOn } from "../sidebar/ui-kit";
@@ -102,14 +102,17 @@ function RuntimeHead({ store, rt, folded, onStart }: { store: ChatStore; rt: Run
 
 /** One session in the list, from its index row (the transcript is fetched only when it is opened). The row and its
  *  `⋮` are siblings in a wrapper rather than one inside the other, because a button cannot hold a button. */
-function IndexRow({ store, s, rt, active, moved, showRuntime, showPin }: { store: ChatStore; s: SessionSummary; rt: RuntimeInfo; active: boolean; moved: boolean; showRuntime?: boolean;
+function IndexRow({ store, s, rt, active, moved, showRuntime, showPin, reveal }: { store: ChatStore; s: SessionSummary; rt: RuntimeInfo; active: boolean; moved: boolean; showRuntime?: boolean;
     /** mark it pinned, for a row OUTSIDE the Pinned group — where being in that group is the mark */
-    showPin?: boolean }) {
+    showPin?: boolean;
+    /** this row was just REVEALED by "older on this runtime": its place in that page, which staggers the animation.
+     *  It plays on mount and never again, which is what makes it say "these are the new ones" rather than decorate. */
+    reveal?: number }) {
     const key = `${s.id.runtime}:${s.id.hash}`;
     const title = s.title || s.task || "(untitled)";
     const offset = rt.clockOffsetMs ?? 0;
     return (
-        <div class={`chat-row-wrap${active ? " active" : ""}`}>
+        <div class={`chat-row-wrap${active ? " active" : ""}${reveal != null ? " revealed" : ""}`} style={reveal != null ? { "--i": String(reveal) } : undefined}>
             <button class={`row chat-row${active ? " active" : ""}`} data-session={key} onClick={() => openSession(key)}>
                 <Dot status={DOT[s.status] ?? "pending"} warn={s.status === "capped" ? "Stopped at its step cap. Open it to give it more steps." : undefined} />
                 <span class="chat-row-body">
@@ -145,11 +148,65 @@ function IndexRow({ store, s, rt, active, moved, showRuntime, showPin }: { store
     );
 }
 
-/** How far back the list reaches. Everything older is on the search page, which holds the whole history. */
+/** How far back the list reaches. Everything older is revealed a page at a time, then on the search page. */
 const RECENT_DAYS = 30;
+
+/** How many older sessions one press of a runtime's "older" line reveals. */
+const OLDER_PAGE = 10;
+
+/**
+ * How many of each runtime's older sessions its group is currently showing, by runtime id.
+ *
+ * NOT a preference, so not in `view-mode.ts` with the pins and the folds: it answers "how far back have I looked
+ * just now", which is worth keeping while the page is open and nothing at all tomorrow. Reaching back into last
+ * month on Tuesday is no reason for Wednesday's list to open long.
+ */
+const shownOlder = signal<ReadonlyMap<string, number>>(new Map());
+
+/** Show the next {@link OLDER_PAGE} of a runtime's older sessions, in place. */
+function revealOlder(id: string): void {
+    shownOlder.value = new Map(shownOlder.value).set(id, (shownOlder.value.get(id) ?? 0) + OLDER_PAGE);
+}
 
 /** A session's last activity on THIS device's clock (the runtime's clock may be off; `clockOffsetMs` says by how much). */
 const localTs = (s: SessionSummary, rt: RuntimeInfo | undefined) => s.lastTs - (rt?.clockOffsetMs ?? 0);
+
+/**
+ * The foot of a runtime's group: how many of its sessions are older than the list reaches, and the way to the rest.
+ *
+ * ONE LINE, lined up with the titles above it. It was two left-aligned grey sentences hanging under the rows, which
+ * read as neither rows nor chrome — clickable text, indented differently from everything near it, taking two lines
+ * to say what is a count and a door.
+ *
+ * A control ALONE takes words; a control beside another takes its glyph and a tooltip. So while there is still
+ * something to reveal, the counter carries the line and searching is the icon at the end of it; once everything held
+ * is shown, searching is the only thing left and says so in full. That rule is what keeps a lone magnifying glass
+ * under a list of sessions from being the one thing on screen nobody can name.
+ */
+function OlderFoot({ rt, left }: { rt: RuntimeInfo; left: number }) {
+    const label = `Search all history on ${rt.name}`;
+    return (
+        <div class="chat-older">
+            {left > 0 ? (
+                <>
+                    {/* Revealing fetches NOTHING: these sessions are in the index already and the list is simply not
+                        reaching back far enough, which is why this is a press with no wait and no spinner. The one
+                        thing here that does ask a runtime is the search page, and it says so there while it waits. */}
+                    <button class="chat-older-more" onClick={() => revealOlder(rt.id)}>
+                        <IconHistory /><span class="chat-older-n">{left}</span> older
+                    </button>
+                    <button class="tt hbtn chat-older-all" aria-label={label} onClick={() => openSearch(rt.id)}>
+                        <IconSearch /><span class="tt-pop" role="tooltip">{label}</span>
+                    </button>
+                </>
+            ) : (
+                <button class="chat-older-more" aria-label={label} onClick={() => openSearch(rt.id)}>
+                    <IconSearch />Search all history
+                </button>
+            )}
+        </div>
+    );
+}
 
 /**
  * The session list: what is pinned, then each runtime's RECENT sessions, then a way to the rest.
@@ -180,12 +237,13 @@ export function SessionList({ store, activeKey, narrow, onStart, gear, gearWide 
     const needsYou = sessions.filter((s) => s.pendingApprovals > 0 && rtOf.has(s.id.runtime)).sort((a, b) => b.lastTs - a.lastTs);
     const upTop = new Set(needsYou.map(keyOf));
     const pinnedRows = sessions.filter((s) => isPinned(s) && !upTop.has(keyOf(s)) && rtOf.has(s.id.runtime));
-    /** How many of a runtime's sessions the list is not reaching back far enough to show. */
-    const olderOn = (id: string) => sessions.filter((s) => s.id.runtime === id && !isPinned(s) && !isRecent(s)).length;
-    const row = (s: SessionSummary, showRuntime = false, showPin = false) => {
+    /** A runtime's sessions from before the recent window, newest first — the list's own, not a round trip. */
+    const olderOn = (id: string) => sessions.filter((s) => s.id.runtime === id && !isPinned(s) && !isRecent(s));
+    const row = (s: SessionSummary, showRuntime = false, showPin = false, reveal?: number) => {
         const key = keyOf(s);
-        return <IndexRow key={key} store={store} s={s} rt={rtOf.get(s.id.runtime)!} active={activeKey === key} moved={moved.has(key)} showRuntime={showRuntime} showPin={showPin} />;
+        return <IndexRow key={key} store={store} s={s} rt={rtOf.get(s.id.runtime)!} active={activeKey === key} moved={moved.has(key)} showRuntime={showRuntime} showPin={showPin} reveal={reveal} />;
     };
+    const revealed = shownOlder.value;
     return (
         <aside class="chat-list" aria-label="Sessions">
             <div class="head">
@@ -214,6 +272,8 @@ export function SessionList({ store, activeKey, narrow, onStart, gear, gearWide 
                 ) : null}
                 {runtimes.map((rt) => {
                     const mine = sessions.filter((s) => s.id.runtime === rt.id && !isPinned(s) && !upTop.has(keyOf(s)) && isRecent(s));
+                    const older = olderOn(rt.id);
+                    const show = Math.min(revealed.get(rt.id) ?? 0, older.length);
                     const shut = folded.has(rt.id);
                     return (
                         <section class={`chat-group${shut ? " folded" : ""}`} key={rt.id}>
@@ -231,12 +291,21 @@ export function SessionList({ store, activeKey, narrow, onStart, gear, gearWide 
                                         opened a page looking at all of them — so finding the thing you were just looking
                                         at meant picking the device again, under the heading that had already said which
                                         one it was. The phone has had it this way (ListScreen's section footer); this is
-                                        the page catching up, which is the rule for anything drawn on both. */}
-                                    {olderOn(rt.id) ? (
-                                        <button class="chat-older-go" onClick={() => openSearch(rt.id)}>
-                                            <IconHistory /><span>Older sessions</span><span class="chat-older-n">{olderOn(rt.id)}</span>
-                                        </button>
-                                    ) : null}
+                                        the page catching up, which is the rule for anything drawn on both.
+
+                                        IT OPENS IN PLACE. These sessions are already here — the index holds them and
+                                        the list is simply not reaching back far enough — so sending the reader to
+                                        another view to look at a row that was five pixels away was a round trip to
+                                        nowhere. The reveal animates because the rows appear BELOW the thing that was
+                                        clicked, where nothing moved at the press: the line has to be seen to do
+                                        something, or it reads as a press that failed.
+
+                                        The way to the search page arrives once the reader has shown they are looking
+                                        backwards, and stays once the list has nothing left to give. It is the honest
+                                        end of this line: what is held here is what the runtime still has in its
+                                        index, and only that page can go further (it asks). */}
+                                    {older.slice(0, show).map((s, i) => row(s, false, false, i % OLDER_PAGE))}
+                                    {older.length ? <OlderFoot rt={rt} left={older.length - show} /> : null}
                                 </div>
                             </div>
                         </section>
