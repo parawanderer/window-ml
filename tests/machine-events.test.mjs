@@ -6,7 +6,7 @@
 // reconstructed from the `load_duration` of whichever request happened to be waiting.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { machineEventFrom, servingSince } from "../src/sidebar/vram.tsx";
+import { machineEventFrom, servingSince } from "../src/sidebar/resource-feed.js";
 
 const reset = () => { servingSince.value = {}; };
 
