@@ -886,8 +886,12 @@ catches what one session broke for another. A green local `npm test` is not that
 the e2e suite, three Node versions, or the real-CPython tests.
 
 `.github/workflows/tests.yml` runs on `pull_request` (and on pushes to main), and **cancels superseded
-runs per branch** so a fix supersedes the run it replaces instead of queueing behind it; main is exempt,
-because every commit there keeps its result.
+runs per branch** so a fix supersedes the run it replaces instead of queueing behind it. Main is exempt, because
+every commit there keeps its result — and that exemption needs the SHA in the concurrency group, not just
+`cancel-in-progress: false`, which is the trap: that flag does not mean "never cancel". It means a new run QUEUES,
+and GitHub keeps at most ONE queued run per group, so a third arrival cancels the one waiting. Merging four PRs
+back to back left two main commits with a run cancelled before a single job started — CI going silent rather than
+red, which is the failure the conflict guard below exists for, in another costume.
 
 **A PR THAT CONFLICTS WITH ITS BASE HAS NO CHECKS AT ALL**, which is worse than red ones: a `pull_request` run is
 built against the MERGE COMMIT, so while there is none there is no run, and every push to that branch looks untested
