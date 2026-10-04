@@ -11,7 +11,7 @@ import { signal } from "@preact/signals";
 import { useRef, useEffect } from "preact/hooks";
 import type { SessionStatus, SessionKey, RuntimeInfo, SessionSummary } from "../session-host";
 import { truncate } from "../sidebar/format";
-import { IconChevron, IconPin, IconPlus, IconSearch, IconCompose, IconInbox, IconHistory } from "../sidebar/icons";
+import { IconChevron, IconPin, IconPlus, IconSearch, IconCompose, IconInbox } from "../sidebar/icons";
 import { AgentBadge } from "../sidebar/reply";
 import type { Status } from "../sidebar/store";
 import { Stamp, Dot, cursorTipOn } from "../sidebar/ui-kit";
@@ -234,7 +234,7 @@ export function SessionList({ store, activeKey, narrow, onStart, gear, gearWide 
                                         the page catching up, which is the rule for anything drawn on both. */}
                                     {olderOn(rt.id) ? (
                                         <button class="chat-older-go" onClick={() => openSearch(rt.id)}>
-                                            <IconHistory /><span>Older sessions</span><span class="chat-older-n">{olderOn(rt.id)}</span>
+                                            <span class="chat-older-n">{olderOn(rt.id)}</span> older on this runtime
                                         </button>
                                     ) : null}
                                 </div>

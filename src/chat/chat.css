@@ -908,14 +908,17 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-row-pin svg { width: 12px; height: 12px; }
 
 /** The way into the older view: the last thing in the recent list, quiet, with how many are behind it. */
+/* A QUIET LINE, not a panel. It carried a dashed box, a glyph, a label and a right-aligned count, which made the
+   least important thing in a runtime's group the loudest: four marks for a row that only says there is more, next to
+   session rows that are plain text. The phone had already settled this — its section footer is one dim sentence —
+   so the page follows it. What is left says the number first, because the number is the part worth reading. */
 .chat-older-go {
-    display: flex; align-items: center; gap: 8px; width: 100%; margin: 2px 0 10px; padding: 9px 10px;
-    background: none; border: 1px dashed var(--border); border-radius: 10px;
-    color: var(--fg-dim); font: inherit; cursor: pointer; text-align: left;
+    display: block; width: 100%; margin: 2px 0 10px; padding: 2px 10px 2px 0;
+    background: none; border: none; color: var(--fg-faint); font: inherit; font-size: .92em;
+    cursor: pointer; text-align: left;
 }
-.chat-older-go:hover { color: var(--fg); background: var(--panel); border-style: solid; }
-.chat-older-go svg { flex: 0 0 auto; }
-.chat-older-n { margin-left: auto; color: var(--fg-faint); font-size: .86em; font-variant-numeric: tabular-nums; }
+.chat-older-go:hover { color: var(--fg-dim); text-decoration: underline; }
+.chat-older-n { font-variant-numeric: tabular-nums; }
 
 /* A row's `⋮`. It arrives with the pointer, in the corner the timestamp was using — the time is what you read on a
    row you are scanning, the menu is what you want from the one you are on, and they never need to be seen together.
@@ -1123,7 +1126,7 @@ button.chat-page-go:hover { color: var(--fg); }
    note, the attention inbox's shape and its "limits" stripe — this is the same kind of thing (nothing is lost, one
    path is paused until someone clicks), so it should not read as a different class of message. */
 /* Named `foot` from when it sat at the end of the page; it leads the results now (search-page.tsx says why). */
-.chat-search-foot { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+.chat-search-foot { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
 .chat-search-foot p {
     margin: 0; padding: 14px 16px; border-radius: 14px; background: var(--panel); box-shadow: inset 3px 0 0 var(--warn);
     color: var(--fg-dim); font-size: .92em; line-height: 1.5;
