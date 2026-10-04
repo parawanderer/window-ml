@@ -249,7 +249,10 @@ function GrantEditor({ found, grant, onChange }: { found: FoundOffer; grant: Gra
                 : grant.mayRevoke
                     ? <p class="pair-hint">{found.signer ? "It also signs revocations for this account: removing a device goes through it." : "It will be the device that signs removals for this account. Exactly one does, and without it a removal reaches nothing."}</p>
                     : null}
-            {days > 0 ? <p class="pair-hint">Valid for {days} days, and renewed while a runtime lists it. It leaves the account only by being removed.</p> : null}
+            {/* A DEVICE RENEWS ITSELF; nothing renews it for being listed. It asks a runtime to sign, inside the last
+                stretch of its window, whenever it is connected (src/chat/auto-renew.ts) — so what keeps it in the
+                account is being used, not being on a list somewhere. */}
+            {days > 0 ? <p class="pair-hint">Valid for {days} days, and it renews itself whenever it connects and one of your browsers is awake to sign. It leaves the account only by being removed.</p> : null}
         </fieldset>
     );
 }

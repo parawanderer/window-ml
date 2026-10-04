@@ -105,9 +105,10 @@ say, because "allow notifications" alone is a question nobody can answer.
   container with it. This device's keys live there, so the remedy is also what makes it a stranger to the account.
   The row says so and says it is not worth it for a notification.
 
-The same container split is a trap in the other direction, and nothing warns about it yet: pairing the hosted client
-in a Safari **tab** and then adding it to the Home Screen gives an installed copy with an empty container, which has
-to be paired on its own. Worth a sentence on the `add-to-home` item (`attention.ts`), not done here.
+The same container split is a trap in the other direction, and the `add-to-home` item now says so before it costs
+anything: pairing the hosted client in a Safari **tab** and then adding it to the Home Screen gives an installed copy
+with an empty container, in no account, which has to be paired on its own. The item says to pair it once it is on the
+home screen rather than before.
 
 Home-screen web apps are otherwise a sound place to keep an identity: they are exempt from Safari's seven-day cap on
 script-writable storage, which a site in a tab is not, so the keyring is not evicted for being unused.

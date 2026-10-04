@@ -513,10 +513,22 @@ export type Command =
     /** Unpair a device: it stops being answered at once, and the stream keys it held are rotated. Revoking the
      *  device this client IS logs this client out, which a UI says before it happens. */
     | { type: "device.revoke"; runtime: RuntimeId; principal: PrincipalId; idempotencyKey?: IdempotencyKey }
-    /** NARROW what a device may do. Widening is refused with `forbidden`: a delegate may issue only scopes it holds
-     *  and a runtime holds none, so the wider certificate comes from the root device, and a renewal re-issues the
-     *  same scopes by definition. Narrowing needs no certificate — it is enforced from the runtime's allowlist, like
-     *  revocation, and takes effect at once. Answers what the device may do now. */
+    /**
+     * NARROW what a device may do. Widening is refused with `forbidden`: a delegate may issue only scopes it holds
+     * and a runtime holds none, so the wider certificate comes from the root device, and a renewal re-issues the
+     * same scopes by definition. Narrowing needs no certificate — it is enforced from the runtime's allowlist, and
+     * takes effect at once on THAT RUNTIME. Answers what the device may do now.
+     *
+     * ITS REACH IS THE RUNTIME THAT HOLDS THE ALLOWLIST, and anything built on this has to say so. A peer that
+     * authorises off the certificate alone does not see a narrowing, because the certificate still says what it
+     * always said: a box connector reads the scopes from the chain it verifies, so a device narrowed here keeps its
+     * old reach there. Revocation has the identical gap and closes it by publishing a SIGNED LIST the connector
+     * verifies for itself; narrowing has no such list yet, and giving it one is a hub schema change plus a connector
+     * change rather than anything a client can do.
+     *
+     * So: no screen may describe this as taking something away from a device everywhere. There is no such screen
+     * today, which is the cheap moment to write this down rather than the expensive one.
+     */
     | { type: "device.scopes"; runtime: RuntimeId; principal: PrincipalId; scopes: Scope[] }
     /**
      * Bring a tab, and the window holding it, to the front. What a person at the machine is LOOKING AT, which is why
