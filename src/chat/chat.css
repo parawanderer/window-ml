@@ -943,52 +943,6 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-row-menu { position: fixed; z-index: 60; }
 .chat-row-menu.up { transform: translateY(-100%); }
 
-/** The one confirmation a delete goes through: modal, centred, and focused on Cancel. */
-.chat-dialog-back {
-    position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 16px;
-    background: rgba(0, 0, 0, .45); animation: chat-fade .15s ease both;
-}
-.chat-dialog {
-    width: min(420px, 100%); padding: 20px 20px 16px; border-radius: 16px;
-    background: var(--panel); border: 1px solid var(--border); box-shadow: 0 18px 50px rgba(0, 0, 0, .45);
-    /* The entrance rises with `top`, not with a transform, and this is the whole reason it has its own keyframes.
-       A transform on this card makes it the containing block for every `position: fixed` descendant, and the
-       pickers inside place their popovers in VIEWPORT coordinates — so the list opened a card's width and height
-       away from the pill that summoned it. An identity matrix does it too, which `animation-fill-mode: both`
-       leaves behind for good, and so does a transform that is merely mid-flight, which is what a picker opened
-       during the entrance would have met. `position: relative` + `top` creates no containing block at all. The
-       0.98 scale went with it; the rise and the fade carry the entrance on their own. */
-    position: relative; animation: chat-dialog-in .18s cubic-bezier(.2, .7, .3, 1) backwards;
-}
-@keyframes chat-dialog-in { from { opacity: 0; top: 6px; } }
-/* A dialog that ASKS something rather than confirming it (resuming a run: where to). It needs the room the picker
-   rows want, and it is still the same card — a second shape would read as a different kind of thing. */
-.chat-dialog.wide { width: min(520px, 100%); }
-.chat-dialog:focus { outline: none; }
-.chat-dialog h2 { margin: 0 0 8px; font-size: 1.12em; font-weight: 600; }
-.chat-dialog p { margin: 0 0 18px; color: var(--fg-dim); line-height: 1.5; }
-.chat-dialog p b { color: var(--fg); font-weight: 600; }
-/* The form rows inside an asking dialog, spaced like the start page's — the same rows, in a card instead of a page. */
-.chat-dialog-form { display: flex; flex-direction: column; gap: 12px; margin-bottom: 18px; }
-/* The start page's inline pickers, which are laid out as one wrapping row there and want the same here. */
-.chat-dialog-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-/* What the pill beside it is choosing. One picker with no label is a control whose subject you infer. */
-.chat-dialog-lead { color: var(--fg-dim); }
-.chat-dialog-form > p:last-child { margin-bottom: 0; }
-.chat-dialog-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
-/* A note that belongs with the buttons sits at the far left of the same row. */
-.chat-dialog-actions.spread > :first-child { margin-right: auto; }
-.chat-dialog .btn {
-    padding: 7px 14px; border-radius: 999px; font: inherit; cursor: pointer;
-    background: transparent; color: var(--fg); border: 1px solid var(--border);
-}
-.chat-dialog .btn:hover { background: var(--panel-2); }
-.chat-dialog .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-/* The confirming button is the filled one, not a red one: the dialog is the warning, and a red button in a calm
-   page shouts a second time about something the sentence above it has already said. */
-.chat-dialog .btn.primary { background: var(--fg); border-color: var(--fg); color: var(--bg); font-weight: 600; }
-.chat-dialog .btn.primary:hover { filter: brightness(.92); }
-.chat-dialog .btn:disabled { opacity: .6; cursor: default; }
 /* THE EXPORT PICKER'S FORMAT ROWS (export-dialog.tsx). A whole row is the target, not the 12px circle beside it, and
    the native radio stays in the DOM: it is what a keyboard arrows through and what a screen reader reads as a group.
    Each row carries WHO THE FILE IS FOR rather than its extension — three formats side by side is a choice nobody
@@ -1016,7 +970,6 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-more-float { transition: opacity .12s linear; }
 @keyframes chat-fade { from { opacity: 0; } }
 @keyframes chat-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
-@media (prefers-reduced-motion: reduce) { .chat-dialog-back, .chat-dialog { animation: none; } }
 
 /* ===================== THE RAIL, THE GEAR, AND THE SEARCH PAGE (nav.tsx, search-page.tsx) =====================
    Gemini's chrome, because it is the quietest there is: with the list away, the left edge keeps a column of glyphs —
@@ -1424,13 +1377,6 @@ button.chat-page-go:hover { color: var(--fg); }
 /* The cursor tip over the page's own popovers (the tab picker's list sits at 60). */
 .chat .cursor-tip { z-index: 70; }
 
-/* The rename dialog's field, and the line under it saying what an empty name does. */
-.chat-dialog-field {
-    width: 100%; box-sizing: border-box; margin: 4px 0 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
-    background: var(--bg); color: var(--fg); font: inherit; outline: none;
-}
-.chat-dialog-field:focus { border-color: var(--fg-dim); }
-.chat-dialog-hint { margin: 0 0 12px; color: var(--fg-faint); font-size: .9em; }
 
 /* A search row's title with, under it, why it matched: the runtime's snippet, the match picked out. */
 .chat-search-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }

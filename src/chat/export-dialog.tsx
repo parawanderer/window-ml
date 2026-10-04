@@ -10,7 +10,7 @@ import { useState } from "preact/hooks";
 import type { SessionKey } from "../session-host";
 import { canPrintSession, exportSession, exportSessionJson, printSession } from "../sidebar/export";
 import { truncate } from "../sidebar/format";
-import { Dialog } from "./dialog";
+import { Dialog } from "../sidebar/dialog";
 
 /** The session whose export is being chosen, or null. Set by the header's `⋮`. */
 export const exportingChat = signal<{ key: SessionKey; title: string; partial?: PartialWhy } | null>(null);

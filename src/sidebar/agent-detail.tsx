@@ -17,6 +17,7 @@ import { surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, sh
 import type { Session, AgentStep, Status } from "./store";
 import { pretty, truncate, markdown, collapsedPreview } from "./format";
 import { sessionProfile } from "./model";
+import { Dialog } from "./dialog";
 import { IconChevron, IconWarn, IconInfo, IconCopy, IconCheck, IconIn, IconOut } from "./icons";
 import { usageSamples, liveOutTokens } from "./usage";
 import { fmtDur } from "./timestamps";
@@ -210,9 +211,13 @@ export function approvalMechanics({ grants }: { grants: boolean }): string[] {
  * The approval's buttons, with a quiet info control at the other end of the row.
  *
  * The explanation is offered BOTH ways on purpose: the pointer gets it on hover, which is what makes it free to
- * consult and free to ignore, and a click opens the same sentences underneath for anyone without a pointer — the
- * cursor tip is pointer-only, and this card is drawn on a phone too. One list, two presentations, so they cannot
- * drift. The control is deliberately not a warning colour: nothing is wrong, there is simply more to know.
+ * consult and free to ignore, and the control OPENS A DIALOG for anyone without one — the cursor tip is
+ * pointer-only, and this card is drawn on a phone too. One list, two presentations, so they cannot drift.
+ *
+ * A dialog rather than the rows unfolding underneath, which is what this did first. Appending to the card pushes the
+ * conversation down and keeps the space for as long as it is open, and on a phone that is most of the screen given
+ * to something you read once. A dialog costs nothing until it is asked for and nothing after it is dismissed. The
+ * control is deliberately not a warning colour: nothing is wrong, there is simply more to know.
  */
 function ApprovalRow({ grants, decide }: { grants: boolean; decide: (ok: boolean, persist?: boolean) => void }) {
     const [why, setWhy] = useState(false);
@@ -221,14 +226,22 @@ function ApprovalRow({ grants, decide }: { grants: boolean; decide: (ok: boolean
     return (
         <>
             <div class="appr-row">
-                <button class="appr-info" aria-label="What these choices do" aria-expanded={why}
-                    {...cursorTipOn(list)} onClick={() => setWhy((v) => !v)}><IconInfo /></button>
+                <button class="appr-info" aria-label="What these choices do" aria-haspopup="dialog" aria-expanded={why}
+                    {...cursorTipOn(list)} onClick={() => setWhy(true)}><IconInfo /></button>
                 <span class="sp" />
                 <button class="appr-btn no" onClick={() => decide(false)}>Deny</button>
                 <button class="appr-btn yes" onClick={() => decide(true)}>Approve</button>
                 {grants ? <button class="appr-btn yes remember" onClick={() => decide(true, true)}>Keep</button> : null}
             </div>
-            {why ? <div class="appr-why">{list}</div> : null}
+            {why ? (
+                <Dialog onClose={() => setWhy(false)} labelledBy="appr-why-h">
+                    <h2 id="appr-why-h">What these choices do</h2>
+                    <div class="appr-why">{list}</div>
+                    <div class="chat-dialog-actions">
+                        <button type="button" class="btn" onClick={() => setWhy(false)}>Close</button>
+                    </div>
+                </Dialog>
+            ) : null}
         </>
     );
 }

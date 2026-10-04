@@ -343,12 +343,15 @@ test("the mechanics of the three buttons are OFFERED, not printed on every card"
     // And it is a REAL control, not a hover: this card is drawn on a phone too, where there is no pointer at all.
     info.click();
     await w.flush();
-    const why = w.shadow.querySelector(".astep-approve .appr-why");
+    // A DIALOG, not rows unfolding under the card: appending pushes the conversation down and holds the space for
+    // as long as it is open, which on a phone is most of the screen given to something read once.
+    const why = w.shadow.querySelector(".chat-dialog .appr-why");
     assert.ok(why, "clicking opens the explanation");
     assert.match(why.textContent, /Approve runs this one call/);
     assert.match(why.textContent, /Deny refuses this call/);
     assert.match(why.textContent, /rest of this session/, "and what Keep does, since Keep is offered here");
     assert.equal(w.shadow.querySelector(".astep-approve .appr-info").getAttribute("aria-expanded"), "true");
+    assert.equal(w.shadow.querySelector(".astep-approve .appr-info").getAttribute("aria-haspopup"), "dialog");
     // The old native title is gone: an explanation that waits a second and cannot be reached by keyboard is not one.
     assert.equal(w.shadow.querySelector(".astep-approve .appr-btn.remember").getAttribute("title"), null);
 });
@@ -368,7 +371,7 @@ test("Keep's sentence is absent where Keep is not offered", async () => {
     assert.ok(!w.shadow.querySelector(".astep-approve .appr-btn.remember"), "no Keep on this card");
     w.shadow.querySelector(".astep-approve .appr-info").click();
     await w.flush();
-    const why = w.shadow.querySelector(".astep-approve .appr-why");
+    const why = w.shadow.querySelector(".chat-dialog .appr-why");
     assert.match(why.textContent, /Approve runs this one call/);
     assert.doesNotMatch(why.textContent, /rest of this session/, "and nothing about a button that is not drawn");
 });

@@ -16,7 +16,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { AgentTarget, RuntimeInfo, TabGroupInfo, TabInfo } from "../session-host";
 import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
-import { Dialog } from "./dialog";
+import { Dialog } from "../sidebar/dialog";
 import type { ChatExtras } from "./extras";
 import { mayStart } from "./grants";
 import { TabPicker } from "./tab-picker";

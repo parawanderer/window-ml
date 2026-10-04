@@ -11,7 +11,7 @@ import type { ArchiveCapability, RuntimeInfo, SessionId, SessionKey, SessionSumm
 import { IconCamera, IconCompose, IconCopy, IconExport, IconMore, IconPin, IconTrash } from "../sidebar/icons";
 import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
-import { Dialog } from "./dialog";
+import { Dialog } from "../sidebar/dialog";
 import { mayCommand } from "./grants";
 import { MenuItem } from "./menu";
 import { addPin, dropPin, pinned } from "./view-mode";
