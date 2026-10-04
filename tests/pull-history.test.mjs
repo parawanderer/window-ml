@@ -88,3 +88,37 @@ test("a runtime that answers without making progress ENDS the pull rather than s
     assert.match(out.why, /stopped sending/);
     assert.equal(out.done, 0);
 });
+
+// --- paging in is the same session as receiving it whole ---
+
+test("a session paged in event by event ends up identical to one delivered in a single ring", async () => {
+    // This is the invariant `loadEarlier` has to preserve, and the one that says whether its replay is needed at
+    // all: the reducer is documented to CONVERGE whatever the order ("patches by `seq` rather than appending"), so
+    // a session assembled from pages must equal the same session that arrived in one piece. Written before the
+    // replay was touched, so it describes the behaviour rather than the change.
+    const events = [{ kind: "agent", id: "aaaa0001", ts: 1000, save: true, session: { hash: "aaaa0001", turn: 0 }, task: "t", model: "m", maxSteps: 10, config: null },
+        ...Array.from({ length: 49 }, (_, i) => step("aaaa0001", i + 1))];
+
+    const whole = new ChatStore(new FakeHost({ runtimes: [runtime("laptop")], sessions: [{ summary: summary("aaaa0001"), events }] }));
+    whole.start();
+    await flush();
+    whole.open("laptop:aaaa0001");
+    await flush(14);
+    const want = JSON.parse(JSON.stringify(sessionMap.get("laptop:aaaa0001")));
+
+    const pagedHost = new FakeHost({ runtimes: [runtime("laptop")], sessions: [{ summary: summary("aaaa0001"), events }] });
+    pagedHost.ringLimit = 7;
+    const paged = new ChatStore(pagedHost);
+    paged.start();
+    await flush();
+    paged.open("laptop:aaaa0001");
+    await flush(14);
+    assert.equal(await pullAllHistory(paged, "laptop:aaaa0001", {}).then((o) => o.kind), "complete");
+    const got = JSON.parse(JSON.stringify(sessionMap.get("laptop:aaaa0001")));
+
+    assert.equal(got.steps.length, want.steps.length, "the same number of steps");
+    assert.deepEqual(got.steps.map((s) => s.seq), want.steps.map((s) => s.seq), "in the same order");
+    assert.deepEqual(got.steps, want.steps, "and the same content, field for field");
+    assert.equal(got.task, want.task);
+    assert.equal(got.kind, want.kind);
+});

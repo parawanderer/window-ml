@@ -269,7 +269,15 @@ export class ChatStore {
         const page = r.data.events.filter((e) => e?.session?.hash === id.hash).map((event, i) => ({ pos: r.data.from + i, event }));
         const held = (this.applied.get(key) ?? []).filter((e) => e.pos == null || e.pos >= at.from);
         const all = [...page, ...held];
-        // Replay: the reduced session goes, and everything comes back in history order.
+        // REPLAY, and it cannot simply be dropped. Reducing only the page is O(page) instead of O(held) and was
+        // tried: the reducer APPENDS a step it has not seen, so an earlier page lands after the later steps and the
+        // transcript comes out 46…50, 6…45, 1…5. Its "patches by `seq`" is about patching a step already there, not
+        // about inserting one in order.
+        //
+        // The cost is real and measured — a full pull of 25,600 events spends 5.3 seconds of CPU here, and past a
+        // few thousand events it dominates the round trips. Making it cheaper means teaching the reducer to insert
+        // in history order rather than append, which every surface reduces through; that is its own change with its
+        // own tests, not a line in this one.
         forgetSessionReduced(key);
         for (const e of all) this.reduce(id.runtime, e.event);
         rev.value++;
