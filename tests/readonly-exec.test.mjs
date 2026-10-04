@@ -184,10 +184,14 @@ const OUT = {
     // `for…of` is now IN-dialect (see below); a C-style `for(;;)` and `for…in` stay OUT.
     "C-style for": `for (let i = 0; i < 3; i++) { i }`,
     "for...in": `for (const k in {a: 1}) { k }`,
-    // Member assignment on an object YOU built is now IN-dialect; a bare-VARIABLE assignment is not (it could
-    // rebind the environment) — it escalates.
-    "bare-variable assignment": `const x = 1; x = 2; x`,
-    "compound assignment": `const o = {}; o.n = 0; o.n += 1; o.n`,   // only plain `=`, no `+=`
+    // Member assignment on an object YOU built is in-dialect, and so is assignment to a binding the script
+    // DECLARED. What stays out is a write that could be seen from outside the evaluator: the environment's own
+    // names, and a name nothing declared — which in real JS would create a global.
+    "assigning to the environment": `document = 1`,
+    "an implicit global": `leaked = 1; leaked`,
+    "a const rebound": `const x = 1; x = 2; x`,
+    // No short-circuiting compound forms: whether the write happens at all depends on the value.
+    "logical assignment": `let o = null; o ||= 1; o`,
     "tagged template": "tag`hi ${1}`",   // a plain template is supported; a TAGGED one (a call) is not
 };
 for (const [name, js] of Object.entries(OUT)) {
@@ -252,14 +256,13 @@ test("for…of supports early return and iterating Object.entries (the for…in 
     // A destructuring loop var falls back — the dialect has no destructuring anywhere; index the pair instead.
     await assert.rejects(run(`for (const [k, v] of Object.entries({ a: 1 })) console.log(k)`), outOfDialect);
 });
-test("for…of CAN now accumulate into an array YOU built (push) — but not via variable reassignment", async () => {
-    // Building a local accumulator is in-dialect: `.push()` onto a script-created array mutates only that
-    // local container (never the page — see the adversarial block). Variable reassignment (`s += x`) stays out.
+test("for…of accumulates into a container you built, and into a binding you declared", async () => {
+    // Both are the same argument: a container the script created and a binding the evaluator created are each
+    // invisible outside the evaluator, so writing to either cannot be observed by the page.
     assert.deepEqual((await run(`const r = []; for (const x of [1, 2, 3]) r.push(x * 2); return r;`)).value, [2, 4, 6]);
     assert.deepEqual((await run(`const g = {}; for (const n of ['a:1','b:2','a:3']) { const k = n.split(':')[0]; (g[k] = g[k] || []).push(n); } return g;`)).value,
         { a: ["a:1", "a:3"], b: ["b:2"] });
-    // A string accumulator via `s += x` needs a bare-variable reassignment → still out of dialect.
-    await assert.rejects(run(`let s = ''; for (const x of ['a', 'b']) s += x; s`), outOfDialect);
+    assert.equal((await run(`let s = ''; for (const x of ['a', 'b']) s += x; return s`)).value, "ab");
 });
 test("for…of over a non-iterable throws a catchable TypeError (not a guard escalation)", async () => {
     await assert.rejects(run(`for (const x of 5) console.log(x)`), e => e instanceof TypeError);
@@ -1736,9 +1739,175 @@ test("HALTING `**`: a power is one bounded operation — repeated squaring ends 
     assert.equal(r.value, Infinity);
 });
 
+// HALTING (local reassignment). The argument the whole dialect rests on is that a loop's trip count is fixed when
+// it starts, and the obvious worry about mutable bindings is that they are how you build a `while`. They are not,
+// here: the dialect has no `while`, no `do`, and no C-style `for` — `for…of` over an iterable captured at loop
+// entry is the only loop form there is (readonly-exec.ts, parseStatement). So the cases below are about the two
+// ways a reassignment could still get round that, and about cost rather than termination.
+test("HALTING (reassignment): rebinding the loop's collection cannot extend the loop", async () => {
+    // The loop holds the iterable it STARTED with, so rebinding the name it came from is invisible to it. Each of
+    // these would be an infinite loop if the iteration re-read the binding.
+    for (const [src, why] of [
+        ["let a = [1]; for (const x of a) { a = a.concat([x]); } return a.length", "rebinding to a longer array"],
+        ["let a = [1]; for (const x of a) { a = [...a, x]; } return a.length", "rebinding to a spread of itself"],
+        ["let n = 0; let a = [1, 2]; for (const x of a) { n++; a = a.concat(a); } return n", "doubling the binding mid-loop"],
+    ]) {
+        const r = await inWorker(src, 5000);
+        assert.ok(!r.hung, `${why}: still running after 5 s`);
+        assert.ok(r.threw === undefined, `${why}: ${JSON.stringify(r)}`);
+    }
+    // And MUTATING the collection still cannot, whether it was declared const or let — the hold is on the value.
+    await fallsBack("let a = [1]; for (const x of a) a.push(x); 0", "for…of over a `let` array the body pushes to");
+});
+
+test("HALTING (reassignment): growth through a compound assignment is bounded like any other", async () => {
+    // `+=` goes through the same `sized` guard as `+`, or it would be a string-doubling hole with an `=` right
+    // beside it that is not. Forty doublings is a terabyte; it must end at the gate, not in the heap.
+    await fallsBack(`let s = "x"; for (const i of [...Array(40).keys()]) s += s; return s.length`, "a string doubled in a loop");
+    // A counter that merely counts is fine, and the step budget is what bounds the loop itself.
+    const ok = await inWorker("let n = 0; for (const x of [...Array(1000).keys()]) n += x; return n", 5000);
+    assert.equal(ok.value, 499500);
+    await fallsBack("let n = 0; for (const a of [...Array(600).keys()]) for (const b of [...Array(600).keys()]) n++; return n", "a nested loop past the step budget");
+});
+
+test("HALTING (reassignment): a counter cannot buy extra call depth", async () => {
+    // Depth is bounded by the SOURCE (a function cannot be entered while it is already running), and a mutable
+    // binding does not change what the source says. Recursion is refused the same way with or without one.
+    await fallsBack("let n = 0; const f = (x) => { n++; return f(x + 1); }; return f(0)", "self-recursion with a counter");
+    await fallsBack("let n = 0; const f = (x) => { n++; return g(x); }; const g = (x) => f(x + 1); return f(0)", "mutual recursion with a counter");
+});
+
 test("FAILURE `**`: a survey that computes with it and then leaves the dialect leaves nothing behind", async () => {
     const doc = kindWorld();
     await assert.rejects(run(`const gib = 2 ** 30; const x = [gib]; document.querySelector("#d").click(); return x`, doc), outOfDialect);
+});
+
+// --- LOCAL REASSIGNMENT: a binding the script declared is its own, and nothing else is -------------------------------
+// The counter idiom (`let n = 0; rows.forEach(r => n += r.x)`) is one a model reaches for constantly, and until now
+// one assignment to a `let` sent a whole read-only survey to the human gate. A binding the evaluator created has no
+// existence outside it, so writing to one cannot be observed by the page — the same argument that already lets a
+// script build an array and push to it. What the extension rests on is that the ENVIRONMENT's names are
+// distinguishable from the script's: they live in a frame with a null prototype, and the script gets a frame of its
+// own over it. Every refusal below is a different way that distinction could be got around.
+
+test("the counter idiom runs with no approval, in all the shapes a model writes it", async () => {
+    assert.equal((await run(`let n = 0; [1, 2, 3].forEach(x => n += x); return n`)).value, 6);
+    assert.equal((await run(`let n = 0; for (const x of [1, 2, 3]) n += x; return n`)).value, 6);
+    assert.equal((await run(`let n = 0; for (const x of [1, 2, 3]) n++; return n`)).value, 3);
+    assert.equal((await run(`let n = 5; n--; return n`)).value, 4);
+    assert.equal((await run(`let s = ""; for (const c of "abc") s += c.toUpperCase(); return s`)).value, "ABC");
+    assert.equal((await run(`let n = 2; n *= 3; n -= 1; n /= 5; n %= 1; return n`)).value, 0);
+});
+
+test("postfix yields the value BEFORE the change, which a desugaring to `n += 1` would get wrong", async () => {
+    assert.equal((await run(`let n = 1; const was = n++; return [was, n]`)).value.join(","), "1,2");
+    assert.equal((await run(`let n = 1; const now = ++n; return [now, n]`)).value.join(","), "2,2");
+    assert.equal((await run(`const o = { c: 1 }; const was = o.c++; return [was, o.c]`)).value.join(","), "1,2");
+});
+
+test("the survey that prompted this: a let reassigned inside try/catch", async () => {
+    // Every other piece of it was already in the dialect — `try`/`catch`, `ml.ps`, `ml.config`, `ml.schema`, `.map`.
+    // One assignment is what sent the whole thing to the gate.
+    const { value } = await run(`
+        const cfg = await ml.config();
+        let ps = [];
+        try { ps = await ml.ps(); } catch (e) {}
+        return { model: cfg.model, resident: ps.map(m => m.name) }`);
+    assert.equal(value.model, "gemma4:31b");
+    assert.deepEqual(value.resident, ["gemma4:31b"]);
+});
+
+test("an assignment reaches the binding it should, through blocks and arrow frames", async () => {
+    // The OUTER binding, not a new one in the block — a frame-walk that stopped at the current frame would
+    // silently create a shadow and the survey would read 0 back.
+    assert.equal((await run(`let n = 0; if (true) { n = 7; } return n`)).value, 7);
+    assert.equal((await run(`let n = 0; const bump = () => { n = 7; }; bump(); return n`)).value, 7);
+    // …and a genuine shadow still shadows.
+    assert.equal((await run(`let n = 0; if (true) { let n = 7; n = 8; } return n`)).value, 0);
+    // An arrow's own parameter is a binding of its own: writing to it must not reach the caller's.
+    assert.equal((await run(`let n = 1; const f = (x) => { x = 99; return x; }; const got = f(n); return [got, n]`)).value.join(","), "99,1");
+});
+
+// --- ADVERSARIAL: bare-name assignment must not reach the environment -------------------------------------------------
+
+test("ADVERSARIAL: the host's own names cannot be assigned to, by any of the new forms", async () => {
+    for (const src of [
+        `document = 1`, `ml = 1`, `Math = 1`, `JSON = 1`, `console = 1`, `Object = 1`, `Array = 1`, `Promise = 1`,
+        `document += 1`, `ml += 1`, `Math++`, `++document`, `console--`, `getComputedStyle = 1`,
+        `undefined = 1`, `NaN = 1`, `Infinity = 1`, `parseInt = 1`,
+    ]) {
+        await assert.rejects(run(src), outOfDialect, src);
+    }
+});
+
+test("ADVERSARIAL: assignment never CREATES a binding, so there are no implicit globals", async () => {
+    // In real JS (non-strict) `leaked = 1` makes a global. Here nothing is declared, so nothing is written, and
+    // the survey falls to the gate rather than inventing a name.
+    for (const src of [`leaked = 1; return leaked`, `leaked += 1`, `leaked++`, `window = 1`, `globalThis = 1`, `self = 1`])
+        await assert.rejects(run(src), outOfDialect, src);
+});
+
+test("ADVERSARIAL: a const is a const, so the dialect never computes a value real JavaScript would not", async () => {
+    for (const src of [
+        `const n = 1; n = 2; return n`,
+        `const n = 1; n += 1; return n`,
+        `const n = 1; n++; return n`,
+        `const { a } = { a: 1 }; a = 2; return a`,
+        `const [a] = [1]; a = 2; return a`,
+        `for (const x of [1]) { x = 2; } return 0`,
+    ]) await assert.rejects(run(src), outOfDialect, src);
+    // A `let` loop variable is not a const, and writing to it is a per-iteration binding like any other.
+    assert.equal((await run(`let out = 0; for (let x of [1, 2]) { x = x * 10; out += x; } return out`)).value, 30);
+    // An inner `const x` must not freeze an OUTER `let x` that merely shares its name: the set of const names is
+    // an own property of its frame, not something read through the prototype chain.
+    assert.equal((await run(`let x = 1; if (true) { const x = 9; } x = 2; return x`)).value, 2);
+});
+
+test("ADVERSARIAL: shadowing a host name writes to the script's frame, never the environment's", async () => {
+    // Allowed — it is just a local binding — and the host's own stays untouched, which is the thing that matters.
+    const { value } = await run(`const ml = 1; return [ml, typeof document]`);
+    assert.deepEqual(value, [1, "object"]);
+    assert.equal((await run(`{ const document = 1; } return typeof document.querySelectorAll`)).value, "function");
+});
+
+test("ADVERSARIAL: rebinding cannot launder a host value into a writable target", async () => {
+    // `owned` is a property of the VALUE, not of the name holding it, so moving a DOM node into a local changes
+    // nothing: the member write still refuses it, and so does ++ on one of its properties.
+    for (const src of [
+        `let o = {}; o = document.querySelector("#a"); o.id = "x"; return 1`,
+        `let o = {}; o = document.querySelector("#a"); o.id += "x"; return 1`,
+        `let o = {}; o = document.body; o.innerHTML = ""; return 1`,
+        `let o = {}; o = document.querySelector("#a"); o.scrollTop++; return 1`,
+    ]) await assert.rejects(run(src), outOfDialect, src);
+});
+
+test("ADVERSARIAL: the realm is still out of reach through every new form", async () => {
+    for (const src of [
+        `const o = {}; o.__proto__ = { x: 1 }; return 1`,
+        `const o = {}; o["__proto__"] += 1; return 1`,
+        `const o = {}; o.constructor = 1; return 1`,
+        `const o = {}; o.prototype++; return 1`,
+    ]) await assert.rejects(run(src), outOfDialect, src);
+    // A method lifted off a host object is the inert sentinel, and passing it through a reassignment does not
+    // reanimate it: calling it is still refused.
+    await assert.rejects(run(`let f = [].map; let g = f; return g.call([1], x => x)`), outOfDialect);
+    await assert.rejects(run(`let f = document.querySelector; f = f; return f("#a")`), outOfDialect);
+});
+
+test("ADVERSARIAL: a compound assignment runs through the SAME size guard as the operator it applies", async () => {
+    // `+=` that skipped `sized` would be a string-growth hole with an `=` right beside it that is not.
+    await assert.rejects(run(`let s = "x"; for (const i of ml.range(40)) s += s; return s.length`), outOfDialect);
+});
+
+// --- FAILURE: a survey that reassigns and then leaves the dialect leaves nothing behind -------------------------------
+
+test("FAILURE: a counter survey that falls out of dialect afterwards has changed nothing", async () => {
+    const set = new AnswerSet();
+    await assert.rejects(
+        evalReadonly(`let n = 0; for (const x of [1, 2]) n += x; ml.answer.add("total " + n); document.body.click(); return n`,
+            world(), ML, makeAnswerFacade(set), { checkpoint: () => set.checkpoint() }),
+        outOfDialect);
+    assert.equal(set.dump().length, 0, "the add before the refusal was rolled back");
 });
 
 // --- STORED tables (POINTER_VALUES slice 7) -------------------------------------------------------------------------
