@@ -656,6 +656,13 @@ button.chat-page-go:hover { color: var(--fg); }
 /* The approval card states it, with the buttons on it; the note under the rule states it again, and the bar at the
    top of the pane a third time (that one is hidden from the component, which knows whether the card is in view). */
 .chat.calm .pending-note.blocked { display: none; }
+/* THE READING VIEW GETS THE GLYPH, NOT THE BAR. An indeterminate sweep is the browser's own page-loading motif and
+   reads right in the panel, among the instrumentation; across a reading column it is a rule drawn under the
+   conversation, which is a lot of furniture for one fact. The glyph says the same thing in the width of a character,
+   beside the sentence that says what is happening. (ui-kit.tsx `BusyBlob`.) */
+.chat.calm .pending-note { flex-direction: row; align-items: center; gap: 8px; }
+.chat.calm .pending-note .pbar { display: none; }
+.chat.calm .pending-note .blob { display: block; }
 /* The rail down the left of a tool step groups its BODY against the prose either side. A collapsed step has no
    body, so the rail is a stroke beside a single line — structure drawn for nothing. It keeps its width, so
    opening one moves nothing sideways. */
@@ -1544,7 +1551,7 @@ button.chat-page-go:hover { color: var(--fg); }
    the app asking a question, not a warning about something that went wrong, and a page of amber badges says the
    second. This replaces the touch-only cyan, which existed because the yellow read as an alarm in a phone's small
    frame — a problem the accent does not have at either size, so one colour now serves both. */
-.chat.calm { --notice: var(--accent); --notice-fg: var(--accent-fg); }
+.chat.calm { --notice: var(--accent); --notice-fg: var(--accent-fg); --busy: var(--accent); }
 /* …and a CITATION with it. The green rails and underlines are right in the developer view, where green means "this
    is real, it came from a tool" among a page of other machinery. In the reading view they are the loudest thing on
    a page of prose — a colour the page uses nowhere else, down the side of every table and under every cited number —
@@ -1554,7 +1561,7 @@ button.chat-page-go:hover { color: var(--fg); }
 /* …and the DOT beside such a row with it, or a session reads as two states at once: an amber dot against blue words
    saying the same thing. `pending` is a run working or a run waiting on you — activity, which is not a warning
    either. The dots that mean something WENT wrong (`err`, `warn`) keep their own colours. */
-.chat.calm .dot.pending { background: var(--notice); }
+/* The dot follows `--busy` (sidebar.css) like the rail beside it does, so this needs no rule of its own. */
 /* A STEP THAT WORKED gets no colour. Succeeding is what nearly every step does, so a saturated dot beside each one
    spends the page's loudest signal on its least surprising fact — twelve of them down a run, none of which you
    needed. The step's NAME is the landmark; the dot only has to be there. Colour is kept for what is exceptional:

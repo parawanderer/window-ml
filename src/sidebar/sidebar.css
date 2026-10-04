@@ -15,6 +15,10 @@
        because `--ok` means "that worked" everywhere else, and the chat page's calm view recolours one without the
        other (chat.css). */
     --cite: var(--ok);
+    /* SOMETHING IS STILL HAPPENING — a step in flight, the dot beside it, the rail down its side. Its own name
+       because the reading view recolours in-progress without touching the warning yellow, and every mark that means
+       "working" has to move together or one step wears two colours. */
+    --busy: var(--warn);
     /* JSON-tree syntax colours, matched to the atom-one-dark code theme so the raw In tree reads like the code block. */
     --j-key: #d19a66; --j-str: #98c379; --j-lit: #56b6c2; --j-base: #abb2bf;
 }
@@ -1238,8 +1242,26 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
 /* Approval provenance lives in the BADGE, not the bar (badge-only — the green/red/blue bars read as
    "too busy" and collided with the badge). A settled step keeps the neutral bar regardless of provenance;
    only the transient LIVE states below tint it, since the badge can't show "running"/"awaiting". */
-/* in-flight: a yellow edge matching the pulsing pending dot, until the DONE patches it in. */
-.astep.tool.pending { border-left-color: var(--warn); }
+/* IN FLIGHT: the same colour, and the same pulse, as the pending dot at the top of the step. It claimed to match
+   that dot and had not for a while — the reading view recolours the dot to its own in-progress colour (`--notice`,
+   which calm maps to the accent) and the rail stayed amber, so the one step that was running wore two colours. One
+   token now, read by both, which is what stops it drifting a second time.
+   The COLOUR is animated rather than the element's opacity: this border is on the step itself, so fading the
+   element would fade its text with it. */
+/* ONE ANIMATION, NOT TWO THAT AGREE. The rail and the dot are different elements, so two `pulse`s of the same
+   duration are only in step if they STARTED together — and they do not, reliably: each begins when its own element
+   gains the animation, and a step whose class flips while the dot persists (or the other way round) leaves the two
+   breathing against each other. It was in sync in some states and not in others, which is worse than either.
+   So the step animates a custom PROPERTY, which inherits, and both marks read it: the rail as its border's alpha,
+   the dot as its opacity. They cannot drift, because there is only one clock. */
+@property --busy-fade { syntax: "<number>"; inherits: true; initial-value: 1; }
+.astep.tool.pending {
+    border-left-color: color-mix(in srgb, var(--busy) calc(var(--busy-fade) * 100%), transparent);
+    animation: busy-fade 1s infinite;
+}
+.astep.tool.pending .dot.pending { animation: none; opacity: var(--busy-fade); }
+@keyframes busy-fade { 50% { --busy-fade: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .astep.tool.pending { animation: none; } }
 .appr { font-size: 0.72em; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; padding: 0 6px; border-radius: 999px; border: 1px solid; flex: 0 0 auto; line-height: 1.6; }
 .appr.yes { color: var(--ok); border-color: var(--ok); }
 .appr.no { color: var(--err); border-color: var(--err); }
@@ -1927,7 +1949,7 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
     .icon-btn:active, .hbtn:active { background: var(--panel-2); color: var(--fg); }
 }
 .dot { width: 0.67em; height: 0.67em; border-radius: 50%; flex: 0 0 auto; }
-.dot.pending { background: var(--warn); animation: pulse 1s infinite; }
+.dot.pending { background: var(--busy); animation: pulse 1s infinite; }
 .dot.ok { background: var(--ok); }
 .dot.err { background: var(--err); }
 .dot.warn { background: var(--warn); }   /* stopped short without failing: a step cap, a cancel */
@@ -2123,6 +2145,42 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 .pending-note.blocked .pbar > span { left: 0; width: 100%; background: var(--warn); animation: pbar-breathe 1.5s ease-in-out infinite; }
 @keyframes pbar-breathe { 0%, 100% { opacity: .18; } 50% { opacity: .85; } }
 @media (prefers-reduced-motion: reduce) { .pbar > span { animation-duration: 0s; opacity: .6; } }
+
+/* THE FOOTER DRAWS BOTH AND THE VIEW PICKS ONE. The sweep bar is the default, because it is the panel's own
+   idiom; the reading view hides it and shows the glyph instead (chat.css). A hidden element's animations do not
+   run, so whichever is not shown costs nothing. */
+.pending-note .blob { display: none; }
+
+/** The liveness glyph: a blob that wobbles, comes apart into three spinning dots, and closes up again. */
+/* The morph is the gooey FILTER (ui-kit.tsx `BusyBlob` says why), so the only thing animated here is how far from
+   the centre each circle sits, on one shared clock. The three are the same keyframes at a third of a turn apart,
+   which is what makes them separate evenly instead of needing three sets. */
+.blob { width: 15px; height: 15px; flex: 0 0 auto; color: var(--busy); overflow: visible; }
+.blob circle { fill: currentColor; }
+.blob > g { animation: blob-spin 2.6s linear infinite; transform-box: view-box; transform-origin: 12px 12px; }
+/* The same keyframes, STAGGERED. Without the offsets the lump is perfectly symmetric, which is a circle and not a
+   blob; with them it leans and shifts, and the three pull apart one after another rather than snapping open. */
+.blob-a { animation: blob-out 4.6s ease-in-out infinite; }
+.blob-b { animation: blob-out 4.6s ease-in-out infinite -0.13s; }
+.blob-c { animation: blob-out 4.6s ease-in-out infinite -0.26s; }
+/* Apart on their own axes, so the trio opens like a hand rather than sliding as one. */
+.blob-b { rotate: 120deg; transform-box: view-box; transform-origin: 12px 12px; }
+.blob-c { rotate: 240deg; transform-box: view-box; transform-origin: 12px 12px; }
+@keyframes blob-spin { to { transform: rotate(360deg); } }
+@keyframes blob-out {
+    /* A lump, breathing: they never quite coincide, or it would be a circle rather than a blob. */
+    0%, 26% { transform: translate(1.1px, 0); }
+    12% { transform: translate(2.1px, 0); }
+    /* Apart: far enough that the filter stops bridging them, which is what makes them read as three dots rather
+       than as a clover. Below about twice the circle's radius the blur still joins them up. */
+    42%, 64% { transform: translate(8px, 0); }
+    /* And back. */
+    82%, 100% { transform: translate(1.1px, 0); }
+}
+/* It is saying "still going", which it does as well at a stand as in motion. */
+@media (prefers-reduced-motion: reduce) {
+    .blob > g, .blob circle { animation: none; }
+}
 /* Collapse toggle: chevron + "assistant" label act as one button. */
 .who-toggle { display: inline-flex; align-items: center; gap: 6px; background: none; border: none; padding: 0; font: inherit; cursor: pointer; }
 .who-toggle .tri { color: var(--fg-dim); }

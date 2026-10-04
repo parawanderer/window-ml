@@ -608,3 +608,41 @@ export function SheetChip({ id, label }: { id: string; label?: string }) {
         </a>
     );
 }
+
+/**
+ * THE LIVENESS GLYPH: a small amorphous blob that wobbles, pulls itself apart into three spinning dots, and comes
+ * back together. Fifteen pixels of "something is still happening", for beside the words that say what.
+ *
+ * It replaces an indeterminate SWEEP BAR in the reading view. A full-width bar is the browser's own page-loading
+ * motif and reads right in the panel, among instrumentation; across a reading column it is a rule drawn under the
+ * conversation, which is a lot of furniture to say one thing. This says the same thing in the space of a character,
+ * next to the sentence it belongs to.
+ *
+ * HOW IT MORPHS, which is one trick rather than a sequence of drawings: three circles under a gooey filter (a blur,
+ * then a hard alpha curve that re-sharpens it). Overlapping, their blurred edges merge and the filter cuts one
+ * outline around the pair, so they ARE a blob; drawn apart, each gets its own outline and they are dots. So the only
+ * thing animated is how far from the centre each sits, and the morph falls out of the filter.
+ *
+ * The group's rotation runs the whole time and is invisible while they are a lump, which is what keeps the two
+ * phases from needing to be coordinated: the spin is simply always there and only legible once there is something
+ * to spin.
+ */
+export function BusyBlob({ label }: { label?: string }) {
+    return (
+        <svg class="blob" viewBox="0 0 24 24" role={label ? "img" : undefined} aria-label={label} aria-hidden={label ? undefined : "true"}>
+            <defs>
+                {/* The alpha curve is what re-sharpens the blur: everything under about half opacity goes, and what
+                    is left goes opaque, so two blurred discs that touch come out as one solid shape. */}
+                <filter id="blob-goo">
+                    <feGaussianBlur in="SourceGraphic" stdDeviation="1.5" result="blur" />
+                    <feColorMatrix in="blur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 16 -7" />
+                </filter>
+            </defs>
+            <g filter="url(#blob-goo)">
+                <circle class="blob-a" cx="12" cy="12" r="3.6" />
+                <circle class="blob-b" cx="12" cy="12" r="3.6" />
+                <circle class="blob-c" cx="12" cy="12" r="3.6" />
+            </g>
+        </svg>
+    );
+}

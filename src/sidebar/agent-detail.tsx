@@ -22,7 +22,7 @@ import { IconChevron, IconWarn, IconInfo, IconCopy, IconCheck, IconIn, IconOut }
 import { usageSamples, liveOutTokens } from "./usage";
 import { fmtDur } from "./timestamps";
 import {
-    Code, CopyBtn, SheetChip, Hash, Stamp, Dot, Disclosure,
+    BusyBlob, Code, CopyBtn, SheetChip, Hash, Stamp, Dot, Disclosure,
     decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText, cursorTipOn, PointerChip, TipText,
 } from "./ui-kit";
 import { FeedbackBlock, ReusedBlock } from "./answer-render";
@@ -943,7 +943,11 @@ export function PendingNote({ s }: { s: Session }) {
     const n = turnsRun(s.steps);
     return (
         <div class={`pending-note${blocked ? " blocked" : ""}`}>
+            {/* BOTH are drawn and the view picks one in CSS: the bar in the panel, where it matches the
+                instrumentation around it, and the glyph in the reading view, where a full-width rule is furniture.
+                A hidden element's animations do not run, so the one that is not shown costs nothing. */}
             <div class="pbar" aria-hidden="true"><span /></div>
+            {blocked ? null : <BusyBlob />}
             <span class="ptext">{blocked ? "waiting for your approval…" : `running · ${n} ${n === 1 ? "step" : "steps"}`}</span>
         </div>
     );
