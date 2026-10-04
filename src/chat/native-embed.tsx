@@ -23,6 +23,8 @@ import { agentTarget, attentionForApp, runtimeStorage, sessionChrome, startableF
 import type { PairingApi } from "../pairing/api";
 import type { CertState } from "./attention";
 import { certReminders } from "./reminders";
+import { certChanged, renewSelf } from "./renew";
+import { startAutoRenew } from "./auto-renew";
 import { installServices, services } from "../sidebar/services";
 import { installTooltipLayer } from "../sidebar/tooltip-layer";
 import { applyCodePrefs, applyTheme, initThemeStyle, pageTheme } from "../sidebar/prefs";
@@ -235,6 +237,30 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
     const live = (c: CertState | null) => c && { ...c, issuerOnline: store.runtimes.value.some((rt) => rt.online) };
     readCert();
     setInterval(readCert, 60 * 60_000);
+    // A renewal replaces the certificate, so the app is told again at once rather than on the hourly read above.
+    effect(() => { void certChanged.value; readCert(); });
+    // THE PHONE CAN RENEW NOW. Before this the app had no way to: `renewSelf` was composed only in the hosted
+    // client, so the phone's inbox said renewing was not something that screen could do and sent people to pair
+    // again. Both halves are here — the store, which can ask a runtime, and the keyring behind `pairing` — exactly
+    // as they are in client.tsx, and it is auto-renew that uses them, so no button is needed on the app's side.
+    if (opts.pairing) {
+        const pairingApi = opts.pairing;
+        startAutoRenew({
+            read: async () => {
+                const m = await pairingApi.load();
+                return typeof m?.notAfterMs === "number"
+                    ? { notAfterMs: m.notAfterMs, ...(m.mayRevoke ? { mayRevoke: true } : {}), renewable: m.renewable !== false }
+                    : null;
+            },
+            runtimeOnline: () => store.runtimes.value.some((rt) => rt.online),
+            renew: async () => {
+                const mine = await pairingApi.load();
+                if (!mine?.principal) return "This device is in no account.";
+                const r = await renewSelf(store.host, pairingApi, store.runtimes.value, mine.principal);
+                return r.ok ? null : r.problem;
+            },
+        });
+    }
     effect(() => post({ type: "attention", ...attentionForApp(store.runtimes.value, live(ownCert)) }));
     /** The chrome for any session: the open one's, and a list row's when the app asks (`chromeFor`). */
     const chromeOf = (key: SessionKey) => {

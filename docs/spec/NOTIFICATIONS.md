@@ -140,7 +140,7 @@ The one gap is an approval reaching a device with the app **killed**. Closing it
 Until then the badge is honest while the app runs and stale while it does not, and the certificate, which is the
 deadline that actually matters, does not depend on any of it.
 
-## The thing that would make these a backstop rather than the mechanism
+## Why these are a backstop and not the mechanism (auto-renew, 2026-10-04)
 
 A certificate is issued for 90 days (`MAX_CERTIFICATE_MS`), and a renewal is refused outside the last 14
 (`RENEW_WITHIN_MS`). Renewal is only ever a button press: `renewSelf` has exactly one caller, the inbox's `apply`.
@@ -149,23 +149,63 @@ So what the product asks of a person today is to **open the app and press Renew 
 90 days**. These reminders exist to make that ask survivable, and on the phone they do. They cannot make it a good
 ask.
 
-**Auto-renew on connect would almost remove it.** A device that connects at all inside the renewal window renews
-itself silently: the same operation as the press, the same subject, scopes, role and `mayPair`, with only the window
-moving. The hub's gate already constrains it to self-only, inside 14 days, with a cooldown, so nothing new has to be
-trusted, and `may_revoke` holders and delegate-issued certificates stay excluded exactly as they are now. Any device
-someone actually uses would then stay current with no press and no notification, and these reminders would be the
-backstop for a genuinely unused device rather than the thing holding an account together.
+**So auto-renew on connect was built** (`src/chat/auto-renew.ts`). A device that connects at all inside the renewal
+window renews itself silently: the same operation as the press, the same subject, scopes, role and `mayPair`, with
+only the window moving. The hub's gate already constrains it to self-only, inside 14 days, with a cooldown, so
+nothing new is trusted, and `may_revoke` holders and delegate-issued certificates stay excluded exactly as before.
 
-It would also make the web's one real limitation stop mattering for the certificate: opening the installed client
-once a month would keep it current, whether or not a notification could ever have reached it while closed.
+It lives in the PAGE half, so the hosted client and the phone (whose page is the same client in a WebView) are served
+by one implementation, and **the phone needed no Renew button at all** — which matters, because before this it had
+no renewal path whatsoever: `renewSelf` was composed only in `client.tsx`, so the phone's inbox said renewing was not
+something that screen could do and sent people to pair again.
 
-Worth noting that `attention.ts` already describes the world as though this existed: "a device that keeps connecting
-keeps itself current, so the only signal left is a person being told." The code does not do that. One of the two is
-wrong, and it is probably the code.
+**A failure is silent, deliberately.** Nobody asked for it, so nothing may interrupt them about it; it degrades to
+the inbox item and its button, which is the visible path that already says why. The one thing worse than a renewal
+that did not happen is a dialog about a renewal nobody requested.
+
+It also makes the web's one real limitation stop mattering for the certificate: opening the installed client once a
+month keeps it current, whether or not a notification could have reached it while closed.
+
+Two doc comments already described this world before it existed, which is why it reads as intent rather than as a new
+idea: `attention.ts` ("a device that keeps connecting keeps itself current, so the only signal left is a person being
+told") and `DeviceInfo.lastSeenMs` ("a runtime renews everything on its allowlist").
+
+### What auto-renew cannot reach: the revocation signer
+
+`defaultGrant` (`src/hub/pair-flow.ts`) gives EVERY runtime `mayRevoke: true`, and `device.renew` refuses a
+`may_revoke` certificate outright, so on today's defaults no browser can renew itself at all. That is not a design
+choice to work around here, it is the code disagreeing with window-ml-hub `docs/design/revocation.md`, which says
+`may_revoke` is "held by exactly one principal at a time" and that "a second runtime that may revoke is the root's
+decision to re-place, not a default".
+
+The expiry cliff is the milder symptom. The worse one is that `src/hub-devices.ts` signs with
+`version = Math.max(nowMs, this.state.version + 1)` where `this.state.version` is each runtime's OWN stored state, so
+two signers race and the one whose state or clock trails the other has its list refused as stale: a removal of a lost
+device can silently fail, which that doc names as the worst possible way for a revocation to fail.
+
+Handed to the hub session (`window-ml-hub/tmp/handover-one-revocation-signer.md`), because the invariant can only be
+enforced where every device on an account is visible without a runtime online. The window-ml half, once the rule is
+settled, is `defaultGrant` no longer returning `mayRevoke: true` and the grant editor explaining the one signer.
+
+**Both halves of it are encoded as tests rather than left as prose** (`tests/auto-renew.test.mjs`, the last section).
+They take `defaultGrant` and `autoRenewSkip` as their oracle rather than a copy of the reasoning, so they cannot drift
+from the code:
+
+- Each role's renewal path, with the set of roles that have NONE pinned to exactly `["ROLE_RUNTIME"]`. It was checked
+  by applying the fix and watching it go red, so it is a guard rather than a test that happens to pass. It also fails
+  if a NEW role arrives that cannot stay in the account, which is the regression it is really there for.
+- The two-signer race, demonstrated: two `DeviceRegistry` instances sign, the second with a clock one second behind,
+  and its version is not above the first's, so a publisher holding the first refuses it.
+- That the inbox never offers a renewal the runtime would refuse (`CERT_WARN_MS <= RENEW_WITHIN_MS`). If the warning
+  were ever the wider of the two, a press in the gap would be answered "not due", which `renewSelf` reports as a
+  success with nothing installed, so the card would say nothing and leave the warning up: the dead-button failure
+  of #323 arriving by another route.
 
 ## Tests
 
 `tests/reminders.test.mjs` is the rule: the schedule at every threshold, what each line says on each branch, that a
 past threshold is skipped, that a live reading cannot reach a plan, the replan after a renewal, and the hosted
 client's timer over a stubbed `Notification` and storage. `tests/native-bridge.test.mjs` checks that the plan crosses
-to the app and that a malformed one is dropped whole. `tests/mobile/notify-settings.yaml` is the phone's row.
+to the app and that a malformed one is dropped whole. `tests/mobile/notify-settings.yaml` is the phone's row. `tests/auto-renew.test.mjs` is the renewal policy and its
+driver: which conditions earn an attempt, which rule refuses and in which order, that a renewal in flight is never
+started twice, and that a failure is silent.
