@@ -191,6 +191,24 @@ export function profilesFor(grantable?: readonly string[] | null): GrantProfile[
     return GRANT_PROFILES.filter((p) => !p.scopes || p.scopes.every((s) => grantable.includes(s)));
 }
 
+/**
+ * WHAT REMOVING A DEVICE COSTS, as the one sentence every surface says. It is the last thing a person reads before an
+ * act that cannot be undone from here, so the two screens saying it differently is the two screens disagreeing about
+ * what is about to happen.
+ *
+ * The holder of `may_revoke` is its own answer, and not for tidiness: it is the device that SIGNS removals, so taking
+ * it out leaves the account unable to remove anything until the root grants that power elsewhere (window-ml-hub
+ * docs/design/revocation.md, where exactly one principal holds it at a time). Removing the ordinary device is
+ * recoverable by pairing it again; removing this one needs the root key out of its drawer.
+ */
+export function removalWarning(d: { label?: string; mayRevoke?: boolean }): string {
+    if (d.mayRevoke) {
+        return "This device signs the account's revocations. Removing it leaves the account unable to remove ANY device "
+            + "until the root device grants that power to another. Remove it only if it is lost.";
+    }
+    return `“${d.label || "That device"}” stops reaching everything on this account at once. Adding it back takes a new code, confirmed on the root device.`;
+}
+
 /** What a role is called on screen. */
 export function roleName(role: PairRole | string): string {
     return role === "runtime" ? "a browser runtime" : role === "client" ? "a device" : role === "box-connector" ? "a box" : "a device";
