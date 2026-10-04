@@ -179,7 +179,12 @@ export async function answerArchive(m: Extract<ToNative, { type: "archive" }>): 
         await cache.save(m.session as CachedSession);
         return { type: "archiveResult", id: m.id, ok: true, held: heldFor(key) };
     } catch (e) {
-        return { type: "archiveResult", id: m.id, ok: false, error: e instanceof Error ? e.message : String(e) };
+        // SAID OUT LOUD, because nothing downstream will. The store discards a failed save (`.catch(() => undefined)`),
+        // so an archive that cannot write looks exactly like one that is working: sessions simply stop being kept and
+        // every reopen goes to the hub. This is the only place it is visible.
+        const why = e instanceof Error ? e.message : String(e);
+        console.warn(`[archive] ${m.op} failed: ${why}`);
+        return { type: "archiveResult", id: m.id, ok: false, error: why };
     }
 }
 

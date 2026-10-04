@@ -40,6 +40,12 @@ const GENRES = {
             "output-cell.test.mjs", "code-tools.test.mjs", "legend.test.mjs",
             "context-container.test.mjs", "tooltip-layer.test.mjs", "tip.test.mjs", "views.test.mjs"],
     },
+    // The session archive: the SQL both surfaces run (src/archive/db.ts), the same statements proven under a second
+    // SQLite build, the bridge the phone keeps its copy over, and the Settings section that manages the folder.
+    archive: {
+        about: "the session archive: its SQL under two SQLite builds, the phone's bridge to it, and the folder section",
+        files: ["archive-db.test.mjs", "archive-portable.test.mjs", "archive-bridge.test.mjs", "archive-section.test.mjs"],
+    },
     ext: {
         about: "the extension's own worlds — background, relay, CDP, the page loop",
         files: ["background.test.js", "relay.test.js", "agent.test.js", "cdp-stream.test.mjs",
