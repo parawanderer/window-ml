@@ -89,12 +89,44 @@ not know throws `NotInDialect`, so the parser can be deliberately incomplete and
   (with spread and shorthand), `new Ctor(…)` for a bare name, unary `! - typeof`, binary arithmetic and comparison,
   `**` (tighter than `*`, right-associative; an unparenthesised unary operand on its left — `-2 ** 2`, `await x ** 2`
   — is refused, as JavaScript refuses it; a BigInt operand is refused because its cost grows with the exponent inside
-  one operation), `&& || ??`, the ternary, `await`, and a simple `=` whose target is a member.
+  one operation), `&& || ??`, the ternary, `await`, assignment (`=` and `+= -= *= /= %=`) and `++`/`--`, prefix or
+  postfix, whose target is either a member of a container the script built or a bare name the script declared.
 - Statements: `const`/`let`/`var` with one declarator (or a shorthand array or object destructuring pattern),
   `if`/`else`, `for (const x of …)`, `try`/`catch`/`finally`, `return`, blocks, expression statements. The value of
   a program is its last expression statement or its `return`.
-- Deliberately absent: `while`, `do`, C-style `for(;;)`, `for…in` (a prototype-chain read), compound assignment
-  and `++`, assignment to a bare name, classes, generators, getters, labels, `this`, `delete`.
+- Deliberately absent: `while`, `do`, C-style `for(;;)`, `for…in` (a prototype-chain read), the short-circuiting
+  compound forms `||= &&= ??=` (whether the write happens at all depends on the value, and a form whose effect you
+  have to evaluate the operand to predict is the wrong one for a dialect that exists to be predictable), classes,
+  generators, getters, labels, `this`, `delete`.
+
+#### Assignment to a bare name
+
+A binding the evaluator created has no existence outside it, so writing to one cannot be observed by the page —
+the same argument that already lets a script build an array and push to it. Without this, one `let n = 0; … n += 1`
+sent an entire read-only survey to the human gate, which is the counter idiom a model reaches for constantly.
+
+What makes it safe to tell apart is the SCOPE SHAPE. Frames are a prototype chain of plain objects, one per block,
+loop iteration and arrow call. The frame at the end of that chain — the host's `document`, `ml`, `Math`, `console` —
+is built with `Object.create(null)`, and the script is given a frame of its own over it. So "does this name belong
+to the environment?" is answered by `Object.getPrototypeOf(frame) === null`, not by a list of names that would go
+stale the next time one is added.
+
+Three refusals, each a different way the page could otherwise be reached:
+
+| | why |
+| --- | --- |
+| `document = 1`, `ml += 1`, `Math++` | the name resolves to the null-prototype frame |
+| `leaked = 1` | nothing declared it; in real JS this creates a global, so here it is refused rather than created |
+| `const n = 1; n = 2` | accepting it would make the dialect compute a value real JavaScript would not |
+
+The target is resolved BEFORE the right-hand side is computed, so `ml += 1` is refused rather than coercing the
+facade on its way to a refusal and reporting "Cannot convert object to primitive value" — a runtime error about the
+wrong thing. Const-ness is tracked as an own, non-enumerable `Set` per frame: read through the prototype chain it
+would be the ENCLOSING frame's set, and an inner `const x` would freeze an outer `let x` that merely shares its name.
+
+Rebinding launders nothing. `owned` is a property of the VALUE, not of the name holding it, so moving a DOM node
+into a local changes nothing about what may be written through it, and a method lifted off a host object stays the
+inert `METHOD_REF` sentinel however many names it passes through.
 
 ### 3. The evaluator
 
@@ -209,6 +241,12 @@ loop.
   property write on a held collection is `Denied`. So every loop's trip count is fixed when it starts.
 - Calls nest at most `MAX_CALL_DEPTH` (256) deep. Recursion is allowed, the way `ml.range` allows a loop: bounded.
   A call tree of bounded depth in which every call does finitely much is finite.
+- A MUTABLE BINDING does not change any of that, which is the obvious worry about it and the reason the argument is
+  written out here. A `while` is what a mutable counter buys you in a normal language, and there is no `while` to
+  buy: `for…of` over an iterable captured at loop entry is the only loop form. Rebinding the NAME the iterable came
+  from is invisible to a loop already holding the value, so `let a = [1]; for (const x of a) a = a.concat([x])`
+  terminates — while `a.push(x)` on the same loop is still `Denied`, because the hold is on the value. And a counter
+  cannot buy call depth, which is fixed by the source.
 
 **B. Every script's cost is bounded.** This is a resource policy, not a language property. A script that halts can
 still take hours: loops nested over large collections, an array doubled forty times.

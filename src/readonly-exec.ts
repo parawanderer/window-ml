@@ -168,9 +168,16 @@ function scanTemplate(src: string, start: number): { quasis: string[]; exprs: st
 // Multi-char punctuators, longest first so greedy matching is correct.
 const PUNCT = [
     "===", "!==", "...", "?.", "=>", "==", "!=", "<=", ">=", "&&", "||", "??", "**",
+    // Compound assignment and the counter operators. They must come BEFORE the single characters or greedy
+    // matching takes the `+` out of `+=`; `a + +b` is unaffected, since the space stops `++` matching.
+    "+=", "-=", "*=", "/=", "%=", "++", "--",
     ".", ",", "(", ")", "[", "]", "{", "}", "?", ":", "!", "<", ">",
-    "+", "-", "*", "/", "%", "=", ";",   // `=` only for `const x = …`; assignment expressions still fail closed
+    "+", "-", "*", "/", "%", "=", ";",
 ];
+/** The compound assignments, mapped to the binary operator each one applies. No `||=`/`&&=`/`??=`: those
+ *  short-circuit, so whether the write happens at all depends on the value, and a form whose effect you have to
+ *  evaluate the operand to predict is the wrong one to be adding to a dialect that exists to be predictable. */
+const COMPOUND: Record<string, string> = { "+=": "+", "-=": "-", "*=": "*", "/=": "/", "%=": "%" };
 
 function tokenize(src: string): Tok[] {
     const toks: Tok[] = [];
@@ -303,7 +310,7 @@ class Parser {
             const iter = this.parseExpression();
             this.eat(")");
             const body = this.parseStatement();
-            return { type: "ForOf", name: id.v, iter, body };
+            return { type: "ForOf", kind: kw.v, name: id.v, iter, body };
         }
         if (t.t === "name" && (t.v === "const" || t.v === "let" || t.v === "var")) {
             this.next();
@@ -316,14 +323,14 @@ class Parser {
                 this.eat("=");
                 const init = this.parseExpression();
                 if (this.is(";")) this.i++;
-                return { type: "VarDecl", pattern, init };
+                return { type: "VarDecl", kind: t.v, pattern, init };
             }
             const id = this.next();
             if (id.t !== "name") throw new NotInDialect("expected name");
             this.eat("=");
             const init = this.parseExpression();
             if (this.is(";")) this.i++;
-            return { type: "VarDecl", name: id.v, init };
+            return { type: "VarDecl", kind: t.v, name: id.v, init };
         }
         if (t.t === "name" && t.v === "return") {
             this.next();
@@ -353,13 +360,19 @@ class Parser {
         return { type: "ExprStmt", expr: e };
     }
     parseExpression(): Node { return this.parseAssignment(); }
-    // Assignment is the LOWEST-precedence, right-associative level. Only a simple `=` (no compound `+=`/`||=`)
-    // — the get-or-create-and-push idiom `(o[k] = o[k] || []).push(x)` and building a local accumulator. The
-    // EVALUATOR mediates the target hard: a member write lands ONLY on a script-local plain object/array,
-    // never a DOM node / host object / the realm — so this stays read-only w.r.t. the PAGE.
+    // Assignment is the LOWEST-precedence, right-associative level: `=` and the arithmetic compound forms. The
+    // EVALUATOR mediates the target hard. A MEMBER write lands only on a script-local plain object/array, never a
+    // DOM node / host object / the realm. A BARE NAME must resolve to a binding the script itself declared — the
+    // host's own names live in a frame with a null prototype and are refused there — so the counter idiom
+    // (`let n = 0; rows.forEach(r => n += r.x)`) runs, and nothing outside the evaluator can be written to.
     parseAssignment(): Node {
         const left = this.parseTernary();
-        if (this.is("=")) { this.eat("="); return { type: "Assign", target: left, value: this.parseAssignment() }; }
+        if (this.is("=")) { this.eat("="); return { type: "Assign", op: "=", target: left, value: this.parseAssignment() }; }
+        const t = this.peek();
+        if (t.t === "punct" && t.v in COMPOUND) {
+            this.i++;
+            return { type: "Assign", op: COMPOUND[t.v], target: left, value: this.parseAssignment() };
+        }
         return left;
     }
     parseTernary(): Node {
@@ -398,6 +411,11 @@ class Parser {
             this.i++;
             return { type: "Unary", op: t.v, arg: this.parseUnary() };
         }
+        // `++n` / `--n`. The counter a model actually writes; the same mediated target as `n += 1`.
+        if (t.t === "punct" && (t.v === "++" || t.v === "--")) {
+            this.i++;
+            return { type: "Update", op: t.v === "++" ? "+" : "-", arg: this.parseUnary(), prefix: true };
+        }
         return this.parsePostfix();
     }
     parsePostfix(): Node {
@@ -417,6 +435,14 @@ class Parser {
             } else if (this.is("(")) {
                 node = this.parseCall(node, false);
             } else break;
+        }
+        // `n++` / `n--`, AFTER the member/call chain, so `o.count++` reaches the same guarded member write that
+        // `o.count += 1` does. Postfix yields the value BEFORE the change, which is the half of this that a
+        // desugaring to `n += 1` would get wrong.
+        const t = this.peek();
+        if (t.t === "punct" && (t.v === "++" || t.v === "--")) {
+            this.i++;
+            return { type: "Update", op: t.v === "++" ? "+" : "-", arg: node, prefix: false };
         }
         return node;
     }
@@ -719,6 +745,8 @@ const BY_KIND: Record<MethodKind | "*", readonly string[]> = {
     PromiseCtor: ["all", "allSettled"],
 };
 
+/** Per-frame set of names declared `const`, kept off the frame's own enumerable keys. */
+const CONSTS = Symbol("consts");
 const KIND_SETS = new Map<string, Set<string>>(Object.entries(BY_KIND).map(([k, v]) => [k, new Set(v)]));
 const ANY_KIND = KIND_SETS.get("*")!;
 
@@ -1055,18 +1083,72 @@ class Evaluator {
     // Bind a destructuring pattern (`const {a,b} = …`, `([a,b]) => …`) MEDIATED: every extracted property goes
     // through `this.prop` (a denied key like `constructor`/`__proto__` throws; a live method → the inert
     // METHOD_REF sentinel), so you can GET a property but not USE it to escape. Shared by VarDecl + arrow params.
-    private bindPattern(scope: any, pattern: Node, val: unknown): void {
+    private bindPattern(scope: any, pattern: Node, val: unknown, isConst = false): void {
+        const bind = (name: string, v: unknown): void => { scope[name] = v; if (isConst) this.markConst(scope, name); };
         if (pattern.type === "ArrayPattern") {
             const arr = Array.isArray(val) ? val
                 : (val != null && typeof (val as any)[Symbol.iterator] === "function") ? this.sized(Array.from(val as Iterable<unknown>))
                     : (() => { throw new TypeError("cannot destructure a non-iterable value"); })();
-            (pattern.elems as (string | null)[]).forEach((name, i) => { if (name) scope[name] = this.prop(arr, String(i)); });
-            if (pattern.rest) scope[pattern.rest] = this.own(arr.slice((pattern.elems as unknown[]).length));
+            (pattern.elems as (string | null)[]).forEach((name, i) => { if (name) bind(name, this.prop(arr, String(i))); });
+            if (pattern.rest) bind(pattern.rest as string, this.own(arr.slice((pattern.elems as unknown[]).length)));
         } else {   // ObjectPattern — each key read through the member-read guard (denied → throw, method → inert)
-            for (const k of pattern.keys as string[]) scope[k] = this.prop(val, k);
+            for (const k of pattern.keys as string[]) bind(k, this.prop(val, k));
         }
     }
 
+
+    /** Apply one binary operator. Shared by `a + b` and by `a += b`, so the compound form cannot quietly skip
+     *  `sized` — which is the guard that stops a loop building an unbounded string one concatenation at a time. */
+    private applyBinary(op: string, l: any, r: any): unknown {
+        switch (op) {
+            case "===": return l === r; case "!==": return l !== r;
+            case "==": return l == r; case "!=": return l != r;
+            case "<": return l < r; case ">": return l > r;
+            case "<=": return l <= r; case ">=": return l >= r;
+            case "+": return this.sized(l + r); case "-": return l - r;
+            case "*": return l * r; case "/": return l / r; case "%": return l % r;
+            // A NUMBER power is one O(1) operation. A BigInt one grows with the exponent inside a single host
+            // operation no step budget sees, so it is refused outright (BigInt is not reachable in the dialect
+            // today; this keeps it that way if it ever becomes so).
+            case "**":
+                if (typeof l === "bigint" || typeof r === "bigint") throw new NotInDialect("a BigInt power is not bounded");
+                return l ** r;
+        }
+        throw new NotInDialect(`operator ${op}`);
+    }
+
+    /** Which scope FRAME actually holds this binding, or null when nothing does. Frames are a prototype chain of
+     *  plain objects, one per block / loop iteration / arrow call; the one at the end — the host's `document`,
+     *  `ml`, `Math`, `console` — is built with `Object.create(null)`, so a null prototype IS the test for "this
+     *  name belongs to the environment, not to the script". */
+    private frameOf(scope: any, name: string): any {
+        for (let f = scope; f; f = Object.getPrototypeOf(f)) if (Object.prototype.hasOwnProperty.call(f, name)) return f;
+        return null;
+    }
+    /** Record that a name was declared `const` in this frame. The set is an OWN, non-enumerable property: read
+     *  through the prototype chain it would be the ENCLOSING frame's set, and marking there would make an inner
+     *  `const x` freeze an outer `let x` that merely shares its name. */
+    private markConst(frame: any, name: string): void {
+        if (!Object.prototype.hasOwnProperty.call(frame, CONSTS))
+            Object.defineProperty(frame, CONSTS, { value: new Set<string>(), enumerable: false, configurable: true });
+        (frame[CONSTS] as Set<string>).add(name);
+    }
+    private isConst(frame: any, name: string): boolean {
+        return Object.prototype.hasOwnProperty.call(frame, CONSTS) && (frame[CONSTS] as Set<string>).has(name);
+    }
+    /** The frame a BARE NAME may be written to. The whole extension is this function: a binding the script itself declared has no
+     *  existence outside the evaluator, so writing to one cannot be observed by the page — which is the same
+     *  argument that already lets a script build an array and push to it. Everything else is refused, and the
+     *  three refusals are each a different way the page could otherwise be reached: the environment's own names
+     *  (`document = …`), a name nothing declared (an implicit global, which in real JS creates one), and a
+     *  `const`, where accepting it would make the dialect compute a value real JavaScript would not. */
+    private writableFrame(scope: any, name: string): any {
+        const frame = this.frameOf(scope, name);
+        if (!frame) throw new Denied(`'${name}' is not declared in this script — assignment never creates a binding here`);
+        if (Object.getPrototypeOf(frame) === null) throw new Denied(`'${name}' belongs to the page's environment and cannot be assigned to`);
+        if (this.isConst(frame, name)) throw new NotInDialect(`'${name}' was declared const`);
+        return frame;
+    }
     *eval(node: Node, scope: any): Ev {
         this.tick();
         // The line of the statement currently executing, so a runtime throw can say WHERE. Only statements
@@ -1101,8 +1183,9 @@ class Evaluator {
             }
             case "VarDecl": {
                 const val = yield* this.eval(node.init, scope);
-                if (node.pattern) { this.bindPattern(scope, node.pattern, val); return undefined; }
+                if (node.pattern) { this.bindPattern(scope, node.pattern, val, node.kind === "const"); return undefined; }
                 scope[node.name] = val;
+                if (node.kind === "const") this.markConst(scope, node.name);
                 return undefined;
             }
             case "ForOf": {
@@ -1121,6 +1204,7 @@ class Evaluator {
                         this.tick();
                         const child = Object.create(scope);   // fresh per-iteration binding (const semantics)
                         child[node.name] = item;
+                        if (node.kind === "const") this.markConst(child, node.name);
                         const v = yield* this.eval(node.body, child);
                         if (v && typeof v === "object" && RETURN in (v as object)) return v;   // a `return` breaks out + propagates
                     }
@@ -1191,12 +1275,25 @@ class Evaluator {
                 return this.sized(inst);
             }
             case "Assign": {
-                // MEMBER-only, and the target must be a container the SCRIPT CREATED (`owned`) with a non-denied
-                // key (guardKey). So a write can never touch a DOM node, a page array, a host object, `window`,
-                // the scope, or the realm (__proto__/constructor/prototype) — assignment stays read-only w.r.t.
-                // the page. A bare-name target (`window = …`, `x = …`) is refused outright (no env corruption).
+                // A BARE NAME must resolve to a binding the SCRIPT declared (setIdent holds that line): the
+                // environment's own names sit in a null-prototype frame and are refused there, an undeclared name
+                // is refused rather than created, and a `const` is refused so the dialect never computes a value
+                // real JavaScript would not.
+                if (node.target.type === "Ident") {
+                    // The TARGET is checked before anything is computed. `ml += 1` would otherwise coerce the
+                    // facade on its way to a refusal and report "Cannot convert object to primitive value" — a
+                    // runtime error about the wrong thing, where the answer is that the name is not the script's.
+                    const frame = this.writableFrame(scope, node.target.name);
+                    const rhs = yield* this.eval(node.value, scope);
+                    const val = node.op === "=" ? rhs : this.applyBinary(node.op, frame[node.target.name], rhs);
+                    frame[node.target.name] = val;
+                    return val;
+                }
+                // MEMBER: the target must be a container the SCRIPT CREATED (`owned`) with a non-denied key
+                // (guardKey). So a write can never touch a DOM node, a page array, a host object, `window`, the
+                // scope, or the realm (__proto__/constructor/prototype) — assignment stays read-only w.r.t. the page.
                 if (node.target.type !== "Member")
-                    throw new NotInDialect("assignment is allowed only to a property of an object/array you built (o[k] = v), never a bare variable");
+                    throw new NotInDialect("assignment is allowed only to a name you declared, or to a property of an object/array you built (o[k] = v)");
                 const obj: any = yield* this.eval(node.target.obj, scope);
                 const key = node.target.computed ? this.guardKey(yield* this.eval(node.target.prop, scope)) : this.guardKey(node.target.prop);
                 // owned AND a plain object/array: a script-created Set/Map is owned (so its mutator METHODS
@@ -1204,9 +1301,30 @@ class Evaluator {
                 if (!this.owned.has(obj) || !isWritableTarget(obj))
                     throw new Denied("can only assign to an object or array you built — never a DOM node, a page object, or the environment");
                 this.notIterating(obj, "assign into");
-                const val = yield* this.eval(node.value, scope);
+                const rhs = yield* this.eval(node.value, scope);
+                const val = node.op === "=" ? rhs : this.applyBinary(node.op, this.prop(obj, key), rhs);
                 obj[key] = val;
                 return val;
+            }
+            // `n++` / `--o.count`: the same two mediated targets as an assignment, and the same refusals. Postfix
+            // evaluates to the value BEFORE the change, which is why this is not parsed as `n += 1`.
+            case "Update": {
+                const delta = node.op === "+" ? 1 : -1;
+                if (node.arg.type === "Ident") {
+                    const frame = this.writableFrame(scope, node.arg.name);
+                    const before = Number(frame[node.arg.name]);
+                    frame[node.arg.name] = before + delta;
+                    return node.prefix ? before + delta : before;
+                }
+                if (node.arg.type !== "Member") throw new NotInDialect("++ and -- apply to a name you declared or to a property of an object you built");
+                const obj: any = yield* this.eval(node.arg.obj, scope);
+                const key = node.arg.computed ? this.guardKey(yield* this.eval(node.arg.prop, scope)) : this.guardKey(node.arg.prop);
+                if (!this.owned.has(obj) || !isWritableTarget(obj))
+                    throw new Denied("can only assign to an object or array you built — never a DOM node, a page object, or the environment");
+                this.notIterating(obj, "assign into");
+                const before = Number(this.prop(obj, key));
+                obj[key] = before + delta;
+                return node.prefix ? before + delta : before;
             }
             case "Unary": {
                 const a = yield* this.eval(node.arg, scope);
@@ -1222,21 +1340,7 @@ class Evaluator {
             }
             case "Binary": {
                 const l: any = yield* this.eval(node.left, scope), r: any = yield* this.eval(node.right, scope);
-                switch (node.op) {
-                    case "===": return l === r; case "!==": return l !== r;
-                    case "==": return l == r; case "!=": return l != r;
-                    case "<": return l < r; case ">": return l > r;
-                    case "<=": return l <= r; case ">=": return l >= r;
-                    case "+": return this.sized(l + r); case "-": return l - r;
-                    case "*": return l * r; case "/": return l / r; case "%": return l % r;
-                    // A NUMBER power is one O(1) operation. A BigInt one grows with the exponent inside a single host
-                    // operation no step budget sees, so it is refused outright (BigInt is not reachable in the dialect
-                    // today; this keeps it that way if it ever becomes so).
-                    case "**":
-                        if (typeof l === "bigint" || typeof r === "bigint") throw new NotInDialect("a BigInt power is not bounded");
-                        return l ** r;
-                }
-                throw new NotInDialect(`operator ${node.op}`);
+                return this.applyBinary(node.op, l, r);
             }
             case "Cond": return (yield* this.eval(node.cond, scope)) ? yield* this.eval(node.cons, scope) : yield* this.eval(node.alt, scope);
             // The chain result is CONSUMED here (not another chain link) → unwrap a short-circuit to undefined.
@@ -1471,13 +1575,19 @@ export async function evalReadonly(code: string, doc: Document, ml?: unknown, an
     const view = doc.defaultView;
     if (view && typeof view.getComputedStyle === "function") root.getComputedStyle = view.getComputedStyle.bind(view);
     const ast = new Parser(tokenize(code)).parseProgram();
+    // THE SCRIPT GETS ITS OWN FRAME over the host's. `root` is where `document`, `ml` and `Math` live and it has a
+    // null prototype, which is what marks a name as the environment's rather than the script's — so the script
+    // must not declare INTO it, or its own top-level `let` would be indistinguishable from `document` and could
+    // not be assigned to. (Shadowing a host name is then possible and harmless: `const document = …` writes to
+    // the child, the host binding is untouched, and nothing outside the evaluator can see either.)
+    const top: Record<string, unknown> = Object.create(root);
     // A FAILED ATTEMPT LEAVES NOTHING BEHIND. That is what makes trying the interpreter first safe, and `ml.answer`
     // is the one thing a survey can change: an add before a fall-back would outlive it, and the human would then be
     // asked to approve a script whose first half had already run. The caller's checkpoint restores it.
     const restore = opts.checkpoint?.();
     const ev = new Evaluator(facade, opts.stepBudget);
     try {
-        const value = await runAsync(ev.eval(ast, root));
+        const value = await runAsync(ev.eval(ast, top));
         return { value, logs, reused };
     } catch (e) {
         restore?.();
