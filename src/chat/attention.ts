@@ -88,8 +88,7 @@ const KNOWN: Record<AttentionCode, { level: AttentionLevel; title: string; detai
     // here are the fallback a surface would show if it ever read them straight out of the table.
     "cert-expiring": {
         level: "limits", title: "This device's access is running out",
-        detail: "Its certificate expires soon. Renewing is one press while it is still valid; after it lapses the device has to be paired again from scratch.",
-        fix: { kind: "act", label: "Renew" },
+        detail: "Its certificate expires soon. Pair it again from a device already in the account; after it lapses there is nothing else left.",
     },
     "cert-expired": {
         level: "blocks", title: "This device's access has expired",
@@ -188,7 +187,9 @@ export interface CertState {
  * take the device out of the account with it; now a device that keeps connecting keeps itself current, so the only
  * signal left is a person being told — early enough to act, and only while acting is still possible.
  *
- * A BUTTON ONLY WHERE ONE WOULD WORK, which is the whole of the rule:
+ * NO BUTTON ANYWHERE YET: `device.renew` exists over the contract but nothing on a screen asks for it, and offering
+ * a press that does nothing is worse than naming the remedy that works. Every branch names pairing it again. What
+ * differs is WHY there is nothing quicker, which is the part a person needs to judge how much time they have:
  *   - expired: nothing can renew it, because it can no longer prove who it is. Pair it again.
  *   - `may_revoke`: only the root may renew it, and the root is not a thing a page can reach.
  *   - issued by a delegate: it has no root-signed predecessor and never will, so it can only be re-paired.
@@ -218,15 +219,15 @@ export function certItems(cert: CertState | null, nowMs: number): AttentionItem[
             title: `This device's access runs out ${when}`,
             detail: `It was paired by another device rather than by the one holding the account's root key, so there is nothing to renew: pair it again. ${tail}` }];
     }
-    if (!cert.issuerOnline) {
-        return [{ ...base, level, key: "this-device:cert-expiring", code: "cert-expiring",
-            title: `This device's access runs out ${when}`,
-            detail: `Renewing takes one press, on a moment when one of your browsers is awake and reachable. None is right now. ${tail}` }];
-    }
+    // NO BUTTON YET, and so no promise of one. Renewal exists over the contract (`device.renew`) and nothing on any
+    // screen asks for it: installing the certificate it answers with is its own piece of work. Until then the remedy
+    // this names is the one that works today, which is also the one every branch above names. When the press lands,
+    // this branch — and only this one — gains it.
+    const nothing = cert.issuerOnline
+        ? `Renewing it is not something these screens can do yet, so pair it again before then. ${tail}`
+        : `None of your browsers is awake to renew it, so pair it again before then. ${tail}`;
     return [{ ...base, level, key: "this-device:cert-expiring", code: "cert-expiring",
-        title: `This device's access runs out ${when}`,
-        detail: `Renewing takes one press and changes nothing else about what this device may do. ${tail}`,
-        fix: { kind: "act", label: "Renew" } }];
+        title: `This device's access runs out ${when}`, detail: nothing }];
 }
 
 /** What this device is, as the few plain facts the suggestion below turns on. Passed in rather than read here, so
