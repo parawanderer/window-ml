@@ -27,7 +27,7 @@ import {
 import { scopeToSpan, filterEvents, sessionWindow } from "../resource-lane";
 import { deviceBands, hostBands, OTHER_BAND_NOTE, residualRank, type Band } from "../resource-bands";
 import { editLayout, capacity, poolColor, hiddenPools, togglePool, VRAM_POLL_MS, laneFilter, streamLive, sampleGapMs, layout } from "./panel-state";
-import { chartHeld, enterPool, eventHover, HOLD_LAPSE_MS, holdAxis, holdKey, hoverAt, hoverPool, lastPointerAt, leavePool, live, noteRuns, poolHover, readingSurface, releaseAxis, snapUnder, tipMuted, trackCursor } from "./chart-interaction";
+import { chartHeld, enterPool, eventHover, HOLD_LAPSE_MS, holdAxis, holdKey, hoverAt, hoverPool, lastPointerAt, leavePool, live, notePools, noteRuns, poolHover, releaseAxis, snapUnder, tipMuted, trackCursor } from "./chart-interaction";
 import { hoverModel, kbFocus, kbPool } from "./vram-focus";
 import { scopedHash, resWindowS, zoomRange, crosshair, laneScoped, laneEnabled, predictView } from "./store";
 import { startBrush, BrushOverlay, EventTip, EventLane } from "./resource-lane-ui";
@@ -385,36 +385,6 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
 /** Every track this machine warrants: one per accelerator, plus the host pool on a discrete box. A unified
  *  device has ONE pool, so it gets one track (its bands already come from the host) and no separate RAM track
  *  — two would double-count the same silicon. */
-
-/** Hovering a pool's line publishes WHICH POOL and WHAT IS ON IT. The model rows below the chart already list
- *  every resident model, so they are the legend: rows not on this pool grey out, and a tooltip on the plot
- *  names the device. That reuses what is on screen instead of injecting a row that pushes the layout around
- *  under the cursor. */
-type PoolRef = { id: string; name: string; ceiling: number; color: string; bandsOf: (s: ResourceSample) => Band[] };
-/**
- * THE LINES THE KEYS STEP THROUGH, published from the render that draws them — the key handler runs outside
- * render, and "which pools are on screen" is a fact about what was just drawn. A plain ref for the same
- * reason `live.runs` is one: written DURING render, and a signal written during render re-enters rendering.
- */
-// PER SURFACE: the overlaid view and a whole-box track both draw POOLS, and a layout can hold both — one shared
-// list meant whichever rendered last owned the keys, and the whole-box view published none at all, so ↑↓ there
-// fell through to stepping MODELS (nothing, on an idle box) under a tip that said "↑↓ pick a line".
-const poolRefs = new Map<string, PoolRef[]>();
-/** Publish the pools the arrow keys step through on `surface` — call it from the render that DRAWS them. */
-export const notePools = (surface: string, pools: PoolRef[]): void => { poolRefs.set(surface, pools); };
-/** Does the view being read draw POOLS (the overlaid lines, a whole-box track)? Decides which list the keys step. */
-export const readingIsOverlay = (): boolean => readingSurface != null && poolRefs.has(readingSurface);
-/** Cycle the focused POOL in the view being read, wrapping through "nothing picked out" at index 0. Hidden
- *  pools are skipped: switching one off takes it off the chart, so there is nothing left to point at. */
-export function stepPool(dir: number): void {
-    const shown = (poolRefs.get(readingSurface ?? "") ?? []).filter((p) => !hiddenPools.value.has(p.id));
-    const list: (PoolRef | null)[] = [null, ...shown];
-    const cur = kbPool.value ? kbPool.value.id : poolHover.value?.id ?? null;
-    const at = list.findIndex((p) => (p?.id ?? null) === (cur ?? null));
-    const next = list[((at < 0 ? 0 : at) + dir + list.length) % list.length];
-    kbPool.value = { id: next?.id ?? null };
-    if (next) enterPool(next); else leavePool();
-}
 
 /** The per-vendor name for "the tool that shows this card's memory". Saying "nvidia-smi" on an AMD box is
  *  worse than saying nothing — it tells the reader to check something that isn't there. */

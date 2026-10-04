@@ -10,6 +10,7 @@
 // holder for what the chart publishes as it draws, because that is written DURING render, where a signal either
 // warns or re-enters. And the two READINGS of the pointer that the plot, its overlays and its tips all ask
 // (`snapUnder`, `cursorOn`), which live beside the signals they read so those files need not import each other.
+// Likewise the registry of which POOLS each surface drew (`notePools`), which the arrow keys step through.
 
 import { signal } from "@preact/signals";
 import type { Band } from "../resource-bands";
@@ -18,7 +19,7 @@ import { snapFraction, type Axis, type RunGap } from "../resource-axis";
 import { lineageOf } from "../resource-lane";
 import { zoomRange, resWindowS, laneScoped, scopedHash, crosshair, snapDot } from "./store";
 import { releaseFocus, kbPool } from "./vram-focus";
-import { sampleGraceMs } from "./panel-state";
+import { hiddenPools, sampleGraceMs } from "./panel-state";
 
 /** The pool (card or host) currently hovered in the chart, and which models sit on it. The model rows below
  *  ARE the legend, so rows not on that pool grey out — reusing what is already on screen instead of injecting
@@ -240,3 +241,37 @@ export const snapUnder = (runs: ResourceSample[][]) => {
  *  read, and only EventTip wants it. */
 export const cursorOn = (surface: string) =>
     (eventHover.value?.scope === surface || gapHover.value?.scope === surface ? null : cursorAt(surface));
+
+/** Hovering a pool's line publishes WHICH POOL and WHAT IS ON IT. The model rows below the chart already list
+ *  every resident model, so they are the legend: rows not on this pool grey out, and a tooltip on the plot
+ *  names the device. That reuses what is on screen instead of injecting a row that pushes the layout around
+ *  under the cursor. */
+type PoolRef = { id: string; name: string; ceiling: number; color: string; bandsOf: (s: ResourceSample) => Band[] };
+
+/**
+ * THE LINES THE KEYS STEP THROUGH, published from the render that draws them — the key handler runs outside
+ * render, and "which pools are on screen" is a fact about what was just drawn. A plain ref for the same
+ * reason `live.runs` is one: written DURING render, and a signal written during render re-enters rendering.
+ */
+// PER SURFACE: the overlaid view and a whole-box track both draw POOLS, and a layout can hold both — one shared
+// list meant whichever rendered last owned the keys, and the whole-box view published none at all, so ↑↓ there
+// fell through to stepping MODELS (nothing, on an idle box) under a tip that said "↑↓ pick a line".
+const poolRefs = new Map<string, PoolRef[]>();
+
+/** Publish the pools the arrow keys step through on `surface` — call it from the render that DRAWS them. */
+export const notePools = (surface: string, pools: PoolRef[]): void => { poolRefs.set(surface, pools); };
+
+/** Does the view being read draw POOLS (the overlaid lines, a whole-box track)? Decides which list the keys step. */
+export const readingIsOverlay = (): boolean => readingSurface != null && poolRefs.has(readingSurface);
+
+/** Cycle the focused POOL in the view being read, wrapping through "nothing picked out" at index 0. Hidden
+ *  pools are skipped: switching one off takes it off the chart, so there is nothing left to point at. */
+export function stepPool(dir: number): void {
+    const shown = (poolRefs.get(readingSurface ?? "") ?? []).filter((p) => !hiddenPools.value.has(p.id));
+    const list: (PoolRef | null)[] = [null, ...shown];
+    const cur = kbPool.value ? kbPool.value.id : poolHover.value?.id ?? null;
+    const at = list.findIndex((p) => (p?.id ?? null) === (cur ?? null));
+    const next = list[((at < 0 ? 0 : at) + dir + list.length) % list.length];
+    kbPool.value = { id: next?.id ?? null };
+    if (next) enterPool(next); else leavePool();
+}

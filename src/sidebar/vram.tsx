@@ -29,7 +29,8 @@ import { genSpan, genTimingsFrom, hintFrom, predictedDecodeFrom } from "../resou
 import { presetsFor, seriesCatalog, stackRefusal, type TrackDef, kindRefusal } from "../resource-presets";
 import { chartWindow, windowSamples } from "../resource-axis";
 import { sessionWindow, addMachineEvent } from "../resource-lane";
-import { ResourceTracks, muteTip, stepPool, readingIsOverlay } from "./resource-chart";
+import { ResourceTracks, muteTip } from "./resource-chart";
+import { stepPool, readingIsOverlay, poolHover } from "./chart-interaction";
 import { ScopeSwitch, LANE_KINDS, toggleLaneKind } from "./resource-lane-ui";
 import type { LoadedModel } from "../contract-server";
 
@@ -73,7 +74,6 @@ export function residencyOf(m: LoadedModel): ModelResidency {
 }
 import { RenderPanel } from "./render-panel";
 import { hoverModel, kbFocus, stepFocus, stepDepth, noteFocusOrder } from "./vram-focus";
-import { poolHover } from "./chart-interaction";
 import { VRAM_PALETTES, capacity, resourceHistory, layout, streamLive, colorFor, frameFocused, vramPalette, VRAM_HISTORY, sessionModels, poolFacts, choosePreset, customTracks, editLayout, presetId, restoreLayout } from "./panel-state";
 import { NO_EXPIRY_MS, modelCaps, isEmbedding, isChatModel, rowTipSuppressed, ModelFacts, CostFacts } from "./panel-facts";
 
