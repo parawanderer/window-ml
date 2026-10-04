@@ -14,6 +14,8 @@ const T = await import("../src/resource-topology.ts");
 const P = await import("../src/resource-presets.ts");
 // And capacity: the /api/info parse and the readings of what the box holds.
 const C = await import("../src/resource-capacity.ts");
+// And what a model should decode at and is doing now: expected decode, roofline, activity, KV occupancy.
+const D = await import("../src/resource-decode.ts");
 // And one generation as the lane draws it: the server's own edges, joined to the calls we made.
 const G = await import("../src/resource-gens.ts");
 const L = await import("../src/resource-lane.ts");
@@ -2363,24 +2365,24 @@ test("the REAL /api/info capture: ceilings, pci_id and the PCIe pair, as gpubox 
 test("rooflineFrom + decodeCeiling reproduce the server's own ceilings off the REAL split capture", async () => {
     const { readFileSync } = await import("node:fs");
     const cap = JSON.parse(readFileSync(new URL("./fixtures/hw/roofline-qwen3-32b-split-2026-09-11.json", import.meta.url), "utf8"));
-    const r = M.rooflineFrom(cap.roofline);
+    const r = D.rooflineFrom(cap.roofline);
     assert.equal(r.devices.length, 2);
     assert.equal(r.kvBytesPerToken, 262144);
     // Each run in the capture carries the ceiling the server computed at that occupancy; ours must match it.
     for (const run of cap.runs) {
-        const c = M.decodeCeiling(r, run.occupancy);
+        const c = D.decodeCeiling(r, run.occupancy);
         assert.ok(Math.abs(c - run.ceiling_at_occupancy) < 1e-9, `occupancy ${run.occupancy}: ${c} vs ${run.ceiling_at_occupancy}`);
     }
     // At 38k the ceiling falls to 60.4 from 90.7 empty — measured decode 48.6 is 80% of it, not 54%.
     const long = cap.runs.find((x) => x.label === "long");
-    assert.ok(Math.abs(long.decode_tps / M.decodeCeiling(r, long.occupancy) - 0.8045) < 0.001);
+    assert.ok(Math.abs(long.decode_tps / D.decodeCeiling(r, long.occupancy) - 0.8045) < 0.001);
     // The honest refusals: a reason instead of a number, and no number where a device has no KV rate.
     const moe = JSON.parse(readFileSync(new URL("./fixtures/hw/roofline-moe-lfm2.5-2026-09-11.json", import.meta.url), "utf8"));
-    assert.deepEqual(M.rooflineFrom(moe.roofline), { unavailable: "mixture_of_experts" });
-    assert.equal(M.decodeCeiling(M.rooflineFrom(moe.roofline), 100), null);
-    const swa = M.rooflineFrom({ ...cap.roofline, devices: cap.roofline.devices.map(({ kv_bytes_per_context_token, ...d }) => d) });
-    assert.equal(M.decodeCeiling(swa, 1000), null, "no KV rate → no figure, never the weights-only overstatement");
-    assert.equal(M.rooflineFrom(undefined), null);
+    assert.deepEqual(D.rooflineFrom(moe.roofline), { unavailable: "mixture_of_experts" });
+    assert.equal(D.decodeCeiling(D.rooflineFrom(moe.roofline), 100), null);
+    const swa = D.rooflineFrom({ ...cap.roofline, devices: cap.roofline.devices.map(({ kv_bytes_per_context_token, ...d }) => d) });
+    assert.equal(D.decodeCeiling(swa, 1000), null, "no KV rate → no figure, never the weights-only overstatement");
+    assert.equal(D.rooflineFrom(undefined), null);
 });
 
 test("parseInfo: pci_id joins a drawn card to its links, and topology rides /api/info", () => {
@@ -2520,12 +2522,12 @@ test("prompt-cache swap: a joined call of ours gets the swap before its prefill"
 test("activityFrom: the host-RAM prompt cache, off a real sample — and it survives idle", async () => {
     const [sample] = (await ndjson("prompt-cache-occupancy-sample")).filter((f) => f.kind === "sample");
     const row = sample.ps.models.find((m) => m.name === "qwen3:32b");
-    const a = M.activityFrom(row.activity);
+    const a = D.activityFrom(row.activity);
     assert.deepEqual(a.promptCache, { entries: 2, tokens: 6582, bytes: 1725513596, limitBytes: 8589934592 });
     // The in-flight counts go at idle; the parked conversations do not — they really are still there.
-    assert.deepEqual(M.activityFrom({ phase: "idle", prompt_cache: { entries: 1, tokens: 10, bytes: 100 } }).promptCache,
+    assert.deepEqual(D.activityFrom({ phase: "idle", prompt_cache: { entries: 1, tokens: 10, bytes: 100 } }).promptCache,
         { entries: 1, tokens: 10, bytes: 100 });
-    assert.equal(M.activityFrom({ phase: "idle" }).promptCache, undefined, "absent until the first request — not an empty cache");
+    assert.equal(D.activityFrom({ phase: "idle" }).promptCache, undefined, "absent until the first request — not an empty cache");
 });
 
 test("loadEdges: a server-split load rules its two steps through the plot, with what each moved", () => {
@@ -2988,7 +2990,7 @@ test("box profile: each card's measured decode bandwidth is joined to it by pci_
 });
 
 test("expected_decode: the three real shapes parse, and the wording follows the basis", () => {
-    const row = (f) => M.expectedDecodeFrom(hwJson(f).ps_row_before_generation.expected_decode);
+    const row = (f) => D.expectedDecodeFrom(hwJson(f).ps_row_before_generation.expected_decode);
     const dense = row("expected-decode-qwen3-32b-2026-09-13.json");
     assert.deepEqual(dense, { tokensPerSec: 71.618, basis: "profile", msPerTokenPer1k: 0.163 });
     const moe = row("expected-decode-gpt-oss-120b-2026-09-13.json");
@@ -2997,21 +2999,21 @@ test("expected_decode: the three real shapes parse, and the wording follows the 
     assert.equal(moe.activeWeightsFraction, 0.078);
     assert.equal(moe.msPerTokenPer1k, undefined, "a sliding-window model has no single per-token cache rate");
 
-    const corrected = M.expectedPhrase(moe);
+    const corrected = D.expectedPhrase(moe);
     assert.equal(corrected.text, "~210 tok/s expected");
     assert.equal(corrected.quiet, false, "learned from its own runs: a real expectation");
     assert.match(corrected.tip, /learned from the last 5 runs on this kind of card/, "a window of recent runs, shared by identical cards");
     assert.match(corrected.tip, /16% slower than the box profile alone predicts \(244 tok\/s\)/);
     assert.match(corrected.tip, /7\.8% of its weights/);
 
-    const est = M.expectedPhrase(row("expected-decode-qwen3.5-0.8b-2026-09-13.json"));
+    const est = D.expectedPhrase(row("expected-decode-qwen3.5-0.8b-2026-09-13.json"));
     assert.equal(est.text, "~854 tok/s estimate", "plain profile: an ESTIMATE (it measured 521 in the capture)");
     assert.equal(est.quiet, true);
-    assert.equal(M.expectedPhrase(dense).text, "~71.6 tok/s estimate");
+    assert.equal(D.expectedPhrase(dense).text, "~71.6 tok/s estimate");
 
-    assert.deepEqual(M.expectedDecodeFrom({ unavailable: "partly_on_cpu" }), { unavailable: "partly_on_cpu" });
-    assert.match(M.expectedPhrase({ unavailable: "profile_pending" }).text, /not measured yet/);
-    assert.equal(M.expectedDecodeFrom({ basis: "profile" }), null, "no figure → nothing");
+    assert.deepEqual(D.expectedDecodeFrom({ unavailable: "partly_on_cpu" }), { unavailable: "partly_on_cpu" });
+    assert.match(D.expectedPhrase({ unavailable: "profile_pending" }).text, /not measured yet/);
+    assert.equal(D.expectedDecodeFrom({ basis: "profile" }), null, "no figure → nothing");
 });
 
 test("predicted_decode on gen.end: the real frames, and a generation read against its own prediction", () => {
