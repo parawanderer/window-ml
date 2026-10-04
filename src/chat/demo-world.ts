@@ -82,6 +82,10 @@ export function demoHost(now = Date.now(), opts: { latencyMs?: number } = {}): F
             thought: "The €96 fare links its rules on another site; read them.",
             arguments: { url: "https://www.transavia.com/en-EU/service/fare-rules/" },
             renderIn: { type: "action", verb: "fetch", target: "https://www.transavia.com/en-EU/service/fare-rules/", crossOrigin: "www.transavia.com" },
+            // A cross-origin fetch is the gate that CAN be remembered, so this one carries the grant a real
+            // `fetch_url` approval carries — which is what puts the third button, Keep, on the card. Without it
+            // the fixture drew a two-answer gate and the three-answer one was never on screen anywhere.
+            grants: [{ kind: "fetch-url", urls: ["https://www.transavia.com/en-EU/service/fare-rules/"] }],
         },
     ];
 
@@ -169,7 +173,10 @@ export function demoHost(now = Date.now(), opts: { latencyMs?: number } = {}): F
     const pointers: MlDebugEvent[] = [
         agentStart(pt, now - 12 * min, "Summarise the fares and show me the spread"),
         {
-            ...base(pt, now - 11 * min, 1), kind: "agent-step", step: 1, seq: 1, tool: "exec", approval: "readonly", toolMs: 12,
+            // NO `toolMs`, deliberately, and it is the only step here without one: a tool time is not guaranteed
+            // (nothing records one for a step a background host replayed), and without it `RanFor` draws nothing.
+            // That is the step the pointer chip has no footer line to tuck onto, and it has to keep its own row.
+            ...base(pt, now - 11 * min, 1), kind: "agent-step", step: 1, seq: 1, tool: "exec", approval: "readonly",
             token: "d4e5f60", thought: "Count what is on the page first.",
             arguments: { js: COUNT_JS }, result: "3",
             renderIn: { type: "code", text: COUNT_JS, lang: "javascript", format: true },
