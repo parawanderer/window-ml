@@ -441,6 +441,13 @@ export class HubHost implements SessionHost {
      * pairing, rather than a silent second signer.
      */
     revocationSigner(): string | null {
+        // THE HUB'S RECORD ARBITRATES, because it is what refuses a second signer's login, and it covers the case
+        // presence cannot: a signer that exists but is asleep has no presence to read. It is verified against the
+        // account root before it gets here, so this is not the hub's word (`readRevoker`).
+        const record = this.conn?.hubClient.revoker;
+        if (record?.known) return record.label || record.principal.slice(0, 8);
+        // No record, a record that did not verify, or a hub too old to send one: fall back to what is online now.
+        // Still not proof that the account has no signer, which is why nothing here says so.
         return this.peers.find((p) => p.mayRevoke)?.name ?? null;
     }
 

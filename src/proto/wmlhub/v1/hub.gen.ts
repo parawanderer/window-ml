@@ -117,7 +117,25 @@ export interface Welcome {
   protocol: number;
   /** the hub's clock, epoch ms, when it sent this; with the round trip, a peer estimates the hub's clock offset */
   serverTimeMs: number;
-  limits: Limits | undefined;
+  limits:
+    | Limits
+    | undefined;
+  /**
+   * The certificate of the one principal that may sign this account's revocation lists, as the hub has it on record,
+   * or absent when no device of the account holds that grant.
+   *
+   * It is the CERTIFICATE and not the principal id because a client must not take a security decision on the hub's
+   * word. The grant is `may_revoke`, which only the account root may issue, so a client verifies this against the
+   * root it already holds and a hub that invents a signer has to forge a root signature. The direction that matters
+   * is the one a bare id would open: a hub claiming a signer exists where none does would steer an account into
+   * never granting one, and an account that never had a revoker has no freshness floor to arm, so revocation would
+   * be absent and nothing would ever say so. Hiding a signer it does have is the safe direction: the grant is
+   * offered to another device, and that device is refused at its own login, in front of whoever is pairing it.
+   *
+   * Absent is "no record", which is also what an older hub sends, so a reader treats it as unknown rather than as
+   * proof of none unless it knows the hub speaks this.
+   */
+  revoker: Certificate | undefined;
 }
 
 /** What the hub will accept from this connection. A peer that exceeds one is disconnected, not throttled silently. */
@@ -954,7 +972,7 @@ export const Hello: MessageFns<Hello> = {
 };
 
 function createBaseWelcome(): Welcome {
-  return { protocol: 0, serverTimeMs: 0, limits: undefined };
+  return { protocol: 0, serverTimeMs: 0, limits: undefined, revoker: undefined };
 }
 
 export const Welcome: MessageFns<Welcome> = {
@@ -967,6 +985,9 @@ export const Welcome: MessageFns<Welcome> = {
     }
     if (message.limits !== undefined) {
       Limits.encode(message.limits, writer.uint32(26).fork()).join();
+    }
+    if (message.revoker !== undefined) {
+      Certificate.encode(message.revoker, writer.uint32(34).fork()).join();
     }
     return writer;
   },
@@ -1008,6 +1029,14 @@ export const Welcome: MessageFns<Welcome> = {
             message.limits = Limits.decode(reader, reader.uint32());
             continue;
           }
+          case 4: {
+            if (tag !== 34) {
+              break;
+            }
+
+            message.revoker = Certificate.decode(reader, reader.uint32());
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -1029,6 +1058,9 @@ export const Welcome: MessageFns<Welcome> = {
     message.serverTimeMs = object.serverTimeMs ?? 0;
     message.limits = (object.limits !== undefined && object.limits !== null)
       ? Limits.fromPartial(object.limits)
+      : undefined;
+    message.revoker = (object.revoker !== undefined && object.revoker !== null)
+      ? Certificate.fromPartial(object.revoker)
       : undefined;
     return message;
   },

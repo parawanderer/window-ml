@@ -85,3 +85,43 @@ test("a list from a principal without may_revoke, from the future, or over the b
     await assert.rejects(R.verifyRevocations(a.root.publicKey, tampered, a.t, null), (e) => e.reason === "signature");
     await assert.rejects(R.signRevocations(a.laptop, a.laptopChain, a.root.publicKey, a.t, Array.from({ length: 257 }, () => new Uint8Array(32)), []), (e) => e.reason === "malformed");
 });
+
+test("the hub's revoker record is VERIFIED, not believed: a forged or absent one reads as unknown", async () => {
+    // The field carries the signer's CERTIFICATE rather than its principal id, and the asymmetry is the reason. A hub
+    // HIDING a signer is safe — the grant gets offered elsewhere and that device is refused at its own login. A hub
+    // CLAIMING one that does not exist would make a client default the grant off forever, so no list would ever be
+    // published and nothing would say so. `may_revoke` is never delegable, so this certificate is root-signed and a
+    // hub that invents a signer has to forge a root signature.
+    const root = await generateIdentity();
+    const other = await generateIdentity();
+    const device = await generateIdentity();
+    const agreement = await generateAgreementKey();
+    const now = Date.parse("2026-10-04T12:00:00Z");
+    const certFrom = async (issuer, extra = {}) => issueCertificate(issuer, {
+        subject: device.publicKey, agreementKey: agreement.publicKey, role: Role.ROLE_RUNTIME, scopes: [],
+        label: "Work laptop", mayRevoke: true, notBeforeMs: now - 86_400_000, notAfterMs: now + 30 * 86_400_000, ...extra,
+    });
+
+    // Absent: an account with no record AND an older hub that sends nothing both land here, which is why this is
+    // "unknown" and never "none".
+    assert.deepEqual(await R.readRevoker(root.publicKey, undefined, now), { known: false });
+
+    // The real thing, signed by the account root.
+    const good = await R.readRevoker(root.publicKey, await certFrom(root), now);
+    assert.equal(good.known, true);
+    assert.equal(good.label, "Work laptop");
+    assert.equal(good.principal, toHex(await principalId(device.publicKey)));
+
+    // Signed by SOMETHING ELSE: a hub naming a device of its own choosing. Refused, and refused silently.
+    assert.deepEqual(await R.readRevoker(root.publicKey, await certFrom(other), now), { known: false });
+
+    // Root-signed but WITHOUT the grant: a record of nothing, so it records nothing.
+    assert.deepEqual(await R.readRevoker(root.publicKey, await certFrom(root, { mayRevoke: false }), now), { known: false });
+
+    // Expired: the hub session made a record spend with its grant, so a dead certificate is not a live signer.
+    const dead = await issueCertificate(root, {
+        subject: device.publicKey, agreementKey: agreement.publicKey, role: Role.ROLE_RUNTIME, scopes: [],
+        label: "Old laptop", mayRevoke: true, notBeforeMs: now - 95 * 86_400_000, notAfterMs: now - 10 * 86_400_000,
+    });
+    assert.deepEqual(await R.readRevoker(root.publicKey, dead, now), { known: false });
+});
