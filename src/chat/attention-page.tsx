@@ -30,7 +30,7 @@ const CERT_POLL_MS = 60 * 60_000;
  * is the half that changes while you watch — a browser going to sleep is what turns the one-press renewal into "open
  * one of your machines".
  */
-export function useOwnCert(pairing: PairingApi | undefined, store: ChatStore): CertState | null {
+export function useOwnCert(pairing: PairingApi | undefined, store: ChatStore, extras?: ChatExtras): CertState | null {
     const [me, setMe] = useState<Membership | null>(null);
     useEffect(() => {
         if (!pairing) return;
@@ -48,6 +48,9 @@ export function useOwnCert(pairing: PairingApi | undefined, store: ChatStore): C
         // re-pair a device that may be perfectly renewable.
         renewable: me.renewable !== false,
         issuerOnline: store.runtimes.value.some((rt) => rt.online),
+        // Whether THIS surface can carry the press out, which is a different question from whether the account would
+        // allow it — and the one that decides whether a button appears at all.
+        canRenew: !!extras?.renewSelf,
     };
 }
 
@@ -101,8 +104,17 @@ export function AttentionPage({ items, extras }: { items: AttentionItem[]; extra
     const [why, setWhy] = useState("");
     const apply = (it: AttentionItem) => {
         const fix = it.fix;
-        // A device-level item has no runtime and never has a fix: the two go together, and this is the choke point.
-        if (!fix || !it.runtime) return;
+        if (!fix) return;
+        // AN ITEM ABOUT THIS DEVICE rather than a machine on the account — its certificate running out. It has no
+        // runtime to address, so it takes its own path; before this one existed the choke point below silently
+        // swallowed it, and the card drew a button that did nothing.
+        if (!it.runtime) {
+            const act = extras?.renewSelf;
+            if (!act) return;
+            setBusy(it.key);
+            void act().then((problem) => { setBusy(""); if (problem) setWhy(it.key); });
+            return;
+        }
         if (fix.kind === "settings") { settingsTab.value = "extension"; mainView.value = "settings"; return; }
         // Called synchronously in the click: a browser shows a permission prompt or a folder picker only inside one.
         const ask = extras?.fix?.(it.runtime.id, it.code);

@@ -19,6 +19,8 @@ import { installServices } from "../sidebar/services";
 import { installTooltipLayer } from "../sidebar/tooltip-layer";
 import { applyCodePrefs, initThemeStyle } from "../sidebar/prefs";
 import { ChatApp } from "./chat-app";
+import type { ChatExtras } from "./extras";
+import { renewSelf } from "./renew";
 import { ChatStore } from "./chat-store";
 import type { HubHost } from "./hub-host";
 import { openClientHost } from "./client-host";
@@ -77,7 +79,18 @@ async function main(): Promise<void> {
     const store = new ChatStore(host);
     installServices(hostServices(store, platform));
     store.start();
-    render(<ChatApp store={store} platform={platform} />, root);
+    // RENEWING THIS DEVICE'S CERTIFICATE is composed here because this is the one place that holds both halves: the
+    // store, which can ask a runtime, and the keyring behind `pairing`, which is the only thing that may install what
+    // comes back. Neither learns about the other (renew.ts).
+    const extras: ChatExtras = {
+        async renewSelf() {
+            const mine = await platform.pairing!.load();
+            if (!mine?.principal) return "This device is in no account.";
+            const r = await renewSelf(store.host, platform.pairing!, store.runtimes.value, mine.principal);
+            return r.ok ? null : r.problem;
+        },
+    };
+    render(<ChatApp store={store} platform={platform} extras={extras} />, root);
 }
 
 void main();
