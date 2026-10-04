@@ -1,0 +1,40 @@
+# device-remove.yaml — the React Native app's DEMO build (`install --demo`): removing a device says what it costs, and
+# the device that SIGNS the account's revocations says something different. Taking an ordinary device out is undone by
+# pairing it again; taking the signer out leaves the account unable to remove anything until the root key comes out of
+# its drawer, so the row carries it and the warning names it. The page's half is tests/e2e/chat-web.spec.mjs "the
+# devices on the account". The sentences are `removalWarning` (src/pairing/api.ts), said once and read by both.
+# Needs the demo world: `node scripts/ios.mjs flows tests/mobile/device-remove.yaml`.
+appId: dev.wander.windowml
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "KV cache size at 32k"
+    timeout: 60000
+- tapOn: "Settings"
+- tapOn: "Devices"
+- extendedWaitUntil:
+    visible: "Work laptop"
+    timeout: 20000
+# WHICH row signs revocations is on the row itself, beside what it may do: it is what a person needs before acting,
+# not only once they have already tapped Remove.
+- assertVisible: "Signs revocations"
+# An ordinary device: named, and told how it comes back.
+- tapOn:
+    text: "Remove"
+    below: "Kitchen tablet"
+# Maestro matches an element's WHOLE text, and the alert's body is one element: hence the wildcards.
+- extendedWaitUntil:
+    visible: ".*Adding it back takes a new code, confirmed on the root device.*"
+    timeout: 10000
+- tapOn: "Keep it"
+# The signer: a different sentence, and a button that says it is going ahead anyway.
+- tapOn:
+    text: "Remove"
+    below: "Work laptop"
+- extendedWaitUntil:
+    visible: ".*unable to remove ANY device.*"
+    timeout: 10000
+- assertVisible: "Remove it anyway"
+- tapOn: "Keep it"
+- assertVisible: "Work laptop"

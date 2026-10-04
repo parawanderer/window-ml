@@ -5,14 +5,15 @@
 // The button shows only when there is something in the list, and its count only for problems, never suggestions, so
 // a page that is set up stays as quiet as it was. A fix is offered only where THIS device can apply it (one click,
 // `ChatExtras.fix`, or the extension's Settings it holds); elsewhere the item says on which runtime it is fixed.
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import type { RuntimeInfo } from "../session-host";
 import { IconInbox } from "../sidebar/icons";
-import { attentionItems, attentionLabel, deviceItems, sortAttention, type AttentionFix, type AttentionItem } from "./attention";
+import { attentionItems, attentionLabel, certItems, deviceItems, sortAttention, type AttentionFix, type AttentionItem, type CertState } from "./attention";
 import { exportTaskItems, exportTasks } from "./export-tasks";
 import { deviceEnv } from "./app-badge";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
+import type { Membership, PairingApi } from "../pairing/api";
 import { cursorTipOn } from "../sidebar/ui-kit";
 import { mainView, useEscapeCloses } from "./nav";
 import { SheetHead, settingsTab } from "./settings-page";
@@ -21,20 +22,59 @@ import { dismiss, dismissed } from "./view-mode";
 /** No codes of this device's own: every runtime reports its own now (`capabilities.attention`). */
 const NONE: ReadonlyMap<string, readonly string[]> = new Map();
 
+/** How often the keyring is re-read for the certificate's end. An expiry moves at the speed of a calendar, so this is
+ *  about a long-lived page crossing a day boundary, not about catching a change. */
+const CERT_POLL_MS = 60 * 60_000;
+
+/**
+ * THIS DEVICE'S OWN CERTIFICATE, as `certItems` needs it: read off the keyring, with `issuerOnline` live because that
+ * is the half that changes while you watch — a browser going to sleep is what turns the one-press renewal into "open
+ * one of your machines".
+ */
+export function useOwnCert(pairing: PairingApi | undefined, store: ChatStore, extras?: ChatExtras): CertState | null {
+    const [me, setMe] = useState<Membership | null>(null);
+    useEffect(() => {
+        if (!pairing) return;
+        let alive = true;
+        const read = () => void pairing.load().then((m) => { if (alive) setMe(m); }).catch(() => {});
+        read();
+        const t = setInterval(read, CERT_POLL_MS);
+        return () => { alive = false; clearInterval(t); };
+    }, [pairing]);
+    if (!me || typeof me.notAfterMs !== "number") return null;
+    return {
+        notAfterMs: me.notAfterMs,
+        ...(me.mayRevoke ? { mayRevoke: true } : {}),
+        // Absent means an older build that did not report it; treat that as renewable rather than telling someone to
+        // re-pair a device that may be perfectly renewable.
+        renewable: me.renewable !== false,
+        issuerOnline: store.runtimes.value.some((rt) => rt.online),
+        // Whether THIS surface can carry the press out, which is a different question from whether the account would
+        // allow it — and the one that decides whether a button appears at all.
+        canRenew: !!extras?.renewSelf,
+    };
+}
+
 /**
  * The list, from what the runtimes report. It changes when a runtime's description does, which a fix causes: the
  * worker follows permissions and settings, so a grant clears its item without the page asking again.
  */
-export function useAttention(store: ChatStore, extras?: ChatExtras): { items: AttentionItem[] } {
+export function useAttention(store: ChatStore, extras?: ChatExtras, cert?: CertState | null): { items: AttentionItem[] } {
     const canFix = (rt: RuntimeInfo, fix: AttentionFix, code: string) =>
         fix.kind === "act" ? !!extras?.fix?.(rt.id, code) : !!rt.capabilities.localSettings && extras?.settings?.(rt.id) != null;
     const repeat = (rt: RuntimeInfo, code: string) => extras?.fixedTimes?.(rt.id, code) ?? 0;
     // Where each of these sits in the list is the SORT's business rather than this line's — which is why the whole
-    // concatenation goes through it, and not just the runtimes' half: a detached export waiting on a click has to be
-    // able to rank above a runtime's lapsed grant, and an export still fetching below it.
+    // concatenation goes through it, and not just the runtimes' half: a certificate about to expire has to be able
+    // to rank with the problems, a detached export waiting on a click above a runtime's lapsed grant, and an export
+    // still fetching below both.
+    //
+    // THIS DEVICE'S OWN CERTIFICATE is not a runtime's code and does not come from one: it is read off the keyring
+    // this page is holding. It goes through no `canFix`, because whether a renewal can happen is a fact about the
+    // certificate rather than about this surface, and `certItems` already decides it.
     return {
         items: sortAttention([
             ...attentionItems(store.runtimes.value, NONE, canFix, dismissed.value, repeat),
+            ...certItems(cert ?? null, Date.now()),
             ...deviceItems(deviceEnv(), dismissed.value),
             ...exportTaskItems(exportTasks.value),
         ]),
@@ -72,11 +112,20 @@ export function AttentionPage({ items, extras }: { items: AttentionItem[]; extra
     const apply = (it: AttentionItem) => {
         const fix = it.fix;
         if (!fix) return;
-        // An item this page raised about its own work brought its own action, so there is nothing to resolve and no
-        // runtime to resolve it against (`AttentionFix`). Before the guard below, which is about the other two kinds.
+        // AN ITEM THIS PAGE RAISED ABOUT ITS OWN WORK brought its own action, so there is nothing to resolve and no
+        // runtime to resolve it against (`AttentionFix`). First, because the two guards below are about items that
+        // name a thing to be acted on elsewhere, and this one has already been handed what to do.
         if (fix.kind === "run") { fix.run(); return; }
-        // A device-level item has no runtime and never has a fix of the other kinds: this is the choke point.
-        if (!it.runtime) return;
+        // AN ITEM ABOUT THIS DEVICE rather than a machine on the account — its certificate running out. It has no
+        // runtime to address, so it takes its own path; before this one existed the choke point below silently
+        // swallowed it, and the card drew a button that did nothing.
+        if (!it.runtime) {
+            const act = extras?.renewSelf;
+            if (!act) return;
+            setBusy(it.key);
+            void act().then((problem) => { setBusy(""); if (problem) setWhy(it.key); });
+            return;
+        }
         if (fix.kind === "settings") { settingsTab.value = "extension"; mainView.value = "settings"; return; }
         // Called synchronously in the click: a browser shows a permission prompt or a folder picker only inside one.
         const ask = extras?.fix?.(it.runtime.id, it.code);

@@ -10,7 +10,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Plus } from "lucide-react-native";
-import { groupFour, roleName, SCOPES, type Grant, type Membership } from "../../../src/pairing/api";
+import { groupFour, profileOf, profilesFor, removalWarning, roleName, SCOPES, type Grant, type Membership } from "../../../src/pairing/api";
 import type { DeviceInfo } from "../../../src/session-host";
 import { useEmbed } from "../embed";
 import { seen } from "../format";
@@ -19,6 +19,11 @@ import { SIZE, usePalette } from "../theme";
 import { Button, Card, Field } from "../ui";
 import { Bar } from "./AccountScreens";
 import { QrScanner } from "../scanner";
+
+/** The chosen named grant's fill: the palette's accent at a tenth, as the page tints it (`.pair-profile.on`). A neutral
+ *  grey read as DISABLED rather than as chosen, which is the opposite of what a selected row is for. Alpha rather than
+ *  a mixed colour, because it has to sit on whichever theme's surface is under it. */
+const selectedTint = (accent: string) => `${accent}1a`;
 
 /** A scope's name in words, or the id itself for one this app does not know. */
 const scopeLabel = (id: string) => SCOPES.find((x) => x.id === id)?.label ?? id;
@@ -42,10 +47,10 @@ export function DevicesScreen() {
     const refresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
     const remove = (d: DeviceInfo) => {
-        const powers = [d.mayPair ? "pair other devices" : null, (d as { mayRevoke?: boolean }).mayRevoke ? "remove devices" : null].filter(Boolean);
-        Alert.alert(`Remove ${d.label}?`,
-            `It stops reaching the account at once${powers.length ? `, and the account loses what only it may do: ${powers.join(" and ")}` : ""}. To bring it back, pair it again.`,
-            [{ text: "Keep it", style: "cancel" }, { text: "Remove", style: "destructive", onPress: async () => {
+        // The page's own sentence (`removalWarning`), not a second telling of it: this is the last thing read before
+        // something that cannot be undone from here, and the holder of `may_revoke` is the case worth getting right.
+        Alert.alert(`Remove ${d.label}?`, removalWarning(d),
+            [{ text: "Keep it", style: "cancel" }, { text: d.mayRevoke ? "Remove it anyway" : "Remove", style: "destructive", onPress: async () => {
                 const r = await e.pairing<string>("revoke", { principal: d.principal });
                 if (!r.ok) setError(r.error); else void load();
             } }]);
@@ -75,10 +80,14 @@ export function DevicesScreen() {
                             <Text style={[s.meta, { color: p.fgDim }]}>
                                 {roleName(d.role).replace(/^a /, "")} · {expired ? "expired" : d.lastSeenMs ? seen(d.lastSeenMs) : "not seen yet"}
                             </Text>
-                            {d.scopes.length || d.mayPair ? (
+                            {d.scopes.length || d.mayPair || d.mayRevoke ? (
                                 <View style={s.pills}>
                                     {d.scopes.map((sc) => <Text key={sc} style={[s.scope, { color: p.fgDim, backgroundColor: p.panel2 }]}>{scopeLabel(sc)}</Text>)}
                                     {d.mayPair ? <Text style={[s.scope, { color: p.fgDim, backgroundColor: p.panel2 }]}>Pairs devices</Text> : null}
+                                    {/* WHICH ROW SIGNS REVOCATIONS is the thing a person needs before acting, which is why
+                                        it is on the row and not only in the warning: exactly one device holds it, and
+                                        removing that one is the removal that cannot be undone by pairing again. */}
+                                    {d.mayRevoke ? <Text style={[s.scope, { color: p.fgDim, backgroundColor: p.panel2 }]}>Signs revocations</Text> : null}
                                 </View>
                             ) : null}
                             {/* Offered on every device but this phone: the page refuses, in its words, one this phone may not remove. */}
@@ -162,13 +171,37 @@ export function PairScreen() {
                             </View>
                         )}
                         <Text style={[s.small, { color: p.fgDim }]}>What it may do</Text>
+                        {/* THE NAMED GRANTS, the same ones and the same words as the page's (src/pairing/api.ts): one
+                            tap for the answer a person can actually give while holding the phone up to a QR code. The
+                            switches stay below, and which profile is lit is DERIVED from them, so a switch flicked by
+                            hand moves it to Custom by itself and the two can never disagree. `custom` is a label here,
+                            not a row to tap: choosing it would do nothing, since the scopes already are what they are. */}
+                        {profilesFor(found.grantable).filter((pr) => pr.scopes).map((pr) => {
+                            const on = profileOf(scopes) === pr.id;
+                            return (
+                                <Pressable key={pr.id} accessibilityRole="radio" accessibilityState={{ checked: on }} accessibilityLabel={pr.label}
+                                    onPress={() => setScopes([...pr.scopes!])}
+                                    style={[s.profile, { borderColor: on ? p.accent : p.border, backgroundColor: on ? selectedTint(p.accent) : "transparent" }]}>
+                                    <Text style={[s.body, { color: p.fg, fontWeight: "600" }]}>{pr.label}</Text>
+                                    <Text style={[s.hint, { color: p.fgFaint }]}>{pr.detail}</Text>
+                                </Pressable>
+                            );
+                        })}
+                        {profileOf(scopes) === "custom" ? (
+                            <View style={[s.profile, { borderColor: p.accent, backgroundColor: selectedTint(p.accent) }]}>
+                                <Text style={[s.body, { color: p.fg, fontWeight: "600" }]}>Custom</Text>
+                                <Text style={[s.hint, { color: p.fgFaint }]}>Chosen one by one, below.</Text>
+                            </View>
+                        ) : null}
                         {SCOPES.filter((sc) => may(sc.id)).map((sc) => (
                             <View key={sc.id} style={s.scopeRow}>
                                 <View style={{ flex: 1 }}>
                                     <Text style={[s.body, { color: p.fg }]}>{sc.label}</Text>
                                     <Text style={[s.hint, { color: p.fgFaint }]}>{sc.detail}</Text>
                                 </View>
-                                <Switch value={scopes.includes(sc.id)} onValueChange={(on) => setScopes((x) => on ? [...x, sc.id] : x.filter((y) => y !== sc.id))}
+                                {/* `testID` so a flow taps the SWITCH: its accessibility label is the scope's name, which the
+                                    Text beside it also carries, and the first match is the label, where a tap does nothing. */}
+                                <Switch testID={`scope-${sc.id}`} value={scopes.includes(sc.id)} onValueChange={(on) => setScopes((x) => on ? [...x, sc.id] : x.filter((y) => y !== sc.id))}
                                     trackColor={{ true: p.accent, false: p.panel2 }} thumbColor="#ffffff" ios_backgroundColor={p.panel2} accessibilityLabel={sc.label} />
                             </View>
                         ))}
@@ -180,7 +213,7 @@ export function PairScreen() {
                     <Card>
                         <Text style={[s.body, { color: p.fgDim }]}>{e.pairingInfo?.canScan ? "On the new device, choose Join an account. It shows a QR code and a typed code: scan the first, or type the second here." : "On the new device, choose Join an account. It shows a code: type it here."}</Text>
                         {e.pairingInfo?.canScan ? <Button primary title="Scan its QR code" busy={busy && scanning} onPress={() => { Keyboard.dismiss(); setScanning(true); }} /> : null}
-                        <Field label="Its code" value={code} onChangeText={setCode} placeholder="7K3M Q9XD" autoCapitalize="characters" mono autoFocus={!e.pairingInfo?.canScan} />
+                        <Field testID="code-field" label="Its code" value={code} onChangeText={setCode} placeholder="7K3M Q9XD" autoCapitalize="characters" mono autoFocus={!e.pairingInfo?.canScan} />
                         {error ? <Text style={[s.error, { color: p.err }]}>{error}</Text> : null}
                         <Button primary={!e.pairingInfo?.canScan} title="Find it" busy={busy} disabled={code.replace(/[\s-]/g, "").length < 4} onPress={lookup} />
                     </Card>
@@ -232,6 +265,9 @@ const s = StyleSheet.create({
     removeRow: { flexDirection: "row", justifyContent: "flex-end" },
     // A scope with its switch.
     scopeRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+    // ONE NAMED GRANT: its name and what it means, on a surface that says whether it is the one chosen. Stacked rather
+    // than a segmented strip, as on the page, because each carries a sentence a strip would have to drop.
+    profile: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, gap: 1 },
     // Why it failed.
     error: { fontSize: 14, lineHeight: 20 },
 });

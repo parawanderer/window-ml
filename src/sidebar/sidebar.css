@@ -1830,6 +1830,13 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
    `--r-ts-w` is the gutter's width, and the line sits inside its right edge (border-box). */
 .r-timed { display: block; position: relative; --r-ts-w: 56px; }
 .r-timed.short { --r-ts-w: 38px; }      /* mm:ss — the hour is the current one, shown on hover */
+/* THE GUTTER IS DRAWN IN THE SAME ELEMENT A PLAIN BLOCK IS — the inner `code.hljs`, which is what the
+   highlighter's theme actually paints. `.code` on the `pre` carries the font and the border; the background
+   and the text colour come from the theme's own rule, so a gutter drawn in a bare `div.code` sat on the
+   panel's colours while the same output with the gutter off sat on the theme's, and the toggle read as two
+   different renderers. Its left padding goes, exactly as the line-number gutter's does, so the stamps start
+   at the block's own edge and `.r-timed::after` lands between them and the text. */
+pre.code > code.hljs.r-timed { padding-left: 0; }
 .r-timed::after { content: ""; position: absolute; top: 0; bottom: 0; left: calc(var(--r-ts-w) - 1px);
                   width: 1px; background: var(--border); pointer-events: none; }
 .r-ts-row { display: flex; gap: 8px; white-space: pre; }
@@ -3610,6 +3617,19 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 /* What a new device may do, chosen on the device pairing it: a checkbox per scope, its words beside it. */
 .pair-grant { display: flex; flex-direction: column; gap: 7px; margin: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
 .pair-grant legend { padding: 0 4px; }
+/* THE NAMED GRANTS above the checkboxes: how much to trust this device, as a few words rather than six switches. One
+   per row rather than a segmented strip, because each carries a sentence saying what it costs and a strip would have
+   to drop it. The checkboxes stay below, and ticking one moves the selection to Custom by itself. */
+.pair-profiles { display: flex; flex-direction: column; gap: 5px; margin-bottom: 3px; }
+/* One named grant: its name, then what it means, on a surface that says whether it is the one chosen. The `custom` row
+   is a span rather than a button, since there is nothing to choose: it is the name for whatever is ticked below. */
+.pair-profile { display: flex; flex-direction: column; gap: 1px; text-align: left; font: inherit; cursor: pointer;
+    padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--fg); }
+.pair-profile:hover { border-color: var(--fg-faint); }
+.pair-profile.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
+.pair-profile.custom { cursor: default; }
+.pair-profile b { font-weight: 600; }
+.pair-profile .pair-hint { display: block; }
 /* One scope's checkbox and its words in the grant editor. */
 .pair-check { display: flex; gap: 9px; align-items: flex-start; line-height: 1.45; cursor: pointer; }
 .pair-check input { margin-top: .25em; accent-color: var(--accent); }

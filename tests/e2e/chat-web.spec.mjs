@@ -1400,6 +1400,40 @@ test("pairing a device: find it by its code, compare fingerprints, grant only wh
     expect(errors).toEqual([]);
 });
 
+test("pairing a device: a named grant is one tap, and ticking a box by hand becomes Custom", async () => {
+    // The question a person can actually answer while holding a phone is how much they trust the thing, not six
+    // independent switches. The switches stay underneath; which profile is selected is DERIVED from them, so the two
+    // cannot disagree.
+    const { page, errors } = await open(DESKTOP);
+    await openDevices(page);
+    await page.getByRole("button", { name: "Pair a device" }).click();
+    await page.getByLabel("Its code").fill("7K3M Q9XD");
+    await page.getByRole("button", { name: "Find it" }).click();
+
+    // This phone may pass on view, drive and screen, so both profiles it can grant in FULL are offered. There is no
+    // row for one it could not complete: the hub would refuse that, as an error about a certificate, long after the tap.
+    await expect(page.locator(".pair-profile")).toHaveText([/Watch only/, /Use it/]);
+    await expect(page.locator(".pair-profile.on")).toHaveText(/Use it/, "the default grant is view + drive, which is Use it");
+
+    await page.getByRole("radio", { name: /Watch only/ }).click();
+    await expect(page.getByRole("checkbox", { name: /See sessions/ })).toBeChecked();
+    await expect(page.getByRole("checkbox", { name: /Start and steer/ })).not.toBeChecked();
+
+    // A box ticked by hand is no longer any named grant, and the row says so instead of staying on a stale name.
+    await page.getByRole("checkbox", { name: /See its screen/ }).check();
+    await expect(page.locator(".pair-profile.on")).toHaveText(/Custom/);
+    await expect(page.locator(".pair-profile.custom")).toBeVisible();
+
+    await page.getByRole("button", { name: "They match: pair it" }).click();
+    await expect(page.locator(".pair-h").first()).toHaveText("Paired");
+    expect(await page.evaluate(() => globalThis.__pairFake.confirmed.map((c) => c.grant.scopes.join(","))))
+        .toEqual(["view,screen"]);
+    // A profile names scopes and nothing else: pairing rights are their own question and revoking is not a choice.
+    expect(await page.evaluate(() => globalThis.__pairFake.confirmed.map((c) => [c.grant.mayPair, c.grant.mayRevoke])))
+        .toEqual([[false, false]]);
+    expect(errors).toEqual([]);
+});
+
 test("joining an account: the code and this device's fingerprint, then the account once the other side confirms", async () => {
     const { page, errors } = await open(DESKTOP);
     await page.evaluate(() => globalThis.__pairFake.setMembership(null));

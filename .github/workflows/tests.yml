@@ -42,6 +42,8 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      hub: ${{ steps.filter.outputs.hub }}
+      phone: ${{ steps.filter.outputs.phone }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -59,10 +61,35 @@ jobs:
           # of being wrong the other way is a check that never ran.
           if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
             echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "hub=true" >> "$GITHUB_OUTPUT"
+            echo "phone=true" >> "$GITHUB_OUTPUT"
             echo "Ran everything: no comparable base for \`${{ github.event_name }}\`." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           files=$(git diff --name-only "$base" HEAD)
+          # The hub suite talks to a real `wmlhub`, which has to be downloaded, so it runs only when something it
+          # could notice changed. Generous on purpose, in the same direction as `code` above: the cost of running it
+          # for nothing is a couple of minutes, and the cost of NOT running it is thirty integration tests that said
+          # nothing about the change that broke them. `src/session-` is in because the publisher and the contract are
+          # what the hub carries.
+          if echo "$files" | grep -qE '^(src/(hub|pairing)/|src/hub-|src/session-|tests/(hub-|pairing-|fixtures/hub-|session-publisher)|scripts/fetch-hub|\.github/workflows/tests\.yml)'; then
+            echo "hub=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "hub=false" >> "$GITHUB_OUTPUT"
+            echo "Nothing the hub suite could notice changed, so \`hub\` was skipped." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # THE ANDROID BUILD IS THE LONG POLE: about ten minutes, where everything else finishes in four, so it alone
+          # decides what a PR costs to wait for. It builds an APK from `mobile/` plus the folders Metro watches
+          # (mobile/metro.config.js: src/native, src/pairing, src/chat) — a change outside those cannot alter the
+          # bundle. Generous in the same direction as the filters above, and never skipped on main, where the APK it
+          # publishes has to come from every commit that lands.
+          if [ "${{ github.ref }}" = "refs/heads/main" ] \
+             || echo "$files" | grep -qE '^(mobile/|src/(native|pairing|chat)/|package(-lock)?\.json|build-web\.mjs|\.github/workflows/tests\.yml)'; then
+            echo "phone=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "phone=false" >> "$GITHUB_OUTPUT"
+            echo "Nothing the phone's bundle is built from changed, so \`mobile-android\` was skipped." >> "$GITHUB_STEP_SUMMARY"
+          fi
           # Prose, plus the OpenWebUI tool sources. Everything else — including any .json under
           # docs/ — counts as code. See the note above this job for why each entry is safe.
           other=$(echo "$files" | grep -vE '(\.md$|\.png$|\.jpe?g$|\.gif$|^\.claude/|^openwebui/)' || true)
@@ -81,6 +108,40 @@ jobs:
             echo "code=true" >> "$GITHUB_OUTPUT"
             echo "Ran everything: $(echo "$other" | grep -c .) non-docs file(s) changed." >> "$GITHUB_STEP_SUMMARY"
           fi
+
+  # THE ONLY PLACE THE HUB TESTS ACTUALLY RUN. Thirty of them, across six files, talk to a real `wmlhub` rather than
+  # a mock — and before this they skipped on every runner, because the only way to get one was to clone the hub and
+  # run cargo. So the hub's behaviour under the client that uses it was never a gate on anything.
+  #
+  # The whole suite, not a chosen list of files: a LIVE test can land in any genre (`session-publisher` is in
+  # `session`, not `hub`), and a hand-kept list is one that goes stale silently in the direction of running less.
+  hub:
+    needs: changes
+    if: needs.changes.outputs.hub == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # The pinned tag's published binaries, checksum-verified and run once before anything trusts them
+      # (scripts/fetch-hub.mjs). Cached by the tag, so the release is downloaded when the pin moves and not before.
+      - name: Cache the hub binary
+        id: hubcache
+        uses: actions/cache@v6
+        with:
+          path: ../window-ml-hub-*
+          key: wmlhub-${{ hashFiles('tests/fixtures/hub-harness.mjs') }}
+      - if: steps.hubcache.outputs.cache-hit != 'true'
+        run: npm run fetch-hub
+      # Proof the suite really had a hub: `LIVE` tests SKIP with a reason when there is none, so without this a
+      # broken download would show as a green run of thirty skipped tests, which is the worst possible outcome.
+      # Through tsx, as the tests are: the harness imports `src/hub/keys.ts`, so plain `node` cannot load it.
+      - name: The suite can see it
+        run: node --import tsx -e "import('./tests/fixtures/hub-harness.mjs').then((h) => { if (!h.HAVE_HUB) { console.error(h.NO_HUB); process.exit(1); } console.log('hub binary:', h.BIN); })"
+      - run: npm test
 
   test:
     runs-on: ubuntu-24.04
@@ -373,7 +434,7 @@ jobs:
   # bridge's unit tests, and the Maestro flows in tests/mobile/ against a device someone has.
   mobile-android:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.phone == 'true'
     runs-on: ubuntu-24.04
     # To re-point the rolling `android-latest` release at the APK this job just built. Every other job here reads.
     permissions:

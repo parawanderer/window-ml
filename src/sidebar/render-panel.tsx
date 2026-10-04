@@ -740,7 +740,7 @@ export { timeForOffset, alignedMarks, elideHour, fmtDelta } from "./timestamps";
  *  is repeated only when it CHANGES, so a burst of lines reads as one moment rather than a wall of identical
  *  clocks. The gutter is its own element with `user-select: none`, so it is never part of the text you copy
  *  (and it was never part of what the model read). Falls back to a plain block when there are no marks or the
- *  gutter is switched off in Settings. */
+ *  gutter is switched off in Settings — the same markup either way, so the toggle changes only the gutter. */
 export function TimedOutput({ text, marks }: { text: string; marks?: [number, number][] }) {
     if (!showOutTimes.value || !marks || !marks.length) return <Code text={text} lang="text" />;
     const lines = text.split("\n");
@@ -776,7 +776,11 @@ export function TimedOutput({ text, marks }: { text: string; marks?: [number, nu
             </div>,
         );
     });
-    return <div class={`code r-timed${short ? " short" : ""}`}>{rows}</div>;
+    // Drawn in the SAME element a plain block is: `<pre class="code"><code class="hljs">`. A code block's
+    // painted surface is the highlighter's own `code.hljs` rule rather than `.code`, so a gutter in a bare
+    // `div.code` took the panel's background and foreground while the same output with the gutter off took
+    // the theme's — and toggling the stamps changed the colour and the weight of the text under them.
+    return <pre class="code"><code class={`hljs r-timed${short ? " short" : ""}`}>{rows}</code></pre>;
 }
 
 /** Captured output with the tail the MODEL NEVER RECEIVED marked. A tool clips its model-facing result

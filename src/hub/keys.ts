@@ -351,6 +351,46 @@ async function renewalOf(root: Bytes, body: CertificateBody, index: number, nowM
     return prior;
 }
 
+/**
+ * A chain as a command result carries it: base64 of each certificate's protobuf encoding, leaf first, the order a
+ * keyring holds one in. Certificates carry only public keys, so this is not secret material; `device.renew` answers
+ * with one because the asking device is the only thing that can install it.
+ */
+export function encodeChain(chain: readonly Certificate[]): string[] {
+    return chain.map((c) => {
+        const encoded = Certificate.encode(c).finish();
+        let bin = "";
+        for (const b of encoded) bin += String.fromCharCode(b);
+        return btoa(bin);
+    });
+}
+
+/** The inverse, for the device installing what it was answered. Throws `ChainError` on anything that is not one. */
+export function decodeChain(encoded: readonly string[]): Certificate[] {
+    if (!Array.isArray(encoded) || !encoded.length) throw new ChainError("a chain is a non-empty list of certificates");
+    return encoded.map((c) => {
+        if (typeof c !== "string") throw new ChainError("a certificate is base64 text");
+        try { return Certificate.decode(Uint8Array.from(atob(c), (ch) => ch.charCodeAt(0))); }
+        catch { throw new ChainError("a certificate did not decode"); }
+    });
+}
+
+/**
+ * THE CERTIFICATE A RENEWAL OF THIS LEAF MUST EMBED: the root-issued one, which is the leaf itself the first time and
+ * the one it already carries every time after. A renewal is signed by a delegate but its predecessor must verify under
+ * the ROOT (`renewalOf`), so renewals never chain — each points back at the same original, and a device needs to keep
+ * nothing but the certificate it is already using.
+ *
+ * null when there is no such original: a device paired BY a delegate holds a delegate-issued leaf, which can never be
+ * a predecessor, so it cannot be renewed and pairs again instead.
+ */
+export function renewalPredecessor(leaf: Certificate, accountRoot: Bytes): Certificate | null {
+    const body = decodeBody(bytes(leaf.body));
+    const original = body.renews ?? leaf;
+    const issuer = decodeBody(bytes(original.body)).issuer;
+    return sameBytes(bytes(issuer), accountRoot) ? original : null;
+}
+
 /** A certificate body with the three fields a renewal is allowed to change removed, for comparing the rest. */
 function comparable(body: CertificateBody): Bytes {
     return bytes(CertificateBody.encode({

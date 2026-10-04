@@ -460,7 +460,6 @@ export const sessionServer = new SessionServer(new SessionIndex({ runtime: local
     ...(sessionStore ? {
         stored: (hash: string) => sessionStore.read(hash),
         // Only a kept session's events are stored, so only they have a position `session.backfill` can page from.
-        position: (hash: string) => (sessionServer.index.get(hash)?.saved ? sessionStore.nextPos(hash) : undefined),
     } : {}),
 });
 

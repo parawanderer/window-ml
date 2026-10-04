@@ -15,14 +15,33 @@ import { SessionPublisher, hubPublish } from "./session-publisher";
 import { IndexPublisher } from "./session-relay";
 import type { HubClient, HubEvent } from "./hub/client";
 import { bytes, type Bytes } from "./hub/hpke";
-import { verifyChain } from "./hub/keys";
+import { encodeChain, issueCertificate, renewalPredecessor, verifyChain, MAX_CERTIFICATE_MS } from "./hub/keys";
 import type { Membership } from "./hub/keyring";
-import { CertificateBody } from "./proto/wmlhub/v1/identity.gen";
+import { Certificate, CertificateBody } from "./proto/wmlhub/v1/identity.gen";
 import { ChannelKey, replyTo, type Opened } from "./hub/seal";
 import { encodeRevocations } from "./hub/revocation";
 import type { Identity } from "./hub/keys";
 import type { DeviceRegistry } from "./hub-devices";
 import { Kind, Role } from "./hub/wire";
+
+/** How far back a freshly issued window reaches, so a device whose clock runs a little behind is not refused. */
+const CLOCK_SKEW_MS = 5 * 60_000;
+/**
+ * How close to its end a certificate has to be before a renewal actually signs one. Asking earlier is answered with
+ * the window the device already has, which is what makes `device.renew` idempotent and rate-limited by construction:
+ * a device can only make this runtime sign by being genuinely near expiry, however often it asks. It is also the
+ * window a client should start showing the renewal in, so the two agree without a second constant.
+ */
+export const RENEW_WITHIN_MS = 14 * 86_400_000;
+/**
+ * How long a renewal's answer is kept and re-given instead of signing a second one. It is what `idempotencyKey`
+ * means here, and it is a CACHE rather than a refusal on purpose: a device whose answer was lost to a dropped
+ * connection has to be able to ask again, or the renewal happened and the device expires anyway.
+ *
+ * Judging dueness from the certificate the device PRESENTS cannot do this job, which is what the test caught: a live
+ * connection keeps presenting the chain it opened with, so every ask looks like the first one.
+ */
+const RENEW_COOLDOWN_MS = 60_000;
 
 /** Where the runtime's sessions come from: the worker's session server, or a test's stand-in. */
 export interface RuntimeSide {
@@ -220,7 +239,10 @@ export class HubRuntime {
         if (e.role !== Role.ROLE_CLIENT) return;
         devices.add(id);
         await publisher.deviceOnline({
-            id, scopes: verified.leaf.scopes,
+            // The narrowed set, not the certificate's: a device that lost `view` must stop being handed stream keys,
+            // and this is where they are handed out. (A box connector grants on the certificate alone and would not
+            // know — the same gap revocation has, which the signed list closes and this does not.)
+            id, scopes: reg ? reg.allowed(id, verified.leaf.scopes) : verified.leaf.scopes,
             recipient: { principal: e.principal, agreementKey: bytes(verified.leaf.agreementKey) },
         });
     }
@@ -241,8 +263,13 @@ export class HubRuntime {
         } else if (reg && (reg.isRevoked(hex(opened.from)) || (await reg.revokes(opened.chain)))) {
             // The allowlist is the authoritative revocation: immediate, and needing nothing from the hub.
             result = { ok: false, error: { code: "forbidden", message: "this device was revoked" } };
+        } else if (reg && !reg.allowed(hex(opened.from), CertificateBody.decode(opened.chain[0].body).scopes).includes(opened.scope)) {
+            // NARROWED since its certificate was issued. The certificate still carries the wider set and this runtime
+            // cannot change that, so the allowlist is what enforces it — the same place, and the same immediacy, as a
+            // revocation. Worded as the account's decision rather than as a broken certificate.
+            result = { ok: false, error: { code: "forbidden", message: `this device is no longer allowed \`${opened.scope}\` on this account` } };
         } else if (command.type.startsWith("device.")) {
-            ({ result, rotate } = await this.device(command, principal));
+            ({ result, rotate } = await this.device(command, principal, opened.chain, hex(opened.from)));
         } else {
             const [localId] = local;
             try {
@@ -263,10 +290,10 @@ export class HubRuntime {
         }
     }
 
-    /** `device.list` and `device.revoke`, the allowlist's side. Renewal and re-scoping are not built yet. */
-    private async device(command: Command, principal: string): Promise<{ result: CommandResult<CommandType>; rotate: boolean }> {
+    /** `device.list`, `device.revoke` and `device.renew`. Re-scoping is not built yet. */
+    private async device(command: Command, principal: string, chain: readonly Certificate[], from: string): Promise<{ result: CommandResult<CommandType>; rotate: boolean }> {
         const reg = this.opts.devices;
-        const fail = (code: "unsupported" | "invalid" | "conflict", message: string) => ({ result: { ok: false, error: { code, message } } as CommandResult<CommandType>, rotate: false });
+        const fail = (code: "unsupported" | "invalid" | "conflict" | "forbidden" | "not-found", message: string) => ({ result: { ok: false, error: { code, message } } as CommandResult<CommandType>, rotate: false });
         if (!reg) return fail("unsupported", "this runtime keeps no device list");
         if (command.type === "device.list") return { result: { ok: true, data: { devices: reg.list() } } as CommandResult<CommandType>, rotate: false };
         if (command.type === "device.revoke") {
@@ -277,8 +304,93 @@ export class HubRuntime {
             const changed = await reg.revoke(target);
             return { result: { ok: true, data: {} } as CommandResult<CommandType>, rotate: changed };
         }
+        if (command.type === "device.renew") return { result: await this.renew(command, from, chain), rotate: false };
+        if (command.type === "device.scopes") {
+            const target = String((command as { principal?: unknown }).principal ?? "").toLowerCase();
+            if (!/^[0-9a-f]{64}$/.test(target)) return fail("invalid", "a principal is 64 hex characters");
+            const want = (command as { scopes?: unknown }).scopes;
+            if (!Array.isArray(want) || want.some((x) => typeof x !== "string")) return fail("invalid", "scopes is a list of scope names");
+            // This runtime signs the account's list and answers every command; narrowing itself would be a runtime
+            // quietly removing its own ability to serve, with nothing left to widen it back.
+            if (target === principal) return fail("conflict", "a runtime does not narrow itself");
+            let scopes: string[] | null;
+            try { scopes = await reg.narrow(target, want as string[]); }
+            catch (e) { return fail("forbidden", (e as Error)?.message || "those scopes cannot be granted here"); }
+            if (!scopes) return fail("not-found", "no such device on this account");
+            // `view` gone means it must stop READING, and what it holds is a stream key. Rotating is how that is taken
+            // back — the same act a revocation performs, for the same reason.
+            return { result: { ok: true, data: { scopes } } as CommandResult<CommandType>, rotate: !scopes.includes("view") };
+        }
         return fail("unsupported", `${command.type} is not built yet`);
     }
+
+    /**
+     * A DEVICE RENEWS ITSELF. The answer carries the new chain, which is why it can only be the asker's: nothing can
+     * push a certificate at a device, so the asker has to be the one that installs it.
+     *
+     * It grants nothing. `verifyChain` holds a renewal to the same subject, agreement key, role, scopes and
+     * `may_pair` as the certificate it renews, so this re-signs a window and nothing else — and the predecessor it
+     * embeds is the ROOT-issued original, which the device is already carrying (`renewalPredecessor`).
+     */
+    private async renew(command: Command, from: string, chain: readonly Certificate[]): Promise<CommandResult<CommandType>> {
+        const fail = (code: "forbidden" | "invalid" | "conflict" | "unsupported", message: string) =>
+            ({ ok: false, error: { code, message } }) as CommandResult<CommandType>;
+        const target = String((command as { principal?: unknown }).principal ?? "").toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(target)) return fail("invalid", "a principal is 64 hex characters");
+        // `from` is the SENDER, not this runtime: the two are different principals and confusing them here would have
+        // let any device renew any other, which is the one thing this command must not do.
+        if (target !== from) return fail("forbidden", "a device renews only its own certificate");
+        const leaf = chain[0];
+        if (!leaf) return fail("invalid", "no certificate to renew");
+        const body = CertificateBody.decode(leaf.body);
+        // A delegate may neither issue nor renew `may_revoke`, so the device that signs this account's revocations is
+        // renewed by the root alone. Said as what to do, since nothing here can do it.
+        if (body.mayRevoke) return fail("forbidden", "this device signs the account's revocations, which only the root device may renew");
+        const root = bytes(this.opts.membership.accountRoot);
+        const predecessor = renewalPredecessor(leaf, root);
+        if (!predecessor) return fail("unsupported", "this device was paired by another device rather than by the root, so its certificate cannot be renewed; pair it again");
+
+        // This runtime signs it, so a runtime that holds no signing key cannot answer at all.
+        const signer = this.opts.signer;
+        if (!signer) return fail("unsupported", "this runtime cannot issue certificates");
+        const t = (this.opts.now ?? Date.now)();
+        if (body.notAfterMs <= t) return fail("conflict", "this certificate has already expired; pair the device again");
+        // Not due: answered with what it has rather than signed again.
+        if (body.notAfterMs - t > RENEW_WITHIN_MS) return { ok: true, data: { notAfterMs: body.notAfterMs } } as CommandResult<CommandType>;
+        // Asked again within the cooldown: the SAME answer, so a loop cannot make this runtime sign in a loop and a
+        // device that lost the first answer still gets its certificate.
+        const cached = this.renewals.get(from);
+        if (cached && t - cached.at < RENEW_COOLDOWN_MS) return { ok: true, data: cached.data } as CommandResult<CommandType>;
+
+        // `OutlivesIssuer`: a renewal may not outlast the runtime that signed it, so a runtime near its own expiry
+        // hands out shorter windows until the root renews IT. Visible to nobody, which is the point.
+        const mine = CertificateBody.decode(this.opts.membership.chain[0].body).notAfterMs;
+        const notAfterMs = Math.min(t - CLOCK_SKEW_MS + MAX_CERTIFICATE_MS, mine);
+        if (notAfterMs <= t) return fail("conflict", "this runtime's own certificate is expiring; renew it from the root device first");
+        let renewed: Certificate[];
+        try {
+            const cert = await issueCertificate(signer, {
+                subject: bytes(body.subject), agreementKey: bytes(body.agreementKey), role: body.role,
+                scopes: body.scopes, mayPair: body.mayPair, label: body.label,
+                notBeforeMs: t - CLOCK_SKEW_MS, notAfterMs, renews: predecessor,
+            });
+            renewed = [cert, ...this.opts.membership.chain];
+            // Checked HERE rather than discovered at the device: this runtime is the only thing that can tell a
+            // mistake in what it just signed from a device that cannot read it, and the device has no way back.
+            await verifyChain(root, renewed, t);
+        } catch (e) {
+            return fail("conflict", (e as Error)?.message || "the certificate could not be renewed");
+        }
+        await this.opts.devices?.seen(renewed, await verifyChain(root, renewed, t), t);
+        const data = { notAfterMs, chain: encodeChain(renewed) };
+        // One entry per device, and devices are few; the stale ones go whenever this is read for somebody else.
+        for (const [who, e] of this.renewals) if (t - e.at >= RENEW_COOLDOWN_MS) this.renewals.delete(who);
+        this.renewals.set(from, { at: t, data });
+        return { ok: true, data } as CommandResult<CommandType>;
+    }
+
+    /** The last renewal answered to each device, for {@link RENEW_COOLDOWN_MS}. */
+    private readonly renewals = new Map<string, { at: number; data: { notAfterMs: number; chain: string[] } }>();
 
     /** Does this runtime's own certificate carry `may_revoke`? Only then does it sign a list. */
     private get mayRevoke(): boolean {

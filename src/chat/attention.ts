@@ -18,12 +18,13 @@ import type { RuntimeInfo } from "../session-host";
  * a long export that finished while you were reading something else is exactly that. `working` is the one level
  * that needs NOTHING: it is in the list so that stopping it is reachable, and it is left out of the count.
  */
-export type AttentionLevel = RuntimeAttentionLevel | "ready" | "working";
+export type AttentionLevel = StateAttentionLevel | "ready" | "working";
 
-/** The three a RUNTIME's own codes can take. Named apart from the two above because the phone's inbox carries only
- *  these (`src/native/snapshot.ts`): it is a native screen fed the runtimes' items, and the other two are about work
- *  the PAGE is doing — which on a phone happens inside the WebView and is reported by the page's own list. */
-export type RuntimeAttentionLevel = "blocks" | "limits" | "suggests";
+/** The three an item about a STATE can take: a runtime's own codes, and this device's certificate. Named apart from
+ *  the two above because the phone's inbox carries only these (`src/native/snapshot.ts`): it is a native screen fed
+ *  those items, and the other two are about work the PAGE is doing — which on a phone happens inside the WebView and
+ *  is reported by the page's own list. */
+export type StateAttentionLevel = "blocks" | "limits" | "suggests";
 
 /** One code a runtime (or this device, for it) reports. OPEN: a code this page does not know is shown generally. */
 export type AttentionCode =
@@ -31,7 +32,9 @@ export type AttentionCode =
     | "archive-folder-lapsed" | "archive-folder-unsupported" | "python-packages-missing"
     | "archive-off" | "archive-folder-none"
     /** THIS DEVICE, not a runtime: an iPhone or iPad reading the hosted client in a tab rather than as an app. */
-    | "add-to-home";
+    | "add-to-home"
+    /** THIS DEVICE's certificate: running out, and run out. See {@link certItems}. */
+    | "cert-expiring" | "cert-expired";
 
 /**
  * How it is fixed from here, when it can be: one click on the runtime (`ChatExtras.fix`), the extension's Settings,
@@ -45,8 +48,8 @@ export type AttentionFix =
     | { kind: "settings"; label: string; where: string }
     | { kind: "run"; label: string; run: () => void };
 
-/** One line of the list about a RUNTIME, which is every line the phone's inbox is given. */
-export interface RuntimeAttentionItem extends AttentionItem { level: RuntimeAttentionLevel }
+/** One line of the list about a STATE of something, which is every line the phone's inbox is given. */
+export interface StateAttentionItem extends AttentionItem { level: StateAttentionLevel }
 
 /** One line of the list. `key` is `runtime:code`, what a dismissal remembers. */
 export interface AttentionItem {
@@ -86,7 +89,7 @@ export interface AttentionItem {
 /** One code: its level, its words, how it is fixed — and the words for a lapse that has come back DESPITE being
  *  fixed. `again` is the second telling, which names what to do differently; `settled` is the third, for when that
  *  has been done and it came back anyway, and is the only wording a non-suggestion can be put away from. */
-interface Known { level: RuntimeAttentionLevel; title: string; detail: string; fix?: AttentionFix; again?: { title: string; detail: string }; settled?: { title: string; detail: string } }
+interface Known { level: StateAttentionLevel; title: string; detail: string; fix?: AttentionFix; again?: { title: string; detail: string }; settled?: { title: string; detail: string } }
 
 const KNOWN: Record<AttentionCode, Known> = {
     "no-model": {
@@ -135,6 +138,17 @@ const KNOWN: Record<AttentionCode, Known> = {
         detail: "The tab picker groups tabs either way; their names and colours need the browser's permission.",
         fix: { kind: "act", label: "Show them" },
     },
+    // Both are filled in by `certItems`, which knows the days left and whether this device can renew itself. The words
+    // here are the fallback a surface would show if it ever read them straight out of the table.
+    "cert-expiring": {
+        level: "limits", title: "This device's access is running out",
+        detail: "Its certificate expires soon. Renewing is one press while it is still valid; after it lapses the device has to be paired again from scratch.",
+        fix: { kind: "act", label: "Renew" },
+    },
+    "cert-expired": {
+        level: "blocks", title: "This device's access has expired",
+        detail: "It can no longer prove who it is, so there is nothing left to renew. Pair it again from a device that is already in the account.",
+    },
     "add-to-home": {
         level: "suggests", title: "Add this to your home screen",
         // What it actually buys, not a slogan: it opens full screen, and the icon can carry the same count the inbox
@@ -177,8 +191,8 @@ export function attentionItems(
     /** HOW MANY TIMES this device has fixed this code already, for one that has come back: 0 is the first telling,
      *  1 says what to do differently (`again`), and 2 or more is the admission that it did not work (`settled`). */
     repeat: (runtime: RuntimeInfo, code: string) => number = () => 0,
-): RuntimeAttentionItem[] {
-    const out: RuntimeAttentionItem[] = [];
+): StateAttentionItem[] {
+    const out: StateAttentionItem[] = [];
     for (const rt of runtimes) {
         const codes = new Set<string>([...reported(rt), ...(local.get(rt.id) ?? [])]);
         for (const code of codes) {
@@ -229,6 +243,85 @@ export function attentionLabel(items: readonly AttentionItem[]): { word: string;
     const count = attentionCount(items);
     if (count) return { word: "Needs attention", count };
     return { word: items.some((i) => i.level === "working") ? "In progress" : "Suggestions", count: 0 };
+}
+
+/** How long before a certificate runs out the inbox starts saying so. Early enough that the two devices a renewal
+ *  may need are likely to be awake together at some point inside it. */
+export const CERT_WARN_MS = 14 * 86_400_000;
+/** Below this it stops being something to get round to: an expiry cannot be undone, only re-paired through. */
+export const CERT_URGENT_MS = 3 * 86_400_000;
+
+/** This device's own certificate, as the few facts the rule below turns on. */
+export interface CertState {
+    /** when it stops being valid */
+    notAfterMs: number;
+    /** it signs the account's revocations, which only the ROOT device may renew — so no button here can do it */
+    mayRevoke?: boolean;
+    /** its certificate was issued by the root, so a runtime holding `may_pair` can re-sign it (`renewalPredecessor`) */
+    renewable: boolean;
+    /** a runtime that could do the renewing is reachable right now; without one the item says what to open instead */
+    issuerOnline: boolean;
+    /** THIS SURFACE can carry a press out (it holds a keyring to install into and a way to ask). Absent is false, so a
+     *  surface that has not wired it up offers nothing rather than a button that does nothing. */
+    canRenew?: boolean;
+}
+
+/**
+ * THIS DEVICE'S CERTIFICATE, as an inbox item. Not a runtime's: it is about the thing in your hand, which is why it
+ * carries no `runtime` and sits beside `add-to-home` rather than among the per-machine codes.
+ *
+ * It exists because renewal removed the thing that used to catch a forgotten device. A certificate used to lapse and
+ * take the device out of the account with it; now a device that keeps connecting keeps itself current, so the only
+ * signal left is a person being told — early enough to act, and only while acting is still possible.
+ *
+ * A BUTTON ONLY WHERE PRESSING ONE WOULD WORK, which is most of the rule. Everywhere else names the remedy that does
+ * — pair it again — and says WHY there is nothing quicker, which is the part a person needs to judge their time by:
+ *   - expired: nothing can renew it, because it can no longer prove who it is. Pair it again.
+ *   - `may_revoke`: only the root may renew it, and the root is not a thing a page can reach.
+ *   - issued by a delegate: it has no root-signed predecessor and never will, so it can only be re-paired.
+ *   - no runtime online: renewing needs one to sign. Say which device to open rather than offering a button that fails.
+ */
+export function certItems(cert: CertState | null, nowMs: number): StateAttentionItem[] {
+    if (!cert || !Number.isFinite(cert.notAfterMs)) return [];
+    const left = cert.notAfterMs - nowMs;
+    if (left > CERT_WARN_MS) return [];
+    const base = { runtime: undefined, level: "blocks" as StateAttentionLevel };
+    if (left <= 0) {
+        return [{ ...base, key: "this-device:cert-expired", code: "cert-expired", title: KNOWN["cert-expired"].title, detail: KNOWN["cert-expired"].detail }];
+    }
+    const days = Math.max(1, Math.ceil(left / 86_400_000));
+    const when = days === 1 ? "today" : `in ${days} days`;
+    // Inside the last few days it stops being something to get round to: the cost of missing it is re-pairing, which
+    // is a different and larger job than pressing a button.
+    const level: StateAttentionLevel = left <= CERT_URGENT_MS ? "blocks" : "limits";
+    const tail = "After that it has to be paired again from scratch.";
+    if (cert.mayRevoke) {
+        return [{ ...base, level, key: "this-device:cert-expiring", code: "cert-expiring",
+            title: `This device's access runs out ${when}`,
+            detail: `It signs this account's revocations, which only the device holding the account's root key may renew. Open that one. ${tail}` }];
+    }
+    if (!cert.renewable) {
+        return [{ ...base, level, key: "this-device:cert-expiring", code: "cert-expiring",
+            title: `This device's access runs out ${when}`,
+            detail: `It was paired by another device rather than by the one holding the account's root key, so there is nothing to renew: pair it again. ${tail}` }];
+    }
+    if (!cert.issuerOnline) {
+        return [{ ...base, level, key: "this-device:cert-expiring", code: "cert-expiring",
+            title: `This device's access runs out ${when}`,
+            detail: `Renewing takes one press, on a moment when one of your browsers is awake to sign it. None is right now. ${tail}` }];
+    }
+    // The one branch that earns a button. `canRenew` is the SURFACE's answer — whether anything here can carry the
+    // press out — kept apart from the account facts above it, so a surface that cannot act says what is true for it
+    // rather than offering a control that does nothing. That is the failure this separation exists for.
+    if (!cert.canRenew) {
+        return [{ ...base, level, key: "this-device:cert-expiring", code: "cert-expiring",
+            title: `This device's access runs out ${when}`,
+            detail: `Renewing it is not something this screen can do, so pair it again before then. ${tail}` }];
+    }
+    return [{ ...base, level, key: "this-device:cert-expiring", code: "cert-expiring",
+        title: `This device's access runs out ${when}`,
+        detail: `Renewing takes one press and changes nothing else about what this device may do. ${tail}`,
+        fix: { kind: "act", label: "Renew" } }];
 }
 
 /** What this device is, as the few plain facts the suggestion below turns on. Passed in rather than read here, so

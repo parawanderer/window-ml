@@ -79,11 +79,6 @@ export class SessionServer {
             command: CommandHandler;
             /** every event a saved session holds, oldest first; absent when nothing is saved (session-store.ts) */
             stored?: (hash: string) => Promise<MlDebugEvent[]>;
-            /**
-             * Where the event being ingested will sit in the session's stored history (`SessionStore.nextPos`), for
-             * the envelope's `pos`; undefined for a session that is not kept. Asked BEFORE the event is stored.
-             */
-            position?: (hash: string) => number | undefined;
         },
     ) {}
 
@@ -201,7 +196,12 @@ export class SessionServer {
         const hash = out.session.hash;
         // A live event says where it sits in the session, which is what lets a client that got it from a short ring
         // (the hub's) page back from there with `session.backfill`.
-        const pos = out.reset ? undefined : this.opts.position?.(hash);
+        // ONE COUNTING for every session, kept or not: the index's own count of the session's events. It had been the
+        // STORE's count for a kept session, which agrees with it only while the store holds the whole history — and
+        // a session saved after its ring had been trimmed, or one the store's budget has since evicted from, holds a
+        // SUFFIX. Where a page of that suffix sits is then `seen - stored`, which `session.backfill` works out, and a
+        // position counted from the store would have disagreed with it by exactly the part that is missing.
+        const pos = out.reset ? undefined : out.pos;
         const live = (): SessionStreamMessage[] => out.reset
             ? this.index.backfill(hash)
             : [{ type: "event", v: SESSION_CONTRACT_VERSION, session: out.session, epoch: out.epoch, cursor: out.cursor, ...(Number.isInteger(pos) && pos! >= 0 ? { pos } : {}), event: out.event }];

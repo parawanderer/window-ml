@@ -62,7 +62,7 @@ export function AttentionScreen() {
                                         <View style={{ flex: 1 }}>
                                             <Text style={[s.title, { color: p.fg }]}>{r.title}</Text>
                                             {/* Which device: the fix is a click THERE, never here. */}
-                                            <Text style={[s.where, { color: tone(r.level) }]}>on {r.runtimeName}</Text>
+                                            {r.runtimeName ? <Text style={[s.where, { color: tone(r.level) }]}>on {r.runtimeName}</Text> : null}
                                             <Text style={[s.detail, { color: p.fgDim }]}>{r.detail}</Text>
                                         </View>
                                         {r.level === "suggests" ? (

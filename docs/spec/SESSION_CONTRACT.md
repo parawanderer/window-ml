@@ -200,7 +200,7 @@ runtime answers a type or option it does not offer with `unsupported`.
 | `page.highlight`: a selector, a canvas token, or clear | drive | `highlight` | `__mlHighlight` → `ML_HL_REMOTE` |
 | `side.call`: a utility-model call about a session | drive | `sideCalls` | `FETCH_LLM` with `extend: "utility"` |
 | `device.list` | admin | `devices` | nothing |
-| `device.renew`: a fresh certificate for a device that still holds a valid one | admin | `devices` | nothing |
+| `device.renew`: a fresh certificate for the asking device, which still holds a valid one | view | `devices` | nothing |
 | `device.revoke`: unpair, and rotate the stream keys it held | admin | `devices` | nothing |
 | `device.scopes`: narrow or widen what a device may do; `approve`, `control` and `admin` are refused with `forbidden` | admin | `devices` | nothing |
 
@@ -228,12 +228,42 @@ rest until it arrives, so a ring without it shows nothing. The runtime re-publis
 facing a runtime that does not pages back on its own, a bounded number of times, until the start arrives.
 
 `more` says another page exists below this one. `truncated` says one does not and never will, which is a different
-sentence: a session the runtime does not KEEP has no durable history at all, its only copy having been the ring the
-subscription already served, and a client given an empty page without being told would wait for a page that is never
-coming.
+sentence, and a client given an empty page without being told would wait for a page that is never coming. A kept
+session is paged from the runtime's store, which holds it from its first event, so it is never truncated. One the
+runtime does not keep is paged from the ring it holds in memory, which is that session's only copy: it is served like
+any other history, and it is truncated once the ring has been trimmed past the session's start, because what fell out
+of it was written nowhere else. `from` is then where the ring begins rather than 0, and the positions on its live
+events are counted the same way, so a client pages back through the two with one rule.
 
 The page is capped by the runtime whatever a client asks for. It is a size decision wearing a count: forty events of
 a DOM run is nothing and forty screenshots is tens of megabytes.
+
+**A DEVICE RENEWS ITSELF, which is why `device.renew` is not an administrative command.** A certificate lives in the
+keyring of the device it is about, and nothing can push it a new one. So the asker has to be the recipient: a device
+connects with the certificate it still holds, asks the runtime (which holds `may_pair`) to re-sign it, and the answer
+carries the new chain. Renewing somebody else's would need a channel on which a device accepts credential material it
+never asked for, which is a larger surface than the thing it buys. The runtime answers `forbidden` for any principal
+but the asker's own, and a device past its expiry gets `conflict`: it can no longer prove who it is, and pairs again.
+
+A renewal grants nothing. The re-issued certificate carries the same subject, agreement key, role, scopes and
+`may_pair`, and differs only in its window; `may_revoke` is the one power a delegate may neither issue nor renew, so a
+certificate carrying it is renewed by the root alone. What this costs is stated rather than discovered: **letting a
+device lapse stops being a way to remove it**, since one that keeps connecting keeps itself current. That is why the
+allowlist rather than expiry is the authoritative act, and why a device not seen for a long time is worth putting in
+front of a person.
+
+**`device.scopes` NARROWS, and cannot widen.** Taking a scope away is enforced from the runtime's allowlist, exactly as
+revocation is, and is immediate for the same reason: waiting for the device to come and ask would leave it holding the
+wider set for as long as it stayed away. The certificate still carries the wider set, because no runtime can change a
+certificate; the allowlist is what is consulted, and `device.list` reports what a device may ACTUALLY do rather than
+what its certificate says. Removing `view` rotates the stream keys, since what it holds is a key and rotation is how
+one is taken back.
+
+Widening is refused with `forbidden`, naming what to do instead. A delegate may issue only scopes it holds, and a
+RUNTIME holds none — scopes are what a client may do TO a runtime, so a runtime's own certificate carries an empty
+set. The wider certificate a device would need can therefore come from the root device alone, and a renewal cannot
+carry it either: a renewal re-issues the same scopes by definition, which is what buys it its exemption. A setting
+that appeared to widen would change nothing any publisher verifying the certificate could see.
 
 **`runtime.info` exists because a TRANSPORT cannot answer it.** A hub carries a runtime's identity and liveness and
 deliberately nothing else: the moment it holds a claim about what a runtime can do, a client is trusting it for

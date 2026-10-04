@@ -573,6 +573,71 @@ test("deleteFolderNote: a delete names the archive folder only where it reaches 
     }
 });
 
+test("certItems: a button only where pressing one would work, and nothing at all until it is close", async () => {
+    // Renewal took away the thing that used to catch a forgotten device: a certificate lapsed and took the device out
+    // of the account with it. A device that keeps connecting now keeps itself current, so the only signal left is
+    // telling someone — early enough to act, and only while acting is still possible.
+    const { certItems, CERT_WARN_MS, CERT_URGENT_MS } = await import("../src/chat/attention.ts");
+    const now = Date.parse("2026-10-04T12:00:00Z");
+    const at = (ms, over = {}) => certItems({ notAfterMs: now + ms, renewable: true, issuerOnline: true, ...over }, now);
+    const one = (ms, over) => { const i = at(ms, over); assert.equal(i.length, 1, JSON.stringify(i)); return i[0]; };
+
+    assert.deepEqual(certItems(null, now), [], "no certificate: nothing to say");
+    assert.deepEqual(at(CERT_WARN_MS + 60_000), [], "plenty of time: silence, so the list stays about what needs a hand");
+
+    // Inside the window: one item, naming the remedy that exists.
+    const soon = one(CERT_WARN_MS - 60_000);
+    assert.equal(soon.level, "limits");
+    assert.equal(soon.runtime, undefined, "it is about THIS device, not a machine on the account");
+    assert.match(soon.title, /runs out in 1[34] days/);
+    assert.match(soon.detail, /pair it again/i);
+
+    // Close in, it stops being something to get round to: missing it costs a re-pairing, not a press.
+    assert.equal(one(CERT_URGENT_MS - 60_000).level, "blocks");
+    assert.match(one(86_400_000 - 1000).title, /runs out today/, "the last day is named, not rounded to zero");
+
+    // EXPIRED: nothing can renew it, because it can no longer prove who it is. No button, and the title says so.
+    const gone = one(-60_000);
+    assert.equal(gone.code, "cert-expired");
+    assert.equal(gone.level, "blocks");
+    assert.equal(gone.fix, undefined);
+    assert.match(gone.detail, /[Pp]air it again/);
+});
+
+test("certItems: a button only where pressing one would work, and a different sentence for each reason it would not", async () => {
+    // A button that does nothing, in the one place a person is judging how much time they have, is worse than saying
+    // there is no shortcut. Each refusal names the remedy that does work and differs in WHY there is nothing quicker.
+    const { certItems, attentionCount, CERT_WARN_MS } = await import("../src/chat/attention.ts");
+    const now = Date.parse("2026-10-04T12:00:00Z");
+    const one = (over) => certItems({ notAfterMs: now + CERT_WARN_MS - 60_000, renewable: true, issuerOnline: true, canRenew: true, ...over }, now)[0];
+
+    // The one that earns it: renewable, something awake to sign, and a surface that can carry the press out.
+    const ready = one({});
+    assert.deepEqual(ready.fix, { kind: "act", label: "Renew" });
+    assert.match(ready.detail, /changes nothing else/);
+
+    const no = {
+        // It signs the account's revocations, which only the root may renew: a delegate may neither issue nor renew it.
+        signer: [one({ mayRevoke: true }), /root key may renew/],
+        // Paired BY another device, so it has no root-signed predecessor and never will.
+        delegated: [one({ renewable: false }), /nothing to renew/],
+        // Renewable in principle, but nothing is awake to sign it.
+        away: [one({ issuerOnline: false }), /None is right now/],
+        // THE SURFACE cannot act, which is a different question from whether the account would allow it. Kept apart
+        // precisely so a screen with no wiring says what is true rather than drawing a control that does nothing.
+        unwired: [one({ canRenew: false }), /not something this screen can do/],
+    };
+    for (const [what, [item, why]] of Object.entries(no)) {
+        assert.equal(item.fix, undefined, `${what} offers no button`);
+        assert.match(item.detail, why, what);
+        assert.match(item.detail, /pair(ed)?( it)? again/i, `${what} names the remedy that works`);
+    }
+    // `canRenew` absent is the same as false: a surface that has not wired it up offers nothing.
+    assert.equal(certItems({ notAfterMs: now + 60_000, renewable: true, issuerOnline: true }, now)[0].fix, undefined);
+    // And they all count in the badge: they are problems, not suggestions.
+    assert.equal(attentionCount([ready, ...Object.values(no).map(([i]) => i)]), 5);
+});
+
 test("attentionItems: a lapse says something new each time it comes back, and stops asking once it cannot work", async () => {
     // The failure this is for: a card that told someone to choose an option their browser does not offer, every
     // restart, with no fix available and no way to put it away. The third telling has to be able to say so.
@@ -660,4 +725,61 @@ test("deviceItems: an iPhone or iPad reading the hosted client in a tab is offer
     assert.deepEqual(deviceItems({ ...here, ios: false }), [], "elsewhere the browser offers its own prompt");
     assert.deepEqual(deviceItems({ ...here, installable: false }), [], "an extension page and a WebView cannot be installed");
     assert.deepEqual(deviceItems(here, new Set(["this-device:add-to-home"])), [], "and it stays dismissed");
+});
+
+// --- renewing this device's own certificate: asking a runtime, and keeping only what checks out ---
+
+test("renewSelf: tries each browser that is awake, installs what comes back, and stops dead on a chain that does not check out", async () => {
+    const { renewSelf } = await import("../src/chat/renew.ts");
+    const rt = (id, online = true) => ({ id, name: id, online });
+    const world = (sends, install) => {
+        const asked = [];
+        const installed = [];
+        const host = { async send(c) { asked.push(c.runtime); return sends(c); } };
+        const pairing = { install: install === null ? undefined : async (chain) => { installed.push(chain); return install?.(chain); } };
+        return { host, pairing, asked, installed };
+    };
+    const chain = ["Zm9v", "YmFy"];
+    const ok = (over = {}) => ({ ok: true, data: { notAfterMs: 42, chain, ...over } });
+
+    // The happy path: asked once, installed once.
+    let w = world(() => ok());
+    let r = await renewSelf(w.host, w.pairing, [rt("a")], "p");
+    assert.deepEqual([r.ok, r.installed, r.notAfterMs], [true, true, 42]);
+    assert.deepEqual([w.asked, w.installed], [["a"], [chain]]);
+
+    // A runtime that REFUSES is not the end of it: another may simply answer, and the reasons are about that runtime
+    // (too near its own expiry to sign a useful window) rather than about this device.
+    w = world((c) => (c.runtime === "a" ? { ok: false, error: { code: "conflict", message: "its own certificate is expiring" } } : ok()));
+    r = await renewSelf(w.host, w.pairing, [rt("a"), rt("b")], "p");
+    assert.deepEqual([r.ok, w.asked], [true, ["a", "b"]]);
+
+    // Every one refusing reports the FIRST reason: the later ones say the same thing.
+    w = world(() => ({ ok: false, error: { code: "conflict", message: "its own certificate is expiring" } }));
+    r = await renewSelf(w.host, w.pairing, [rt("a"), rt("b")], "p");
+    assert.deepEqual([r.ok, r.problem], [false, "its own certificate is expiring"]);
+
+    // Asleep ones are never asked, and the answer says what to do rather than failing in general words.
+    w = world(() => ok());
+    r = await renewSelf(w.host, w.pairing, [rt("a", false)], "p");
+    assert.deepEqual([r.ok, w.asked], [false, []]);
+    assert.match(r.problem, /Open one and try again/);
+
+    // NOT DUE: a success with nothing to keep. The runtime answered with the window it already has, which is the
+    // idempotent path, and a caller should say nothing about it.
+    w = world(() => ({ ok: true, data: { notAfterMs: 99 } }));
+    r = await renewSelf(w.host, w.pairing, [rt("a")], "p");
+    assert.deepEqual([r.ok, r.installed, w.installed], [true, false, []]);
+
+    // A chain that does not check out STOPS it: that is not another runtime's problem to solve, and trying the next
+    // one would be asking a second machine to vouch for the first one's answer.
+    w = world(() => ok(), () => { throw new Error("That certificate is for another device. Nothing was changed."); });
+    r = await renewSelf(w.host, w.pairing, [rt("a"), rt("b")], "p");
+    assert.deepEqual([r.ok, w.asked], [false, ["a"]]);
+    assert.match(r.problem, /for another device/);
+
+    // A surface with no keyring to install into asks nobody.
+    w = world(() => ok(), null);
+    r = await renewSelf(w.host, w.pairing, [rt("a")], "p");
+    assert.deepEqual([r.ok, w.asked], [false, []]);
 });

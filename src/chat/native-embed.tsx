@@ -21,6 +21,7 @@ import { searchBridge } from "../native/search-bridge";
 import { Keyring } from "../hub/keyring";
 import { agentTarget, attentionForApp, runtimeStorage, sessionChrome, startableFor } from "../native/snapshot";
 import type { PairingApi } from "../pairing/api";
+import type { CertState } from "./attention";
 import { installServices, services } from "../sidebar/services";
 import { installTooltipLayer } from "../sidebar/tooltip-layer";
 import { applyCodePrefs, applyTheme, initThemeStyle, pageTheme } from "../sidebar/prefs";
@@ -214,8 +215,22 @@ export function runEmbed(host: SessionHost, opts: { account: BridgeAccount | nul
     const sendIndex = perFrame(() => post({ type: "index", runtimes: store.runtimes.value, sessions: [...store.index.value.values()], startable: startableFor(store.runtimes.value) }));
     effect(() => { void store.runtimes.value; void store.index.value; sendIndex(); });
     effect(() => post({ type: "status", status: store.status.value }));
-    // What the runtimes need a hand with: the phone's inbox, worded here so the laptop's page and the phone agree.
-    effect(() => post({ type: "attention", ...attentionForApp(store.runtimes.value) }));
+    // What the runtimes need a hand with, plus THIS PHONE'S OWN CERTIFICATE: the inbox, worded here so the laptop's
+    // page and the phone agree. The certificate is read off the keyring rather than watched, because an expiry moves
+    // at the speed of a calendar; what changes while you look is whether a browser is awake to sign a renewal, which
+    // the effect already re-runs on.
+    let ownCert: CertState | null = null;
+    const readCert = () => void opts.pairing?.load().then((m) => {
+        ownCert = typeof m?.notAfterMs === "number"
+            ? { notAfterMs: m.notAfterMs, ...(m.mayRevoke ? { mayRevoke: true } : {}), renewable: m.renewable !== false, issuerOnline: false }
+            : null;
+        post({ type: "attention", ...attentionForApp(store.runtimes.value, live(ownCert)) });
+    }).catch(() => {});
+    /** `issuerOnline` is the one part that is live: a browser going to sleep turns a one-press renewal into "open one". */
+    const live = (c: CertState | null) => c && { ...c, issuerOnline: store.runtimes.value.some((rt) => rt.online) };
+    readCert();
+    setInterval(readCert, 60 * 60_000);
+    effect(() => post({ type: "attention", ...attentionForApp(store.runtimes.value, live(ownCert)) }));
     /** The chrome for any session: the open one's, and a list row's when the app asks (`chromeFor`). */
     const chromeOf = (key: SessionKey) => {
         const id = parseSessionKey(key);

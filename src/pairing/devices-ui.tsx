@@ -8,7 +8,7 @@
 import { useEffect, useState } from "preact/hooks";
 import type { DeviceInfo } from "../session-host";
 import { Stamp } from "../sidebar/ui-kit";
-import { SCOPES, type HubLogLine, type PairingApi, type RevokeOutcome } from "./api";
+import { removalWarning, SCOPES, type HubLogLine, type PairingApi, type RevokeOutcome } from "./api";
 
 /** Re-ask `load` every `ms` while mounted; the latest answer, or null before the first. */
 function usePolled<T>(load: (() => Promise<T>) | undefined, ms: number, key: unknown = null): [T | null, () => void] {
@@ -83,9 +83,7 @@ function DeviceRow({ d, self, api, onChanged }: { d: DeviceInfo; self: boolean; 
             {api.revoke && !self ? (
                 asking ? (
                     <div class="pair-leave" role="group" aria-label={`Remove ${d.label}`}>
-                        <p class="pair-p">{d.mayRevoke
-                            ? "This device signs the account's revocations. Removing it leaves the account unable to remove ANY device until the root device grants that power to another. Remove it only if it is lost."
-                            : `“${d.label}” stops reaching everything on this account at once. Adding it back takes a new code, confirmed on the root device.`}</p>
+                        <p class="pair-p">{removalWarning(d)}</p>
                         <div class="pair-actions">
                             <button class="btn" onClick={() => setAsking(false)}>Keep it</button>
                             <button class="btn primary" disabled={busy} onClick={remove}>{busy ? "Removing…" : d.mayRevoke ? "Remove it anyway" : "Remove it"}</button>

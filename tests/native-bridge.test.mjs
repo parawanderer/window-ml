@@ -314,6 +314,31 @@ test("the phone's inbox: the page's words, the problems counted, the suggestions
     assert.deepEqual(B.parseToNative(B.encode({ type: "attention", items, count })), { type: "attention", items, count });
 });
 
+test("the phone's inbox carries THIS PHONE's certificate too, which is the device most likely to miss it", () => {
+    // A phone is the device most likely to be away while its access runs out, and renewal took away the thing that
+    // used to catch that. It is the one item with no runtime: the answer to "where" is "here", so the row says
+    // nothing about a machine, and the app has to tolerate that rather than print "on undefined".
+    const runtimes = [rt({ id: "laptop", name: "Work laptop", capabilities: { chat: true } })];
+    const now = Date.parse("2026-10-04T12:00:00Z");
+    const cert = { notAfterMs: now + 5 * 86_400_000, renewable: true, issuerOnline: true };
+
+    const plenty = attentionForApp(runtimes, { ...cert, notAfterMs: now + 60 * 86_400_000 }, now);
+    assert.equal(plenty.items.length, 0, "far from its end it says nothing at all");
+
+    const { items, count } = attentionForApp(runtimes, cert, now);
+    const mine = items.find((i) => i.key.startsWith("this-device:"));
+    assert.ok(mine, JSON.stringify(items));
+    assert.equal(mine.runtime, undefined, "no machine to name");
+    assert.equal(mine.runtimeName, undefined);
+    assert.match(mine.title, /runs out in 5 days/);
+    assert.equal(count, 1, "and it counts, so the phone's badge says so");
+
+    // None of this device's OTHER items travel: the app's install story is the App Store's, not a Share sheet's.
+    assert.ok(!items.some((i) => i.key.includes("add-to-home")));
+    // And it survives the wire the app reads it over, absent fields included.
+    assert.deepEqual(B.parseToNative(B.encode({ type: "attention", items, count })), { type: "attention", items, count });
+});
+
 test("the runtimes the app may start on are the page's rule: online, offering the kind, holding the grant", () => {
     const rts = [
         rt({ id: "both", capabilities: { chat: true, agent: true } }),

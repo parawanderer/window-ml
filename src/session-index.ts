@@ -32,7 +32,9 @@ export interface IngestSource {
  *  replaced (its subscribers need a fresh backfill); `evicted` lists sessions dropped to stay under the caps. */
 export type IngestOutcome =
     | { accepted: false; reason: "invalid" | "not-owner" | "duplicate" }
-    | { accepted: true; session: SessionId; cursor: number; epoch: string; event: MlDebugEvent; summary: SessionSummary | null; reset: boolean; evicted: SessionId[] };
+    | { accepted: true; session: SessionId; cursor: number; epoch: string; event: MlDebugEvent; summary: SessionSummary | null; reset: boolean; evicted: SessionId[];
+        /** where this event sits in the session's own history, counted by the index (0 is its first ever) */
+        pos: number };
 
 export interface SessionIndexOptions {
     runtime: RuntimeId;
@@ -68,6 +70,10 @@ interface Indexed {
     /** bumped when the session is replaced, so its cursors stop meaning anything */
     gen: number;
     ring: Entry[];
+    /** events accepted for this session in this generation: the position the NEXT one takes. The ring is trimmed
+     *  and the store holds only what was in it when the session was saved, so this is the only count that spans a
+     *  session's whole history, and it is what an UNKEPT session's positions are counted in. */
+    seen: number;
     bytes: number;
     /** the newest cursor evicted by a cap; -1 when nothing was lost */
     lostThrough: number;
@@ -212,20 +218,23 @@ export class SessionIndex {
 
         const cursor = ++this.cursor;
         const bytes = sizeOf(ev);
+        // Counted BEFORE the caps run: trimming the ring loses the event, never its place in the history. That is
+        // what lets `heldEvents` say where what it still holds began.
+        const pos = s.seen++;
         s.ring.push({ cursor, event: ev, bytes });
         s.bytes += bytes;
         this.totalBytes += bytes;
         s.lastCursor = cursor;
         s.summary.lastTs = this.now();
         const evicted = this.enforceCaps(s);
-        return { accepted: true, session: s.id, cursor, epoch: this.epochOf(hash), event: ev, summary: this.refreshSummary(s), reset, evicted };
+        return { accepted: true, session: s.id, cursor, epoch: this.epochOf(hash), event: ev, summary: this.refreshSummary(s), reset, evicted, pos };
     }
 
     private create(ev: MlDebugEvent, hash: string, src: IngestSource, gen: number): Indexed {
         const kind: SessionKind = ev.kind.startsWith("chat") ? ((ev as { sessionKind?: string }).sessionKind === "embed" ? "embed" : "chat") : "agent";
         const now = this.now();
         const s: Indexed = {
-            id: { runtime: this.runtime, hash }, kind, gen, ring: [], bytes: 0, lostThrough: -1, lastCursor: 0,
+            id: { runtime: this.runtime, hash }, kind, gen, ring: [], seen: 0, bytes: 0, lostThrough: -1, lastCursor: 0,
             owner: src.tabId, hostedBy: src.trusted ? "background" : "page", hasStart: false,
             ended: false, endedStep: -1, endStatus: "done", gates: new Set(), openTurns: new Set(), lastResultKey: null, seenSays: new Set(), seenResumes: new Set(), interrupted: false,
             summary: { id: { runtime: this.runtime, hash }, kind, status: "running", createdTs: now, lastTs: now, pendingApprovals: 0, saved: false },
@@ -422,8 +431,9 @@ export class SessionIndex {
             return [...s.ring.filter((e) => e.cursor > since.cursor).map(event), { type: "backfilled", session, epoch, cursor: Math.max(since.cursor, s.lastCursor), truncated: false }];
         }
         if (!s.ring.length) return [{ type: "backfilled", session, epoch, cursor: s.lastCursor, truncated: true }];
-        // Nothing lost: the ring starts at the session's first event, so paging back has nowhere to go. Something lost
-        // and served from here anyway: an unsaved session, which has no history to page through, so no position.
+        // Nothing lost: the ring starts at the session's first event, so paging back has nowhere to go. Something
+        // lost and served from here anyway: an unsaved session, whose older events are gone from the ring, so this
+        // says nothing about where it starts and the client pages back with `session.backfill` (`heldEvents`).
         const lost = s.lostThrough >= 0;
         return [{ type: "reset", session, epoch }, ...s.ring.map(event), { type: "backfilled", session, epoch, cursor: s.lastCursor, truncated: lost, ...(lost ? {} : { from: 0 }) }];
     }
@@ -447,7 +457,7 @@ export class SessionIndex {
             const status: SessionStatus = summary.status === "running" || summary.status === "waiting" ? "interrupted" : summary.status;
             const restored: SessionSummary = { ...summary, id: { runtime: this.runtime, hash }, status, saved: true };
             const s: Indexed = {
-                id: restored.id, kind: restored.kind, gen: 0, ring: [], bytes: 0,
+                id: restored.id, kind: restored.kind, gen: 0, ring: [], seen: count, bytes: 0,
                 lostThrough: count, lastCursor: count,
                 owner: undefined, hostedBy: "background", hasStart: true,
                 ended: true, endedStep: -1, endStatus: status === "interrupted" ? "error" : "done",
@@ -544,6 +554,26 @@ export class SessionIndex {
         const s = this.sessions.get(hash);
         if (!s || s.lostThrough <= 0) return false;
         return !(since && since.epoch === this.epochOf(hash) && since.cursor >= s.lostThrough);
+    }
+
+    /**
+     * What this session still holds IN MEMORY, and the history position the first of them sits at.
+     *
+     * This is how an UNKEPT session is paged (`session.backfill`). A kept one is read from the store, which holds it
+     * from 0; an unkept one was never written anywhere, so the ring is its only copy — and `from` is what says how
+     * much of the start has already been trimmed out of it, which is the difference between "there is no more" and
+     * "there is more and it is gone".
+     *
+     * `seen` is how long the session's history is: what the store holds is the last `seen - n` of it, which is how a
+     * KEPT session's page knows where it sits too.
+     *
+     * null when the session is not held at all, which is a third answer again: nothing can be served and nothing
+     * ever will be.
+     */
+    heldEvents(hash: string): { events: MlDebugEvent[]; from: number; seen: number } | null {
+        const s = this.sessions.get(hash);
+        if (!s) return null;
+        return { events: s.ring.map((e) => e.event), from: Math.max(0, s.seen - s.ring.length), seen: s.seen };
     }
 
     /** What a restored or evicted session has on disk but not in memory, so a caller can splice the two together. */
