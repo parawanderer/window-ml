@@ -33,6 +33,12 @@ let windowWrite: ReturnType<typeof setTimeout> | null = null;
  * names. So zooming while live changes how much history is drawn and STAYS live, rather than pinning the
  * window at wherever it happened to be when you pinched — which would have made the gesture a way to
  * accidentally stop following.
+ *
+ * A pinned window that merely happens to sit at the end is not the same as following: new samples arrive,
+ * the window stays where it was pinned, and the view silently falls behind while the button still reads
+ * live (which is computed from where the window sits, not from whether it is following). The drag path has
+ * always done this on release; the wheel paths did not, so scrolling to the end looked like rejoining live
+ * and then drifted away from it.
  */
 export function settleScrub(next: { from: number; to: number }, ex: { from: number; to: number }, follows: boolean): void {
     const intent = scrubIntent(ex, next, TAIL_SLACK_MS, follows);
@@ -46,7 +52,13 @@ export function settleScrub(next: { from: number; to: number }, ex: { from: numb
     }, 400);
 }
 
-/** The scrub strip: the whole sampled history in miniature, with the visible window as a box you drag, resize, wheel or pinch to choose what the plots show. */
+/** The SCRUB strip: the whole session compressed into one bar, with a box showing which slice the chart above
+ *  is drawing. Drag the box to move through the session; drag it back to the right edge — or press the live
+ *  button — to re-pin to the tail.
+ *
+ *  Its own axis is LINEAR in time, unlike the chart's: this is an overview, and a ten-minute hole is a fact
+ *  about the session that an overview should show at its true width rather than collapse. The runs are drawn
+ *  as filled blocks with the gaps left empty, so "nothing was measured here" reads as a hole. */
 export function ScrubStrip({ samples, window: win, pan, events = [], follows }: {
     samples: ResourceSample[]; window: { from: number; to: number } | null;
     /** The window at its REAL width, for a pan. `window` is clipped to the last reading while it fills, which is right

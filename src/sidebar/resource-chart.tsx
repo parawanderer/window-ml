@@ -385,6 +385,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
 /** Every track this machine warrants: one per accelerator, plus the host pool on a discrete box. A unified
  *  device has ONE pool, so it gets one track (its bands already come from the host) and no separate RAM track
  *  — two would double-count the same silicon. */
+
 /** Hovering a pool's line publishes WHICH POOL and WHAT IS ON IT. The model rows below the chart already list
  *  every resident model, so they are the legend: rows not on this pool grey out, and a tooltip on the plot
  *  names the device. That reuses what is on screen instead of injecting a row that pushes the layout around
@@ -891,24 +892,6 @@ function OverlayView({ def, samples, latest, hidden, events = [], onHide }: { de
         </div>
     );
 }
-
-/** The SCRUB strip: the whole session compressed into one bar, with a box showing which slice the chart above
- *  is drawing. Drag the box to move through the session; drag it back to the right edge — or press the live
- *  button — to re-pin to the tail.
- *
- *  Its own axis is LINEAR in time, unlike the chart's: this is an overview, and a ten-minute hole is a fact
- *  about the session that an overview should show at its true width rather than collapse. The runs are drawn
- *  as filled blocks with the gaps left empty, so "nothing was measured here" reads as a hole. */
-/**
- * Apply a scrubbed window — and REJOIN LIVE when it reaches the tail.
- *
- * A pinned window that merely happens to sit at the end is not the same as following: new samples arrive,
- * the window stays where it was pinned, and the view silently falls behind while the button still reads
- * live (which is computed from where the window sits, not from whether it is following). The drag path has
- * always done this on release; the wheel paths did not, so scrolling to the end looked like rejoining live
- * and then drifted away from it.
- */
-
 
 // THREE WAYS A HOLD ENDS, because the one that should suffice (`pointerleave`) is not delivered when the pointer leaves
 // the panel's iframe for the page: moving anywhere in the panel off the chart; the shell saying the pointer is on the
