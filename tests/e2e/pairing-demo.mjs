@@ -20,6 +20,11 @@
 //   a code, naming who can answer it. Nothing is lost by it, which the screen says, because "pair it again" is the
 //   kind of phrase that makes somebody wonder.
 //
+//   NOBODY TO SIGN A REMOVAL. An account can reach a state where no device holds the grant at all, and a removal
+//   then takes effect only on the runtime it was made on while every other one goes on trusting the device. Saying so
+//   needed the hub to ANNOUNCE that it keeps the record, because until v0.4.3 "holds none" and "too old to know" were
+//   the same bytes and the warning would have fired against every older hub.
+//
 // Build first: `node scripts/build-web.mjs` (or `npm run build:all`).
 import { chromium } from "@playwright/test";
 import fs from "node:fs";
@@ -102,6 +107,25 @@ await beat("One press, and it says what it costs", "nothing: the same keys, the 
 await page.getByRole("button", { name: "Show the code" }).click();
 await page.locator("svg.pair-qr").waitFor();
 await beat("The code names who can answer it", "a device that may pair, which is not this one; scanned or typed, because a laptop-only account has no camera to point", "section[aria-label='Refresh pairing']");
+
+// --- the account with nobody to sign a removal ---
+
+await page.keyboard.press("Escape");
+await page.evaluate(() => {
+    // A healthy certificate and NOT the signer, so the only card left is the account's: this device holding
+    // `may_revoke` would contradict the very thing the next beat says.
+    globalThis.__pairFake.setMembership({
+        label: "Shane's phone", role: "client", hubUrl: "wss://hub.example", fingerprint: "5ab0e19c44d2",
+        root: true, mayPair: true, principal: "5ab0e19c".repeat(8),
+        renewable: true, notAfterMs: Date.now() + 80 * 86_400_000,
+    });
+    globalThis.__pairFake.setRevoker("none");
+});
+await page.locator(".chat-att-btn, .chat-gear-btn").first().click();
+const gone = page.locator(".chat-att-item", { hasText: "remove another" }).first();
+await gone.waitFor();
+await beat("Nobody here can sign a removal", "the one thing a hub had to start ANNOUNCING before this could be said: absent and 'too old to know' were the same bytes", gone);
+await beat("It says what actually fails, not that it is broken", "the removal works where you make it and reaches nothing else, so the obvious check looks like it worked", gone);
 
 if (errors.length) console.error(`the page threw:\n  ${errors.join("\n  ")}`);
 if (HEADLESS) console.log(`wrote ${shot} frames to ${OUT}`);

@@ -101,27 +101,65 @@ test("the hub's revoker record is VERIFIED, not believed: a forged or absent one
         subject: device.publicKey, agreementKey: agreement.publicKey, role: Role.ROLE_RUNTIME, scopes: [],
         label: "Work laptop", mayRevoke: true, notBeforeMs: now - 86_400_000, notAfterMs: now + 30 * 86_400_000, ...extra,
     });
+    const FEAT = [R.REVOKER_FEATURE];
 
-    // Absent: an account with no record AND an older hub that sends nothing both land here, which is why this is
-    // "unknown" and never "none".
-    assert.deepEqual(await R.readRevoker(root.publicKey, undefined, now), { known: false });
-
-    // The real thing, signed by the account root.
-    const good = await R.readRevoker(root.publicKey, await certFrom(root), now);
-    assert.equal(good.known, true);
+    // The real thing, signed by the account root, from a hub that announces the record.
+    const good = await R.readRevoker(root.publicKey, await certFrom(root), now, FEAT);
+    assert.equal(good.state, "signer");
     assert.equal(good.label, "Work laptop");
     assert.equal(good.principal, toHex(await principalId(device.publicKey)));
 
     // Signed by SOMETHING ELSE: a hub naming a device of its own choosing. Refused, and refused silently.
-    assert.deepEqual(await R.readRevoker(root.publicKey, await certFrom(other), now), { known: false });
+    assert.deepEqual(await R.readRevoker(root.publicKey, await certFrom(other), now, FEAT), { state: "unknown" });
 
     // Root-signed but WITHOUT the grant: a record of nothing, so it records nothing.
-    assert.deepEqual(await R.readRevoker(root.publicKey, await certFrom(root, { mayRevoke: false }), now), { known: false });
+    assert.deepEqual(await R.readRevoker(root.publicKey, await certFrom(root, { mayRevoke: false }), now, FEAT), { state: "unknown" });
 
     // Expired: the hub session made a record spend with its grant, so a dead certificate is not a live signer.
     const dead = await issueCertificate(root, {
         subject: device.publicKey, agreementKey: agreement.publicKey, role: Role.ROLE_RUNTIME, scopes: [],
         label: "Old laptop", mayRevoke: true, notBeforeMs: now - 95 * 86_400_000, notAfterMs: now - 10 * 86_400_000,
     });
-    assert.deepEqual(await R.readRevoker(root.publicKey, dead, now), { known: false });
+    assert.deepEqual(await R.readRevoker(root.publicKey, dead, now, FEAT), { state: "unknown" });
+
+    // AND NONE OF THOSE THREE IS "none", though every one of them came from a hub that announces the record. A
+    // present certificate that does not verify is a lying or broken hub, which is unknown; reading it as "the
+    // account has none" would let a hub manufacture the warning by sending forty bad bytes.
+});
+
+test("absent `revoker` means NONE only from a hub that says it keeps the record, and UNKNOWN from one that does not", async () => {
+    // THE UPGRADE CASE, and the whole reason `Welcome.features` exists. An absent `revoker` is the same bytes from a
+    // hub holding no signer and from one too old to keep one, so before v0.4.3 a "nothing signs here" warning could
+    // not be built: it would have fired against every older hub, and a warning that is usually wrong is one people
+    // learn to dismiss. The NAME is what makes the silence mean something.
+    //
+    // The reading rule is a pure function of (features, revoker), so every row is asserted here with no hub at all
+    // (tests/hub-runtime.test.mjs runs the two v0.4.3 rows against the real binary, where the certificate must
+    // actually verify). Rows are the hub session's table in window-ml-hub `tmp/hub-revoker-reading-rule.md`.
+    const root = await generateIdentity();
+    const device = await generateIdentity();
+    const agreement = await generateAgreementKey();
+    const now = Date.parse("2026-10-04T12:00:00Z");
+    const cert = await issueCertificate(root, {
+        subject: device.publicKey, agreementKey: agreement.publicKey, role: Role.ROLE_RUNTIME, scopes: [],
+        label: "Work laptop", mayRevoke: true, notBeforeMs: now - 86_400_000, notAfterMs: now + 30 * 86_400_000,
+    });
+    const read = (c, features) => R.readRevoker(root.publicKey, c, now, features);
+
+    // A hub before v0.4.2: no record and no claim about whether it keeps one.
+    assert.deepEqual(await read(undefined, []), { state: "unknown" }, "an older hub says nothing by sending nothing");
+    // v0.4.2: the certificate is still good where there is one, and the SILENCE is what carries no information.
+    assert.equal((await read(cert, [])).state, "signer", "v0.4.2 still names a signer usefully");
+    assert.deepEqual(await read(undefined, []), { state: "unknown" }, "but its silence is not proof of none");
+    // v0.4.3 with a signer, and v0.4.3 with none: the one row anything is allowed to warn on.
+    assert.equal((await read(cert, [R.REVOKER_FEATURE])).state, "signer");
+    assert.deepEqual(await read(undefined, [R.REVOKER_FEATURE]), { state: "none" }, "the name is what makes absence mean none");
+
+    // The list is the SERVER'S OWN and additive: test for the name you need, ignore every other, and a name you do
+    // not know is not an error. A fork may add its own and a hub may drop one it no longer implements.
+    assert.deepEqual(await read(undefined, ["sessions", "revoker", "whatever-comes-next"]), { state: "none" });
+    assert.deepEqual(await read(undefined, ["sessions", "whatever-comes-next"]), { state: "unknown" });
+    // Defaulted, because ts-proto gives `[]` rather than `undefined` and a caller that has not been taught the field
+    // must not start warning: absent argument reads exactly as an older hub.
+    assert.deepEqual(await R.readRevoker(root.publicKey, undefined, now), { state: "unknown" });
 });

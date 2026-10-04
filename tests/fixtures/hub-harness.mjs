@@ -15,7 +15,7 @@ const { generateIdentity, issueCertificate, principalId } = await import("../../
 
 export const HUB = "hub.test";
 /** The hub release these tests are checked against; move it when a later one is NEEDED, not when one exists. */
-export const HUB_TAG = "v0.4.2";
+export const HUB_TAG = "v0.4.3";
 export const BIN =
     process.env.WMLHUB_BIN ??
     [`../../../window-ml-hub-${HUB_TAG}/target/release/wmlhub`, `../../../window-ml-hub-${HUB_TAG}/target/debug/wmlhub`]

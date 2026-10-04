@@ -275,3 +275,17 @@ export function pairingProblem(err: unknown): string {
  * renewed itself, and silent renewal would have made it the normal case.
  */
 export const certChanged = signal(0);
+
+/**
+ * WHETHER ANY DEVICE ON THIS ACCOUNT CAN SIGN A REMOVAL, as the hub's own record answers it. Written by the host when
+ * a connection's welcome is read (`readRevoker`, already verified against the account root), read by the inbox
+ * (`revokerItems`).
+ *
+ * `"unknown"` is the floor and the default: no record, one that did not verify, or a hub that does not keep one. Only
+ * `"none"` is a hub that keeps the record and holds none, and it is the only value anything is allowed to warn on.
+ *
+ * It SURVIVES A BLIP on purpose. A websocket dropping does not grant anybody the ability to sign a removal, so
+ * resetting this on every reconnect would flicker the item for the same reason the runtime list does not empty and
+ * refill. `close()` clears it, because leaving the account is the one event that makes it another account's answer.
+ */
+export const accountRevoker = signal<"unknown" | "signer" | "none">("unknown");

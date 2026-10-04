@@ -4,7 +4,7 @@
 // cannot fake from one screen: the other device answering a join, or the hub giving up on it.
 
 import type { DeviceInfo } from "../session-host";
-import { certChanged } from "./api";
+import { accountRevoker, certChanged } from "./api";
 import type { FoundOffer, Grant, HubLogLine, Membership, OfferHandle, PairingApi, PairRole, RevokeOutcome } from "./api";
 
 /** The error shape the library's `PairingError` has: a reason the screens turn into words. */
@@ -26,6 +26,9 @@ export interface FakePairingControls {
     fail(reason: string): void;
     /** every confirmation made from this device, in order */
     readonly confirmed: { label: string; grant: Grant }[];
+    /** what the hub would say about who signs this account's revocations, which is a HUB fact and so the fake's to
+     *  stand in for: `"none"` is the only one anything warns on (`revokerItems`) */
+    setRevoker(state: "unknown" | "signer" | "none"): void;
 }
 
 const norm = (typed: string) => typed.toUpperCase().replace(/[\s-]/g, "");
@@ -127,6 +130,7 @@ export function fakePairing(o: {
             certChanged.value++;
         },
         addOffer(code, offer) { offers.set(norm(code), offer); },
+        setRevoker(state) { accountRevoker.value = state; },
         get waiting() { return join ? { code: join.code, fingerprint: join.fingerprint } : null; },
         answer(asLabel) {
             if (!join) return;

@@ -132,10 +132,25 @@ export interface Welcome {
    * be absent and nothing would ever say so. Hiding a signer it does have is the safe direction: the grant is
    * offered to another device, and that device is refused at its own login, in front of whoever is pairing it.
    *
-   * Absent is "no record", which is also what an older hub sends, so a reader treats it as unknown rather than as
-   * proof of none unless it knows the hub speaks this.
+   * Absent is "no record" only from a hub that says it keeps one: see `features`. From one that does not, absent is
+   * "cannot say", and the two are the same bytes.
    */
-  revoker: Certificate | undefined;
+  revoker:
+    | Certificate
+    | undefined;
+  /**
+   * The optional behaviours this hub implements, so a reader can tell "this hub holds none" from "this hub cannot
+   * say". Without it an absent `revoker` is both, and a client cannot build a warning on it: a warning that fires
+   * against every older hub is one people learn to dismiss.
+   *
+   * A reader TESTS FOR THE NAME it needs and ignores every other, so a fork may add its own and a hub may drop one it
+   * no longer implements. Names are lowercase ASCII and short; this list is the server's own, so its length is
+   * whatever that server implements rather than anything a peer controls.
+   *
+   * `"revoker"` means `revoker` above is this hub's record of the account's revocation signer, so absent means the
+   * account has none. It is not a promise about any other field.
+   */
+  features: string[];
 }
 
 /** What the hub will accept from this connection. A peer that exceeds one is disconnected, not throttled silently. */
@@ -972,7 +987,7 @@ export const Hello: MessageFns<Hello> = {
 };
 
 function createBaseWelcome(): Welcome {
-  return { protocol: 0, serverTimeMs: 0, limits: undefined, revoker: undefined };
+  return { protocol: 0, serverTimeMs: 0, limits: undefined, revoker: undefined, features: [] };
 }
 
 export const Welcome: MessageFns<Welcome> = {
@@ -988,6 +1003,9 @@ export const Welcome: MessageFns<Welcome> = {
     }
     if (message.revoker !== undefined) {
       Certificate.encode(message.revoker, writer.uint32(34).fork()).join();
+    }
+    for (const v of message.features) {
+      writer.uint32(42).string(v!);
     }
     return writer;
   },
@@ -1037,6 +1055,14 @@ export const Welcome: MessageFns<Welcome> = {
             message.revoker = Certificate.decode(reader, reader.uint32());
             continue;
           }
+          case 5: {
+            if (tag !== 42) {
+              break;
+            }
+
+            message.features.push(reader.string());
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -1062,6 +1088,7 @@ export const Welcome: MessageFns<Welcome> = {
     message.revoker = (object.revoker !== undefined && object.revoker !== null)
       ? Certificate.fromPartial(object.revoker)
       : undefined;
+    message.features = object.features?.map((e) => e) || [];
     return message;
   },
 };

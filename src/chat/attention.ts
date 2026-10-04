@@ -34,7 +34,9 @@ export type AttentionCode =
     /** THIS DEVICE, not a runtime: an iPhone or iPad reading the hosted client in a tab rather than as an app. */
     | "add-to-home"
     /** THIS DEVICE's certificate: running out, and run out. See {@link certItems}. */
-    | "cert-expiring" | "cert-expired";
+    | "cert-expiring" | "cert-expired"
+    /** THIS ACCOUNT, not a device: no device on it can sign a removal. See {@link revokerItems}. */
+    | "no-revoker";
 
 /**
  * How it is fixed from here, when it can be: one click on the runtime (`ChatExtras.fix`), the extension's Settings,
@@ -164,6 +166,19 @@ const KNOWN: Record<AttentionCode, Known> = {
         level: "suggests", title: "Old sessions are deleted, not kept",
         detail: "Retention deletes a session for good once it is old enough or storage runs out. The archive keeps them instead, in the browser's own storage, every word searchable.",
         fix: { kind: "act", label: "Keep them" },
+    },
+    "no-revoker": {
+        // THE SUBJECT IS THAT NO DEVICE CURRENTLY HOLDS THE GRANT, not that the account can never revoke anything:
+        // the root can grant it to one, and that is what this points at. Getting that backwards would read as a
+        // permanent defect in the account rather than a thing to go and do.
+        //
+        // What it costs is specific and worth saying, because nothing else on the page shows it: removing a device
+        // still takes it off whichever runtime you removed it from, so the obvious check looks like it worked. What
+        // does not happen is the signed list every OTHER runtime and the box connector read, so they go on trusting
+        // it (`publishList` returns early without the grant).
+        level: "limits", title: "No device can remove another from this account",
+        detail: "Removing a device needs one device holding the grant to sign it for the others, and none here has it. A removal would take effect on the one runtime you did it from, and every other runtime and box connector would go on trusting the removed device. Pair a device from the one holding the account's root key, or refresh an existing pairing, and give it that grant.",
+        fix: { kind: "devices", label: "Pair a device" },
     },
     "archive-folder-none": {
         level: "suggests", title: "Keep a copy of the archive on disk",
@@ -338,6 +353,34 @@ export function certItems(cert: CertState | null, nowMs: number): StateAttention
         title: `This device's access runs out ${when}`,
         detail: `Renewing takes one press and changes nothing else about what this device may do. ${tail}`,
         fix: { kind: "act", label: "Renew" } }];
+}
+
+/**
+ * What the hub's record says about who may sign a removal on this account. Its own type rather than an import from the
+ * pairing seam, for the reason every input shape in this file is: the rule and the wording stay testable with nothing
+ * but a string. `accountRevoker` (pairing/api.ts) is what carries the live one.
+ */
+export type RevokerState = "unknown" | "signer" | "none";
+
+/**
+ * NO DEVICE ON THIS ACCOUNT CAN SIGN A REMOVAL, as an inbox item. About the ACCOUNT rather than a runtime or this
+ * device, so it carries no `runtime` either.
+ *
+ * ONLY `"none"` SAYS ANYTHING, and that narrowness is the whole feature. An absent record is the same bytes from a hub
+ * that holds no signer and from one too old to keep one, so until a hub announces that it keeps the record
+ * (`REVOKER_FEATURE`, hub/revocation.ts) its silence means "cannot say" and this stays quiet. A warning that fired
+ * against every hub predating v0.4.3 would be wrong more often than right, and one that is usually wrong is one
+ * people learn to dismiss — which would cost the warning that matters, not just this one.
+ *
+ * It is a `limits` rather than a `blocks`: everything works, including every removal you make on the runtime in front
+ * of you. What is missing is that the removal reaches the runtimes you are not looking at.
+ */
+export function revokerItems(state: RevokerState, hidden: ReadonlySet<string> = new Set()): StateAttentionItem[] {
+    if (state !== "none") return [];
+    const key = "this-account:no-revoker";
+    if (hidden.has(key)) return [];
+    const k = KNOWN["no-revoker"];
+    return [{ runtime: undefined, key, code: "no-revoker", level: k.level, title: k.title, detail: k.detail, fix: k.fix }];
 }
 
 /** What this device is, as the few plain facts the suggestion below turns on. Passed in rather than read here, so

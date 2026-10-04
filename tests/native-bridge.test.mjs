@@ -339,6 +339,23 @@ test("the phone's inbox carries THIS PHONE's certificate too, which is the devic
     assert.deepEqual(B.parseToNative(B.encode({ type: "attention", items, count })), { type: "attention", items, count });
 });
 
+test("the phone's inbox carries the account's missing revocation signer, and nothing from a hub that cannot say", async () => {
+    // Parity: the phone is usually the ROOT, so "pair a device and give it that grant" is a thing to do on that
+    // screen rather than somewhere else. It travels with no fix because `AttentionRow` has no channel for one; the
+    // sentence names the remedy instead.
+    const at = Date.parse("2026-10-04T12:00:00Z");
+    const none = attentionForApp([], null, at, "none");
+    const [row] = none.items;
+    assert.equal(row.key, "this-account:no-revoker");
+    assert.equal(row.runtime, undefined, "the account is not one of the machines the phone lists");
+    assert.match(row.detail, /root key/);
+    assert.equal(none.count, 1);
+
+    // And the default, which is what a caller that has not been taught the field passes: silence.
+    assert.deepEqual(attentionForApp([], null, at).items, [], "an older hub's silence reaches no lock screen");
+    assert.deepEqual(attentionForApp([], null, at, "signer").items, []);
+});
+
 test("the certificate's DATES cross as well as its inbox line, because only the app can hand them to the OS", async () => {
     // The inbox item is read when someone opens the app; these are what reach them when they do not. A WebView cannot
     // be woken at a date, so the page computes the plan and the app schedules it (docs/spec/NOTIFICATIONS.md).
