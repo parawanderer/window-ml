@@ -508,14 +508,22 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // Whether the RUNTIME would still act on it — the other reducer over the same events. A run that died without a
     // terminal event leaves this client's step `awaitingApproval` for ever, so the card is drawn with live buttons
     // over a gate nothing holds.
+    // Subscribed to `rev` for the same reason the run view is, and kept in the output: this reads the seam, which
+    // reads the runtime's index signal, which would otherwise memoize the step on a `st` that is mutated in place.
+    const stepRev = rev.value;
     const live = !hash || services().stillLive(hash);
+    // AND NOTHING IS IN FLIGHT once the runtime has settled the session. A step is `pending` until a terminal event
+    // for it arrives, and a run that died never sends one — so the rail went on pulsing and the row went on saying
+    // "running…" beside a card saying the run had ended. Two claims about the same step, one of them from a clock
+    // that stopped. The step keeps its own state; only the LIVE chrome is withheld.
+    const inFlight = !!st.pending && live;
     const sheetGrants = gate ? externalSheetGrant(st.arguments) : [];
     const showGrants = gate && hasPersistGrants(st.grants);
     return (
-        <div ref={rootRef} data-astep-seq={st.seq} class={`astep tool${dimmed ? " away" : ""}${open ? " open" : ""}${closing ? " closing" : ""}${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}>
+        <div ref={rootRef} data-astep-seq={st.seq} data-rev={stepRev} class={`astep tool${dimmed ? " away" : ""}${open ? " open" : ""}${closing ? " closing" : ""}${inFlight ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}>
             <button class="astep-head" onClick={toggle}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
-                <Dot status={st.pending ? "pending" : toolFailed(st.result) ? "err" : "ok"} />
+                <Dot status={inFlight ? "pending" : toolFailed(st.result) ? "err" : "ok"} />
                 {/* Tool-authored short summary (contract MlTool.summary) → hover tooltip, both surfaces. */}
                 {toolSummary
                     ? <span class="tt tool-name-wrap"><span class="tool-name">{st.tool}</span><span class="tt-pop left" role="tooltip">{toolSummary}</span></span>
@@ -523,7 +531,7 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                 {st.approval ? <ApprovalBadge approval={st.approval} /> : null}
                 {st.elements ? <span class="tt el-count">{st.elements} el<span class="tt-pop wrap" role="tooltip">DOM nodes returned (reach them in the console via onStep).</span></span> : null}
                 {issues ? <span class="arg-warn" {...cursorTipOn(issues.join("; "))}><IconWarn />{issues.length}</span> : null}
-                {!open ? <span class="astep-preview">{awaiting ? <span class="dim">needs approval</span> : st.pending ? (st.streamOutput ? <span class="astep-livepreview">{collapsedPreview(st.streamOutput).text}</span> : <span class="dim">running…<RunningFor since={st.ts} /></span>) : collapsedPreview(st.result || "").text}</span> : null}
+                {!open ? <span class="astep-preview">{awaiting ? <span class="dim">needs approval</span> : inFlight ? (st.streamOutput ? <span class="astep-livepreview">{collapsedPreview(st.streamOutput).text}</span> : <span class="dim">running…<RunningFor since={st.ts} /></span>) : collapsedPreview(st.result || "").text}</span> : null}
             </button>
             {open
                 ? <div class={`astep-body${closing ? " closing" : ""}`} ref={bodyRef}>
@@ -542,19 +550,19 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                             failed={stepFailed}
                             raw={<RawArgs args={args || {}} schema={paramSchema} />} rawText={rawArgsText(args || {})} />
                         : null}
-                    <IoBlock label="Out" tip="What the tool returned to the model." marks={st.streamMarks} reserve={!!st.pending && st.streamOutput != null}
+                    <IoBlock label="Out" tip="What the tool returned to the model." marks={st.streamMarks} reserve={inFlight && st.streamOutput != null}
                         /* HOW LONG IT RAN. `toolMs` is the tool's own wall clock, not the step's — a human at
                            an approval gate is the step's time and none of the machine's work. Live, it ticks
                            from when the step started, which is the difference between "slow" and "stuck". */
-                        live={!!st.pending} ranMs={st.toolMs} ranSince={st.ts} lineMap={inMap} remoteMs={st.remoteMs}
-                        preview={st.pending ? (st.streamOutput ? inlineText(st.streamOutput) : "running…") : inlineText(st.result || "")} render={outRender}
-                        raw={st.pending
+                        live={inFlight} ranMs={st.toolMs} ranSince={st.ts} lineMap={inMap} remoteMs={st.remoteMs}
+                        preview={inFlight ? (st.streamOutput ? inlineText(st.streamOutput) : "running…") : inlineText(st.result || "")} render={outRender}
+                        raw={inFlight
                             ? (st.streamOutput != null
                                 // LIVE tool output (ctx.stream — console.log / print) filling in Jupyter-style while it runs.
                                 ? <div class="astep-streaming"><SeenSplit text={st.streamOutput} seen={liveCutoff(st)} live marks={st.streamMarks} /></div>
                                 : <span class="dim">running…</span>)
                             : (st.modelResult ?? st.result) ? <Code text={st.modelResult ?? st.result ?? ""} lang="text" /> : <span class="dim">(no output)</span>}
-                        rawText={st.pending ? undefined : (st.modelResult ?? st.result ?? "") || undefined} />
+                        rawText={inFlight ? undefined : (st.modelResult ?? st.result ?? "") || undefined} />
                     {st.feedback ? <FeedbackBlock fb={st.feedback} /> : null}
                     {/* The step's POINTER, when the run minted one — a first-class handle the model reads its
                         own outputs back through and can cite in an answer, which until now existed only in
@@ -925,13 +933,32 @@ export function AgentRunView({ s }: { s: Session }) {
     // Only the newest items are drawn: a long run costs as much DOM as it has steps, and a step with a screenshot or
     // a table costs several times a chat turn (transcript-window.tsx).
     const { drawn, hidden } = tail(items, s.hash);
+    // Does the RUNTIME still think this run is going? `s.status` is this client's reduction of the event stream and
+    // stays `pending` for ever when a run dies without a terminal event.
+    //
+    // SUBSCRIBED TO `rev` BECAUSE OF THIS, and the read is kept in the output (a bare one is dropped by the
+    // minifier) — the same shape `RunStatsBar` already needs. The seam answers out of the runtime's index, which is
+    // a signal, and reading one here makes @preact/signals memoize this component on its props; `s` is the same
+    // mutated object for the whole run, so without its own subscription it stops re-rendering from the parent's
+    // cascade. That cascade is how a GROWN WINDOW reaches the screen, and the symptom is silent and specific: a
+    // citation to a step outside the window pages it back in, the window grows, nothing repaints, and the click
+    // appears to do nothing. Which is the exact failure `reveal` exists to prevent.
+    const r = rev.value;
+    const runLive = services().stillLive(s.hash);
     return (
         <>
+            <span data-rev={r} hidden />
             <AgentOptionsBlock s={s} />
             <EarlierInThread sessionKey={s.hash} hidden={hidden} />
             {drawn.map(it => it.el)}
-            {s.liveStream ? <LiveStream ls={s.liveStream} s={s} /> : null}
-            {s.status === "pending" ? <PendingNote s={s} /> : null}
+            {s.liveStream && runLive ? <LiveStream ls={s.liveStream} s={s} /> : null}
+            {/* THE RUN SAYS HOW IT ENDED, or the transcript simply stops. A run that died without a terminal event
+                leaves nothing after its last step, so the page went on claiming it was running — and when the
+                runtime settled it, the only place that said so was the row in the list. One of them was a history
+                and the other a state, both true and neither reconcilable from the other. */}
+            {s.status === "pending"
+                ? (runLive ? <PendingNote s={s} /> : <div class="arun-cut">This run was interrupted. It never reported how it ended, so what is above is everything it got through.</div>)
+                : null}
         </>
     );
 }

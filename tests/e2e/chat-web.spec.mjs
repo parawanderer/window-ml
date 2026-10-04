@@ -943,6 +943,14 @@ test("a gate the run ended without answering keeps what was asked and loses the 
     await expect(page.locator(".appr-dead")).toHaveText(/nothing left to approve/);
     // What was ASKED is still on screen: the card is the only place the intent sentence lives.
     await expect(page.locator(".astep-approve")).toContainText("transavia.com");
+    // AND NOTHING IS STILL IN FLIGHT. A step stays `pending` until a terminal event for it arrives and a run that
+    // died never sends one, so the rail went on pulsing and the row went on saying "running…" beside a card saying
+    // the run had ended — two claims about one step, one of them from a clock that stopped.
+    await expect(page.locator(".astep.tool.pending")).toHaveCount(0);
+    await expect(page.locator(".pending-note")).toHaveCount(0);
+    // And the TRANSCRIPT says how it ended, not only the row in the list: a history and a state cannot be
+    // reconciled from each other by someone reading one of them.
+    await expect(page.locator(".arun-cut")).toHaveText(/interrupted/);
     expect(errors).toEqual([]);
     await page.close();
 });

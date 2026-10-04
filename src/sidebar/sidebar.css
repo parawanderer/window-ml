@@ -1307,6 +1307,9 @@ html[data-focus] .astep-approve { gap: .55em; margin: 6px 0; padding: .82em .95e
 /** What stands in for the approve/deny row on a gate the runtime no longer holds: the request is still worth
  *  reading, the buttons would do nothing. Quiet — this is a fact about the run, not a new thing to act on. */
 .appr-dead { display: block; color: var(--fg-faint); font-size: 0.86em; font-style: italic; padding: 2px 0; }
+/** Where a run that died without reporting an end stops. Said in the transcript, not only in the list, because a
+ *  history and a state cannot be reconciled from each other by someone reading one of them. */
+.arun-cut { color: var(--fg-faint); font-size: 0.88em; font-style: italic; padding: 6px 0 2px; }
 .appr-info { flex: 0 0 auto; }
 .astep-approve .appr-row { flex-wrap: wrap; justify-content: flex-end; }
 @media (pointer: coarse) { .astep-approve .appr-row { gap: 6px; } }
