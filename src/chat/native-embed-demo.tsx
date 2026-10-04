@@ -5,8 +5,7 @@
 import type { ModelChoice } from "../session-host";
 import { fakePairing } from "../pairing/fake-pairing";
 import { demoHost } from "./demo-world";
-import { keepKeysInApp, runEmbed } from "./native-embed";
-import { storeCache } from "./event-cache";
+import { sessionArchive, keepKeysInApp, runEmbed } from "./native-embed";
 
 /**
  * What THIS demo's box offers to run: a real one has dozens, which is what the app's model filter is for, and the web
@@ -58,5 +57,5 @@ pairing.addOffer("7K3M Q9XD", { label: "Living-room tablet", role: "client", fin
 // starts a new history on every launch, so a reopened session is also the RESET path, which is worth seeing work.
 // Only inside the app: a page opened on its own (the specs) has no store to keep anything in.
 const inApp = !!(globalThis as { ReactNativeWebView?: unknown }).ReactNativeWebView;
-const cache = inApp ? storeCache(keepKeysInApp()) : undefined;
+const cache = inApp ? (keepKeysInApp(), sessionArchive) : undefined;
 runEmbed(host, { account: { label: "Demo phone", hubUrl: "demo", root: false }, bundle: "demo", pairing, ...(cache ? { cache } : {}) });

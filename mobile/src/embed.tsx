@@ -17,6 +17,7 @@ import { encode, parseToNative, type AttentionRow, type BridgeAccount, type Pair
 import type { HostStatus, ListedSession, ModelChoice, RuntimeInfo, SessionSummary, TabGroupInfo, TabInfo } from "../../src/session-host";
 import { EMBED } from "./generated/embed";
 import { answerStore } from "./store";
+import { answerArchive } from "./archive";
 import { answerVault } from "./vault";
 
 /** What the page has reported, as the screens read it. */
@@ -194,6 +195,13 @@ export function EmbedProvider({ children }: { children: ReactNode }) {
             case "store":
                 if (!ourPage(e.nativeEvent.url)) return;
                 void answerStore(m).then((r) => ref.current?.injectJavaScript(`window.__wmlReceive && window.__wmlReceive(${JSON.stringify(encode(r))}); true;`));
+                return;
+            // This phone's copy of a session, in its SQLite archive. Answered at once like the two above: the store
+            // opens a session, and queuing it behind `ready` would make every reopen wait on the hub it is meant to
+            // save a round trip to.
+            case "archive":
+                if (!ourPage(e.nativeEvent.url)) return;
+                void answerArchive(m).then((r) => ref.current?.injectJavaScript(`window.__wmlReceive && window.__wmlReceive(${JSON.stringify(encode(r))}); true;`));
                 return;
             // The keyring's secrets: answered at once, not queued behind `ready` (the page needs its keys to get there).
             case "vault":
