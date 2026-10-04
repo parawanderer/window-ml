@@ -16,6 +16,7 @@
 // exact failure the session-scoped store was introduced to fix.
 
 import { bgRunResumable, pushReplay } from "./contract-run";
+import { moveTabKey } from "./tab-replaced";
 import { type DerefRead } from "./contract-pointers";
 import { type NeutralMessage } from "./contract-chat";
 import { type StartRunPayload } from "./contract-messages";
@@ -203,6 +204,39 @@ export const bufferReplay = (tabId: number, event: unknown): void => {
     pushReplay(buf, event, REPLAY_CAP);
 };
 
+// KEEPING A RUN'S TAB. The browser discards a background tab under memory pressure (and, with Memory Saver on,
+// just for being in the background a while), which takes the document — and with it the toolset the run delegates
+// to — without any navigation to notice. `autoDiscardable: false` is the one hint Chrome offers, and a tab hosting
+// a run is the clearest case there is for it: the person is waiting on work happening in there.
+//
+// The pin has to be UNDONE, including when this worker never gets the chance. The ids are kept in
+// storage.session, which outlives an eviction and does not outlive the browser — the same life as the flag
+// itself — so `reconcileTabPins` on the next worker can release a tab whose run did not come back with it.
+const PINNED_TABS = "ml_pinned_tabs";
+
+const setPinned = async (tabId: number, on: boolean): Promise<void> => {
+    try {
+        await chrome.tabs.update(tabId, { autoDiscardable: !on });
+        const held = new Set<number>(((await chrome.storage.session.get(PINNED_TABS))[PINNED_TABS] as number[] | undefined) || []);
+        if (on) held.add(tabId); else held.delete(tabId);
+        await chrome.storage.session.set({ [PINNED_TABS]: [...held] });
+    } catch { /* the tab went: nothing to pin, and nothing to release */ }
+};
+
+/** Ask the browser not to discard a tab while we are hosting a run in it (and to stop asking once we are not). */
+export const keepTabAwake = (tabId: number, on: boolean): void => { void setPinned(tabId, on); };
+
+/** Release every tab this worker's PREDECESSOR pinned and did not get to release — an eviction mid-run leaves the
+ *  flag set with nobody left who knows why. Run after the rehydrate, so a run that came back keeps its tab. */
+export const reconcileTabPins = async (): Promise<void> => {
+    try {
+        const held: number[] = ((await chrome.storage.session.get(PINNED_TABS))[PINNED_TABS] as number[] | undefined) || [];
+        const keep = held.filter((id) => activeRuns.has(id));
+        for (const id of held) if (!activeRuns.has(id)) await chrome.tabs.update(id, { autoDiscardable: true }).catch(() => { /* gone */ });
+        if (keep.length !== held.length) await chrome.storage.session.set({ [PINNED_TABS]: keep });
+    } catch { /* no session storage, or no tabs: nothing to reconcile */ }
+};
+
 /** Register a run against its tab so the navigation sensor watches it, and decide what that tab's replay buffer
  *  keeps: a fresh run wipes it, a RESUME of the same run must not (a resume never re-emits the `agent` start). */
 export const trackRun = (tabId: number, runId: string, rebuild?: import("./contract").RebuildConfig): void => {
@@ -216,6 +250,7 @@ export const trackRun = (tabId: number, runId: string, rebuild?: import("./contr
     if (!s.size && !bgRuns.has(runId)) runReplayBuffer.delete(tabId);
     s.add(runId); activeRuns.set(tabId, s);
     if (rebuild) runRebuilds.set(runId, rebuild);
+    keepTabAwake(tabId, true);
 };
 
 // True if a COMPLETED-but-resumable run still lives on this tab (bgRuns keeps a snapshot at completion for a
@@ -238,6 +273,7 @@ export const untrackRun = (tabId: number, runId: string): void => {
     s.delete(runId);
     if (!s.size) {
         activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId);
+        keepTabAwake(tabId, false);   // nothing of ours is waiting on this tab any more
         // Keep the replay buffer if a just-completed run is still resumable on this tab (bgRuns.set ran in the
         // run's .then, before this .finally) — a late/reloaded page replays it once (CONTENT_READY). Else drop it.
         if (!tabHasBgRun(tabId)) runReplayBuffer.delete(tabId);
@@ -281,3 +317,14 @@ export function releaseSessionTokens(runId: string): void { tokensByRun.delete(r
  *  of the page it is ON from a fetch of the page it STARTED on (see `fetchIsCurrentPage`). History-API
  *  changes count too: an SPA moves between URLs without committing a navigation. */
 export const tabPageUrl = new Map<number, string>();
+
+/** A tab Chrome has handed a NEW id (`chrome.tabs.onReplaced` — a discard restored, a prerender swapped in):
+ *  move everything this module files under the old one, or the run it is hosting is orphaned under an id nothing
+ *  will ever send again, and the restored page's CONTENT_READY finds nothing to re-adopt. The barrier is not
+ *  moved: its state belongs to the document that went away. */
+export const retabRuns = (from: number, to: number): number => {
+    const moved = moveTabKey([activeRuns, runReplayBuffer, readoptPageInfo, tabPageUrl] as Array<Map<number, unknown>>, from, to);
+    for (const snap of bgRuns.values()) if (snap.tabId === from) snap.tabId = to;
+    navBarrier.forget(from);
+    return moved;
+};
