@@ -13,6 +13,41 @@ That is the shape of everything in this log — work that happens, matters, and 
 - **The published export**: `docs/spec/run-log.schema.json`, generated from `run-log.ts`
 - **A demo of the whole thing**: `node tests/e2e/run-log-demo.mjs`
 
+## How to log to it
+
+Two calls, and which one you reach for is about what you are holding.
+
+```ts
+// You know whose run it is (sw-runs.ts, sw-run-host.ts where the runId is in scope):
+import { recordRunLog } from "./sw-run-log";
+recordRunLog(runId, { subsystem: "tab", kind: "pinned", reason: "hosting", detail: { tab: tabId } });
+
+// You only have a TAB — which is the usual case, because the machinery that reloads a discarded tab or
+// attaches a debugger is addressed to a tab (sw-cdp.ts, and anything keyed the same way):
+import { noteRunMechanic } from "./sw-runs";
+noteRunMechanic(tabId, { subsystem: "cdp", kind: "refused", reason: "permission", detail: { tab: tabId } });
+```
+
+`noteRunMechanic` records for whichever run(s) that tab is hosting, and says nothing when there is none — correct
+rather than lossy: this log is a run's, and with no run there is nobody to tell.
+
+Both are fire-and-forget and neither can throw: a log line must never fail the run being logged. The cost of that
+is the trap below — a malformed record is dropped in silence.
+
+The fields are `HousekeepingReport`'s (`subsystem`, `kind`, `reason?`, `key?`, `bytes?`, `ms?`, `detail?`) plus
+the `run`, which the call supplies. Pick `subsystem`/`kind` freely; both are open registries. Add the row to the
+table below in the same change, which the tests check (see "Why a bad name is dangerous").
+
+### Watching them while you drive
+
+`globalThis.__mlRunLog.echo()`, evaluated in the WORKER, mirrors every record to its console as it is made;
+`.all()` reads the ring without going through a message. Both are for a Playwright spec, a demo or `observe` —
+whoever is driving the browser and for whom the records ARE the thing being watched. Off for everyone else, and
+that default is the whole point: this log exists because a `console.log` in a service worker is one nobody will
+ever see, and echoing by default would simply put the noise back.
+
+`tests/e2e/run-log-demo.mjs` is the worked example, relaying the lines out with `ext.sw.on("console")`.
+
 ## It is not the housekeeping log, and the difference is a rule
 
 `docs/spec/HOUSEKEEPING_LOG.md` scopes that log to **decisions the system made on its own** and puts

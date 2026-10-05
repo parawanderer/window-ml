@@ -18,6 +18,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { OutputCell, TimedOutput } from "./render-panel";
 import { housekeepingText, subsystemCounts } from "./housekeeping-log";
 import { PanelHead } from "./panel-head";
+import { Stepper } from "./ui-kit";
 import { IconFilter, IconGear } from "./icons";
 import { downloadBlob } from "./download";
 import { exportSessionJson } from "./export";
@@ -37,7 +38,7 @@ export const LOG_ZOOMS = [0.75, 0.85, 1, 1.15, 1.3, 1.5, 1.75] as const;
 export const LOG_ZOOM_BASE = 2;
 const ZOOM_KEY = "ml_runlog_zoom", COLOUR_KEY = "ml_runlog_colour";
 const zoomStep = signal<number>(LOG_ZOOM_BASE);
-const colourGroups = signal<boolean>(false);
+const colourGroups = signal<boolean>(true);
 let prefsRead = false;
 
 /** Set the log's zoom, clamped to the ladder, and remember it. */
@@ -48,8 +49,9 @@ function setZoom(step: number): void {
     try { chrome.storage.local.set({ [ZOOM_KEY]: i }); } catch { /* no storage: the size still changes, it just does not stick */ }
 }
 
-/** Colour each line by its subsystem, or stop. Default OFF: the renderer is shared with the housekeeping log,
- *  and a log that started colouring itself everywhere would be a change to a surface nobody asked about. */
+/** Colour each line by its subsystem, or stop. Default ON — it is what the column is for, and a reader who wants
+ *  the plainer log turns it off. It does not reach the housekeeping log either way: colouring is asked for per
+ *  CALLER (`TimedOutput`'s `groups`), and that view does not ask. */
 function setColour(on: boolean): void {
     colourGroups.value = on;
     try { chrome.storage.local.set({ [COLOUR_KEY]: on }); } catch { /* as above */ }
@@ -95,7 +97,7 @@ export function RunLogView({ run }: { run: string | null }) {
             chrome.storage.local.get([ZOOM_KEY, COLOUR_KEY], (d: Record<string, unknown>) => {
                 const z = d?.[ZOOM_KEY];
                 if (typeof z === "number" && LOG_ZOOMS[z] != null) zoomStep.value = z;
-                if (d?.[COLOUR_KEY] === true) colourGroups.value = true;
+                if (d?.[COLOUR_KEY] === false) colourGroups.value = false;
             });
         } catch { /* no storage here: the defaults are the answer */ }
     }, []);
@@ -210,9 +212,8 @@ function RunLogMenu({ run, records, counts, hidden, setHidden }: {
                         Clear<span class="menu-hint">{run ? "this run's records" : "every run's records"}</span>
                     </button>
                     <div class="menu-rule" role="separator" />
-                    {/* Colouring is a reading aid for THIS log, and off by default — the renderer under it is the
-                        housekeeping log's too, and a log that started colouring itself everywhere would be a
-                        change to a surface nobody asked about. */}
+                    {/* On by default: the colour is what the group column is FOR. Nothing else is affected —
+                        colouring is asked for per caller, and the housekeeping log does not ask. */}
                     <button class="menu-item menu-check" role="menuitemcheckbox" aria-checked={colourGroups.value}
                         onClick={() => setColour(!colourGroups.value)}>
                         <span class="menu-tick">{colourGroups.value ? "✓" : ""}</span>Colour by group
@@ -221,12 +222,9 @@ function RunLogMenu({ run, records, counts, hidden, setHidden }: {
                         docked panel. The keys do the same thing and are the ones a hand already reaches for. */}
                     <div class="menu-zoom">
                         <span class="menu-zoom-lbl">Text size</span>
-                        <button class="hbtn" aria-label="Smaller" disabled={zoomStep.value === 0}
-                            onClick={() => setZoom(zoomStep.value - 1)}>−</button>
-                        <button class="menu-zoom-now" aria-label="Reset the text size"
-                            onClick={() => setZoom(LOG_ZOOM_BASE)}>{Math.round(LOG_ZOOMS[zoomStep.value] * 100)}%</button>
-                        <button class="hbtn" aria-label="Bigger" disabled={zoomStep.value === LOG_ZOOMS.length - 1}
-                            onClick={() => setZoom(zoomStep.value + 1)}>+</button>
+                        <Stepper label="Text size" value={`${Math.round(LOG_ZOOMS[zoomStep.value] * 100)}%`}
+                            onStep={(by) => setZoom(zoomStep.value + by)} reset={() => setZoom(LOG_ZOOM_BASE)}
+                            atLeast={zoomStep.value === 0} atMost={zoomStep.value === LOG_ZOOMS.length - 1} />
                     </div>
                     <div class="menu-foot">{navigator.platform?.startsWith("Mac") ? "⌘" : "Ctrl"} + − 0 over the log</div>
                 </div>

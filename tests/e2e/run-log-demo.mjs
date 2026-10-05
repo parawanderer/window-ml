@@ -60,6 +60,10 @@ const shot = async (name) => {
 
 try {
     await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off" });
+    // Mirror every record to the worker's console as it happens, and relay that here: watching a demo should not
+    // mean waiting until the end to find out what it recorded. Off for anyone who is not driving the browser.
+    ext.sw.on("console", (m) => { if (m.text().startsWith("[run-log]")) console.log("  " + m.text()); });
+    await ext.sw.evaluate(() => globalThis.__mlRunLog?.echo());
 
     // The page the run will happen on, and the chat page we watch it from. The chat page is opened SECOND and
     // stays in front, because Chrome will not discard the tab you are looking at — which is also why the
@@ -130,13 +134,13 @@ try {
     await sleep(BEAT + 400); await shot("the-one-menu");
     await chat.keyboard.press("Escape");
 
-    await narrate(chat, "8 · Colour by group, and a zoom", { sub: "the subsystem column takes the next colour of the palette the graphs use — by POSITION, so two groups never land on the same one. Off by default: the renderer under it is the housekeeping log's too" });
+    await narrate(chat, "8 · Coloured by group, and a zoom", { sub: "the subsystem column takes the next colour of the palette the graphs use — by POSITION, so two groups never land on the same one. On by default, and the toggle is there for a reader who wants it plain" });
     await chat.locator(".runlog-menu button").first().click();
-    await chat.getByRole("menuitemcheckbox", { name: /Colour by group/ }).click();
     await chat.getByRole("button", { name: "Bigger" }).click();
-    await sleep(BEAT + 400); await shot("coloured-and-zoomed");
+    await chat.getByRole("button", { name: "Bigger" }).click();
+    await sleep(BEAT + 400); await shot("the-reading-options");
     await chat.keyboard.press("Escape");
-    await sleep(400); await shot("coloured-log");
+    await sleep(400); await shot("coloured-and-zoomed");
 
     await narrate(chat, "9 · And what it IS, on the tab", { sub: "under a rule, where it is read once by whoever is wondering — rather than a paragraph every reader scrolls past every time" });
     {

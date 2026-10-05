@@ -13,8 +13,34 @@ import type { HousekeepingReport } from "./housekeeping";
  *  does not take a run's history with it (the eviction is itself one of the things worth knowing about). */
 export const runLog = new RunLog(sessionArea());
 
+/**
+ * ECHO EVERY RECORD TO THE CONSOLE as well. OFF for anyone using the extension — this log exists precisely
+ * because a `console.log` in a service worker is a thing nobody will ever see, and turning that around by
+ * default would just put the noise back.
+ *
+ * ON is for whoever is DRIVING the browser: a Playwright spec, a demo, `observe`. There the records are what you
+ * are watching for, and waiting for the panel to flush them to `storage.session` to read them back is the long
+ * way round. Flipped from the worker (`globalThis.__mlRunLog.echo()`), never from a page.
+ */
+let echo = false;
+
+/** The worker-console surface for a harness or anyone poking at the service worker: turn the echo on, or read
+ *  the ring without going through a message. Deliberately on `globalThis` rather than in the message contract —
+ *  it is a developer's handle on a running worker, the same shape `__mlApprovals` has. */
+try {
+    (globalThis as Record<string, unknown>).__mlRunLog = {
+        echo: (on = true): boolean => (echo = on),
+        all: () => runLog.all(),
+    };
+} catch { /* no globalThis to decorate (a bundled test): the echo simply stays off */ }
+
 /** Records something the machinery did on one run's behalf, where the caller knows whose run it is. */
-export const recordRunLog = (run: string, report: HousekeepingReport): void => runLog.record(run, report);
+export const recordRunLog = (run: string, report: HousekeepingReport): void => {
+    runLog.record(run, report);
+    // The record as ONE line, in the order the panel prints it, so a run's console and its panel read alike.
+    if (echo) console.debug(`[run-log] ${run} ${report.subsystem} ${report.kind}${report.reason ? ` (${report.reason})` : ""}`,
+        ...(report.ms != null ? [`${report.ms}ms`] : []), ...(report.detail ? [report.detail] : []));
+};
 
 /** What a DUMP_RUN_LOG answers with: one run's records when a run was named, and what else the ring holds — so
  *  a panel opened on a session with no mechanics of its own can say which runs do. */

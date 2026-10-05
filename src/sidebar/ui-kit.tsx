@@ -163,6 +163,39 @@ export const Code = ({ text, lang, format, marks, lineIds, markLine, markTitle, 
  *  The shell only — the chip's CHROME and its tooltip. What it DOES differs (one copies, one navigates), so
  *  the behaviour stays with the caller. `children` is the label: a pointer's own id, or a friendlier name
  *  the model gave it. */
+/**
+ * A −/value/+ PILL: step something down or up, with where it currently stands between the two. One rounded
+ * control rather than three loose buttons, because the three are one question ("how big?") and a row of bare
+ * glyphs beside a number reads as three unrelated things.
+ *
+ * The VALUE IS A BUTTON when `reset` is given: the one place a reset belongs is on the number it would reset,
+ * which costs no row and is where a hand already is. Ends disable themselves at the ladder's limits rather than
+ * silently doing nothing — a control that looks live and is not is worse than one that is visibly spent.
+ *
+ * @param value what it stands at now, already formatted ("115%", "3 of 8")
+ * @param onStep called with -1 or 1
+ * @param label what the control adjusts, for a screen reader ("Text size")
+ * @param reset put it back; omitted, the middle is plain text
+ */
+export function Stepper({ value, onStep, label, less, more, reset, atLeast, atMost }: {
+    value: string; onStep(by: -1 | 1): void; label: string;
+    /** the ends' own names, where "Smaller"/"Bigger" is not what this steps */
+    less?: string; more?: string;
+    reset?(): void;
+    /** at the bottom / top of the ladder: the end that cannot move says so */
+    atLeast?: boolean; atMost?: boolean;
+}) {
+    return (
+        <span class="ui-stepper" role="group" aria-label={label}>
+            <button class="ui-step-end" aria-label={less ?? "Smaller"} disabled={atLeast} onClick={() => onStep(-1)}>−</button>
+            {reset
+                ? <button class="ui-step-now" aria-label={`${label}: ${value}. Reset`} onClick={reset}>{value}</button>
+                : <span class="ui-step-now">{value}</span>}
+            <button class="ui-step-end" aria-label={more ?? "Bigger"} disabled={atMost} onClick={() => onStep(1)}>+</button>
+        </span>
+    );
+}
+
 export function PointerChip({ label, tip, onClick, cls, trailing }:
     { label: ComponentChildren; tip: ComponentChildren; onClick: (e: MouseEvent) => void; cls?: string; trailing?: ComponentChildren }) {
     return (

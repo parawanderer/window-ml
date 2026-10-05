@@ -323,12 +323,20 @@ test("the execution log is what the machinery did under the open run, which its 
         await expect(panel.getByRole("menuitem", { name: /Download the log/ })).toBeEnabled();
         await expect(panel.getByRole("menuitem", { name: /Export all events/ })).toBeEnabled();
 
-        // COLOUR BY GROUP, off by default — the renderer under this is the housekeeping log's too, and a log
-        // that started colouring itself everywhere would be a change to a surface nobody asked about.
-        await expect(panel.locator(".r-ts-g")).toHaveCount(0);
+        // COLOUR BY GROUP, on by default: the colour is what the group column is for. Nothing else is affected
+        // — colouring is asked for per CALLER (`TimedOutput`'s `groups`), and the housekeeping log does not ask.
+        await expect(panel.locator(".r-ts-g").first()).toBeVisible();
+        await panel.getByRole("menuitemcheckbox", { name: /Colour by group/ }).click();
+        await expect(panel.locator(".r-ts-g")).toHaveCount(0, { timeout: 5000 });
         await panel.getByRole("menuitemcheckbox", { name: /Colour by group/ }).click();
         await expect(panel.locator(".r-ts-g").first()).toBeVisible();
         await dismiss();
+
+        // THE TIMESTAMP GUTTER IS AS WIDE AS THE STAMP, in `ch` — a fixed pixel width clipped the leading digit
+        // the moment the zoom below scaled the text, and was already a shade under `mm:ss` at the default size.
+        const stamp = panel.locator(".r-ts", { hasText: /\d/ }).first();
+        const fits = () => stamp.evaluate((el) => el.scrollWidth <= el.clientWidth + 1);
+        expect(await fits(), "the stamp fits its gutter").toBe(true);
 
         // A ZOOM over the size the log already reads at, by the keys a hand reaches for. Pressed over the LOG,
         // which is focusable because the output cell owns Ctrl+F — and prevented, so the browser does not zoom
@@ -338,6 +346,7 @@ test("the execution log is what the machinery did under the open run, which its 
         await panel.locator(".r-outscroll").click();
         await chat.keyboard.press("Control+=");
         await expect.poll(size).toBeGreaterThan(before);
+        expect(await fits(), "and still fits it once the log is zoomed").toBe(true);
         await chat.keyboard.press("Control+0");
         await expect.poll(size).toBe(before);
 

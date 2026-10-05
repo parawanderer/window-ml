@@ -326,9 +326,16 @@ learned by shipping the wrong version first.
   under an id nothing will send again.
 - **The execution log is the OTHER half of that trap, and it is NOT the housekeeping log.** What the machinery did
   under a run — the discarded tab reloaded, the CDP attach refused, the tab re-filed under a new id — goes to
-  `run-log.ts`, whose scope is per-RUN mechanics; the housekeeping log's own spec excludes "anything a user or
-  model action caused directly", and a CDP attach is caused by a tool call. It REUSES that log's record shape plus
-  a `run` and its sanitizer, so one renderer draws both. Two things bite: `sanitizeRunReport` SILENTLY DROPS a
+  `run-log.ts`, whose scope is per-RUN mechanics. **This is how the worker says what it did, so reach for it
+  rather than a `console.log` nobody will ever see**: `recordRunLog(runId, { subsystem, kind, reason?, detail? })`
+  where the run is in scope, or `noteRunMechanic(tabId, …)` (sw-runs.ts) where only the tab is — which is the
+  usual case, since the machinery is addressed to tabs and the log is read per run. Both are fire-and-forget and
+  neither can throw. **Driving the browser yourself? `globalThis.__mlRunLog.echo()` in the WORKER mirrors every
+  record to its console as it happens** (and `.all()` reads the ring without a message) — off for everyone else,
+  because this log exists precisely because a `console.log` in a service worker is one nobody will ever see.
+  The housekeeping log's own spec excludes "anything a user or model action caused directly",
+  and a CDP attach is caused by a tool call, which is why the two are separate; the execution log REUSES that
+  log's record shape plus a `run` and its sanitizer, so one renderer draws both. Two things bite: `sanitizeRunReport` SILENTLY DROPS a
   record whose `subsystem`/`kind` is not a lowercase slug (right in production, invisible in development — a tool
   name is never a `reason`, it goes in `detail.tool`), and `detail.tab` is which tab a record is ABOUT, while the
   event's own `tab` means who REPORTED it. Never a line per probe: the transcript already shows what a step cost.

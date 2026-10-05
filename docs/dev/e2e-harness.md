@@ -224,6 +224,10 @@ as in AGENTS.md — they are all under `src/`.
   first step is a `wait` that sits for twelve seconds, with the tab reported discarded out from under it. It
   prints the records as the worker holds them and the panel's own text, so checking it does not mean opening
   seventeen screenshots.
+  It turns the execution log's console echo on (`globalThis.__mlRunLog.echo()`, in the WORKER) and relays those
+  lines out through `ext.sw.on("console")`, which is worth copying into any spec or harness that cares what the
+  machinery did: the records stream as they happen instead of being read back out of `storage.session` at the
+  end. It is off by default for everyone who is not driving the browser.
   **A REAL `chrome.tabs.discard` TAKES THE WHOLE BROWSER CONNECTION WITH IT.** Measured, in isolation, with no run
   in flight and two tabs open: the discard succeeds, Chrome re-files the tab under a new id — and Playwright's
   persistent context is gone (`pages()` is empty, every page `isClosed()`, the next call throws "Target page,
