@@ -74,9 +74,13 @@ function scanInterfaces(src, file) {
             while (!/\*\//.test(lines[i]) && i < lines.length - 1) pending.push(lines[++i]);
             continue;
         }
-        const m = line.match(/^export interface (\w+)(?:<[^>]*>)?\s*(?:extends [\w\s,<>]+)?\{/);
+        const m = line.match(/^export interface (\w+)(?:<[^>]*>)?\s*(?:extends ([\w\s,<>]+?)\s*)?\{/);
         if (!m) { if (line.trim()) pending = []; continue; }
         const name = m[1];
+        // `extends` was MATCHED and thrown away, which made an extended interface publish only its own members
+        // — a schema describing less than it claims, silently, which is the one failure this generator exists
+        // to prevent. The bases are kept and merged in `interfaceToSchema`.
+        const bases = (m[2] || "").split(",").map((b) => b.trim().replace(/<.*$/, "")).filter(Boolean);
         const doc = jsdocText(pending);
         pending = [];
         const members = [];
@@ -90,7 +94,7 @@ function scanInterfaces(src, file) {
                 const mm = part.trim().match(/^(\w+)(\?)?:\s*(.+)$/);
                 if (mm) members.push({ name: mm[1], optional: !!mm[2], type: mm[3].trim(), doc: "" });
             }
-            out.set(name, { doc, members });
+            out.set(name, { doc, bases, members });
             continue;
         }
 
@@ -111,7 +115,7 @@ function scanInterfaces(src, file) {
             members.push({ name: mm[1], optional: !!mm[2], type: mm[3].trim(), doc: jsdocText(pending) });
             pending = [];
         }
-        out.set(name, { doc, members });
+        out.set(name, { doc, bases, members });
         i = j;
     }
     return out;
@@ -173,12 +177,16 @@ function scanUnstable(src) {
  */
 function splitTop(t, delim) {
     const parts = [];
-    let depth = 0, cur = "";
+    let depth = 0, cur = "", prev = "";
     for (const ch of t) {
-        // `<`/`>` deliberately excluded: `=>` in a function type would unbalance them, and a generic
-        // never contains a top-level `|` or `;` that matters here.
-        if ("({[".includes(ch)) depth++;
-        else if (")}]".includes(ch)) depth--;
+        // `<`/`>` ARE counted, with the one exception that made them look uncountable: the `>` of a `=>` in a
+        // function type, which closes nothing. They were excluded on the reasoning that "a generic never
+        // contains a top-level `|` that matters here", and `Record<string, string | number | boolean>` — the
+        // housekeeping record's `detail` — is one that does: splitting inside it produced the half-type
+        // `Record<string, string` and a refusal.
+        if ("({[<".includes(ch)) depth++;
+        else if (")}]".includes(ch) || (ch === ">" && prev !== "=")) depth--;
+        prev = ch;
         if (ch === delim && depth === 0) { parts.push(cur); cur = ""; continue; }
         cur += ch;
     }
@@ -315,11 +323,30 @@ function depthBalanced(t) {
     return depth === 0;
 }
 
+/** An interface's members, its bases' first so its own override them — `interface A extends B` is B's shape
+ *  plus A's, and a consumer generating from this must see all of it. Transitive, and a missing base is refused
+ *  rather than quietly dropped, for the same reason an unknown type is. */
+function membersOf(name, iface, ctx, seen = new Set()) {
+    if (seen.has(name)) return [];                       // a cycle: already counted
+    seen.add(name);
+    const out = [];
+    for (const base of iface.bases || []) {
+        const b = ctx.ifaces.get(base);
+        if (!b) throw new Error(`gen-export-schema: ${name} extends \`${base}\`, which is not in the resolved sources — publishing it would describe less than it claims`);
+        out.push(...membersOf(base, b, ctx, seen));
+    }
+    for (const m of iface.members) {
+        const at = out.findIndex((x) => x.name === m.name);
+        if (at >= 0) out[at] = m; else out.push(m);
+    }
+    return out;
+}
+
 /** One interface → a JSON Schema object node. */
 function interfaceToSchema(name, iface, ctx) {
     const properties = {};
     const required = [];
-    for (const m of iface.members) {
+    for (const m of membersOf(name, iface, ctx)) {
         const node = typeToSchema(m.type, ctx);
         properties[m.name] = m.doc ? { description: m.doc, ...node } : node;
         if (!m.optional) required.push(m.name);
@@ -367,6 +394,18 @@ export const SCHEMAS = [
         blurb: 'The payload of the `dev.wander.windowml/timing` key on an MCP tools/call result',
     },
     {
+        // The execution log, as the panel's download writes it: the mechanics under one run (src/run-log.ts).
+        // `subsystem` and `kind` are OPEN STRINGS with the known values as examples, never a closed enum — a new
+        // mechanism adds its own, and a consumer generated from a closed enum would break the day one does.
+        key: "run-log",
+        source: "src/run-log.ts",
+        root: "RunLogDocument",
+        out: "docs/spec/run-log.schema.json",
+        title: "window.ml execution log export",
+        versionConst: "RUN_LOG_SCHEMA_VERSION",
+        blurb: "What the machinery did underneath one agent run",
+    },
+    {
         key: "tool-protocol",
         source: "src/tool-protocol.ts",
         root: "ToolFrame",
@@ -393,13 +432,13 @@ const MAX_CONTRACT_MODULES = 48;
  * Breadth-first and nearest-first because the caller resolves a name once: a declaration in contract.ts itself
  * must win over one in something it imports, and this order is what makes "first wins" mean "nearest wins".
  */
-function contractModules() {
+function modulesFrom(startRel) {
     const resolve = (from, spec) => {
         const base = join(dirname(from), spec);
         for (const c of [`${base}.ts`, `${base}.tsx`, join(base, "index.ts")]) if (existsSync(c)) return c;
         return null;
     };
-    const start = join(ROOT, "src/contract.ts");
+    const start = join(ROOT, startRel);
     const seen = new Set([start]);
     const queue = [start];
     const out = [];
@@ -437,7 +476,11 @@ export function buildSchema(key = "export") {
     // generator matched any capitalised word against what it knew, so a wider `known` would have pulled unrelated
     // declarations into the output. This one WALKS FROM A ROOT — nothing reaches `$defs` unless the root actually
     // references it — so an extra interface in the map costs nothing and cannot appear in the document.
-    const reached = contractModules();
+    // contract.ts's modules, then the NORMATIVE FILE's own — a schema source may extend or reference a type
+    // that lives beside it rather than in the contract (the execution log's record is a housekeeping event plus
+    // a `run`). Second, so a name contract.ts also declares still wins; the walk is from a root, so an interface
+    // nothing references cannot reach the document.
+    const reached = [...modulesFrom("src/contract.ts"), ...modulesFrom(spec.source)];
     const contract = new Map();
     const aliases = new Map();
     const unstableSrc = [contractSrc, schemaSrc];

@@ -13,7 +13,7 @@ import { OutputCell, TimedOutput } from "./render-panel";
 import { housekeepingText, subsystemCounts } from "./housekeeping-log";
 import { downloadBlob } from "./download";
 import { exportSessionJson } from "./export";
-import { RUN_LOG_KEY, type RunLogEvent } from "../run-log";
+import { RUN_LOG_KEY, runLogDocument, type RunLogEvent } from "../run-log";
 import type { RunLogDump } from "../sw-run-log";
 
 /**
@@ -60,9 +60,10 @@ export function RunLogView({ run }: { run: string | null }) {
     const toggle = (s: string) => setHidden((h) => { const n = new Set(h); if (n.has(s)) n.delete(s); else n.add(s); return n; });
     const clear = () => chrome.runtime.sendMessage({ type: "DUMP_RUN_LOG", payload: { ...(run ? { run } : {}), clear: true } }, () => { void chrome.runtime.lastError; });
     // The RECORDS, not the rendered lines: they are structured for the same reason they are stored that way, and
-    // a consumer of the rendered text would be parsing a layout.
+    // a consumer of the rendered text would be parsing a layout. Published shape, so it carries its version and
+    // which run it is of: docs/spec/run-log.schema.json.
     const download = () => downloadBlob(`ml-run-log-${run || "all"}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`,
-        new Blob([JSON.stringify(all, null, 1)], { type: "application/json" }));
+        new Blob([JSON.stringify(runLogDocument(all, run), null, 1)], { type: "application/json" }));
     const elsewhere = (dump?.runs || []).filter((r) => r.run !== run);
 
     return (

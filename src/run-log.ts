@@ -96,6 +96,39 @@ export function runsInLog(records: readonly RunLogEvent[]): { run: string; count
     return [...by.values()].sort((a, b) => b.last - a.last);
 }
 
+/**
+ * The version of the EXPORT DOCUMENT below, not of the records. Additive changes are free — a new `subsystem`,
+ * a new `kind`, a new `detail` key — because both are open by intent and a consumer that fails on one would
+ * break the day any new mechanism reports. It moves only when a field that was there changes meaning or goes.
+ */
+export const RUN_LOG_SCHEMA_VERSION = 1;
+
+/**
+ * One run's mechanics as a FILE, which is what the panel's download writes. A bare array was the obvious thing
+ * and is the wrong one: it carries no version, nothing saying which run it is of, and nothing saying when it was
+ * taken — all three of which a file read six months later needs and a panel does not.
+ *
+ * Normative shape, published as `docs/spec/run-log.schema.json` (generated from here; see scripts/gen-export-schema.mjs).
+ */
+export interface RunLogDocument {
+    schemaVersion: number;
+    /** When this was exported, ISO 8601. */
+    exportedAt: string;
+    /** The run it is of — absent when the whole ring was exported rather than one run's records. */
+    run?: string;
+    records: RunLogEvent[];
+}
+
+/** The records as the published document. Pure, so the shape is tested without a panel around it. */
+export function runLogDocument(records: readonly RunLogEvent[], run?: string | null, now: number = Date.now()): RunLogDocument {
+    return {
+        schemaVersion: RUN_LOG_SCHEMA_VERSION,
+        exportedAt: new Date(now).toISOString(),
+        ...(run ? { run } : {}),
+        records: [...records],
+    };
+}
+
 /** The service worker's execution log: one ring over every run's mechanics, written in batches. */
 export class RunLog extends StorageRing<RunLogEvent> {
     constructor(area: SessionArea, now: () => number = Date.now) {

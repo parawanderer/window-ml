@@ -2,7 +2,7 @@
 // watching a sleeping tab cannot push every other run's mechanics out of the ring.
 import { test } from "node:test";
 import assert from "node:assert";
-import { RunLog, sanitizeRunReport, trimRunRing, eventsForRun, runsInLog, RUN_LOG_KEY, RUN_LOG_CAP, PER_RUN_CAP } from "../src/run-log.ts";
+import { RunLog, sanitizeRunReport, trimRunRing, eventsForRun, runsInLog, runLogDocument, RUN_LOG_KEY, RUN_LOG_CAP, PER_RUN_CAP, RUN_LOG_SCHEMA_VERSION } from "../src/run-log.ts";
 
 function area(seed = {}) {
     const store = { ...seed };
@@ -119,6 +119,14 @@ test("the ring outlives the log object, which is what surviving an evicted worke
     const next = new RunLog(a, () => 2);
     next.record("aaa1", { subsystem: "page", kind: "unreachable", reason: "asleep" });
     assert.deepEqual((await next.all()).map((e) => e.kind), ["silent", "unreachable"]);
+});
+
+test("the export is a document, not a bare array: it says which run, when, and by which schema", () => {
+    const rs = [rec("aaa1"), rec("bbb2")];
+    assert.deepEqual(runLogDocument(rs, "aaa1", 1_700_000_000_000),
+        { schemaVersion: RUN_LOG_SCHEMA_VERSION, exportedAt: "2023-11-14T22:13:20.000Z", run: "aaa1", records: rs });
+    // The whole ring has no one run to name, and a `run` of null or "" would read as a run called that.
+    assert.equal("run" in runLogDocument(rs, null, 1), false);
 });
 
 // --- the names the emitters use: a generator judged by a rule, enumerated rather than sampled ---

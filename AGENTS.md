@@ -252,6 +252,7 @@ learned by shipping the wrong version first.
 | the Markdown/PDF export, the JSON export and its schema | `docs/dev/export.md` |
 | `ml.fetch` Markdown negotiation, protobuf streaming, the live token count, sources/reasoning plumbing | `docs/dev/wire-and-fetch.md` |
 | the housekeeping log (`ml.__housekeeping()`), or anything that evicts, sweeps or restarts on its own | `docs/dev/housekeeping.md` (+ `docs/spec/HOUSEKEEPING_LOG.md`) |
+| the execution log: what the machinery did UNDER a run (a discarded tab, a refused CDP attach), and its panel | `docs/dev/run-log.md` (+ `docs/spec/run-log.schema.json`) |
 | the resource panel (VRAM/RAM) and the event lane | `docs/dev/resource-panel.md` (+ `docs/spec/RESOURCE_PANEL.md`) |
 | the overlay vs DevTools surfaces, `debugMode`, shared UI components | `docs/dev/sidebar.md` |
 | the chat page (`src/chat/`): the client store, hosts, stream rules, the web build | `docs/dev/chat-page.md` (+ `docs/spec/CHAT_PAGE.md`, `docs/spec/SESSION_CONTRACT.md`) |
@@ -323,6 +324,14 @@ learned by shipping the wrong version first.
   released when it ends. And a tab can come back under a NEW id: `chrome.tabs.onReplaced` is the only notice, since
   no navigation commits and nothing is removed, so everything keyed by tab is re-filed there or the run is orphaned
   under an id nothing will send again.
+- **The execution log is the OTHER half of that trap, and it is NOT the housekeeping log.** What the machinery did
+  under a run — the discarded tab reloaded, the CDP attach refused, the tab re-filed under a new id — goes to
+  `run-log.ts`, whose scope is per-RUN mechanics; the housekeeping log's own spec excludes "anything a user or
+  model action caused directly", and a CDP attach is caused by a tool call. It REUSES that log's record shape plus
+  a `run` and its sanitizer, so one renderer draws both. Two things bite: `sanitizeRunReport` SILENTLY DROPS a
+  record whose `subsystem`/`kind` is not a lowercase slug (right in production, invisible in development — a tool
+  name is never a `reason`, it goes in `detail.tool`), and `detail.tab` is which tab a record is ABOUT, while the
+  event's own `tab` means who REPORTED it. Never a line per probe: the transcript already shows what a step cost.
 - **Hub client.** A hub is trusted with nothing, including who sent something: what a runtime acts on is the signature
   inside the seal, never `Envelope.sender`. The checks in `seal.ts` are in a deliberate order and the nonce is last, so
   only an authenticated command inside its clock window can fill the replay window. Bytes reaching WebCrypto are
@@ -846,6 +855,10 @@ thing. The parts:
   `stream-demo`, `bench-editor-demo`, `bench-completion-demo`, `pairing-demo` (the named grants and their switches,
   the one device that refreshes its pairing rather than renewing, and an account with nobody left to sign a removal;
   serves `dist-web/`, so it needs no extension),
+  `run-log-demo` (the EXECUTION LOG panel, with the measured failure staged: a run whose delegated call is
+  outstanding when its tab is discarded, then reloaded in place and retried — and a trap, measured: a real
+  `chrome.tabs.discard` DESTROYS the target and takes Playwright's connection to the WHOLE browser with it, so a
+  spec cannot stage one and this demo patches Chrome's own `discarded` flag once instead),
   `touch-tips-demo` (reading a tooltip with no pointer, on a PHONE context — and a trap for the next demo author:
   a synthetic hover cannot be held in a HEADFUL window, because the real cursor is elsewhere and Chromium corrects
   the pointer straight back out; it holds fine headless, which is why a spec can assert one and a watched demo

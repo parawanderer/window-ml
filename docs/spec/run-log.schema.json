@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/parawanderer/window-ml/main/docs/spec/run-log.schema.json",
+  "title": "window.ml execution log export",
+  "description": "One run's mechanics as a FILE, which is what the panel's download writes. A bare array was the obvious thing and is the wrong one: it carries no version, nothing saying which run it is of, and nothing saying when it was taken — all three of which a file read six months later needs and a panel does not. Normative shape, published as `docs/spec/run-log.schema.json` (generated from here; see scripts/gen-export-schema.mjs).",
+  "x-schemaVersion": 1,
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "number"
+    },
+    "exportedAt": {
+      "description": "When this was exported, ISO 8601.",
+      "type": "string"
+    },
+    "run": {
+      "description": "The run it is of — absent when the whole ring was exported rather than one run's records.",
+      "type": "string"
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RunLogEvent"
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "exportedAt",
+    "records"
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "RunLogEvent": {
+      "type": "object",
+      "description": "One thing the machinery did on a run's behalf. A housekeeping event plus WHOSE run it was, since the whole point is reading one run's mechanics beside its steps. `subsystem` and `kind` are open by intent, exactly as they are there: a new mechanism adds its own rather than extending an enum every consumer generated from.",
+      "properties": {
+        "t": {
+          "description": "Epoch ms.",
+          "type": "number"
+        },
+        "subsystem": {
+          "description": "`\"sw\"`, `\"offscreen\"`, `\"pyodide\"`, `\"fetch-cache\"`, `\"value-store\"`, `\"grants\"`, `\"quota\"`, `\"log\"`, …",
+          "type": "string"
+        },
+        "kind": {
+          "description": "`\"start\"`, `\"evicted-inferred\"`, `\"evict\"`, `\"sweep\"`, `\"prewarm\"`, `\"cold-start\"`, `\"kill\"`, `\"clear\"`, …",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why: `\"budget\"`, `\"idle\"`, `\"timeout\"`, `\"session-end\"`, … — what tells a budget eviction from an idle one.",
+          "type": "string"
+        },
+        "key": {
+          "description": "What it acted on: a URL, a pointer id, a session hash. Withheld from a page reading events it did not report.",
+          "type": "string"
+        },
+        "bytes": {
+          "description": "What it freed or cost.",
+          "type": "number"
+        },
+        "ms": {
+          "description": "How long it took.",
+          "type": "number"
+        },
+        "origin": {
+          "type": "string",
+          "enum": [
+            "worker",
+            "offscreen",
+            "extension",
+            "page"
+          ]
+        },
+        "tab": {
+          "description": "The reporting tab, for `origin: \"page\"` — how a page's own events are told from another tab's.",
+          "type": "number"
+        },
+        "detail": {
+          "description": "Anything else, small and flat. Withheld from a page reading events it did not report.",
+          "type": "object",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          }
+        },
+        "run": {
+          "description": "The run's id, which is its session hash (`runId: runHash`, ml-agent-run.ts).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "t",
+        "subsystem",
+        "kind",
+        "origin",
+        "run"
+      ],
+      "additionalProperties": true
+    }
+  }
+}

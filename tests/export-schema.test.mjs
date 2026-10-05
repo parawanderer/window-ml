@@ -13,7 +13,7 @@ import assert from "node:assert";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { buildSchema } from "../scripts/gen-export-schema.mjs";
+import { buildSchema, SCHEMAS } from "../scripts/gen-export-schema.mjs";
 const { sessionToJson } = await import("../src/sidebar/export-json.ts");
 const { schemaUrl } = await import("../src/export-schema.ts");
 import { validate } from "./helpers-validate.mjs";
@@ -145,4 +145,48 @@ test("$schema is still emitted for a DIRTY build — best effort, flagged beside
     const doc = sessionToJson(agentSession(), { build: { repoUrl: "https://github.com/o/r", commit: "c".repeat(40), dirty: true } });
     assert.ok(doc.$schema.includes("c".repeat(40)));
     assert.equal(doc.generator.build.dirty, true);
+});
+
+// --- every published schema, including the ones added after this was written ---
+
+test("EVERY checked-in schema is what the generator produces, not just the ones someone listed", () => {
+    // Iterated rather than listed: the generator is table-driven, and a document whose freshness check was
+    // forgotten is a published spec that drifts silently — which is the one failure it exists to prevent.
+    for (const spec of SCHEMAS) {
+        const onDisk = JSON.parse(readFileSync(new URL(`../${spec.out}`, import.meta.url), "utf8"));
+        assert.deepEqual(onDisk, buildSchema(spec.key), `${spec.out} is stale — run \`node scripts/gen-export-schema.mjs\``);
+    }
+});
+
+test("an interface's BASE members are published too: `extends` used to be matched and thrown away", () => {
+    const ev = buildSchema("run-log").$defs.RunLogEvent;
+    // `run` is RunLogEvent's own; everything else comes from the HousekeepingEvent it extends, and a schema
+    // describing only `run` would look complete and describe almost nothing.
+    for (const k of ["t", "subsystem", "kind", "reason", "key", "bytes", "ms", "origin", "tab", "detail", "run"])
+        assert.ok(ev.properties[k], `RunLogEvent.${k}`);
+    assert.deepEqual(ev.required.sort(), ["kind", "origin", "run", "subsystem", "t"]);
+});
+
+test("a generic's own `|` is not a union boundary: `Record<string, string | number | boolean>` survives", () => {
+    const detail = buildSchema("run-log").$defs.RunLogEvent.properties.detail;
+    assert.equal(detail.type, "object");
+    assert.deepEqual(detail.additionalProperties.anyOf.map((x) => x.type), ["string", "number", "boolean"]);
+});
+
+test("the log's open registries stay open: a new subsystem or kind must not fail an old consumer", () => {
+    const ev = buildSchema("run-log").$defs.RunLogEvent;
+    for (const k of ["subsystem", "kind", "reason"]) {
+        assert.equal(ev.properties[k].type, "string");
+        assert.equal(ev.properties[k].enum, undefined, `${k} must not be a closed enum`);
+    }
+});
+
+test("a real execution-log export validates", async () => {
+    const { runLogDocument } = await import("../src/run-log.ts");
+    const doc = runLogDocument([
+        { t: 1_700_000_000_000, run: "abc123", subsystem: "tab", kind: "pinned", reason: "hosting", origin: "worker", detail: { tab: 7 } },
+        { t: 1_700_000_004_000, run: "abc123", subsystem: "page", kind: "discarded", ms: 4000, origin: "worker", detail: { tab: 7, tool: "wait" } },
+    ], "abc123", 1_700_000_010_000);
+    assert.equal(doc.exportedAt, "2023-11-14T22:13:30.000Z");
+    assert.deepEqual(validate(doc, buildSchema("run-log")), []);
 });
