@@ -14,18 +14,25 @@
 // model-facing view may be quiet but never UNAVAILABLE (AGENTS.md §Showing a run).
 import { signal } from "@preact/signals";
 import { IconBrain, IconMenu } from "../sidebar/icons";
-import { focusMode } from "../sidebar/store";
+import { focusMode, groupAllTools } from "../sidebar/store";
 import type { PlatformPrefs } from "./platform";
 import { CODE_DEFAULT, CODE_SIZES } from "../native/text-size";
 
 /** Preference keys, under the platform's own namespace. */
-export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", PINNED_MODELS_KEY = "view.pinnedModels", CODE_KEY = "view.codeSize", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups", THEME_KEY = "view.theme";
+export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", PINNED_MODELS_KEY = "view.pinnedModels", CODE_KEY = "view.codeSize", GROUP_ALL_KEY = "view.groupAll", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups", THEME_KEY = "view.theme";
 
 /** Is the page in calm view? Read it in a render to re-render when it changes. */
 export const calm = signal(true);
 
 /** Is the session list pane open? Only a wide layout asks: a phone shows one pane at a time either way. */
 export const listOpen = signal(true);
+
+/** Fold EVERY run of tool calls into one row, not only a run of the same tool. Off by default — the ordinary rule
+ *  is what someone who has not asked should get. Mirrored onto the shared signal the session views read. */
+export function setGroupAll(on: boolean): void {
+    groupAllTools.value = on;
+    store?.set(GROUP_ALL_KEY, on);
+}
 
 /**
  * What the pane on the RIGHT is showing, if anything.
@@ -143,6 +150,8 @@ export function installViewPrefs(prefs: PlatformPrefs): void {
     const l = prefs.get<boolean>(LIST_KEY);
     calm.value = typeof c === "boolean" ? c : true;
     listOpen.value = typeof l === "boolean" ? l : true;
+    const ga = prefs.get<boolean>(GROUP_ALL_KEY);
+    groupAllTools.value = ga === true;
     const pn = prefs.get<string>(PANE_KEY);
     pane.value = pn === "resource" ? pn : null;
     const f = prefs.get<string[]>(FOLDED_KEY);

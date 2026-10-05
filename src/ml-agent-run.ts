@@ -28,7 +28,7 @@ import { type MlApi, type MlTool, type ApprovalRequest, type ApprovalDecision, t
 import { setPierceClosedShadow, externalSheetIds, isCurrentPage, elLine, errText } from "./dom";
 import { type AgentControl, columnsViaBackground, sameOriginNav, sameOriginFetch } from "./ml-agent";
 import { expandPointers } from "./pointer-macro";
-import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_CLOSED_NOTE, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE } from "./prompts";
+import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_CLOSED_NOTE, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE } from "./prompts";
 import { evalReadonly } from "./readonly-exec";
 import { descriptorFor } from "./render-descriptor";
 import { parseInfo } from "./resource-capacity";
@@ -36,7 +36,7 @@ import { registerRun, endRun, runAnswer } from "./run-delegation";
 import { isSelfSourceUrl } from "./self-source";
 import { TokenStore } from "./token-pipe";
 import { toolContext, executeTool, withRunDeref } from "./tool-exec";
-import { citeParam } from "./tool-params";
+import { citeParam, withCallTitle } from "./tool-params";
 import { buildDereferenceTool } from "./tools";
 import { pageContext } from "./util";
 import { validateArgs } from "./validate";
@@ -321,6 +321,12 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
                 token: citeParam("the pricing table") } } }
             : t);
     }
+    // THE MODEL'S OWN ACCOUNT of each call, offered on every tool. Injected into the TOOLSET and not only into
+    // the model-facing `toolDefs`, which matters in three places at once: the background run's descriptors are
+    // built from the toolset too (so one injection covers both loops), and both the loop's `validateArgs` and the
+    // panel's argument-issue strip read `tool.parameters` — against which an unannounced `title` would read as an
+    // unknown property and put a ⚠ on every call that used it.
+    toolset = toolset.map(t => ({ ...t, parameters: withCallTitle(t.parameters) }));
     const byName = Object.fromEntries(toolset.map(t => [t.name, t]));
     const toolDefs = toolset.map(t => ({
         type: "function",
@@ -330,6 +336,7 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
     let systemPrompt = system || AGENT_SYSTEM;
     if (!system) {
         // Adapt the default prompt to what the toolset can actually do.
+        systemPrompt += CALL_TITLE_CLAUSE;   // every tool carries the param, so the instruction is unconditional
         if (hasCap("vision")) systemPrompt += VISION_CLAUSE;
         if (hasCap("answer")) systemPrompt += ANSWER_CLAUSE;
         if (toolTokens) systemPrompt += TOOLTOKENS_CLAUSE + DEREF_CLAUSE;   // rich results carry an @tool: id — to cite verbatim, and to read back

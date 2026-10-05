@@ -403,6 +403,33 @@ test("agent-step: an arg-schema mismatch shows the warning count + the red strip
 
 // --- the step box itself: the thought, the thinking block, and what is not a step ------------------------
 
+test("a step's dot says WHEN and HOW LONG under its status, not just whether it worked", async () => {
+    // Both facts were already on the step — the stamp in the gutter, the duration inside the Out block — which is
+    // to say behind a scroll and behind a disclosure, while the dot is what the eye is on when the question is
+    // asked. `toolMs` and NOT the step's own clock: a step's time is mostly a human standing at an approval gate.
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("dt", "time it"));
+    await w.dispatch(agentStep("dt", 1, { seq: 1, tool: "exec", result: "ok", toolMs: 1400, ts: Date.UTC(2026, 0, 2, 14, 3, 7) }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const tip = w.shadow.querySelector(".astep.tool .astep-head .tt-pop");
+    assert.match(tip.textContent, /Completed successfully/, "the status sentence is still the first thing");
+    const when = tip.querySelector(".dot-when");
+    assert.ok(when, "…and the figures sit under it, in their own section");
+    assert.match(when.textContent, /\d\d:\d\d:\d\d/, "a wall-clock time");
+    assert.match(when.textContent, /1\.4s/, "and the tool's own duration");
+});
+
+test("a dot with nothing to time carries no empty rule under its sentence", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("dt2", "no times"));
+    await w.dispatch(agentStep("dt2", 1, { seq: 1, thought: "Just thinking." }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    // A session row's dot is a STATE, not an event: it has no duration and must not grow a separator for one.
+    assert.equal(w.shadow.querySelector(".dot-when"), null);
+});
+
 test("turn prose: a SHORT one-line thought has NO misleading collapse chevron; a LONG one keeps it", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("tp", "do it"));

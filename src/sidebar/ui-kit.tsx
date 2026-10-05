@@ -11,6 +11,7 @@ import { HASH_SHOWN } from "../contract-run";
 import type { Status, AgentStep } from "./store";
 import { codeLineNumbers } from "./store";
 import { beautifyJs, highlight, htmlLines, shortStamp, fullStamp, pretty, truncate, mdInline } from "./format";
+import { hhmmss, fmtDur } from "./timestamps";
 import { lineMapBetween } from "../line-map";
 import { services } from "./services";
 import { useTipPlacement } from "./use-tip";
@@ -25,11 +26,29 @@ export const DOT_TIP: Record<Status, string> = {
 /** A status DOT — pending / ok / err — with the tooltip that says which. The one status indicator: a
  *  session row, a step header and a model's residency all use it, so the three cannot drift into three
  *  colours meaning the same thing. `warn` is for a run that stopped short without failing (its step cap, a cancel):
- *  amber, and the sentence given is its tooltip, since "Failed" would be wrong about it. */
-export const Dot = ({ status, warn }: { status: Status; warn?: string }) => (
+ *  amber, and the sentence given is its tooltip, since "Failed" would be wrong about it.
+ *
+ *  WHEN AND HOW LONG, under a rule, for a dot that marks an EVENT rather than a state. The status alone answers
+ *  "did it work"; standing on a row in a long transcript the next two questions are always "when was this" and
+ *  "what did it cost", and both were already on the step — the stamp in the gutter, the duration inside the Out
+ *  block — which is to say behind a scroll and behind a disclosure. The dot is the thing the eye is already on.
+ *  Same shape as the event lane's tip: the sentence, then a rule, then the figures. A row that is a STATE (a
+ *  session's dot, a model's residency) passes neither and is unchanged. */
+export const Dot = ({ status, warn, ts, ms }: {
+    status: Status; warn?: string;
+    /** when this happened, as wall clock */
+    ts?: number;
+    /** how long it took — the tool's own clock, not the step's (a step's time includes a human at a gate) */
+    ms?: number;
+}) => (
     <span class="tt">
         <span class={`dot ${warn ? "warn" : status}`} />
-        <span class="tt-pop left" role="tooltip">{warn ?? DOT_TIP[status]}</span>
+        <span class="tt-pop left" role="tooltip">
+            {warn ?? DOT_TIP[status]}
+            {ts != null || ms != null
+                ? <span class="dot-when">{ts != null ? hhmmss(ts) : null}{ts != null && ms != null ? " · " : null}{ms != null ? <b>{fmtDur(ms)}</b> : null}</span>
+                : null}
+        </span>
     </span>
 );
 

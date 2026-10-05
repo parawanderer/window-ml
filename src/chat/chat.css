@@ -816,6 +816,27 @@ button.chat-page-go:hover { color: var(--fg); }
    the component reads it and waits, and a surface that sets nothing closes in the same tick it always has. */
 .chat.calm .astep-body { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); --astep-close-ms: 200; }
 .chat.calm .astep-body.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; }
+/* A TURN ARRIVING IS THE LOG MOVING, so it looks like it. A new turn appearing at full height in one frame is a
+   developer-tooling cut: everything under it jumps and the reader loses the line they were on. It drifts up and
+   fades in instead — deliberately FASTER than the disclosures (180ms against 220), because this one is not a
+   gesture anybody made, it is the page getting on with itself, and anything slower is in the way.
+   `.fresh` is only set on a turn that landed while the reader was watching (just-arrived.ts); without that test
+   the same rule runs over every item of a transcript somebody merely opened. */
+.chat.calm .aturn.fresh { animation: chat-turn-in .18s cubic-bezier(.4, 0, .2, 1); }
+@keyframes chat-turn-in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .chat.calm .aturn.fresh { animation: none; } }
+
+/* THE GRANT CARD IS NOT A WARNING HERE. In the panel it is a warm card because it establishes a session-long
+   consent, and the panel is a debugging surface where an amber block reads as one more marked thing among many. In
+   the reading view it is the only coloured block on a quiet page, so it took the eye first — ahead of the sentence
+   saying what is actually being approved, which is the thing to read. It keeps its outline and its glyph, because
+   the glyph is what says this one is different from an ordinary approval; it loses the fill and the amber border.
+   The ⚠ stays `--warn`: one small mark is the right amount of alarm for "this will go on applying". */
+.chat.calm .appr-grant {
+    background: color-mix(in srgb, var(--fg) 4%, transparent);
+    border-color: var(--border);
+}
+
 /* THE GATE CARD GOES THE SAME WAY as the body under it. It is the largest thing on a step and the thing you were
    reading, so blinking it out on the click left you looking for where the call went. Inert while it leaves —
    a card mid-exit is not a control, and a second click on it would decide an answered gate. */
@@ -1142,6 +1163,13 @@ button.chat-page-go:hover { color: var(--fg); }
 /* The gear's menu rises from the gear, with room for its longer rows. */
 .chat-gear { position: relative; }
 .chat-gear-menu { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 40; min-width: 240px; transform-origin: bottom left; }
+/* AND NEVER WIDER THAN THE COLUMN IT RISES IN. `.chat-list` clips, and has to: the pane slides out from under the
+   page and its rows must not be seen leaving. So a menu that outgrows the list does not merely look untidy — its
+   right-hand side is simply gone, and that is the side the tick is on, which is the one thing a toggle row has to
+   show. The rows give instead: a trailing value ellipsizes, and `aria-label` already carries it whole. */
+.chat-list-foot .chat-gear-menu { max-width: calc(var(--list-w) - 20px); }
+.chat-menu-item { min-width: 0; }
+.chat-menu-val { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* On a PHONE the gear is in the list's top bar, not its foot, so its menu drops DOWN from it: rising, it opened above
    the top of the screen and nothing of it could be seen. */
 .chat.narrow .chat-list .head .chat-gear-menu { top: calc(100% + 8px); bottom: auto; left: auto; right: 0; transform-origin: top right; max-width: calc(100vw - 16px); }
@@ -1679,3 +1707,91 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-bs-choices .btn svg { flex: 0 0 auto; color: var(--fg-dim); }
 /* The "or type one" row: the dialog's own field (`.chat-dialog-field`) under a label saying what it is for. */
 .chat-bs-field { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; font-size: .92em; color: var(--fg-dim); }
+
+/* A FOLDED RUN OF THE SAME TOOL. Eight `exec` rows with empty previews say "exec" eight times; this says what they
+   could not — how many, how many failed, how long. Reading view only: the panel is the developer's whole trace.
+   The fold happens once the streak has ENDED, so the entrance is a thing arriving rather than rows vanishing
+   under a reader. Design: tmp/design-tool-streaks.md. */
+/* NO ENTRANCE ANIMATION. It was written for a streak arriving in a transcript, and that case turned out not to
+   exist: a fold the reader WATCHED now collapses from the rows it replaced (`.refolding`), which is the motion
+   that actually describes what happened, and a fold drawn into a transcript somebody opened should simply be
+   there. What was left fired only in the second case — the one it is wrong for. */
+.astreak { margin: 3px 0; --astep-close-ms: 200; }
+/* …and inside an OPEN one, each row may say what the model said it was for. See `.astep-said`: this is the one
+   place it is drawn, because expanding a group is the gesture that means "I am investigating what happened". */
+.chat.calm .astreak.open .astep-said { display: inline-block; max-width: 46ch; vertical-align: bottom; }
+
+/* THE ROW SITS WHERE THE TURNS DO. Its text begins on the transcript's own left edge — the line `thinking` and a
+   turn's prose start from — so a folded run reads as one more thing in the column rather than as a control
+   indented out of it. The chevron hangs in the MARGIN beside it, absolutely placed so it cannot push the row's
+   text out of line on a narrow screen, which is what a flex child would do. */
+.astreak-head {
+    position: relative;
+    display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 6px 5px 0;
+    background: none; border: none; border-radius: 8px; color: var(--fg-dim); font: inherit; cursor: pointer; text-align: left;
+}
+.astreak-head:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+/* QUIET UNTIL IT IS WANTED. A folded run is a thing to READ past, and a chevron standing permanently beside every
+   one of them is a column of controls down a page whose whole point is to have less on it. It fades in on hover —
+   and on keyboard focus, which is the half that is easy to leave out and the only way a non-pointer user finds it.
+   It also stays up whenever the group is OPEN: the control that closes it must not be the one you have to guess at.
+   On a COARSE pointer there is no hover to reveal anything, so it is simply always there. */
+.astreak-head .tri {
+    position: absolute; left: -18px; top: 50%; flex: none; width: 12px; height: 12px;
+    opacity: 0; transform: translateY(-50%); transition: opacity .15s ease, transform .12s;
+}
+.astreak-head .tri svg { width: 12px; height: 12px; }
+.astreak-head .tri.open { transform: translateY(-50%) rotate(90deg); }
+.astreak:hover .tri, .astreak.open .tri, .astreak-head:focus-visible .tri { opacity: 1; }
+@media (pointer: coarse) { .astreak-head .tri { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .astreak-head .tri { transition: none; } }
+/* The tool's NAME in the same mono the step rows use, so a folded run reads as the rows it replaced. */
+.astreak-tool { font-family: var(--mono, ui-monospace, monospace); font-weight: 700; color: var(--fg); }
+.astreak-n { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+/* SEVERAL TOOLS cannot name themselves in the mono slot, so the count leads and the names follow it. The count is
+   the brighter of the two: "how much work is behind this row" is the question the row is answering. */
+.astreak-calls { color: var(--fg); font-weight: 600; }
+.astreak-tools { color: var(--fg-faint); font-family: var(--mono, ui-monospace, monospace); font-size: .88em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* STILL GROWING. In "group all" the newest call joins a row that is already closed, so without a word here the
+   only sign of a run in progress is a number changing. Same breathing the live step rail uses, not a new one. */
+.astreak-live { color: var(--fg-dim); font-size: .88em; font-style: italic; margin-left: auto;
+    animation: astreak-breathe 1.8s ease-in-out infinite; }
+/* Its OWN curve rather than `livepulse`, which falls to .25 — right for a dot, and for a word it reads as text
+   flickering out. This is a view whose whole point is to be quiet. */
+@keyframes astreak-breathe { 50% { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) { .astreak-live { animation: none; } }
+/* THE ONE THING WORTH COLOURING. In the run this was built for, two calls in the stretch were errors and that was
+   the only signal in it; everything else here is grey on purpose so this is what the eye finds. */
+.astreak-bad { color: var(--err); font-size: .88em; }
+.astreak-ms { color: var(--fg-faint); font-size: .88em; font-style: italic; margin-left: auto; }
+.astreak.open > .astreak-head { margin-bottom: 4px; }
+/* WHICH ROWS BELONG TO THE GROUP. Open, the members are turns in the transcript again, at the same indent as the
+   turns above and below the streak — so the only thing marking where the group ended was the gap before the next
+   one, which is nothing. A rail down the left is the ordinary way to say "these are inside that", and it descends
+   from the chevron that opened them.
+   DARK rather than accented: membership is structure, not status, and the steps inside carry their own colours — a
+   failed call's red dot, a gate's amber rail — that a coloured bracket would compete with for the same meaning. */
+.astreak-body { position: relative; margin-left: -12px; padding-left: 13px; }
+/* The line itself is drawn by a ::before so the BUTTON can be wider than it: the thing you aim at is the gutter,
+   and the thing you see is a hairline. It brightens on hover, which is the only way a rail says it is a control. */
+.astreak-rail {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 11px;
+    margin: 0; padding: 0; border: none; background: none; appearance: none; cursor: pointer;
+}
+.astreak-rail::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; border-radius: 1px;
+    background: color-mix(in srgb, var(--fg) 12%, transparent); transition: background .15s ease;
+}
+.astreak-rail:hover::before { background: color-mix(in srgb, var(--fg) 32%, transparent); }
+@media (prefers-reduced-motion: reduce) { .astreak-rail::before { transition: none; } }
+/* NOT A TAP TARGET. It duplicates the header, which is full width, and an 11px strip running down the side of the
+   content is a mis-tap rather than an affordance on a phone. The line stays; only the click goes. */
+@media (pointer: coarse) { .astreak-rail { pointer-events: none; } }
+/* …and it opens and shuts on the same keyframes as a step body, through the same `--astep-close-ms` handshake. */
+.astreak-body { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); }
+.astreak-body.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; }
+@media (prefers-reduced-motion: reduce) {
+    .astreak { --astep-close-ms: 0; }
+    .astreak-body, .astreak-body.closing { animation: none; }
+}

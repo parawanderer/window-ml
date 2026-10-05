@@ -13,9 +13,9 @@ import type { DebugAgentConfig } from "../contract-debug";
 import { resolveOutputCap } from "../contract-pointers";
 import { runStats, fmtTokPerSec, runStatsProvenance } from "../contract-chat";
 import { externalSheetIds } from "../dom";
-import { surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, showStatsTps, laneLitSeqs, focusMode } from "./store";
+import { surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, showStatsTps, laneLitSeqs, focusMode, groupAllTools } from "./store";
 import type { Session, AgentStep, Status } from "./store";
-import { pretty, truncate, markdown, collapsedPreview } from "./format";
+import { pretty, truncate, markdown, collapsedPreview, toolFailed } from "./format";
 import { sessionProfile } from "./model";
 import { Dialog } from "./dialog";
 import { useCloseAnimation } from "./use-close";
@@ -27,6 +27,9 @@ import {
     decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText, cursorTipOn, PointerChip, TipText,
 } from "./ui-kit";
 import { FeedbackBlock, ReusedBlock } from "./answer-render";
+import { foldStreaks, StepStreak } from "./step-streak";
+import { CALL_TITLE } from "../tool-params";
+import { justArrived } from "./just-arrived";
 import { deepestUserLine } from "../py-format";
 import { JsonNode, type JsonSchemaNode } from "./json-tree";
 export { JsonNode, JtKey, jtPreview, type JsonSchemaNode } from "./json-tree";
@@ -150,10 +153,6 @@ export function liveCutoff(st: AgentStep): number | undefined {
     return resolveOutputCap(st.tool, a.maxChars, a.maxCharsReason).cap;
 }
 
-/** Did this tool call FAIL, read off the model-facing result text. Biased toward "failed": a false
- *  positive withholds a citation token, a false negative would cite an ERROR as an answer. */
-export const toolFailed = (result?: string): boolean => !!result && /^(Error:|Denied)/.test(result);
-
 // One tool call: collapsed by default. Expanded, a descriptor renders by default
 // with a rendered⇄raw toggle (raw = the In:/Out: args+result); no descriptor →
 // In:/Out: directly.
@@ -172,12 +171,19 @@ export const APPROVAL = {
 } as const;
 /** WHY a gated call ran — auto-approved read-only, sandboxed, you clicked, you denied. The provenance
  *  badge, in the colour that says which; a step's left border matches it. */
-export const ApprovalBadge = ({ approval }: { approval: keyof typeof APPROVAL }) => (
-    <span class={`tt appr-badge appr-${approval}`}>
-        <span class={`appr ${approval === "denied" ? "no" : (approval === "skipped" || approval === "cancelled") ? "skip" : "yes"}`}>{APPROVAL[approval].label}</span>
-        <span class="tt-pop left" role="tooltip">{APPROVAL[approval].tip}</span>
-    </span>
-);
+export const ApprovalBadge = ({ approval }: { approval: keyof typeof APPROVAL }) => {
+    // A value THIS BUILD DOES NOT KNOW is not a crash. The provenance comes off the wire from a runtime that may
+    // be newer than the client reading it — a hub puts a phone in front of a browser that ships a different
+    // version — and a bare `APPROVAL[approval].label` took the whole transcript down with a TypeError rather than
+    // drawing one unfamiliar badge. Found by a demo passing a string that was nearly right.
+    const a = APPROVAL[approval] ?? { label: String(approval), tip: "This client does not know this approval kind — it came from a newer runtime." };
+    return (
+        <span class={`tt appr-badge appr-${approval}`}>
+            <span class={`appr ${approval === "denied" ? "no" : (approval === "skipped" || approval === "cancelled") ? "skip" : "yes"}`}>{a.label}</span>
+            <span class="tt-pop left" role="tooltip">{a.tip}</span>
+        </span>
+    );
+};
 
 // The distinct EXTERNAL Google Sheet ids a python_exec call will load — read from the ARGS (`tables`),
 // NOT the rendered In: at approval time the tables aren't fetched yet (the pre-run preview is code-only),
@@ -398,6 +404,10 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // annotates each arg key with its schema description). Absent on older debug events (names only).
     const toolDef = hash ? sessionMap.get(hash)?.agentConfig?.tools?.find(t => t.name === st.tool) : undefined;
     const toolSummary = toolDef?.summary;
+    // What the MODEL said this call was for. Read off the arguments rather than off a field of its own: the step
+    // event carries what the model actually sent, whole, which is the log's standing promise — so there is nothing
+    // to add to the wire, and the raw-args view shows it where it was written.
+    const saidTitle = typeof st.arguments?.[CALL_TITLE] === "string" ? String(st.arguments[CALL_TITLE]).trim() : "";
     const paramSchema = toolDef?.parameters as JsonSchemaNode | undefined;
     // Each slot renders from its own descriptor; the block falls back to raw when absent.
     const inRender = st.renderIn;
@@ -448,7 +458,10 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // and it is always one click from closed.
     // A gate holds its own step open — EXCEPT in calm, where the intent line above says what is being asked and the
     // card is reachable without the body. Named, because whether a step can close at all is asked twice.
-    const forcedOpen = awaiting && !(intent && focusMode.value);
+    // …EXCEPT a code tool, whose sentence says only WHERE it runs. The source is the thing being judged and no
+    // sentence stands in for it, so it unfurls either way. This used to ride on `intentFor` returning null for a
+    // code tool; now that it returns one, the rule has to say what it meant.
+    const forcedOpen = awaiting && !(intent && !codeOf(st) && focusMode.value);
     const open = expanded || forcedOpen;
     // CLOSING A STEP, on a surface that animates it shut. The body is unmounted the moment it closes, so there is
     // nothing left to animate — the way to give it a way out is to keep it mounted for exactly as long as the
@@ -505,21 +518,54 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // `gate`, not `awaiting`: everything the card SAYS has to stay put while it animates away, or its last beat
     // on screen is a different card — the intent sentence replaced by the generic question, the grant note gone.
     const gate = awaiting || fading;
+    // Whether the RUNTIME would still act on it — the other reducer over the same events. A run that died without a
+    // terminal event leaves this client's step `awaitingApproval` for ever, so the card is drawn with live buttons
+    // over a gate nothing holds.
+    // Subscribed to `rev` for the same reason the run view is, and kept in the output: this reads the seam, which
+    // reads the runtime's index signal, which would otherwise memoize the step on a `st` that is mutated in place.
+    const stepRev = rev.value;
+    const live = !hash || services().stillLive(hash);
+    // THE STEP THE RUN DIED ON: pending here, with nothing on the other side left to finish it. Every cue that means
+    // "this is still happening" is then a claim from a clock that stopped — and the step was making three of them in
+    // three vocabularies at once, beside a card that already said the run had ended. The amber gate rail, the
+    // collapsed row's "needs approval", and worst of all the dot, which falls through to `ok` once nothing is in
+    // flight and drew a call that never ran as one that had succeeded.
+    //
+    // It is not a FAILURE either, which is why the dot takes `warn` rather than `err`: nothing went wrong with the
+    // call. The step keeps its own state; only the live chrome is withheld.
+    const cut = !!st.pending && !live;
+    const inFlight = !!st.pending && !cut;
     const sheetGrants = gate ? externalSheetGrant(st.arguments) : [];
     const showGrants = gate && hasPersistGrants(st.grants);
     return (
-        <div ref={rootRef} data-astep-seq={st.seq} class={`astep tool${dimmed ? " away" : ""}${open ? " open" : ""}${closing ? " closing" : ""}${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}>
+        <div ref={rootRef} data-astep-seq={st.seq} data-rev={stepRev} class={`astep tool${dimmed ? " away" : ""}${open ? " open" : ""}${closing ? " closing" : ""}${inFlight ? " pending" : ""}${awaiting && !cut ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}>
             <button class="astep-head" onClick={toggle}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
-                <Dot status={st.pending ? "pending" : toolFailed(st.result) ? "err" : "ok"} />
+                {/* WHEN and HOW LONG ride the dot's tip: both facts already existed on the step — the stamp in the
+                    gutter, the duration in the Out block — which is to say behind a scroll and behind a disclosure,
+                    while the dot is what the eye is on when the question is asked. `toolMs` is the TOOL's clock and
+                    not the step's, because a step's time is mostly a human standing at an approval gate. */}
+                <Dot status={inFlight ? "pending" : toolFailed(st.result) ? "err" : "ok"} ts={st.ts} ms={st.toolMs}
+                    warn={cut ? (awaiting ? "The run ended before anyone answered, so this call never ran." : "The run ended before this call finished.") : undefined} />
                 {/* Tool-authored short summary (contract MlTool.summary) → hover tooltip, both surfaces. */}
-                {toolSummary
-                    ? <span class="tt tool-name-wrap"><span class="tool-name">{st.tool}</span><span class="tt-pop left" role="tooltip">{toolSummary}</span></span>
+                {/* THE MODEL'S OWN ACCOUNT of this call (the reserved `title` argument), where it wrote one. It is a
+                    CLAIM about what it meant to do — not derived from anything, not checked against anything — so
+                    it is quoted, and it sits UNDER the tool's own description rather than replacing it.
+                    Always in the tip. Inline only in the reading view and only inside an OPEN group, which the
+                    stylesheet decides: expanding a folded run is the gesture that means "I am investigating", and
+                    there the line earns its place; watching a run go, it is one more thing per row. */}
+                {toolSummary || saidTitle
+                    ? <span class="tt tool-name-wrap"><span class="tool-name">{st.tool}</span>
+                        <span class="tt-pop left" role="tooltip">
+                            {toolSummary}
+                            {saidTitle ? <span class={`tt-said${toolSummary ? "" : " bare"}`}>“{saidTitle}”</span> : null}
+                        </span></span>
                     : <span class="tool-name">{st.tool}</span>}
+                {saidTitle ? <span class="astep-said">“{saidTitle}”</span> : null}
                 {st.approval ? <ApprovalBadge approval={st.approval} /> : null}
                 {st.elements ? <span class="tt el-count">{st.elements} el<span class="tt-pop wrap" role="tooltip">DOM nodes returned (reach them in the console via onStep).</span></span> : null}
                 {issues ? <span class="arg-warn" {...cursorTipOn(issues.join("; "))}><IconWarn />{issues.length}</span> : null}
-                {!open ? <span class="astep-preview">{awaiting ? <span class="dim">needs approval</span> : st.pending ? (st.streamOutput ? <span class="astep-livepreview">{collapsedPreview(st.streamOutput).text}</span> : <span class="dim">running…<RunningFor since={st.ts} /></span>) : collapsedPreview(st.result || "").text}</span> : null}
+                {!open ? <span class="astep-preview">{cut ? <span class="dim">{awaiting ? "never ran" : "never finished"}</span> : awaiting ? <span class="dim">needs approval</span> : inFlight ? (st.streamOutput ? <span class="astep-livepreview">{collapsedPreview(st.streamOutput).text}</span> : <span class="dim">running…<RunningFor since={st.ts} /></span>) : collapsedPreview(st.result || "").text}</span> : null}
             </button>
             {open
                 ? <div class={`astep-body${closing ? " closing" : ""}`} ref={bodyRef}>
@@ -538,19 +584,19 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                             failed={stepFailed}
                             raw={<RawArgs args={args || {}} schema={paramSchema} />} rawText={rawArgsText(args || {})} />
                         : null}
-                    <IoBlock label="Out" tip="What the tool returned to the model." marks={st.streamMarks} reserve={!!st.pending && st.streamOutput != null}
+                    <IoBlock label="Out" tip="What the tool returned to the model." marks={st.streamMarks} reserve={inFlight && st.streamOutput != null}
                         /* HOW LONG IT RAN. `toolMs` is the tool's own wall clock, not the step's — a human at
                            an approval gate is the step's time and none of the machine's work. Live, it ticks
                            from when the step started, which is the difference between "slow" and "stuck". */
-                        live={!!st.pending} ranMs={st.toolMs} ranSince={st.ts} lineMap={inMap} remoteMs={st.remoteMs}
-                        preview={st.pending ? (st.streamOutput ? inlineText(st.streamOutput) : "running…") : inlineText(st.result || "")} render={outRender}
-                        raw={st.pending
+                        live={inFlight} ranMs={st.toolMs} ranSince={st.ts} lineMap={inMap} remoteMs={st.remoteMs}
+                        preview={inFlight ? (st.streamOutput ? inlineText(st.streamOutput) : "running…") : inlineText(st.result || "")} render={outRender}
+                        raw={inFlight
                             ? (st.streamOutput != null
                                 // LIVE tool output (ctx.stream — console.log / print) filling in Jupyter-style while it runs.
                                 ? <div class="astep-streaming"><SeenSplit text={st.streamOutput} seen={liveCutoff(st)} live marks={st.streamMarks} /></div>
                                 : <span class="dim">running…</span>)
                             : (st.modelResult ?? st.result) ? <Code text={st.modelResult ?? st.result ?? ""} lang="text" /> : <span class="dim">(no output)</span>}
-                        rawText={st.pending ? undefined : (st.modelResult ?? st.result ?? "") || undefined} />
+                        rawText={inFlight ? undefined : (st.modelResult ?? st.result ?? "") || undefined} />
                     {st.feedback ? <FeedbackBlock fb={st.feedback} /> : null}
                     {/* The step's POINTER, when the run minted one — a first-class handle the model reads its
                         own outputs back through and can cite in an answer, which until now existed only in
@@ -587,7 +633,13 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                     {intent
                         ? <IntentSentence intent={intent} />
                         : <span class="appr-ask">Approve running <b>{st.tool}</b>?</span>}
-                    <ApprovalRow grants={!!showGrants} decide={decide} />
+                    {/* THE REQUEST STAYS, THE BUTTONS GO, when the runtime no longer holds this gate. `approval.answer`
+                        does not refuse one it has forgotten — it resolves nothing and reports it — so the buttons sat
+                        there and silently did nothing, which is worse than being told no. What was ASKED is still
+                        worth reading, so only the row is replaced. */}
+                    {live
+                        ? <ApprovalRow grants={!!showGrants} decide={decide} />
+                        : <span class="appr-dead">This run ended before anyone answered, so there is nothing left to approve.</span>}
                 </div>
                 : null}
         </div>
@@ -616,8 +668,16 @@ export function TurnProse({ text }: { text: string }) {
 }
 // One turn = the pill + the thinking + the prose + the tool calls it batched.
 export function AgentTurn({ turn, max, hash }: { turn: AgentTurnGroup; max?: number; hash?: string }) {
+    // A TURN ARRIVING IS THE LOG MOVING, and in the reading view it should look like it. A new turn appearing at
+    // full height in one frame is a developer-tooling cut: everything under it jumps and you lose your place in
+    // the thing you were reading. It drifts up instead, fast enough not to be in the way.
+    //
+    // Only a turn that landed WHILE YOU WERE WATCHING (`justArrived`), and captured once on mount: without that
+    // test, opening any transcript plays the same animation over fifty items at once, about turns the reader
+    // never saw happen.
+    const [fresh] = useState(() => justArrived(turn.tools[turn.tools.length - 1]?.ts));
     return (
-        <div class="aturn">
+        <div class={`aturn${fresh ? " fresh" : ""}`}>
             <div class="aturn-head"><StepPill step={turn.localStep} max={max} /></div>
             {turn.reasoning ? <ThoughtBlock thought={turn.reasoning} tokens={turn.reasoningTokens} /> : null}
             {turn.thought ? <TurnProse text={turn.thought} /> : null}
@@ -791,6 +851,44 @@ export function NavDivider({ url }: { url: string }) {
 }
 
 /**
+ * WHERE A RUN WAS CONTINUED PAST ITS STEP CAP — a seam, not an ending.
+ *
+ * A capped run that someone pressed Continue on keeps its "stopped at its step cap" answer, and the steps of the
+ * next stretch are appended under it. Read top to bottom that is a run announcing it has stopped and then going
+ * on, and the question it provokes is "did I ask for that?". Which is a question about a budget, so the seam
+ * answers it with the budget: what it stopped at, and what it was given.
+ *
+ * It REPLACES the answer rather than sitting beside it, because that answer is boilerplate the runtime wrote
+ * ("Stopped at the 10-step cap without finishing") and the divider says strictly more. Its text is kept in the
+ * tip, and both exports still carry the answer whole — the standing rule is that a view may be quiet, never that
+ * something becomes unavailable.
+ *
+ * Only a hitCap stop, and only once the run has gone PAST it. Not "is this the latest answer", which stays true
+ * for the whole continued stretch and would collapse the seam only when the run finally ended — long after the
+ * reader met the confusing version.
+ */
+export function CapDivider({ stoppedAt, granted, text }: {
+    /** the step count it stopped at, which is the cap it hit */
+    stoppedAt: number;
+    /** the budget the next stretch was given, when a cap raise was recorded for this seam */
+    granted?: number;
+    /** the answer this replaces, kept readable */
+    text?: string;
+}) {
+    return (
+        <div class="nav-divider cap-divider">
+            <span class="nav-rule" aria-hidden="true" />
+            <span class="nav-label" {...cursorTipOn(text ? `It said: ${text}` : "The run stopped at its step cap here, and was continued.")}>
+                <svg class="nav-ico" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M5 5v14M10 12h9m-4-4 4 4-4 4" /></svg>
+                stopped at <b class="nav-url">{stoppedAt} steps</b>
+                {granted != null ? <> · continued with <b class="nav-url">{granted}</b></> : <> · continued</>}
+            </span>
+            <span class="nav-rule" aria-hidden="true" />
+        </div>
+    );
+}
+
+/**
  * A RESUME divider in the run log: the session was picked up again on a different page, after a gap.
  *
  * Distinct from {@link NavDivider}, which marks the agent walking to a new page inside one run. This is the run
@@ -878,8 +976,23 @@ export function AgentRunView({ s }: { s: Session }) {
         const hi = answers[i].atStep;
         return groups.filter(g => g.step > lo && g.step <= hi).flatMap(g => g.tools);
     };
+    // A CAP STOP THE RUN WENT PAST is a seam, not an ending (see CapDivider). "Has the run gone past it" and not
+    // "is this the latest answer": the latter stays true for the whole continued stretch, so the collapse would
+    // happen only when the run finally ended — long after the reader met the version that reads as a contradiction.
+    const continuedPast = (a: NonNullable<Session["answers"]>[number]): boolean =>
+        !!a.hitCap && !a.cancelled && !a.error && groups.some(g => g.step > a.atStep);
+    // The budget granted AT THIS SEAM: the first raise that falls between this answer and the NEXT one. Not
+    // `s.maxSteps`, which is only the latest and would label the first of two seams with the second grant — and
+    // bounded on both sides rather than merely "the first raise after this", which puts every later grant on the
+    // earliest seam the moment a run is continued twice.
+    const grantedAt = (a: NonNullable<Session["answers"]>[number], i: number): number | undefined => {
+        const until = answers[i + 1]?.ts;
+        return (s.capRaises || []).find(c => c.ts >= a.ts && (until == null || c.ts < until))?.maxSteps;
+    };
     const answer = (a: NonNullable<Session["answers"]>[number], key: string, i: number) =>
-        a.error
+        continuedPast(a)
+        ? <CapDivider key={key} stoppedAt={a.atStep} granted={grantedAt(a, i)} text={a.text || undefined} />
+        : a.error
             // RETRY on the latest failure only, and not while something is already running — the same guard
             // Continue uses, for the same reason: resuming an old buried failure would re-run a turn the reader
             // has since moved past, and a live run has nothing to resume.
@@ -894,9 +1007,36 @@ export function AgentRunView({ s }: { s: Session }) {
     // breaks the tie. A fixed answer-before-say fraction was wrong: when a turn runs no tool steps (a plain
     // chat-style reply, or a cancel), every answer/say lands at the SAME atStep, so the fraction forced ALL
     // answers ahead of ALL says regardless of when they actually happened. ts is the authoritative order.
-    const items: { pos: number; ts: number; el: preact.JSX.Element }[] = [
+    // Does the RUNTIME still think this run is going? `s.status` is this client's reduction of the event stream and
+    // stays `pending` for ever when a run dies without a terminal event.
+    //
+    // SUBSCRIBED TO `rev` BECAUSE OF THIS, and the read is kept in the output (a bare one is dropped by the
+    // minifier) — the same shape `RunStatsBar` already needs. The seam answers out of the runtime's index, which is
+    // a signal, and reading one here makes @preact/signals memoize this component on its props; `s` is the same
+    // mutated object for the whole run, so without its own subscription it stops re-rendering from the parent's
+    // cascade. That cascade is how a GROWN WINDOW reaches the screen, and the symptom is silent and specific: a
+    // citation to a step outside the window pages it back in, the window grows, nothing repaints, and the click
+    // appears to do nothing. Which is the exact failure `reveal` exists to prevent.
+    const r = rev.value;
+    const runLive = services().stillLive(s.hash);
+    const items: { pos: number; ts: number; el: preact.JSX.Element; weight?: number }[] = [
         { pos: -1, ts: s.createdTs, el: <UserBubble key="task" text={s.task || ""} ts={s.createdTs} images={s.taskImages} /> },
-        ...groups.map(g => ({ pos: g.step, ts: 0, el: <AgentTurn key={`t${g.step}`} turn={g} max={s.maxSteps} hash={s.hash} /> })),
+        // A RUN OF THE SAME TOOL folds into one row in the reading view — eight `exec` rows with empty previews say
+        // "exec" eight times, and the busy view is the developer's whole trace and keeps all of them. The fold only
+        // happens once the streak has ENDED, so a live run is never collapsing out from under you.
+        // Design and every clause behind it: tmp/design-tool-streaks.md.
+        // `breaks` is every position something ELSE is interleaved at — an answer (including a cap seam) and the
+        // reader's own messages. A fold that spans one leaves that item rendering below the whole block, which is
+        // how a "stopped at its step cap" seam ended up under the seven steps it sat in the middle of.
+        ...((runGoing => focusMode.value
+            ? foldStreaks(groups, { live: runGoing, all: groupAllTools.value, breaks: [...answers.map(a => a.atStep), ...(s.says || []).map(m => m.atStep)] })
+            : groups)(s.status === "pending" && runLive)).map(g =>
+            "kind" in g
+                // `live` is the same answer `foldStreaks` is given, and it is what lets the streak tell a fold
+                // happening IN VIEW (collapse the rows you were reading) from one drawn into a transcript you just
+                // opened (already folded, no animation).
+                ? { pos: g.step, ts: 0, weight: g.turns.length, el: <StepStreak key={`k${g.step}`} s={g} render={t => <AgentTurn key={`t${t.step}`} turn={t} max={s.maxSteps} hash={s.hash} />} /> }
+                : { pos: g.step, ts: 0, el: <AgentTurn key={`t${g.step}`} turn={g} max={s.maxSteps} hash={s.hash} /> }),
         // A page-transition divider right after each SUCCESSFUL navigate turn (skip a denied/errored one — the
         // page didn't actually change). Sits at step+0.3: after the navigate group, before its next turn/answer.
         ...(s.steps || []).filter(st => st.tool === "navigate" && st.approval !== "denied" && !!st.result && !st.result.startsWith("Error") && !!navTargetOf(st))
@@ -914,14 +1054,23 @@ export function AgentRunView({ s }: { s: Session }) {
     ].sort((a, b) => a.pos - b.pos || a.ts - b.ts);
     // Only the newest items are drawn: a long run costs as much DOM as it has steps, and a step with a screenshot or
     // a table costs several times a chat turn (transcript-window.tsx).
-    const { drawn, hidden } = tail(items, s.hash);
+    // A folded streak weighs its MEMBERS, not one: the fold is a reading affordance and must not quietly hand the
+    // window a hundred turns it was built to hold back.
+    const { drawn, hidden } = tail(items, s.hash, (it) => it.weight ?? 1);
     return (
         <>
+            <span data-rev={r} hidden />
             <AgentOptionsBlock s={s} />
             <EarlierInThread sessionKey={s.hash} hidden={hidden} />
             {drawn.map(it => it.el)}
-            {s.liveStream ? <LiveStream ls={s.liveStream} s={s} /> : null}
-            {s.status === "pending" ? <PendingNote s={s} /> : null}
+            {s.liveStream && runLive ? <LiveStream ls={s.liveStream} s={s} /> : null}
+            {/* THE RUN SAYS HOW IT ENDED, or the transcript simply stops. A run that died without a terminal event
+                leaves nothing after its last step, so the page went on claiming it was running — and when the
+                runtime settled it, the only place that said so was the row in the list. One of them was a history
+                and the other a state, both true and neither reconcilable from the other. */}
+            {s.status === "pending"
+                ? (runLive ? <PendingNote s={s} /> : <div class="arun-cut">This run was interrupted. It never reported how it ended, so what is above is everything it got through.</div>)
+                : null}
         </>
     );
 }

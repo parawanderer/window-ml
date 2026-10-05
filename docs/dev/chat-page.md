@@ -701,6 +701,64 @@ Three rules it follows:
 | a citation | the tip belongs to the CAPTION, not the whole embed: an embed is something you read, and a tip that fires anywhere over it explains the frame on top of the contents. The link form drops the accent colour for the citation green under ordinary text |
 | a reply | copy and the timestamp move UNDER it (they are what you want after reading, not on the first line), the status dot goes unless it is saying something other than "this worked", and the collapse control moves into the gutter |
 
+### Grouping a run's tool calls
+
+A long run is mostly machinery, and calm's default rule for it is deliberately CONSERVATIVE, because it is
+guessing: it folds only a run of ADJACENT turns that called the SAME tool, at least three of them, which has
+ENDED, where nothing was said and nothing revised (`step-streak.tsx`, every clause argued there and in
+`tmp/design-tool-streaks.md`). The honest condition is "a run of rows that say nothing a reader could tell
+apart", and in this view — where a collapsed row's output preview is hidden as spam — the tool's name is exactly
+that set.
+
+**"Group all tool calls" (the ⋮ menu, under Calm view, off by default, `view.groupAll`) is the reader answering
+every one of those arguments at once.** So the clauses that protect a legible row go: a different tool, fewer than
+three, a tail still growing, a revision's header. Two do not, and neither is about legibility —
+
+- **a gate is never grouped.** A decision waiting on a human is not machinery, and no display preference may hide
+  one. (An ANSWERED gate is ordinary work again and folds with the rest: the refusal is about the decision, not
+  about the tool or about it having needed approval.)
+- **prose is never grouped.** What the model SAID is the thing this view exists to show.
+
+Two consequences worth knowing before changing it. The minimum is counted in CALLS, not turns, which is the only
+counting that answers both halves of the question — one lone step is not a group, while ONE turn whose model call
+decided on five tools is. And the group folds a LIVE tail, unlike the default rule: because a group of two exists
+almost at once, every later call joins a row that is already closed, so nothing collapses out from under a reader
+and the toggle does something while a run is going (the row says `running…` while any member is pending).
+
+The signal lives in `src/sidebar/store.ts`, not here, for the same reason `focusMode` does: the shared session
+views render on three surfaces and may not import from `src/chat/`. The page's toggle drives it, exactly as calm
+drives `focusMode`.
+
+**A FOLD MAY NOT SPAN A BOUNDARY** (`breaks`, both rules). Answers — a run's cap seam among them — and the
+reader's own mid-run messages are placed into the transcript BY POSITION, after the fold has been computed. A
+streak that merged across one left that item rendering below the whole block: a "stopped at its step cap" seam
+appeared under the seven steps it sat in the middle of, which says the opposite of what happened. A demo caught
+it, because a finished transcript shows a plausible-looking order and nothing throws.
+
+**Nothing is dropped, as always.** The busy view keeps the whole trace, both exports keep it, and a citation into
+a folded group opens it (`holdsSeq` + `revealSeq`) — a jump that silently did nothing would be a new way to break
+what `scrollToStepSeq` exists to prevent, so it has a test on both sides.
+
+### A step cap that was continued past
+
+A capped run someone pressed Continue on keeps its "stopped at its step cap" answer, and the next stretch is
+appended under it. Read top to bottom that is a run announcing it has ended and then going on, and the question it
+provokes — "did I ask for that?" — is a question about a budget. So the answer is replaced by a SEAM
+(`CapDivider`, the `.nav-divider` motif the page already uses for a navigation and a resume) saying what it
+stopped at and what it was then given.
+
+Two things that look like details and are not:
+
+- **The trigger is "the run has gone PAST this answer", not "is this the latest answer".** The latter stays true
+  for the whole continued stretch, so the collapse would happen only when the run finally ended — long after the
+  reader met the version that reads as a contradiction.
+- **The budget comes from `capRaises`, not `maxSteps`.** `maxSteps` is only the budget NOW; a run continued twice
+  asks the question twice, and the first seam would be labelled with the second grant. The reducer keeps every
+  `agent-cap` with its stamp, and a seam takes the raise falling between its own answer and the next one.
+
+The answer it replaces is boilerplate the runtime wrote, and the seam says strictly more — but it is kept in the
+seam's tip and both exports still carry it whole, which is the standing rule (AGENTS.md §Showing a run).
+
 **NO HEADER BAND on the wide layout.** What a header held has gone where each part belongs, because the four
 things in it had four different scopes and only one of them was about the page:
 

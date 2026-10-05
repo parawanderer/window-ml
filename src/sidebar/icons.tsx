@@ -21,22 +21,29 @@ export const IconCheck = () => (
         <path d="M3 8.5l3.5 3.5L13 4.5" />
     </svg>
 );
-// Warning triangle (an SVG — the native ⚠ emoji renders inconsistently and off-baseline).
 /** A circled "i" — an explanation is available here, and nothing is wrong. Drawn at the warning triangle's weight
- *  so the two read as the same family where they sit on one card, and deliberately NOT in its colour. */
+ *  so the two read as the same family where they sit on one card, and deliberately NOT in its colour.
+ *
+ *  THE DOT IS A REAL CIRCLE, not a zero-length path with a round cap. That trick draws a dot exactly as wide as the
+ *  STROKE, which at this size is about one device pixel — so the glyph read as a ring with a stray tick in it, and
+ *  the thing that says "there is more to know" was the faintest mark on the card. A filled circle is also the one
+ *  part that can be sized on its own, which is what lets the dot carry the glyph while the ring stays quiet. */
 export const IconInfo = () => (
-    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="8" cy="8" r="6.4" />
-        <path d="M8 7.2v4" />
-        <path d="M8 4.7h0.01" />
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true">
+        <circle cx="8" cy="8" r="6.3" />
+        <path d="M8 7.5v3.7" />
+        <circle cx="8" cy="4.9" r="0.85" fill="currentColor" stroke="none" />
     </svg>
 );
 
+/** A warning triangle (an SVG — the native ⚠ emoji renders inconsistently and off-baseline). Its dot is a real
+ *  circle for the same reason {@link IconInfo}'s is, and at the same size: the two sit on one card and the docstring
+ *  above is only true while they are drawn alike. */
 export const IconWarn = () => (
-    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M8 2 15 14H1z" />
-        <path d="M8 6.3v3.4" />
-        <path d="M8 12h0.01" />
+        <path d="M8 6.6v3.2" />
+        <circle cx="8" cy="11.9" r="0.85" fill="currentColor" stroke="none" />
     </svg>
 );
 // Disclosure chevron (the ▸ glyph renders tiny; an SVG is crisp and scalable).
@@ -225,6 +232,12 @@ export const IconExpand = () => (
 export const IconCollapse = () => (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
         <path d="M4 9h5V4M4 4l5 5M20 9h-5V4M20 4l-5 5M4 15h5v5M4 20l5-5M20 15h-5v5M20 20l-5-5" />
+    </svg>
+);
+/** Rows folding into one: a line with a chevron closing on it from each side — group every tool call. */
+export const IconFold = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 12h16M8.5 5 12 8.5 15.5 5M8.5 19 12 15.5 15.5 19" />
     </svg>
 );
 /** Close. */

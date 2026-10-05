@@ -121,7 +121,10 @@ export function Composer({ s, multiline, tools }: { s: Session; multiline?: bool
     // (say/run/cancel); a plain CHAT session continues via its history in the session registry (a fresh turn,
     // or the in-flight fetch aborted). The page routes `sessionSend`/`sessionCancel` to whichever it is.
     const agent = s.kind === "agent";
-    const running = s.status === "pending";
+    // `pending` is THIS client's reduction of the event stream; `stillLive` is the runtime's own reading, and the
+    // two disagree whenever a run dies without emitting a terminal event — the client shows pending for ever while
+    // the index has moved on, so the stop button stayed and answered "the session is not running" when pressed.
+    const running = s.status === "pending" && services().stillLive(s.hash);
     const empty = !text.trim() && !att.imgs.length;   // an IMAGE-only send is allowed
     const stop = running && empty;   // in-flight + empty box → the button cancels the run/turn (Claude-Code style)
     const cancel = () => services().cancelSession(s.hash);

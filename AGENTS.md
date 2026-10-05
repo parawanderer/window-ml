@@ -438,6 +438,13 @@ never picks up the explanation of it.
   than plain text. Pointer links live in the ANSWER renderer, which has that context. Both refusals have a
   test, because both are currently true by accident of how the inline pass works.
 
+  **A FINGER CAN READ ONE TOO.** A touch raises `pointerover` and then, a moment later, the synthetic
+  `pointerout` that ends it, so every anchored tip used to flash and vanish on a phone and its prose was simply
+  unreachable. A TAP now holds one open and the next tap anywhere dismisses it (`tooltip-layer.ts`) — but only on
+  a trigger that is NOT itself a control. The split is the same one below: a control's tip is its NAME, which
+  `aria-label` already carries, and raising a popup on every icon button a finger lands on turns ordinary use into
+  a flicker. The tap is never stolen — whatever it was pressing still happens.
+
   **The exception is an accessible NAME.** A `title` on an icon-only control is what a screen reader and a
   keyboard user get, and `cursorTip` is pointer-only — so those keep a name (prefer `aria-label`) and gain
   the custom tip for the pointer. The split is: naming a control → `aria-label` (+ a tip); explaining
@@ -838,6 +845,14 @@ thing. The parts:
   `approval-demo`, `resource-demo` (`BOX=`), `line-map-demo`, `cursor-demo`, `panel-news-demo`, `whole-box-demo`,
   `stream-demo`, `bench-editor-demo`, `bench-completion-demo`, `pairing-demo` (the named grants and their switches,
   the one device that refreshes its pairing rather than renewing, and an account with nobody left to sign a removal;
+  serves `dist-web/`, so it needs no extension),
+  `touch-tips-demo` (reading a tooltip with no pointer, on a PHONE context — and a trap for the next demo author:
+  a synthetic hover cannot be held in a HEADFUL window, because the real cursor is elsewhere and Chromium corrects
+  the pointer straight back out; it holds fine headless, which is why a spec can assert one and a watched demo
+  cannot),
+  `streak-demo` (the reading view folding runs of the same tool, appended ONE STEP AT A TIME — every rule
+  here is about the turns AROUND a step, so a finished transcript cannot show you why a stretch folded and the
+  one under it did not; part two is the ⋮ menu's "group all tool calls"; drives the fake host rather than a model,
   serves `dist-web/`, so it needs no extension),
   `table-demo` (fetching CSV/Parquet, then
   scanning, surveying and analysing them through pipe / readonly exec / full exec / python_exec; part two is the

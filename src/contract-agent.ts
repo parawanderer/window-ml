@@ -140,6 +140,12 @@ export interface MlTool {
     name: string;
     /** the FULL description sent to the model */
     description: string;
+    /** JSON Schema for the call's arguments, as the model is shown it.
+     *
+     *  `title` is RESERVED and must not appear here: every tool is given one, for the model's own few words on
+     *  what a given call is for, and it is taken off the arguments again before `run` sees them. Declaring it
+     *  throws from `ml.defineTool`. A tool that declares NO properties is left alone — an empty `properties`
+     *  means "shape not specified", and adding one would start reporting the tool's own arguments as unknown. */
     parameters: JsonSchema;
     /** Optional SHORT, human-friendly one-liner (≤ ~12 words) for the debug/HUD UI — shown as a tooltip
      *  when you hover the tool name in a step, in BOTH the debug sidebar and the off-mode card. e.g. look:

@@ -926,6 +926,159 @@ test("what eases open eases shut: a think block, and the gate you just answered"
     await gated.page.close();
 });
 
+// A GATE THE RUNTIME NO LONGER HOLDS still had live buttons. `approval.answer` does not refuse one it has
+// forgotten — it resolves nothing and reports `resolved: false` — so pressing Approve did nothing at all and said
+// nothing, which is worse than being told no. The step's own `awaitingApproval` is this client's reduction of an
+// event stream that never got a terminal event, so it stays true for ever; the runtime's status is the other
+// reading, and it is the one that decides whether the controls are drawn.
+test("a gate the run ended without answering keeps what was asked and loses the buttons", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(WAITING)}`);
+    await expect(page.locator(".astep-approve .appr-btn.yes")).toHaveCount(2);   // Approve and Keep, while it is live
+    await expect(page.locator(".appr-dead")).toHaveCount(0);
+
+    // The runtime settles the session without ever resolving the gate — a run that died with its host.
+    await page.evaluate((k) => globalThis.__chatFake.updateSummary(k, { status: "interrupted", pendingApprovals: 0 }), WAITING);
+
+    await expect(page.locator(".astep-approve .appr-btn")).toHaveCount(0);
+    await expect(page.locator(".appr-dead")).toHaveText(/nothing left to approve/);
+    // What was ASKED is still on screen: the card is the only place the intent sentence lives.
+    await expect(page.locator(".astep-approve")).toContainText("transavia.com");
+    // AND NOTHING IS STILL IN FLIGHT. A step stays `pending` until a terminal event for it arrives and a run that
+    // died never sends one, so the rail went on pulsing and the row went on saying "running…" beside a card saying
+    // the run had ended — two claims about one step, one of them from a clock that stopped.
+    await expect(page.locator(".astep.tool.pending")).toHaveCount(0);
+    await expect(page.locator(".pending-note")).toHaveCount(0);
+    // …NOR WAITING ON ANYONE. The amber gate rail is the third voice saying the same stopped clock, and it sat
+    // beside the sentence saying there was nothing left to approve.
+    await expect(page.locator(".astep.tool.awaiting")).toHaveCount(0);
+    // AND THE DOT IS NOT GREEN. With nothing in flight the status falls through to `ok`, which drew a call that
+    // never ran as one that had succeeded — the one cue here a reader takes at a glance. It is not a failure
+    // either, so: warn.
+    await expect(page.locator(".astep.tool .dot.warn")).toHaveCount(1);
+    await expect(page.locator(".astep.tool .dot.ok")).toHaveCount(1);   // the step that DID run keeps its own
+    // And the TRANSCRIPT says how it ended, not only the row in the list: a history and a state cannot be
+    // reconciled from each other by someone reading one of them.
+    await expect(page.locator(".arun-cut")).toHaveText(/interrupted/);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// A RUN OF THE SAME TOOL FOLDS INTO ONE ROW in the reading view. The rule itself is unit-tested
+// (step-streak.test.mjs); what is here is that the fold reaches the screen and opens again. The REVEAL half — a
+// citation landing on a step inside a folded streak — is in sidebar-agent-step.test.js, where `revealSeq` can be
+// set directly; that is the hazard, because a citation that silently did nothing would be a new way to break the
+// thing `scrollToStepSeq` exists to prevent.
+test("a run of the same tool folds into one row, and opens again", async () => {
+    const { page, errors } = await open(DESKTOP);
+    await page.evaluate(() => {
+        const key = "laptop:5e6f7a80", hash = "5e6f7a80", now = Date.now();
+        // Six more `exec` turns after the run's own steps: adjacent, one tool each, nothing said between them.
+        for (let i = 0; i < 6; i++) {
+            globalThis.__chatFake.emit(key, {
+                kind: "agent-step", id: `${hash}-run${i}`, ts: now + i, save: true, session: { hash, turn: 0 },
+                step: 10 + i, seq: 300 + i, tool: "exec", arguments: { js: `${i}` },
+                result: i === 1 ? "Error: nope" : `${i}`, toolMs: 100,
+            });
+        }
+    });
+    await page.goto(`${server.url}#s=laptop%3A5e6f7a80`);
+    const streak = page.locator(".astreak");
+    await expect(streak).toHaveCount(1);
+    // It says what the six rows could not: how many, how many failed, how long.
+    await expect(streak.locator(".astreak-n")).toHaveText("× 6");
+    await expect(streak.locator(".astreak-bad")).toHaveText("1 failed");
+    // The members are NOT drawn while it is folded — that is the whole point.
+    await expect(page.locator('[data-astep-seq="303"]')).toHaveCount(0);
+
+    await streak.locator(".astreak-head").click();
+    await expect(page.locator('[data-astep-seq="303"]')).toHaveCount(1);
+    await streak.locator(".astreak-head").click();
+    await expect(page.locator('[data-astep-seq="303"]')).toHaveCount(0);
+
+    // THE RAIL CLOSES IT TOO. It is the one thing on screen saying where the group ends, so it is what a reader
+    // points at to be rid of it — and it was a `border`, which takes no clicks.
+    await streak.locator(".astreak-head").click();
+    await expect(page.locator('[data-astep-seq="303"]')).toHaveCount(1);
+    await streak.locator(".astreak-rail").click();
+    await expect(page.locator('[data-astep-seq="303"]')).toHaveCount(0);
+
+    // AND NONE OF IT REACHES THE BUSY VIEW. That is the developer's whole trace, where a collapsed row shows the
+    // value the call RETURNED — so the rows there are distinguishable, the argument for folding them never applies,
+    // and the fold is asked for behind `focusMode` rather than styled away. Turning calm off must restore every row.
+    await page.locator(".chat-gear-btn").first().click();
+    await page.getByRole("menuitemcheckbox", { name: "Calm view" }).click();
+    await expect(page.locator(".astreak")).toHaveCount(0);
+    await expect(page.locator('[data-astep-seq="303"]')).toHaveCount(1);
+    // …and the preview that makes them distinguishable is on screen, which is the reason the rule differs at all.
+    await expect(page.locator('[data-astep-seq="303"] .astep-preview')).toBeVisible();
+
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// "GROUP ALL TOOL CALLS" — the ⋮ menu's toggle, off by default. The ordinary rule above is conservative because it
+// is GUESSING at which rows a reader can tell apart; this one was asked for, so almost every clause goes. What is
+// here is the two that do NOT, because neither is about legibility: a gate is a decision waiting on a human, and a
+// citation must still reach a step the toggle has just hidden. The rule itself is unit-tested (step-streak).
+test("group all tool calls: a mixed run becomes one row, a pending gate does not join it, and a citation still reaches inside", async () => {
+    const { page, errors } = await open(DESKTOP);
+    await page.evaluate(() => {
+        const key = "laptop:5e6f7a80", hash = "5e6f7a80", now = Date.now();
+        const step = (i, tool, over = {}) => globalThis.__chatFake.emit(key, {
+            kind: "agent-step", id: `${hash}-g${i}`, ts: now + i, save: true, session: { hash, turn: 0 },
+            step: 40 + i, seq: 400 + i, tool, arguments: {}, result: "ok", toolMs: 100, ...over,
+        });
+        // Three different tools in a row, which the ordinary rule refuses outright.
+        step(0, "exec"); step(1, "look"); step(2, "python_exec", { token: "beef123" });
+        // An answer CITING the last of them, so the jump below has something real to resolve. Emitted before the
+        // gate: a terminal result clears every pending flag, which would otherwise take the gate with it.
+        globalThis.__chatFake.emit(key, {
+            kind: "agent-result", id: `${hash}-gans`, ts: now + 10, save: true, session: { hash, turn: 0 },
+            steps: 43, hitCap: false, summary: "I read [the airlines](@tool:beef123) off the page.",
+        });
+        // Then a gate, and two ordinary calls after it.
+        step(3, "fetch_url", { pending: true, awaitingApproval: true, result: undefined,
+                               renderIn: { type: "action", verb: "fetch", target: "https://ex.example/x" } });
+        step(4, "exec"); step(5, "exec");
+    });
+    await page.goto(`${server.url}#s=laptop%3A5e6f7a80`);
+    // The ordinary rule produces no MIXED group at all — it cannot, by construction — which is the whole reason
+    // the toggle exists and is what makes the assertions after it mean something.
+    await expect(page.locator(".astreak-calls")).toHaveCount(0);
+
+    await page.locator(".chat-gear-btn").first().click();
+    const toggle = page.getByRole("menuitemcheckbox", { name: "Group all tool calls" });
+    await expect(toggle).toHaveAttribute("aria-checked", "false");   // OFF by default
+    await toggle.click();
+
+    // The mixed run is one row now, counted in CALLS and naming every tool, because it can no longer name one.
+    // Found BY that — "N tool calls" is what a multi-tool row says and a single-tool one never does, so this
+    // cannot drift onto one of the session's own same-tool groups the way `hasText: "python_exec"` did.
+    const mixed = page.locator(".astreak").filter({ hasText: /tool calls/ }).first();
+    await expect(mixed.locator(".astreak-calls")).toContainText("3 tool calls");
+    await expect(mixed.locator(".astreak-tools")).toHaveText("exec, look, python_exec");
+
+    // THE GATE IS NOT IN ANY OF THEM. A decision waiting on a human is not machinery, whatever the toggle says.
+    await expect(page.locator(".astep-approve")).toHaveCount(1);
+    await expect(page.locator(".astreak .astep-approve")).toHaveCount(0);
+    await expect(page.locator('[data-astep-seq="403"]')).toHaveCount(1);
+    // …while an ordinary call beside it IS hidden, or the assertion above would mean nothing.
+    await expect(page.locator('[data-astep-seq="401"]')).toHaveCount(0);
+
+    // AND A CITATION STILL REACHES INSIDE. The step it names is in a closed group; clicking must open it, or we
+    // have built a new way to make a citation silently do nothing.
+    await page.locator(".tok-link").filter({ hasText: "the airlines" }).first().click();
+    await expect(page.locator('[data-astep-seq="402"]')).toHaveCount(1);
+
+    // The preference is this DEVICE's, like Calm view, and the menu says so rather than the row having to.
+    // (The round trip through storage is `tests/chat-view-prefs.test.mjs`; a reload here would lose the steps
+    // this test emitted, since the fake host's history lives in the page.)
+    await page.locator(".chat-gear-btn").first().click();
+    await expect(page.getByRole("menuitemcheckbox", { name: "Group all tool calls" })).toHaveAttribute("aria-checked", "true");
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 // TWO THINGS CLAIM THE TOP-RIGHT CORNER of a wide calm page. There is no header band there, so the session's ⋮ is a
 // floating button in the corner — and the approval bar, when the gate has scrolled out of reach, is the first
 // in-flow element of the same pane. The ⋮ landed on the band, a pixel from "Review ›". Both are still reachable, so
@@ -1817,6 +1970,152 @@ test("phone (touch): the tab picker opens without raising the keyboard, and stay
         expect(box.y + box.height, "the list fits the window the keyboard left").toBeLessThanOrEqual(480);
         expect(errors).toEqual([]);
     } finally { await ctx.close(); }
+});
+
+// THE MODEL'S OWN ACCOUNT OF A CALL — the reserved `title` argument — and WHERE it is allowed to be drawn. It is
+// in the tool name's tip everywhere, and inline in exactly one place: inside an OPEN group in the reading view,
+// because expanding a folded run is the gesture that means "I am investigating what happened". Everywhere else it
+// would be one more thing per row, and in the busy view the row already carries the value the call returned.
+test("a call's own title: in the tip always, inline only inside an open group in the reading view", async () => {
+    const { page, errors } = await open(DESKTOP);
+    await page.evaluate(() => {
+        const key = "laptop:5e6f7a80", hash = "5e6f7a80", now = Date.now();
+        for (let i = 0; i < 4; i++) {
+            globalThis.__chatFake.emit(key, {
+                kind: "agent-step", id: `${hash}-t${i}`, ts: now + i, save: true, session: { hash, turn: 0 },
+                step: 60 + i, seq: 600 + i, tool: "exec", toolMs: 90,
+                arguments: { js: `${i}`, title: `Read fare ${i}` }, result: `${i}`,
+            });
+        }
+    });
+    await page.goto(`${server.url}#s=laptop%3A5e6f7a80`);
+    const streak = page.locator(".astreak").filter({ hasText: "exec" }).first();
+    await expect(streak).toBeVisible();
+
+    // FOLDED: nothing inline — the rows are not even drawn.
+    await expect(page.locator(".astep-said")).toHaveCount(0);
+
+    await streak.locator(".astreak-head").click();
+    const said = page.locator('[data-astep-seq="601"] .astep-said');
+    await expect(said).toBeVisible();
+    await expect(said).toHaveText("“Read fare 1”", { useInnerText: true });
+
+    // It is in the TIP too, under the tool's own description, so it is readable without opening anything.
+    await expect(page.locator('[data-astep-seq="601"] .astep-head .tt-said')).toHaveText("“Read fare 1”");
+
+    // THE BUSY VIEW NEVER DRAWS IT INLINE. A collapsed row there carries the value the call RETURNED, which is
+    // what a developer is reading; a model's claim about itself is not that.
+    await page.locator(".chat-gear-btn").first().click();
+    await page.getByRole("menuitemcheckbox", { name: "Calm view" }).click();
+    await expect(page.locator('[data-astep-seq="601"]')).toBeVisible();   // the row is back, unfolded
+    await expect(page.locator('[data-astep-seq="601"] .astep-said')).toBeHidden();
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// A TIP A FINGER CAN READ. The jsdom test (tooltip-layer) owns the rule; what is here is that a real browser
+// reports `pointerType: "touch"` for a tap, which is the single fact the rule turns on and the one thing no unit
+// test can establish. Without it every tip on a phone flashes and goes, and its prose is unreachable.
+test("phone (touch): tapping a step's dot opens its tip, and the tap still opens the step @mobile", async () => {
+    const ctx = await browser.newContext({ viewport: PHONE, hasTouch: true, isMobile: true });
+    const page = await ctx.newPage();
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    try {
+        await page.goto(`${server.url}#/s/${encodeURIComponent(WAITING)}`);
+        const step = page.locator(".astep.tool").first();
+        await expect(step).toBeVisible();
+        await expect(page.locator(".tt-layer")).toBeHidden();
+
+        await step.locator(".astep-head .dot").first().tap();
+        const tip = page.locator(".tt-layer");
+        await expect(tip).toBeVisible();
+        await expect(tip).toContainText("Completed successfully");
+        // AND IT IS STILL THERE A MOMENT LATER. This assertion is the whole reason the test is not a lie: the tap
+        // that opens a tip is very often the same tap that SCROLLS — it opens the step, the transcript grows, its
+        // stick-to-bottom scrolls, and a tip that hides on scroll was gone inside a hundred milliseconds. The
+        // first `toBeVisible` polls, so it caught the tip before that and passed over a broken feature. A demo
+        // found it, by looking a beat later than the test did.
+        await page.waitForTimeout(500);
+        await expect(tip).toBeVisible();
+        // The figures the dot was given: when it happened and how long the TOOL took.
+        await expect(tip.locator(".dot-when")).toContainText(/\d\d:\d\d:\d\d/);
+        // AND THE TAP WAS NOT STOLEN — trading what someone meant to do for a tooltip they did not ask for would
+        // be the wrong way to make this reachable.
+        await expect(step).toHaveClass(/\bopen\b/);
+
+        // The next tap anywhere puts it away, which is the gesture people already use.
+        await page.locator(".chat-transcript").tap({ position: { x: 5, y: 5 } });
+        await expect(tip).toBeHidden();
+        expect(errors).toEqual([]);
+    } finally { await ctx.close(); }
+});
+
+// NO POPUP IS CUT OFF, by the window OR by whatever clips it. This is a different failure from "off the screen",
+// which the touch probe below already measures, and it is the quieter one: the gear's menu rises inside
+// `.chat-list`, which sets `overflow: hidden` because the pane slides out from under the page — so a menu that
+// outgrows the column is not merely untidy, its right-hand side is GONE, and that is the side a toggle's tick is
+// on. It was found by a row whose gloss made the menu wider than the list, not by anything the menu itself did,
+// which is why the check is general: any row added anywhere can cause it, in a place nobody was looking.
+const popupCutoffs = (page) => page.evaluate(async () => {
+    // Measured at rest: every menu here pops with a scale, and a menu mid-pop is smaller than the one that lands.
+    await Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity).map((a) => a.finished.catch(() => {})));
+    const out = [], round = (n) => Math.round(n);
+    for (const pop of document.querySelectorAll('[role=menu], .chat-menu, .chat-dialog')) {
+        const r = pop.getBoundingClientRect();
+        if (!r.width || !r.height || getComputedStyle(pop).visibility === "hidden") continue;
+        const name = (pop.getAttribute("aria-label") || pop.className || "popup").trim().slice(0, 40);
+        if (r.left < -1 || r.right > innerWidth + 1 || r.top < -1 || r.bottom > innerHeight + 1)
+            out.push(`off the window: "${name}" at ${round(r.left)}..${round(r.right)} x ${round(r.top)}..${round(r.bottom)} in ${innerWidth}x${innerHeight}`);
+        // A `fixed` popup is laid out against the window and is NOT clipped by an ancestor's overflow, so walking
+        // them would report a cut that does not happen. (Strictly a transformed ancestor would make one a
+        // containing block again; nothing here does, and a false NEGATIVE is the safe direction for a guard.)
+        if (getComputedStyle(pop).position === "fixed") continue;
+        for (let el = pop.parentElement; el; el = el.parentElement) {
+            const cs = getComputedStyle(el);
+            if (!/hidden|clip|auto|scroll/.test(cs.overflowX + " " + cs.overflowY)) continue;
+            const b = el.getBoundingClientRect();
+            if (r.right > b.right + 1 || r.left < b.left - 1 || r.bottom > b.bottom + 1 || r.top < b.top - 1)
+                out.push(`"${name}" is cut off by .${String(el.className).split(" ")[0]} (${round(r.left)}..${round(r.right)} outside ${round(b.left)}..${round(b.right)})`);
+        }
+    }
+    return out;
+});
+
+test("no menu is cut off — by the window or by the column it opens in", async () => {
+    for (const viewport of [DESKTOP, PHONE]) {
+        const page = await browser.newPage({ viewport, ...(viewport === PHONE ? { hasTouch: true, isMobile: true } : {}) });
+        const errors = [];
+        page.on("pageerror", (e) => errors.push(e.message));
+        const where = viewport === PHONE ? "phone" : "desktop";
+        try {
+            // The PAGE's menu, from the list and from a session — on a wide screen it rises from the list's foot
+            // and on a phone it drops from the list's header, which are two different sets of edges to be cut by.
+            for (const hash of ["", `#/s/${encodeURIComponent(WAITING)}`]) {
+                await page.goto(server.url + hash);
+                await page.locator(".chat").waitFor();
+                if (hash && viewport === PHONE) continue;   // the list (and its gear) is not on screen beside a session here
+                await page.locator(".chat-gear-btn").first().click();
+                await expect(page.locator(".chat-gear-menu")).toBeVisible();
+                expect(await popupCutoffs(page), `${where}, the gear's menu on ${hash || "the list"}`).toEqual([]);
+                // …and with its longest row open, which is where a sub-list can reach past the column.
+                await page.getByRole("menuitem", { name: /Theme for this page/ }).click();
+                expect(await popupCutoffs(page), `${where}, the gear's menu with Theme open`).toEqual([]);
+                await page.keyboard.press("Escape");
+            }
+            // A SESSION ROW's own menu, which opens against the list's right edge rather than rising from its foot.
+            await page.goto(server.url);
+            await page.locator(".chat-row").first().hover();
+            const rowMenu = page.locator(".chat-row-wrap .hbtn, .chat-row-more").first();
+            if (await rowMenu.count()) {
+                await rowMenu.click();
+                expect(await popupCutoffs(page), `${where}, a session row's menu`).toEqual([]);
+            }
+            expect(errors).toEqual([]);
+        } finally {
+            await page.close();
+        }
+    }
 });
 
 test("phone (touch): no view scrolls sideways, and everything a finger taps is at least 40px @mobile", async () => {

@@ -60,6 +60,19 @@ export interface SidebarServices {
      * The panel says yes: it is attached to the tab that holds the run. Read during render, like `sideCalls`.
      */
     canContinue(session: string): boolean;
+    /**
+     * Would the runtime still ACT on this session? Named for the fact rather than for one action, because two
+     * controls depend on it and they fail differently: stopping is REFUSED ("the session is not running"), while
+     * answering an approval is not refused at all — `approval.answer` resolves a gate the runtime no longer holds
+     * and reports `resolved: false`, so the buttons sit there and silently do nothing, which is worse.
+     *
+     * Both are drawn from this client's own reduction of the event stream, and the runtime's index is the other
+     * reducer over the same events. They disagree whenever a run dies without emitting a terminal event: the client
+     * reduces to `pending` for ever while the index has settled. A control that cannot work should not be drawn.
+     *
+     * The panel says yes: its own stream IS the runtime's. Read during render, like `canContinue`.
+     */
+    stillLive(session: string): boolean;
     /** outline something on the session's page; `null` clears it. A host with no page does nothing. */
     highlight(ref: HighlightRef): void;
     /** show an image full-size */
@@ -128,6 +141,7 @@ const UNAVAILABLE: SidebarServices = {
     cancelSession() {},
     continueSession() {},
     canContinue: () => false,
+    stillLive: () => false,
     highlight() {},
     openLightbox() {},
     openLink() {},

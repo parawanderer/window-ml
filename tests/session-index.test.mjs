@@ -205,6 +205,52 @@ test("a tab's document going away interrupts the runs it hosted, not the backgro
     assert.equal(ix.ingest(base("aaaa0001", "agent-say", { text: "resumed here" }), page(TAB_B)).accepted, true);
     assert.equal(ix.get("aaaa0001").status, "running");
     assert.equal(ix.ingest(step("bbbb0002", 1), page(TAB_B)).accepted, false);
+    // …and the BACKGROUND one is interrupted by the close, which the navigation above deliberately did not do. Its
+    // tab held the document every page tool is delegated into, so it cannot take another step.
+    assert.equal(ix.get("bbbb0002").status, "interrupted");
+});
+
+test("a background run whose tab closed stops claiming an approval nobody can answer", () => {
+    // The state a real run reached: a delegated tool hung, the page went, and the run never emitted a result. The
+    // gate stayed in the index, so `pendingApprovals` stayed 1 — the bar said an approval was pending across
+    // reloads and tab switches, with no card to reach and the one press that would clear it refused.
+    const ix = index();
+    ix.ingest(start("aaaa0001"), bg(TAB_A));
+    ix.ingest(step("aaaa0001", 1, { pending: true, awaitingApproval: true }), bg(TAB_A));
+    assert.equal(ix.get("aaaa0001").status, "waiting");
+    assert.equal(ix.get("aaaa0001").pendingApprovals, 1);
+
+    // A NAVIGATION must not do it: a background run surviving one is the whole of cross-page.
+    ix.pageGone(TAB_A, { closed: false });
+    assert.equal(ix.get("aaaa0001").pendingApprovals, 1, "a navigation leaves a background run alone");
+
+    ix.pageGone(TAB_A, { closed: true });
+    assert.equal(ix.get("aaaa0001").status, "interrupted");
+    assert.equal(ix.get("aaaa0001").pendingApprovals, 0, "the gate goes with the page it would have been answered on");
+
+    // Self-correcting: if the run turns out to be alive after all, its own next event takes it back.
+    ix.ingest(base("aaaa0001", "agent-say", { text: "still here" }), bg(TAB_B));
+    assert.equal(ix.get("aaaa0001").status, "running");
+});
+
+test("a restored session claims no approval, whatever the row on disk said", () => {
+    // The row is persisted with whatever was pending at the time, and a session restored from one holds NO gates.
+    // Carrying the count across left a claim with nothing behind it, and the only thing that recomputes it runs on
+    // an event — which a run that died with its worker never sends. What that looked like: the bar above the
+    // transcript saying an approval was pending for the rest of the browser's life, "Review" scrolling to no card,
+    // and answering an unrelated gate unable to clear it, because it had never been one.
+    const ix = index();
+    const saved = { id: { runtime: "local", hash: "aaaa0001" }, kind: "agent", status: "waiting", createdTs: 500, lastTs: 900, pendingApprovals: 1, saved: true, task: "read the fare rules" };
+    const [row] = ix.restore([{ summary: saved, count: 12 }]);
+    assert.equal(row.pendingApprovals, 0);
+    assert.equal(ix.get("aaaa0001").pendingApprovals, 0);
+    // A gate open when the worker died cannot be answered — the loop that posted it is gone — so the status is the
+    // interrupted one and the count agrees with it.
+    assert.equal(row.status, "interrupted");
+    // A restored session is `ended`, so nothing it is handed can reopen a gate by accident either: it takes a real
+    // resume to make it live again, and that path brings its own events with it.
+    ix.ingest(step("aaaa0001", 1, { pending: true, awaitingApproval: true }), page(TAB_A));
+    assert.equal(ix.get("aaaa0001").pendingApprovals, 0);
 });
 
 test("a restored session is listed, is not running any more, and its events are known to be on disk", () => {

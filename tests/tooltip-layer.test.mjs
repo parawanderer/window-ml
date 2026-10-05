@@ -219,3 +219,95 @@ test("the DELAYED cursor tip waits for the pointer to rest, shows only when aske
         h.onPointerLeave();
     } finally { Object.assign(g, saved); }
 });
+
+// --- a tap holds a tip open, where there is no pointer to hover with ---
+// A touch raises `pointerover` and then the synthetic `pointerout` that ends it, so every tip flashed and
+// vanished on a phone and its prose was simply unreachable. The repo's rule is that naming a control is
+// `aria-label` and explaining anything is the tip — so the tap opens the tips that EXPLAIN, and leaves the ones
+// that merely name a control alone, or ordinary use on a phone becomes a flicker of popups.
+
+/** A pointerdown with a pointer type, which is the only thing telling a finger from a mouse here. */
+const tap = (doc, el, pointerType = "touch") => {
+    const ev = new doc.defaultView.Event("pointerdown", { bubbles: true });
+    Object.defineProperty(ev, "pointerType", { value: pointerType });
+    Object.defineProperty(ev, "target", { value: el, configurable: true });
+    el.dispatchEvent(ev);
+};
+
+test("a touch tap opens an explaining tip, and leaving does not take it away", () => {
+    const w = world('<span class="tt">dot<span class="tt-pop">Completed successfully.</span></span>');
+    try {
+        const trigger = w.document.querySelector(".tt");
+        hover(w.document, trigger);           // the browser raises this for a touch too…
+        tap(w.document, trigger);
+        assert.equal(w.layer().hidden, false);
+        assert.match(w.layer().textContent, /Completed successfully/);
+        // …and then ends it with a synthetic leave, which is what used to make the tip flash and go.
+        trigger.dispatchEvent(new w.dom.window.MouseEvent("pointerout", { bubbles: true, relatedTarget: w.document.body }));
+        assert.equal(w.layer().hidden, false, "the tap holds it");
+    } finally { w.stop(); }
+});
+
+test("the next tap anywhere dismisses it", () => {
+    const w = world('<span class="tt">dot<span class="tt-pop">Completed successfully.</span></span>');
+    try {
+        tap(w.document, w.document.querySelector(".tt"));
+        assert.equal(w.layer().hidden, false);
+        tap(w.document, w.document.body);
+        assert.equal(w.layer().hidden, true, "the gesture people already use");
+    } finally { w.stop(); }
+});
+
+test("a held tip FOLLOWS a scroll; a hovered one still goes", () => {
+    // The tap that opens a tip is very often the same tap that scrolls — tapping the dot in a step's header opens
+    // that step, the transcript grows and its stick-to-bottom scrolls. Dropping the tip there means a finger can
+    // never read one on the control it most wants to. A HOVERED tip is the opposite case: the pointer stays still
+    // while the content moves out from under it, so what is there now is not what raised it.
+    const w = world('<span class="tt">dot<span class="tt-pop">Completed successfully.</span></span>');
+    try {
+        const trigger = w.document.querySelector(".tt");
+        tap(w.document, trigger);
+        w.document.dispatchEvent(new w.dom.window.Event("scroll", { bubbles: true }));
+        assert.equal(w.layer().hidden, false, "held: it follows");
+
+        hover(w.document, trigger);
+        tap(w.document, w.document.body);                      // release the hold
+        hover(w.document, trigger);
+        assert.equal(w.layer().hidden, false);
+        w.document.dispatchEvent(new w.dom.window.Event("scroll", { bubbles: true }));
+        assert.equal(w.layer().hidden, true, "hovered: it goes");
+    } finally { w.stop(); }
+});
+
+test("a held tip still goes once its trigger has left the screen", () => {
+    const w = world('<span class="tt">dot<span class="tt-pop">Completed successfully.</span></span>');
+    try {
+        const trigger = w.document.querySelector(".tt");
+        tap(w.document, trigger);
+        assert.equal(w.layer().hidden, false);
+        // jsdom has no layout, so the scroll is simulated by moving the trigger above the viewport.
+        trigger.getBoundingClientRect = () => ({ left: 100, top: -80, width: 40, height: 16, right: 140, bottom: -64 });
+        w.document.dispatchEvent(new w.dom.window.Event("scroll", { bubbles: true }));
+        assert.equal(w.layer().hidden, true, "anchored to something nobody can see is worse than none");
+    } finally { w.stop(); }
+});
+
+test("a tap on a trigger that IS a control opens nothing: its tip is that control's name", () => {
+    // `aria-label` already carries it, and raising a popup on every icon button a finger lands on would turn
+    // ordinary use into a flicker.
+    const w = world('<button class="tt" aria-label="Stop">x<span class="tt-pop">Stop this run</span></button>');
+    try {
+        tap(w.document, w.document.querySelector(".tt"));
+        assert.equal(w.layer().hidden, true);
+    } finally { w.stop(); }
+});
+
+test("a MOUSE press still dismisses, which is what pressing anything should do", () => {
+    const w = world('<span class="tt">dot<span class="tt-pop">Completed successfully.</span></span>');
+    try {
+        hover(w.document, w.document.querySelector(".tt"));
+        assert.equal(w.layer().hidden, false);
+        tap(w.document, w.document.querySelector(".tt"), "mouse");
+        assert.equal(w.layer().hidden, true);
+    } finally { w.stop(); }
+});

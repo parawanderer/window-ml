@@ -331,6 +331,45 @@ worst case is failing again. It exists because a failure is usually not about wh
 restarting underneath a run answered "Model not found" for a model that was serving a minute earlier and was
 listed again a minute later, and the only way forward was to retype something.
 
+## A call's own title
+
+Every tool is given one reserved parameter, `title`: a few words from the model on what THAT call is for. Optional
+— a model that writes none has said nothing and nothing is shown. It exists for reading a run back: the arguments
+say what ran and the result says what came of it, and neither says what the model thought it was doing, which is
+the question anyone investigating a run actually has.
+
+**It is a CLAIM, and is drawn as one** — quoted, never in place of the arguments beside it. Nothing derives it and
+nothing checks it against what the call did.
+
+The mechanics, which are the part that can go wrong silently:
+
+- **Injected into the TOOLSET, not into the model-facing `toolDefs`** (`withCallTitle`, ml-agent-run.ts). The
+  background run's descriptors are built from the toolset too, so one injection covers both loops; and both the
+  loop's `validateArgs` and the panel's argument-issue strip read `tool.parameters`, against which an unannounced
+  `title` reads as an unknown property and puts a ⚠ on every call that used it.
+- **A schema that declares NO properties is left alone.** An empty `properties` is how this codebase spells "shape
+  not specified" and `validateArgs` skips the unknown-property check entirely for it. Adding ours makes it
+  non-empty, and a parameterless tool would start telling the model its own arguments were wrong.
+- **Taken off the arguments at the single dispatch** (`takeCallTitle`, tool-exec.ts), so a tool is never handed a
+  key its own code never declared — several of the DOM tools iterate their args. The step EVENT keeps the model's
+  arguments whole, which is the log's standing promise, so the UI reads it from there and nothing was added to
+  the wire.
+- **The name is RESERVED, loudly.** `defineTool` throws on a tool declaring it (where it is fixable, like an
+  unusable tool name), and the signature rejects a literal schema that does, with the sentence spelled as a string
+  literal so the diagnostic says what to do. A schema whose keys are not literal cannot be checked that way and
+  falls to the throw. `tests/types/call-title.types.ts` is a `@ts-expect-error` file, so tsc fails if the type-level
+  half ever stops catching it.
+
+**Where it is shown**: in the tool name's tooltip always, under the tool's own description; inline beside the tool
+name only in the reading view and only inside an OPEN group, because expanding a folded run is the gesture that
+means "I am investigating" — during a run, one per row is noise. The busy view never draws it inline: a collapsed
+row there already carries the value the call returned, which is what a developer is reading. `run.md` puts it in
+the step's heading, since that file is the canonical human narrative and is the surface this exists for.
+
+The instruction lives in the SYSTEM prompt (`CALL_TITLE_CLAUSE`), said once, with only a one-line reminder and an
+example in each schema: the parameter rides in every tool on every turn, so a sentence per schema is multiplied by
+the toolset and re-sent for the length of the run.
+
 ## `chat_metadata`: where the user is
 
 `chat_metadata` adds one `user focus:` line when the user is NOT on the agent's own tab, read at the moment of the

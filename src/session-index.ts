@@ -455,7 +455,14 @@ export class SessionIndex {
             const hash = summary.id?.hash;
             if (typeof hash !== "string" || !HASH_RE.test(hash) || this.sessions.has(hash)) continue;
             const status: SessionStatus = summary.status === "running" || summary.status === "waiting" ? "interrupted" : summary.status;
-            const restored: SessionSummary = { ...summary, id: { runtime: this.runtime, hash }, status, saved: true };
+            // `pendingApprovals: 0`, NOT whatever was persisted. A restored session holds no gates — `gates` below is
+            // empty by construction — so a count carried in from disk is a claim with nothing behind it, and the one
+            // thing that recomputes it (`refreshSummary`) runs on an EVENT, which a run that died with its worker
+            // will never send again. The result was a row that said an approval was pending for the rest of the
+            // browser's life: the bar above the transcript stayed up through reloads and tab switches, "Review"
+            // scrolled to no card, and answering some other gate could not clear it because it was never a gate.
+            // A gate open when the worker died cannot be answered anyway — the loop that posted it is gone.
+            const restored: SessionSummary = { ...summary, id: { runtime: this.runtime, hash }, status, saved: true, pendingApprovals: 0 };
             const s: Indexed = {
                 id: restored.id, kind: restored.kind, gen: 0, ring: [], seen: count, bytes: 0,
                 lostThrough: count, lastCursor: count,
@@ -599,7 +606,14 @@ export class SessionIndex {
                 s.owner = undefined;
                 if (s.summary.page) delete s.summary.page.tabId;
             }
-            if (s.hostedBy === "page" && !s.interrupted && (s.kind === "agent" ? !s.ended : s.openTurns.size > 0)) {
+            // A BACKGROUND-hosted run was taken to report its own end, and that holds only while something is still
+            // driving it. Its tab CLOSING takes the document every page tool is delegated into, so it cannot take
+            // another step: it is picked up on a new page or it is over. Leaving it `waiting` kept a gate in the
+            // list that nothing could answer — the bar said an approval was pending across reloads and tab
+            // switches, and the press that would have cleared it was refused. A NAVIGATION stays excluded, because
+            // a background run surviving one is the whole of cross-page. Self-correcting either way: any later
+            // event from the run clears `interrupted` again, and marking it is also what offers the resume.
+            if ((s.hostedBy === "page" || opts.closed) && !s.interrupted && (s.kind === "agent" ? !s.ended : s.openTurns.size > 0)) {
                 s.interrupted = true;
                 s.gates.clear();
                 s.openTurns.clear();

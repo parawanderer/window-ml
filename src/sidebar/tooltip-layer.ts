@@ -53,6 +53,11 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
     ((root as ShadowRoot).host ? root : doc.body).appendChild(layer);
 
     let current: Element | null = null;
+    // A TIP HELD BY A TAP. A touch raises `pointerover` and then, a moment later, the synthetic `pointerout` that
+    // ends it — so on a phone every tip flashed and vanished and the prose was simply unreachable. While this is
+    // set, leaving does not hide; the next tap elsewhere does, which is the gesture people already use. Declared
+    // beside `current` because `hide` clears it.
+    let held = false;
     // The layer holds a COPY, so anything that re-renders the source while it is open (the resource panel
     // polls every 2s) would leave the reader looking at a figure the panel no longer believes. Watch the
     // source and re-copy — a tooltip that disagrees with what is under it is worse than no tooltip.
@@ -61,6 +66,7 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
         : null;
     let unwatch: (() => void) | null = null;
     const hide = (): void => {
+        held = false;
         current = null; layer.hidden = true; layer.textContent = "";
         layer.style.removeProperty("--fs");
         watcher?.disconnect();
@@ -81,6 +87,21 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
         // `wide` is a width INTENT: content laid out as a grid (a card's facts) needs more than the default cap.
         layer.classList.toggle("wide", src.classList.contains("wide"));
         return true;
+    };
+
+    /** Put the layer beside its trigger. Measured AFTER the content is in, and placed against the VIEWPORT — the
+     *  only box that never scrolls out from under it. Its own function because a tip held by a tap is re-placed
+     *  when the page moves rather than dropped. */
+    const place = (trigger: Element): void => {
+        const t = trigger.getBoundingClientRect();
+        const w = doc.defaultView?.innerWidth ?? 1024;
+        const h = doc.defaultView?.innerHeight ?? 768;
+        const box = layer.getBoundingClientRect();
+        const style = tipStyle({ x: t.left + t.width / 2, y: t.top, w });
+        Object.assign(layer.style, { left: "auto", right: "auto", ...style });
+        // tipStyle decides the side; the vertical half needs the tooltip's own height, which only exists now.
+        const above = t.top - box.height - MARGIN;
+        layer.style.top = `${above >= MARGIN ? above : Math.min(t.bottom + MARGIN, h - box.height - MARGIN)}px`;
     };
 
     const show = (trigger: Element): void => {
@@ -112,34 +133,67 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
         unwatch?.();
         unwatch = watchTrigger(trigger, hide);
 
-        // Measure AFTER content is in, then place against the viewport — the only box that never scrolls out
-        // from under it.
-        const t = trigger.getBoundingClientRect();
-        const w = doc.defaultView?.innerWidth ?? 1024;
-        const h = doc.defaultView?.innerHeight ?? 768;
-        const box = layer.getBoundingClientRect();
-        const style = tipStyle({ x: t.left + t.width / 2, y: t.top, w });
-        Object.assign(layer.style, { left: "auto", right: "auto", ...style });
-        // tipStyle decides the side; the vertical half needs the tooltip's own height, which only exists now.
-        const above = t.top - box.height - MARGIN;
-        layer.style.top = `${above >= MARGIN ? above : Math.min(t.bottom + MARGIN, h - box.height - MARGIN)}px`;
+        place(trigger);
     };
 
     const over = (e: Event): void => {
         const el = (e.target as Element | null)?.closest?.(".tt");
         if (el) { if (el !== current) show(el); }
-        else if (current) hide();
+        else if (!held && current) hide();
     };
     const out = (e: Event): void => {
+        if (held) return;
         const to = (e as MouseEvent).relatedTarget as Element | null;
         if (!to || !to.closest?.(".tt")) hide();
+    };
+    /**
+     * A tap. On a POINTER this dismisses whatever is up, which is what pressing anything should do. On TOUCH it
+     * can instead be the only way to read a tip at all, so it opens one — for the triggers that need it.
+     *
+     * WHICH ONES: a trigger that IS a control (a button, a link, a tab) is skipped. Its tip is that control's
+     * NAME, which `aria-label` already carries, and raising one on every icon button a finger lands on turns
+     * ordinary use into a flicker of popups. A trigger that is a plain wrapper — the status dot inside a step's
+     * header, an element count, a marked line — has prose that exists nowhere else, and that is the case this is
+     * for. The same split AGENTS.md draws: naming a control is `aria-label`, explaining anything is the tip.
+     *
+     * THE TAP IS NOT STOLEN. No `preventDefault`, so whatever the finger was pressing still happens — tapping the
+     * dot in a step's header still opens the step. Taking that away to show a tooltip would trade the thing
+     * someone meant to do for a thing they did not ask for.
+     */
+    const down = (e: Event): void => {
+        const pe = e as PointerEvent;
+        const el = pe.pointerType === "touch" ? (e.target as Element | null)?.closest?.(".tt") : null;
+        if (el && !el.matches("button, a, summary, [role=button], [role=tab], [role=menuitem]")) {
+            held = true;
+            show(el);
+            return;
+        }
+        held = false;
+        hide();
+    };
+
+    /**
+     * A tooltip anchored to something that has scrolled away is worse than none — so a HOVERED one goes: the
+     * pointer stays still while the content moves out from under it, and whatever is there now is not what raised
+     * it.
+     *
+     * A tip held by a TAP is the opposite case and must follow instead. The tap that opened it is very often the
+     * same tap that scrolled: tapping the dot in a step's header opens that step, the transcript grows, its
+     * stick-to-bottom scrolls, and the tip the finger just asked for was gone within a hundred milliseconds. It
+     * still goes once its trigger has genuinely left the screen.
+     */
+    const onScroll = (): void => {
+        if (!current) return;
+        if (!held) { hide(); return; }
+        const t = current.getBoundingClientRect();
+        if (t.bottom < 0 || t.top > (doc.defaultView?.innerHeight ?? 768)) { hide(); return; }
+        place(current);
     };
 
     root.addEventListener("pointerover", over, true);
     root.addEventListener("pointerout", out, true);
-    root.addEventListener("pointerdown", hide, true);
-    // A tooltip anchored to something that has scrolled away is worse than none.
-    root.addEventListener("scroll", hide, true);
+    root.addEventListener("pointerdown", down, true);
+    root.addEventListener("scroll", onScroll, true);
     doc.defaultView?.addEventListener("blur", hide);
     // Esc dismisses hover content without moving the pointer (WCAG 1.4.13) — and is usually the very key that is
     // closing whatever the trigger was in.
@@ -149,8 +203,8 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
     return () => {
         root.removeEventListener("pointerover", over, true);
         root.removeEventListener("pointerout", out, true);
-        root.removeEventListener("pointerdown", hide, true);
-        root.removeEventListener("scroll", hide, true);
+        root.removeEventListener("pointerdown", down, true);
+        root.removeEventListener("scroll", onScroll, true);
         root.removeEventListener("keydown", onKey, true);
         watcher?.disconnect();
         unwatch?.();

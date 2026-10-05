@@ -10,8 +10,8 @@ import { FakeHost } from "../src/chat/fake-host.ts";
 import { hostServices } from "../src/chat/host-services.ts";
 import { holds, mayCommand } from "../src/chat/grants.ts";
 import { resumableHere } from "../src/chat/grants.js";
-import { CALM_KEY, LIST_KEY, PINNED_KEY, PINNED_MODELS_KEY, calm, dropPin, installViewPrefs, listOpen, pinned, pinnedModels, setCalm, setListOpen, togglePin, togglePinnedModel } from "../src/chat/view-mode.tsx";
-import { sessionMap, view } from "../src/sidebar/store.ts";
+import { CALM_KEY, GROUP_ALL_KEY, LIST_KEY, PINNED_KEY, PINNED_MODELS_KEY, calm, dropPin, installViewPrefs, listOpen, pinned, pinnedModels, setCalm, setGroupAll, setListOpen, togglePin, togglePinnedModel } from "../src/chat/view-mode.tsx";
+import { groupAllTools, sessionMap, view } from "../src/sidebar/store.ts";
 import { SESSION_CONTRACT_VERSION } from "../src/session-host.ts";
 
 const flush = async (n = 4) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
@@ -430,6 +430,15 @@ test("Continue is offered only where the RUNTIME agrees the run stopped at its c
     // Capped, but `session.continue` is delivered THROUGH the page, so with no tab the press would do nothing.
     assert.equal(svc.canContinue("laptop:notab001"), false);
     assert.equal(svc.canContinue("laptop:nosuch01"), false);
+
+    // The STOP button asks the same way, against `session.cancel`'s own precondition. The failure this closes: a
+    // run that died without emitting a terminal event leaves this client reducing to `pending` for ever while the
+    // runtime's index has moved on, so the button stayed and answered "the session is not running" when pressed.
+    assert.equal(svc.stillLive("laptop:run00001"), true);
+    assert.equal(svc.stillLive("laptop:wait0001"), true);
+    assert.equal(svc.stillLive("laptop:cap00001"), false);
+    // No summary yet is NOT a refusal: the first paint of a real run must not be the one with no way to stop it.
+    assert.equal(svc.stillLive("laptop:nosuch01"), true);
     store.dispose();
 });
 
@@ -473,6 +482,27 @@ const fakePrefs = (seed = {}) => {
     const m = new Map(Object.entries(seed));
     return { get: (k) => m.get(k), set: (k, v) => m.set(k, v), all: m };
 };
+
+test("view prefs: group-all is OFF unless this device said otherwise, and it writes back", () => {
+    // Off is the default because the conservative fold rule is what someone who has not asked should get; and the
+    // flag is mirrored onto a signal in `src/sidebar/store`, since the shared session views may not import from
+    // `src/chat/` at all.
+    installViewPrefs(fakePrefs());
+    assert.equal(groupAllTools.value, false);
+
+    installViewPrefs(fakePrefs({ [GROUP_ALL_KEY]: true }));
+    assert.equal(groupAllTools.value, true, "a device that asked for it keeps its answer across a reload");
+
+    // A stored value of the wrong shape is not an answer: installing IS the answer to "how does this device read".
+    installViewPrefs(fakePrefs({ [GROUP_ALL_KEY]: "yes" }));
+    assert.equal(groupAllTools.value, false);
+
+    const prefs = fakePrefs();
+    installViewPrefs(prefs);
+    setGroupAll(true);
+    assert.equal(groupAllTools.value, true);
+    assert.equal(prefs.all.get(GROUP_ALL_KEY), true, "written back, so the next load opens the same way");
+});
 
 test("view prefs: calm is the default, a stored answer wins, and both toggles write back", () => {
     // Nothing stored: the page opens calm, with the list out, which is what this surface is for.

@@ -316,3 +316,7 @@ export function mdInline(src: string): string {
     const m = html.match(/^<p>((?:(?!<\/p>)[\s\S])*)<\/p>\s*$/);
     return m ? m[1] : html;
 }
+
+/** Did this tool call FAIL, read off the model-facing result text. Biased toward "failed": a false
+ *  positive withholds a citation token, a false negative would cite an ERROR as an answer. */
+export const toolFailed = (result?: string): boolean => !!result && /^(Error:|Denied)/.test(result);

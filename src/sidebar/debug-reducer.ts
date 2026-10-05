@@ -247,9 +247,18 @@ export function onDebug(ev: MlDebugEvent, runtime?: string): void {
         rev.value++; return;
     }
     // A handle raised the step cap mid-run (a.maxSteps = N) → the "STEP x/N" display re-renders live.
+    //
+    // KEPT AS A LIST, not only as the latest number. `maxSteps` answers "what is the budget now", which is what the
+    // step pill and the Continue button need. It cannot answer "what was granted HERE", and a run continued twice
+    // asks that twice: the first seam would be labelled with the second grant. The seams are what a reader is
+    // reconciling when they find a "stopped at its step cap" with more steps under it.
     if (ev.kind === "agent-cap") {
         const s = sessionMap.get(key);
-        if (s) { s.maxSteps = ev.maxSteps; s.lastTs = ev.ts; rev.value++; }
+        if (s) {
+            s.maxSteps = ev.maxSteps; s.lastTs = ev.ts;
+            s.capRaises = [...(s.capRaises || []), { ts: ev.ts, maxSteps: ev.maxSteps }];
+            rev.value++;
+        }
         return;
     }
     // A user message mid-conversation: a follow-up run()'s task OR a mid-run say(). Both render as "you"

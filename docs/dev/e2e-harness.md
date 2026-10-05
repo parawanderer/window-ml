@@ -217,6 +217,40 @@ as in AGENTS.md — they are all under `src/`.
   `tests/e2e/artifacts/bench-completion-demo/`. Its first headless run caught the worker's per-run inputs being
   listed as kept variables, which is what a demo is for. The assertions are `tests/python.test.mjs` and
   `bench-dock.spec.mjs`.
+- **`touch-tips-demo.mjs`** — a **narrated demo, not a test** of READING A TOOLTIP WITHOUT A POINTER:
+  `npm run build && node tests/e2e/touch-tips-demo.mjs` (`BEAT=`, `HOLD=0`; screenshots in
+  `tests/e2e/artifacts/touch-tips-demo/`). One phone context (`hasTouch`), left open at the end. Five beats: the
+  tip is unreachable · a tap holds it · the tap is not stolen (the step opens too) · the next tap dismisses it ·
+  a trigger that IS a control raises nothing.
+  **A HEADFUL DEMO CANNOT HOLD A SYNTHETIC HOVER**, which is why there is no desktop beat and is worth knowing
+  before writing one: `page.mouse.move` is a CDP event while the real cursor is wherever the hand left it, so
+  Chromium corrects the pointer position back out and raises a genuine `pointerout` within a frame or two.
+  Measured: headless the tip survives a second; headful it is gone inside 900ms, with three `pointerout`s, the
+  last carrying a null `relatedTarget`. A spec can assert a hover (it runs headless); a watched demo cannot.
+  It also prints what each beat SAW (`observe`), because checking a demo otherwise means opening six screenshots
+  — and that is how it caught the tip dying to the scroll its own tap had caused, which the spec had missed by
+  asserting a beat too early. The assertions are `tests/tooltip-layer.test.mjs` and the `@mobile` test in
+  `chat-web.spec.mjs`.
+- **`streak-demo.mjs`** — a **narrated demo, not a test** of TOOL-STREAK FOLDING in the chat page's calm view:
+  `npm run build && node tests/e2e/streak-demo.mjs` (`BEAT=` paces it, `HOLD=0` exits instead of leaving the
+  browser for you; screenshots in `tests/e2e/artifacts/streak-demo/`). It needs no extension — it serves
+  `dist-web/` and drives the FAKE HOST (`window.__chatFake.addSession` + `emit`) rather than a scripted model,
+  because every beat is about WHEN the client folds what it has, so the pacing has to be the demo's own.
+  Nine beats, each one rule: different tools never fold · two is a pair · a live tail stays open · something
+  following it makes it fold · a second run of the same tool is a SEPARATE streak (adjacent, not cumulative) ·
+  the row carries the count, the failures and the total time · a turn that said something is never folded ·
+  open is indistinguishable from never folded, plus the rail · the tail folds when the run ends.
+  PART THREE is a second session for the other thing that changes under a reader: a run stopping at its step cap
+  and being continued past it, where the boilerplate answer collapses into a seam naming the budget. That part
+  caught a fold merging ACROSS the seam, so the divider rendered under all seven steps instead of in the middle
+  of them — a plausible-looking order that nothing throws on and no finished transcript would show.
+  PART TWO turns on the ⋮ menu's "Group all tool calls" and walks the three things that rule still owes you: a
+  mixed run becoming one row counted in CALLS and naming every tool; a pending gate standing OUTSIDE the group and
+  folding in once answered; and a citation in the answer opening the group the step it names is now inside.
+  It exists because a finished transcript cannot show you any of that: every clause is about the turns AROUND a
+  step, so reading the end state tells you what folded and never why. Its first run found `ApprovalBadge`
+  throwing on an approval value it did not know — a crash a newer runtime could have caused on a real client.
+  The assertions are `tests/step-streak.test.mjs` and the fold tests in `chat-web.spec.mjs`.
 - **`table-demo.mjs`** — a **narrated demo, not a test** of fetched tables: `npm run build && node --import tsx
   tests/e2e/table-demo.mjs` (`HOLD=0` exits). Part one (beats 1–8) is built behaviour: CSV / semicolon / Parquet
   previews, `pipe`, the read-only survey, a full `exec` through a pointer, `python_exec` from the cache, and an

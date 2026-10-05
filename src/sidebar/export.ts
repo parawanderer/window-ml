@@ -11,6 +11,7 @@
 // deflated). Extracted from app.tsx.
 import atomOneLight from "highlight.js/styles/atom-one-light.css";
 import { ladderLines } from "./fetch-ladder";
+import { CALL_TITLE } from "../tool-params";
 import katexCss from "katex/dist/katex.min.css";
 import { sessionMap, turnsRun, config } from "./store";
 import { serializeSessionJson } from "./export-json";
@@ -349,7 +350,11 @@ function writeAgent(s: Session, d: Sink): void {
             if (st.thought) d.prose(st.thought);
             continue;
         }
-        d.head(`Step ${st.step} · ${st.tool || "?"}`);
+        // THE MODEL'S OWN ACCOUNT of this call, where it wrote one, in the heading a reader scans. This file is
+        // the canonical human narrative of a run, which is the surface the parameter exists for; the arguments
+        // below carry it verbatim either way, so nothing here is the only copy. Quoted, because it is a claim.
+        const said = typeof st.arguments?.[CALL_TITLE] === "string" ? String(st.arguments[CALL_TITLE]).trim() : "";
+        d.head(`Step ${st.step} · ${st.tool || "?"}${said ? ` — “${said}”` : ""}`);
         if (st.approval) d.note(st.approval === "readonly" ? "auto-approved (read-only)" : st.approval === "sandbox" ? "auto-approved (sandboxed python)" : st.approval === "user" ? "approved by user" : st.approval === "skipped" ? "skipped (target didn't resolve — would only fail)" : "denied by user");
         if (st.reasoning) d.details("Thinking", () => d.prose(st.reasoning!));
         if (st.thought) d.prose(st.thought);

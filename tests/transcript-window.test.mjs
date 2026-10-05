@@ -94,3 +94,21 @@ test("reveal: a step nothing can produce is reported gone, never silently ignore
     host(null);
     assert.equal(await W.reveal("r4", () => null), "gone");
 });
+
+test("an item can weigh more than one, so a fold cannot smuggle a hundred turns past the window", () => {
+    // The budget is about what a transcript COSTS TO DRAW, not how many rows it has. A folded run of tool calls is
+    // one row on screen and its own length in DOM the moment somebody opens it, so counting it as one item let a
+    // hundred and forty turns through the guard that exists to stop exactly that.
+    const items = [{ w: 1 }, { w: 1 }, { w: W.WINDOW * 3 }, { w: 1 }];
+    const { drawn, hidden } = W.tail(items, "wgt", (i) => i.w);
+    assert.deepEqual(drawn, [{ w: 1 }], "the heavy one does not fit, so neither does anything above it");
+    assert.equal(hidden, 3);
+    // Unweighted callers are untouched: every item weighs one and this is the slice it always was.
+    assert.equal(W.tail(items, "wgt2").drawn.length, 4);
+});
+
+test("one item heavier than the whole budget is still drawn — never an empty transcript", () => {
+    const { drawn, hidden } = W.tail([{ w: 1 }, { w: W.WINDOW * 20 }], "wgt3", (i) => i.w);
+    assert.deepEqual(drawn, [{ w: W.WINDOW * 20 }], "the thing you are looking at is the one thing that must be there");
+    assert.equal(hidden, 1);
+});

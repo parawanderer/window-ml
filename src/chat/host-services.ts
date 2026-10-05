@@ -76,6 +76,14 @@ export function hostServices(store: ChatStore, platform: ClientPlatform): Sideba
             const s = summaryOf(key as SessionKey);
             return !!s?.page?.tabId && s.status === "capped";
         },
+        // The runtime's OWN reading, which is what `session.cancel` checks. Its precondition is exactly these two
+        // statuses, so asking anything else here would be inventing a second rule. A session with no summary yet is
+        // allowed: the caller has already decided it looks live, and the first paint of a real run must not be the
+        // one with no way to stop it or answer it.
+        stillLive: (key) => {
+            const st = summaryOf(key as SessionKey)?.status;
+            return st === undefined || st === "running" || st === "waiting";
+        },
         highlight: (ref) => {
             // The shared views outline things on "the session's page" without naming it, because in a panel there is
             // only one. Here that is the session being read.

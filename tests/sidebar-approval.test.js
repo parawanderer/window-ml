@@ -460,9 +460,10 @@ test("a fetch AS THE USER says so as its own fact, not as a dimmed aside", async
     assert.ok(!note || !/cookies/.test(note.textContent), "the dimmed note does not carry it");
 });
 
-test("an approval with no sentence to give still shows what it would run", async () => {
-    // A code tool has no deterministic intent, and you cannot approve code you cannot see: there the arguments must
-    // still open themselves. This is the half that the rule above must not take away.
+test("a code approval says where the code runs, and still unfurls the code", async () => {
+    // Every other gate says what the agent wants to do; a code one used to ask a question about a tool instead, so
+    // one run held both wordings for one decision. The sentence cannot say what the code DOES — that is what the
+    // block under it is for — so it says the half it can: where it would run.
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("code", "run it"));
     await w.dispatch(agentStep("code", 1, {
@@ -471,8 +472,28 @@ test("an approval with no sentence to give still shows what it would run", async
     }));
     w.shadow.querySelector(".row").click();
     await w.flush();
-    assert.ok(w.shadow.querySelectorAll(".astep.tool .io").length > 0, "the In opens itself when nothing else says what will run");
-    assert.match(w.shadow.querySelector(".astep-approve").textContent, /Approve running/, "and the plain question stands in");
+    const card = w.shadow.querySelector(".astep-approve");
+    assert.match(card.textContent, /Agent wants to run the JavaScript on the page/, "the sentence, in the form every other gate uses");
+    assert.doesNotMatch(card.textContent, /Approve running/, "not the question about a tool");
+    // AND THE SOURCE STILL OPENS ITSELF. You cannot approve code you cannot see, and the rule that a sentence
+    // means the arguments need not unfurl must never reach this one.
+    assert.ok(w.shadow.querySelectorAll(".astep.tool .io").length > 0, "the In opens itself for a code tool");
+});
+
+test("a tool with no deterministic intent at all keeps the plain question", async () => {
+    // The fallback is not dead: a custom tool supplies no `action` render and is not code, so there is nothing to
+    // build a sentence out of. The rendered arguments sit directly above it either way.
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("cust", "file it"));
+    await w.dispatch(agentStep("cust", 1, {
+        seq: 1, pending: true, awaitingApproval: true, tool: "send_report",
+        arguments: { to: "ops", body: "all clear" },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.flush();
+    const card = w.shadow.querySelector(".astep-approve");
+    assert.match(card.textContent, /Approve running/, "the plain question stands in");
+    assert.doesNotMatch(card.textContent, /Agent wants to/, "and no sentence is invented for it");
 });
 
 test("output-cap raise: the approval card calls out the raised limit + the model's justification", async () => {
