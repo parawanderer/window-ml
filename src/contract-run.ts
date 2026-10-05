@@ -134,3 +134,31 @@ export const shortHash = (): string => {
 
 /** A session hash as runtimes mint them. No `:`, so it composes into a SessionKey. */
 export const HASH_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * WHERE A PROMPT WAS TYPED — recorded per message, because one session can be driven from several places: a run
+ * started from the Commander HUD and followed up from the chat app is the ordinary case, not a corner one.
+ *
+ * It is deliberately NOT the debug surface (`"overlay" | "devtools" | "off"`, which says where the
+ * INSTRUMENTATION is). The two disagree routinely — a chat-app prompt arrives while `debugMode` is "off" — and
+ * one field meaning both is how a surface ends up described by where its logs happen to be going.
+ *
+ * STAMPED FROM THE CHANNEL the message arrived on, never read from a field the sender set: the content shell
+ * knows its own mode, the panel knows it is the panel, and a session command knows it came over the port. A
+ * value a page could choose would be worth nothing, and deriving it costs nothing.
+ */
+export type PromptSurface =
+    /** the Commander HUD's composer, in a corner card on the page itself */
+    | "hud"
+    /** the sidebar panel open over the page */
+    | "overlay"
+    /** the DevTools panel */
+    | "devtools"
+    /** the chat app — this browser's own page, or a client on another device (`remote`) */
+    | "chat"
+    /** a direct `ml.agent()` call, from a console or a userscript */
+    | "console";
+
+/** Where a prompt came from, and whether that place is on another device. `remote` only means anything for
+ *  `"chat"`; every other surface is, by construction, the browser the run is in. */
+export interface PromptOrigin { surface: PromptSurface; remote?: boolean }

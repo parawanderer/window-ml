@@ -8,7 +8,7 @@
 // Re-exported from contract.ts, which stays the address everything imports from.
 // Type-only, so the cycle with contract.ts (which re-exports this file) erases at build entirely.
 import type { JsonSchema } from "./contract";
-import type { RequestHint } from "./contract-run";
+import type { PromptOrigin, RequestHint } from "./contract-run";
 import type { LexicalMetric } from "./contract-config";
 import type { NeutralMessage, ExtendProfile } from "./contract-chat";
 import type { RemoteToolTarget, RemoteTiming, ReusedGrant } from "./contract-agent";
@@ -98,6 +98,9 @@ export interface StartRunPayload {
     /** opt-in: STREAM the model's thinking/reply live (emits `agent-stream` deltas) so a long reasoning phase
      *  shows its text instead of a frozen token count. Default false — the loop uses a single non-streamed call. */
     stream?: boolean;
+    /** where this run's prompt was typed (contract-run.ts) — stamped by the surface that sent it, for
+     *  `chat_metadata` and the provenance clause. Absent means a direct `ml.agent()` call. */
+    origin?: PromptOrigin;
     /** trusted config flag → the background may auto-approve readonly python */
     autoApprovePython: boolean;
     /** config flag → auto-approve a same-origin as-you (credentialed) fetch (the security gate is enforced
@@ -224,6 +227,9 @@ export interface InjectMessagePayload {
     /** A stable id for this steer message, minted page-side, so the SW can fan an `agent-say-seen`
      *  event (the "seen" indicator) keyed to the same bubble when the loop actually drains it. */
     sayId?: string;
+    /** where this steering message was typed (contract-run.ts) — it supersedes the run's own origin for
+     *  `chat_metadata`, since the last instruction is the one that says who is driving. */
+    origin?: PromptOrigin;
 }
 
 /** RUN_TOOL_IN_PAGE payload — run a named tool from an active agent run's page-side toolset. The

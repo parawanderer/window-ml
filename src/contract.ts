@@ -123,7 +123,8 @@ export interface MlApi {
     agent(task: string, opts?: AgentOptions): Promise<AgentResult>;
     /** A stateful agent session (the agent analogue of ml.createChat): run(task) executes a turn,
      *  say(text) writes a user message, run() again continues the SAME session; also cancel/fork +
-     *  hash/messages/maxSteps. Everything shares one hash so the sidebar/HUD keep it as one conversation. */
+     *  hash/messages/maxSteps. Everything shares one hash, so every surface showing it keeps it as ONE
+     *  conversation. */
     createAgent(opts?: AgentOptions): MlAgentHandle;
     /** Re-acquire a live agent handle by its session hash (the agent analogue of resumeChat) — read/mutate
      *  its `messages`, say()/run() to continue, fork() or cancel(). Same-tab createAgent / HUD-started runs

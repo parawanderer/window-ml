@@ -81,7 +81,11 @@ export function relaySessionToPage(msg: Record<string, unknown>, sendResponse: (
     const reqId = typeof msg.reqId === "string" ? msg.reqId : undefined;
     const elementContext = msg.elementContext as { selector?: unknown } | undefined;
     const ec = elementContext && typeof elementContext.selector === "string" ? elementContext : undefined;
-    if (msg.action === "send") window.postMessage({ __mlSessionSend: { hash: msg.hash, text: msg.text, images: cleanImages(msg.images as string[] | undefined), ...(ec ? { elementContext: ec } : {}), reqId } }, "*");
+    // WHERE IT WAS TYPED, from the route rather than from a field a sender chose. The panel says so outright
+    // (it is the one composer not in this document); anything arriving with a `reqId` came in as a session
+    // COMMAND, which is the chat app. Neither can be forged by the page: both crossed the background first.
+    const surface = typeof msg.surface === "string" ? msg.surface : reqId ? "chat" : undefined;
+    if (msg.action === "send") window.postMessage({ __mlSessionSend: { hash: msg.hash, text: msg.text, images: cleanImages(msg.images as string[] | undefined), ...(ec ? { elementContext: ec } : {}), ...(surface ? { surface } : {}), reqId } }, "*");
     else if (msg.action === "cancel") window.postMessage({ __mlCancelSession: { hash: msg.hash, reqId } }, "*");
     else if (msg.action === "continue") {
         // STRICT, not coerced: the runtime refuses a `"50"` outright (session-commands.ts), so accepting one here
@@ -131,6 +135,9 @@ export function relayStartAgent(msg: Record<string, unknown>, sendResponse: (r: 
         stream: msg.stream === true ? true : undefined,
         images: cleanImages(msg.images as string[] | undefined),
         hud,
+        // This entry point IS the chat app's `agent.start` command — it reached here over the sessions port and
+        // through the background, so the surface is known from the route and needs no field from the sender.
+        surface: "chat",
     } }, "*");
     awaitSessionDone(msg.reqId as string, sendResponse, START_DONE_MS);
     return true;

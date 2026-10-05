@@ -374,9 +374,16 @@ await a.run("Now fix the ones you flagged.");   // continue the SAME session
 `ml.agent(task)` has no handle). The low-level `ml.agent(task, { resume: hash })`
 also continues a run by hash (it runs a turn rather than returning the handle).
 Background/off-mode runs live in the service worker and aren't handle-resumable
-this way yet. The hash is also how the in-page HUD and the sidebar/DevTools composer
-drive a session — typing into "Send a message to continue this session…" routes
+this way yet. The hash is also how every UI that can drive a session reaches it —
+the in-page HUD, the sidebar panel over the page, the DevTools panel, and the chat
+app (which may be this browser's own page or a client on another device). Typing
+into "Send a message to continue this session…" on any of them routes
 `say()`/`run()` to the handle behind that hash.
+
+Which of them a message was typed in travels with it, and `chat_metadata` reports
+the surface of the LAST instruction — because it decides what the person can
+actually see. Someone at the HUD is looking at the page you are working on; someone
+in the chat app on another device cannot see it at all.
 
 **Scripting modes.** Two per-run switches for headless/automation use:
 

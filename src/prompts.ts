@@ -68,14 +68,7 @@ export const SELF_CLAUSE =
     "TOOLBOX: e.g. `await ml.chat(prompt)` for a sub-LLM call (summarise/classify a blob of text " +
     "you've gathered) or `await ml.read(el)` to OCR an image — each returns a `Promise<string>`; " +
     "`agent_api_docs` lists the rest.";
-// Invocation provenance for a UI-started run, passed as ml.agent's `systemAppend` (SELF_CLAUSE
-// says the user CAN drive you from the console — for a HUD run that's true but not how
-// they actually did it, and "how do I invoke you?" deserves the answer they're living in).
-export const HUD_HINT =
-    "You were started from window.ml's in-page HUD (the Spotlight composer / right-click menu), " +
-    "not the devtools console — the user is driving you through the extension's UI. The console " +
-    "API is still open to them if they ask how to script this.";
-// Appended to HUD_HINT per the HUD's verbosity (agentHud). PROGRESS: your between-step prose shows live in
+// Appended to the run's provenance clause (prompt-surface.ts) per the HUD's verbosity (agentHud). PROGRESS: your between-step prose shows live in
 // the corner card, so keep it to ONE terse line. QUIET: the user won't see intermediate prose at all — stay
 // silent between steps and put everything in the final answer.
 export const HUD_PROSE_PROGRESS =

@@ -122,7 +122,7 @@ window.addEventListener("message", (e: MessageEvent) => {
     // Session composer reverse channel: the panel can't touch the inspected page, so relay to the
     // background → that tab's shell → the page's handle registry (same route as hover-highlight).
     if (d.__mlSidebarApp === "sessionSend" && typeof d.hash === "string" && typeof d.text === "string" && (d.text.trim() || cleanImages(d.images))) {
-        void chrome.runtime.sendMessage({ type: "ML_SESSION_REMOTE", tabId, action: "send", hash: d.hash, text: d.text, images: cleanImages(d.images) }).catch(() => {});
+        void chrome.runtime.sendMessage({ type: "ML_SESSION_REMOTE", tabId, action: "send", hash: d.hash, text: d.text, images: cleanImages(d.images), surface: "devtools" }).catch(() => {});
         return;
     }
     if (d.__mlSidebarApp === "sessionCancel" && typeof d.hash === "string") {
