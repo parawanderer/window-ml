@@ -6,7 +6,8 @@
 import { StorageBody } from "./storage-section";
 import { LocalArchiveFolder } from "./archive-section";
 import { signal } from "@preact/signals";
-import { useState, useEffect, useRef } from "preact/hooks";
+import { useState, useEffect, useLayoutEffect, useRef } from "preact/hooks";
+import { filterSettings } from "./settings-search";
 import type { ComponentChildren } from "preact";
 import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, LexicalMetric, ProtoMode } from "../contract-config";
 import type { VisionSupport } from "../contract-render";
@@ -45,13 +46,16 @@ const collapsedSections = signal<Record<string, boolean>>((() => {
     try { return JSON.parse(localStorage.getItem(SECT_KEY) || "{}"); } catch { return {}; }
 })());
 function Section({ id, title, children }: { id: string; title: ComponentChildren; children: ComponentChildren }) {
+    const searching = !!settingsQuery.value.trim();
     const onToggle = (e: any) => {
+        if (searching) return;   // a search opens every section; that is not you choosing to open them
+
         const next = { ...collapsedSections.value, [id]: !e.currentTarget.open };
         collapsedSections.value = next;
         try { localStorage.setItem(SECT_KEY, JSON.stringify(next)); } catch { /* opaque origin — skip */ }
     };
     return (
-        <details class="set-section" open={!collapsedSections.value[id]} onToggle={onToggle}>
+        <details class="set-section" open={searching || !collapsedSections.value[id]} onToggle={onToggle}>
             <summary class="set-group">{title}</summary>
             {children}
         </details>
@@ -542,6 +546,9 @@ const SETTINGS_TABS = [
 ] as const;
 type SettingsTab = typeof SETTINGS_TABS[number]["id"];
 const settingsTab = signal<SettingsTab>("connection");
+/** What the Settings search box holds. While it holds anything, every tab is drawn at once and filtered to the rows
+ *  that match (settings-search.ts), because the flag you cannot find is the one whose tab you do not know. */
+const settingsQuery = signal("");
 /** Settings → Code blocks → Colour theme: a highlight.js preset, or a VS Code theme the user uploads (converted,
  *  approximately, by code-themes.ts). One stylesheet colours every code block AND the bench editor, so the choice
  *  applies to both at once. */
@@ -633,6 +640,7 @@ function CodeThemeSetting() {
  * that only switched tabs could land you on a heading you had shut weeks ago and look like it did nothing.
  */
 export function openSettingsAt(tab: SettingsTab, section: string): void {
+    settingsQuery.value = "";   // a shortcut lands on its tab, not on a filtered view of every tab
     settingsTab.value = tab;
     collapsedSections.value = { ...collapsedSections.value, [section]: false };
     try { localStorage.setItem(SECT_KEY, JSON.stringify(collapsedSections.value)); } catch { /* private mode */ }
@@ -999,18 +1007,45 @@ export function Settings() {
         onChange: (e: any) => setField(key, e.target.value),
         ...extra,
     });
+    const q = settingsQuery.value;
+    const searching = !!q.trim();
+    // Filter AFTER every render, not once per query: rows re-render under the search (a model list arriving, a
+    // toggle revealing its sub-fields), and a filter applied once would leave those unfiltered.
+    const bodyRef = useRef<HTMLDivElement>(null);
+    const [hits, setHits] = useState(0);
+    useLayoutEffect(() => {
+        if (!bodyRef.current) return;
+        const n = filterSettings(bodyRef.current, q);
+        if (n !== hits) setHits(n);
+    });
+    // …and after a row re-renders ON ITS OWN. A component with async state (the tab-groups permission, the site
+    // access list) draws its rows after Settings last rendered, and those arrived unfiltered. Child lists only:
+    // the filter's own class changes are attribute changes, so it cannot wake itself.
+    useEffect(() => {
+        const el = bodyRef.current;
+        if (!searching || !el || typeof MutationObserver === "undefined") return;
+        const mo = new MutationObserver(() => setHits(filterSettings(el, settingsQuery.value)));
+        mo.observe(el, { childList: true, subtree: true });
+        return () => mo.disconnect();
+    }, [searching]);
+    const show = (t: SettingsTab) => searching || tab === t;
+    const head = (t: SettingsTab) => (searching ? <div class="set-search-tab">{SETTINGS_TABS.find((x) => x.id === t)!.label}</div> : null);
     return (
         <div class="settings">
-            <div class="set-tabs" role="tablist">
+            <input class="set-search" type="search" placeholder="Search every setting…" aria-label="Search settings" value={q}
+                onInput={(e: any) => { settingsQuery.value = e.target.value; }}
+                onKeyDown={(e: KeyboardEvent) => { if (e.key === "Escape" && settingsQuery.value) { e.preventDefault(); e.stopPropagation(); settingsQuery.value = ""; } }} />
+            {searching ? null : <div class="set-tabs" role="tablist">
                 {SETTINGS_TABS.map(t => (
                     <button key={t.id} role="tab" aria-selected={tab === t.id}
                         class={`set-tab${tab === t.id ? " on" : ""}`}
                         onClick={() => { settingsTab.value = t.id; }}>{t.label}</button>
                 ))}
-            </div>
+            </div>}
 
-            <div class="set-body">
-            {tab === "connection" ? <>
+            {searching && !hits ? <div class="set-hint set-search-none">No setting matches “{q.trim()}”.</div> : null}
+            <div class="set-body" ref={bodyRef}>
+            {show("connection") ? <>{head("connection")}
                 <div class="set-note">Point this at <b>OpenWebUI</b> for the full feature set — server-side (Python) tools, RAG, and web search all route through it. A direct <b>Ollama</b> URL works but only gives the plain text-chat subset.</div>
                 <label class="set-field"><span>Chat completions URL</span>
                     <input {...text("chatUrl")} class={c.chatUrl.trim() ? "" : "err"} />
@@ -1028,7 +1063,7 @@ export function Settings() {
                     </select></label>
             </> : null}
 
-            {tab === "models" ? <>
+            {show("models") ? <>{head("models")}
                 <div class="set-note">These are the defaults <code>ml.chat</code> / <code>ml.createChat</code> use when you don't pass a <code>model</code>. With no default <b>Model</b> set, you must specify one on every call.</div>
 
                 <Section id="defaults" title="Defaults">
@@ -1132,7 +1167,7 @@ export function Settings() {
                 <ModelTests />
             </> : null}
 
-            {tab === "appearance" ? <>
+            {show("appearance") ? <>{head("appearance")}
                 <Section id="general" title="General">
                 {/* Named for what it sizes: the chat page reads at its own sizes and shows these settings too, where an
                     unqualified "Font size" that moved nothing on the page it was changed from read as broken. */}
@@ -1294,7 +1329,7 @@ export function Settings() {
                 </Section>
             </> : null}
 
-            {tab === "advanced" ? <>
+            {show("advanced") ? <>{head("advanced")}
 
                 {/* A read-only probe of the BACKEND, like the Python sandbox one below it. */}
 
@@ -1420,7 +1455,7 @@ export function Settings() {
 
             </> : null}
 
-            {tab === "permissions" ? <PermissionsView /> : null}
+            {show("permissions") ? <>{head("permissions")}<PermissionsView /></> : null}
             </div>
         </div>
     );

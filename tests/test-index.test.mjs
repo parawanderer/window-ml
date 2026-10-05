@@ -77,6 +77,24 @@ test("under the second", () => {});
     ]);
 });
 
+test("a multi-line template above a section does not move the tests below it out of their section", () => {
+    // The scanner lifts strings out of the code and counted their newlines but did not keep them, so a test after a
+    // fourteen-line fixture was placed fourteen lines early, above its own section, and the ratchet refused it.
+    const fixture = Array.from({ length: 14 }, (_, i) => `row ${i}`).join("\n");
+    const { tests } = index(`// sample.test.mjs — a file.
+const BODY = \`
+${fixture}
+\`;
+// --- the group ---
+test("first in the group", () => {});
+test("second in the group", () => {});
+`);
+    assert.deepEqual(tests.map((t) => [t.name, t.line, t.section]), [
+        ["first in the group", 19, "the group"],
+        ["second in the group", 20, "the group"],
+    ]);
+});
+
 test("a file with no section markers says so, which is what keeps the ratchet off it", () => {
     // The ratchet only asks about files that already group their tests: demanding a section in a file nobody has
     // sorted out yet would block an unrelated fix, which is how a check stops being run.
