@@ -2979,3 +2979,45 @@ test("the signer refreshes its pairing from the inbox: one press to the code, sa
     expect(errors).toEqual([]);
     await page.close();
 });
+
+// --- a status line only where nothing else shows liveness ---
+
+test("while the model streams, the reading view drops the status line and the pulse — the words ARE the signal", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(WATCHED)}`, ORDINARY_FOLD);
+    const note = page.locator(".pending-note");
+    // A running run with nothing arriving: the footer is the only thing saying so, and it says it.
+    await expect(note).toBeVisible();
+
+    // Now the model starts streaming. `LiveStream` draws the reply a line above, so the footer's phrase would
+    // be a clone of that reply's first line, and the pulse a second copy of the fact that it is moving.
+    await page.evaluate((k) => globalThis.__chatFake.emit(k, {
+        kind: "agent-stream", id: k.split(":").pop(), ts: Date.now(), save: false,
+        session: { hash: k.split(":").pop(), turn: 9 }, step: 9, localStep: 9,
+        content: "A man walks into a bar", tokens: 12,
+    }), WATCHED);
+    await expect(page.locator(".msg.asst.streaming")).toBeVisible();
+    await expect(page.locator(".msg.asst.streaming")).toContainText("A man walks into a bar");
+    await expect(note, "the status line goes while the reply is being written").toBeHidden();
+    await expect(page.locator(".msg.asst.streaming .live-dot"), "and so does the lone pulse").toBeHidden();
+
+    // The DETAILED view is instrumentation, not reading: it keeps both.
+    await reading(page);
+    await calmRow(page).click();
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".pending-note"), "the panel-style view keeps its running bar").toBeVisible();
+    expect(errors, "no page errors").toEqual([]);
+});
+
+test("a streamed THOUGHT also silences the status line, which would otherwise count the same tokens twice", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(WATCHED)}`, ORDINARY_FOLD);
+    await expect(page.locator(".pending-note")).toBeVisible();
+    await page.evaluate((k) => globalThis.__chatFake.emit(k, {
+        kind: "agent-stream", id: k.split(":").pop(), ts: Date.now(), save: false,
+        session: { hash: k.split(":").pop(), turn: 9 }, step: 9, localStep: 9,
+        reasoning: "let me think about this one", reasoningTokens: 9,
+    }), WATCHED);
+    // The thought block renders it with its own ticking count; "Thinking… (9 tok)" underneath is the same
+    // number said twice, which is what the screenshots showed.
+    await expect(page.locator(".pending-note")).toBeHidden();
+    expect(errors, "no page errors").toEqual([]);
+});

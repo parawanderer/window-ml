@@ -401,7 +401,10 @@ test("running footer swaps to 'waiting for your approval' when blocked, and back
     await w.tick();
     let note = w.shadow.querySelector(".pending-note");
     assert.ok(note && !note.classList.contains("blocked"), "actively running: not blocked");
-    assert.match(note.textContent, /running/);
+    // The footer says what is happening in the HUD orb's own words (orbStatus), so the two surfaces describe
+    // one event the same way. Before a first step that is "Waiting for the model…", where this used to read
+    // "running · 0 steps" — a phrase that said nothing while the orb beside it was counting the wait.
+    assert.match(note.textContent, /Waiting for the model/i);
 
     // A step lands awaiting the gate → the footer goes amber/blocked with the approval copy.
     await w.dispatch(agentStep("agB", 1, { seq: 1, pending: true, awaitingApproval: true, tool: "click", arguments: { selector: "#go" } }));
@@ -414,6 +417,90 @@ test("running footer swaps to 'waiting for your approval' when blocked, and back
     await w.tick();
     note = w.shadow.querySelector(".pending-note");
     assert.ok(note && !note.classList.contains("blocked"), "no longer blocked the instant you approve (before DONE)");
+});
+
+test("the running footer speaks the HUD orb's vocabulary, so one event reads the same on both surfaces", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("agP", "do a thing"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    // Nothing has come back yet: not "running · 0 steps", which described the run rather than the moment.
+    assert.match(w.shadow.querySelector(".pending-note").textContent, /Waiting for the model/i);
+
+    // A tool is actively running → the footer names THAT, out of the same ACTIVITY table the orb reads.
+    await w.dispatch(agentStep("agP", 1, { seq: 1, pending: true, tool: "python_exec", arguments: { code: "x = 1" } }));
+    await w.tick();
+    assert.match(w.shadow.querySelector(".pending-note").textContent, /Running Python/i);
+
+    // Once it returns, the step count appears beside the phrase — it is the one thing the orb has no room for.
+    await w.dispatch(agentStep("agP", 1, { seq: 1, tool: "python_exec", arguments: { code: "x = 1" }, result: "1" }));
+    await w.tick();
+    assert.match(w.shadow.querySelector(".pending-note .psteps")?.textContent ?? "", /1 step\b/);
+});
+
+test("the footer counts THIS turn's steps: a follow-up starts a new loop and the count starts again with it", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("agT", "do a thing"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    for (let step = 1; step <= 4; step++) {
+        await w.dispatch(agentStep("agT", step, { seq: step, tool: "exec", arguments: {}, result: "ok" }));
+    }
+    await w.tick();
+    assert.match(w.shadow.querySelector(".pending-note .psteps")?.textContent ?? "", /4 steps/);
+
+    // A follow-up typed into the composer. The next loop has run nothing yet, so there is no count to show —
+    // it used to go on saying "4 steps" under a prompt sent a moment ago, describing work that had already
+    // finished when it was typed.
+    await w.dispatch(agentSay("agT", "Can you write me a response here?", "say1"));
+    await w.tick();
+    assert.equal(w.shadow.querySelector(".pending-note .psteps"), null, "no count until the new turn has run a step");
+    assert.match(w.shadow.querySelector(".pending-note").textContent, /Waiting for the model/i);
+
+    // And it counts the new turn's work, not the session's.
+    await w.dispatch(agentStep("agT", 5, { seq: 5, tool: "exec", arguments: {}, result: "ok" }));
+    await w.tick();
+    assert.match(w.shadow.querySelector(".pending-note .psteps")?.textContent ?? "", /1 step\b/);
+});
+
+test("while the model streams, the footer marks itself a DUPLICATE of the text already on screen", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("agD", "write me a joke"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    // Nothing on screen yet, so the footer is the only thing saying anything is happening.
+    assert.ok(!w.shadow.querySelector(".pending-note.dup"), "not a duplicate before anything streams");
+    assert.match(w.shadow.querySelector(".pending-note").textContent, /Waiting for the model/i);
+
+    // THINKING streams: the thought block renders it, so the footer's "Thinking… (N tok)" is a second copy.
+    await w.dispatch({ kind: "agent-stream", id: "agD", ts: Date.now(), save: false, session: { hash: "agD", turn: 1 }, step: 1, localStep: 1, reasoning: "let me think about this", reasoningTokens: 9 });
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".pending-note.dup"), "a streamed THOUGHT is already drawn above");
+
+    // The REPLY streams: likewise — the words appearing are the liveness signal.
+    await w.dispatch({ kind: "agent-stream", id: "agD", ts: Date.now() + 1, save: false, session: { hash: "agD", turn: 1 }, step: 1, localStep: 1, content: "A man walks into a bar", tokens: 12 });
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".pending-note.dup"), "a streamed REPLY is already drawn above");
+
+    // The step lands: the live view is superseded, nothing is drawing the model's output any more, and the
+    // footer goes back to being the only thing that says the run is still going.
+    await w.dispatch(agentStep("agD", 1, { seq: 1, tool: "exec", arguments: {}, result: "ok" }));
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".pending-note"), "the footer is still there");
+    assert.ok(!w.shadow.querySelector(".pending-note.dup"), "and no longer a duplicate of anything");
+});
+
+test("an approval is never a duplicate: it is the one thing no stream above can be saying", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("agDA", "do a thing"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    await w.dispatch({ kind: "agent-stream", id: "agDA", ts: Date.now(), save: false, session: { hash: "agDA", turn: 1 }, step: 1, localStep: 1, content: "I will click it" });
+    await w.dispatch(agentStep("agDA", 1, { seq: 1, pending: true, awaitingApproval: true, tool: "click", arguments: { selector: "#go" } }));
+    await w.tick();
+    const note = w.shadow.querySelector(".pending-note");
+    assert.ok(note.classList.contains("blocked"), "blocked while awaiting approval");
+    assert.ok(!note.classList.contains("dup"), "and shown, whatever was streaming a moment ago");
 });
 
 test("the DEBUG DETAIL does NOT render answer media (that's HUD-only, the sidebar is a trace)", async () => {
