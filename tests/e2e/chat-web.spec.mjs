@@ -2031,6 +2031,13 @@ test("phone (touch): tapping a step's dot opens its tip, and the tap still opens
         const tip = page.locator(".tt-layer");
         await expect(tip).toBeVisible();
         await expect(tip).toContainText("Completed successfully");
+        // AND IT IS STILL THERE A MOMENT LATER. This assertion is the whole reason the test is not a lie: the tap
+        // that opens a tip is very often the same tap that SCROLLS — it opens the step, the transcript grows, its
+        // stick-to-bottom scrolls, and a tip that hides on scroll was gone inside a hundred milliseconds. The
+        // first `toBeVisible` polls, so it caught the tip before that and passed over a broken feature. A demo
+        // found it, by looking a beat later than the test did.
+        await page.waitForTimeout(500);
+        await expect(tip).toBeVisible();
         // The figures the dot was given: when it happened and how long the TOOL took.
         await expect(tip.locator(".dot-when")).toContainText(/\d\d:\d\d:\d\d/);
         // AND THE TAP WAS NOT STOLEN — trading what someone meant to do for a tooltip they did not ask for would

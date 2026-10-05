@@ -846,6 +846,10 @@ thing. The parts:
   `stream-demo`, `bench-editor-demo`, `bench-completion-demo`, `pairing-demo` (the named grants and their switches,
   the one device that refreshes its pairing rather than renewing, and an account with nobody left to sign a removal;
   serves `dist-web/`, so it needs no extension),
+  `touch-tips-demo` (reading a tooltip with no pointer, on a PHONE context — and a trap for the next demo author:
+  a synthetic hover cannot be held in a HEADFUL window, because the real cursor is elsewhere and Chromium corrects
+  the pointer straight back out; it holds fine headless, which is why a spec can assert one and a watched demo
+  cannot),
   `streak-demo` (the reading view folding runs of the same tool, appended ONE STEP AT A TIME — every rule
   here is about the turns AROUND a step, so a finished transcript cannot show you why a stretch folded and the
   one under it did not; part two is the ⋮ menu's "group all tool calls"; drives the fake host rather than a model,

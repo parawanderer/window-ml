@@ -89,6 +89,21 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
         return true;
     };
 
+    /** Put the layer beside its trigger. Measured AFTER the content is in, and placed against the VIEWPORT — the
+     *  only box that never scrolls out from under it. Its own function because a tip held by a tap is re-placed
+     *  when the page moves rather than dropped. */
+    const place = (trigger: Element): void => {
+        const t = trigger.getBoundingClientRect();
+        const w = doc.defaultView?.innerWidth ?? 1024;
+        const h = doc.defaultView?.innerHeight ?? 768;
+        const box = layer.getBoundingClientRect();
+        const style = tipStyle({ x: t.left + t.width / 2, y: t.top, w });
+        Object.assign(layer.style, { left: "auto", right: "auto", ...style });
+        // tipStyle decides the side; the vertical half needs the tooltip's own height, which only exists now.
+        const above = t.top - box.height - MARGIN;
+        layer.style.top = `${above >= MARGIN ? above : Math.min(t.bottom + MARGIN, h - box.height - MARGIN)}px`;
+    };
+
     const show = (trigger: Element): void => {
         if (!trigger.querySelector(".tt-pop") && !trigger.getAttribute("data-tip")) return hide();
         current = trigger;
@@ -118,17 +133,7 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
         unwatch?.();
         unwatch = watchTrigger(trigger, hide);
 
-        // Measure AFTER content is in, then place against the viewport — the only box that never scrolls out
-        // from under it.
-        const t = trigger.getBoundingClientRect();
-        const w = doc.defaultView?.innerWidth ?? 1024;
-        const h = doc.defaultView?.innerHeight ?? 768;
-        const box = layer.getBoundingClientRect();
-        const style = tipStyle({ x: t.left + t.width / 2, y: t.top, w });
-        Object.assign(layer.style, { left: "auto", right: "auto", ...style });
-        // tipStyle decides the side; the vertical half needs the tooltip's own height, which only exists now.
-        const above = t.top - box.height - MARGIN;
-        layer.style.top = `${above >= MARGIN ? above : Math.min(t.bottom + MARGIN, h - box.height - MARGIN)}px`;
+        place(trigger);
     };
 
     const over = (e: Event): void => {
@@ -167,11 +172,28 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
         hide();
     };
 
+    /**
+     * A tooltip anchored to something that has scrolled away is worse than none — so a HOVERED one goes: the
+     * pointer stays still while the content moves out from under it, and whatever is there now is not what raised
+     * it.
+     *
+     * A tip held by a TAP is the opposite case and must follow instead. The tap that opened it is very often the
+     * same tap that scrolled: tapping the dot in a step's header opens that step, the transcript grows, its
+     * stick-to-bottom scrolls, and the tip the finger just asked for was gone within a hundred milliseconds. It
+     * still goes once its trigger has genuinely left the screen.
+     */
+    const onScroll = (): void => {
+        if (!current) return;
+        if (!held) { hide(); return; }
+        const t = current.getBoundingClientRect();
+        if (t.bottom < 0 || t.top > (doc.defaultView?.innerHeight ?? 768)) { hide(); return; }
+        place(current);
+    };
+
     root.addEventListener("pointerover", over, true);
     root.addEventListener("pointerout", out, true);
     root.addEventListener("pointerdown", down, true);
-    // A tooltip anchored to something that has scrolled away is worse than none.
-    root.addEventListener("scroll", hide, true);
+    root.addEventListener("scroll", onScroll, true);
     doc.defaultView?.addEventListener("blur", hide);
     // Esc dismisses hover content without moving the pointer (WCAG 1.4.13) — and is usually the very key that is
     // closing whatever the trigger was in.
@@ -182,7 +204,7 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
         root.removeEventListener("pointerover", over, true);
         root.removeEventListener("pointerout", out, true);
         root.removeEventListener("pointerdown", down, true);
-        root.removeEventListener("scroll", hide, true);
+        root.removeEventListener("scroll", onScroll, true);
         root.removeEventListener("keydown", onKey, true);
         watcher?.disconnect();
         unwatch?.();

@@ -258,17 +258,37 @@ test("the next tap anywhere dismisses it", () => {
     } finally { w.stop(); }
 });
 
-test("a scroll releases the hold too, or a tip outlives what it was about", () => {
+test("a held tip FOLLOWS a scroll; a hovered one still goes", () => {
+    // The tap that opens a tip is very often the same tap that scrolls — tapping the dot in a step's header opens
+    // that step, the transcript grows and its stick-to-bottom scrolls. Dropping the tip there means a finger can
+    // never read one on the control it most wants to. A HOVERED tip is the opposite case: the pointer stays still
+    // while the content moves out from under it, so what is there now is not what raised it.
     const w = world('<span class="tt">dot<span class="tt-pop">Completed successfully.</span></span>');
     try {
-        tap(w.document, w.document.querySelector(".tt"));
+        const trigger = w.document.querySelector(".tt");
+        tap(w.document, trigger);
         w.document.dispatchEvent(new w.dom.window.Event("scroll", { bubbles: true }));
-        assert.equal(w.layer().hidden, true);
-        // …and the hold is genuinely released: an ordinary leave hides again rather than being ignored.
-        hover(w.document, w.document.querySelector(".tt"));
+        assert.equal(w.layer().hidden, false, "held: it follows");
+
+        hover(w.document, trigger);
+        tap(w.document, w.document.body);                      // release the hold
+        hover(w.document, trigger);
         assert.equal(w.layer().hidden, false);
-        w.document.querySelector(".tt").dispatchEvent(new w.dom.window.MouseEvent("pointerout", { bubbles: true, relatedTarget: w.document.body }));
-        assert.equal(w.layer().hidden, true);
+        w.document.dispatchEvent(new w.dom.window.Event("scroll", { bubbles: true }));
+        assert.equal(w.layer().hidden, true, "hovered: it goes");
+    } finally { w.stop(); }
+});
+
+test("a held tip still goes once its trigger has left the screen", () => {
+    const w = world('<span class="tt">dot<span class="tt-pop">Completed successfully.</span></span>');
+    try {
+        const trigger = w.document.querySelector(".tt");
+        tap(w.document, trigger);
+        assert.equal(w.layer().hidden, false);
+        // jsdom has no layout, so the scroll is simulated by moving the trigger above the viewport.
+        trigger.getBoundingClientRect = () => ({ left: 100, top: -80, width: 40, height: 16, right: 140, bottom: -64 });
+        w.document.dispatchEvent(new w.dom.window.Event("scroll", { bubbles: true }));
+        assert.equal(w.layer().hidden, true, "anchored to something nobody can see is worse than none");
     } finally { w.stop(); }
 });
 

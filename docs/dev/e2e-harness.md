@@ -217,6 +217,20 @@ as in AGENTS.md — they are all under `src/`.
   `tests/e2e/artifacts/bench-completion-demo/`. Its first headless run caught the worker's per-run inputs being
   listed as kept variables, which is what a demo is for. The assertions are `tests/python.test.mjs` and
   `bench-dock.spec.mjs`.
+- **`touch-tips-demo.mjs`** — a **narrated demo, not a test** of READING A TOOLTIP WITHOUT A POINTER:
+  `npm run build && node tests/e2e/touch-tips-demo.mjs` (`BEAT=`, `HOLD=0`; screenshots in
+  `tests/e2e/artifacts/touch-tips-demo/`). One phone context (`hasTouch`), left open at the end. Five beats: the
+  tip is unreachable · a tap holds it · the tap is not stolen (the step opens too) · the next tap dismisses it ·
+  a trigger that IS a control raises nothing.
+  **A HEADFUL DEMO CANNOT HOLD A SYNTHETIC HOVER**, which is why there is no desktop beat and is worth knowing
+  before writing one: `page.mouse.move` is a CDP event while the real cursor is wherever the hand left it, so
+  Chromium corrects the pointer position back out and raises a genuine `pointerout` within a frame or two.
+  Measured: headless the tip survives a second; headful it is gone inside 900ms, with three `pointerout`s, the
+  last carrying a null `relatedTarget`. A spec can assert a hover (it runs headless); a watched demo cannot.
+  It also prints what each beat SAW (`observe`), because checking a demo otherwise means opening six screenshots
+  — and that is how it caught the tip dying to the scroll its own tap had caused, which the spec had missed by
+  asserting a beat too early. The assertions are `tests/tooltip-layer.test.mjs` and the `@mobile` test in
+  `chat-web.spec.mjs`.
 - **`streak-demo.mjs`** — a **narrated demo, not a test** of TOOL-STREAK FOLDING in the chat page's calm view:
   `npm run build && node tests/e2e/streak-demo.mjs` (`BEAT=` paces it, `HOLD=0` exits instead of leaving the
   browser for you; screenshots in `tests/e2e/artifacts/streak-demo/`). It needs no extension — it serves
