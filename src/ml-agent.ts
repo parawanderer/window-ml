@@ -22,7 +22,7 @@ import { makeBackgroundTaskPromise } from "./bridge";
 export interface AgentControl {
     hash: string | null;          // the session hash (minted on the first turn, then stable)
     messages: NeutralMessage[];   // the live history — the source of truth; the loop mutates it in place
-    inbox: { id: string; text: string }[];   // say()'d messages waiting to be injected at the next step boundary (id = "seen"-indicator key)
+    inbox: { id: string; text: string; origin?: import("./contract-run").PromptOrigin }[];   // say()'d messages waiting to be injected at the next step boundary (id = "seen"-indicator key; origin = where it was typed)
     maxSteps: number;             // the step cap, read live so a handle can raise it mid-run
     running: boolean;             // is a loop in flight?
     seqBase: number;              // monotonic step-seq base so seqs stay session-unique across turns
@@ -59,7 +59,7 @@ export const sameOriginFetch = (url: string): boolean => {
 export class AgentHandle implements MlAgentHandle, AgentControl {
     hash: string | null = null;
     messages: NeutralMessage[] = [];
-    inbox: { id: string; text: string }[] = [];
+    inbox: { id: string; text: string; origin?: import("./contract-run").PromptOrigin }[] = [];
     running = false;
     seqBase = 0;
     stepBase = 0;
@@ -104,15 +104,15 @@ export class AgentHandle implements MlAgentHandle, AgentControl {
 
     /** Put a user message into the session. Mid-run → steer (queued for the next step boundary, shown in
      *  the UI immediately); idle → append to history for the next run(), with a console note. Never throws. */
-    say(text: string): void {
+    say(text: string, origin?: import("./contract-run").PromptOrigin): void {
         if (this.running) {
             // A stable id ties this steer's bubble to its later "seen" flip (page loop drains → agent-say-seen;
             // a bg loop fans the same event from the SW, keyed by this same id via INJECT_MESSAGE.sayId).
             const sayId = nextSteerId();
             // Steer the live loop. A BACKGROUND run's loop is in the service worker, so route the message
             // there (INJECT_MESSAGE, drained at its next step); a PAGE-loop run drains the local inbox.
-            if (this.bg && this.hash) makeBackgroundTaskPromise("INJECT_MESSAGE_REQUEST", "INJECT_MESSAGE_RESPONSE", { runId: this.hash, text, sayId }).catch(() => { /* run finished first → the next run()'s flush catches it */ });
-            this.inbox.push({ id: sayId, text });   // page loop drains this; for a bg run it's the run()-flush safety net
+            if (this.bg && this.hash) makeBackgroundTaskPromise("INJECT_MESSAGE_REQUEST", "INJECT_MESSAGE_RESPONSE", { runId: this.hash, text, sayId, ...(origin ? { origin } : {}) }).catch(() => { /* run finished first → the next run()'s flush catches it */ });
+            this.inbox.push({ id: sayId, text, ...(origin ? { origin } : {}) });   // page loop drains this; for a bg run it's the run()-flush safety net
             if (this.hash) emitDebug({ kind: "agent-say", id: this.hash, ts: Date.now(), save: false, session: { hash: this.hash, turn: 0 }, text, sayId });
         } else {
             this.messages.push({ role: "user", content: text });

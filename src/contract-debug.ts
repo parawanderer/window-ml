@@ -215,7 +215,7 @@ export interface DebugAgentStep extends DebugBase {
      *  and it's the slot a future interactive-approval control resolves into. */
     approval?: "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled";
     /** button #3: the persistable egress grants this call would establish (its `ml.fetch` literal URLs),
-     *  extracted background-side. Present on a pending approval step when there's ≥1 — the sidebar/HUD then
+     *  extracted background-side. Present on a pending approval step when there's ≥1 — the surface showing it then
      *  offer an "Approve + remember" control and unfurl exactly this list (what's shown IS what persists). */
     grants?: PersistGrant[];
     /** transparency: prior grants this step REUSED (so it auto-ran without a prompt) — a cached `ml.fetch`
@@ -255,7 +255,8 @@ export interface DebugAgentResult extends DebugBase { kind: "agent-result"; summ
      *  `@tool:` citation (a designated tool output, e.g. a table/image), which the plain summary can't show. */
     answer?: string; }
 
-/** A handle raised the step cap mid-run (a.maxSteps = N) — the sidebar/HUD updates its "STEP x/N" display. */
+/** A handle raised the step cap mid-run (a.maxSteps = N) — every surface showing the run updates its
+ *  "STEP x/N" display. */
 export interface DebugAgentCap extends DebugBase { kind: "agent-cap"; maxSteps: number; }
 
 /** A handle inserted a user message into a RUNNING loop (a.say(text)) — shown immediately (pending), even

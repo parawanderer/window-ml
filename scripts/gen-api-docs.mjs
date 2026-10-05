@@ -70,15 +70,23 @@ only the prompt string (plus any \`images\`) and has no DOM access and no tools,
 the console you must either extract the text yourself and pass it in
 (\`ml.chat("Summarise: " + document.body.innerText)\`) or use \`ml.agent\`.
 
-The console is not the only entry point: the user can also start a run from the
-extension's in-page HUD (a Spotlight-style command bar). **How to open the HUD on this
-browser — including the keyboard shortcut actually bound right now — is in the "Opening
-the HUD" section at the END of this document.** It is read live rather than written here,
-because the user can rebind it.
+The console is not the only entry point. A run can also be started and continued from
+four UIs: the in-page **Commander HUD** (a Spotlight-style command bar in a corner card),
+the **sidebar panel** open over the page, the **DevTools panel**, and the **chat app**,
+which is either this browser's own page or a client on another device. **How to open the
+HUD on this browser — including the keyboard shortcut actually bound right now — is in the
+"Opening the HUD" section at the END of this document.** It is read live rather than
+written here, because the user can rebind it.
 
-Each \`ml.agent\` run gets a short session hash, visible in the extension's debug
-sidebar (and resumable). Requests flow page -> content script -> background worker ->
-the LLM server; the API key and server URL are never exposed to the page.
+Which of them the person typed in is recorded per message and reported by
+\`chat_metadata\`, and it is worth asking for, because it says what they can actually see:
+at the HUD they are looking at the page you are working on; in the chat app on another
+device they cannot see it at all.
+
+Each \`ml.agent\` run gets a short session hash, and every one of those surfaces shows the
+same session under it (and can resume it). Requests flow page -> content script ->
+background worker -> the LLM server; the API key and server URL are never exposed to the
+page.
 
 \`window.ml\` is chiefly how the USER invokes you, but it is also reachable from your own
 \`exec\` tool — those calls run in the page like any other JS, and go through the same human

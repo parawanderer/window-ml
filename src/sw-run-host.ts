@@ -333,7 +333,7 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
     // a handle's setter fans page-side, and the reducer already folds it into the session.
     else if (capRaised) fanEvent({ kind: "agent-cap", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, maxSteps: p.maxSteps });
     runBackgroundAgent(
-        { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSameOriginAuth: p.autoApproveSameOriginAuth, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, runId, seqBase, tokenStore: sessionTokens(runId), labelMatch: p.labelMatch, resumeMessages, images: p.images,
+        { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSameOriginAuth: p.autoApproveSameOriginAuth, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, ...(p.origin ? { origin: p.origin } : {}), runId, seqBase, tokenStore: sessionTokens(runId), labelMatch: p.labelMatch, resumeMessages, images: p.images,
           // A resumed turn follows a PERSON (a follow-up, Continue, Retry) — except a run resurrected after the
           // worker was evicted, where nobody was waited on.
           ...(resumeMessages && !resurrected ? { after: "human" as const } : {}) },
@@ -718,7 +718,8 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
             drainInbox: () => {   // a.say() steering (INJECT_MESSAGE); draining flips the "seen" indicator
                 const items = (runInboxes.get(runId)?.queue || []).splice(0);
                 for (const it of items) if (it.id) fanEvent({ kind: "agent-say-seen", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, sayId: it.id });
-                return items.map(it => it.text);
+                // Each says where it was typed, so a run steered from another surface reports THAT one.
+                return items.map(it => (it.origin ? { text: it.text, origin: it.origin } : it.text));
             },
             signal: abortCtl.signal,
             // chat_metadata: the run's model FACTS from the SW's caches (the loop supplies the live
