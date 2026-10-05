@@ -5,7 +5,7 @@
 // A session identifier here is always a key, `runtime:hash`, which is how the command finds its runtime.
 import type { JsonSchema } from "../contract";
 import type { NeutralMessage } from "../contract-chat";
-import type { Command, SessionKey } from "../session-host";
+import type { Command, RuntimeId, SessionKey } from "../session-host";
 import { parseSessionKey } from "../session-host";
 import type { SidebarServices } from "../sidebar/services";
 import { view } from "../sidebar/store";
@@ -13,8 +13,17 @@ import type { ChatStore } from "./chat-store";
 import { mayCommand } from "./grants";
 import type { ClientPlatform } from "./platform";
 
-/** The services for a chat page over `store`'s host. */
-export function hostServices(store: ChatStore, platform: ClientPlatform): SidebarServices {
+/**
+ * What the ENTRY knows about a runtime's box that the chat core cannot ask for itself. `modelResident` answers for
+ * the runtimes whose `/api/ps` the entry can read (the extension's chat page: this browser's own runtime), and
+ * `undefined` — not known — for every other one.
+ */
+export interface HostReadings {
+    modelResident?(runtime: RuntimeId, model?: string | null): boolean | undefined;
+}
+
+/** The services for a chat page over `store`'s host. `readings` is what the entry can tell about a runtime's box. */
+export function hostServices(store: ChatStore, platform: ClientPlatform, readings: HostReadings = {}): SidebarServices {
     const idOf = (key: SessionKey) => parseSessionKey(key);
     const summaryOf = (key: SessionKey) => store.index.value.get(key);
     /** The runtime a session is on, when this client may send it a command of `type`. */
@@ -80,12 +89,14 @@ export function hostServices(store: ChatStore, platform: ClientPlatform): Sideba
         // statuses, so asking anything else here would be inventing a second rule. A session with no summary yet is
         // allowed: the caller has already decided it looks live, and the first paint of a real run must not be the
         // one with no way to stop it or answer it.
-        // Resident WHERE. The reading belongs to the RUNTIME that holds the session, and this page has no
-        // per-runtime one: `loadedModels` is filled by whichever resource panel was last opened, which is a
-        // different question from "is the model this session runs on loaded". Answering from it would describe
-        // the wrong machine confidently, so this says NOT KNOWN — which orbStatus renders as "Waiting for the
-        // model…" rather than "Awakening…". Attributing that reading per runtime is what would close it.
-        modelResident: () => undefined,
+        // Resident WHERE. The reading belongs to the RUNTIME that holds the session, so it is asked of the entry
+        // with that runtime named, and an entry that cannot read that runtime's box says NOT KNOWN — which
+        // orbStatus renders as "Waiting for the model…", never as "Awakening…". A reading from some other box
+        // would describe the wrong machine confidently.
+        modelResident: (key, model) => {
+            const id = idOf(key as SessionKey);
+            return id && readings.modelResident ? readings.modelResident(id.runtime, model) : undefined;
+        },
         stillLive: (key) => {
             const st = summaryOf(key as SessionKey)?.status;
             return st === undefined || st === "running" || st === "waiting";
