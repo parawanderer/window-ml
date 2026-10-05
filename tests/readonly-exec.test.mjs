@@ -24,6 +24,10 @@ function world() {
 // NOT be able to reach. The gated ones THROW A DISTINCT ERROR if invoked, so a test can tell
 // "rejected at the gate" (NotInDialect/Denied) apart from "actually ran".
 const ML_CALLS = [];
+// A FRESH object per call, as the real `ml.info()` builds — the dialect marks an `ml.*` result as OWNED, so a
+// facade that handed back the same object every time would let one script's edits be seen by the next.
+const mlInfo = () => ({ compute: { system_compute: { total_memory: 130142785536 },
+    supported_gpus: [{ gpu_id: "0", name: "CUDA0", total_memory: 101972967424, free_memory: 101386813440, runner: "CUDA" }] } });
 const ML = {
     getModel: async () => "gemma4:31b",
     config: async () => ({ model: "gemma4:31b", ocrModel: "", apiFormat: "openai" }),
@@ -45,8 +49,7 @@ const ML = {
     // slipped through it.
     dereference: async (ref, opts) => { ML_CALLS.push(["dereference", ref, opts && opts.pipe]); return `VALUE(${ref})`; },
     // Machine CAPACITY — a read of the hardware that spends nothing and changes nothing.
-    info: async () => { ML_CALLS.push(["info"]); return { compute: { system_compute: { total_memory: 130142785536 },
-        supported_gpus: [{ gpu_id: "0", name: "CUDA0", total_memory: 101972967424, free_memory: 101386813440, runner: "CUDA" }] } }; },
+    info: async () => { ML_CALLS.push(["info"]); return mlInfo(); },
     range: (a, b, step = 1) => { const start = b === undefined ? 0 : a, stop = b === undefined ? a : b; const out = []; for (let i = 0, v = start; i < Math.max(0, Math.ceil((stop - start) / step)); i++, v += step) out.push(v); return out; },
 };
 const run = (js, doc = world(), ml = ML) => evalReadonly(js, doc, ml);
@@ -340,6 +343,45 @@ test("adversarial (mutators): push/sort/… only touch an array YOU built — ne
     assert.deepEqual((await run(`document.appData.slice().reverse()`, doc)).value, [2, 1, 3]);
     assert.deepEqual(doc.appData, [3, 1, 2]);           // still untouched
 });
+test("ownership is ONE LEVEL deep, for EVERY source — the nested containers are never yours", async () => {
+    // The guarantee `ml.current` is specified against (docs/spec/CURRENT_CONTEXT.md): data a facade hands back
+    // may be written at the top, and NOTHING below that may be, whatever route reached it. `own()` marks the
+    // value it is given and does not recurse, so a nested container is owned by nobody and every write through
+    // one is refused — off the result itself, off a shallow copy of it, and (the surprising one) off a JSON
+    // round trip of it. A model told to "clone it and edit the clone" therefore fails LOUDLY rather than
+    // quietly editing something it did not create.
+
+    // TOP LEVEL: the facade built this value for this call, so it is the script's to write.
+    const { value: top } = await run(`const i = await ml.info(); i.compute = { mine: 1 }; i.compute.mine`);
+    assert.equal(top, 1);
+    const { value: flat } = await run(`const c = { ...(await ml.info()) }; c.mine = 1; c.mine`);
+    assert.equal(flat, 1, "a spread is likewise the script's own object — one level deep");
+
+    // NESTED, off the result: refused.
+    await assert.rejects(run(`const i = await ml.info(); i.compute.system_compute = {}; 1`), outOfDialect);
+    await assert.rejects(run(`const i = await ml.info(); i.compute.supported_gpus.push({ gpu_id: "9" }); 1`), outOfDialect);
+    await assert.rejects(run(`const i = await ml.info(); i.compute.supported_gpus[0].name = 'HACKED'; 1`), outOfDialect);
+    // NESTED, off a SHALLOW copy: the spread carried those containers by REFERENCE, so the refusal lands at
+    // the depth where the alias is. This is the case a model writes by accident.
+    await assert.rejects(run(`const c = { ...(await ml.info()) }; c.compute.supported_gpus[0].name = 'HACKED'; 1`), outOfDialect);
+    await assert.rejects(run(`const c = { ...(await ml.info()) }; c.compute.system_compute.total_memory = 1; 1`), outOfDialect);
+
+    // NESTED, off a JSON ROUND TRIP: also refused. Every container in a JSON.parse result is freshly built and
+    // provably not a page object, yet only the OUTERMOST one is marked owned — so there is no idiom in the
+    // dialect today that yields a deeply writable copy. The spec records that as a dependency rather than
+    // assuming it; this is the assertion that will fail the day it is lifted, which is when the spec's
+    // deep-clone advice becomes true.
+    await assert.rejects(run(`const j = JSON.parse('{"a":{"b":1}}'); j.a.b = 2; 1`), outOfDialect);
+    await assert.rejects(run(`const mine = JSON.parse(JSON.stringify(await ml.info())); mine.compute.system_compute.total_memory = 1; 1`), outOfDialect);
+    // Its top level is writable, like any other owned value.
+    const { value: jtop } = await run(`const j = JSON.parse('{"a":{"b":1}}'); j.a = 5; j.a`);
+    assert.equal(jtop, 5);
+
+    // And a later read is untouched by any of it — the facade builds a fresh value per call.
+    const { value: fresh } = await run(`(await ml.info()).compute.supported_gpus[0].name`);
+    assert.equal(fresh, "CUDA0");
+});
+
 test("adversarial (new): only pure builtins — code gen / network / host constructors are Denied", async () => {
     await assert.rejects(run(`new Function('return 1')()`), outOfDialect);
     await assert.rejects(run(`new Function('return this')().constructor`), outOfDialect);
