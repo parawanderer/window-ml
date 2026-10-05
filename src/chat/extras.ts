@@ -23,6 +23,14 @@ export interface ChatExtras {
     /** The runtime's housekeeping log (what it decided on its own: evictions, sweeps, worker restarts), read-only. */
     housekeeping?(runtime: RuntimeId): ComponentChildren | null;
     /**
+     * The EXECUTION LOG for one run on one runtime: what the machinery did underneath it (run-log.ts).
+     *
+     * Takes the run as well as the runtime, unlike every other member here, because this view is about ONE run
+     * rather than about the device — and it is passed in rather than read from the page's own state because the
+     * shared views may not import `src/chat/`. Null with nothing open is a real answer: the panel says so.
+     */
+    runLog?(runtime: RuntimeId, run: string | null): ComponentChildren | null;
+    /**
      * The one-click fix for an attention code (attention.ts) on a runtime this device IS: a permission (`tab-groups`,
      * `site-access`), a setting (`archive-off`), the folder picker (`archive-folder-none`, `archive-folder-lapsed`). A
      * function, not a view: it must be CALLED inside the click that asked, the only place a browser shows a permission

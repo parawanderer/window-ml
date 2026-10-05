@@ -15,7 +15,7 @@ import { benchOpen, groupAllTools, openBench, view } from "../sidebar/store";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
 import { StartMenu, type StartKind } from "./new-session";
-import { calm, pane, setCalm, setGroupAll, setListOpen, setPane } from "./view-mode";
+import { calm, logOpen, pane, setCalm, setGroupAll, setListOpen, setLogOpen, setPane } from "./view-mode";
 
 /** What the MAIN pane shows instead of a session: the search page, this device's settings, or the attention list. Not
  *  stored as a preference: it lives in the URL (route.ts), so a reload keeps it and a fresh page does not. */
@@ -83,8 +83,8 @@ export function Rail({ store, onStart, gear }: { store: ChatStore; onStart: (kin
  * describe, already asked both questions by the caller: the open session's where it offers the view, otherwise the
  * first that does. Settings is always offered, because the page's own display settings need no runtime.
  */
-export function GearMenu({ graphsRt, benchRt, labelled }: {
-    graphsRt?: RuntimeInfo; benchRt?: RuntimeInfo; labelled?: boolean;
+export function GearMenu({ graphsRt, benchRt, logRt, labelled }: {
+    graphsRt?: RuntimeInfo; benchRt?: RuntimeInfo; logRt?: RuntimeInfo; labelled?: boolean;
 }) {
     const [open, setOpen] = useState(false);
     const wrap = useRef<HTMLDivElement>(null);
@@ -119,11 +119,15 @@ export function GearMenu({ graphsRt, benchRt, labelled }: {
                         "Calm view". Grouped, the device is said once by the rows themselves and the menu's top level
                         stays four plain choices. Drawn with the same opening row as the theme choices, because a
                         second disclosure that animated differently is how a menu ends up with two of them. */}
-                    {graphsRt || benchRt ? (
+                    {graphsRt || benchRt || logRt ? (
                         <MenuGroup icon={<IconDock side="right" />} label="Panels">
                             {(sub) => <>
                                 {graphsRt ? <MenuItem sub={{ i: 0, open: sub }} icon={null} label="Models and memory" detail={graphsRt.name} on={pane.value === "resource"} onPick={pick(() => setPane(pane.value === "resource" ? null : "resource"))} /> : null}
                                 {benchRt ? <MenuItem sub={{ i: 1, open: sub }} icon={null} label="Python bench" detail={benchRt.name} on={benchOpen.value} onPick={pick(() => (benchOpen.value ? (benchOpen.value = false) : openBench()))} /> : null}
+                                {/* Named for what it is rather than for the run it happens to be showing: it
+                                    follows whatever session is open, so a title naming one would go stale the
+                                    moment someone clicked another. */}
+                                {logRt ? <MenuItem sub={{ i: 2, open: sub }} icon={null} label="Execution log" detail={logRt.name} on={logOpen.value} onPick={pick(() => setLogOpen(!logOpen.value))} /> : null}
                             </>}
                         </MenuGroup>
                     ) : null}

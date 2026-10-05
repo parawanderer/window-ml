@@ -14,8 +14,12 @@ import { LOG_CAP, LOG_KEY, type HousekeepingEvent } from "../housekeeping";
  * cell's tail-follow keeps the newest in view. Subsystems in `hidden` are left out. Aligned for a human reader
  * (this never reaches a model). Anything not reported by the worker itself says who reported it, since a page
  * can write here and nothing it wrote should read as the worker's own account.
+ *
+ * `omit` drops `detail` keys from the LINE only — never from the records, which is what the download carries.
+ * It exists because a key that is the same on every record in view is width spent saying nothing, and in a
+ * narrow panel that width is what makes a one-record line wrap into two (the execution log's `tab`).
  */
-export function housekeepingText(events: HousekeepingEvent[], hidden: ReadonlySet<string> = new Set()): { text: string; marks: [number, number][] } {
+export function housekeepingText(events: HousekeepingEvent[], hidden: ReadonlySet<string> = new Set(), omit: ReadonlySet<string> = new Set()): { text: string; marks: [number, number][] } {
     const shown = events.filter((e) => !hidden.has(e.subsystem));
     const width = Math.max(0, ...shown.map((e) => e.subsystem.length));
     const lines: string[] = [];
@@ -26,7 +30,7 @@ export function housekeepingText(events: HousekeepingEvent[], hidden: ReadonlySe
         if (e.ms != null) parts.push(fmtDelta(e.ms));
         if (e.bytes != null) parts.push(formatBytes(e.bytes));
         if (e.key) parts.push(e.key);
-        for (const [k, v] of Object.entries(e.detail || {})) parts.push(`${k}=${v}`);
+        for (const [k, v] of Object.entries(e.detail || {})) if (!omit.has(k)) parts.push(`${k}=${v}`);
         if (e.origin !== "worker") parts.push(`[${e.origin}${e.tab != null ? ` tab ${e.tab}` : ""}]`);
         const line = parts.join("  ");
         marks.push([offset, e.t]);

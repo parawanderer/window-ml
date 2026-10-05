@@ -162,6 +162,13 @@ export const IconMenu = () => (
         <path d="M4 6h16M4 12h16M4 18h16" />
     </svg>
 );
+/** Ruled lines with a stamp beside each — a TIMESTAMPED LOG, which is what tells it apart from the list's three
+ *  plain rules and the summary's unequal bars: the gutter is the point, because every line here happened at a time. */
+export const IconLog = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+        <path d="M4 6h1.5M4 12h1.5M4 18h1.5M9 6h11M9 12h11M9 18h7" />
+    </svg>
+);
 /** Three bars of unequal length — a column-by-column SUMMARY of a table, as against its rows. */
 export const IconSummary = () => (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">

@@ -80,11 +80,19 @@ const delegateSend = async (tabId: number, msg: unknown): Promise<any> => {
         // page cannot answer after being rebuilt, the tool fails with a sentence instead of looping.
         note("discarded", { ms: e.waitedMs });
         navBarrier.noteNavigating(tabId);
-        const ok = await chrome.tabs.reload(tabId).then(() => true, () => false);   // gone for good; the retry below reports it
+        const ok = await chrome.tabs.reload(tabId).then(() => true, () => false);
         await navBarrier.whenReady(tabId);
-        note("reloaded", { reason: ok ? "discarded" : "gone" });
-        try { return await watchWhileWaiting(chrome.tabs.sendMessage(tabId, msg), () => tabState(tabId)); }
-        catch (again) {
+        // No reason when the reload worked, the browser's own word for it when it did not: an absent reason
+        // reads as "and then it was fine", which is what the next line is about to confirm or deny.
+        note("reloaded", ok ? {} : { reason: "gone" });
+        const from = Date.now();
+        try {
+            const answer = await watchWhileWaiting(chrome.tabs.sendMessage(tabId, msg), () => tabState(tabId));
+            // The story needs its ending. Without this the log reads "discarded, reloaded" and then stops, and
+            // whether the run went on is left to be inferred from what did NOT appear underneath it.
+            note("recovered", { ms: Date.now() - from });
+            return answer;
+        } catch (again) {
             if (again instanceof PageUnreachable) note("unreachable", { reason: again.state, ms: again.waitedMs, detail: { retried: true } });
             throw again;
         }

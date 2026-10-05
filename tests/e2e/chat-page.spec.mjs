@@ -263,6 +263,66 @@ test("the box's panel and the Python bench are on this page, because THIS browse
     } finally { await ext.context.close(); await fake.stop(); }
 });
 
+test("the execution log is what the machinery did under the open run, which its steps never say", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const site = await startPageServer({});
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off" });
+        fake.setScript([{ content: "nothing to do" }]);
+
+        // A real run on a real tab, started the way a person would. It needs no tools: the mechanics this log is
+        // for happen AROUND a run — the browser is asked not to discard the tab the moment one is hosted there,
+        // and let go of it again when the run ends, and neither is visible anywhere else on the page.
+        const site1 = await ext.context.newPage();
+        await site1.goto(site.url + "/");
+        await waitForMl(site1);
+        const hash = await site1.evaluate(() => window.ml.agent("do nothing", { env: false }).then((r) => r.hash));
+
+        const { page: chat, errors } = await openChatPage(ext);
+        await chat.locator(".chat-row", { hasText: "do nothing" }).click();
+        await expect(chat).toHaveURL(new RegExp(`#/s/local%3A${hash}`));
+
+        // Offered beside the other panels, named for what it IS: it follows whichever session is open, so a title
+        // naming one run would go stale on the next click.
+        await chat.locator(".chat-gear-btn").click();
+        await chat.getByRole("menuitem", { name: "Panels" }).click();
+        const row = chat.getByRole("menuitemcheckbox", { name: /Execution log/ });
+        await expect(row).toHaveAccessibleName(/This browser/);
+        await row.click();
+
+        // Docked to the RIGHT by default: it is read line by line beside the steps it explains.
+        const panel = chat.locator(".chat-dock.chat-dock-right");
+        await expect(panel.locator(".hk-view")).toBeVisible();
+        await expect(panel.locator(".r-outcell")).toContainText("pinned (hosting)");
+        await expect(panel.locator(".r-outcell")).toContainText("released");
+        await expect(panel.locator(".hk-count")).toHaveText(/record/);
+        // One tab hosted the whole run, so its id is the same on every line and is left off them: in a region
+        // this narrow that width is what turns a one-record line into two. It is still in the records.
+        await expect(panel.locator(".r-outcell")).not.toContainText("tab=");
+
+        // The filter chips are the housekeeping log's own, because a run-log record IS one of its events plus a
+        // run — which is what lets one renderer draw both.
+        // One subsystem in play, so no filter row: the chips are the housekeeping log's, and they appear for the
+        // same reason they do there — more than one kind of thing to tell apart.
+        await expect(panel.locator(".rc-lane-chip")).toHaveCount(0);
+
+        // The two exports this panel owes: the records themselves, and the run's WHOLE timeline, which is
+        // `run.json` rather than a fifth artifact that is almost it.
+        await expect(panel.getByRole("button", { name: "download" })).toBeEnabled();
+        await expect(panel.getByRole("button", { name: "all events" })).toBeEnabled();
+
+        // It is the OPEN run's, not the ring's: going back to the list leaves it with no run to describe rather
+        // than showing some other run's mechanics under nothing.
+        // `.hint:not(.hk-about)` — the blurb saying what this panel IS is always there; this is the state line.
+        await chat.evaluate(() => { location.hash = "#/"; });
+        await expect(panel.locator(".hint:not(.hk-about)")).toContainText("Open a session to read what happened underneath it");
+        await expect(panel.getByRole("button", { name: "all events" })).toBeDisabled();
+
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); await site.stop(); await fake.stop(); }
+});
+
 test("the start page holds through a worker restart, and its tab list is fresh and has the sites' icons", async () => {
     const fake = await startFakeLlm({ model: "fake-model" });
     // Pages with an icon: a tab's icon is what the runtime fetches and hands the picker as a data URL.

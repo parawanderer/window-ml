@@ -5,6 +5,7 @@
 // `chrome`: everything under `src/chat/` must build for a phone, and `scripts/build-web.mjs` fails on a `chrome.*`
 // reference to keep it that way. The same reason `sidebar/services-ext.ts` sits beside the seam it fills.
 import { HousekeepingView } from "./sidebar/housekeeping-log";
+import { RunLogView } from "./sidebar/run-log-view";
 import { render } from "preact";
 import { useEffect } from "preact/hooks";
 import { ChatApp } from "./chat/chat-app";
@@ -106,6 +107,10 @@ const extras: ChatExtras = {
     bench: (id) => (localRuntimes.has(id) ? <PythonBench /> : null),
     settings: (id) => (localRuntimes.has(id) ? <SettingsPane /> : null),
     housekeeping: (id) => (localRuntimes.has(id) ? <HousekeepingView /> : null),
+    // No capability is asked of the runtime for this one, unlike the resource panel: those graphs describe a box
+    // the runtime reports on, while this log is read out of THIS browser's worker — so a device that can draw it
+    // has it, and a runtime that is not ours gets null.
+    runLog: (id, run) => (localRuntimes.has(id) ? <RunLogView run={run} /> : null),
     fixedTimes: (id, code) => (localRuntimes.has(id) && code === "archive-folder-lapsed" ? regrantCount() : 0),
     fix: (id, code) => (localRuntimes.has(id) && FIXES[code] ? FIXES[code] : null),
     // The narrow grant: one origin, asked for inside the click. `<all_urls>` would also unblock it and is the wrong

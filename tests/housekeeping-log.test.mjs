@@ -35,3 +35,14 @@ test("subsystem names are padded to one column, and a hidden subsystem is left o
 test("subsystemCounts keeps first-appearance order", () => {
     assert.deepEqual(subsystemCounts([...EV, EV[0]]), [["sw", 2], ["fetch-cache", 1], ["pyodide", 1]]);
 });
+
+test("an omitted detail key leaves the LINE, not the record — the width it was spending is what makes a line wrap", () => {
+    const evs = [{ t: 100, subsystem: "page", kind: "discarded", ms: 4000, origin: "worker", detail: { tab: 175215074, tool: "wait" } }];
+    assert.equal(housekeepingText(evs).text, "page  discarded  4.00s  tab=175215074  tool=wait");
+    assert.equal(housekeepingText(evs, new Set(), new Set(["tab"])).text, "page  discarded  4.00s  tool=wait");
+    // Omitting shortens the line, so the marks the gutter is drawn from must be computed over the SHORTENED
+    // text or every timestamp after the first lands on the wrong row.
+    const two = [...evs, { ...evs[0], t: 200, kind: "reloaded" }];
+    const { text, marks } = housekeepingText(two, new Set(), new Set(["tab"]));
+    assert.equal(timeForOffset(marks, text.indexOf("reloaded")), 200);
+});
