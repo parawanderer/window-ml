@@ -1685,25 +1685,11 @@ function LookRender({ d }: { d: Extract<RenderDescriptor, { type: "look" }> }) {
     );
 }
 
-/** `lineMap` is the IN block's reflow map, handed to the OUT block so a failure can name the row the
- *  reader is actually looking at. The two are separate descriptors that cannot see each other; only the
- *  step holds both, so it is the step that passes this across. */
-export function RenderPanel({ d, marks, live, failLine, ranMs, ranSince, ctx, lineMap, remoteMs, failed }: { d: RenderDescriptor; marks?: [number, number][]; live?: boolean; failLine?: number | null; ranMs?: number; ranSince?: number; ctx?: CodeCtx; lineMap?: number[] | null; remoteMs?: { durationMs: number; bootMs?: number } | null; failed?: boolean }) {
-    switch (d.type) {
-        case "image": {
-            // If the label references an @pt/@box (e.g. look's `element "@pt:…"`), hovering the shot
-            // outlines that point/region on the page — same overlay setup.
-            const th = tokenHover(d.label);
-            return <div class={`r-image${th.onPointerEnter ? " r-hoverable" : ""}`} {...th}>
-                <ClickableImg src={d.src} alt={d.label || "image"} />{d.label ? <div class="r-image-label">{d.label}</div> : null}</div>;
-        }
-        case "code": return <CodeRender d={d} failLine={failLine} ctx={ctx} failed={failed} />;
-        // The SAME grid a DataFrame gets (scroll-capped, sticky header, sort, copy-CSV, hide) — answer-render
-        // already made this call for a cited df, and a fetched CSV is the same kind of object. The bare
-        // alternative had no max-height, so a 200-row fetched table rendered as an unbroken wall in the step.
-        case "table": return <PyDfTable columns={d.columns} rows={d.rows} rowCount={d.rowCount} dtypes={d.dtypes} delimiter={d.delimiter} headerless={d.headerless} value={d.value} />;
-        case "keyval": return <div class="r-keyval">{d.pairs.map(([k, v], i) => <div class="r-kv" key={i}><span class="r-k">{k}</span><span class="r-v">{v}</span></div>)}</div>;
-        case "elements": return <RenderElements items={d.items} />;
+// NOTE: this lived INSIDE RenderPanel's `switch`, between two `case`s. A switch jumps straight to the
+// matching label, so the declaration never ran and the binding stayed in its temporal dead zone: every
+// `action` descriptor carrying a negotiation ladder threw `Cannot access 'FetchLadder' before
+// initialization` and rendered nothing at all. It reads as "fetch_url has no rendering", intermittently,
+// because only a fetch whose ladder ran reaches it.
 /** The Markdown ladder as a resolution TREE: what was tried, what worked, what was never needed. Every rung is
  *  drawn, dimmed when unused, so the protocol is legible from any single render rather than having to be
  *  inferred across several. The failures it exists to expose are invisible in the body alone — a stub twin is
@@ -1729,6 +1715,25 @@ function FetchLadder({ attempts, resolvedBy }: { attempts: import("../contract")
     );
 }
 
+/** `lineMap` is the IN block's reflow map, handed to the OUT block so a failure can name the row the
+ *  reader is actually looking at. The two are separate descriptors that cannot see each other; only the
+ *  step holds both, so it is the step that passes this across. */
+export function RenderPanel({ d, marks, live, failLine, ranMs, ranSince, ctx, lineMap, remoteMs, failed }: { d: RenderDescriptor; marks?: [number, number][]; live?: boolean; failLine?: number | null; ranMs?: number; ranSince?: number; ctx?: CodeCtx; lineMap?: number[] | null; remoteMs?: { durationMs: number; bootMs?: number } | null; failed?: boolean }) {
+    switch (d.type) {
+        case "image": {
+            // If the label references an @pt/@box (e.g. look's `element "@pt:…"`), hovering the shot
+            // outlines that point/region on the page — same overlay setup.
+            const th = tokenHover(d.label);
+            return <div class={`r-image${th.onPointerEnter ? " r-hoverable" : ""}`} {...th}>
+                <ClickableImg src={d.src} alt={d.label || "image"} />{d.label ? <div class="r-image-label">{d.label}</div> : null}</div>;
+        }
+        case "code": return <CodeRender d={d} failLine={failLine} ctx={ctx} failed={failed} />;
+        // The SAME grid a DataFrame gets (scroll-capped, sticky header, sort, copy-CSV, hide) — answer-render
+        // already made this call for a cited df, and a fetched CSV is the same kind of object. The bare
+        // alternative had no max-height, so a 200-row fetched table rendered as an unbroken wall in the step.
+        case "table": return <PyDfTable columns={d.columns} rows={d.rows} rowCount={d.rowCount} dtypes={d.dtypes} delimiter={d.delimiter} headerless={d.headerless} value={d.value} />;
+        case "keyval": return <div class="r-keyval">{d.pairs.map(([k, v], i) => <div class="r-kv" key={i}><span class="r-k">{k}</span><span class="r-v">{v}</span></div>)}</div>;
+        case "elements": return <RenderElements items={d.items} />;
         case "action":
             // DEBUG In view (overlay/devtools + HUD "show work"): a hoverable ELEMENT reference when the action
             // targets a page element (selector — hover → outline, right-click → copy a reference); otherwise a
