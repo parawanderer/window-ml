@@ -380,8 +380,9 @@ export interface AgentOptions {
     /** continue the run with this hash: append `task` as a follow-up turn (same session) */
     resume?: string | null;
     /** images (URLs / data URLs / <img>) to attach to THIS turn's user message — e.g. a screenshot the
-     *  user pasted into the HUD/sidebar composer. A vision-capable driver sees them natively; otherwise
-     *  they're transcribed via ml.read and injected as text (with a note the model didn't see the pixels). */
+     *  user pasted into a composer on any of the surfaces (PromptSurface). A vision-capable driver sees them
+     *  natively; otherwise they're transcribed via ml.read and injected as text (with a note the model didn't
+     *  see the pixels). */
     images?: (string | HTMLImageElement)[];
     /** scripting mode: keep this run OUT of the in-page HUD (no working orb, no answer card). Approvals STILL surface (privileged consent can't be silenced). The debug sidebar/panel is unaffected. */
     silent?: boolean;
@@ -404,16 +405,18 @@ export interface AgentOptions {
      *  `"external"` = the UI buttons are SUPPRESSED and ONLY that channel resolves it (headless). A `"ui"`
      *  run is never externally resolvable — the channel lists/decides only opted-in ("both"/"external") runs. */
     approvalRouting?: "ui" | "both" | "external";
-    /** STREAM the model's thinking/reply live (emits `agent-stream` deltas → a live "thinking" block in the
-     *  sidebar/HUD), so a long reasoning phase shows its words instead of a frozen token count. Default false —
-     *  the loop uses a single non-streamed call. Background-hosted runs only (design A); a page-hosted run
-     *  ignores it. Accumulates tool_calls from the stream, so the loop still gets its authoritative result. */
+    /** STREAM the model's thinking/reply live (emits `agent-stream` deltas → a live "thinking" block on every
+     *  surface showing the run), so a long reasoning phase shows its words instead of a frozen token count.
+     *  Default false — the loop uses a single non-streamed call. Background-hosted runs only (design A); a
+     *  page-hosted run ignores it. Accumulates tool_calls from the stream, so the loop still gets its
+     *  authoritative result. */
     stream?: boolean;
 }
 
 /** A stateful ml.agent handle (what ml.createAgent returns) — the agent analogue of ml.createChat's
  *  history. Two primitives: `say` writes a user message into the session, `run` executes the loop until
- *  the agent's turn is complete. Everything shares one `hash` = one sidebar/HUD conversation. */
+ *  the agent's turn is complete. Everything shares one `hash`, which is what makes it ONE conversation on every
+ *  surface that shows it (PromptSurface names them). */
 export interface MlAgentHandle {
     /** the session hash (null until the first run() mints it) */
     hash: string | null;

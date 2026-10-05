@@ -34,7 +34,7 @@ ml.current.meta(id)            // what we KNOW about that message; read-only, no
 ml.current.log                 // this run's execution log (run-log.ts), gated — see "The log" below
 ```
 
-Four decisions make it survive the write half. Each is the non-obvious choice.
+Five decisions make it survive the write half. Each is the non-obvious choice.
 
 ### 1. `ml.current`, not `self.current`
 
@@ -71,7 +71,29 @@ cannot author them.
 So: `meta` is read-only permanently, including after the write half lands. Same object graph, two trust levels, kept
 apart by shape rather than by a rule in a document.
 
-### 4. It is read from the DIALECT, never from a tool that dumps
+### 4. Every read hands back a COPY the script owns
+
+`ml.current.messages` and `ml.current.meta(id)` return a deep clone, not a view. Writing to it changes nothing.
+
+The obvious alternative — a frozen object, or one that throws on write — is hostile in a dialect. The natural
+thing to do with this data is to work it: annotate rows, sort them, build a plan for what to drop. A frozen row
+throws part-way through that and the whole script falls out of dialect, which degrades to "asks the human" for a
+script that was only ever reading.
+
+But the real reason is the write half. If a read returned a LIVE object, the obvious expectation would be that
+assigning to it mutates the context — so the moment named mutation operations arrive there are two ways to say the
+same thing, one of which works and one of which silently does not. A copy makes the split unambiguous before the
+question can be asked: **what you are handed is yours; changing the context is something you CALL.**
+
+The dialect already has the mechanism and needs no new concept. `owned` (`readonly-exec.ts`) is a WeakSet of
+containers the script created, and the mutation gate is "is this owned", kept deliberately orthogonal to which
+methods a kind allows. A clone handed out here is marked owned, so the script may mutate its copy exactly as it may
+mutate an array it built itself, and the page's own objects stay out of reach by the same rule as before.
+
+The clone must be DEEP, or a nested `tool_calls` array still aliases the real message. That is a real cost on a long
+context, which is one more reason the read is a filter in the dialect rather than a dump into the transcript.
+
+### 5. It is read from the DIALECT, never from a tool that dumps
 
 Reading your context into your context is a quine that grows. A tool returning the messages array would double the
 context in one call, on the path whose whole purpose is usually to save it.
