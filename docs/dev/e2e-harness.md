@@ -226,6 +226,10 @@ as in AGENTS.md — they are all under `src/`.
   following it makes it fold · a second run of the same tool is a SEPARATE streak (adjacent, not cumulative) ·
   the row carries the count, the failures and the total time · a turn that said something is never folded ·
   open is indistinguishable from never folded, plus the rail · the tail folds when the run ends.
+  PART THREE is a second session for the other thing that changes under a reader: a run stopping at its step cap
+  and being continued past it, where the boilerplate answer collapses into a seam naming the budget. That part
+  caught a fold merging ACROSS the seam, so the divider rendered under all seven steps instead of in the middle
+  of them — a plausible-looking order that nothing throws on and no finished transcript would show.
   PART TWO turns on the ⋮ menu's "Group all tool calls" and walks the three things that rule still owes you: a
   mixed run becoming one row counted in CALLS and naming every tool; a pending gate standing OUTSIDE the group and
   folding in once answered; and a citation in the answer opening the group the step it names is now inside.

@@ -218,3 +218,36 @@ test("a jump reaches a step inside a group, including one in a multi-call turn",
     assert.equal(holdsSeq(g, 2), true);
     assert.equal(holdsSeq(g, 99), false);
 });
+
+// --- a fold may not span a boundary: what is interleaved by POSITION must stay where it happened ---
+// Answers (a run's cap seam among them) and the reader's own messages are placed into the transcript by step
+// position AFTER the fold is computed. A streak that merged across one left that item rendering below the whole
+// block — a "stopped at its step cap" seam under the seven steps it sat in the middle of, which says the opposite
+// of what happened. A demo caught it; a finished transcript shows a plausible-looking order.
+
+test("a run of the same tool does not fold across an answer sitting inside it", () => {
+    const seven = [1, 2, 3, 4, 5, 6, 7].map((n) => turn(n, "fetch_url"));
+    assert.deepEqual(kinds(foldStreaks(seven)), ["fetch_url×7"], "with nothing between them, one streak");
+    // An answer after turn 4 (`atStep: 4` → it renders at 4.5) splits it in two.
+    assert.deepEqual(kinds(foldStreaks(seven, { breaks: [4] })), ["fetch_url×4", "fetch_url×3"]);
+});
+
+test("group-all breaks at a boundary too, for the same reason", () => {
+    const mixed = [turn(1, "exec"), turn(2, "look"), turn(3, "exec"), turn(4, "python_exec")];
+    assert.equal(foldStreaks(mixed, { all: true }).length, 1);
+    assert.deepEqual(kinds(foldStreaks(mixed, { all: true, breaks: [2] })), ["exec×2", "exec×2"],
+        "two groups, and the answer between them has somewhere to go");
+});
+
+test("a mid-run message from the reader is a boundary as much as an answer is", () => {
+    // A steer is the one thing in a transcript that is NOT the run talking; burying it under a folded block of
+    // what came before it is the same failure in another costume.
+    const out = foldStreaks([turn(1, "exec"), turn(2, "exec"), turn(3, "exec"), turn(4, "exec")], { breaks: [1] });
+    assert.deepEqual(kinds(out), ["exec", "exec×3"]);
+});
+
+test("a boundary past the end, or before the start, changes nothing", () => {
+    const three = [turn(1, "exec"), turn(2, "exec"), turn(3, "exec")];
+    assert.deepEqual(kinds(foldStreaks(three, { breaks: [9] })), ["exec×3"]);
+    assert.deepEqual(kinds(foldStreaks(three, { breaks: [0] })), ["exec×3"]);
+});

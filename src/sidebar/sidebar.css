@@ -2150,6 +2150,15 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 .resume-divider { margin: 16px 2px; }
 .resume-divider .nav-rule { background: none; border-top: 1px dashed var(--border); height: 0; }
 .resume-divider .nav-label { color: var(--fg-dim); cursor: help; }
+/* WHERE A RUN WAS CONTINUED PAST ITS STEP CAP. A cap stop with steps under it reads as a run announcing it has
+   ended and then going on, so the seam says what it stopped at and what it was then given — the budget, because
+   the question it provokes ("did I ask for that?") is a question about a budget. Amber-lipped rather than dashed:
+   a nav is a place change and a resume is a gap, but this is a LIMIT that was lifted, which is the same family as
+   the warn dot the capped answer carried. */
+.cap-divider { margin: 12px 2px; }
+.cap-divider .nav-rule { background: linear-gradient(90deg, transparent, var(--border) 35%, var(--border) 65%, transparent); }
+.cap-divider .nav-ico { color: var(--warn); }
+.cap-divider .nav-label { cursor: help; }
 /* What a resume did NOT carry over, listed in the divider's tooltip — a list, so it is not on the seam itself. */
 .resume-lost { margin: 4px 0 0; padding-left: 16px; }
 .resume-lost li { margin: 1px 0; }

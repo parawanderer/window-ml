@@ -835,6 +835,44 @@ export function NavDivider({ url }: { url: string }) {
 }
 
 /**
+ * WHERE A RUN WAS CONTINUED PAST ITS STEP CAP — a seam, not an ending.
+ *
+ * A capped run that someone pressed Continue on keeps its "stopped at its step cap" answer, and the steps of the
+ * next stretch are appended under it. Read top to bottom that is a run announcing it has stopped and then going
+ * on, and the question it provokes is "did I ask for that?". Which is a question about a budget, so the seam
+ * answers it with the budget: what it stopped at, and what it was given.
+ *
+ * It REPLACES the answer rather than sitting beside it, because that answer is boilerplate the runtime wrote
+ * ("Stopped at the 10-step cap without finishing") and the divider says strictly more. Its text is kept in the
+ * tip, and both exports still carry the answer whole — the standing rule is that a view may be quiet, never that
+ * something becomes unavailable.
+ *
+ * Only a hitCap stop, and only once the run has gone PAST it. Not "is this the latest answer", which stays true
+ * for the whole continued stretch and would collapse the seam only when the run finally ended — long after the
+ * reader met the confusing version.
+ */
+export function CapDivider({ stoppedAt, granted, text }: {
+    /** the step count it stopped at, which is the cap it hit */
+    stoppedAt: number;
+    /** the budget the next stretch was given, when a cap raise was recorded for this seam */
+    granted?: number;
+    /** the answer this replaces, kept readable */
+    text?: string;
+}) {
+    return (
+        <div class="nav-divider cap-divider">
+            <span class="nav-rule" aria-hidden="true" />
+            <span class="nav-label" {...cursorTipOn(text ? `It said: ${text}` : "The run stopped at its step cap here, and was continued.")}>
+                <svg class="nav-ico" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M5 5v14M10 12h9m-4-4 4 4-4 4" /></svg>
+                stopped at <b class="nav-url">{stoppedAt} steps</b>
+                {granted != null ? <> · continued with <b class="nav-url">{granted}</b></> : <> · continued</>}
+            </span>
+            <span class="nav-rule" aria-hidden="true" />
+        </div>
+    );
+}
+
+/**
  * A RESUME divider in the run log: the session was picked up again on a different page, after a gap.
  *
  * Distinct from {@link NavDivider}, which marks the agent walking to a new page inside one run. This is the run
@@ -922,8 +960,23 @@ export function AgentRunView({ s }: { s: Session }) {
         const hi = answers[i].atStep;
         return groups.filter(g => g.step > lo && g.step <= hi).flatMap(g => g.tools);
     };
+    // A CAP STOP THE RUN WENT PAST is a seam, not an ending (see CapDivider). "Has the run gone past it" and not
+    // "is this the latest answer": the latter stays true for the whole continued stretch, so the collapse would
+    // happen only when the run finally ended — long after the reader met the version that reads as a contradiction.
+    const continuedPast = (a: NonNullable<Session["answers"]>[number]): boolean =>
+        !!a.hitCap && !a.cancelled && !a.error && groups.some(g => g.step > a.atStep);
+    // The budget granted AT THIS SEAM: the first raise that falls between this answer and the NEXT one. Not
+    // `s.maxSteps`, which is only the latest and would label the first of two seams with the second grant — and
+    // bounded on both sides rather than merely "the first raise after this", which puts every later grant on the
+    // earliest seam the moment a run is continued twice.
+    const grantedAt = (a: NonNullable<Session["answers"]>[number], i: number): number | undefined => {
+        const until = answers[i + 1]?.ts;
+        return (s.capRaises || []).find(c => c.ts >= a.ts && (until == null || c.ts < until))?.maxSteps;
+    };
     const answer = (a: NonNullable<Session["answers"]>[number], key: string, i: number) =>
-        a.error
+        continuedPast(a)
+        ? <CapDivider key={key} stoppedAt={a.atStep} granted={grantedAt(a, i)} text={a.text || undefined} />
+        : a.error
             // RETRY on the latest failure only, and not while something is already running — the same guard
             // Continue uses, for the same reason: resuming an old buried failure would re-run a turn the reader
             // has since moved past, and a live run has nothing to resume.
@@ -956,7 +1009,12 @@ export function AgentRunView({ s }: { s: Session }) {
         // "exec" eight times, and the busy view is the developer's whole trace and keeps all of them. The fold only
         // happens once the streak has ENDED, so a live run is never collapsing out from under you.
         // Design and every clause behind it: tmp/design-tool-streaks.md.
-        ...((runGoing => focusMode.value ? foldStreaks(groups, { live: runGoing, all: groupAllTools.value }) : groups)(s.status === "pending" && runLive)).map(g =>
+        // `breaks` is every position something ELSE is interleaved at — an answer (including a cap seam) and the
+        // reader's own messages. A fold that spans one leaves that item rendering below the whole block, which is
+        // how a "stopped at its step cap" seam ended up under the seven steps it sat in the middle of.
+        ...((runGoing => focusMode.value
+            ? foldStreaks(groups, { live: runGoing, all: groupAllTools.value, breaks: [...answers.map(a => a.atStep), ...(s.says || []).map(m => m.atStep)] })
+            : groups)(s.status === "pending" && runLive)).map(g =>
             "kind" in g
                 // `live` is the same answer `foldStreaks` is given, and it is what lets the streak tell a fold
                 // happening IN VIEW (collapse the rows you were reading) from one drawn into a transcript you just

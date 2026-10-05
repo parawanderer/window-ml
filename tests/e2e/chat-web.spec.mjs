@@ -1052,9 +1052,11 @@ test("group all tool calls: a mixed run becomes one row, a pending gate does not
     await toggle.click();
 
     // The mixed run is one row now, counted in CALLS and naming every tool, because it can no longer name one.
-    const mixed = page.locator(".astreak").filter({ hasText: "python_exec" }).first();
-    await expect(mixed.locator(".astreak-calls")).toContainText("tool calls");
-    await expect(mixed.locator(".astreak-tools")).toContainText("look");
+    // Found BY that — "N tool calls" is what a multi-tool row says and a single-tool one never does, so this
+    // cannot drift onto one of the session's own same-tool groups the way `hasText: "python_exec"` did.
+    const mixed = page.locator(".astreak").filter({ hasText: /tool calls/ }).first();
+    await expect(mixed.locator(".astreak-calls")).toContainText("3 tool calls");
+    await expect(mixed.locator(".astreak-tools")).toHaveText("exec, look, python_exec");
 
     // THE GATE IS NOT IN ANY OF THEM. A decision waiting on a human is not machinery, whatever the toggle says.
     await expect(page.locator(".astep-approve")).toHaveCount(1);

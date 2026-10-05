@@ -729,9 +729,35 @@ The signal lives in `src/sidebar/store.ts`, not here, for the same reason `focus
 views render on three surfaces and may not import from `src/chat/`. The page's toggle drives it, exactly as calm
 drives `focusMode`.
 
+**A FOLD MAY NOT SPAN A BOUNDARY** (`breaks`, both rules). Answers — a run's cap seam among them — and the
+reader's own mid-run messages are placed into the transcript BY POSITION, after the fold has been computed. A
+streak that merged across one left that item rendering below the whole block: a "stopped at its step cap" seam
+appeared under the seven steps it sat in the middle of, which says the opposite of what happened. A demo caught
+it, because a finished transcript shows a plausible-looking order and nothing throws.
+
 **Nothing is dropped, as always.** The busy view keeps the whole trace, both exports keep it, and a citation into
 a folded group opens it (`holdsSeq` + `revealSeq`) — a jump that silently did nothing would be a new way to break
 what `scrollToStepSeq` exists to prevent, so it has a test on both sides.
+
+### A step cap that was continued past
+
+A capped run someone pressed Continue on keeps its "stopped at its step cap" answer, and the next stretch is
+appended under it. Read top to bottom that is a run announcing it has ended and then going on, and the question it
+provokes — "did I ask for that?" — is a question about a budget. So the answer is replaced by a SEAM
+(`CapDivider`, the `.nav-divider` motif the page already uses for a navigation and a resume) saying what it
+stopped at and what it was then given.
+
+Two things that look like details and are not:
+
+- **The trigger is "the run has gone PAST this answer", not "is this the latest answer".** The latter stays true
+  for the whole continued stretch, so the collapse would happen only when the run finally ended — long after the
+  reader met the version that reads as a contradiction.
+- **The budget comes from `capRaises`, not `maxSteps`.** `maxSteps` is only the budget NOW; a run continued twice
+  asks the question twice, and the first seam would be labelled with the second grant. The reducer keeps every
+  `agent-cap` with its stamp, and a seam takes the raise falling between its own answer and the next one.
+
+The answer it replaces is boilerplate the runtime wrote, and the seam says strictly more — but it is kept in the
+seam's tip and both exports still carry it whole, which is the standing rule (AGENTS.md §Showing a run).
 
 **NO HEADER BAND on the wide layout.** What a header held has gone where each part belongs, because the four
 things in it had four different scopes and only one of them was about the page:

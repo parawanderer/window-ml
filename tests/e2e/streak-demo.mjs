@@ -1,5 +1,6 @@
-// streak-demo.mjs — a NARRATED VISUAL demo (not a test) of TOOL-STREAK FOLDING in the chat page's calm view,
-// walked through one step at a time so you can watch each rule decide.
+// streak-demo.mjs — a NARRATED VISUAL demo (not a test) of HOW THE READING VIEW CHANGES AS A RUN GOES, walked
+// through one appended step at a time so you can watch each rule decide. Mostly tool-streak FOLDING; part three is
+// the other thing that changes under a reader, a step-cap stop continued past.
 //
 //   npm run build && node tests/e2e/streak-demo.mjs        # headful; HOLD=0 to exit instead of waiting
 //
@@ -222,6 +223,68 @@ await page.evaluate((key) => {
 await sleep(BEAT + 900); await shot("15-gate-answered-folds-in");
 
 await narrate(page, "That is the toggle", { sub: "everything groups except a gate waiting on a human and what the model SAID — and nothing is dropped: the busy view and both exports keep the whole trace" });
+await sleep(BEAT);
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+// PART THREE — the other thing the reading view does as a run goes: a STEP-CAP STOP that was continued past.
+// Its own session, because this one is deliberately a mess by now and the seam is worth seeing on a clean page.
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+const CAP = "laptop:9c0ffee1";
+await page.evaluate(([key, task]) => {
+    const [runtime, hash] = key.split(":");
+    const now = Date.now();
+    window.__chatFake.addSession(
+        { id: { runtime, hash }, kind: "agent", status: "running", createdTs: now, lastTs: now, pendingApprovals: 0, saved: true,
+          title: "Stopped, then continued", task, model: "qwen3:32b", page: { url: "https://flights.example/search", title: "Flights", tabId: 41 } },
+        [{ id: `${hash}-0`, ts: now, save: true, session: { hash, turn: 0 }, kind: "agent", task, model: "qwen3:32b", maxSteps: 4,
+           config: undefined, pageUrl: "https://flights.example/search", pageTitle: "Flights" }],
+    );
+}, [CAP, "Check every fare's rules, one by one"]);
+await page.goto(server.url + `#/s/${encodeURIComponent(CAP)}`);
+await page.locator(".chat-transcript").waitFor();
+
+const capStep = (n) => page.evaluate(([key, s]) => {
+    const hash = key.split(":")[1];
+    window.__chatFake.emit(key, { id: `${hash}-0`, ts: Date.now(), save: true, session: { hash, turn: 0 },
+        kind: "agent-step", step: s, seq: s, tool: "fetch_url", approval: "user", toolMs: 300 + ((s * 53) % 500),
+        reasoning: "Next fare.", reasoningTokens: 11,
+        arguments: { url: `https://transavia.example/rules/${s}` }, result: "changes €40…",
+        renderIn: { type: "action", verb: "fetch", target: `https://transavia.example/rules/${s}` } });
+}, [CAP, n]);
+
+await narrate(page, "15 · A run that stops at its cap", { sub: "four steps, a 4-step budget — and an answer that offers Continue, because right now this really is the end" });
+for (const n of [1, 2, 3, 4]) { await capStep(n); await page.waitForTimeout(220); }
+await page.evaluate((key) => {
+    const hash = key.split(":")[1];
+    window.__chatFake.emit(key, { id: `${hash}-0`, ts: Date.now(), save: true, session: { hash, turn: 0 },
+        kind: "agent-result", steps: 4, hitCap: true, summary: "Stopped at the 4-step cap without finishing." });
+    window.__chatFake.updateSummary(key, { status: "capped", lastTs: Date.now() });
+}, CAP);
+await sleep(BEAT + 700); await shot("16-stopped-at-the-cap");
+
+await narrate(page, "16 · …and is continued past it", { sub: "the answer said it had ended; steps are arriving under it. Read top to bottom that is a contradiction, and the question it provokes is about a BUDGET" });
+await page.evaluate((key) => {
+    const hash = key.split(":")[1];
+    window.__chatFake.updateSummary(key, { status: "running", lastTs: Date.now() });
+    window.__chatFake.emit(key, { id: `${hash}-0`, ts: Date.now(), save: true, session: { hash, turn: 0 },
+        kind: "agent-cap", maxSteps: 20 });
+}, CAP);
+await sleep(600);
+for (const n of [5, 6, 7]) { await capStep(n); await page.waitForTimeout(260); }
+await sleep(BEAT + 700); await shot("17-the-cap-seam");
+
+await narrate(page, "17 · So it answers with the budget", { sub: "the boilerplate answer collapses into a seam: what it stopped at, and what it was then given. The answer itself is in the tip, and both exports keep it whole" });
+// The tip FOLLOWS the cursor, so it is raised by a pointer MOVE and not by arriving: `hover()` alone put the
+// pointer there and left the layer empty in the capture. Two moves, the second a pixel off the first.
+{
+    const box = await page.locator(".cap-divider .nav-label").boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.move(box.x + box.width / 2 + 1, box.y + box.height / 2);
+}
+await sleep(BEAT + 700); await shot("18-the-seam-tip");
+
+await narrate(page, "That is the reading view", { sub: "it says what it is doing as the run goes, instead of cutting between states — and never at the cost of what is in the log" });
 await sleep(BEAT);
 await narrateDone(page);
 console.log(`screenshots in ${ART}`);

@@ -100,6 +100,10 @@ export interface Session {
     cancelled?: boolean;   // the run was aborted (HUD "Cancel agent run" / opts.signal) — partial transcript kept
 
     maxSteps?: number;
+    /** Every time the step cap was RAISED, in order, with the total it became. `maxSteps` is only the latest, which
+     *  cannot label a seam in a run that was continued more than once. Rebuilt from the event stream like
+     *  everything else here, so nothing has to be migrated. */
+    capRaises?: { ts: number; maxSteps: number }[];
     agentConfig?: DebugAgentConfig;
     resumed?: boolean;   // this run was RESURRECTED from storage after an SW eviction/respawn (visible + stoppable)
     // Live model output for the CURRENT step while it streams (opt-in stream:true) — the accumulated

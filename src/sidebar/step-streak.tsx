@@ -101,6 +101,22 @@ function foldableAll(t: AgentTurnGroup): boolean {
     return !t.tools.some((st) => st.awaitingApproval && st.pending);
 }
 
+/**
+ * Which SEGMENT of the transcript a turn is in — how many boundaries sit before it.
+ *
+ * A fold may not span one. Answers and the reader's own messages are interleaved with the turns BY POSITION
+ * after the fold is computed, so a streak that merged across one left that item rendering below the whole block:
+ * a run's "stopped at its step cap" seam appeared after the seven steps it sat in the middle of, which says the
+ * opposite of what happened. Found by a demo, because a finished transcript shows a plausible-looking order.
+ *
+ * A boundary of `4` means "after turn 4, before turn 5" — the same `atStep + 0.5` the items list positions by.
+ */
+const segmentOf = (step: number, breaks: readonly number[]): number => {
+    let n = 0;
+    for (const b of breaks) if (b < step) n++;
+    return n;
+};
+
 /** The distinct tool names in a run of turns, in the order they first appear. */
 const toolsIn = (turns: AgentTurnGroup[]): string[] => {
     const seen: string[] = [];
@@ -123,14 +139,17 @@ const revisionOf = (st: AgentStep): unknown =>
  *
  * @param groups the run's turns, in order (`groupTurns`)
  * @param live is the run still going? the last streak stays open while it is
+ * @param all the reader's "group all tool calls" preference — fold by adjacency rather than by tool name
+ * @param breaks step positions a fold may not span: where an answer or one of the reader's own messages sits
  */
-export function foldStreaks(groups: AgentTurnGroup[], { live = false, all = false } = {}): (AgentTurnGroup | ToolStreak)[] {
+export function foldStreaks(groups: AgentTurnGroup[], { live = false, all = false, breaks = [] as readonly number[] } = {}): (AgentTurnGroup | ToolStreak)[] {
     const out: (AgentTurnGroup | ToolStreak)[] = [];
+    const seg = (t: AgentTurnGroup): number => segmentOf(t.step, breaks);
     for (let i = 0; i < groups.length;) {
         if (all) {
             if (!foldableAll(groups[i])) { out.push(groups[i++]); continue; }
             let j = i + 1;
-            while (j < groups.length && foldableAll(groups[j])) j++;
+            while (j < groups.length && foldableAll(groups[j]) && seg(groups[j]) === seg(groups[i])) j++;
             const run = groups.slice(i, j);
             // NO "ENDED" TEST HERE, unlike the ordinary rule. A group of two exists almost immediately and every
             // later call joins a row that is ALREADY closed, so nothing collapses out from under a reader mid-run —
@@ -146,7 +165,7 @@ export function foldStreaks(groups: AgentTurnGroup[], { live = false, all = fals
         let j = i + 1;
         while (j < groups.length) {
             const next = foldable(groups[j]);
-            if (!next || next.tool !== first.tool) break;
+            if (!next || next.tool !== first.tool || seg(groups[j]) !== seg(groups[i])) break;
             j++;
         }
         const run = groups.slice(i, j);

@@ -5,7 +5,7 @@
 const { test, after } = require("node:test");
 const assert = require("node:assert");
 const { closeSidebarWorlds, loadSidebarWorld } = require("./helpers");
-const { agentStart, agentStep, agentResult, agentSay, agentSaySeen, streamConfig, openRun } = require("./sidebar-helpers");
+const { agentStart, agentStep, agentResult, agentSay, agentSaySeen, streamConfig, openRun, hoverTip } = require("./sidebar-helpers");
 
 // Close every jsdom window after the file — the VRAM panel's setInterval keeps a
 // window's timers alive, which would otherwise hang the runner after all pass.
@@ -175,6 +175,61 @@ test("devtools/panel: a follow-up run() task (continuation agent-say, no sayId) 
 });
 
 // --- a run that stopped: the step cap, Continue, Retry and a fatal error ---------------------------------
+
+test("a cap stop the run went PAST becomes a seam saying what it stopped at and what it was given", async () => {
+    // Read top to bottom, a "stopped at its step cap" answer with more steps under it is a run announcing it has
+    // ended and then going on — and the question it provokes ("did I ask for that?") is a question about a budget.
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("capd", "long task", "m", 10));
+    await w.dispatch(agentStep("capd", 1, { seq: 1, tool: "exec", result: "1" }));
+    await w.dispatch(agentResult("capd", "Stopped at the 10-step cap without finishing.", 10, true));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    // While it IS the end, it is an answer with a Continue button: nothing has superseded it.
+    assert.equal(w.shadow.querySelector(".cap-divider"), null, "not a seam while nothing follows it");
+    assert.ok(w.shadow.querySelector(".continue-run"), "it is still the thing you act on");
+
+    // Continue: the runtime raises the cap and the next stretch arrives.
+    await w.dispatch({ kind: "agent-cap", id: "capd", ts: Date.now() + 200, save: false, session: { hash: "capd", turn: 0 }, maxSteps: 30 });
+    await w.dispatch(agentStep("capd", 11, { seq: 11, tool: "exec", result: "2" }));
+    await w.tick();
+
+    const seam = w.shadow.querySelector(".cap-divider");
+    assert.ok(seam, "the answer collapses into a seam once the run has gone past it");
+    assert.match(seam.textContent, /stopped at\s*10 steps/, "what it stopped at");
+    assert.match(seam.textContent, /continued with\s*30/, "and the budget it was then given");
+    // It REPLACES the answer: the boilerplate the runtime wrote said strictly less than this does.
+    assert.equal(w.shadow.querySelector(".msg.asst.capped"), null, "the capped bubble is gone");
+    assert.equal(w.shadow.querySelector(".continue-run"), null, "…and so is a Continue for a run already continued");
+    // …and the words it replaced are still reachable, which is the standing rule: a view may be quiet, nothing
+    // may become unavailable. (Both exports carry the answer whole regardless — they read `s.answers`.)
+    assert.match(await hoverTip(w, seam.querySelector(".nav-label")), /Stopped at the 10-step cap/);
+});
+
+test("a run continued TWICE labels each seam with its own grant, not with the latest", async () => {
+    // `maxSteps` is only the budget NOW. Labelling from it would put the second grant on the first seam, which is
+    // the one thing a reader is using these to reconcile.
+    const w = await loadSidebarWorld();
+    const t0 = Date.now();
+    // Hand-built so the stamps ADVANCE: `agentResult` fixes its own `ts`, and two results landing at the same
+    // instant is not a run, it is a fixture. Which seam a grant belongs to is decided by the clock.
+    const cappedAt = (ts, summary, steps) => ({ kind: "agent-result", id: "cap2x", ts, save: false, session: { hash: "cap2x", turn: steps }, summary, steps, hitCap: true });
+    const raisedAt = (ts, maxSteps) => ({ kind: "agent-cap", id: "cap2x", ts, save: false, session: { hash: "cap2x", turn: 0 }, maxSteps });
+    await w.dispatch(agentStart("cap2x", "long task", "m", 10));
+    await w.dispatch(agentStep("cap2x", 1, { seq: 1, tool: "exec", result: "1" }));
+    await w.dispatch(cappedAt(t0 + 100, "Stopped at the 10-step cap without finishing.", 10));
+    await w.dispatch(raisedAt(t0 + 200, 30));
+    await w.dispatch(agentStep("cap2x", 11, { seq: 11, tool: "exec", result: "2" }));
+    await w.dispatch(cappedAt(t0 + 300, "Stopped at the 30-step cap without finishing.", 30));
+    await w.dispatch(raisedAt(t0 + 400, 50));
+    await w.dispatch(agentStep("cap2x", 31, { seq: 31, tool: "exec", result: "3" }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const seams = [...w.shadow.querySelectorAll(".cap-divider")].map(e => e.textContent.replace(/\s+/g, " "));
+    assert.equal(seams.length, 2, "both stops are seams now");
+    assert.match(seams[0], /stopped at 10 steps · continued with 30/);
+    assert.match(seams[1], /stopped at 30 steps · continued with 50/);
+});
 
 test("step-cap stop (sidebar): the answer offers 'Continue (+N steps)' → posts continueRun for that run", async () => {
     const w = await loadSidebarWorld();
