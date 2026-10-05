@@ -174,7 +174,7 @@ test("resource tracks: the hovered band outlines itself, and single-sample runs 
 // "Not resident" and "we don't know yet" are different claims — the orb says "Awakening…" for the first and
 // must say nothing for the second.
 test("residentNow: knows loaded from not-loaded, and unknown from either", async () => {
-    const { residentNow } = await import("../src/sidebar/model-status.tsx");
+    const { residentNow } = await import("../src/sidebar/panel-facts.tsx");
     const { loadedModels } = await import("../src/sidebar/store.ts");
     const before = loadedModels.value;
     try {

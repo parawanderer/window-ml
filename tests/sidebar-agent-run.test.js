@@ -438,6 +438,31 @@ test("the running footer speaks the HUD orb's vocabulary, so one event reads the
     assert.match(w.shadow.querySelector(".pending-note .psteps")?.textContent ?? "", /1 step\b/);
 });
 
+test("the footer counts THIS turn's steps: a follow-up starts a new loop and the count starts again with it", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("agT", "do a thing"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    for (let step = 1; step <= 4; step++) {
+        await w.dispatch(agentStep("agT", step, { seq: step, tool: "exec", arguments: {}, result: "ok" }));
+    }
+    await w.tick();
+    assert.match(w.shadow.querySelector(".pending-note .psteps")?.textContent ?? "", /4 steps/);
+
+    // A follow-up typed into the composer. The next loop has run nothing yet, so there is no count to show —
+    // it used to go on saying "4 steps" under a prompt sent a moment ago, describing work that had already
+    // finished when it was typed.
+    await w.dispatch(agentSay("agT", "Can you write me a response here?", "say1"));
+    await w.tick();
+    assert.equal(w.shadow.querySelector(".pending-note .psteps"), null, "no count until the new turn has run a step");
+    assert.match(w.shadow.querySelector(".pending-note").textContent, /Waiting for the model/i);
+
+    // And it counts the new turn's work, not the session's.
+    await w.dispatch(agentStep("agT", 5, { seq: 5, tool: "exec", arguments: {}, result: "ok" }));
+    await w.tick();
+    assert.match(w.shadow.querySelector(".pending-note .psteps")?.textContent ?? "", /1 step\b/);
+});
+
 test("the DEBUG DETAIL does NOT render answer media (that's HUD-only, the sidebar is a trace)", async () => {
     const w = await loadSidebarWorld();
     const hash = "ansmedia2";

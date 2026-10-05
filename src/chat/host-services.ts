@@ -80,6 +80,12 @@ export function hostServices(store: ChatStore, platform: ClientPlatform): Sideba
         // statuses, so asking anything else here would be inventing a second rule. A session with no summary yet is
         // allowed: the caller has already decided it looks live, and the first paint of a real run must not be the
         // one with no way to stop it or answer it.
+        // Resident WHERE. The reading belongs to the RUNTIME that holds the session, and this page has no
+        // per-runtime one: `loadedModels` is filled by whichever resource panel was last opened, which is a
+        // different question from "is the model this session runs on loaded". Answering from it would describe
+        // the wrong machine confidently, so this says NOT KNOWN — which orbStatus renders as "Waiting for the
+        // model…" rather than "Awakening…". Attributing that reading per runtime is what would close it.
+        modelResident: () => undefined,
         stillLive: (key) => {
             const st = summaryOf(key as SessionKey)?.status;
             return st === undefined || st === "running" || st === "waiting";

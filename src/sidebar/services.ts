@@ -73,6 +73,17 @@ export interface SidebarServices {
      * The panel says yes: its own stream IS the runtime's. Read during render, like `canContinue`.
      */
     stillLive(session: string): boolean;
+    /**
+     * Is this model resident on the runtime right now? `undefined` means NOT KNOWN, which is a third answer
+     * and the common one: only a surface reading that box's `/api/ps` can tell, so a remote runtime and a
+     * panel nobody opened both answer it.
+     *
+     * It is asked here rather than read from `model-status.ts` because that module reaches `chrome.*`, and
+     * these views are the ones the chat page and a phone app reuse. What it buys is the difference between
+     * "Waiting for the model…" and "Awakening…" while tens of GiB go into VRAM — the longest wait a run has
+     * and the one that most looks like a hang. Never read `undefined` as "not loaded".
+     */
+    modelResident(session: string, model?: string | null): boolean | undefined;
     /** outline something on the session's page; `null` clears it. A host with no page does nothing. */
     highlight(ref: HighlightRef): void;
     /** show an image full-size */
@@ -142,6 +153,7 @@ const UNAVAILABLE: SidebarServices = {
     continueSession() {},
     canContinue: () => false,
     stillLive: () => false,
+    modelResident: () => undefined,
     highlight() {},
     openLightbox() {},
     openLink() {},

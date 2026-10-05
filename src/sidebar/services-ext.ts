@@ -6,6 +6,7 @@
 import { hintSession } from "../contract-run";
 import { config } from "./store";
 import { bareHash, type SidebarServices, type SideCallRequest, type SideCallResult } from "./services";
+import { residentNow } from "./panel-facts";
 import { downloadBlob } from "./download";
 import { printInFrame } from "./print-frame";
 
@@ -51,6 +52,9 @@ export const extensionServices: SidebarServices = {
     // This frame is attached to the tab the run is in: if it were gone, so would this panel be.
     canContinue: () => true,
     stillLive: () => true,   // this panel is attached to the tab that holds the run; its reduction IS the runtime's
+    // This panel polls the box itself, so it has the reading; `residentNow` answers `undefined` until the
+    // first /api/ps lands, which is the right answer rather than "cold".
+    modelResident: (_session, model) => residentNow(model),
     highlight: (ref) => toParent({ __mlHighlight: ref }),
     openLightbox: (src) => toParent({ __mlLightbox: src }),
     // `noopener` is not politeness here: without it the opened page gets a handle on this one, and this one is the

@@ -21,7 +21,7 @@ import { Dialog } from "./dialog";
 import { useCloseAnimation } from "./use-close";
 import { IconChevron, IconWarn, IconInfo, IconCopy, IconCheck, IconIn, IconOut } from "./icons";
 import { usageSamples, liveOutTokens } from "./usage";
-import { orbStatus } from "./orb-status";
+import { currentTurnSteps, orbStatus } from "./orb-status";
 import { fmtDur } from "./timestamps";
 import {
     BusyBlob, Code, CopyBtn, SheetChip, Hash, Stamp, Dot, Disclosure,
@@ -1107,7 +1107,10 @@ export function PendingNote({ s }: { s: Session }) {
     // Blocked = a step is still awaiting the gate AND you haven't decided it yet (decidedSteps flips
     // the instant you click, before the tool's DONE event clears awaitingApproval).
     const blocked = (s.steps || []).some(st => st.pending && st.awaitingApproval && !(st.seq != null && decidedSteps.has(stepKey(s.hash, st.seq))));
-    const n = turnsRun(s.steps);
+    // THIS turn's steps, not the session's. A follow-up starts a new loop, and the footer went on reporting
+    // the previous one — "running · 4 steps" under a prompt sent a moment ago, describing work that had
+    // finished before it was typed. Same boundary the orb's own activity uses.
+    const n = turnsRun(currentTurnSteps(s));
     // WHAT IS HAPPENING RIGHT NOW, in the HUD's words — because it is the same event in another rendering.
     // `orbStatus` is already the one pure projection of a run's live state into a phrase ("Waiting for the
     // model…", "Running Python…", a stall's elapsed seconds, a climbing token count), and the orb is where it
@@ -1129,7 +1132,11 @@ export function PendingNote({ s }: { s: Session }) {
         const t = setInterval(() => setNow(Date.now()), 1000);
         return () => clearInterval(t);
     }, [blocked]);
-    const live = blocked ? null : orbStatus(s, now);
+    // `residentNow` is what lets it say "Awakening…" rather than "Waiting for the model…" while tens of GiB
+    // go into VRAM — the longest wait there is, and the one that most looks like a hang. It answers
+    // `undefined` where no /api/ps reading exists (a remote runtime, or the panel never opened), which
+    // orbStatus reads as "we don't know" rather than "not loaded".
+    const live = blocked ? null : orbStatus(s, now, services().modelResident(s.hash, s.model));
     return (
         <div class={`pending-note${blocked ? " blocked" : ""}`}>
             {/* BOTH are drawn and the view picks one in CSS: the bar in the panel, where it matches the
