@@ -8,6 +8,8 @@ import { foldStreaks, streakFacts, holdsSeq, STREAK_MIN } from "../src/sidebar/s
 
 /** One turn with a single tool call, which is the shape a streak is made of. */
 const turn = (step, tool, over = {}) => ({ step, localStep: step, tools: [{ step, seq: step, tool, ...over }] });
+/** A step whose collapsed row SHOWS something — the thing that keeps it out of a fold. */
+const says = (step, tool, text = "3 fare cards") => turn(step, tool, { result: text });
 const kinds = (out) => out.map((x) => ("kind" in x ? `${x.tool}×${x.turns.length}` : x.tools[0]?.tool ?? "·"));
 
 // --- what folds, and what a fold must never swallow ---
@@ -93,4 +95,20 @@ test("a streak knows whether it holds the step a jump is reaching for", () => {
     assert.equal(holdsSeq(s, null), false, "nothing is being revealed");
     assert.equal(holdsSeq(s, undefined), false);
     assert.equal(holdsSeq(s, 0), false, "a falsy seq is still a seq, and this one is not in it");
+});
+
+// --- the clause the rule really turns on: a row that says something is not noise ---
+
+test("a result does NOT keep a row out — the reading view hides the preview, so every row says only its name", () => {
+    // `html[data-focus] .astep-preview { display: none }`. Gating on the preview's text would test something the
+    // reader cannot see, and would have spared exactly the rows the complaint was about.
+    assert.deepEqual(kinds(foldStreaks([says(1, "exec"), says(2, "exec"), says(3, "exec")])), ["exec×3"]);
+});
+
+test("a step that REVISES another never folds: the diff header is the only place that is said", () => {
+    // Three `python_exec` calls each revising the last — which is a real run in this repo's own tests. Folding
+    // them would hide what changed, and would make the step somebody was reading vanish on entering calm.
+    const revise = (step) => turn(step, "python_exec", { renderIn: { type: "python-in", mode: "script", code: "x", revision: { ref: "@tool:a1b2c3d", tool: "python_exec", seq: step - 1 } } });
+    const out = foldStreaks([turn(1, "python_exec"), revise(2), revise(3)]);
+    assert.equal(out.filter((x) => "kind" in x).length, 0);
 });

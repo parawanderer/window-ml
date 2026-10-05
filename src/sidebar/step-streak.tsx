@@ -28,15 +28,37 @@ export const STREAK_MIN = 3;
  *  would have been there — an open streak is indistinguishable from no streak at all. */
 export interface ToolStreak { kind: "streak"; tool: string; turns: AgentTurnGroup[]; step: number; }
 
-/** Is this turn one that can join a streak at all? Exactly one tool call, no PROSE (if the model said something
- *  that is content, not noise), and nothing awaiting approval — a gate is never hidden, under any circumstance.
- *  THINKING does not disqualify it: that is the other half of what is being folded away. */
+/**
+ * Is this turn one that can join a streak at all?
+ *
+ * Exactly one tool call, no PROSE (if the model said something that is content, not noise), nothing awaiting
+ * approval (a gate is never hidden, under any circumstance), and nothing that REVISES an earlier call.
+ *
+ * WHY THE TOOL'S NAME IS ENOUGH HERE, which took being wrong twice to see. In the reading view the collapsed row's
+ * output preview is hidden as spam (`html[data-focus] .astep-preview`), so every collapsed tool row says its name
+ * and nothing else — "a run of rows that say nothing distinguishable" and "a run of the same tool" are the same
+ * set in this view, which they would not be in the panel. Gating on the preview's TEXT would be testing something
+ * the reader cannot see.
+ *
+ * The one row that still says something is a RETRY's: focus mode folds a diff's rows but deliberately keeps its
+ * header, which names what the step revises and by how much. Folding the step takes that header with it — and a
+ * real run in this repo's own tests is three `python_exec` calls each revising the last, where it would also mean
+ * flipping into the reading view makes whatever you were reading disappear.
+ *
+ * THINKING does not disqualify a turn: that is the other half of what is being folded away.
+ */
 function foldable(t: AgentTurnGroup): AgentStep | null {
     if (t.thought || t.tools.length !== 1) return null;
     const st = t.tools[0];
     if (!st.tool || (st.awaitingApproval && st.pending)) return null;
+    if (revisionOf(st)) return null;
     return st;
 }
+
+/** Does this step revise an earlier one? The link lives on the IN descriptor, which is the only place the "revises"
+ *  line comes from — so it is also the only way to know that folding the row would take that line with it. */
+const revisionOf = (st: AgentStep): unknown =>
+    st.renderIn && typeof st.renderIn === "object" && "revision" in st.renderIn ? st.renderIn.revision : undefined;
 
 /**
  * Fold runs of same-tool turns, leaving everything else alone.
