@@ -130,17 +130,38 @@ lands in it. `ml.current.meta(id).sinceMs` over three hundred messages costs wha
 Anything genuinely large is addressed rather than copied, through the value store and a `@tool:` pointer, which is
 the machinery that already exists for exactly this.
 
-## Joining `meta` to `messages` — and why that makes `meta` synchronous
+## It is all RESOLVED UP FRONT, so the whole facade is synchronous
 
-Combining the two is the main thing anyone will do with this, so it decides the shape rather than following from
-it. The dialect allows a SYNC `ml.*` read inside a `.map`/`.filter` callback and refuses an ASYNC one — the sync
-driver cannot await there, so the call falls out of dialect and the whole survey escalates to a human
-(`tests/readonly-exec.test.mjs`). The natural join is a lookup inside a map:
+`ml.current.messages` is a plain array and `ml.current.meta(id)` a plain lookup. Nothing here returns a promise and
+nothing needs an `await`.
+
+That follows the house pattern rather than inventing one. `@tool:` pointers are resolved before a line of the
+script runs — the macro pass is lexical, so every handle the source mentions is known in advance, `exec` awaits
+them all in one `Promise.all` before evaluating, and `ml.dereference` is "an ordinary synchronous read for the
+duration of the call" (`pointer-macro.ts`). The reason given there is the one that applies here exactly: a model
+that writes `@tool:abc.length` gets a length, where against a promise it would get `undefined` and no error —
+"which is exactly the plausible-wrong-answer shape this codebase keeps designing out". `ml.current.messages.length`
+on a promise is that same silent `undefined`.
+
+**How it is afforded: the same lexical trick.** The source is scanned before evaluation for which members it
+names — `messages`/`meta`, `log`, `run` — and only those are fetched, in the same up-front resolve as the pointer
+handles. A script
+that never says `ml.current` costs nothing — which matters, because on a background-hosted run the context lives in
+the worker while `exec` runs on the page, so an unconditional pre-fetch would put the context on the wire for every
+delegated tool call whether or not anything read it.
+
+**What the snapshot carries** is therefore bounded by design: per message an id, a role, the metadata, and a short
+PREVIEW of the content — not the body. A whole context of bodies is the thing that must never cross on spec, and
+the full text of any one message is a separate, explicit, async read (`messageText(id)`, below). So the pre-fetch
+is N small records, and the expensive thing stays something you ask for by name.
+
+Combining the two is then the obvious code, and works inside a callback because everything is sync — the dialect
+allows a sync read inside a `.map`/`.filter` and refuses an async one (`tests/readonly-exec.test.mjs`), so this
+distinction is what decides whether the natural join runs or escalates to a human:
 
 ```js
-const msgs = await ml.current.messages; // ONE await, at the top level
-const stale = msgs
-    .map((m) => ({ m, meta: ml.current.meta(m.id) })) // SYNC — an async read here would fall out of dialect
+const stale = ml.current.messages
+    .map((m) => ({ m, meta: ml.current.meta(m.id) }))
     .filter((x) => x.meta.tokens > 500 && x.meta.sinceMs > 10 * 60_000)
     .map(
         (x) =>
@@ -148,23 +169,17 @@ const stale = msgs
     );
 ```
 
-So **`meta(id)` is synchronous**, which forces the rest: on a background-hosted run `ml.current` is reached from
-`exec` on the page while the context lives in the worker, so something has to cross. It crosses ONCE — the `await`
-on `messages` — and populates a run-bound snapshot that `meta` then reads locally.
-
-That is a better arrangement than it looks, because `ml.current` is therefore a SNAPSHOT rather than a live view:
-every row and every record describes the same instant. A run advances while a survey is being written, and a join
-whose two halves were fetched separately could pair a message with metadata from a later step and be wrong in a way
-nothing would report.
+Resolving up front also makes the facade a SNAPSHOT for free: every row and every record describes the same
+instant. A run advances while a survey is being written, and a join whose halves were fetched separately could pair
+a message with metadata from a later step and be wrong with nothing to report it.
 
 **The JSDoc on the contract type carries this example**, because `agent_api_docs` lifts contract JSDoc verbatim
-into what the model reads, and the join is the part worth showing — a model that knows `messages` and `meta` exist
-but writes the async form gets an escalation instead of an answer. The same example belongs on `meta` itself, not
-only on the facade, since that is where `agent_api_docs --member` will land.
+into what the model reads, and the join is the part worth showing. It belongs on `meta` itself as well as on the
+facade, since that is where `agent_api_docs --member` lands.
 
 **Do not add the contract type before the implementation.** The generator advertises whatever is in `contract.ts`,
-so a type landing early would put a method in the model's own API reference that throws when called, on every run,
-with no way for the model to tell "not built yet" from "refused".
+so a type landing early would put a method in the model's own API reference that throws when called, with no way
+for the model to tell "not built yet" from "refused".
 
 ## What `meta` carries
 
@@ -186,12 +201,17 @@ because it answers the same kind of question: what happened to me that my transc
 was discarded and reloaded, the CDP attach that was refused. The gate and the hazards are already written in that
 document and are not re-decided here.
 
+It is resolved up front and read synchronously like everything else on `ml.current`, and it is the clearest case
+for scanning PER MEMBER rather than for the facade as a whole: a script that wants message times has no use for the
+log, and one that wants the log has no use for the message table. Both are capped — `PER_RUN_CAP` records, N small
+message records — so either is cheap to ship and neither should be shipped to a script that never names it.
+
 **It is an array of RECORDS, not rendered text.** Each is the shape the log already stores — `ts`, `subsystem`,
 `kind`, optional `reason`, optional `detail` — so filtering is ordinary dialect code and needs no query language
 and no new methods:
 
 ```js
-const log = await ml.current.log;
+const log = ml.current.log; // sync, like the rest of the facade
 log.slice(-20); // the last twenty
 log.filter((r) => r.subsystem === "page"); // one subsystem
 log.filter((r) => r.kind === "discarded" || r.kind === "unreachable");
@@ -204,6 +224,30 @@ layout and the human wording — rather than the facts, so the log's presentatio
 scripts written against it. And `kind` is a closed vocabulary that the log's own sanitizer enforces
 (`sanitizeRunReport` silently drops a record whose `subsystem`/`kind` is not a lowercase slug), which is exactly
 what makes an equality filter reliable and a substring search a guess.
+
+### And a greppable text form beside it, for `ml.pipe`
+
+`ml.pipe(text, "grep … | head -20")` already runs the tools' shell-style dialect over ANY string
+(`text-pipe.ts`), and a log is the most line-oriented thing in the system, so piping one is the obvious move.
+`ml.current.logText` is that string:
+
+```js
+ml.pipe(ml.current.logText, "grep discarded | tail -20");
+```
+
+**A sibling member, not `toString()`.** `ml.current.log` is a plain array, and `String(array)` is comma-joined
+`[object Object]`, so a useful `toString` would mean handing back a custom array-like — a live object with
+behaviour, which is what the Python-parity decision rules out and what the rejected String wrapper above fails on
+for the same reasons. Two plain values cost nothing: an array and a string, both JSON-shaped, both trivially a
+`list` and a `str` in Python, and neither needing a new kind in the dialect's deny-by-default `kindOf`.
+
+**The format is part of the contract, which is what answers the objection to text above.** The complaint there was
+that a regex over RENDERED output matches the presentation rather than the facts; this is not the presentation.
+`housekeepingText` is the UI renderer, with column widths and marks, and is explicitly not this. `logText` is a
+specified serialization — one record per line, `<iso-ts> <subsystem> <kind> [reason] [k=v …]`, fields separated by
+a single space and NEVER padded, because padding a model-facing string is pure context cost (AGENTS.md). It is
+generated from the records by one pure function, so the two cannot drift, and a test asserts that every record
+appears in the text with its `kind` intact.
 
 The array is already bounded — `PER_RUN_CAP` records per run — so "the whole log" is a known, small quantity and
 `slice(-n)` is the only recency control needed. If a model wants the human rendering (to quote it in an answer), it
