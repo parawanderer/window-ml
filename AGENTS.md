@@ -438,6 +438,13 @@ never picks up the explanation of it.
   than plain text. Pointer links live in the ANSWER renderer, which has that context. Both refusals have a
   test, because both are currently true by accident of how the inline pass works.
 
+  **A FINGER CAN READ ONE TOO.** A touch raises `pointerover` and then, a moment later, the synthetic
+  `pointerout` that ends it, so every anchored tip used to flash and vanish on a phone and its prose was simply
+  unreachable. A TAP now holds one open and the next tap anywhere dismisses it (`tooltip-layer.ts`) — but only on
+  a trigger that is NOT itself a control. The split is the same one below: a control's tip is its NAME, which
+  `aria-label` already carries, and raising a popup on every icon button a finger lands on turns ordinary use into
+  a flicker. The tap is never stolen — whatever it was pressing still happens.
+
   **The exception is an accessible NAME.** A `title` on an icon-only control is what a screen reader and a
   keyboard user get, and `cursorTip` is pointer-only — so those keep a name (prefer `aria-label`) and gain
   the custom tip for the pointer. The split is: naming a control → `aria-label` (+ a tip); explaining

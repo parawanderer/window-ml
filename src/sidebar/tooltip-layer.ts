@@ -53,6 +53,11 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
     ((root as ShadowRoot).host ? root : doc.body).appendChild(layer);
 
     let current: Element | null = null;
+    // A TIP HELD BY A TAP. A touch raises `pointerover` and then, a moment later, the synthetic `pointerout` that
+    // ends it — so on a phone every tip flashed and vanished and the prose was simply unreachable. While this is
+    // set, leaving does not hide; the next tap elsewhere does, which is the gesture people already use. Declared
+    // beside `current` because `hide` clears it.
+    let held = false;
     // The layer holds a COPY, so anything that re-renders the source while it is open (the resource panel
     // polls every 2s) would leave the reader looking at a figure the panel no longer believes. Watch the
     // source and re-copy — a tooltip that disagrees with what is under it is worse than no tooltip.
@@ -61,6 +66,7 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
         : null;
     let unwatch: (() => void) | null = null;
     const hide = (): void => {
+        held = false;
         current = null; layer.hidden = true; layer.textContent = "";
         layer.style.removeProperty("--fs");
         watcher?.disconnect();
@@ -128,16 +134,42 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
     const over = (e: Event): void => {
         const el = (e.target as Element | null)?.closest?.(".tt");
         if (el) { if (el !== current) show(el); }
-        else if (current) hide();
+        else if (!held && current) hide();
     };
     const out = (e: Event): void => {
+        if (held) return;
         const to = (e as MouseEvent).relatedTarget as Element | null;
         if (!to || !to.closest?.(".tt")) hide();
+    };
+    /**
+     * A tap. On a POINTER this dismisses whatever is up, which is what pressing anything should do. On TOUCH it
+     * can instead be the only way to read a tip at all, so it opens one — for the triggers that need it.
+     *
+     * WHICH ONES: a trigger that IS a control (a button, a link, a tab) is skipped. Its tip is that control's
+     * NAME, which `aria-label` already carries, and raising one on every icon button a finger lands on turns
+     * ordinary use into a flicker of popups. A trigger that is a plain wrapper — the status dot inside a step's
+     * header, an element count, a marked line — has prose that exists nowhere else, and that is the case this is
+     * for. The same split AGENTS.md draws: naming a control is `aria-label`, explaining anything is the tip.
+     *
+     * THE TAP IS NOT STOLEN. No `preventDefault`, so whatever the finger was pressing still happens — tapping the
+     * dot in a step's header still opens the step. Taking that away to show a tooltip would trade the thing
+     * someone meant to do for a thing they did not ask for.
+     */
+    const down = (e: Event): void => {
+        const pe = e as PointerEvent;
+        const el = pe.pointerType === "touch" ? (e.target as Element | null)?.closest?.(".tt") : null;
+        if (el && !el.matches("button, a, summary, [role=button], [role=tab], [role=menuitem]")) {
+            held = true;
+            show(el);
+            return;
+        }
+        held = false;
+        hide();
     };
 
     root.addEventListener("pointerover", over, true);
     root.addEventListener("pointerout", out, true);
-    root.addEventListener("pointerdown", hide, true);
+    root.addEventListener("pointerdown", down, true);
     // A tooltip anchored to something that has scrolled away is worse than none.
     root.addEventListener("scroll", hide, true);
     doc.defaultView?.addEventListener("blur", hide);
@@ -149,7 +181,7 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
     return () => {
         root.removeEventListener("pointerover", over, true);
         root.removeEventListener("pointerout", out, true);
-        root.removeEventListener("pointerdown", hide, true);
+        root.removeEventListener("pointerdown", down, true);
         root.removeEventListener("scroll", hide, true);
         root.removeEventListener("keydown", onKey, true);
         watcher?.disconnect();

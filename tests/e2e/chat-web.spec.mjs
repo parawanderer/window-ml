@@ -2013,6 +2013,37 @@ test("a call's own title: in the tip always, inline only inside an open group in
     await page.close();
 });
 
+// A TIP A FINGER CAN READ. The jsdom test (tooltip-layer) owns the rule; what is here is that a real browser
+// reports `pointerType: "touch"` for a tap, which is the single fact the rule turns on and the one thing no unit
+// test can establish. Without it every tip on a phone flashes and goes, and its prose is unreachable.
+test("phone (touch): tapping a step's dot opens its tip, and the tap still opens the step @mobile", async () => {
+    const ctx = await browser.newContext({ viewport: PHONE, hasTouch: true, isMobile: true });
+    const page = await ctx.newPage();
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    try {
+        await page.goto(`${server.url}#/s/${encodeURIComponent(WAITING)}`);
+        const step = page.locator(".astep.tool").first();
+        await expect(step).toBeVisible();
+        await expect(page.locator(".tt-layer")).toBeHidden();
+
+        await step.locator(".astep-head .dot").first().tap();
+        const tip = page.locator(".tt-layer");
+        await expect(tip).toBeVisible();
+        await expect(tip).toContainText("Completed successfully");
+        // The figures the dot was given: when it happened and how long the TOOL took.
+        await expect(tip.locator(".dot-when")).toContainText(/\d\d:\d\d:\d\d/);
+        // AND THE TAP WAS NOT STOLEN — trading what someone meant to do for a tooltip they did not ask for would
+        // be the wrong way to make this reachable.
+        await expect(step).toHaveClass(/\bopen\b/);
+
+        // The next tap anywhere puts it away, which is the gesture people already use.
+        await page.locator(".chat-transcript").tap({ position: { x: 5, y: 5 } });
+        await expect(tip).toBeHidden();
+        expect(errors).toEqual([]);
+    } finally { await ctx.close(); }
+});
+
 // NO POPUP IS CUT OFF, by the window OR by whatever clips it. This is a different failure from "off the screen",
 // which the touch probe below already measures, and it is the quieter one: the gear's menu rises inside
 // `.chat-list`, which sets `overflow: hidden` because the pane slides out from under the page — so a menu that
