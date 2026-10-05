@@ -11,6 +11,7 @@ import type { RuntimeInfo, SessionId, SessionKey, SessionSummary } from "../sess
 import { parseSessionKey } from "../session-host";
 import { DetailView } from "../sidebar/session-detail";
 import { Composer } from "../sidebar/composer";
+import { RUN_LOG_ABOUT } from "../run-log";
 import { IconBack, IconBench, IconBrain, IconCopy, IconCamera, IconClose, IconExport, IconLog, IconMore, IconSave, IconVram } from "../sidebar/icons";
 import { ContextMenu, CursorTipLayer, Hash } from "../sidebar/ui-kit";
 import { benchOpen, openBench, rev, sessionMap, view } from "../sidebar/store";
@@ -628,8 +629,10 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
         tip: `What ${graphsRt!.name} is running, and what it is using` });
     if (bench) panels.push({ id: "bench", title: "Python bench", icon: <IconBench />, body: bench, close: () => { benchOpen.value = false; },
         tip: `Python against ${benchOwner!.name}'s sandbox, the one a run's python_exec uses` });
+    // The tab's tooltip carries what this panel IS. It was a paragraph above the records, in the one region whose
+    // width is the scarce thing; on the tab it is read once, by whoever is wondering, and costs the log nothing.
     if (runLog) panels.push({ id: "runlog", title: "Execution log", icon: <IconLog />, body: runLog, close: () => setLogOpen(false),
-        tip: `What ${logRt!.name}'s machinery did under the run you are reading` });
+        tip: <>What {logRt!.name}'s machinery did under the run you are reading<span class="tt-note">{RUN_LOG_ABOUT}</span></> });
     // The runtime whose settings this device may edit: one that reports `localSettings` and this device can draw.
     // Not gated on `online`: these read and write this browser's own storage, which needs no worker, and the browser
     // stops an idle worker every half minute, which took the Extension tab away with it.

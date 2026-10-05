@@ -80,6 +80,13 @@ It asks no capability of the runtime, unlike the resource panel. Those graphs de
 *runtime* reports on; this log is read out of **this browser's own worker**, so being able to draw it
 is the whole question, and `ChatExtras.runLog` returns null for a runtime that is not ours.
 
+**The panel is the records, and nothing else.** Its filters, its three exports and its count were a toolbar and
+a paragraph sitting on top of the log, in the one region whose width is the scarce thing. They are now one menu
+button in the dock's own bar (`PanelHead`, which is how a docked panel puts controls in the tab bar instead of
+growing a second row), and the paragraph is the TAB's tooltip under a rule (`.tt-note`). The count is in that
+button's own tip: it is a status rather than a control, so it earned no row, but it is the one number someone
+wants at a glance and a tooltip costs no width.
+
 The tab id is dropped from the rendered LINES while it is the same on all of them — in a region this
 narrow that width is what turns each record into two wrapped lines — and comes back the moment a run is
 re-filed under a new tab, which is exactly when it is worth reading. The records always carry it.

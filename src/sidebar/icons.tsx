@@ -162,6 +162,14 @@ export const IconMenu = () => (
         <path d="M4 6h16M4 12h16M4 18h16" />
     </svg>
 );
+/** More, three dots ACROSS — a panel's own menu, told apart at a glance from the vertical `⋮` that belongs to the
+ *  frame around it (the dock region's, the header's). Two menus sit next to each other in a dock's tab bar, and
+ *  the same glyph twice would read as the same menu drawn twice. */
+export const IconMoreH = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+        <circle cx="6" cy="12" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="18" cy="12" r="1.7" />
+    </svg>
+);
 /** Ruled lines with a stamp beside each — a TIMESTAMPED LOG, which is what tells it apart from the list's three
  *  plain rules and the summary's unequal bars: the gutter is the point, because every line here happened at a time. */
 export const IconLog = () => (

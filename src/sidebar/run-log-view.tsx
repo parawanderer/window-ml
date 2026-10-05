@@ -5,12 +5,19 @@
 // shape was reused: a run-log record IS a housekeeping event plus a `run`, so the cell's timestamp gutter, find,
 // resize grip and tail-follow come along and there is one place a record's line is decided.
 //
+// THE PANEL IS THE LOG, and nothing else. Its filters, its exports and its count were a toolbar and a paragraph
+// sitting on top of the records, in a region whose whole width is already the scarce thing — so they are one
+// menu button in the dock's own bar (`PanelHead`), and the paragraph is the TAB's tooltip. What is left is the
+// records, edge to edge.
+//
 // It follows whatever session is open. The question it answers — "what happened under THIS" — is always about
 // what is being read, so there is no run picker; the count of other runs holding records is there only so an
 // empty panel can be told from a broken one.
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { OutputCell, TimedOutput } from "./render-panel";
 import { housekeepingText, subsystemCounts } from "./housekeeping-log";
+import { PanelHead } from "./panel-head";
+import { IconMoreH } from "./icons";
 import { downloadBlob } from "./download";
 import { exportSessionJson } from "./export";
 import { RUN_LOG_KEY, runLogDocument, type RunLogEvent } from "../run-log";
@@ -32,7 +39,7 @@ export function RunLogView({ run }: { run: string | null }) {
         let live = true;
         setDump(null);
         setError(null);
-        const ask = (clear?: true) => chrome.runtime.sendMessage({ type: "DUMP_RUN_LOG", payload: { ...(run ? { run } : {}), ...(clear ? { clear: true } : {}) } },
+        const ask = () => chrome.runtime.sendMessage({ type: "DUMP_RUN_LOG", payload: { ...(run ? { run } : {}) } },
             (r: { data?: RunLogDump; error?: string } | undefined) => {
                 if (!live) return;
                 if (!r) setError(chrome.runtime.lastError?.message || "no answer from the service worker");
@@ -57,43 +64,13 @@ export function RunLogView({ run }: { run: string | null }) {
     // download is unaffected: it carries the records.
     const tabs = new Set(all.map((e) => e.detail?.tab).filter((v) => v != null));
     const { text, marks } = housekeepingText(all, hidden, tabs.size > 1 ? new Set() : new Set(["tab"]));
-    const toggle = (s: string) => setHidden((h) => { const n = new Set(h); if (n.has(s)) n.delete(s); else n.add(s); return n; });
-    const clear = () => chrome.runtime.sendMessage({ type: "DUMP_RUN_LOG", payload: { ...(run ? { run } : {}), clear: true } }, () => { void chrome.runtime.lastError; });
-    // The RECORDS, not the rendered lines: they are structured for the same reason they are stored that way, and
-    // a consumer of the rendered text would be parsing a layout. Published shape, so it carries its version and
-    // which run it is of: docs/spec/run-log.schema.json.
-    const download = () => downloadBlob(`ml-run-log-${run || "all"}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`,
-        new Blob([JSON.stringify(runLogDocument(all, run), null, 1)], { type: "application/json" }));
     const elsewhere = (dump?.runs || []).filter((r) => r.run !== run);
 
     return (
-        <div class="hk-view">
-            <div class="hk-bar">
-                {counts.length > 1 ? (
-                    <div class="rc-lane-filter">
-                        {counts.map(([s, n]) => (
-                            <button class={`rc-lane-chip${hidden.has(s) ? " off" : ""}`} key={s} aria-pressed={!hidden.has(s)}
-                                aria-label={hidden.has(s) ? `Show ${s}` : `Hide ${s}`} onClick={() => toggle(s)}>{s} {n}</button>
-                        ))}
-                    </div>
-                ) : null}
-                <span class="hk-count">{error ? "unavailable" : dump == null ? "loading…" : `${all.length} record${all.length === 1 ? "" : "s"}`}</span>
-                <span class="sp" />
-                <button class="raw-btn tt" onClick={download} disabled={!all.length}>
-                    download<span class="tt-pop left" role="tooltip">The records themselves, as JSON — structured, not these rendered lines</span>
-                </button>
-                {/* The run's whole timeline is `run.json`, which already carries `session.events` — the file this
-                    panel's own question ("where did the time go") belongs to. A fifth artifact that was almost
-                    that file is how the "which one to reach for" table stops working. */}
-                <button class="raw-btn tt" onClick={() => run && exportSessionJson(run)} disabled={!run}>
-                    all events<span class="tt-pop left" role="tooltip">The whole run as <code>run.json</code>: every step, and the timeline the resource panel draws</span>
-                </button>
-                <button class="raw-btn" onClick={clear} disabled={!all.length}>clear</button>
-            </div>
-            <div class="hint hk-about">
-                What the machinery did under this run, which its steps cannot say: a tab the browser discarded and we
-                reloaded, a debugger attach that was refused. Kept until the browser restarts.
-            </div>
+        <div class="runlog">
+            <PanelHead>
+                <RunLogMenu run={run} records={all} counts={counts} hidden={hidden} setHidden={setHidden} />
+            </PanelHead>
             {error ? <div class="hint err">could not read the log: {error}</div>
                 : !run ? <div class="hint">Open a session to read what happened underneath it.</div>
                     : dump == null ? null
@@ -108,5 +85,71 @@ export function RunLogView({ run }: { run: string | null }) {
                         )
                             : <OutputCell text fill><TimedOutput text={text} marks={marks} /></OutputCell>}
         </div>
+    );
+}
+
+/** The panel's one control: which subsystems to show, and the three things you can do with the records. A menu
+ *  rather than a row of buttons because the row was competing with the log for a width the log needs. */
+function RunLogMenu({ run, records, counts, hidden, setHidden }: {
+    run: string | null; records: RunLogEvent[]; counts: [string, number][];
+    hidden: Set<string>; setHidden: (f: (h: Set<string>) => Set<string>) => void;
+}) {
+    const [open, setOpen] = useState(false);
+    const wrap = useRef<HTMLSpanElement>(null);
+    useEffect(() => {
+        if (!open) return;
+        const onDown = (e: Event) => { if (!wrap.current?.contains(e.target as Node)) setOpen(false); };
+        const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+        document.addEventListener("pointerdown", onDown);
+        document.addEventListener("keydown", onKey);
+        return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); };
+    }, [open]);
+    const act = (fn: () => void) => () => { setOpen(false); fn(); };
+    const toggle = (s: string) => setHidden((h) => { const n = new Set(h); if (n.has(s)) n.delete(s); else n.add(s); return n; });
+    // The RECORDS, not the rendered lines: they are structured for the same reason they are stored that way, and
+    // a consumer of the rendered text would be parsing a layout. Published shape, so it carries its version and
+    // which run it is of: docs/spec/run-log.schema.json.
+    const download = () => downloadBlob(`ml-run-log-${run || "all"}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`,
+        new Blob([JSON.stringify(runLogDocument(records, run), null, 1)], { type: "application/json" }));
+    const clear = () => chrome.runtime.sendMessage({ type: "DUMP_RUN_LOG", payload: { ...(run ? { run } : {}), clear: true } }, () => { void chrome.runtime.lastError; });
+    const n = records.length;
+
+    return (
+        <span class="menuwrap runlog-menu" ref={wrap}>
+            <button class={`tt hbtn${open ? " on" : ""}`} aria-label="Execution log options" aria-haspopup="menu" aria-expanded={open}
+                onClick={() => setOpen((o) => !o)}>
+                <IconMoreH />
+                {/* The COUNT lives here. It is a status rather than a control, so it earned no row of its own —
+                    but it is the one number someone wants at a glance, and a tooltip costs no width. */}
+                {open ? null : <span class="tt-pop left" role="tooltip">Filters and exports<span class="tt-note">{n} record{n === 1 ? "" : "s"}</span></span>}
+            </button>
+            {open ? (
+                <div class="menu" role="menu">
+                    {counts.length > 1 ? (
+                        <>
+                            {counts.map(([s, c]) => (
+                                <button class="menu-item menu-check" role="menuitemcheckbox" key={s} aria-checked={!hidden.has(s)}
+                                    onClick={() => toggle(s)}>
+                                    <span class="menu-tick">{hidden.has(s) ? "" : "✓"}</span>{s}<span class="menu-hint">{c}</span>
+                                </button>
+                            ))}
+                            <div class="menu-rule" role="separator" />
+                        </>
+                    ) : null}
+                    <button class="menu-item" role="menuitem" disabled={!n} onClick={act(download)}>
+                        Download the log<span class="menu-hint">the records, as JSON</span>
+                    </button>
+                    {/* The run's whole timeline is `run.json`, which already carries `session.events` — the file
+                        this panel's own question ("where did the time go") belongs to. A fifth artifact that was
+                        almost that file is how the "which artifact to reach for" table stops working. */}
+                    <button class="menu-item" role="menuitem" disabled={!run} onClick={act(() => run && exportSessionJson(run))}>
+                        Export all events<span class="menu-hint">the whole run, as run.json</span>
+                    </button>
+                    <button class="menu-item" role="menuitem" disabled={!n} onClick={act(clear)}>
+                        Clear<span class="menu-hint">{run ? "this run's records" : "every run's records"}</span>
+                    </button>
+                </div>
+            ) : null}
+        </span>
     );
 }

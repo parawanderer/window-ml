@@ -3155,6 +3155,26 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 /* THE HOUSEKEEPING LOG VIEW (header ⋮ → Housekeeping log): a toolbar, one line about what this is, then the log's
    output cell taking the rest of the height (it rides `.view-bench`'s non-scrolling column, like the full bench). */
 .hk-view { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px; }
+/* THE EXECUTION LOG PANEL (run-log-view.tsx), which is the same log view with everything else taken off it: its
+   filters and exports are one menu in the dock's own bar and its explanation is the tab's tooltip, so the panel
+   IS the records. No padding, because a region this narrow has no width to give a margin and the output cell
+   draws its own gutter — the padding read as the log floating in a white box. */
+.runlog { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+/* The states that are not a log — nothing open, nothing recorded, unreadable — do want the margin back. */
+.runlog > .hint { padding: 8px; margin: 0; }
+/* A SECOND BLOCK IN A TOOLTIP, under a rule: the same divider `.tt-said` draws for a model's claim, without its
+   italic, for prose that is ours — what a panel is for, under the name of the thing it is on. */
+.tt-note { display: block; margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--tip-line); color: var(--fg-dim); }
+/* A menu's own divider, between a group of toggles and the actions under them. */
+.menu-rule { height: 1px; margin: 4px 2px; background: var(--border); }
+/* A CHECKABLE menu row — a filter rather than an action — reads ACROSS: tick, what it filters, how many of them.
+   `.menu-item` is a column because an action's hint belongs under its label, and that stacking turned a
+   three-word filter into three lines. */
+.menu-check { flex-direction: row; align-items: baseline; gap: 6px; }
+/* The tick column, a fixed width so the labels line up whether or not they are ticked. */
+.menu-tick { display: inline-block; width: 1em; flex: none; color: var(--accent); }
+/* How many records that subsystem has, pushed to the end of its row. */
+.menu-check .menu-hint { margin-left: auto; }
 /* Filter chips, the count, then download/clear pushed to the far end. */
 .hk-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 /* How many events the log holds, beside the chips — a status, not a control. */

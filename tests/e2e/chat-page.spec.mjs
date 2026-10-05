@@ -293,31 +293,43 @@ test("the execution log is what the machinery did under the open run, which its 
 
         // Docked to the RIGHT by default: it is read line by line beside the steps it explains.
         const panel = chat.locator(".chat-dock.chat-dock-right");
-        await expect(panel.locator(".hk-view")).toBeVisible();
+        await expect(panel.locator(".runlog")).toBeVisible();
         await expect(panel.locator(".r-outcell")).toContainText("pinned (hosting)");
         await expect(panel.locator(".r-outcell")).toContainText("released");
-        await expect(panel.locator(".hk-count")).toHaveText(/record/);
         // One tab hosted the whole run, so its id is the same on every line and is left off them: in a region
         // this narrow that width is what turns a one-record line into two. It is still in the records.
         await expect(panel.locator(".r-outcell")).not.toContainText("tab=");
 
-        // The filter chips are the housekeeping log's own, because a run-log record IS one of its events plus a
-        // run — which is what lets one renderer draw both.
-        // One subsystem in play, so no filter row: the chips are the housekeeping log's, and they appear for the
-        // same reason they do there — more than one kind of thing to tell apart.
-        await expect(panel.locator(".rc-lane-chip")).toHaveCount(0);
+        // Escape closes the menu, but the key can land in the frame between the menu appearing and the effect
+        // that listens for it registering — invisible to a hand, reachable by a driver — so press until it takes
+        // rather than once and hope, or with a sleep long enough to hide the question.
+        const dismiss = () => expect.poll(async () => {
+            await chat.keyboard.press("Escape");
+            return panel.locator(".runlog-menu .menu").count();
+        }, { timeout: 5000 }).toBe(0);
 
+        // THE PANEL IS THE LOG. Its controls are in the DOCK'S bar, not in a row above the records — a toolbar
+        // and a paragraph were competing for the one width this region does not have.
+        await expect(panel.locator(".dock-bar .runlog-menu")).toBeVisible();
+        await expect(panel.locator(".runlog .hk-bar")).toHaveCount(0);
+        await panel.locator(".runlog-menu button").first().click();
+        await expect(panel.locator(".runlog-menu .menu")).toBeVisible();
+        // Exactly one subsystem is in play here, so there is nothing to filter between and no filter group.
+        await expect(panel.getByRole("menuitemcheckbox")).toHaveCount(0);
         // The two exports this panel owes: the records themselves, and the run's WHOLE timeline, which is
         // `run.json` rather than a fifth artifact that is almost it.
-        await expect(panel.getByRole("button", { name: "download" })).toBeEnabled();
-        await expect(panel.getByRole("button", { name: "all events" })).toBeEnabled();
+        await expect(panel.getByRole("menuitem", { name: /Download the log/ })).toBeEnabled();
+        await expect(panel.getByRole("menuitem", { name: /Export all events/ })).toBeEnabled();
+        await dismiss();
 
         // It is the OPEN run's, not the ring's: going back to the list leaves it with no run to describe rather
         // than showing some other run's mechanics under nothing.
-        // `.hint:not(.hk-about)` — the blurb saying what this panel IS is always there; this is the state line.
         await chat.evaluate(() => { location.hash = "#/"; });
-        await expect(panel.locator(".hint:not(.hk-about)")).toContainText("Open a session to read what happened underneath it");
-        await expect(panel.getByRole("button", { name: "all events" })).toBeDisabled();
+        await expect(panel.locator(".runlog .hint")).toContainText("Open a session to read what happened underneath it");
+        await panel.locator(".runlog-menu button").first().click();
+        await expect(panel.locator(".runlog-menu .menu")).toBeVisible();
+        await expect(panel.getByRole("menuitem", { name: /Export all events/ })).toBeDisabled();
+        await dismiss();
 
         expect(errors).toEqual([]);
     } finally { await ext.context.close(); await site.stop(); await fake.stop(); }

@@ -155,3 +155,9 @@ export class RunLog extends StorageRing<RunLogEvent> {
         await this.replace(kept);
     }
 }
+
+/** WHAT THE EXECUTION LOG PANEL IS, in one sentence, for the tooltip on its tab. It was a paragraph sitting on
+ *  top of the records until the panel gave its width back to them. Here rather than in the view beside it,
+ *  because the page that draws the tab may not import a module that touches `chrome` — and the only reason that
+ *  did not already break the web build is that esbuild happened to shake the rest of the view out. */
+export const RUN_LOG_ABOUT = "What the machinery did under this run, which its steps cannot say: a tab the browser discarded and we reloaded, a debugger attach that was refused. Kept until the browser restarts.";

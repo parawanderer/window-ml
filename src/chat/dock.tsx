@@ -27,8 +27,9 @@ export interface DockPanel {
     /** the tab's name */
     title: string;
     icon: ComponentChildren;
-    /** what the tab's tip says: whose it is, when that is not obvious */
-    tip?: string;
+    /** what the tab's tip says: whose it is, when that is not obvious — and, under a rule (`.tt-note`), what the
+     *  panel is FOR, where that explanation would otherwise be a paragraph sitting on top of the panel's content */
+    tip?: ComponentChildren;
     body: ComponentChildren;
     close(): void;
 }

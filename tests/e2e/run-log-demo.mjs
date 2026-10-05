@@ -123,11 +123,27 @@ try {
     await narrate(chat, "6 · And the run carried on", { sub: "every line here is one this browser actually produced. Without them, a run that took half a minute longer than it should have looks like a slow page tool" });
     await sleep(BEAT + 800); await shot("the-whole-log");
 
+    // THE PANEL IS THE LOG. Everything that was a toolbar and a paragraph on top of it is one menu in the dock's
+    // own bar, and the tab's tooltip.
+    await narrate(chat, "7 · The panel is the records", { sub: "its filters and its three exports are one menu in the dock's bar — a row of buttons was competing for the width the log needs" });
+    await chat.locator(".runlog-menu button").first().click();
+    await sleep(BEAT + 400); await shot("the-one-menu");
+    await chat.keyboard.press("Escape");
+
+    await narrate(chat, "8 · And what it IS, on the tab", { sub: "under a rule, where it is read once by whoever is wondering — rather than a paragraph every reader scrolls past every time" });
+    {
+        const tab = chat.locator('.dock-tab', { hasText: "Execution log" });
+        const box = await tab.boundingBox();
+        await chat.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await chat.mouse.move(box.x + box.width / 2 + 1, box.y + box.height / 2);
+    }
+    await sleep(BEAT + 400); await shot("what-it-is-on-the-tab");
+
     console.log("\n--- the records, as the worker holds them ---");
     const log = await ext.sw.evaluate(async () => (await chrome.storage.session.get("ml_run_log"))["ml_run_log"] || []);
     for (const e of log) console.log(`  ${e.subsystem} ${e.kind}${e.reason ? ` (${e.reason})` : ""}${e.ms != null ? ` ${e.ms}ms` : ""} ${JSON.stringify(e.detail || {})}`);
     console.log(`\n${log.length} record(s); run(s): ${[...new Set(log.map((e) => e.run))].join(", ")}`);
-    console.log(`panel text:\n${(await panel.locator(".hk-view").innerText()).split("\n").map((l) => "  " + l).join("\n")}`);
+    console.log(`panel text:\n${(await panel.locator(".runlog").innerText()).split("\n").map((l) => "  " + l).join("\n")}`);
     console.log(`\nscreenshots in ${ART}`);
 
     await narrateDone(chat);
