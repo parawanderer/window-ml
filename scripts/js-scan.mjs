@@ -68,8 +68,10 @@ export function scan(text) {
             const { value, end, interpolated } = readString(text, i);
             strings.push({ value: interpolated ? null : value, line: at });
             code += `${MARK}${strings.length - 1}${MARK}`;
-            // The literal's own newlines still have to be counted, or everything after a multi-line template moves.
-            for (const c of text.slice(i, end)) if (c === "\n") line++;
+            // The literal's own newlines go into `code` after the sentinel, not only into the counter: `lineAt` counts
+            // the newlines in `code`, so without them every test after a multi-line template was placed that many
+            // lines early, and could land above its own section.
+            push("\n".repeat([...text.slice(i, end)].filter((c) => c === "\n").length));
             i = end;
             continue;
         }
