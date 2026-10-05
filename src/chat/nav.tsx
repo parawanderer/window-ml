@@ -101,18 +101,23 @@ export function GearMenu({ graphsRt, benchRt, logRt, labelled }: {
         <div class="chat-gear" ref={wrap}>
             {open ? (
                 <div class="chat-menu chat-gear-menu" role="menu" aria-label="Page menu">
-                    <MenuItem icon={<IconBrain />} label="Calm view" on={calm.value} onPick={pick(() => setCalm(!calm.value))} />
-                    {/* Under "Calm view" and only offered WITH it: this folds nothing outside the reading view, and
-                        a toggle that does nothing where you are standing is worse than one that is absent.
-
-                        `note`, not `detail`: the right-hand slot is for WHICH thing a row acts on (the theme's
-                        current choice, a panel's device), and a gloss put there grew the menu wider than the column
-                        it rises in — which CLIPS, so the tick saying whether the toggle is on was the part that
-                        went. A second line costs no width. */}
-                    {calm.value
-                        ? <MenuItem icon={<IconFold />} label="Group all tool calls" note="one row per run of work"
-                            on={groupAllTools.value} onPick={pick(() => setGroupAll(!groupAllTools.value))} />
-                        : null}
+                    {/* HOW MUCH OF THE MACHINERY YOU SEE WHILE READING — the two rows that answer that, under one
+                        head. They were loose at the top level, where "Calm view" and a folding toggle read as two
+                        unrelated switches rather than the coarse and fine of one choice. The group says which
+                        view is on in its own row, so the mode is still legible without opening it. */}
+                    <MenuGroup icon={<IconBrain />} label="Reading" detail={calm.value ? "Calm" : "Detailed"}>
+                        {(sub) => <>
+                            <MenuItem sub={{ i: 0, open: sub }} icon={null} label="Calm view" note="the conversation, with the machinery one hover away"
+                                on={calm.value} onPick={pick(() => setCalm(!calm.value))} />
+                            {/* SHOWN AND DISABLED outside calm, not hidden: "is this only available in calm view?"
+                                is a question the menu should answer, and a row that vanishes answers it by making
+                                you wonder whether you imagined it. `note` carries the reason, which is what that
+                                slot is for. */}
+                            <MenuItem sub={{ i: 1, open: sub }} icon={null} label="Group all tool calls"
+                                note={calm.value ? "one row per run of work" : "only in Calm view — the detailed view is the one that shows every call"}
+                                off={!calm.value} on={groupAllTools.value} onPick={pick(() => setGroupAll(!groupAllTools.value))} />
+                        </>}
+                    </MenuGroup>
                     {/* THE PANELS TOGETHER, under one row. These two are a different kind of thing from the rows
                         around them: not how the page reads or what it is set to, but an extra surface opened ONTO a
                         runtime — so each needs to say which device it would open on, and neither belongs beside

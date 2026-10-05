@@ -1047,6 +1047,9 @@ test("group all tool calls: a mixed run becomes one row, a pending gate does not
     await expect(page.locator(".astreak-calls")).toHaveCount(0);
 
     await page.locator(".chat-gear-btn").first().click();
+    // Under "Reading", with Calm view: the two are the coarse and fine of one choice about how much of the
+    // machinery a transcript shows, so they live under one head rather than loose at the menu's top level.
+    await page.getByRole("menuitem", { name: /^Reading/ }).click();
     const toggle = page.getByRole("menuitemcheckbox", { name: "Group all tool calls" });
     await expect(toggle).toHaveAttribute("aria-checked", "false");   // OFF by default
     await toggle.click();
@@ -1074,6 +1077,7 @@ test("group all tool calls: a mixed run becomes one row, a pending gate does not
     // (The round trip through storage is `tests/chat-view-prefs.test.mjs`; a reload here would lose the steps
     // this test emitted, since the fake host's history lives in the page.)
     await page.locator(".chat-gear-btn").first().click();
+    await page.getByRole("menuitem", { name: /^Reading/ }).click();
     await expect(page.getByRole("menuitemcheckbox", { name: "Group all tool calls" })).toHaveAttribute("aria-checked", "true");
     expect(errors).toEqual([]);
     await page.close();

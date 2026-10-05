@@ -197,8 +197,9 @@ await sleep(BEAT);
 // because it is GUESSING at what a reader can tell apart. This one was asked for, so almost every clause goes.
 // ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-await narrate(page, "10 · “Group all tool calls”", { sub: "the toggle under Calm view in the ⋮ menu — off by default, because the conservative rule is what someone who has not asked should get" });
+await narrate(page, "10 · “Group all tool calls”", { sub: "under Reading, beside Calm view — the coarse and fine of one choice. Off by default, because the conservative rule is what someone who has not asked should get" });
 await page.locator(".chat-gear-btn").first().click();
+await page.getByRole("menuitem", { name: /^Reading/ }).click();
 await sleep(700);
 await shot("10-the-toggle");
 await page.getByRole("menuitemcheckbox", { name: "Group all tool calls" }).click();
