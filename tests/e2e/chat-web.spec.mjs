@@ -1972,6 +1972,47 @@ test("phone (touch): the tab picker opens without raising the keyboard, and stay
     } finally { await ctx.close(); }
 });
 
+// THE MODEL'S OWN ACCOUNT OF A CALL — the reserved `title` argument — and WHERE it is allowed to be drawn. It is
+// in the tool name's tip everywhere, and inline in exactly one place: inside an OPEN group in the reading view,
+// because expanding a folded run is the gesture that means "I am investigating what happened". Everywhere else it
+// would be one more thing per row, and in the busy view the row already carries the value the call returned.
+test("a call's own title: in the tip always, inline only inside an open group in the reading view", async () => {
+    const { page, errors } = await open(DESKTOP);
+    await page.evaluate(() => {
+        const key = "laptop:5e6f7a80", hash = "5e6f7a80", now = Date.now();
+        for (let i = 0; i < 4; i++) {
+            globalThis.__chatFake.emit(key, {
+                kind: "agent-step", id: `${hash}-t${i}`, ts: now + i, save: true, session: { hash, turn: 0 },
+                step: 60 + i, seq: 600 + i, tool: "exec", toolMs: 90,
+                arguments: { js: `${i}`, title: `Read fare ${i}` }, result: `${i}`,
+            });
+        }
+    });
+    await page.goto(`${server.url}#s=laptop%3A5e6f7a80`);
+    const streak = page.locator(".astreak").filter({ hasText: "exec" }).first();
+    await expect(streak).toBeVisible();
+
+    // FOLDED: nothing inline — the rows are not even drawn.
+    await expect(page.locator(".astep-said")).toHaveCount(0);
+
+    await streak.locator(".astreak-head").click();
+    const said = page.locator('[data-astep-seq="601"] .astep-said');
+    await expect(said).toBeVisible();
+    await expect(said).toHaveText("“Read fare 1”", { useInnerText: true });
+
+    // It is in the TIP too, under the tool's own description, so it is readable without opening anything.
+    await expect(page.locator('[data-astep-seq="601"] .astep-head .tt-said')).toHaveText("“Read fare 1”");
+
+    // THE BUSY VIEW NEVER DRAWS IT INLINE. A collapsed row there carries the value the call RETURNED, which is
+    // what a developer is reading; a model's claim about itself is not that.
+    await page.locator(".chat-gear-btn").first().click();
+    await page.getByRole("menuitemcheckbox", { name: "Calm view" }).click();
+    await expect(page.locator('[data-astep-seq="601"]')).toBeVisible();   // the row is back, unfolded
+    await expect(page.locator('[data-astep-seq="601"] .astep-said')).toBeHidden();
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 // NO POPUP IS CUT OFF, by the window OR by whatever clips it. This is a different failure from "off the screen",
 // which the touch probe below already measures, and it is the quieter one: the gear's menu rises inside
 // `.chat-list`, which sets `overflow: hidden` because the pane slides out from under the page — so a menu that

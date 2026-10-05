@@ -15,7 +15,7 @@
 
 import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from "./builtin-tools";
 import { subcallUsage } from "./bus";
-import type { MlApi } from "./contract";
+import type { MlApi, JsonSchema } from "./contract";
 import type { MlTool, ToolResult } from "./contract-agent";
 import type { VisionMemory, RenderDescriptor } from "./contract-render";
 import { navTarget, errText, clipOut, askReaderNumCtx, jsonShape } from "./dom";
@@ -24,6 +24,7 @@ import { buildPythonTool } from "./python-tool";
 import { tableShape, asTable, tableFromDelimited, tablePreview, RENDER_TABLE_ROWS } from "./table-data";
 import { PIPE_REF, runPipe, pipeHint } from "./text-pipe";
 import { toolNameError } from "./token-id";
+import { CALL_TITLE, type NoReservedParams } from "./tool-params";
 import { currentHasTool } from "./tool-exec";
 
 /**
@@ -37,7 +38,13 @@ import { currentHasTool } from "./tool-exec";
  * @returns {MlTool} The tool with defaults filled in.
  * @throws {Error} If `name` or a `run` function is missing.
  */
-export const defineTool = function({ name, description = "", summary, parameters = { type: "object", properties: {} }, run, requiresApproval = false, capabilities = [], render, precheck }: Partial<MlTool> = {}): MlTool {
+export const defineTool = function<P extends Record<string, unknown> = Record<string, unknown>>(
+    { name, description = "", summary, parameters, run, requiresApproval = false, capabilities = [], render, precheck }:
+        Omit<Partial<MlTool>, "parameters"> & { parameters?: JsonSchema & { properties?: P } & NoReservedParams<P> } = {},
+): MlTool {
+    // Defaulted here rather than in the destructuring: the parameter's type is now generic in the schema's own
+    // `properties`, and a literal default cannot satisfy "whatever P the caller turns out to have".
+    const schema: JsonSchema = parameters ?? { type: "object", properties: {} };
     if (!name || typeof run !== "function") {
         throw new Error("ml.defineTool needs a name and a run(args) function");
     }
@@ -47,7 +54,14 @@ export const defineTool = function({ name, description = "", summary, parameters
     // not silently become uncitable halfway through a run.
     const nameErr = toolNameError(name);
     if (nameErr) throw new Error(`ml.defineTool: ${nameErr}`);
-    return { name, description, summary, parameters, run, requiresApproval, capabilities, render, precheck };
+    // A RESERVED PARAMETER NAME, refused where the tool is written. Every tool is handed a `title` the model may
+    // use to say what one call is for, so a tool declaring its own would have to either lose it or silently
+    // shadow ours — and both are a tool that behaves differently from how it reads, found months later. Thrown
+    // at definition time for the same reason an unusable `name` is: it should fail where it is fixable.
+    if (schema.properties && CALL_TITLE in schema.properties) {
+        throw new Error(`ml.defineTool: "${CALL_TITLE}" is a reserved parameter — every tool is given one for the model's own short description of a call. Rename this parameter.`);
+    }
+    return { name, description, summary, parameters: schema, run, requiresApproval, capabilities, render, precheck };
 };
 
 /**

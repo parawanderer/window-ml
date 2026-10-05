@@ -84,6 +84,13 @@ export const HUD_PROSE_PROGRESS =
 export const HUD_PROSE_QUIET =
     " The user has the HUD in QUIET mode and will NOT see anything you say between steps — so don't narrate " +
     "your progress at all. Work silently, thinking as needed, and put your entire response in the FINAL answer.";
+/** Every tool takes a `title`. Terse on purpose and placed in the SYSTEM prompt rather than in each schema's
+ *  description: the parameter rides in every tool on every turn, so the instruction is said once here and the
+ *  schema keeps only a one-line reminder with an example. */
+export const CALL_TITLE_CLAUSE =
+    "\n\nEvery tool takes an optional `title`: a few words on what THAT call is for, for a human reading the run " +
+    "back later. Write one when the reason is not obvious from the arguments; omit it when it is. It is a label, " +
+    "not a sentence, and never an explanation of the tool itself.";
 export const ANSWER_CLAUSE =
     "\n\nThe `answer` tool curates the run's RESULT — what the user sees. Keep it MINIMAL and matched to " +
     "what they asked for, not a dump of everything you touched. Add a `text` line for a fact/summary, or a " +

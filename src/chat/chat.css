@@ -1717,6 +1717,10 @@ button.chat-page-go:hover { color: var(--fg); }
    that actually describes what happened, and a fold drawn into a transcript somebody opened should simply be
    there. What was left fired only in the second case — the one it is wrong for. */
 .astreak { margin: 3px 0; --astep-close-ms: 200; }
+/* …and inside an OPEN one, each row may say what the model said it was for. See `.astep-said`: this is the one
+   place it is drawn, because expanding a group is the gesture that means "I am investigating what happened". */
+.chat.calm .astreak.open .astep-said { display: inline-block; max-width: 46ch; vertical-align: bottom; }
+
 /* THE ROW SITS WHERE THE TURNS DO. Its text begins on the transcript's own left edge — the line `thinking` and a
    turn's prose start from — so a folded run reads as one more thing in the column rather than as a control
    indented out of it. The chevron hangs in the MARGIN beside it, absolutely placed so it cannot push the row's

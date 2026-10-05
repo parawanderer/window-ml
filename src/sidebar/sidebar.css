@@ -1673,6 +1673,18 @@ details.io[open] > summary .io-preview { display: none; }
 .dot-when { display: block; margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--tip-line);
     color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 .dot-when b { color: var(--fg); font-weight: 600; }
+/** WHAT THE MODEL SAID this call was for, under the tool's own description in its tooltip. The rule is the same
+ *  separator-as-a-border the figures use. Italic and quoted because it is a CLAIM: nothing derived it and nothing
+ *  checked it, and a reader has to be able to tell it from the tool's description above it, which is ours. */
+.tt-said { display: block; margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--tip-line);
+    color: var(--fg-dim); font-style: italic; }
+.tt-said.bare { margin-top: 0; padding-top: 0; border-top: none; }
+/** The same claim INLINE beside the tool name. Drawn nowhere by default: the busy view's collapsed row already
+ *  carries the value the call returned, which is what a developer is reading, and during a run one of these per
+ *  row is noise. The reading view shows it only inside an OPEN group — expanding a folded run is the gesture
+ *  that means "I am investigating what happened", and that is when it earns the line. */
+.astep-said { display: none; font-style: italic; color: var(--fg-faint); min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* A keyboard shortcut rendered as its own keys. Chrome reports it as "Alt+Space"; showing that verbatim reads
    as text, whereas the keys read as something to press. */
 .keys { display: inline-flex; gap: 3px; vertical-align: baseline; }

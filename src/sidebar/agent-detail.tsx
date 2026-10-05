@@ -28,6 +28,7 @@ import {
 } from "./ui-kit";
 import { FeedbackBlock, ReusedBlock } from "./answer-render";
 import { foldStreaks, StepStreak } from "./step-streak";
+import { CALL_TITLE } from "../tool-params";
 import { justArrived } from "./just-arrived";
 import { deepestUserLine } from "../py-format";
 import { JsonNode, type JsonSchemaNode } from "./json-tree";
@@ -403,6 +404,10 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // annotates each arg key with its schema description). Absent on older debug events (names only).
     const toolDef = hash ? sessionMap.get(hash)?.agentConfig?.tools?.find(t => t.name === st.tool) : undefined;
     const toolSummary = toolDef?.summary;
+    // What the MODEL said this call was for. Read off the arguments rather than off a field of its own: the step
+    // event carries what the model actually sent, whole, which is the log's standing promise — so there is nothing
+    // to add to the wire, and the raw-args view shows it where it was written.
+    const saidTitle = typeof st.arguments?.[CALL_TITLE] === "string" ? String(st.arguments[CALL_TITLE]).trim() : "";
     const paramSchema = toolDef?.parameters as JsonSchemaNode | undefined;
     // Each slot renders from its own descriptor; the block falls back to raw when absent.
     const inRender = st.renderIn;
@@ -543,9 +548,20 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                 <Dot status={inFlight ? "pending" : toolFailed(st.result) ? "err" : "ok"} ts={st.ts} ms={st.toolMs}
                     warn={cut ? (awaiting ? "The run ended before anyone answered, so this call never ran." : "The run ended before this call finished.") : undefined} />
                 {/* Tool-authored short summary (contract MlTool.summary) → hover tooltip, both surfaces. */}
-                {toolSummary
-                    ? <span class="tt tool-name-wrap"><span class="tool-name">{st.tool}</span><span class="tt-pop left" role="tooltip">{toolSummary}</span></span>
+                {/* THE MODEL'S OWN ACCOUNT of this call (the reserved `title` argument), where it wrote one. It is a
+                    CLAIM about what it meant to do — not derived from anything, not checked against anything — so
+                    it is quoted, and it sits UNDER the tool's own description rather than replacing it.
+                    Always in the tip. Inline only in the reading view and only inside an OPEN group, which the
+                    stylesheet decides: expanding a folded run is the gesture that means "I am investigating", and
+                    there the line earns its place; watching a run go, it is one more thing per row. */}
+                {toolSummary || saidTitle
+                    ? <span class="tt tool-name-wrap"><span class="tool-name">{st.tool}</span>
+                        <span class="tt-pop left" role="tooltip">
+                            {toolSummary}
+                            {saidTitle ? <span class={`tt-said${toolSummary ? "" : " bare"}`}>“{saidTitle}”</span> : null}
+                        </span></span>
                     : <span class="tool-name">{st.tool}</span>}
+                {saidTitle ? <span class="astep-said">“{saidTitle}”</span> : null}
                 {st.approval ? <ApprovalBadge approval={st.approval} /> : null}
                 {st.elements ? <span class="tt el-count">{st.elements} el<span class="tt-pop wrap" role="tooltip">DOM nodes returned (reach them in the console via onStep).</span></span> : null}
                 {issues ? <span class="arg-warn" {...cursorTipOn(issues.join("; "))}><IconWarn />{issues.length}</span> : null}

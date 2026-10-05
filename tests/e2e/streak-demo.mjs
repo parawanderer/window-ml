@@ -90,7 +90,11 @@ const emit = (s, sq, t, o) => page.evaluate(([key, step, seqN, tool, over]) => {
         reasoning: "Checking the next card.", reasoningTokens: 9 + ((seqN * 13) % 40), ...over,
     });
 }, [KEY, s, sq, t, o]);
-const execStep = (over = {}) => step("exec", { arguments: { js: EXEC_JS }, result: '["TP","HV","KL"]',
+// The model's own one-line account of a call rides in the reserved `title` argument. Several of these carry one,
+// because beat 8b is about where it is SHOWN — and a run where only some calls have one is the realistic case.
+const TITLES = ["Count the fare cards", "Read each airline code", "Check for a sold-out flag", "Re-read after the filter",
+    "Pull the prices", "Find the cheapest row", "Confirm the currency"];
+const execStep = (over = {}) => step("exec", { arguments: { js: EXEC_JS, title: TITLES[seq % TITLES.length] }, result: '["TP","HV","KL"]',
     renderIn: { type: "code", text: EXEC_JS, lang: "javascript", format: true },
     renderOut: { type: "exec-out", value: '["TP","HV","KL"]' }, ...over });
 const pyStep = (over = {}) => step("python_exec", { approval: "sandbox", toolMs: 1840, arguments: { code: PY }, result: "airline  price\nHV  96",
@@ -158,6 +162,17 @@ await narrate(page, "8 · Open is indistinguishable from never folded", { sub: "
 const streak = page.locator(".astreak").first();
 await streak.locator(".astreak-head").click();
 await sleep(BEAT + 600); await shot("8-open-with-rail");
+
+// 8b — the model's own account of each call, which an open group is the one place to show.
+await narrate(page, "8b · What the model said each call was for", { sub: "every tool takes an optional `title`. Shown INLINE only here — expanding a group is the gesture that means you are investigating; watching a run, one per row is noise" });
+await sleep(BEAT + 400); await shot("8b-model-titles");
+{
+    const name = streak.locator(".astep .tool-name").first();
+    const box = await name.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.move(box.x + box.width / 2 + 1, box.y + box.height / 2);
+}
+await sleep(BEAT + 400); await shot("8c-title-in-the-tip");
 await streak.locator(".astreak-head").click();
 await sleep(900); await shot("8-closed-again");
 

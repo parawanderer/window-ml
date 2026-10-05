@@ -8,6 +8,7 @@ import type { RenderDescriptor, ToolFeedback } from "./contract-render";
 import type { DerefRead } from "./token-pipe";
 import { AnswerSet } from "./answer-set";
 import { validateArgs } from "./validate";
+import { takeCallTitle } from "./tool-params";
 import { errText } from "./dom";
 
 // `agent_api_docs`'s within-burst dedup memory is per RUN, but `toolContext` is rebuilt on every
@@ -164,7 +165,11 @@ export async function executeTool(tool: MlTool, args: Record<string, unknown>, c
         // ctx carrying `stream` so `run` can push partial output. A shallow copy per call (never mutate the
         // shared run ctx). A tool that doesn't support streaming just ignores `ctx.stream`.
         const runCtx = onStream && ctx ? { ...ctx, stream: onStream } : ctx;
-        const raw = await tool.run(args, runCtx);
+        // The call's TITLE is ours, not the tool's: a tool handed an argument its own code never declared is one
+        // `Object.keys` away from behaving differently, and several of the DOM tools iterate their args. It is
+        // taken here, at the single dispatch both loops come through, and nowhere earlier — the step event keeps
+        // the model's arguments whole, which is the log's standing promise.
+        const raw = await tool.run(takeCallTitle(args).args, runCtx);
         // A tool may return a plain string, or { content, elements, image?, render?, renderIn? } to
         // also hand back real DOM nodes / a screenshot (routed to onStep/the transcript, never the model).
         if (raw && typeof raw === "object" && typeof (raw as ToolResult).content === "string") {
