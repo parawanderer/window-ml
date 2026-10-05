@@ -401,7 +401,10 @@ test("running footer swaps to 'waiting for your approval' when blocked, and back
     await w.tick();
     let note = w.shadow.querySelector(".pending-note");
     assert.ok(note && !note.classList.contains("blocked"), "actively running: not blocked");
-    assert.match(note.textContent, /running/);
+    // The footer says what is happening in the HUD orb's own words (orbStatus), so the two surfaces describe
+    // one event the same way. Before a first step that is "Waiting for the model…", where this used to read
+    // "running · 0 steps" — a phrase that said nothing while the orb beside it was counting the wait.
+    assert.match(note.textContent, /Waiting for the model/i);
 
     // A step lands awaiting the gate → the footer goes amber/blocked with the approval copy.
     await w.dispatch(agentStep("agB", 1, { seq: 1, pending: true, awaitingApproval: true, tool: "click", arguments: { selector: "#go" } }));
@@ -414,6 +417,25 @@ test("running footer swaps to 'waiting for your approval' when blocked, and back
     await w.tick();
     note = w.shadow.querySelector(".pending-note");
     assert.ok(note && !note.classList.contains("blocked"), "no longer blocked the instant you approve (before DONE)");
+});
+
+test("the running footer speaks the HUD orb's vocabulary, so one event reads the same on both surfaces", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("agP", "do a thing"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    // Nothing has come back yet: not "running · 0 steps", which described the run rather than the moment.
+    assert.match(w.shadow.querySelector(".pending-note").textContent, /Waiting for the model/i);
+
+    // A tool is actively running → the footer names THAT, out of the same ACTIVITY table the orb reads.
+    await w.dispatch(agentStep("agP", 1, { seq: 1, pending: true, tool: "python_exec", arguments: { code: "x = 1" } }));
+    await w.tick();
+    assert.match(w.shadow.querySelector(".pending-note").textContent, /Running Python/i);
+
+    // Once it returns, the step count appears beside the phrase — it is the one thing the orb has no room for.
+    await w.dispatch(agentStep("agP", 1, { seq: 1, tool: "python_exec", arguments: { code: "x = 1" }, result: "1" }));
+    await w.tick();
+    assert.match(w.shadow.querySelector(".pending-note .psteps")?.textContent ?? "", /1 step\b/);
 });
 
 test("the DEBUG DETAIL does NOT render answer media (that's HUD-only, the sidebar is a trace)", async () => {

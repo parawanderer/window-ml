@@ -21,6 +21,7 @@ import { Dialog } from "./dialog";
 import { useCloseAnimation } from "./use-close";
 import { IconChevron, IconWarn, IconInfo, IconCopy, IconCheck, IconIn, IconOut } from "./icons";
 import { usageSamples, liveOutTokens } from "./usage";
+import { orbStatus } from "./orb-status";
 import { fmtDur } from "./timestamps";
 import {
     BusyBlob, Code, CopyBtn, SheetChip, Hash, Stamp, Dot, Disclosure,
@@ -1107,6 +1108,28 @@ export function PendingNote({ s }: { s: Session }) {
     // the instant you click, before the tool's DONE event clears awaitingApproval).
     const blocked = (s.steps || []).some(st => st.pending && st.awaitingApproval && !(st.seq != null && decidedSteps.has(stepKey(s.hash, st.seq))));
     const n = turnsRun(s.steps);
+    // WHAT IS HAPPENING RIGHT NOW, in the HUD's words — because it is the same event in another rendering.
+    // `orbStatus` is already the one pure projection of a run's live state into a phrase ("Waiting for the
+    // model…", "Running Python…", a stall's elapsed seconds, a climbing token count), and the orb is where it
+    // was worked out. Reading it here is what gives the surfaces parity; deriving a second phrase from the same
+    // signals is how the HUD came to say "Waiting for the model… · 56s" while this said "running · 0 steps".
+    //
+    // Its stall heartbeat and elapsed tick are functions of NOW, so this re-renders on a 1 s beat while the run
+    // is live — gated on `blocked` (an approval has nothing ticking) and cleared on unmount, because a timer
+    // left behind here keeps the jsdom test runner alive for ever.
+    // READ `rev` HERE, deliberately. Giving this component hooks gave it its own update scope, and the
+    // session object it is handed is MUTATED in place and bumped through `rev` — so with props shallow-equal
+    // the parent's cascade stopped reaching it and the footer froze on whatever it said first (it went on
+    // reading "Waiting for the model…" through an approval it was supposed to be announcing). Reading the
+    // signal re-renders it on every event, which is what the cascade was doing before the hooks arrived.
+    rev.value;
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        if (blocked) return;
+        const t = setInterval(() => setNow(Date.now()), 1000);
+        return () => clearInterval(t);
+    }, [blocked]);
+    const live = blocked ? null : orbStatus(s, now);
     return (
         <div class={`pending-note${blocked ? " blocked" : ""}`}>
             {/* BOTH are drawn and the view picks one in CSS: the bar in the panel, where it matches the
@@ -1114,7 +1137,12 @@ export function PendingNote({ s }: { s: Session }) {
                 A hidden element's animations do not run, so the one that is not shown costs nothing. */}
             <div class="pbar" aria-hidden="true"><span /></div>
             {blocked ? null : <BusyBlob />}
-            <span class="ptext">{blocked ? "waiting for your approval…" : `running · ${n} ${n === 1 ? "step" : "steps"}`}</span>
+            {/* The step count stays, as the one thing the orb has no room for and a trace reader wants; it is
+                dropped before the first step rather than reading "0 steps", which said nothing and crowded out
+                the phrase that did. */}
+            <span class="ptext">{blocked
+                ? "waiting for your approval…"
+                : <>{live?.label}{live?.suffix}{n > 0 ? <span class="psteps"> · {n} {n === 1 ? "step" : "steps"}</span> : null}</>}</span>
         </div>
     );
 }
