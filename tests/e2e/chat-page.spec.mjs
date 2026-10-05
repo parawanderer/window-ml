@@ -314,13 +314,32 @@ test("the execution log is what the machinery did under the open run, which its 
         await expect(panel.locator(".runlog .hk-bar")).toHaveCount(0);
         await panel.locator(".runlog-menu button").first().click();
         await expect(panel.locator(".runlog-menu .menu")).toBeVisible();
-        // Exactly one subsystem is in play here, so there is nothing to filter between and no filter group.
-        await expect(panel.getByRole("menuitemcheckbox")).toHaveCount(0);
+        // Exactly one subsystem is in play here, so there is nothing to filter between and no filter group — the
+        // only checkable row left is the colouring toggle, which is not one of them.
+        await expect(panel.locator(".menu-head")).toHaveCount(0);
+        await expect(panel.getByRole("menuitemcheckbox")).toHaveCount(1);
         // The two exports this panel owes: the records themselves, and the run's WHOLE timeline, which is
         // `run.json` rather than a fifth artifact that is almost it.
         await expect(panel.getByRole("menuitem", { name: /Download the log/ })).toBeEnabled();
         await expect(panel.getByRole("menuitem", { name: /Export all events/ })).toBeEnabled();
+
+        // COLOUR BY GROUP, off by default — the renderer under this is the housekeeping log's too, and a log
+        // that started colouring itself everywhere would be a change to a surface nobody asked about.
+        await expect(panel.locator(".r-ts-g")).toHaveCount(0);
+        await panel.getByRole("menuitemcheckbox", { name: /Colour by group/ }).click();
+        await expect(panel.locator(".r-ts-g").first()).toBeVisible();
         await dismiss();
+
+        // A ZOOM over the size the log already reads at, by the keys a hand reaches for. Pressed over the LOG,
+        // which is focusable because the output cell owns Ctrl+F — and prevented, so the browser does not zoom
+        // the whole page instead.
+        const size = () => panel.locator("pre.code").evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+        const before = await size();
+        await panel.locator(".r-outscroll").click();
+        await chat.keyboard.press("Control+=");
+        await expect.poll(size).toBeGreaterThan(before);
+        await chat.keyboard.press("Control+0");
+        await expect.poll(size).toBe(before);
 
         // It is the OPEN run's, not the ring's: going back to the list leaves it with no run to describe rather
         // than showing some other run's mechanics under nothing.

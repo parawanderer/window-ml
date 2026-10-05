@@ -12,7 +12,8 @@ import { type ResourceSample, type MemoryBreakdown, memoryParts, MEMORY_PARTS } 
 import { type ResourceEvent } from "../resource-timeline";
 import { trackCursor, hoverAt } from "./chart-interaction";
 import { bandIdentity, bandTint, W, H, partFill, bandFill } from "./chart-paint";
-import { sampleGraceMs, colorFor } from "./panel-state";
+import { sampleGraceMs } from "./panel-state";
+import { colorFor } from "./palette";
 import { hoverModel, kbFocus } from "./vram-focus";
 
 /**

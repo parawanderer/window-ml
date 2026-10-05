@@ -5,7 +5,7 @@
 
 import type { Band } from "../resource-bands";
 import type { MemoryBreakdown } from "../resource-model";
-import { colorFor } from "./panel-state";
+import { colorFor } from "./palette";
 
 /** The plot's SVG viewBox, width and height; every plot is stretched to its track, so these are units, not pixels. */
 export const W = 300, H = 72;

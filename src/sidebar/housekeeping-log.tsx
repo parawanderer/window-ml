@@ -9,6 +9,18 @@ import { formatBytes } from "../resource-model";
 import { fmtDelta } from "./timestamps";
 import { LOG_CAP, LOG_KEY, type HousekeepingEvent } from "../housekeeping";
 
+/** A log rendered as text: the lines, the produced-at marks the timestamp gutter is drawn from, and — for a
+ *  surface that wants it — which GROUP each line belongs to and how wide that column is. The last two are extra,
+ *  not a change: a caller that ignores them gets exactly the log it got before. */
+export interface LogText {
+    text: string;
+    marks: [number, number][];
+    /** The subsystem each rendered line came from, one per line, in the same order. */
+    groups: string[];
+    /** How many characters the subsystem column was padded to, so a renderer can find it in the line. */
+    headWidth: number;
+}
+
 /**
  * The events as log TEXT plus the produced-at marks `TimedOutput` draws its gutter from — oldest first, so the
  * cell's tail-follow keeps the newest in view. Subsystems in `hidden` are left out. Aligned for a human reader
@@ -19,11 +31,12 @@ import { LOG_CAP, LOG_KEY, type HousekeepingEvent } from "../housekeeping";
  * It exists because a key that is the same on every record in view is width spent saying nothing, and in a
  * narrow panel that width is what makes a one-record line wrap into two (the execution log's `tab`).
  */
-export function housekeepingText(events: HousekeepingEvent[], hidden: ReadonlySet<string> = new Set(), omit: ReadonlySet<string> = new Set()): { text: string; marks: [number, number][] } {
+export function housekeepingText(events: HousekeepingEvent[], hidden: ReadonlySet<string> = new Set(), omit: ReadonlySet<string> = new Set()): LogText {
     const shown = events.filter((e) => !hidden.has(e.subsystem));
     const width = Math.max(0, ...shown.map((e) => e.subsystem.length));
     const lines: string[] = [];
     const marks: [number, number][] = [];
+    const groups: string[] = [];
     let offset = 0;
     for (const e of shown) {
         const parts = [e.subsystem.padEnd(width), e.reason ? `${e.kind} (${e.reason})` : e.kind];
@@ -35,9 +48,10 @@ export function housekeepingText(events: HousekeepingEvent[], hidden: ReadonlySe
         const line = parts.join("  ");
         marks.push([offset, e.t]);
         lines.push(line);
+        groups.push(e.subsystem);
         offset += line.length + 1;
     }
-    return { text: lines.join("\n"), marks };
+    return { text: lines.join("\n"), marks, groups, headWidth: width };
 }
 
 /** Each subsystem with how many events it has, in order of first appearance — the filter chips' labels. */

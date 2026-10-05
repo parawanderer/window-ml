@@ -400,9 +400,12 @@ html, body, #root { height: 100%; }
 .chat.calm .composer-row:focus-within { border-color: var(--panel-2-hover); }
 /* The model, beside send: the name in the code face, quiet, no box of its own until the pointer finds it. */
 .chat .composer-foot .chint { margin-right: 14px; }
-.composer-tools { display: flex; align-items: center; flex: 0 1 auto; min-width: 0; align-self: flex-end; }
+/* CENTRED WITH THE SEND BUTTON, which is its neighbour and the thing it is read against. It was pinned to the
+   BOTTOM of the row, which looks identical while the field is one line and splits the moment the text wraps —
+   the model name dropping a half-line below a send button that stays where it was. */
+.composer-tools { display: flex; align-items: center; flex: 0 1 auto; min-width: 0; }
 .tp-pill.tp-pill-model.tp-pill-quiet { background: transparent; border: none; color: var(--fg-dim); font-size: .82em; padding: 6px 8px; min-height: 0;
-    border-radius: 10px; max-width: 240px; margin-bottom: 2px; }
+    border-radius: 10px; max-width: 240px; }
 .tp-pill.tp-pill-model.tp-pill-quiet:hover, .tp-pill.tp-pill-model.tp-pill-quiet[aria-expanded="true"] { background: var(--panel-2); color: var(--fg); }
 /* Where each model runs, in the model lists: a faint glyph, the sentence on hover (`WhereMark`). */
 .tp-where { display: inline-flex; flex: 0 0 auto; color: var(--fg-faint); opacity: .8; }

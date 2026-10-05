@@ -8,6 +8,11 @@
     --border: #3f3f46; --fg: #e4e4e7; --fg-dim: #a1a1aa; --fg-faint: #71717a;
     --accent: #6366f1; --accent-strong: #4f46e5; --accent-fg: #ffffff;
     --ok: #4ade80; --err: #f87171; --warn: #eab308; --err-border: #7f1d1d; --kind: #c7d2fe;
+    /* HOW HARD A GROUP COLOUR LANDS IN A LOG. The palettes (`VRAM_PALETTES`) are drawn for CHART LINES, which are
+       thin and want to carry across a plot; the same hue as a word in a wall of monospace is shouting. So the
+       colour is blended toward the ground before it is used — toward the dark background here, toward black on a
+       white one, which is the direction each needs to stop being the brightest thing on the line. */
+    --log-g-into: var(--bg); --log-g-strength: 76%;
     /* Something waiting on the person (an approval, an attention count). The warning yellow at a desk; the chat page
        turns it cyan on a touch screen (chat.css), where a yellow badge in a small frame read as an alarm. */
     --notice: var(--warn); --notice-fg: #1a1400;
@@ -29,6 +34,7 @@
     --border: #d4d4d8; --fg: #18181b; --fg-dim: #52525b; --fg-faint: #a1a1aa;
     --accent: #6366f1; --accent-strong: #4f46e5; --accent-fg: #ffffff;
     --ok: #16a34a; --err: #dc2626; --warn: #ca8a04; --err-border: #fecaca; --kind: #4338ca;
+    --log-g-into: #000; --log-g-strength: 70%;
     --j-key: #986801; --j-str: #50a14f; --j-lit: #0184bb; --j-base: #383a42;   /* atom-one-light, matches the code block */
 }
 * { box-sizing: border-box; }
@@ -2751,7 +2757,9 @@ html[data-surface="card"] .appr-btn.no:hover {
 .card-export-menu { position: absolute; top: 34px; left: 2px; z-index: 6;
     display: flex; flex-direction: column; min-width: 200px; padding: 4px;
     background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 22px rgba(0, 0, 0, .45); }
-.card-export-menu .menu-head { padding: 4px 8px 5px; color: var(--fg-faint); font-size: .8em; font-weight: 600; letter-spacing: .02em; }
+/* A section head inside a menu: a glyph and a few words naming what the rows under it are, so a group of toggles
+   is not read as more things to do. Promoted out of `.card-export-menu`, which happened to need one first. */
+.menu-head { display: flex; align-items: center; gap: 6px; padding: 4px 8px 5px; color: var(--fg-faint); font-size: .8em; font-weight: 600; letter-spacing: .02em; }
 .card-work-toggle { display: flex; align-items: center; gap: 8px; width: 100%; background: transparent;
     border: none; color: var(--fg-dim); font: inherit; font-size: .95em; cursor: pointer; padding: 4px 0; }
 .card-work-toggle:hover { color: var(--fg); }
@@ -3160,6 +3168,17 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
    IS the records. No padding, because a region this narrow has no width to give a margin and the output cell
    draws its own gutter — the padding read as the log floating in a white box. */
 .runlog { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+/* A log line's GROUP column when the surface asked for colouring (TimedOutput's `groups`), in the colour
+   `colorFor` gives that name from the chosen graph palette. Only the column is
+   tinted, never the whole line: the line is the thing being read, and a page of coloured prose is harder to read
+   than one with a coloured margin — what the colour is for is finding where one group ends and the next begins. */
+.r-ts-g { font-weight: 600; color: color-mix(in srgb, var(--g, currentColor) var(--log-g-strength, 76%), var(--log-g-into, currentColor)); }
+/* A ZOOM, never an absolute size. The log IS a code block, so the size it already follows is the device's "Code
+   size" (`--code-fs`) rather than the panel's — and this multiplies it, so changing that one still moves a log
+   somebody had zoomed instead of the two settings disagreeing. `pre.code` to out-specify `.chat .code`, which
+   is what pins the page's code to that variable in the first place. */
+.runlog { font-size: calc(1em * var(--runlog-zoom, 1)); }
+.runlog pre.code { font-size: calc(var(--code-fs, 0.92em) * var(--runlog-zoom, 1)); }
 /* The states that are not a log — nothing open, nothing recorded, unreadable — do want the margin back. */
 .runlog > .hint { padding: 8px; margin: 0; }
 /* A SECOND BLOCK IN A TOOLTIP, under a rule: the same divider `.tt-said` draws for a model's claim, without its
@@ -3167,6 +3186,20 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .tt-note { display: block; margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--tip-line); color: var(--fg-dim); }
 /* A menu's own divider, between a group of toggles and the actions under them. */
 .menu-rule { height: 1px; margin: 4px 2px; background: var(--border); }
+/* The panel's own menu sits at the RIGHT of the dock's bar, against the region's `\22EE` — the bar's slot stretches
+   (`.dock-slot > *`), so without this the button floats at the far left, a whole bar away from the other menu. */
+.runlog-menu { justify-content: flex-end; }
+/* The text-size row in a panel's menu: a label, then minus / the current size / plus, the middle one resetting. */
+.menu-zoom { display: flex; align-items: center; gap: 2px; padding: 2px 8px 4px; }
+.menu-zoom-lbl { flex: 1 1 auto; }
+.menu-zoom .hbtn { width: 22px; height: 22px; flex: none; font-size: 1.1em; line-height: 1; }
+/* The current size, which is also the button that puts it back — the one place a reset belongs is on the number
+   it would reset. Tabular, so stepping through the ladder does not shift the buttons beside it. */
+.menu-zoom-now { min-width: 3.4em; padding: 2px 4px; background: none; border: none; border-radius: 4px;
+    color: var(--fg-dim); font: inherit; font-variant-numeric: tabular-nums; cursor: pointer; }
+.menu-zoom-now:hover { background: var(--panel-2); color: var(--fg); }
+/* The keyboard way to do the same thing, said once at the foot of the menu rather than on the row. */
+.menu-foot { padding: 0 8px 4px; color: var(--fg-faint); font-size: .8em; }
 /* A CHECKABLE menu row — a filter rather than an action — reads ACROSS: tick, what it filters, how many of them.
    `.menu-item` is a column because an action's hint belongs under its label, and that stacking turned a
    three-word filter into three lines. */

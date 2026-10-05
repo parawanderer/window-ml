@@ -9,7 +9,8 @@ import { useRef, useState, useLayoutEffect } from "preact/hooks";
 import { scrubIntent, TAIL_SLACK_MS, scrubExtent, segments, scrubZone, scrubResize, scrubTo, scrubPinch, wheelScrubFraction, scrubNudge } from "../resource-axis";
 import type { ResourceSample } from "../resource-model";
 import type { ResourceEvent } from "../resource-timeline";
-import { sampleGapMs, colorFor } from "./panel-state";
+import { sampleGapMs } from "./panel-state";
+import { colorFor } from "./palette";
 import { zoomRange, resWindowS, RESWIN_KEY, laneEnabled, showLane } from "./store";
 
 /** Which part of the scrub window the pointer is over, so the cursor can say a handle is there before you

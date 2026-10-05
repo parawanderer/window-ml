@@ -87,6 +87,23 @@ growing a second row), and the paragraph is the TAB's tooltip under a rule (`.tt
 button's own tip: it is a status rather than a control, so it earned no row, but it is the one number someone
 wants at a glance and a tooltip costs no width.
 
+Two reading choices live in that menu, both remembered per device in `chrome.storage.local` beside the panel's
+neighbours (`outMaxH` and the rest of Appearance do the same), because the view is drawn from `src/sidebar/` and
+may not reach into `src/chat/`:
+
+- **Colour by group**, OFF by default. Each line's subsystem column takes a colour from the palette the resource
+  panel draws with — the one "Colour palette" names, which is why that setting is no longer called "Model
+  colours". Assigned by POSITION over every group the log holds (`poolColor`, the rule pools already use), not by
+  hashing the name: a log has four or five groups, and two of them colliding is likely rather than unlucky. The
+  order is over every group, not the shown ones, so filtering one out does not recolour the rest. The colour is
+  blended toward the ground before use (`--log-g-into`), because a palette drawn for thin chart lines is shouting
+  as a word in a wall of monospace. Default off because the renderer underneath is the housekeeping log's too.
+- **Text size**, a ZOOM and never an absolute size. The log is a code block, so the size it already reads at is
+  the device's "Code size" (`--code-fs`); this multiplies it, so changing that one still moves a log somebody had
+  zoomed instead of the two settings disagreeing. `Ctrl`/`⌘` with `+`, `−` or `0` does the same thing while the
+  log has focus — the output cell is focusable already, since it owns Ctrl+F — and the key is prevented, so the
+  browser does not zoom the whole page instead.
+
 The tab id is dropped from the rendered LINES while it is the same on all of them — in a region this
 narrow that width is what turns each record into two wrapped lines — and comes back the moment a run is
 re-filed under a new tab, which is exactly when it is worth reading. The records always carry it.

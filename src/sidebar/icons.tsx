@@ -162,12 +162,12 @@ export const IconMenu = () => (
         <path d="M4 6h16M4 12h16M4 18h16" />
     </svg>
 );
-/** More, three dots ACROSS — a panel's own menu, told apart at a glance from the vertical `⋮` that belongs to the
- *  frame around it (the dock region's, the header's). Two menus sit next to each other in a dock's tab bar, and
- *  the same glyph twice would read as the same menu drawn twice. */
-export const IconMoreH = () => (
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
-        <circle cx="6" cy="12" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="18" cy="12" r="1.7" />
+/** A funnel — FILTERING a list down to the part you want, as against searching it. Marks the group of
+ *  subsystem toggles in a panel's menu, where the rows under it are what is being filtered rather than things
+ *  to do. */
+export const IconFilter = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 5h16l-6.2 7.3v5.4L10.2 20v-7.7Z" />
     </svg>
 );
 /** Ruled lines with a stamp beside each — a TIMESTAMPED LOG, which is what tells it apart from the list's three

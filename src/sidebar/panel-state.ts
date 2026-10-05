@@ -19,47 +19,6 @@ import { usageByModel, type UsageSource } from "./model-stats";
 import { scopedHash, laneScoped, laneHidden, sessionMap } from "./store";
 import type { Band } from "../resource-bands";
 
-// --- VRAM monitor ---
-/**
- * The palettes a model's colour can come from. A model's colour is its identity across the whole panel — the
- * line, the band, the row, its lane blocks, its ticks on the strip — so this is a real preference rather
- * than decoration: which eight hues read as distinct depends on the display, the theme and the eyes.
- *
- * `grafana` is the classic dashboard palette, which is what a lot of people are already reading GPU graphs
- * in; `warm`/`cool` narrow the range for a panel sitting beside other colour; `vivid` is the original.
- * Every palette is eight long, because the assignment hashes a name into it and a shorter one collides more.
- */
-export const VRAM_PALETTES: Record<string, string[]> = {
-    vivid:   ["#6366f1", "#22c55e", "#f59e0b", "#ec4899", "#06b6d4", "#a855f7", "#ef4444", "#84cc16"],
-    grafana: ["#7EB26D", "#EAB839", "#6ED0E0", "#EF843C", "#E24D42", "#1F78C1", "#BA43A9", "#705DA0"],
-    cool:    ["#4C78A8", "#54A24B", "#72B7B2", "#B279A2", "#439894", "#5C7EC1", "#83B4D8", "#3F8F7A"],
-    warm:    ["#E45756", "#F58518", "#EECA3B", "#B279A2", "#D67195", "#C4693D", "#E7955A", "#B4451F"],
-};
-
-/** Which one is in use. A sidebar-only display pref in `chrome.storage.local`, like the font scale and the
- *  code-block prefs — it changes how the panel LOOKS, not what the extension does, so it has no business in
- *  the synced `MlConfig`. */
-export const vramPalette = signal<string>("vivid");
-
-/** A model's colour: its name hashed into the chosen palette, so it is stable for as long as the model is
- *  called the same thing and identical on every surface that draws it. */
-export const colorFor = (name: string) => {
-    const p = VRAM_PALETTES[vramPalette.value] ?? VRAM_PALETTES.vivid;
-    return p[[...name].reduce((a, c) => a + c.charCodeAt(0), 0) % p.length];
-};
-
-/** A POOL's colour. Pools are an ordered set, not names to hash, so they get distinct colours by construction
- *  — which `VRAM_COLORS[i % 8]` stopped doing on a box with more than eight pools: an 8-GPU node (eight cards
- *  plus system RAM) gave card 0 and System RAM the same indigo, in a legend whose entire job is telling the
- *  lines apart. Past the curated palette, hues are spread evenly over however many pools there are. */
-export function poolColor(i: number, count: number): string {
-    const pal = VRAM_PALETTES[vramPalette.value] ?? VRAM_PALETTES.vivid;
-    if (count <= pal.length) return pal[i % pal.length];
-    // Golden-angle-free even spread: with the count known, evenly spaced hues are maximally far apart, and
-    // fixed saturation/lightness keeps them legible on both themes.
-    return `hsl(${Math.round((i * 360) / count)}deg 70% 55%)`;
-}
-
 export const VRAM_HISTORY = 45, VRAM_POLL_MS = 2000;   // samples kept, and how often we ask — polling is gated on the panel being open, so gaps are real gaps
 
 // EVERY MEMORY SAMPLE this session took, per box. Session-only and dropped on a backend change: redrawing
@@ -213,10 +172,6 @@ export function editLayout(tracks: TrackDef[]): void {
     customTracks.value = tracks;   // kept so a detour through a preset doesn't destroy it
     saveLayout();
 }
-
-export const VRAM_PALETTE_KEY = "ml_vram_palette";   // storage.local: which colour palette names the models
-
-export const VRAM_COLORS = VRAM_PALETTES.vivid;   // the default palette — a model keeps its colour for as long as it is DRAWN, not just while resident
 
 // Models the user has hidden from the totals/graph (session-only; a signal so it
 // survives VramPanel remounts). Immutable Set updates so the signal notifies.

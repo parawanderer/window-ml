@@ -130,7 +130,15 @@ try {
     await sleep(BEAT + 400); await shot("the-one-menu");
     await chat.keyboard.press("Escape");
 
-    await narrate(chat, "8 · And what it IS, on the tab", { sub: "under a rule, where it is read once by whoever is wondering — rather than a paragraph every reader scrolls past every time" });
+    await narrate(chat, "8 · Colour by group, and a zoom", { sub: "the subsystem column takes the next colour of the palette the graphs use — by POSITION, so two groups never land on the same one. Off by default: the renderer under it is the housekeeping log's too" });
+    await chat.locator(".runlog-menu button").first().click();
+    await chat.getByRole("menuitemcheckbox", { name: /Colour by group/ }).click();
+    await chat.getByRole("button", { name: "Bigger" }).click();
+    await sleep(BEAT + 400); await shot("coloured-and-zoomed");
+    await chat.keyboard.press("Escape");
+    await sleep(400); await shot("coloured-log");
+
+    await narrate(chat, "9 · And what it IS, on the tab", { sub: "under a rule, where it is read once by whoever is wondering — rather than a paragraph every reader scrolls past every time" });
     {
         const tab = chat.locator('.dock-tab', { hasText: "Execution log" });
         const box = await tab.boundingBox();
