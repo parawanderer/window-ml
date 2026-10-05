@@ -955,6 +955,42 @@ test("a gate the run ended without answering keeps what was asked and loses the 
     await page.close();
 });
 
+// A RUN OF THE SAME TOOL FOLDS INTO ONE ROW in the reading view. The rule itself is unit-tested
+// (step-streak.test.mjs); what is here is that the fold reaches the screen and opens again. The REVEAL half — a
+// citation landing on a step inside a folded streak — is in sidebar-agent-step.test.js, where `revealSeq` can be
+// set directly; that is the hazard, because a citation that silently did nothing would be a new way to break the
+// thing `scrollToStepSeq` exists to prevent.
+test("a run of the same tool folds into one row, and opens again", async () => {
+    const { page, errors } = await open(DESKTOP);
+    await page.evaluate(() => {
+        const key = "laptop:5e6f7a80", hash = "5e6f7a80", now = Date.now();
+        // Six more `exec` turns after the run's own steps: adjacent, one tool each, nothing said between them.
+        for (let i = 0; i < 6; i++) {
+            globalThis.__chatFake.emit(key, {
+                kind: "agent-step", id: `${hash}-run${i}`, ts: now + i, save: true, session: { hash, turn: 0 },
+                step: 10 + i, seq: 300 + i, tool: "exec", arguments: { js: `${i}` },
+                result: i === 1 ? "Error: nope" : `${i}`, toolMs: 100,
+            });
+        }
+    });
+    await page.goto(`${server.url}#s=laptop%3A5e6f7a80`);
+    const streak = page.locator(".astreak");
+    await expect(streak).toHaveCount(1);
+    // It says what the six rows could not: how many, how many failed, how long.
+    await expect(streak.locator(".astreak-n")).toHaveText("× 6");
+    await expect(streak.locator(".astreak-bad")).toHaveText("1 failed");
+    // The members are NOT drawn while it is folded — that is the whole point.
+    await expect(page.locator('[data-astep-seq="303"]')).toHaveCount(0);
+
+    await streak.locator(".astreak-head").click();
+    await expect(page.locator('[data-astep-seq="303"]')).toHaveCount(1);
+    await streak.locator(".astreak-head").click();
+    await expect(page.locator('[data-astep-seq="303"]')).toHaveCount(0);
+
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 // TWO THINGS CLAIM THE TOP-RIGHT CORNER of a wide calm page. There is no header band there, so the session's ⋮ is a
 // floating button in the corner — and the approval bar, when the gate has scrolled out of reach, is the first
 // in-flow element of the same pane. The ⋮ landed on the band, a pixel from "Review ›". Both are still reachable, so

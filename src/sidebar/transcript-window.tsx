@@ -50,11 +50,24 @@ const held = new Map<string, number>();
 export const hiddenFor = (key: string): number => held.get(key) ?? 0;
 
 /** The items a transcript draws, and how many it is holding back. */
-export function tail<T>(items: T[], key: string): { drawn: T[]; hidden: number } {
+export function tail<T>(items: T[], key: string, weight?: (item: T) => number): { drawn: T[]; hidden: number } {
     const n = shownFor(key);
-    const hidden = Math.max(0, items.length - n);
+    // WEIGHT, because an item is not always one thing to draw. A folded run of tool calls is one row on screen and
+    // its own length in DOM the moment it is opened, and counting it as one let a hundred and forty turns through a
+    // window whose whole job is that they do not — the budget is about what this costs to draw, not about rows.
+    // Unweighted callers are unchanged: every item weighs one and this is the same slice it always was.
+    if (!weight) {
+        const hidden = Math.max(0, items.length - n);
+        held.set(key, hidden);
+        return { drawn: hidden ? items.slice(items.length - n) : items, hidden };
+    }
+    let used = 0, i = items.length;
+    while (i > 0 && used + weight(items[i - 1]) <= n) { used += weight(items[--i]); }
+    // Never draw NOTHING: one item heavier than the whole budget is still the one you are looking at.
+    if (i === items.length && items.length) i = items.length - 1;
+    const hidden = i;
     held.set(key, hidden);
-    return { drawn: hidden ? items.slice(items.length - n) : items, hidden };
+    return { drawn: items.slice(i), hidden };
 }
 
 /** The scrollable ancestor of an element: what a transcript is drawn inside, whichever surface it is. */

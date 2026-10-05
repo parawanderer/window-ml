@@ -15,7 +15,7 @@ import { runStats, fmtTokPerSec, runStatsProvenance } from "../contract-chat";
 import { externalSheetIds } from "../dom";
 import { surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, showStatsTps, laneLitSeqs, focusMode } from "./store";
 import type { Session, AgentStep, Status } from "./store";
-import { pretty, truncate, markdown, collapsedPreview } from "./format";
+import { pretty, truncate, markdown, collapsedPreview, toolFailed } from "./format";
 import { sessionProfile } from "./model";
 import { Dialog } from "./dialog";
 import { useCloseAnimation } from "./use-close";
@@ -27,6 +27,7 @@ import {
     decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText, cursorTipOn, PointerChip, TipText,
 } from "./ui-kit";
 import { FeedbackBlock, ReusedBlock } from "./answer-render";
+import { foldStreaks, StepStreak } from "./step-streak";
 import { deepestUserLine } from "../py-format";
 import { JsonNode, type JsonSchemaNode } from "./json-tree";
 export { JsonNode, JtKey, jtPreview, type JsonSchemaNode } from "./json-tree";
@@ -149,10 +150,6 @@ export function liveCutoff(st: AgentStep): number | undefined {
     const a = st.arguments || {};
     return resolveOutputCap(st.tool, a.maxChars, a.maxCharsReason).cap;
 }
-
-/** Did this tool call FAIL, read off the model-facing result text. Biased toward "failed": a false
- *  positive withholds a citation token, a false negative would cite an ERROR as an answer. */
-export const toolFailed = (result?: string): boolean => !!result && /^(Error:|Denied)/.test(result);
 
 // One tool call: collapsed by default. Expanded, a descriptor renders by default
 // with a rendered⇄raw toggle (raw = the In:/Out: args+result); no descriptor →
@@ -912,9 +909,28 @@ export function AgentRunView({ s }: { s: Session }) {
     // breaks the tie. A fixed answer-before-say fraction was wrong: when a turn runs no tool steps (a plain
     // chat-style reply, or a cancel), every answer/say lands at the SAME atStep, so the fraction forced ALL
     // answers ahead of ALL says regardless of when they actually happened. ts is the authoritative order.
-    const items: { pos: number; ts: number; el: preact.JSX.Element }[] = [
+    // Does the RUNTIME still think this run is going? `s.status` is this client's reduction of the event stream and
+    // stays `pending` for ever when a run dies without a terminal event.
+    //
+    // SUBSCRIBED TO `rev` BECAUSE OF THIS, and the read is kept in the output (a bare one is dropped by the
+    // minifier) — the same shape `RunStatsBar` already needs. The seam answers out of the runtime's index, which is
+    // a signal, and reading one here makes @preact/signals memoize this component on its props; `s` is the same
+    // mutated object for the whole run, so without its own subscription it stops re-rendering from the parent's
+    // cascade. That cascade is how a GROWN WINDOW reaches the screen, and the symptom is silent and specific: a
+    // citation to a step outside the window pages it back in, the window grows, nothing repaints, and the click
+    // appears to do nothing. Which is the exact failure `reveal` exists to prevent.
+    const r = rev.value;
+    const runLive = services().stillLive(s.hash);
+    const items: { pos: number; ts: number; el: preact.JSX.Element; weight?: number }[] = [
         { pos: -1, ts: s.createdTs, el: <UserBubble key="task" text={s.task || ""} ts={s.createdTs} images={s.taskImages} /> },
-        ...groups.map(g => ({ pos: g.step, ts: 0, el: <AgentTurn key={`t${g.step}`} turn={g} max={s.maxSteps} hash={s.hash} /> })),
+        // A RUN OF THE SAME TOOL folds into one row in the reading view — eight `exec` rows with empty previews say
+        // "exec" eight times, and the busy view is the developer's whole trace and keeps all of them. The fold only
+        // happens once the streak has ENDED, so a live run is never collapsing out from under you.
+        // Design and every clause behind it: tmp/design-tool-streaks.md.
+        ...(focusMode.value ? foldStreaks(groups, { live: s.status === "pending" && runLive }) : groups).map(g =>
+            "kind" in g
+                ? { pos: g.step, ts: 0, weight: g.turns.length, el: <StepStreak key={`k${g.step}`} s={g} render={t => <AgentTurn key={`t${t.step}`} turn={t} max={s.maxSteps} hash={s.hash} />} /> }
+                : { pos: g.step, ts: 0, el: <AgentTurn key={`t${g.step}`} turn={g} max={s.maxSteps} hash={s.hash} /> }),
         // A page-transition divider right after each SUCCESSFUL navigate turn (skip a denied/errored one — the
         // page didn't actually change). Sits at step+0.3: after the navigate group, before its next turn/answer.
         ...(s.steps || []).filter(st => st.tool === "navigate" && st.approval !== "denied" && !!st.result && !st.result.startsWith("Error") && !!navTargetOf(st))
@@ -932,19 +948,9 @@ export function AgentRunView({ s }: { s: Session }) {
     ].sort((a, b) => a.pos - b.pos || a.ts - b.ts);
     // Only the newest items are drawn: a long run costs as much DOM as it has steps, and a step with a screenshot or
     // a table costs several times a chat turn (transcript-window.tsx).
-    const { drawn, hidden } = tail(items, s.hash);
-    // Does the RUNTIME still think this run is going? `s.status` is this client's reduction of the event stream and
-    // stays `pending` for ever when a run dies without a terminal event.
-    //
-    // SUBSCRIBED TO `rev` BECAUSE OF THIS, and the read is kept in the output (a bare one is dropped by the
-    // minifier) — the same shape `RunStatsBar` already needs. The seam answers out of the runtime's index, which is
-    // a signal, and reading one here makes @preact/signals memoize this component on its props; `s` is the same
-    // mutated object for the whole run, so without its own subscription it stops re-rendering from the parent's
-    // cascade. That cascade is how a GROWN WINDOW reaches the screen, and the symptom is silent and specific: a
-    // citation to a step outside the window pages it back in, the window grows, nothing repaints, and the click
-    // appears to do nothing. Which is the exact failure `reveal` exists to prevent.
-    const r = rev.value;
-    const runLive = services().stillLive(s.hash);
+    // A folded streak weighs its MEMBERS, not one: the fold is a reading affordance and must not quietly hand the
+    // window a hundred turns it was built to hold back.
+    const { drawn, hidden } = tail(items, s.hash, (it) => it.weight ?? 1);
     return (
         <>
             <span data-rev={r} hidden />

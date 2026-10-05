@@ -1690,3 +1690,27 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-bs-choices .btn svg { flex: 0 0 auto; color: var(--fg-dim); }
 /* The "or type one" row: the dialog's own field (`.chat-dialog-field`) under a label saying what it is for. */
 .chat-bs-field { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; font-size: .92em; color: var(--fg-dim); }
+
+/* A FOLDED RUN OF THE SAME TOOL. Eight `exec` rows with empty previews say "exec" eight times; this says what they
+   could not — how many, how many failed, how long. Reading view only: the panel is the developer's whole trace.
+   The fold happens once the streak has ENDED, so the entrance is a thing arriving rather than rows vanishing
+   under a reader. Design: tmp/design-tool-streaks.md. */
+.astreak { margin: 3px 0; animation: chat-streak-in .22s cubic-bezier(.4, 0, .2, 1); }
+.astreak-head {
+    display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 6px;
+    background: none; border: none; border-radius: 8px; color: var(--fg-dim); font: inherit; cursor: pointer; text-align: left;
+}
+.astreak-head:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.astreak-head .tri { flex: none; width: 12px; height: 12px; transition: transform .12s; }
+.astreak-head .tri svg { width: 12px; height: 12px; }
+.astreak-head .tri.open { transform: rotate(90deg); }
+/* The tool's NAME in the same mono the step rows use, so a folded run reads as the rows it replaced. */
+.astreak-tool { font-family: var(--mono, ui-monospace, monospace); font-weight: 700; color: var(--fg); }
+.astreak-n { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+/* THE ONE THING WORTH COLOURING. In the run this was built for, two calls in the stretch were errors and that was
+   the only signal in it; everything else here is grey on purpose so this is what the eye finds. */
+.astreak-bad { color: var(--err); font-size: .88em; }
+.astreak-ms { color: var(--fg-faint); font-size: .88em; font-style: italic; margin-left: auto; }
+.astreak.open > .astreak-head { margin-bottom: 4px; }
+@keyframes chat-streak-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .astreak { animation: none; } }
