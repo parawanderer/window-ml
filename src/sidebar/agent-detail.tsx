@@ -21,7 +21,7 @@ import { Dialog } from "./dialog";
 import { useCloseAnimation } from "./use-close";
 import { IconChevron, IconWarn, IconInfo, IconCopy, IconCheck, IconIn, IconOut } from "./icons";
 import { usageSamples, liveOutTokens } from "./usage";
-import { currentTurnSteps, orbStatus } from "./orb-status";
+import { currentTurnSteps, liveShownByTranscript, orbStatus } from "./orb-status";
 import { fmtDur } from "./timestamps";
 import {
     BusyBlob, Code, CopyBtn, SheetChip, Hash, Stamp, Dot, Disclosure,
@@ -1136,14 +1136,16 @@ export function PendingNote({ s }: { s: Session }) {
     // go into VRAM — the longest wait there is, and the one that most looks like a hang. It answers
     // `undefined` where no /api/ps reading exists (a remote runtime, or the panel never opened), which
     // orbStatus reads as "we don't know" rather than "not loaded".
-    const live = blocked ? null : orbStatus(s, now, services().modelResident(s.hash, s.model));
+    const live = blocked ? null : orbStatus(s, now, services().modelResident(s.hash, s.model), { narration: false });
     // IS THIS THE SAME EVENT, DRAWN TWICE? While the model streams, `LiveStream` is rendering that very text
     // just above — so the orb's phrase is a second copy of it, and the reading view ends up showing the reply
     // and a clone of the reply's first line under it. The HUD needs the phrase (it has no transcript to show
     // the text in); a surface that already draws the stream does not. Marked rather than removed, because the
     // panel is an instrumentation surface where a steady running bar is wanted and the reading view is not:
-    // chat.css hides it there. The rule is "a status indicator only where nothing else shows liveness".
-    const dup = !blocked && !!(s.liveStream?.content || s.liveStream?.reasoning);
+    // chat.css hides it there. The rule is "a status indicator only where nothing else shows liveness", which also
+    // covers a tool in flight: its step pulses just above (`liveShownByTranscript` holds the whole list). And the label
+    // is never the model's narrated thought, which this surface prints already; the HUD, with no transcript, keeps it.
+    const dup = !blocked && liveShownByTranscript(s);
     return (
         <div class={`pending-note${blocked ? " blocked" : ""}${dup ? " dup" : ""}`}>
             {/* BOTH are drawn and the view picks one in CSS: the bar in the panel, where it matches the

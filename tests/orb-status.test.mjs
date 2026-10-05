@@ -4,7 +4,7 @@
 // (the humanized tool phase + a stall heartbeat), with no live token count (it can't, mid-generation).
 import { test } from "node:test";
 import assert from "node:assert";
-import { orbStatus, startupPhase, activityFor, liveProseFor, liveTokensFor, fmtTokens, STALL_MS } from "../src/sidebar/orb-status.ts";
+import { orbStatus, startupPhase, activityFor, liveProseFor, liveTokensFor, fmtTokens, STALL_MS, liveShownByTranscript } from "../src/sidebar/orb-status.ts";
 
 // Minimal Session fixtures — only the fields the projection reads.
 const run = (over = {}) => ({ steps: [], says: [], lastTs: Date.now(), ...over });
@@ -148,4 +148,30 @@ test("activityFor: after a tool returns, 'thinking about' becomes 'writing about
     const withStream = (ls) => ({ ...run({ steps: [step({ tool: "python_exec", pending: false })] }), liveStream: ls });
     assert.equal(activityFor(withStream({ reasoning: "hm" })).label, "Thinking about the Python output…");
     assert.equal(activityFor(withStream({ content: "The total is" })).label, "Writing about the Python output…");
+});
+
+// ---- WHAT A SURFACE WITH A TRANSCRIPT STILL SAYS: the waits nothing else on screen shows ----
+
+test("a transcript already shows streaming text, reasoning and a tool in flight; the waits it does not show are left", () => {
+    // Shown by the transcript, so a reading view hides its status line.
+    assert.equal(liveShownByTranscript(run({ liveStream: { content: "The cheapest fare is" } })), true, "the reply appearing IS the signal");
+    assert.equal(liveShownByTranscript(run({ liveStream: { reasoning: "compare the three" } })), true, "so is the thought block");
+    assert.equal(liveShownByTranscript(run({ steps: [{ step: 1, tool: "python_exec", pending: true }] })), true, "a tool in flight pulses in its step");
+    // Not shown anywhere else: these keep the line, streaming or not.
+    assert.equal(liveShownByTranscript(run()), false, "nothing back yet: Waiting for the model / Awakening");
+    assert.equal(liveShownByTranscript(run({ steps: [{ step: 1, tool: "python_exec", pending: false }] })), false, "a tool returned, the model has not answered");
+    assert.equal(liveShownByTranscript(run({ liveStream: { tokens: 240 } })), false, "the model writing a tool call's arguments: only the count moves");
+    assert.equal(liveShownByTranscript(run({ steps: [{ step: 1, tool: "exec", pending: true, awaitingApproval: true }] })), false, "a gate is the approval's to show, not a running tool");
+    // A PREVIOUS turn's tool that never settled is not this turn's liveness.
+    assert.equal(liveShownByTranscript(run({ steps: [{ step: 1, tool: "exec", pending: true }], says: [{ atStep: 1 }] })), false);
+});
+
+test("narration: false reads the phase, not the model's narrated thought the transcript already prints", () => {
+    const r = run({ steps: [{ step: 1, tool: "python_exec", pending: false, thought: "Now I will sum the fares." }] });
+    assert.match(orbStatus(r).label, /Now I will sum the fares/, "the HUD, with no transcript, keeps the narration");
+    assert.equal(orbStatus(r, Date.now(), undefined, { narration: false }).label, "Thinking about the Python output…");
+    const waiting = run({ lastTs: Date.now() - STALL_MS - 2000 });
+    const o = orbStatus(waiting, Date.now(), false, { narration: false });
+    assert.equal(o.label, "Awakening…", "a model loading, said where nothing else says it");
+    assert.match(o.suffix, /· \d+s/, "with the stall heartbeat");
 });
