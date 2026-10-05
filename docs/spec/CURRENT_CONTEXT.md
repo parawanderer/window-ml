@@ -31,8 +31,7 @@ today and both come up constantly:
 ml.current.run        // { id, model, step, maxSteps, startedTs } — which run this is
 ml.current.messages   // `NeutralMessage[]` VERBATIM — the exact array `ml.step()` takes
 ml.current.meta       // a PARALLEL array, same length and order: what we KNOW about each message
-ml.current.log        // this run's execution log (run-log.ts) as records
-ml.current.logText    // the same log as greppable text, for ml.pipe
+ml.current.log        // this run's execution log: records, carrying `.text` for ml.pipe
 ```
 
 Five decisions make it survive the write half. Each is the non-obvious choice.
@@ -229,39 +228,34 @@ scripts written against it. And `kind` is a closed vocabulary that the log's own
 (`sanitizeRunReport` silently drops a record whose `subsystem`/`kind` is not a lowercase slug), which is exactly
 what makes an equality filter reliable and a substring search a guess.
 
-### And a greppable text form beside it, for `ml.pipe`
+### The text form travels WITH it, as `log.text`
 
-`ml.pipe(text, "grep … | head -20")` already runs the tools' shell-style dialect over ANY string
-(`text-pipe.ts`), and a log is the most line-oriented thing in the system, so piping one is the obvious move.
-`ml.current.logText` is that string:
+`ml.current.log` is one member, not two. It is an array of records that also carries `text`: the same log as
+greppable lines, generated from those records by one pure function at snapshot time, so there is nothing to keep in
+sync and no second member to discover.
 
 ```js
-ml.pipe(ml.current.logText, "grep discarded | tail -20")
+ml.current.log.filter(r => r.kind === "discarded")      // records, for deciding
+ml.pipe(ml.current.log, "grep discarded | tail -20")    // text, for scanning
 ```
 
-**A sibling member, not `toString()`** — and not for the reason first given here. Python can express a custom
-`__str__` perfectly well (`class RunLog(list): def __str__(self): ...` is idiomatic), so "Python parity rules it
-out" was simply wrong; that objection applies to the String wrapper for message CONTENT, which has to be a string
-AND carry behaviour, not to a list that merely prints nicely.
+Both of those work today with no change to anything, which is the point — measured, not assumed:
 
-The real reason is that it would not work. `mlPipe` (`text-pipe.ts`) takes a string, unwraps an object with a
-`.text`/`.markdown` string property, and otherwise THROWS — naming an array explicitly: _"ml.pipe needs a string
-(or a fetch result), got an array. For an object, JSON.stringify it first"_. It never consults `toString`. So a
-custom one buys nothing unless `mlPipe` is changed to stringify whatever it is handed, which would blunt an error
-message that is deliberately steering models somewhere better.
+- `Array.isArray` is true, and the dialect decides kinds STRUCTURALLY rather than by constructor
+  (`readonly-exec.ts`), so it is an ordinary Array there: `filter`/`slice`/`map` are allowed, it is a writable
+  target, and no new kind has to be registered in a `kindOf` that defaults to deny. That is what keeps this a data
+  shape rather than a dialect extension owing its own adversarial tests.
+- `mlPipe` already unwraps an object carrying a `.text` string — that is what "or a fetch result" means in its
+  error — and it reads that BEFORE its array check, so an array with a `text` property pipes while a bare array
+  still throws the same steering error it throws today.
 
-Two plain values need no change anywhere, and the second reason is discoverability: `logText` appears in
-`agent_api_docs` as a named member with its format documented, where a `toString` behaviour is invisible in a type
-listing — a model reading `log: RunLogRecord[]` has no reason to suspect that printing it does something special.
-A `toString` can still be added later if it earns its place; it is additive, so nothing here closes that door.
+In Python the same thing is a `list` subclass with a `text` attribute (and `__str__` returning it), which is
+ordinary there — so the earlier claim that parity ruled this out was wrong twice over, and this is the shape that
+makes the point moot rather than argued.
 
-**The format is part of the contract, which is what answers the objection to text above.** The complaint there was
-that a regex over RENDERED output matches the presentation rather than the facts; this is not the presentation.
-`housekeepingText` is the UI renderer, with column widths and marks, and is explicitly not this. `logText` is a
-specified serialization — one record per line, `<iso-ts> <subsystem> <kind> [reason] [k=v …]`, fields separated by
-a single space and NEVER padded, because padding a model-facing string is pure context cost (AGENTS.md). It is
-generated from the records by one pure function, so the two cannot drift, and a test asserts that every record
-appears in the text with its `kind` intact.
+**The principle, since it is the second time this has come up:** two members for two different things (`messages`
+is the wire, `meta` is what we know about it — and they must not merge, decision 3), one member for two VIEWS of
+the same thing. `log` and `logText` were the second case dressed as the first.
 
 The array is already bounded — `PER_RUN_CAP` records per run — so "the whole log" is a known, small quantity and
 `slice(-n)` is the only recency control needed. If a model wants the human rendering (to quote it in an answer), it
@@ -345,6 +339,9 @@ later rather than now:
   a new costume — so the halting tests are written NOW, against the read-only shape, and re-run against the first
   mutation.
 - **Failure**: a script that reads `ml.current` and then falls out of dialect leaves nothing behind.
+- **`log` is both things at once**: `Array.isArray` holds, `filter`/`slice` run in the dialect, `ml.pipe` reads its
+  `.text` without a change to `mlPipe`, a BARE array still throws `mlPipe`'s steering error, and the text is
+  derived from the records by the one pure function so a record cannot be missing from it.
 - **The print rendering**, since it is now the only thing standing between a model and its own context twice over:
   that `console.log(ml.current.messages)` abridges, that naming one message's `content` prints it whole, that the
   rule is by size rather than by role (a large tool result abridges like the system prompt), and that the VALUE is
