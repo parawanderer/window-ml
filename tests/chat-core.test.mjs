@@ -10,8 +10,8 @@ import { FakeHost } from "../src/chat/fake-host.ts";
 import { hostServices } from "../src/chat/host-services.ts";
 import { holds, mayCommand } from "../src/chat/grants.ts";
 import { resumableHere } from "../src/chat/grants.js";
-import { CALM_KEY, LIST_KEY, PINNED_KEY, PINNED_MODELS_KEY, calm, dropPin, installViewPrefs, listOpen, pinned, pinnedModels, setCalm, setListOpen, togglePin, togglePinnedModel } from "../src/chat/view-mode.tsx";
-import { sessionMap, view } from "../src/sidebar/store.ts";
+import { CALM_KEY, GROUP_ALL_KEY, LIST_KEY, PINNED_KEY, PINNED_MODELS_KEY, calm, dropPin, installViewPrefs, listOpen, pinned, pinnedModels, setCalm, setGroupAll, setListOpen, togglePin, togglePinnedModel } from "../src/chat/view-mode.tsx";
+import { groupAllTools, sessionMap, view } from "../src/sidebar/store.ts";
 import { SESSION_CONTRACT_VERSION } from "../src/session-host.ts";
 
 const flush = async (n = 4) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
@@ -482,6 +482,27 @@ const fakePrefs = (seed = {}) => {
     const m = new Map(Object.entries(seed));
     return { get: (k) => m.get(k), set: (k, v) => m.set(k, v), all: m };
 };
+
+test("view prefs: group-all is OFF unless this device said otherwise, and it writes back", () => {
+    // Off is the default because the conservative fold rule is what someone who has not asked should get; and the
+    // flag is mirrored onto a signal in `src/sidebar/store`, since the shared session views may not import from
+    // `src/chat/` at all.
+    installViewPrefs(fakePrefs());
+    assert.equal(groupAllTools.value, false);
+
+    installViewPrefs(fakePrefs({ [GROUP_ALL_KEY]: true }));
+    assert.equal(groupAllTools.value, true, "a device that asked for it keeps its answer across a reload");
+
+    // A stored value of the wrong shape is not an answer: installing IS the answer to "how does this device read".
+    installViewPrefs(fakePrefs({ [GROUP_ALL_KEY]: "yes" }));
+    assert.equal(groupAllTools.value, false);
+
+    const prefs = fakePrefs();
+    installViewPrefs(prefs);
+    setGroupAll(true);
+    assert.equal(groupAllTools.value, true);
+    assert.equal(prefs.all.get(GROUP_ALL_KEY), true, "written back, so the next load opens the same way");
+});
 
 test("view prefs: calm is the default, a stored answer wins, and both toggles write back", () => {
     // Nothing stored: the page opens calm, with the list out, which is what this surface is for.

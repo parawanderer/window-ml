@@ -999,6 +999,67 @@ test("a run of the same tool folds into one row, and opens again", async () => {
     await page.close();
 });
 
+// "GROUP ALL TOOL CALLS" — the ⋮ menu's toggle, off by default. The ordinary rule above is conservative because it
+// is GUESSING at which rows a reader can tell apart; this one was asked for, so almost every clause goes. What is
+// here is the two that do NOT, because neither is about legibility: a gate is a decision waiting on a human, and a
+// citation must still reach a step the toggle has just hidden. The rule itself is unit-tested (step-streak).
+test("group all tool calls: a mixed run becomes one row, a pending gate does not join it, and a citation still reaches inside", async () => {
+    const { page, errors } = await open(DESKTOP);
+    await page.evaluate(() => {
+        const key = "laptop:5e6f7a80", hash = "5e6f7a80", now = Date.now();
+        const step = (i, tool, over = {}) => globalThis.__chatFake.emit(key, {
+            kind: "agent-step", id: `${hash}-g${i}`, ts: now + i, save: true, session: { hash, turn: 0 },
+            step: 40 + i, seq: 400 + i, tool, arguments: {}, result: "ok", toolMs: 100, ...over,
+        });
+        // Three different tools in a row, which the ordinary rule refuses outright.
+        step(0, "exec"); step(1, "look"); step(2, "python_exec", { token: "beef123" });
+        // An answer CITING the last of them, so the jump below has something real to resolve. Emitted before the
+        // gate: a terminal result clears every pending flag, which would otherwise take the gate with it.
+        globalThis.__chatFake.emit(key, {
+            kind: "agent-result", id: `${hash}-gans`, ts: now + 10, save: true, session: { hash, turn: 0 },
+            steps: 43, hitCap: false, summary: "I read [the airlines](@tool:beef123) off the page.",
+        });
+        // Then a gate, and two ordinary calls after it.
+        step(3, "fetch_url", { pending: true, awaitingApproval: true, result: undefined,
+                               renderIn: { type: "action", verb: "fetch", target: "https://ex.example/x" } });
+        step(4, "exec"); step(5, "exec");
+    });
+    await page.goto(`${server.url}#s=laptop%3A5e6f7a80`);
+    // The ordinary rule produces no MIXED group at all — it cannot, by construction — which is the whole reason
+    // the toggle exists and is what makes the assertions after it mean something.
+    await expect(page.locator(".astreak-calls")).toHaveCount(0);
+
+    await page.locator(".chat-gear-btn").first().click();
+    const toggle = page.getByRole("menuitemcheckbox", { name: "Group all tool calls" });
+    await expect(toggle).toHaveAttribute("aria-checked", "false");   // OFF by default
+    await toggle.click();
+
+    // The mixed run is one row now, counted in CALLS and naming every tool, because it can no longer name one.
+    const mixed = page.locator(".astreak").filter({ hasText: "python_exec" }).first();
+    await expect(mixed.locator(".astreak-calls")).toContainText("tool calls");
+    await expect(mixed.locator(".astreak-tools")).toContainText("look");
+
+    // THE GATE IS NOT IN ANY OF THEM. A decision waiting on a human is not machinery, whatever the toggle says.
+    await expect(page.locator(".astep-approve")).toHaveCount(1);
+    await expect(page.locator(".astreak .astep-approve")).toHaveCount(0);
+    await expect(page.locator('[data-astep-seq="403"]')).toHaveCount(1);
+    // …while an ordinary call beside it IS hidden, or the assertion above would mean nothing.
+    await expect(page.locator('[data-astep-seq="401"]')).toHaveCount(0);
+
+    // AND A CITATION STILL REACHES INSIDE. The step it names is in a closed group; clicking must open it, or we
+    // have built a new way to make a citation silently do nothing.
+    await page.locator(".tok-link").filter({ hasText: "the airlines" }).first().click();
+    await expect(page.locator('[data-astep-seq="402"]')).toHaveCount(1);
+
+    // The preference is this DEVICE's, like Calm view, and the menu says so rather than the row having to.
+    // (The round trip through storage is `tests/chat-view-prefs.test.mjs`; a reload here would lose the steps
+    // this test emitted, since the fake host's history lives in the page.)
+    await page.locator(".chat-gear-btn").first().click();
+    await expect(page.getByRole("menuitemcheckbox", { name: "Group all tool calls" })).toHaveAttribute("aria-checked", "true");
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 // TWO THINGS CLAIM THE TOP-RIGHT CORNER of a wide calm page. There is no header band there, so the session's ⋮ is a
 // floating button in the corner — and the approval bar, when the gate has scrolled out of reach, is the first
 // in-flow element of the same pane. The ⋮ landed on the band, a pixel from "Review ›". Both are still reachable, so

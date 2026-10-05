@@ -13,7 +13,7 @@ import type { DebugAgentConfig } from "../contract-debug";
 import { resolveOutputCap } from "../contract-pointers";
 import { runStats, fmtTokPerSec, runStatsProvenance } from "../contract-chat";
 import { externalSheetIds } from "../dom";
-import { surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, showStatsTps, laneLitSeqs, focusMode } from "./store";
+import { surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, showStatsTps, laneLitSeqs, focusMode, groupAllTools } from "./store";
 import type { Session, AgentStep, Status } from "./store";
 import { pretty, truncate, markdown, collapsedPreview, toolFailed } from "./format";
 import { sessionProfile } from "./model";
@@ -956,7 +956,7 @@ export function AgentRunView({ s }: { s: Session }) {
         // "exec" eight times, and the busy view is the developer's whole trace and keeps all of them. The fold only
         // happens once the streak has ENDED, so a live run is never collapsing out from under you.
         // Design and every clause behind it: tmp/design-tool-streaks.md.
-        ...((runGoing => focusMode.value ? foldStreaks(groups, { live: runGoing }) : groups)(s.status === "pending" && runLive)).map(g =>
+        ...((runGoing => focusMode.value ? foldStreaks(groups, { live: runGoing, all: groupAllTools.value }) : groups)(s.status === "pending" && runLive)).map(g =>
             "kind" in g
                 // `live` is the same answer `foldStreaks` is given, and it is what lets the streak tell a fold
                 // happening IN VIEW (collapse the rows you were reading) from one drawn into a transcript you just

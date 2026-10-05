@@ -123,7 +123,8 @@ await sleep(BEAT + 600); await shot("4-folded-behind-fetch");
 
 // 5 — a second run of the SAME tool is its own streak, not an addition to the first.
 await narrate(page, "5 · Adjacent, not cumulative", { sub: "three more exec calls after the fetch are a SECOND streak — a single count would have hidden the fetch" });
-await execStep(); await execStep(); await execStep();
+await execStep(); await execStep();
+await execStep({ token: "d4e5f60" });   // cited by the final answer, so part two can jump INTO a group
 await step("look", { result: "The fare-rules panel is open." });
 await sleep(BEAT + 600); await shot("5-two-separate-streaks");
 
@@ -166,12 +167,61 @@ await sleep(BEAT);
 await page.evaluate((key) => {
     const hash = key.split(":")[1];
     window.__chatFake.emit(key, { id: `${hash}-0`, ts: Date.now(), save: true, session: { hash, turn: 0 },
-        kind: "agent-result", summary: "The cheapest fare is HV at €96; changes cost €40.", steps: 26, hitCap: false });
+        kind: "agent-result", steps: 26, hitCap: false,
+        summary: "I read [the airlines](@tool:d4e5f60) off the page. The cheapest fare is HV at €96; changes cost €40." });
     window.__chatFake.updateSummary(key, { status: "done", lastTs: Date.now() });
 }, KEY);
 await sleep(BEAT + 800); await shot("9-tail-folded-on-end");
 
-await narrate(page, "That is the whole rule", { sub: "adjacent · same tool · at least three · ended · nothing said · nothing revised — and the busy view keeps the full trace" });
+await narrate(page, "That is the default rule", { sub: "adjacent · same tool · at least three · ended · nothing said · nothing revised — and the busy view keeps the full trace" });
+await sleep(BEAT);
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+// PART TWO — "Group all tool calls", the per-device toggle in the ⋮ menu. The rule above is conservative
+// because it is GUESSING at what a reader can tell apart. This one was asked for, so almost every clause goes.
+// ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+await narrate(page, "10 · “Group all tool calls”", { sub: "the toggle under Calm view in the ⋮ menu — off by default, because the conservative rule is what someone who has not asked should get" });
+await page.locator(".chat-gear-btn").first().click();
+await sleep(700);
+await shot("10-the-toggle");
+await page.getByRole("menuitemcheckbox", { name: "Group all tool calls" }).click();
+await sleep(BEAT + 800);
+await shot("11-everything-grouped");
+
+await narrate(page, "11 · Mixed tools, counted in CALLS", { sub: "the row can no longer name one tool, so it counts the calls and names them all — and one turn that made three calls counts as three" });
+await sleep(BEAT); await shot("12-mixed-row");
+
+// A citation must still reach a step that is now inside a closed group.
+await narrate(page, "12 · A citation still reaches inside", { sub: "clicking the pointer in the answer opens the group it landed in — a jump that silently did nothing would be a new way to break the thing reveal exists to prevent" });
+await page.locator(".tok-link").first().click();
+await sleep(BEAT + 800); await shot("13-jump-opened-the-group");
+
+// The ONE thing group-all still refuses to hide.
+await narrate(page, "13 · A gate is never grouped", { sub: "a decision waiting on a human is not machinery — it stands outside the group, whatever the toggle says" });
+await page.evaluate((key) => {
+    const hash = key.split(":")[1];
+    window.__chatFake.updateSummary(key, { status: "waiting", pendingApprovals: 1, lastTs: Date.now() });
+    window.__chatFake.emit(key, { id: `${hash}-0`, ts: Date.now(), save: true, session: { hash, turn: 0 },
+        kind: "agent-step", step: 30, seq: 30, tool: "fetch_url", pending: true, awaitingApproval: true,
+        reasoning: "The rules live on another site.", reasoningTokens: 14,
+        arguments: { url: "https://transavia.example/fare-rules" },
+        renderIn: { type: "action", verb: "fetch", target: "https://transavia.example/fare-rules", crossOrigin: "transavia.example" } });
+}, KEY);
+await sleep(BEAT + 900); await shot("14-gate-stands-outside");
+
+await narrate(page, "14 · …and folds in once it is answered", { sub: "the refusal is about a decision WAITING on a human, not about the tool or about it having needed approval" });
+await page.evaluate((key) => {
+    const hash = key.split(":")[1];
+    window.__chatFake.updateSummary(key, { status: "running", pendingApprovals: 0, lastTs: Date.now() });
+    window.__chatFake.emit(key, { id: `${hash}-0`, ts: Date.now(), save: true, session: { hash, turn: 0 },
+        kind: "agent-step", step: 30, seq: 30, tool: "fetch_url", approval: "user", toolMs: 410,
+        arguments: { url: "https://transavia.example/fare-rules" }, result: "Fare rules: changes €40…",
+        renderIn: { type: "action", verb: "fetch", target: "https://transavia.example/fare-rules" } });
+}, KEY);
+await sleep(BEAT + 900); await shot("15-gate-answered-folds-in");
+
+await narrate(page, "That is the toggle", { sub: "everything groups except a gate waiting on a human and what the model SAID — and nothing is dropped: the busy view and both exports keep the whole trace" });
 await sleep(BEAT);
 await narrateDone(page);
 console.log(`screenshots in ${ART}`);

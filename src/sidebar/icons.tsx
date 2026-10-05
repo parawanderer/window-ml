@@ -234,6 +234,12 @@ export const IconCollapse = () => (
         <path d="M4 9h5V4M4 4l5 5M20 9h-5V4M20 4l-5 5M4 15h5v5M4 20l5-5M20 15h-5v5M20 20l-5-5" />
     </svg>
 );
+/** Rows folding into one: a line with a chevron closing on it from each side — group every tool call. */
+export const IconFold = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 12h16M8.5 5 12 8.5 15.5 5M8.5 19 12 15.5 15.5 19" />
+    </svg>
+);
 /** Close. */
 export const IconClose = () => (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">

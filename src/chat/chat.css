@@ -1737,6 +1737,19 @@ button.chat-page-go:hover { color: var(--fg); }
 /* The tool's NAME in the same mono the step rows use, so a folded run reads as the rows it replaced. */
 .astreak-tool { font-family: var(--mono, ui-monospace, monospace); font-weight: 700; color: var(--fg); }
 .astreak-n { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+/* SEVERAL TOOLS cannot name themselves in the mono slot, so the count leads and the names follow it. The count is
+   the brighter of the two: "how much work is behind this row" is the question the row is answering. */
+.astreak-calls { color: var(--fg); font-weight: 600; }
+.astreak-tools { color: var(--fg-faint); font-family: var(--mono, ui-monospace, monospace); font-size: .88em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* STILL GROWING. In "group all" the newest call joins a row that is already closed, so without a word here the
+   only sign of a run in progress is a number changing. Same breathing the live step rail uses, not a new one. */
+.astreak-live { color: var(--fg-dim); font-size: .88em; font-style: italic; margin-left: auto;
+    animation: astreak-breathe 1.8s ease-in-out infinite; }
+/* Its OWN curve rather than `livepulse`, which falls to .25 — right for a dot, and for a word it reads as text
+   flickering out. This is a view whose whole point is to be quiet. */
+@keyframes astreak-breathe { 50% { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) { .astreak-live { animation: none; } }
 /* THE ONE THING WORTH COLOURING. In the run this was built for, two calls in the stretch were errors and that was
    the only signal in it; everything else here is grey on purpose so this is what the eye finds. */
 .astreak-bad { color: var(--err); font-size: .88em; }

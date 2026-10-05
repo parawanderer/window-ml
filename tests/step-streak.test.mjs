@@ -4,7 +4,7 @@
 "use strict";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { foldStreaks, streakFacts, holdsSeq, foldedInView, STREAK_MIN } from "../src/sidebar/step-streak.tsx";
+import { foldStreaks, streakFacts, holdsSeq, foldedInView, STREAK_MIN, STREAK_MIN_ALL } from "../src/sidebar/step-streak.tsx";
 import { JUST_ARRIVED_MS } from "../src/sidebar/just-arrived.ts";
 
 /** One turn with a single tool call, which is the shape a streak is made of. */
@@ -75,12 +75,12 @@ test("the facts are the failures and the time — `exec × 8` alone is the same 
         turn(2, "exec", { result: "Error: no active agent run", toolMs: 500 }),
         turn(3, "exec", { result: "Denied", toolMs: 500 }),
     ]);
-    assert.deepEqual(streakFacts(s), { failed: 2, ms: 2000 });
+    assert.deepEqual(streakFacts(s), { failed: 2, ms: 2000, calls: 3, pending: false });
 });
 
 test("a time is claimed only when something reported one", () => {
     const [s] = foldStreaks([turn(1, "exec"), turn(2, "exec"), turn(3, "exec")]);
-    assert.deepEqual(streakFacts(s), { failed: 0, ms: null });
+    assert.deepEqual(streakFacts(s), { failed: 0, ms: null, calls: 3, pending: false });
 });
 
 // --- a jump must be able to reach a step inside a folded one ---
@@ -149,4 +149,72 @@ test("a stamp from a clock running fast is read as history, not as the future", 
 test("an unstamped streak is treated as history, so nothing animates on a guess", () => {
     // ts is optional on a step; without one there is no evidence the reader saw this happen.
     assert.equal(foldedInView({ kind: "streak", tool: "exec", step: 1, turns: [turn(1, "exec")] }, 1_000_000), false);
+});
+
+// --- "group all tool calls": the reader has answered every argument the ordinary rule makes ---
+// The rule above is conservative because it is GUESSING at what a reader can tell apart. This one is not guessing:
+// it was asked for. So the clauses that protect a legible row go, and only the two that are not about legibility
+// stay — a gate is a decision waiting on a human, and prose is what the model said.
+
+/** A turn holding SEVERAL tool calls: one model call that decided on more than one. */
+const multi = (step, tools) => ({ step, localStep: step, tools: tools.map((tool, i) => ({ step, seq: step * 10 + i, tool })) });
+const all = (groups) => foldStreaks(groups, { all: true });
+
+test("group-all folds a mixed run the ordinary rule would leave alone, and names every tool in it", () => {
+    const out = all([turn(1, "exec"), turn(2, "look"), turn(3, "python_exec"), turn(4, "exec")]);
+    assert.equal(out.length, 1);
+    assert.deepEqual(out[0].tools, ["exec", "look", "python_exec"], "distinct, in the order they first appear");
+    assert.equal(streakFacts(out[0]).calls, 4);
+    // …and the ordinary rule still refuses it, which is the whole reason the toggle exists.
+    assert.equal(foldStreaks([turn(1, "exec"), turn(2, "look"), turn(3, "python_exec"), turn(4, "exec")]).filter(x => "kind" in x).length, 0);
+});
+
+test("one lone step is not a group; ONE turn with several calls is", () => {
+    // Shane's two cases, and they are the same question asked of CALLS rather than of turns.
+    assert.deepEqual(kinds(all([turn(1, "exec"), { step: 2, localStep: 2, tools: [], thought: "Now the hard part." }])), ["exec", "·"]);
+    const packed = all([multi(1, ["exec", "exec", "look"])]);
+    assert.equal(packed.length, 1, "one turn, three calls — that is a group");
+    assert.equal(streakFacts(packed[0]).calls, 3, "counted in calls, not in turns");
+    assert.equal(STREAK_MIN_ALL, 2);
+});
+
+test("a PENDING APPROVAL is the one call group-all still refuses to hide", () => {
+    const gated = turn(3, "fetch_url", { pending: true, awaitingApproval: true });
+    const out = all([turn(1, "exec"), turn(2, "exec"), gated, turn(4, "exec"), turn(5, "look")]);
+    assert.deepEqual(kinds(out), ["exec×2", "fetch_url", "exec×2"], "the gate stands between two groups");
+});
+
+test("a gate ALREADY ANSWERED is ordinary work again and folds with the rest", () => {
+    // The refusal is about a decision WAITING on a human, not about the tool or about it having needed approval.
+    const done = turn(3, "fetch_url", { approval: "user", result: "ok" });
+    assert.deepEqual(kinds(all([turn(1, "exec"), turn(2, "exec"), done])), ["exec×3"]);
+});
+
+test("group-all still never swallows what the model SAID", () => {
+    // Prose is the thing the reading view exists to show; a transcript of nothing but folded rows is not a win.
+    const out = all([turn(1, "exec"), turn(2, "exec"), turn(3, "exec", { }), { step: 4, localStep: 4, tools: [], thought: "Rebuilding it from the cards." }, turn(5, "look"), turn(6, "look")]);
+    assert.deepEqual(kinds(out), ["exec×3", "·", "look×2"]);
+});
+
+test("group-all folds a live tail, because otherwise the toggle does nothing while a run is going", () => {
+    // The ordinary rule holds a growing streak open — rows collapsing out from under a reader is motion at the
+    // worst moment. Here the group exists from the second call and every later one joins a row already closed,
+    // so there is nothing left to collapse under anyone.
+    const out = foldStreaks([turn(1, "exec"), turn(2, "look"), turn(3, "exec")], { all: true, live: true });
+    assert.deepEqual(kinds(out), ["exec×3"]);
+    assert.deepEqual(kinds(foldStreaks([turn(1, "exec"), turn(2, "exec"), turn(3, "exec")], { live: true })), ["exec", "exec", "exec"]);
+});
+
+test("a revision folds under group-all, where the ordinary rule keeps its header", () => {
+    const revise = (step) => turn(step, "python_exec", { renderIn: { type: "python-in", code: "x", revision: { ref: "@tool:a1b2c3d", tool: "python_exec", seq: step - 1 } } });
+    assert.deepEqual(kinds(all([turn(1, "python_exec"), revise(2), revise(3)])), ["python_exec×3"]);
+});
+
+test("a jump reaches a step inside a group, including one in a multi-call turn", () => {
+    // A citation that silently does nothing is the failure `reveal` exists to prevent, and a group is a new way to
+    // build one. `holdsSeq` is what makes the group open itself, so it has to see every call, not the first of each.
+    const [g] = all([multi(1, ["exec", "look"]), turn(2, "exec")]);
+    assert.equal(holdsSeq(g, 11), true, "the SECOND call of a turn that made two");
+    assert.equal(holdsSeq(g, 2), true);
+    assert.equal(holdsSeq(g, 99), false);
 });

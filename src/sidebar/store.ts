@@ -148,6 +148,18 @@ export const codeThemeUi = signal<boolean>(true);
 // FOCUS MODE: read the run as a conversation. A DISPLAY pref, not a filter — it quiets chrome (counters,
 // badges, provenance) via CSS on a root attribute, so nothing is dropped and turning it off restores it.
 export const focusMode = signal(false);
+/**
+ * GROUP EVERY TOOL CALL, not just a run of the same one. Off by default, in which case the reading view folds by
+ * the ordinary rule (adjacent, same tool, at least three, ended).
+ *
+ * The ordinary rule is deliberately conservative — it is guessing, so it only folds where the rows provably say
+ * nothing a reader could tell apart. This is the same reader saying "I know, fold it anyway": the answer and what
+ * the model SAID are what they came for, and the machinery between them is one line however many tools it took.
+ *
+ * Lives here rather than in the chat page because the shared session views render on three surfaces and may not
+ * import from `src/chat/`; the page's own toggle drives this signal, exactly as calm drives {@link focusMode}.
+ */
+export const groupAllTools = signal(false);
 export const showStatsTokens = signal(true);   // DevTools run-stats bar: cumulative in/out tokens (default on)
 export const showStatsTps = signal(false);     // DevTools run-stats bar: generation tok/s (default off)
 export const OUTMAX_DEFAULT = 260;             // px — roughly 14 lines; enough to read, small enough not to bury the page

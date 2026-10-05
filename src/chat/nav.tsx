@@ -9,13 +9,13 @@ import { signal } from "@preact/signals";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { RuntimeInfo, SessionKey } from "../session-host";
-import { IconBrain, IconCompose, IconDock, IconGear, IconMenu, IconSearch } from "../sidebar/icons";
+import { IconBrain, IconCompose, IconDock, IconFold, IconGear, IconMenu, IconSearch } from "../sidebar/icons";
 import { MenuGroup, MenuItem } from "./menu";
-import { benchOpen, openBench, view } from "../sidebar/store";
+import { benchOpen, groupAllTools, openBench, view } from "../sidebar/store";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
 import { StartMenu, type StartKind } from "./new-session";
-import { calm, pane, setCalm, setListOpen, setPane } from "./view-mode";
+import { calm, pane, setCalm, setGroupAll, setListOpen, setPane } from "./view-mode";
 
 /** What the MAIN pane shows instead of a session: the search page, this device's settings, or the attention list. Not
  *  stored as a preference: it lives in the URL (route.ts), so a reload keeps it and a fresh page does not. */
@@ -102,6 +102,12 @@ export function GearMenu({ graphsRt, benchRt, labelled }: {
             {open ? (
                 <div class="chat-menu chat-gear-menu" role="menu" aria-label="Page menu">
                     <MenuItem icon={<IconBrain />} label="Calm view" on={calm.value} onPick={pick(() => setCalm(!calm.value))} />
+                    {/* Under "Calm view" and only offered WITH it: this folds nothing outside the reading view, and
+                        a toggle that does nothing where you are standing is worse than one that is absent. */}
+                    {calm.value
+                        ? <MenuItem icon={<IconFold />} label="Group all tool calls" detail="one row per run of work"
+                            on={groupAllTools.value} onPick={pick(() => setGroupAll(!groupAllTools.value))} />
+                        : null}
                     {/* THE PANELS TOGETHER, under one row. These two are a different kind of thing from the rows
                         around them: not how the page reads or what it is set to, but an extra surface opened ONTO a
                         runtime — so each needs to say which device it would open on, and neither belongs beside

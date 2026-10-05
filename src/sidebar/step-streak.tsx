@@ -26,8 +26,16 @@ import { justArrived } from "./just-arrived";
 /** The fewest turns worth folding. Two is a pair; three is where a reader starts skipping. */
 export const STREAK_MIN = 3;
 
+/** The fewest CALLS worth folding once the reader has asked for everything to be grouped. Counted in calls and not
+ *  in turns, which is the only counting that answers both halves of the question: one lone step is not a group and
+ *  is left where it is, while ONE turn whose model call decided on five tools is five calls and is. */
+export const STREAK_MIN_ALL = 2;
+
 /** When this streak's last call landed — 0 when nothing in it is stamped. */
-const lastTs = (s: ToolStreak): number => s.turns[s.turns.length - 1]?.tools[0]?.ts ?? 0;
+const lastTs = (s: ToolStreak): number => {
+    const tools = s.turns[s.turns.length - 1]?.tools ?? [];
+    return tools[tools.length - 1]?.ts ?? 0;
+};
 
 /**
  * Did this fold happen IN FRONT OF THE READER? The rule behind the collapse-on-mount below, pulled out so it is
@@ -40,9 +48,10 @@ const lastTs = (s: ToolStreak): number => s.turns[s.turns.length - 1]?.tools[0]?
  */
 export const foldedInView = (s: ToolStreak, now = Date.now()): boolean => justArrived(lastTs(s), now);
 
-/** A folded run of turns that all called the same tool. `turns` is kept whole so expanding renders exactly what
- *  would have been there — an open streak is indistinguishable from no streak at all. */
-export interface ToolStreak { kind: "streak"; tool: string; turns: AgentTurnGroup[]; step: number; }
+/** A folded run of turns. `turns` is kept whole so expanding renders exactly what would have been there — an open
+ *  streak is indistinguishable from no streak at all. `tools` is the DISTINCT tool names in it, in order: one in
+ *  the ordinary rule by construction, and however many the reader's "group everything" toggle swept up. */
+export interface ToolStreak { kind: "streak"; tool: string; tools: string[]; turns: AgentTurnGroup[]; step: number; }
 
 /**
  * Is this turn one that can join a streak at all?
@@ -71,6 +80,33 @@ function foldable(t: AgentTurnGroup): AgentStep | null {
     return st;
 }
 
+/**
+ * The `all` mode's much shorter question: is this turn anything other than CONTENT or a DECISION?
+ *
+ * The rule above is conservative because it is GUESSING — it folds only where the rows provably say nothing a
+ * reader could tell apart, and every clause is an argument for why some row might still be worth seeing. A reader
+ * who has turned "group all tool calls" on has answered all of those arguments at once, so the clauses that
+ * protect a legible row (a different tool, a revision's header, fewer than three, a tail still growing) go.
+ *
+ * TWO DO NOT GO, and neither is about legibility. A gate is a DECISION waiting on a human and may never be hidden
+ * by a display preference, under any circumstance. And prose is what the model SAID, which is the thing the
+ * reading view exists to show — folding that away would leave a transcript of nothing but folded rows.
+ *
+ * A turn with no tool call at all — pure thinking — folds here and not above: that is the other half of what this
+ * toggle was asked for ("group all tool calls AND thinking blocks").
+ */
+function foldableAll(t: AgentTurnGroup): boolean {
+    if (t.thought) return false;
+    return !t.tools.some((st) => st.awaitingApproval && st.pending);
+}
+
+/** The distinct tool names in a run of turns, in the order they first appear. */
+const toolsIn = (turns: AgentTurnGroup[]): string[] => {
+    const seen: string[] = [];
+    for (const t of turns) for (const st of t.tools) if (st.tool && !seen.includes(st.tool)) seen.push(st.tool);
+    return seen;
+};
+
 /** Does this step revise an earlier one? The link lives on the IN descriptor, which is the only place the "revises"
  *  line comes from — so it is also the only way to know that folding the row would take that line with it. */
 const revisionOf = (st: AgentStep): unknown =>
@@ -87,9 +123,23 @@ const revisionOf = (st: AgentStep): unknown =>
  * @param groups the run's turns, in order (`groupTurns`)
  * @param live is the run still going? the last streak stays open while it is
  */
-export function foldStreaks(groups: AgentTurnGroup[], { live = false } = {}): (AgentTurnGroup | ToolStreak)[] {
+export function foldStreaks(groups: AgentTurnGroup[], { live = false, all = false } = {}): (AgentTurnGroup | ToolStreak)[] {
     const out: (AgentTurnGroup | ToolStreak)[] = [];
     for (let i = 0; i < groups.length;) {
+        if (all) {
+            if (!foldableAll(groups[i])) { out.push(groups[i++]); continue; }
+            let j = i + 1;
+            while (j < groups.length && foldableAll(groups[j])) j++;
+            const run = groups.slice(i, j);
+            // NO "ENDED" TEST HERE, unlike the ordinary rule. A group of two exists almost immediately and every
+            // later call joins a row that is ALREADY closed, so nothing collapses out from under a reader mid-run —
+            // the count simply ticks up. It is also the only way the toggle does anything at all while a run goes.
+            const calls = run.reduce((n, t) => n + t.tools.length, 0);
+            if (calls >= STREAK_MIN_ALL) out.push({ kind: "streak", tool: toolsIn(run)[0] ?? "", tools: toolsIn(run), turns: run, step: run[0].step });
+            else out.push(...run);
+            i = j;
+            continue;
+        }
         const first = foldable(groups[i]);
         if (!first) { out.push(groups[i++]); continue; }
         let j = i + 1;
@@ -102,7 +152,7 @@ export function foldStreaks(groups: AgentTurnGroup[], { live = false } = {}): (A
         // `j < groups.length` is "something follows it". Otherwise it is the tail, and only a finished run may
         // fold its tail — a live one is still adding to it.
         const ended = j < groups.length || !live;
-        if (run.length >= STREAK_MIN && ended) out.push({ kind: "streak", tool: first.tool!, turns: run, step: run[0].step });
+        if (run.length >= STREAK_MIN && ended) out.push({ kind: "streak", tool: first.tool!, tools: [first.tool!], turns: run, step: run[0].step });
         else out.push(...run);
         i = j;
     }
@@ -111,21 +161,26 @@ export function foldStreaks(groups: AgentTurnGroup[], { live = false } = {}): (A
 
 /** How many of a streak's calls came back an error, and how long they took in total — the two things the rows
  *  themselves could not say. `ms` is null when no call reported a time, so nothing is claimed. */
-export function streakFacts(s: ToolStreak): { failed: number; ms: number | null } {
-    let failed = 0, ms = 0, timed = 0;
+export function streakFacts(s: ToolStreak): { failed: number; ms: number | null; calls: number; pending: boolean } {
+    let failed = 0, ms = 0, timed = 0, calls = 0, pending = false;
     for (const t of s.turns) {
-        const st = t.tools[0];
-        if (toolFailed(st.result)) failed++;
-        if (typeof st.toolMs === "number") { ms += st.toolMs; timed++; }
+        // Every call, not `tools[0]`: the "group all" rule sweeps up a turn whose one model call decided on
+        // SEVERAL tools, and counting those as one would under-report the thing the row exists to report.
+        for (const st of t.tools) {
+            calls++;
+            if (toolFailed(st.result)) failed++;
+            if (st.pending) pending = true;
+            if (typeof st.toolMs === "number") { ms += st.toolMs; timed++; }
+        }
     }
-    return { failed, ms: timed ? ms : null };
+    return { failed, ms: timed ? ms : null, calls, pending };
 }
 
 /** Does this streak hold the step a jump is trying to reach? The rule behind the sticky open below, pulled out so
  *  it is testable without a DOM: a citation or an event-lane click that landed inside a FOLDED streak and did
  *  nothing would be a new way to break the thing `scrollToStepSeq` exists to prevent. */
 export const holdsSeq = (s: ToolStreak, seq: number | null | undefined): boolean =>
-    seq != null && s.turns.some(t => t.tools[0]?.seq === seq);
+    seq != null && s.turns.some(t => t.tools.some(st => st.seq === seq));
 
 /** One folded streak: a row saying what the calls did, and the calls themselves when it is open. `render` draws a
  *  member, so this never duplicates what a turn looks like. */
@@ -165,18 +220,27 @@ export function StepStreak({ s, render }: { s: ToolStreak; render: (t: AgentTurn
     // starts from where they were. An effect rather than a render-time call: `close` measures the duration off the
     // node, which does not exist until this has been painted once.
     useEffect(() => { if (refolding) close(() => setOpen(false)); }, []);
-    const { failed, ms } = streakFacts(s);
+    const { failed, ms, calls, pending } = streakFacts(s);
+    // ONE TOOL NAMES ITSELF — `exec × 4` reads as the rows it replaced. SEVERAL cannot, so the row counts the calls
+    // and names the tools beside it: "11 tool calls · exec, look, python_exec". Dropping the names would make the
+    // one row standing for a whole run of work say less about it than any one of the rows did.
+    const one = s.tools.length === 1;
     return (
-        <div ref={rootRef} class={`astreak${shown ? " open" : ""}${closing ? " closing" : ""}${refolding ? " refolding" : ""}`} data-rev={r}>
+        <div ref={rootRef} class={`astreak${shown ? " open" : ""}${closing ? " closing" : ""}${refolding ? " refolding" : ""}${pending ? " running" : ""}`} data-rev={r}>
             <button class="astreak-head" onClick={toggle}
-                aria-expanded={shown && !closing} aria-label={`${s.turns.length} ${s.tool} calls`}>
+                aria-expanded={shown && !closing}
+                aria-label={one ? `${calls} ${s.tool} calls` : `${calls} tool calls: ${s.tools.join(", ")}`}>
                 {/* The chevron turns back on the CLICK, not when the body has finished leaving: it is the control's
                     acknowledgement, and the body collapsing behind it is the result. */}
                 <span class={`tri${shown && !closing ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
-                <span class="astreak-tool">{s.tool}</span>
-                <span class="astreak-n">× {s.turns.length}</span>
+                {one
+                    ? <><span class="astreak-tool">{s.tool}</span><span class="astreak-n">× {calls}</span></>
+                    : <><span class="astreak-n astreak-calls">{calls} tool calls</span>
+                        <span class="astreak-tools">{s.tools.join(", ")}</span></>}
                 {failed ? <span class="astreak-bad">{failed} failed</span> : null}
-                {ms != null ? <span class="astreak-ms">{fmtDur(ms)}</span> : null}
+                {/* A GROUP THAT IS STILL GROWING SAYS SO. In "group all" the newest call joins a row that is already
+                    closed, so without this the only sign of a run in progress would be the number changing. */}
+                {pending ? <span class="astreak-live">running…</span> : ms != null ? <span class="astreak-ms">{fmtDur(ms)}</span> : null}
             </button>
             {shown ? <div class={`astreak-body${closing ? " closing" : ""}`}>{s.turns.map(render)}</div> : null}
         </div>
