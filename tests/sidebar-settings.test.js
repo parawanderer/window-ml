@@ -680,3 +680,62 @@ test("housekeeping log: ‹ returns to the view it replaced, and the header's pa
     assert.ok(w.shadow.querySelector('[aria-label="More panels"]'));
     assert.equal(w.shadow.querySelector(".hk-view"), null);
 });
+
+// --- searching every setting, across the tabs --------------------------------------------------------------
+
+test("settings search: finds a flag on another tab by what it does, and clearing it gives the tabs back", async () => {
+    const w = await loadSidebarWorld();
+    await openSettings(w, "Appearance");
+    // Collapse a section yourself first: the search opens every section, and must not remember that as your choice.
+    const hud = () => [...w.shadow.querySelectorAll("details.set-section")].find((d) => /Agent HUD/.test(d.querySelector("summary").textContent));
+    hud().open = false;
+    hud().dispatchEvent(new w.window.Event("toggle"));
+    await w.flush();
+    assert.equal(hud().open, false);
+    const box = w.shadow.querySelector(".settings .set-search");
+    assert.ok(box, "a search box sits above the tabs");
+    const type = async (v) => { box.value = v; box.dispatchEvent(new w.window.Event("input", { bubbles: true })); await w.flush(); };
+    const visible = (sel) => [...w.shadow.querySelectorAll(sel)].filter((e) => !e.closest(".set-miss"));
+
+    // "has done nothing" is in the RETENTION field's help text, on the Appearance tab, not in any label.
+    await type("has done nothing");
+    assert.equal(w.shadow.querySelector(".set-tab"), null, "while searching there are no tabs: every tab is drawn");
+    const fields = visible(".set-field").map((f) => f.textContent);
+    assert.equal(fields.length, 1, `one row: ${fields.join(" | ")}`);
+    assert.match(fields[0], /Keep unpinned sessions for \(days\)/);
+    assert.deepEqual(visible(".set-search-tab").map((h) => h.textContent), ["Appearance"], "headed by the tab it lives on");
+    assert.equal(hud().open, true, "every section is open while searching, a collapsed one included");
+    assert.ok(w.shadow.querySelectorAll(".set-field.set-miss").length > 10, "the rest of every tab is hidden, not removed");
+
+    // A row that a component draws LATER, on its own (async state), arrives under the search and must be filtered too.
+    const late = w.window.document.createElement("label");
+    late.className = "set-field";
+    late.textContent = "A row that arrived after the search";
+    hud().appendChild(late);
+    await new Promise((r) => setTimeout(r, 20));
+    await w.flush();
+    assert.ok(late.classList.contains("set-miss"), "a row drawn after the search ran is filtered as it arrives");
+
+    await type("zebra crossing");
+    assert.match(w.shadow.querySelector(".set-search-none")?.textContent || "", /No setting matches “zebra crossing”/);
+
+    await type("");
+    assert.ok(w.shadow.querySelector(".set-tab.on"), "an empty box gives the tabs back");
+    assert.match(w.shadow.querySelector(".set-tab.on").textContent, /Appearance/, "on the tab you were on");
+    assert.equal(w.shadow.querySelector(".set-miss"), null, "and nothing stays hidden");
+    assert.equal(hud().open, false, "the section you collapsed is collapsed again: the search opening it was not you");
+});
+
+test("settings search: Escape in the box clears it", async () => {
+    const w = await loadSidebarWorld();
+    await openSettings(w);
+    const box = w.shadow.querySelector(".settings .set-search");
+    box.value = "api key";
+    box.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.flush();
+    assert.equal(w.shadow.querySelector(".set-tab"), null);
+    box.dispatchEvent(new w.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await w.flush();
+    assert.ok(w.shadow.querySelector(".set-tab"), "the tabs are back");
+    assert.equal(w.shadow.querySelector(".settings .set-search").value, "");
+});

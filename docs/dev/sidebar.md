@@ -19,6 +19,15 @@ still fetches on expand, never on mount). A consequence for tests: a collapsed b
 Playwright counts a clipped element as visible, so assert on the body's measured height rather than on
 `toBeHidden`.
 
+**One small chart over time that you can read (`TimeChart`, time-chart.tsx).** Stacked series against a time axis,
+with a readout: pointer, tap or arrow keys snap to the nearest sample, draw a rule there and a dot on each series,
+and put the time, every series' value and the total in the panel's one cursor tooltip. Points are `{ t, values }`
+and series `{ key, label, cls }`; the caller says how a value and a time are written. The x axis is linear in TIME,
+so uneven samples sit where they happened. The rule and the dots are HTML over the stretched SVG, because a circle
+inside it would stretch into an ellipse. First user: the Storage section's history. Reach for it before drawing
+another SVG over time; the resource panel's chart is deliberately not built on it (an axis with gaps, bands that
+belong to models, keyboard depth).
+
 **Two surfaces (in-page overlay + DevTools panel).** The same `sidebar-app` bundle runs
 in two places: the in-page **overlay** (a content-script shadow-root shell, `shell.ts`,
 hosting `sidebar.html` in an iframe) and an optional **DevTools panel** (`devtools.ts`

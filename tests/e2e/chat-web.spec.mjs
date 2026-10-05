@@ -2702,6 +2702,35 @@ test("the runtime panel's lists read as lists: chips left and full width, bars e
     await page.close();
 });
 
+// The storage history was a picture you could not ask anything of, and the largest sessions were names you then had to
+// go and find. The chart reads out any day under the pointer, and a listed session opens as a chat on its own runtime.
+test("the runtime's storage chart reads out a day, and a largest session opens as a chat", async () => {
+    const { page, errors } = await open(DESKTOP, "#/settings/runtimes");
+    const plot = page.locator(".tc-plot");
+    await plot.scrollIntoViewIfNeeded();
+    const box = await plot.boundingBox();
+    await page.mouse.move(box.x + box.width * 0.9, box.y + box.height / 2);
+    const tip = page.locator(".cursor-tip");
+    await expect(tip).toContainText("Total");
+    await expect(page.locator(".tc-rule")).toHaveCount(1);
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height + 120);
+    await expect(tip).toHaveCount(0);
+
+    // Every figure in the list ends in one column, buttons or not.
+    const rows = page.locator(".stor-largest .stor-open");
+    expect(await rows.count()).toBeGreaterThan(1);
+    const rights = await rows.evaluateAll((els) => els.map((e) => Math.round(e.lastElementChild.getBoundingClientRect().right)));
+    expect(new Set(rights).size, `sizes ended at ${rights.join(", ")}`).toBe(1);
+
+    const name = (await rows.first().locator("span").first().textContent()).trim();
+    await rows.first().click();
+    await expect(page).toHaveURL(/#\/s\/laptop%3A/);
+    await expect(page.locator(".stor")).toHaveCount(0);
+    await expect(page.locator(".chat-list .chat-row.active")).toContainText(name);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 // The list and the phone's list are the same list. Four things had drifted: the status sat LAST, after a hostname of
 // a different width on every row; the agent marker was a panel badge at 0.75em inside a .86em line, so it read at
 // about two-thirds of the words beside it; the meta line wrapped; and what needs you was only findable by knowing
