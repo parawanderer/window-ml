@@ -155,6 +155,12 @@ jobs:
   test:
     runs-on: ubuntu-24.04
     strategy:
+      # `fail-fast: false` for the same reason the e2e shards have it, and with a sharper edge here: a
+      # CANCELLED check blocks a merge exactly as a failing one does, so the default (cancel every sibling
+      # the moment one goes red) turns one Node version's failure into three unmergeable contexts, two of
+      # which never reported an opinion. It also costs the answer you need — whether a break is
+      # version-specific or in the code — which is the whole reason three versions run.
+      fail-fast: false
       matrix:
         # 22 + 24 are the Active LTS lines; 26 is Current (catches forward-compat). Node 20 was
         # dropped — it's EOL, and tsx loads a `.css` import via the CJS path there, which the
