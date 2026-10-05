@@ -948,6 +948,14 @@ test("a gate the run ended without answering keeps what was asked and loses the 
     // the run had ended — two claims about one step, one of them from a clock that stopped.
     await expect(page.locator(".astep.tool.pending")).toHaveCount(0);
     await expect(page.locator(".pending-note")).toHaveCount(0);
+    // …NOR WAITING ON ANYONE. The amber gate rail is the third voice saying the same stopped clock, and it sat
+    // beside the sentence saying there was nothing left to approve.
+    await expect(page.locator(".astep.tool.awaiting")).toHaveCount(0);
+    // AND THE DOT IS NOT GREEN. With nothing in flight the status falls through to `ok`, which drew a call that
+    // never ran as one that had succeeded — the one cue here a reader takes at a glance. It is not a failure
+    // either, so: warn.
+    await expect(page.locator(".astep.tool .dot.warn")).toHaveCount(1);
+    await expect(page.locator(".astep.tool .dot.ok")).toHaveCount(1);   // the step that DID run keeps its own
     // And the TRANSCRIPT says how it ended, not only the row in the list: a history and a state cannot be
     // reconciled from each other by someone reading one of them.
     await expect(page.locator(".arun-cut")).toHaveText(/interrupted/);

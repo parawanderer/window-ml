@@ -134,6 +134,18 @@ export function fetchUtilityLine(messages: { role: string; content: string }[], 
 // A pending call's INTENT: prefer the tool-provided `action` descriptor (deterministic; custom tools
 // too), else a name-based verb for built-ins, else nothing (→ utility-model description).
 export const CODE_LANG: Record<string, string> = { exec: "javascript", python_exec: "python" };
+/** WHAT RUNNING A CODE TOOL MEANS, in the sentence form every other gate uses. A code call carries no `action`
+ *  descriptor to derive an intent from, so it fell through to "Approve running `exec`?" — one gate in a run phrased
+ *  as a question about a tool while the gate above it said what the agent wanted to do. Two wordings for one
+ *  decision, which is the thing `IntentSentence` exists to stop.
+ *
+ *  The sentence cannot say what the code DOES — that is what the code block under it and the utility model's gloss
+ *  are for — so it says the other half: WHERE it runs. That is the real difference between the two code tools, and
+ *  the fact a person is actually judging when they read which one is asking. */
+export const CODE_INTENT: Record<string, { verb: string; kind: string }> = {
+    exec: { verb: "Run", kind: "JavaScript on the page" },
+    python_exec: { verb: "Run", kind: "Python in the sandbox" },
+};
 /** WHAT A PENDING CALL WILL DO, deterministically: the verb, what it acts on, and the facts that change what
  *  approving it MEANS — reaching into a cross-origin frame, leaving this machine, or going out as the user. */
 export interface Intent { verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; submit?: boolean; crossOrigin?: string; offMachine?: string; asYou?: string; link?: boolean; }
@@ -198,6 +210,10 @@ export function intentFor(st: AgentStep): Intent | null {
     // Whether a `type` will ALSO press Enter — a materially bigger action (it submits the form/search), so the
     // approval must call it out. Read from the raw args (the ground truth), regardless of the render path.
     const submit = st.tool === "type" ? !!st.arguments?.submit : undefined;
+    // Keyed on the TOOL, ahead of the render descriptors: a code tool's In is `code`/`python-in`, which neither
+    // branch below reads, so this is the only place the sentence can come from.
+    const ci = CODE_INTENT[st.tool || ""];
+    if (ci) return { verb: ci.verb, kind: ci.kind };
     const ri = st.renderIn;
     // `link` renders the target as a significant URL (warm-yellow + dotted, like navigate/submit) rather than
     // "the element …" — a fetch's URL is leaving-the-page-worthy, so style it the same as navigate's.

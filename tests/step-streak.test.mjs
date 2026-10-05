@@ -4,7 +4,8 @@
 "use strict";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { foldStreaks, streakFacts, holdsSeq, STREAK_MIN } from "../src/sidebar/step-streak.tsx";
+import { foldStreaks, streakFacts, holdsSeq, foldedInView, STREAK_MIN } from "../src/sidebar/step-streak.tsx";
+import { JUST_ARRIVED_MS } from "../src/sidebar/just-arrived.ts";
 
 /** One turn with a single tool call, which is the shape a streak is made of. */
 const turn = (step, tool, over = {}) => ({ step, localStep: step, tools: [{ step, seq: step, tool, ...over }] });
@@ -111,4 +112,41 @@ test("a step that REVISES another never folds: the diff header is the only place
     const revise = (step) => turn(step, "python_exec", { renderIn: { type: "python-in", mode: "script", code: "x", revision: { ref: "@tool:a1b2c3d", tool: "python_exec", seq: step - 1 } } });
     const out = foldStreaks([turn(1, "python_exec"), revise(2), revise(3)]);
     assert.equal(out.filter((x) => "kind" in x).length, 0);
+});
+
+// --- a fold the reader WATCHED happen, told apart from history drawn for the first time ---
+// The two make the same component and want opposite things: one has to collapse (or a block of the transcript
+// vanishes between frames and you go looking for it), and the other must not (or opening an old session plays a
+// page of animations about rows the reader never saw).
+
+/** A streak whose last call landed `ago` ms before `now`. */
+const streakAt = (ago, now = 1_000_000) => ({
+    kind: "streak", tool: "exec", step: 1,
+    turns: [turn(1, "exec"), turn(2, "exec"), { step: 3, localStep: 3, tools: [{ step: 3, seq: 3, tool: "exec", ts: now - ago }] }],
+});
+
+test("a streak whose calls landed a moment ago collapses; an old one is simply folded already", () => {
+    const now = 1_000_000;
+    assert.equal(foldedInView(streakAt(200, now), now), true, "a fold the reader just watched");
+    assert.equal(foldedInView(streakAt(JUST_ARRIVED_MS + 1, now), now), false, "past the window: history");
+    assert.equal(foldedInView(streakAt(5 * 60_000, now), now), false, "and a run from this morning, certainly");
+});
+
+test("the run having ENDED is not a reason to snap — that is the fold most certain to be watched", () => {
+    // The tail folds precisely BECAUSE the run finished, so gating this on "is the run still live" would have
+    // excluded the one case a reader is guaranteed to be looking at. Only the clock decides.
+    const now = 1_000_000;
+    assert.equal(foldedInView(streakAt(50, now), now), true);
+});
+
+test("a stamp from a clock running fast is read as history, not as the future", () => {
+    // A remote runtime's `ts` can be minutes ahead of this device. A negative age is not "a moment ago", and the
+    // safe way to be wrong is one missing animation rather than a whole transcript moving at once.
+    const now = 1_000_000;
+    assert.equal(foldedInView(streakAt(-60_000, now), now), false);
+});
+
+test("an unstamped streak is treated as history, so nothing animates on a guess", () => {
+    // ts is optional on a step; without one there is no evidence the reader saw this happen.
+    assert.equal(foldedInView({ kind: "streak", tool: "exec", step: 1, turns: [turn(1, "exec")] }, 1_000_000), false);
 });

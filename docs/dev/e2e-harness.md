@@ -217,6 +217,19 @@ as in AGENTS.md — they are all under `src/`.
   `tests/e2e/artifacts/bench-completion-demo/`. Its first headless run caught the worker's per-run inputs being
   listed as kept variables, which is what a demo is for. The assertions are `tests/python.test.mjs` and
   `bench-dock.spec.mjs`.
+- **`streak-demo.mjs`** — a **narrated demo, not a test** of TOOL-STREAK FOLDING in the chat page's calm view:
+  `npm run build && node tests/e2e/streak-demo.mjs` (`BEAT=` paces it, `HOLD=0` exits instead of leaving the
+  browser for you; screenshots in `tests/e2e/artifacts/streak-demo/`). It needs no extension — it serves
+  `dist-web/` and drives the FAKE HOST (`window.__chatFake.addSession` + `emit`) rather than a scripted model,
+  because every beat is about WHEN the client folds what it has, so the pacing has to be the demo's own.
+  Nine beats, each one rule: different tools never fold · two is a pair · a live tail stays open · something
+  following it makes it fold · a second run of the same tool is a SEPARATE streak (adjacent, not cumulative) ·
+  the row carries the count, the failures and the total time · a turn that said something is never folded ·
+  open is indistinguishable from never folded, plus the rail · the tail folds when the run ends.
+  It exists because a finished transcript cannot show you any of that: every clause is about the turns AROUND a
+  step, so reading the end state tells you what folded and never why. Its first run found `ApprovalBadge`
+  throwing on an approval value it did not know — a crash a newer runtime could have caused on a real client.
+  The assertions are `tests/step-streak.test.mjs` and the fold tests in `chat-web.spec.mjs`.
 - **`table-demo.mjs`** — a **narrated demo, not a test** of fetched tables: `npm run build && node --import tsx
   tests/e2e/table-demo.mjs` (`HOLD=0` exits). Part one (beats 1–8) is built behaviour: CSV / semicolon / Parquet
   previews, `pipe`, the read-only survey, a full `exec` through a pointer, `python_exec` from the cache, and an

@@ -13,16 +13,32 @@
 //
 // CALM ONLY, and nothing is dropped: the busy view keeps the whole trace, and so do both exports. Design note and
 // the rules behind each clause: tmp/design-tool-streaks.md.
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { AgentStep } from "./store";
 import { rev, revealSeq } from "./store";
 import type { AgentTurnGroup } from "./debug-reducer";
 import { fmtDur } from "./timestamps";
 import { toolFailed } from "./format";
 import { IconChevron } from "./icons";
+import { useCloseAnimation } from "./use-close";
+import { justArrived } from "./just-arrived";
 
 /** The fewest turns worth folding. Two is a pair; three is where a reader starts skipping. */
 export const STREAK_MIN = 3;
+
+/** When this streak's last call landed — 0 when nothing in it is stamped. */
+const lastTs = (s: ToolStreak): number => s.turns[s.turns.length - 1]?.tools[0]?.ts ?? 0;
+
+/**
+ * Did this fold happen IN FRONT OF THE READER? The rule behind the collapse-on-mount below, pulled out so it is
+ * testable without a DOM and without waiting on a clock — the same reason {@link holdsSeq} is.
+ *
+ * A fold the reader WATCHED — three `exec` rows replaced the instant a fourth tool lands — has to collapse, or a
+ * block of the transcript vanishes between frames and they go looking for it. A transcript OPENED LATER wants to
+ * be folded already. {@link justArrived} is that distinction, shared with the arriving-turn animation, because
+ * two answers to "did I see this happen" is how one of them ends up subtly different.
+ */
+export const foldedInView = (s: ToolStreak, now = Date.now()): boolean => justArrived(lastTs(s), now);
 
 /** A folded run of turns that all called the same tool. `turns` is kept whole so expanding renders exactly what
  *  would have been there — an open streak is indistinguishable from no streak at all. */
@@ -114,7 +130,16 @@ export const holdsSeq = (s: ToolStreak, seq: number | null | undefined): boolean
 /** One folded streak: a row saying what the calls did, and the calls themselves when it is open. `render` draws a
  *  member, so this never duplicates what a turn looks like. */
 export function StepStreak({ s, render }: { s: ToolStreak; render: (t: AgentTurnGroup) => preact.JSX.Element }) {
-    const [open, setOpen] = useState(false);
+    // FOLDING IN FRONT OF A READER, as a collapse rather than a cut. Captured ONCE, on mount: it is a fact about
+    // how this streak came to exist, and re-reading the clock on later renders would make it decay mid-animation.
+    const [refolding] = useState(() => foldedInView(s));
+    const [open, setOpen] = useState(refolding);
+    // THROUGH THE SAME CLOSE A STEP USES. Eleven turns arriving in one frame is most of a screen appearing at once,
+    // which shoves whatever you were reading down the page — the shove `.astep-body` was given an animation for,
+    // and this was the one disclosure on the surface still doing it. The surface declares the duration; the hook
+    // holds the body mounted for exactly that long so there is something left to animate.
+    const rootRef = useRef<HTMLDivElement>(null);
+    const { closing, close, cancel } = useCloseAnimation(rootRef);
     // A citation or an event-lane click that jumps INTO a folded streak has to open it, or we have built a new way
     // to make a citation silently do nothing. Read during render into a sticky flag, the way a step and the HUD's
     // per-task block already do it: `revealSeq` clears itself about a second later, and reading it directly would
@@ -129,18 +154,31 @@ export function StepStreak({ s, render }: { s: ToolStreak; render: (t: AgentTurn
     const holds = holdsSeq(s, want);
     if (holds && !stuck) setStuck(true);
     const shown = open || stuck;
+    // Opening is immediate; closing waits for the animation, which is why both pieces of state are cleared in the
+    // callback rather than on the click. `stuck` goes with them: a streak held open by a jump closes like any other
+    // once you ask it to, or the one opened FOR you is the one that will not shut.
+    const toggle = (): void => {
+        if (!shown) { cancel(); setOpen(true); return; }
+        close(() => { setStuck(false); setOpen(false); });
+    };
+    // The run shut on the frame AFTER mount, so the rows are on screen in their old places first and the collapse
+    // starts from where they were. An effect rather than a render-time call: `close` measures the duration off the
+    // node, which does not exist until this has been painted once.
+    useEffect(() => { if (refolding) close(() => setOpen(false)); }, []);
     const { failed, ms } = streakFacts(s);
     return (
-        <div class={`astreak${shown ? " open" : ""}`} data-rev={r}>
-            <button class="astreak-head" onClick={() => { setStuck(false); setOpen(v => !v); }}
-                aria-expanded={shown} aria-label={`${s.turns.length} ${s.tool} calls`}>
-                <span class={`tri${shown ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
+        <div ref={rootRef} class={`astreak${shown ? " open" : ""}${closing ? " closing" : ""}${refolding ? " refolding" : ""}`} data-rev={r}>
+            <button class="astreak-head" onClick={toggle}
+                aria-expanded={shown && !closing} aria-label={`${s.turns.length} ${s.tool} calls`}>
+                {/* The chevron turns back on the CLICK, not when the body has finished leaving: it is the control's
+                    acknowledgement, and the body collapsing behind it is the result. */}
+                <span class={`tri${shown && !closing ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 <span class="astreak-tool">{s.tool}</span>
                 <span class="astreak-n">× {s.turns.length}</span>
                 {failed ? <span class="astreak-bad">{failed} failed</span> : null}
                 {ms != null ? <span class="astreak-ms">{fmtDur(ms)}</span> : null}
             </button>
-            {shown ? <div class="astreak-body">{s.turns.map(render)}</div> : null}
+            {shown ? <div class={`astreak-body${closing ? " closing" : ""}`}>{s.turns.map(render)}</div> : null}
         </div>
     );
 }

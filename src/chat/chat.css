@@ -816,6 +816,16 @@ button.chat-page-go:hover { color: var(--fg); }
    the component reads it and waits, and a surface that sets nothing closes in the same tick it always has. */
 .chat.calm .astep-body { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); --astep-close-ms: 200; }
 .chat.calm .astep-body.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; }
+/* A TURN ARRIVING IS THE LOG MOVING, so it looks like it. A new turn appearing at full height in one frame is a
+   developer-tooling cut: everything under it jumps and the reader loses the line they were on. It drifts up and
+   fades in instead — deliberately FASTER than the disclosures (180ms against 220), because this one is not a
+   gesture anybody made, it is the page getting on with itself, and anything slower is in the way.
+   `.fresh` is only set on a turn that landed while the reader was watching (just-arrived.ts); without that test
+   the same rule runs over every item of a transcript somebody merely opened. */
+.chat.calm .aturn.fresh { animation: chat-turn-in .18s cubic-bezier(.4, 0, .2, 1); }
+@keyframes chat-turn-in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .chat.calm .aturn.fresh { animation: none; } }
+
 /* THE GRANT CARD IS NOT A WARNING HERE. In the panel it is a warm card because it establishes a session-long
    consent, and the panel is a debugging surface where an amber block reads as one more marked thing among many. In
    the reading view it is the only coloured block on a quiet page, so it took the eye first — ahead of the sentence
@@ -1695,15 +1705,35 @@ button.chat-page-go:hover { color: var(--fg); }
    could not — how many, how many failed, how long. Reading view only: the panel is the developer's whole trace.
    The fold happens once the streak has ENDED, so the entrance is a thing arriving rather than rows vanishing
    under a reader. Design: tmp/design-tool-streaks.md. */
-.astreak { margin: 3px 0; animation: chat-streak-in .22s cubic-bezier(.4, 0, .2, 1); }
+/* NO ENTRANCE ANIMATION. It was written for a streak arriving in a transcript, and that case turned out not to
+   exist: a fold the reader WATCHED now collapses from the rows it replaced (`.refolding`), which is the motion
+   that actually describes what happened, and a fold drawn into a transcript somebody opened should simply be
+   there. What was left fired only in the second case — the one it is wrong for. */
+.astreak { margin: 3px 0; --astep-close-ms: 200; }
+/* THE ROW SITS WHERE THE TURNS DO. Its text begins on the transcript's own left edge — the line `thinking` and a
+   turn's prose start from — so a folded run reads as one more thing in the column rather than as a control
+   indented out of it. The chevron hangs in the MARGIN beside it, absolutely placed so it cannot push the row's
+   text out of line on a narrow screen, which is what a flex child would do. */
 .astreak-head {
-    display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 6px;
+    position: relative;
+    display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 6px 5px 0;
     background: none; border: none; border-radius: 8px; color: var(--fg-dim); font: inherit; cursor: pointer; text-align: left;
 }
 .astreak-head:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
-.astreak-head .tri { flex: none; width: 12px; height: 12px; transition: transform .12s; }
+/* QUIET UNTIL IT IS WANTED. A folded run is a thing to READ past, and a chevron standing permanently beside every
+   one of them is a column of controls down a page whose whole point is to have less on it. It fades in on hover —
+   and on keyboard focus, which is the half that is easy to leave out and the only way a non-pointer user finds it.
+   It also stays up whenever the group is OPEN: the control that closes it must not be the one you have to guess at.
+   On a COARSE pointer there is no hover to reveal anything, so it is simply always there. */
+.astreak-head .tri {
+    position: absolute; left: -18px; top: 50%; flex: none; width: 12px; height: 12px;
+    opacity: 0; transform: translateY(-50%); transition: opacity .15s ease, transform .12s;
+}
 .astreak-head .tri svg { width: 12px; height: 12px; }
-.astreak-head .tri.open { transform: rotate(90deg); }
+.astreak-head .tri.open { transform: translateY(-50%) rotate(90deg); }
+.astreak:hover .tri, .astreak.open .tri, .astreak-head:focus-visible .tri { opacity: 1; }
+@media (pointer: coarse) { .astreak-head .tri { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .astreak-head .tri { transition: none; } }
 /* The tool's NAME in the same mono the step rows use, so a folded run reads as the rows it replaced. */
 .astreak-tool { font-family: var(--mono, ui-monospace, monospace); font-weight: 700; color: var(--fg); }
 .astreak-n { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
@@ -1712,5 +1742,20 @@ button.chat-page-go:hover { color: var(--fg); }
 .astreak-bad { color: var(--err); font-size: .88em; }
 .astreak-ms { color: var(--fg-faint); font-size: .88em; font-style: italic; margin-left: auto; }
 .astreak.open > .astreak-head { margin-bottom: 4px; }
-@keyframes chat-streak-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .astreak { animation: none; } }
+/* WHICH ROWS BELONG TO THE GROUP. Open, the members are turns in the transcript again, at the same indent as the
+   turns above and below the streak — so the only thing marking where the group ended was the gap before the next
+   one, which is nothing. A rail down the left is the ordinary way to say "these are inside that", and it descends
+   from the chevron that opened them.
+   DARK rather than accented: membership is structure, not status, and the steps inside carry their own colours — a
+   failed call's red dot, a gate's amber rail — that a coloured bracket would compete with for the same meaning. */
+.astreak-body {
+    margin-left: -12px; padding-left: 13px;
+    border-left: 2px solid color-mix(in srgb, var(--fg) 12%, transparent);
+}
+/* …and it opens and shuts on the same keyframes as a step body, through the same `--astep-close-ms` handshake. */
+.astreak-body { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); }
+.astreak-body.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; }
+@media (prefers-reduced-motion: reduce) {
+    .astreak { --astep-close-ms: 0; }
+    .astreak-body, .astreak-body.closing { animation: none; }
+}
