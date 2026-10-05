@@ -6,11 +6,12 @@
 // machine, in its own Settings, and is never a remote command (`localSettings` is local by design). What is here only
 // needs `view`, which is why a watch-only client sees it too.
 import { useEffect, useState } from "preact/hooks";
-import type { ArchiveCapability, ModelChoice, RuntimeCapabilities, RuntimeInfo } from "../session-host";
+import { sessionKey, type ArchiveCapability, type ModelChoice, type RuntimeCapabilities, type RuntimeInfo } from "../session-host";
 import { StorageBody } from "../sidebar/storage-section";
 import { Stamp, cursorTipOn } from "../sidebar/ui-kit";
 import type { ChatStore } from "./chat-store";
 import { mayCommand } from "./grants";
+import { openSession } from "./nav";
 
 /** What each capability means to a person, in the order worth reading. Unknown ones are left out, not guessed at. */
 const CAPS: [keyof RuntimeCapabilities, string][] = [
@@ -142,6 +143,7 @@ function RuntimeStorage({ store, rt }: { store: ChatStore; rt: RuntimeInfo }) {
             {!may ? <p class="chat-set-hint rt-note">{rt.online ? "This device may not read its storage." : "Offline."}</p> : (
                 <StorageBody
                     emptyText={`${rt.name} keeps no saved sessions.`}
+                    onOpen={(hash) => openSession(sessionKey({ runtime: rt.id, hash }))}
                     load={async () => {
                         const r = await store.send({ type: "storage.stats", runtime: rt.id }, { quiet: true });
                         if (!r.ok) {
