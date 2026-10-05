@@ -68,9 +68,11 @@ test("a preset colours the page's code and the bench editor, and a dark one keep
         await configureExtension(ext.sw, { chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "overlay", theme: "light" });
         const { page, frame } = await openSidebar(fake, ext);
         await openCodeSettings(frame);
-        // The default draws on the panel's own colours: no surface override.
+        // The default reports its OWN surface, like every other theme — a code block is painted by the theme's
+        // `.hljs` rule either way, and leaving the token unset left everything that matches a block without one
+        // (a raw In/Out cell, a JSON value) on a different colour. Light here, because the panel is.
         await expect(frame.locator("select.set-codetheme")).toHaveValue("atom-one");
-        expect(await rootVar(frame, "--code-bg")).toBe("");
+        expect(await rootVar(frame, "--code-bg")).toBe("#fafafa");
 
         await frame.locator("select.set-codetheme").selectOption("nord");
         await expect.poll(() => rootVar(frame, "--code-bg")).toBe("#2E3440");
@@ -102,7 +104,8 @@ test("a VS Code theme file is uploaded, converted, and applied — and a bad fil
         // A file that is not JSON: refused, said why, and nothing changes.
         await frame.locator('.set-codetheme-vscode input[type="file"]').setInputFiles({ name: "broken.json", mimeType: "application/json", buffer: Buffer.from("{ not json") });
         await expect(frame.locator(".set-codetheme-vscode .set-warn")).toContainText("not valid JSON");
-        expect(await rootVar(frame, "--code-bg")).toBe("");
+        // Still the DEFAULT's surface, which is what "nothing changed" means now that the default has one.
+        expect(await rootVar(frame, "--code-bg")).toBe("#fafafa");
 
         await frame.locator('.set-codetheme-vscode input[type="file"]').setInputFiles(FIXTURE);
         await expect(frame.locator(".set-codetheme-vscode")).toContainText("Fixture Sunset");

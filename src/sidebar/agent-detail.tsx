@@ -85,7 +85,10 @@ export function IoBlock({ label, tip, preview, render, raw, rawText, marks, rese
                                match; when it declares none, this is still the right half of the step. */
                             : <div class="io-raw" data-cite={slotOf(label)}>{cell(raw)}</div>}
                     </>
-                    : <div data-cite={slotOf(label)}>{cell(raw)}</div>}
+                    /* THE SAME CONTAINER either way. A block with no rendered view to toggle to drew its raw
+                       content in a bare div, so the one case where raw is ALL there is — most tools — was the
+                       one without the surface that says "this is the model's own text". `.io-raw` is that box. */
+                    : <div class="io-raw" data-cite={slotOf(label)}>{cell(raw)}</div>}
                 {/* WHILE IT RUNS the footer lives HERE, outside the branches, because there is no render
                     descriptor yet — one only lands when the step settles, and a pending step with nothing
                     streamed yet takes the other branch entirely. Settled, the descriptor owns it (inside the

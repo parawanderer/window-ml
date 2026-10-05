@@ -1294,9 +1294,14 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
    on the page you are meant to read carefully the most cramped. It belongs on the CARD and not on the sentence:
    padding the sentence alone would indent it out of line with the buttons underneath it.
 
-   In `em`, because this rule is also the DevTools panel's focus mode, where the base is 12px and the old figures
-   were right. The same proportion gives ~13px/15px at reading size and ~10px/11px there. */
-html[data-focus] .astep-approve { gap: .55em; margin: 6px 0; padding: .82em .95em; border-radius: 10px;
+   `data-calm`, NOT `data-focus`. The two were one attribute and they are two ideas: focus mode QUIETENS the dev
+   panel (the step pills, the badges, the previews — see the list further down, which stays on `data-focus`),
+   while this is the reading product's own approval card. Keying it to focus meant a developer who had turned the
+   noise down in the panel was handed the calm product's gate instead of the red/green one they were working
+   with, which is a different decision wearing the same switch.
+
+   In `em` all the same, because `data-calm` is also what the phone-shaped embed sets, where the base differs. */
+html[data-calm] .astep-approve { gap: .55em; margin: 6px 0; padding: .82em .95em; border-radius: 10px;
     background: var(--panel); border: none; }
 .astep-approve .appr-row { display: flex; align-items: center; gap: 8px; }
 /* The info control sits at the FAR end from the buttons, which is what keeps it out of the way of the decision:
@@ -1346,7 +1351,7 @@ html[data-focus] .astep-approve { gap: .55em; margin: 6px 0; padding: .82em .95e
 @media (pointer: coarse) { .appr-deny-more { min-width: 40px; justify-content: center; } }
 /* Focus view draws its buttons as pills with no outline until they are needed; the wrapper follows, or a round
    Approve would sit beside a square Deny. */
-html[data-focus] .appr-deny-wrap { border-radius: 999px; color: var(--fg-dim); }
+html[data-calm] .appr-deny-wrap { border-radius: 999px; color: var(--fg-dim); }
 /* The message itself: a field that can hold a sentence, not a line. */
 .appr-say { min-height: 72px; resize: vertical; font: inherit; }
 /* What the pointer gets from the tip, for everyone else: opened by the control, under the row it explains. */
@@ -1376,29 +1381,29 @@ html[data-focus] .appr-deny-wrap { border-radius: 999px; color: var(--fg-dim); }
    What the control must keep either way is that the two answers are TOLD APART instantly and that neither is the one
    an eye slides onto. So here: the page's own primary chip for yes, a quiet outline for no. Deny is NOT softened to
    "Skip" on any surface — denying is a decision about what an agent may do, not stepping past a wizard. */
-html[data-focus] .appr-btn { font-weight: 600; padding: 4px 13px; border-radius: 999px; border-color: transparent; }
+html[data-calm] .appr-btn { font-weight: 600; padding: 4px 13px; border-radius: 999px; border-color: transparent; }
 /* SIZED FOR THE PAGE where there is a page to size for. These are the panel's buttons, drawn for a 360px drawer, and
    at a reading measure they came out smaller than the prose around them — the one control on screen you are meant to
    stop and use. A coarse pointer already gets its 40px minimum below, so this is the mouse's case. */
 @media (min-width: 720px) and (pointer: fine) {
-    html[data-focus] .appr-btn { font-size: .95em; padding: 7px 18px; }
+    html[data-calm] .appr-btn { font-size: .95em; padding: 7px 18px; }
 }
-html[data-focus] .appr-btn.yes { color: var(--bg); background: var(--fg); border-color: var(--fg); font-weight: 700; }
+html[data-calm] .appr-btn.yes { color: var(--bg); background: var(--fg); border-color: var(--fg); font-weight: 700; }
 /* The outline is `--fg-dim`, the same token as the label, not `--border`. A border at `--border` sits about 1.4:1
    against this card — technically drawn, effectively invisible, which on one of two answers to a consent question
    is the wrong thing to be. WCAG's non-text minimum is 3:1; this lands near 5.8:1 and is still plainly the quieter
    of the pair, because Approve is FILLED. `tests/e2e/chat-web.spec.mjs` measures it rather than trusting the eye. */
-html[data-focus] .appr-btn.no { color: var(--fg-dim); border-color: var(--fg-dim); }
-html[data-focus] .appr-btn.no:hover { color: var(--fg); border-color: var(--fg-dim); background: var(--panel-2); }
+html[data-calm] .appr-btn.no { color: var(--fg-dim); border-color: var(--fg-dim); }
+html[data-calm] .appr-btn.no:hover { color: var(--fg); border-color: var(--fg-dim); background: var(--panel-2); }
 .appr-btn:hover { filter: brightness(1.08); }
 /* "Keep" (approve + remember): a hollow variant of the yes button so the plain Approve stays primary. */
 .appr-btn.yes.remember { background: none; color: var(--ok); }
 /* `background: none` RESTATED, not inherited. `.appr-btn.yes.remember` above already clears the filled
-   background, but `html[data-focus] .appr-btn.yes` outranks it (an attribute + an element), so in the focus
+   background, but `html[data-calm] .appr-btn.yes` outranks it (an attribute + an element), so in the focus
    view Keep kept the solid `--fg` pill and then took `color: var(--fg)` on top of it: white on white. */
-html[data-focus] .appr-btn.yes.remember { background: none; color: var(--fg); border-color: var(--fg-dim); font-weight: 600; }
+html[data-calm] .appr-btn.yes.remember { background: none; color: var(--fg); border-color: var(--fg-dim); font-weight: 600; }
 .appr-btn.yes.remember:hover { background: color-mix(in srgb, var(--ok) 16%, transparent); }
-html[data-focus] .appr-btn.yes.remember:hover { background: var(--panel-2); }
+html[data-calm] .appr-btn.yes.remember:hover { background: var(--panel-2); }
 /* The collapsed grant CARD: what "Keep" will persist. Summary line always shown; expand for the exact items.
    Extensible — generic over grant kind (a warm card, since it establishes a session-long consent). */
 .appr-grant { border-radius: 6px; padding: 4px 8px;

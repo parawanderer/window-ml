@@ -147,7 +147,13 @@ let store: PlatformPrefs | null = null;
 
 /** Mirror `calm` onto the document, where the shared views' own reading rules already live. */
 function applyCalm(): void {
-    try { document.documentElement.toggleAttribute("data-focus", calm.value); } catch { /* no DOM (a unit test) */ }
+    try {
+        document.documentElement.toggleAttribute("data-focus", calm.value);
+        // `data-calm` SAYS WHICH PRODUCT THIS IS, where `data-focus` only says "quieten the chrome". The panel's
+        // focus mode sets the second and not the first, so a developer who turned the noise down there keeps the
+        // approval gate they were working with instead of being handed the reading view's card.
+        document.documentElement.toggleAttribute("data-calm", calm.value);
+    } catch { /* no DOM (a unit test) */ }
     // The shared views ask the STORE, not the document, whether they are being read quietly — a component cannot
     // re-render from an attribute. The panel's own focus toggle already sets this signal and derives the attribute
     // from it; calm is the same idea under another name, so it sets both and the two surfaces answer alike.
