@@ -196,6 +196,32 @@ tool's span is the tool plus the network as one unattributable number. Both are 
 are consumed: the frames stream into the step as they arrive, and `remoteMs` crosses the delegation
 (`run-delegation.ts`) into the run export, which is what makes a remote tool's span attributable.
 
+### A protobuf stream needs `9a2bfd623` or newer, or it arrives as one blob
+
+OpenWebUI wraps the whole app in `starlette-compress`, whose compressible-type list includes
+`application/protobuf` and excludes `text/event-stream`. Its streaming path writes each chunk into the
+compressor without flushing, so a few KB of frames stayed inside the compressor until the response closed
+and then went out as a single write. The frames were all correct and all decoded — they simply arrived at
+the end, so a streamed reply showed nothing until it was finished and then appeared at once.
+
+Measured here before the fix: an SSE reply woke the reader ~2000 times across the whole generation, a
+protobuf reply woke it **once**, zero milliseconds wide. Our fan emits at most every 90 ms, so one answer
+produced 329 live updates over SSE and **2** over protobuf.
+
+Two things made it hard to place. It wraps the WHOLE app, so `/ollama/v1/chat/completions` behaved
+identically to `/api/chat/completions` and the ollama passthrough looked implicated when it was not. And
+it only happens when the client offers compression: a probe sending `Accept-Encoding: identity` never
+reproduces it, while every browser and every default `fetch` does.
+
+**The tell is `content-encoding` on the response** — a faulty protobuf reply carries `zstd` (or `br`/`gzip`)
+and an SSE reply on the same route carries none. `utils/chat_proto.py` now drops `application/protobuf`
+from the compressible list on import, by content type rather than by disabling the middleware, so the web
+UI's own pages stay compressed. It costs a few hundred bytes a stream and protobuf is still ~11x smaller
+than the SSE for the same answer.
+
+The same fix covers `/ollama/api/events` negotiated as protobuf, which is the same content type through the
+same middleware.
+
 ## Running them
 
 Both forks build and run exactly like their upstreams; nothing about the extension's config changes.
