@@ -326,19 +326,18 @@ learned by shipping the wrong version first.
   under an id nothing will send again.
 - **The execution log is the OTHER half of that trap, and it is NOT the housekeeping log.** What the machinery did
   under a run — the discarded tab reloaded, the CDP attach refused, the tab re-filed under a new id — goes to
-  `run-log.ts`, whose scope is per-RUN mechanics. **This is how the worker says what it did, so reach for it
-  rather than a `console.log` nobody will ever see**: `recordRunLog(runId, { subsystem, kind, reason?, detail? })`
-  where the run is in scope, or `noteRunMechanic(tabId, …)` (sw-runs.ts) where only the tab is — which is the
-  usual case, since the machinery is addressed to tabs and the log is read per run. Both are fire-and-forget and
-  neither can throw. **Driving the browser yourself? `globalThis.__mlRunLog.echo()` in the WORKER mirrors every
-  record to its console as it happens** (and `.all()` reads the ring without a message) — off for everyone else,
-  because this log exists precisely because a `console.log` in a service worker is one nobody will ever see.
-  The housekeeping log's own spec excludes "anything a user or model action caused directly",
-  and a CDP attach is caused by a tool call, which is why the two are separate; the execution log REUSES that
-  log's record shape plus a `run` and its sanitizer, so one renderer draws both. Two things bite: `sanitizeRunReport` SILENTLY DROPS a
-  record whose `subsystem`/`kind` is not a lowercase slug (right in production, invisible in development — a tool
-  name is never a `reason`, it goes in `detail.tool`), and `detail.tab` is which tab a record is ABOUT, while the
-  event's own `tab` means who REPORTED it. Never a line per probe: the transcript already shows what a step cost.
+  `run-log.ts`, whose scope is per-RUN mechanics. **It exists because a `console.log` in a service worker is one
+  nobody will ever see, so write what the worker did HERE**: `recordRunLog(runId, { subsystem, kind, reason?,
+  detail? })` where the run is in scope, or `noteRunMechanic(tabId, …)` (sw-runs.ts) where only the tab is, which
+  is the usual case — the machinery is addressed to tabs and the log is read per run. Both are fire-and-forget
+  and neither can throw. Driving the browser yourself? `globalThis.__mlRunLog.echo()` in the WORKER mirrors every
+  record to its console as it happens, and `.all()` reads the ring without a message; off for everyone else, for
+  the reason above. It is NOT the housekeeping log, whose spec excludes "anything a user or model action caused
+  directly" — a CDP attach is caused by a tool call — but it REUSES that log's record shape plus a `run` and its
+  sanitizer, so one renderer draws both. Two things bite: `sanitizeRunReport` SILENTLY DROPS a record whose
+  `subsystem`/`kind` is not a lowercase slug (right in production, invisible in development — a tool name is
+  never a `reason`, it goes in `detail.tool`), and `detail.tab` is which tab a record is ABOUT, while the event's
+  own `tab` means who REPORTED it. Never a line per probe: the transcript already shows what a step cost.
 - **Hub client.** A hub is trusted with nothing, including who sent something: what a runtime acts on is the signature
   inside the seal, never `Envelope.sender`. The checks in `seal.ts` are in a deliberate order and the nonce is last, so
   only an authenticated command inside its clock window can fill the replay window. Bytes reaching WebCrypto are
