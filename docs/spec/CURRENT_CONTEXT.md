@@ -28,10 +28,11 @@ today and both come up constantly:
 ## The shape
 
 ```js
-ml.current.run; // { id, model, step, maxSteps, startedTs } — which run this is
-ml.current.messages; // the array the NEXT model call would receive, each row carrying a stable `id`
-ml.current.meta(id); // what we KNOW about that message; read-only, now and after mutation lands
-ml.current.log; // this run's execution log (run-log.ts), gated — see "The log" below
+ml.current.run        // { id, model, step, maxSteps, startedTs } — which run this is
+ml.current.messages   // `NeutralMessage[]` VERBATIM — the exact array `ml.step()` takes
+ml.current.meta       // a PARALLEL array, same length and order: what we KNOW about each message
+ml.current.log        // this run's execution log (run-log.ts) as records
+ml.current.logText    // the same log as greppable text, for ml.pipe
 ```
 
 Five decisions make it survive the write half. Each is the non-obvious choice.
@@ -51,19 +52,25 @@ pointer, both resolving against _the run currently executing a tool_ and both th
 It also unifies with the Python half: the standing idea is a run-bound `ml` facade inside Pyodide, and `ml.current`
 is then the same name reaching the same thing from both languages.
 
-### 2. Stable ids, from day one, even though reading does not need them
+### 2. Stable ids, from day one — but in `meta`, never on the message
 
-Array position is the obvious address and the one that breaks: drop message 3 and every index the model is holding
-means a different message, silently. Each row carries an `id` minted the way `@tool:` ids are (`token-id.ts`:
-payload plus a check character), so a hallucinated or stale id fails the check instead of addressing a real message
-by accident.
+Array position is the obvious address and the one that breaks under mutation: drop message 3 and every index a
+model is holding means a different message, silently. So an id exists from the start, minted the way `@tool:` ids
+are (`token-id.ts`: payload plus a check character), and a stale or hallucinated one fails the check rather than
+addressing a real message by accident. Retrofitting an address later is a breaking change to a contract the model
+has already learned.
 
-Retrofitting addresses later is a breaking change to a contract the model has already learned, and there is no
-migration for "the thing it remembered now points elsewhere".
+It lives in `meta[i].id`, NOT on the message. An earlier draft put it on the row, which was the one place derived
+data leaked into the wire shape — and decision 3 exists to stop exactly that. Within a snapshot the index IS a
+valid address, because the snapshot is one instant; the id is what carries identity ACROSS a filter, a later read,
+or a mutation, which is the only thing position cannot do.
 
 ### 3. `messages` is the wire; `meta` is what we know — and they stay apart
 
-`messages` rows are the content the model would actually receive (`role`, `content`, `tool_calls`, …) plus the `id`.
+`ml.current.messages` is `NeutralMessage[]` and nothing else: the same objects `ml.step(messages)` takes and
+`ml.agent`'s own loop holds, with no field added, nothing capped and nothing renamed. A doctored copy would be
+worse than no copy — a model reasoning about its context from a report ABOUT it is wrong in ways it cannot detect,
+and code written against the doctored shape would not fit the function that consumes the real one.
 `meta` is everything derived. Merging them reads better and is wrong: `messages` is what later becomes writable, and
 a row carrying its own `ts` invites writing a false one. The entire value of the timing fields is that the model
 cannot author them.
@@ -86,12 +93,10 @@ A model that wants to work the messages as data has to copy them, and **the dial
 mutable copy today**. That is measured, not assumed (`tests/readonly-exec.test.mjs`):
 
 ```js
-const i = await ml.info();
-i.compute = {}; // OK — the facade built this value for this call
-const c = { ...i };
-c.mine = 1; // OK — the copy is the script's own object
-c.compute.supported_gpus.push(x); // REFUSED — the spread carried it by reference
-JSON.parse(JSON.stringify(i)).compute.system_compute.total_memory = 1; // ALSO REFUSED
+const i = await ml.info();  i.compute = {};        // OK — the facade built this value for this call
+const c = { ...i };         c.mine = 1;            // OK — the copy is the script's own object
+c.compute.supported_gpus.push(x);                  // REFUSED — the spread carried it by reference
+JSON.parse(JSON.stringify(i)).compute.a.b = 1;     // ALSO REFUSED — own() does not recurse, for any source
 ```
 
 `own()` marks the value it is handed and does not recurse, for every source — an `ml.*` result, a spread, and a
@@ -109,7 +114,7 @@ other source has that property, which is why this is a change to one branch rath
 it would owe adversarial tests of its own. Until it is made, the honest advice to a model is to rebuild what it
 needs at the depth it needs (`msgs.map(m => ({ role: m.role, content: m.content }))`) rather than to clone.
 
-`ml.current.meta(id)` is the opposite case and gets the opposite treatment: a fresh record per call, which the
+`ml.current.meta` is the opposite case and gets the opposite treatment: a fresh array per read, which the
 dialect marks owned, so the script may write to it — to the same one-level depth as everything else above, which is
 why `meta` is specified FLAT (see the table) rather than as a nested record. It can afford that because `meta` is never going to be writable — it is derived provenance, and the
 whole value of the timing fields is that the model cannot author them (decision 3). There is no future operation for
@@ -126,14 +131,14 @@ Reading your context into your context is a quine that grows. A tool returning t
 context in one call, on the path whose whole purpose is usually to save it.
 
 Inside `exec` (and later `python_exec`) the model's filter and slice run OUTSIDE the context, and only the result
-lands in it. `ml.current.meta(id).sinceMs` over three hundred messages costs whatever the model chooses to return.
+lands in it. A survey over three hundred records costs whatever the model chooses to return.
 Anything genuinely large is addressed rather than copied, through the value store and a `@tool:` pointer, which is
 the machinery that already exists for exactly this.
 
 ## It is all RESOLVED UP FRONT, so the whole facade is synchronous
 
-`ml.current.messages` is a plain array and `ml.current.meta(id)` a plain lookup. Nothing here returns a promise and
-nothing needs an `await`.
+Every member is a plain value — two arrays, a record and a string. Nothing here is a call, nothing returns a
+promise, and nothing needs an `await`.
 
 That follows the house pattern rather than inventing one. `@tool:` pointers are resolved before a line of the
 script runs — the macro pass is lexical, so every handle the source mentions is known in advance, `exec` awaits
@@ -150,23 +155,22 @@ that never says `ml.current` costs nothing — which matters, because on a backg
 the worker while `exec` runs on the page, so an unconditional pre-fetch would put the context on the wire for every
 delegated tool call whether or not anything read it.
 
-**What the snapshot carries** is therefore bounded by design: per message an id, a role, the metadata, and a short
-PREVIEW of the content — not the body. A whole context of bodies is the thing that must never cross on spec, and
-the full text of any one message is a separate, explicit, async read (`messageText(id)`, below). So the pre-fetch
-is N small records, and the expensive thing stays something you ask for by name.
+**What the snapshot carries** is the real messages, bodies included, because that is the point (decision 3). The
+cost is a structured clone of the context across the extension's own bridge — in-process, not a network hop, of
+data already in memory, and bounded by the context window itself. It is paid only by a script that NAMES
+`ml.current.messages`, which is what makes the lexical scan worth having rather than a micro-optimisation. The
+remote case is the one where this is not obviously affordable, and it is listed under Open.
 
 Combining the two is then the obvious code, and works inside a callback because everything is sync — the dialect
 allows a sync read inside a `.map`/`.filter` and refuses an async one (`tests/readonly-exec.test.mjs`), so this
 distinction is what decides whether the natural join runs or escalates to a human:
 
 ```js
+const meta = ml.current.meta;
 const stale = ml.current.messages
-    .map((m) => ({ m, meta: ml.current.meta(m.id) }))
-    .filter((x) => x.meta.tokens > 500 && x.meta.sinceMs > 10 * 60_000)
-    .map(
-        (x) =>
-            `${x.m.id} ${x.m.role} ${x.meta.tokens}t ${Math.round(x.meta.sinceMs / 60_000)}m ago`,
-    );
+    .map((m, i) => ({ m, meta: meta[i] }))            // zip by index: same length, same order
+    .filter(x => x.meta.tokens > 500 && x.meta.sinceMs > 10 * 60_000)
+    .map(x => `${x.meta.id} ${x.m.role} ${x.meta.tokens}t ${Math.round(x.meta.sinceMs / 60_000)}m ago`);
 ```
 
 Resolving up front also makes the facade a SNAPSHOT for free: every row and every record describes the same
@@ -211,11 +215,11 @@ message records — so either is cheap to ship and neither should be shipped to 
 and no new methods:
 
 ```js
-const log = ml.current.log; // sync, like the rest of the facade
-log.slice(-20); // the last twenty
-log.filter((r) => r.subsystem === "page"); // one subsystem
-log.filter((r) => r.kind === "discarded" || r.kind === "unreachable");
-log.filter((r) => r.ts > Date.now() - 60_000); // the last minute
+const log = ml.current.log;                        // plain data, like the rest of the facade
+log.slice(-20)                                     // the last twenty
+log.filter(r => r.subsystem === "page")            // one subsystem
+log.filter(r => r.kind === "discarded" || r.kind === "unreachable")
+log.filter(r => r.ts > Date.now() - 60_000)        // the last minute
 ```
 
 Records rather than a string, for three reasons. The dialect's array methods are already there, so a string would
@@ -232,14 +236,24 @@ what makes an equality filter reliable and a substring search a guess.
 `ml.current.logText` is that string:
 
 ```js
-ml.pipe(ml.current.logText, "grep discarded | tail -20");
+ml.pipe(ml.current.logText, "grep discarded | tail -20")
 ```
 
-**A sibling member, not `toString()`.** `ml.current.log` is a plain array, and `String(array)` is comma-joined
-`[object Object]`, so a useful `toString` would mean handing back a custom array-like — a live object with
-behaviour, which is what the Python-parity decision rules out and what the rejected String wrapper above fails on
-for the same reasons. Two plain values cost nothing: an array and a string, both JSON-shaped, both trivially a
-`list` and a `str` in Python, and neither needing a new kind in the dialect's deny-by-default `kindOf`.
+**A sibling member, not `toString()`** — and not for the reason first given here. Python can express a custom
+`__str__` perfectly well (`class RunLog(list): def __str__(self): ...` is idiomatic), so "Python parity rules it
+out" was simply wrong; that objection applies to the String wrapper for message CONTENT, which has to be a string
+AND carry behaviour, not to a list that merely prints nicely.
+
+The real reason is that it would not work. `mlPipe` (`text-pipe.ts`) takes a string, unwraps an object with a
+`.text`/`.markdown` string property, and otherwise THROWS — naming an array explicitly: _"ml.pipe needs a string
+(or a fetch result), got an array. For an object, JSON.stringify it first"_. It never consults `toString`. So a
+custom one buys nothing unless `mlPipe` is changed to stringify whatever it is handed, which would blunt an error
+message that is deliberately steering models somewhere better.
+
+Two plain values need no change anywhere, and the second reason is discoverability: `logText` appears in
+`agent_api_docs` as a named member with its format documented, where a `toString` behaviour is invisible in a type
+listing — a model reading `log: RunLogRecord[]` has no reason to suspect that printing it does something special.
+A `toString` can still be added later if it earns its place; it is additive, so nothing here closes that door.
 
 **The format is part of the contract, which is what answers the objection to text above.** The complaint there was
 that a regex over RENDERED output matches the presentation rather than the facts; this is not the presentation.
@@ -265,35 +279,39 @@ the shape is JSON-shaped data plus explicit calls, with no getters that do work 
 
 The same interface must be expressible in Python; how it crosses does not matter. In practice that rules out:
 getters that look like properties but perform I/O, Proxies, array methods AS the API, and any distinction between
-`undefined` and `null` carrying meaning. `ml.current.messages` is a list of dicts; `ml.current.meta(id)` is a
-function. Absent is one value, spelled one way.
+`undefined` and `null` carrying meaning. `ml.current.messages` and `ml.current.meta` are both lists of dicts. Absent is one value, spelled one way.
 
-## A large message is CAPPED, and its full text is a separate ask
+## The spam problem is solved at the PRINT boundary, not in the data
 
 The system prompt is the case that forces this — around 3.2k tokens, re-sent every turn, the largest single thing
-in the context and the one the model can least act on. It appears in `messages`, because it IS in the context and a
-list that omitted it would make every total wrong. But its `content` is CAPPED, with `truncated: true` and the real
-`tokens` beside it, and the full text is a separate explicit call:
+in the context and the one a model can least act on. An earlier draft capped it inside `messages` and put the full
+text behind a separate call. That was the wrong trade: it is decision 3 again, and losing it costs more than the
+spam does. A model reasoning about its context from an abridged copy is wrong in ways it cannot detect, every total
+it computes is off by the part that was removed, and `ml.step(ml.current.messages)` stops being a thing that works.
 
-```js
-ml.current.messageText(id); // the whole thing, when you actually want it
-```
+So `messages` is complete, and the abridging happens where the cost actually is. **Holding the context costs
+nothing; PRINTING it is what spends tokens**, because `console.log` from `exec` is what reaches the model as the
+tool's result. `console.log(ml.current.messages)` therefore renders abridged — per message the role, the size, and
+a short preview — and anything a model wants in full it prints by naming it
+(`console.log(ml.current.messages[0].content)`), which is an explicit act over honest data rather than a shape it
+was handed.
 
-The rule is by SIZE, not by role: any message over the cap is treated the same way, because the system prompt is
-not the only large thing in a context — a screenshot-bearing tool result or a fetched page is — and a rule keyed to
-"is this the system prompt" is a special case that the next large thing walks straight past. The cap itself is the
-one the repo already applies to model-facing output (`resolveOutputCap`, contract-pointers.ts) rather than a new
-number.
+That is the house pattern rather than a new one: `IMG_PREVIEW_CHARS` (token-pipe.ts) shows "enough to identify the
+media type, far short of flooding the context" of a base64 image, and the output caps (`UI_OUT_CAP`,
+`resolveOutputCap`) bound what a tool result carries. All of them cut at the boundary where text reaches the model,
+none of them change the value underneath.
+
+It also generalises where a cap on `messages` would not. The rendering is keyed to SIZE, so a screenshot-bearing
+tool result or a fetched page abridges the same way the system prompt does — and a rule keyed to "is this the
+system prompt" is a special case the next large thing walks straight past.
 
 **Considered and rejected: a String-like wrapper** whose `toString()` shows the first N characters and which needs
-`.toFullString()` for the rest. It is a tidier idea at the call site and it loses on three counts. It is a live
-object with behaviour, which is exactly what the Python-parity decision rules out — it crosses as neither a string
-nor a dict, and the Python half would need a bespoke class to match. It needs a new kind registered in the
-dialect's `kindOf` plus an allowlist entry, and `kindOf` defaults to deny, so it is a dialect extension owing
-adversarial tests rather than a data shape. And it protects the wrong path: a model is most likely to spend its
-context by serializing, and `JSON.stringify` unwraps a String object to its full primitive, so the protection would
-be absent from the one route that actually costs. A cap plus an explicit fetch is the same affordance — you have to
-ask for the spam — as plain data, with none of that.
+`.toFullString()` for the rest. It is a live object with behaviour, which the Python-parity decision rules out — it
+crosses as neither a string nor a dict. It needs a new kind registered in the dialect's `kindOf` plus an allowlist
+entry, and `kindOf` defaults to deny, so it is a dialect extension owing adversarial tests rather than a data
+shape. And it protects the wrong path: `JSON.stringify` unwraps a String object to its full primitive, and
+serializing is how a model actually spends its context. Abridging the PRINT has none of those problems, because it
+touches no value at all.
 
 ## What it must never expose
 
@@ -327,14 +345,18 @@ later rather than now:
   a new costume — so the halting tests are written NOW, against the read-only shape, and re-run against the first
   mutation.
 - **Failure**: a script that reads `ml.current` and then falls out of dialect leaves nothing behind.
+- **The print rendering**, since it is now the only thing standing between a model and its own context twice over:
+  that `console.log(ml.current.messages)` abridges, that naming one message's `content` prints it whole, that the
+  rule is by size rather than by role (a large tool result abridges like the system prompt), and that the VALUE is
+  untouched — `ml.current.messages[0].content.length` is the real length whatever the print showed.
 - **Copy semantics.** The depth rule is already asserted against the real dialect, for every route into it
   (`tests/readonly-exec.test.mjs`, "ownership is ONE LEVEL deep"); what this still owes is the same assertions
-  against `ml.current` itself once it exists — that a `messages` row refuses a write, that a `meta(id)` record
+  against `ml.current` itself once it exists — that a `messages` row refuses a write, that a `meta` record
   accepts one and reaches nothing, and that neither can be reached around through a shallow copy.
 
 ## Open
 
-- ~~`meta(id)` per message is N host calls~~ — answered by making `meta` SYNCHRONOUS over the snapshot the
+- ~~`meta` per message is N host calls~~ — answered by making the whole facade plain data over the snapshot the
   single `await` already fetched. N calls are then N lookups in the same realm, with no round trip, over an
   array whose length is fixed before the loop starts. That is cheaper than `ml.queryAll` inside a `.map`,
   which the dialect already allows and which does real DOM work per call. No bulk form is needed; adding one
