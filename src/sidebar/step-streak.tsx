@@ -20,6 +20,7 @@ import type { AgentTurnGroup } from "./debug-reducer";
 import { fmtDur } from "./timestamps";
 import { toolFailed } from "./format";
 import { IconChevron } from "./icons";
+import { cursorTipOn } from "./ui-kit";
 import { useCloseAnimation } from "./use-close";
 import { justArrived } from "./just-arrived";
 
@@ -242,7 +243,22 @@ export function StepStreak({ s, render }: { s: ToolStreak; render: (t: AgentTurn
                     closed, so without this the only sign of a run in progress would be the number changing. */}
                 {pending ? <span class="astreak-live">running…</span> : ms != null ? <span class="astreak-ms">{fmtDur(ms)}</span> : null}
             </button>
-            {shown ? <div class={`astreak-body${closing ? " closing" : ""}`}>{s.turns.map(render)}</div> : null}
+            {shown
+                ? <div class={`astreak-body${closing ? " closing" : ""}`}>
+                    {/* THE RAIL IS THE CONTROL, not a decoration. It is the one thing on screen that says where the
+                        group ends, so it is what a reader points at when they want it gone — and it was a `border`,
+                        which cannot be clicked. A real element, with a hit strip wider than the 2px line it draws.
+
+                        Pointer-only, deliberately: `aria-hidden` + `tabindex -1` because it DUPLICATES the header
+                        above it, and a second tab stop for one action is noise in a keyboard pass. The header is
+                        also the full-width target a finger gets — a thin strip beside the content is a mis-tap
+                        waiting to happen on a phone, which is why the stylesheet takes this one's clicks away on a
+                        coarse pointer. */}
+                    <button class="astreak-rail" aria-hidden="true" tabIndex={-1} onClick={toggle}
+                        {...cursorTipOn("Collapse this group")} />
+                    {s.turns.map(render)}
+                  </div>
+                : null}
         </div>
     );
 }

@@ -1761,10 +1761,22 @@ button.chat-page-go:hover { color: var(--fg); }
    from the chevron that opened them.
    DARK rather than accented: membership is structure, not status, and the steps inside carry their own colours — a
    failed call's red dot, a gate's amber rail — that a coloured bracket would compete with for the same meaning. */
-.astreak-body {
-    margin-left: -12px; padding-left: 13px;
-    border-left: 2px solid color-mix(in srgb, var(--fg) 12%, transparent);
+.astreak-body { position: relative; margin-left: -12px; padding-left: 13px; }
+/* The line itself is drawn by a ::before so the BUTTON can be wider than it: the thing you aim at is the gutter,
+   and the thing you see is a hairline. It brightens on hover, which is the only way a rail says it is a control. */
+.astreak-rail {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 11px;
+    margin: 0; padding: 0; border: none; background: none; appearance: none; cursor: pointer;
 }
+.astreak-rail::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; border-radius: 1px;
+    background: color-mix(in srgb, var(--fg) 12%, transparent); transition: background .15s ease;
+}
+.astreak-rail:hover::before { background: color-mix(in srgb, var(--fg) 32%, transparent); }
+@media (prefers-reduced-motion: reduce) { .astreak-rail::before { transition: none; } }
+/* NOT A TAP TARGET. It duplicates the header, which is full width, and an 11px strip running down the side of the
+   content is a mis-tap rather than an affordance on a phone. The line stays; only the click goes. */
+@media (pointer: coarse) { .astreak-rail { pointer-events: none; } }
 /* …and it opens and shuts on the same keyframes as a step body, through the same `--astep-close-ms` handshake. */
 .astreak-body { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); }
 .astreak-body.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; }

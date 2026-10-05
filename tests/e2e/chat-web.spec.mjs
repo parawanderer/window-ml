@@ -995,6 +995,13 @@ test("a run of the same tool folds into one row, and opens again", async () => {
     await streak.locator(".astreak-head").click();
     await expect(page.locator('[data-astep-seq="303"]')).toHaveCount(0);
 
+    // THE RAIL CLOSES IT TOO. It is the one thing on screen saying where the group ends, so it is what a reader
+    // points at to be rid of it — and it was a `border`, which takes no clicks.
+    await streak.locator(".astreak-head").click();
+    await expect(page.locator('[data-astep-seq="303"]')).toHaveCount(1);
+    await streak.locator(".astreak-rail").click();
+    await expect(page.locator('[data-astep-seq="303"]')).toHaveCount(0);
+
     expect(errors).toEqual([]);
     await page.close();
 });
