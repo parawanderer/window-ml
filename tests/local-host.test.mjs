@@ -313,3 +313,95 @@ test("watch(): a sink hears every index change and every session's events with n
     server.ingest(step("aaaa0001", 2), { tabId: TAB, trusted: true });
     assert.equal(streams.length, 2, "nothing after the stop");
 });
+
+// --- live streaming reaches a WATCHING page: the model's reply, and a tool's output as it works ---
+// A run streams two different things by two different routes, and both reach a page that is merely WATCHING only
+// through the index: the model's reply/thinking as `agent-stream`, and a tool's output as an `agent-step` delta
+// carrying `streamOutput` and NO `tool` (contract-debug.ts). The surface that hosts the run renders them from its
+// own events, so it proves nothing about this path — tests/e2e/stream-watch.spec.mjs drives the whole browser, and
+// these are the fast guard over the carriage itself.
+
+for (const trusted of [true, false]) {
+    const who = trusted ? "the background" : "a page's own shell";
+    test(`a streamed reply from ${who} reaches a watching transcript, delta by delta`, T, async () => {
+        const { world, host } = setup();
+        const store = new ChatStore(host);
+        store.start();
+        await flush();
+        world.current.server.ingest(start("aaaa0001", "stream at me"), { tabId: TAB, trusted });
+        await flush();
+        store.open("local:aaaa0001");
+        await flush();
+
+        const stream = (over) => base("aaaa0001", "agent-stream", { step: 1, localStep: 1, ...over });
+        world.current.server.ingest(stream({ reasoning: "let me think" }), { tabId: TAB, trusted });
+        await flush();
+        assert.equal(sessionMap.get("local:aaaa0001")?.liveStream?.reasoning, "let me think");
+        // `agent-stream` carries the text ACCUMULATED so far and the UI REPLACES rather than appends, which is what
+        // makes a reconnect mid-turn show the whole reply instead of its tail (session-relay.ts says the same).
+        world.current.server.ingest(stream({ content: "the ans", tokens: 3 }), { tabId: TAB, trusted });
+        await flush();
+        world.current.server.ingest(stream({ content: "the answer so far", tokens: 7 }), { tabId: TAB, trusted });
+        await flush();
+        assert.equal(sessionMap.get("local:aaaa0001")?.liveStream?.content, "the answer so far");
+        assert.equal(sessionMap.get("local:aaaa0001")?.liveStream?.tokens, 7);
+        // The runtime's own reading says the run is live, which is what the transcript gates the live block on.
+        assert.equal(store.index.value.get("local:aaaa0001")?.status, "running");
+
+        // The step's real events supersede the live view: the index drops the stream rather than leaving a stale
+        // bubble above a finished reply.
+        world.current.server.ingest(step("aaaa0001", 1), { tabId: TAB, trusted });
+        await flush();
+        assert.ok(!sessionMap.get("local:aaaa0001")?.liveStream, "the live bubble is gone once the step lands");
+        store.dispose();
+        host.dispose();
+    });
+
+    test(`a tool's live output from ${who} patches the pending step on a watching transcript`, T, async () => {
+        const { world, host } = setup();
+        const store = new ChatStore(host);
+        store.start();
+        await flush();
+        world.current.server.ingest(start("aaaa0001", "stream a tool at me"), { tabId: TAB, trusted });
+        await flush();
+        store.open("local:aaaa0001");
+        await flush();
+
+        // The pending step carries the tool; each delta carries ONLY { step, seq, streamOutput }.
+        world.current.server.ingest(step("aaaa0001", 1, { pending: true, result: undefined }), { tabId: TAB, trusted });
+        await flush();
+        const delta = (out) => base("aaaa0001", "agent-step", { step: 1, seq: 1, streamOutput: out });
+        world.current.server.ingest(delta("one\n"), { tabId: TAB, trusted });
+        await flush();
+        assert.equal(sessionMap.get("local:aaaa0001")?.steps?.[0]?.streamOutput, "one\n");
+        world.current.server.ingest(delta("one\ntwo\n"), { tabId: TAB, trusted });
+        await flush();
+        const steps = sessionMap.get("local:aaaa0001")?.steps ?? [];
+        assert.equal(steps.length, 1, "a delta patches the pending row rather than adding one");
+        assert.equal(steps[0].streamOutput, "one\ntwo\n");
+
+        // The finished step's real result supersedes the live output.
+        world.current.server.ingest(step("aaaa0001", 1, { result: "one\ntwo\nthree" }), { tabId: TAB, trusted });
+        await flush();
+        assert.equal(sessionMap.get("local:aaaa0001")?.steps?.[0]?.result, "one\ntwo\nthree");
+        store.dispose();
+        host.dispose();
+    });
+}
+
+test("a page that joins MID-STREAM is served the accumulated reply, not the delta it happened to arrive on", T, async () => {
+    // The index coalesces `agent-stream` per step, so what a joiner is backfilled is the newest accumulated text.
+    // That is the whole reason the events carry the total rather than the increment.
+    const { world, host } = setup();
+    world.current.server.ingest(start("aaaa0001", "already going"), { tabId: TAB, trusted: true });
+    world.current.server.ingest(base("aaaa0001", "agent-stream", { step: 1, localStep: 1, content: "half" }), { tabId: TAB, trusted: true });
+    world.current.server.ingest(base("aaaa0001", "agent-stream", { step: 1, localStep: 1, content: "half the answer" }), { tabId: TAB, trusted: true });
+    const store = new ChatStore(host);
+    store.start();
+    await flush();
+    store.open("local:aaaa0001");
+    await flush();
+    assert.equal(sessionMap.get("local:aaaa0001")?.liveStream?.content, "half the answer");
+    store.dispose();
+    host.dispose();
+});

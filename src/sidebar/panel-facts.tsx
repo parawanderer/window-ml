@@ -13,12 +13,12 @@ import { signal } from "@preact/signals";
 import type { RunStats } from "../contract";
 import { fmtCtx } from "../contract-config";
 import type { LoadedModel } from "../contract-server";
-import { quantPlain, formatBytes } from "../resource-model";
+import { quantPlain, formatBytes, normModel } from "../resource-model";
 import { activityFrom, kvOccupancy, fmtOccupancy, expectedDecodeFrom, expectedPhrase } from "../resource-decode";
 import { type Capacity } from "../resource-capacity";
 import { usageByModel, type UsageSource } from "./model-stats";
 import { capacity } from "./panel-state";
-import { rev, sessionMap } from "./store";
+import { loadedModels, rev, sessionMap } from "./store";
 
 /** BEYOND THIS, THE DEADLINE IS NOT A DEADLINE. `keep_alive: -1` pins a model in memory, and Ollama expresses
  *  that as an `expires_at` about a century out — so a countdown rendered from it reads "36159d 12h", which is
@@ -233,3 +233,12 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
  *  keep-alive TTL). Two tooltips for one pointer is never right — the specific one wins, and the row's
  *  follower steps aside rather than overlapping it. */
 export const rowTipSuppressed = signal(false);
+
+/** Is this model resident right now? `undefined` when we have no `/api/ps` answer yet — the caller must not
+ *  read that as "not loaded", since the difference between "loading" and "we don't know" matters to what the
+ *  UI claims. Matches on the tagged name, normalising `:latest` like the rest of the model plumbing. */
+export function residentNow(model?: string | null): boolean | undefined {
+    const loaded = loadedModels.value;
+    if (!model || !loaded) return undefined;
+    return loaded.some((m) => normModel(m.model) === normModel(model));
+}

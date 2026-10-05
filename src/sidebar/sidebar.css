@@ -2218,6 +2218,9 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 .resume-from { display: block; margin-top: 6px; color: var(--fg-faint); }
 .pending-note { display: flex; flex-direction: column; gap: 6px; padding: 4px 2px 10px; color: var(--fg-faint); font-style: italic; }
 .pending-note .ptext { font-variant-numeric: tabular-nums; }
+/* The step count beside the live phrase: present for a trace reader, quieter than the phrase, because what
+   is happening now is the thing being read and how many steps it took is the context around it. */
+.pending-note .psteps { color: var(--fg-faint); }
 /* Browser page-load bar: the thin indeterminate sweep an SPA shows on navigation. */
 .pbar { position: relative; height: 2px; width: 100%; background: var(--border); border-radius: 2px; overflow: hidden; }
 .pbar > span { position: absolute; top: 0; bottom: 0; left: -35%; width: 35%; border-radius: 2px;

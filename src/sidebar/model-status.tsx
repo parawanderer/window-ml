@@ -2,18 +2,9 @@
 // loading, unavailable or cloud (`modelLoadState`, `ModelStatusDot`), when its keep-alive runs out (`expiresIn`),
 // and its capability probe. The model picker, the HUD card and the resource panel all read it from here.
 
-import { normModel, formatBytes } from "../resource-model";
+import { formatBytes } from "../resource-model";
 import { NO_EXPIRY_MS, modelCaps, isEmbedding, isChatModel } from "./panel-facts";
 import { loadedModels, psError, models, ollamaIds } from "./store";
-
-/** Is this model resident right now? `undefined` when we have no `/api/ps` answer yet — the caller must not
- *  read that as "not loaded", since the difference between "loading" and "we don't know" matters to what the
- *  UI claims. Matches on the tagged name, normalising `:latest` like the rest of the model plumbing. */
-export function residentNow(model?: string | null): boolean | undefined {
-    const loaded = loadedModels.value;
-    if (!model || !loaded) return undefined;
-    return loaded.some((m) => normModel(m.model) === normModel(model));
-}
 
 // "expires in Xs/Xm" from an /api/ps expires_at ISO stamp (Ollama's TTL). A BUSY runner has no deadline to
 // report: the server rewrites it when the request finishes, so the stamp we hold is the one from last time.

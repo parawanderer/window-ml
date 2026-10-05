@@ -33,9 +33,11 @@ export const ACTIVITY: Record<string, { icon: string; label: string; short: stri
     agent_api_docs: { icon: "📖", label: "Reading its own manual…", short: "docs", about: "its manual" },
 };
 
-// The current turn's steps: those AFTER the last follow-up prompt's step position, so a fresh reply-turn
-// never shows the PREVIOUS turn's tools. (Shared by activityFor + liveProseFor.)
-function currentTurnSteps(run: Session): AgentStep[] {
+/** The current turn's steps: those AFTER the last follow-up prompt's step position, so a fresh reply-turn
+ *  never shows the PREVIOUS turn's tools. Shared by activityFor, liveProseFor and the running footer's step
+ *  count — a follow-up starts a new loop, and counting every step the session ever ran told you about work
+ *  that finished before you typed. */
+export function currentTurnSteps(run: Session): AgentStep[] {
     const steps = run.steps || [];
     const turnStart = Math.max(0, ...(run.says || []).map(s => s.atStep || 0));
     return steps.filter(s => (s.step || 0) > turnStart);

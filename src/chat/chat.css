@@ -659,6 +659,16 @@ button.chat-page-go:hover { color: var(--fg); }
 /* The approval card states it, with the buttons on it; the note under the rule states it again, and the bar at the
    top of the pane a third time (that one is hidden from the component, which knows whether the card is in view). */
 .chat.calm .pending-note.blocked { display: none; }
+/* THE SAME EVENT, DRAWN TWICE. While the model is streaming, the reply itself is being written on screen a
+   line above — that growing text IS the liveness signal, so the footer's phrase is a clone of the first line
+   of it, and the "thinking" count is a clone of the thought block's. The reading view shows a status line only
+   when nothing else represents status: before the first token, between steps, while a tool runs. The panel
+   keeps its bar (it is instrumentation), and the HUD keeps its phrase (it has no transcript to show instead). */
+.chat.calm .pending-note.dup { display: none; }
+/* And the live pulse beside a streaming reply, for the same reason: the words appearing are the pulse. Left on
+   in the panel, where it sits in a row of instrumentation; in the reading view it is a lone purple dot in the
+   margin with nothing to belong to. */
+.chat.calm .msg.asst.streaming .live-dot { display: none; }
 /* THE READING VIEW GETS THE GLYPH, NOT THE BAR. An indeterminate sweep is the browser's own page-loading motif and
    reads right in the panel, among the instrumentation; across a reading column it is a rule drawn under the
    conversation, which is a lot of furniture for one fact. The glyph says the same thing in the width of a character,
