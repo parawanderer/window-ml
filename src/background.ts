@@ -19,6 +19,7 @@ import { configureSessionCommands, ingestSessionEvent, keepSession, saveChatSess
 import { folderAction } from "./sw-archive";   // the session archive's folder, for Settings
 import { ensureHubRuntime, hubDevices, hubLog, hubState, revokeHubDevice, stopHubRuntime } from "./sw-hub";   // this browser as a runtime on a hub
 import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, senderOrigin } from "./sw-housekeeping";
+import { handleRunLogDump } from "./sw-run-log";
 import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, pendingGrants, takeCredFetch } from "./sw-consent";
 import { runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw-runs";
@@ -827,6 +828,12 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     } else if (message.type === "DUMP_HOUSEKEEPING") {
         // `ml.__housekeeping()` and the DevTools panel. A page sees another tab's events without their key/detail.
         handleHousekeepingDump(message.payload, sender).then(sendResponse, (e) => sendResponse({ error: String((e as Error)?.message || e) }));
+        return true;
+
+    } else if (message.type === "DUMP_RUN_LOG") {
+        // The chat page's Execution log panel. Extension pages only: the ring holds every run's records, and a
+        // record's key can be another tab's URL (sw-run-log.ts says why the model's own read waits for a gate).
+        handleRunLogDump(message.payload, sender).then(sendResponse, (e) => sendResponse({ error: String((e as Error)?.message || e) }));
         return true;
 
     } else if (message.type === "SESSION_STORAGE_STATS") {

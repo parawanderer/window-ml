@@ -120,3 +120,64 @@ test("the ring outlives the log object, which is what surviving an evicted worke
     next.record("aaa1", { subsystem: "page", kind: "unreachable", reason: "asleep" });
     assert.deepEqual((await next.all()).map((e) => e.kind), ["silent", "unreachable"]);
 });
+
+// --- the names the emitters use: a generator judged by a rule, enumerated rather than sampled ---
+
+/** Every `subsystem` / `kind` / `reason` literal the worker's emitters pass, in either of the two shapes they
+ *  are written in: a record literal (`subsystem: "cdp"`) and the log helper's positional kind (`note("held")`). */
+async function emittedNames() {
+    const { readFile } = await import("node:fs/promises");
+    const out = { subsystem: new Set(), kind: new Set(), reason: new Set() };
+    for (const f of ["sw-run-host.ts", "sw-cdp.ts", "sw-runs.ts"]) {
+        const src = await readFile(new URL(`../src/${f}`, import.meta.url), "utf8");
+        for (const key of ["subsystem", "kind", "reason"])
+            for (const m of src.matchAll(new RegExp(`\\b${key}:\\s*([^,}\\n]+)`, "g")))
+                for (const lit of m[1].matchAll(/"([^"]*)"/g)) out[key].add(lit[1]);
+        for (const m of src.matchAll(/\bnote\(\s*"([^"]*)"/g)) out.kind.add(m[1]);
+    }
+    // One reason is not a literal at its emit site: an unreachable page records `reason: e.state`, whose values
+    // are the `TabState` union plus the cap's own "silent". Read them where they ARE declared, so a new state
+    // named in a shape the sanitizer refuses still fails this.
+    const reach = await readFile(new URL("../src/page-reachable.ts", import.meta.url), "utf8");
+    const states = reach.match(/^export type TabState = (.*)$/m)[1] + (reach.match(/state: TabState \| "[^"]+"/)?.[0] ?? "");
+    for (const lit of states.matchAll(/"([^"]*)"/g)) out.reason.add(lit[1]);
+    return out;
+}
+
+test("every name the emitters pass survives the sanitizer — a bad slug would drop the record silently", async () => {
+    const names = await emittedNames();
+    // The scan must not pass by finding nothing: these three files hold the page, cdp and tab mechanics.
+    assert.ok(names.subsystem.size >= 3, [...names.subsystem].join(","));
+    assert.ok(names.kind.size >= 8, [...names.kind].join(","));
+    assert.ok(names.reason.size >= 5, [...names.reason].join(","));
+    for (const subsystem of names.subsystem)
+        assert.ok(sanitizeRunReport({ run: "abc123", subsystem, kind: "x" }), `subsystem "${subsystem}"`);
+    for (const kind of names.kind)
+        assert.ok(sanitizeRunReport({ run: "abc123", subsystem: "page", kind }), `kind "${kind}"`);
+    for (const reason of names.reason)
+        assert.ok(sanitizeRunReport({ run: "abc123", subsystem: "page", kind: "x", reason })?.reason, `reason "${reason}"`);
+});
+
+test("the kinds and reasons the module's own map documents are the ones the emitters emit", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const doc = await readFile(new URL("../src/run-log.ts", import.meta.url), "utf8");
+    // The map is the three `//   <subsystem>  <kind> (reason: a|b) · <kind> …` lines in the header's convention
+    // note. Parsed rather than grepped, so the prose around it cannot be mistaken for an entry.
+    const lines = doc.split("\n").filter((l) => /^\/\/ {3}(page|cdp|tab) /.test(l));
+    assert.equal(lines.length, 3, "the map's three subsystem lines");
+    const mapped = { subsystem: new Set(), kind: new Set(), reason: new Set() };
+    for (const line of lines) {
+        const [, subsystem, rest] = line.match(/^\/\/ {3}(\w+) +(.*)$/);
+        mapped.subsystem.add(subsystem);
+        for (const seg of rest.split("·")) {
+            mapped.kind.add(seg.trim().split(/\s/)[0]);
+            const reasons = seg.match(/\(reason: ([^)]+)\)/);
+            if (reasons) for (const r of reasons[1].split("|")) mapped.reason.add(r.trim());
+        }
+    }
+    const names = await emittedNames();
+    // One direction only: the map is a map, so an emitter may add a kind before anyone writes it down — but a
+    // kind written down that nothing emits is a map describing a log that does not exist.
+    for (const key of ["subsystem", "kind", "reason"])
+        for (const w of mapped[key]) assert.ok(names[key].has(w), `the map lists ${key} "${w}", which nothing emits`);
+});

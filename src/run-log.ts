@@ -24,6 +24,15 @@ export interface RunLogEvent extends HousekeepingEvent {
     run: string;
 }
 
+// WHICH TAB A RECORD IS ABOUT GOES IN `detail.tab`, never the event's own `tab`: that field means the tab that
+// REPORTED an event, which for a worker record is nobody, and the shared renderer prints it as part of "who said
+// this". Here the tab is the subject — the one that was discarded, pinned, attached to — so it is detail.
+//
+// The subsystems and kinds in use today. Both are open by intent, so this is a map rather than a contract:
+//   page  held (reason: navigating) · discarded · reloaded (reason: discarded|gone) · unreachable (reason: asleep|gone|silent)
+//   cdp   attached (reason: already) · refused (reason: permission|busy) · detached
+//   tab   pinned (reason: hosting) · released · replaced
+
 /** What a reporter may say about a run. `t` and `origin` are the worker's to set, as in the housekeeping log. */
 export type RunLogReport = HousekeepingReport & { run: string };
 

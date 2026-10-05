@@ -4,6 +4,7 @@
 // background.ts verbatim; it owns its own attach lifecycle and shares no state with the rest of the worker.
 // Gated at the call sites behind the off-by-default `cdp` setting + the `debugger` permission (checked here).
 import { clipOut } from "./dom";
+import { noteRunMechanic } from "./sw-runs";
 
 /** Is the `debugger` permission held? It's declared at INSTALL time (in `permissions`, not optional) —
  *  Chrome forbids `debugger` as a runtime-optional grant (`permissions.request` rejects it: "Only permissions
@@ -27,15 +28,29 @@ const DEBUGGER_IDLE_MS = 20_000;   // detach a tab's debugger after this long wi
 /** Attach the debugger to `tabId` if we don't already hold it (idempotent), reusing a live attachment across
  *  calls. Returns ok, or an actionable error (missing permission / another debugger already attached). */
 export async function ensureDebuggerAttached(tabId: number): Promise<{ ok: true } | { error: string; needsPermission?: true }> {
-    if (!(await hasDebuggerPermission())) return { error: "The `debugger` permission isn't granted — enable \"Debugger-based actions (CDP)\" in window.ml Settings → Advanced.", needsPermission: true };
-    if (attachedDebuggees.has(tabId)) return { ok: true };
+    // Every outcome here goes in the run's log (sw-run-log.ts). A model that reached for CDP and was refused
+    // explains a step that otherwise reads as an inexplicable failure, and "the debugger is not granted" is a
+    // thing only the person can fix — so it must be somewhere they can see it, not only in the tool's error.
+    if (!(await hasDebuggerPermission())) {
+        noteRunMechanic(tabId, { subsystem: "cdp", kind: "refused", reason: "permission", detail: { tab: tabId } });
+        return { error: "The `debugger` permission isn't granted — enable \"Debugger-based actions (CDP)\" in window.ml Settings → Advanced.", needsPermission: true };
+    }
+    if (attachedDebuggees.has(tabId)) return { ok: true };   // reusing a live attachment: the attach below is what is worth a line
     try {
         await chrome.debugger.attach({ tabId }, "1.3");
         attachedDebuggees.add(tabId);
+        noteRunMechanic(tabId, { subsystem: "cdp", kind: "attached", detail: { tab: tabId } });
         return { ok: true };
     } catch (e) {
         const msg = (e as Error)?.message || String(e);
-        if (/already attached/i.test(msg)) { attachedDebuggees.add(tabId); return { ok: true }; }   // a prior attach we didn't track / a race
+        if (/already attached/i.test(msg)) {   // a prior attach we didn't track / a race
+            attachedDebuggees.add(tabId);
+            noteRunMechanic(tabId, { subsystem: "cdp", kind: "attached", reason: "already", detail: { tab: tabId } });
+            return { ok: true };
+        }
+        // Usually DevTools is open on the tab: the browser allows one debugger client, so this is the other
+        // common "CDP did not happen" and it is not the same thing as the setting being off.
+        noteRunMechanic(tabId, { subsystem: "cdp", kind: "refused", reason: "busy", key: msg, detail: { tab: tabId } });
         return { error: msg };
     }
 }
@@ -45,6 +60,9 @@ export function releaseDebugger(tabId: number): void {
     if (timer) { clearTimeout(timer); debuggerIdleTimers.delete(tabId); }
     if (!attachedDebuggees.has(tabId)) return;
     attachedDebuggees.delete(tabId);
+    // The banner the person saw going away. Paired with the attach above, the two bracket how long this run held
+    // the debugger on their tab, which is the question the banner raises.
+    noteRunMechanic(tabId, { subsystem: "cdp", kind: "detached", detail: { tab: tabId } });
     try { void chrome.debugger.detach({ tabId }).catch(() => {}); } catch { /* already gone / tab closed */ }
 }
 /** Reset the idle-detach timer after a CDP op — a run detaches eagerly in its finally, but a standalone
