@@ -82,10 +82,25 @@ Handing back a silently-discarding copy would teach the model that editing its c
 it would then be right about the syntax and wrong about the effect, and there is no error anywhere to tell it apart.
 A throw is loud now and becomes the real operation later, so nothing learned here has to be unlearned.
 
-A model that wants to work the messages as data clones them ITSELF — `ml.current.messages.map(m => ({ ...m }))` —
-and the dialect already allows that with no new rule: a container the script built is in `owned`
-(`readonly-exec.ts`), and method results are owned too, precisely so a live page container cannot be laundered into
-one. The copy is the script's and it may do as it likes with it.
+A model that wants to work the messages as data clones them ITSELF, and the dialect already allows that with no new
+rule. The clone has to be DEEP, and the spelling matters:
+
+```js
+const mine = JSON.parse(JSON.stringify(ml.current.messages));   // deep, and OWNED → freely mutable
+const flat = ml.current.messages.map(m => ({ ...m }));          // SHALLOW: nested values still alias
+```
+
+A spread copies a row's own keys and nothing below them, so `flat[0].tool_calls` is still the array inside the real
+message. Editing it does not corrupt anything — the `owned` gate refuses a write to a container the script did not
+create, so it throws — but it throws one level deeper than the model was looking, which is a worse error than the
+flat case it was imitating. `structuredClone` is not in the dialect; `JSON.parse`/`JSON.stringify` are, and a
+`JSON.parse` result is explicitly owned (`readonly-exec.ts`), which is what makes the round trip both a deep copy
+and a mutable one.
+
+That the round trip is LOSSLESS here is not luck: it follows from the Python-parity decision below, which already
+requires this to be JSON-shaped data with no `undefined`/`null` distinction carrying meaning. A shape that survives
+`JSON.parse(JSON.stringify(x))` unchanged is the same shape that crosses into Python unchanged, so one constraint
+buys both.
 
 `ml.current.meta(id)` is the opposite case and gets the opposite treatment: a deep clone the script owns and may
 freely mutate. It can afford that because `meta` is never going to be writable — it is derived provenance, and the
@@ -160,6 +175,11 @@ later rather than now:
   a new costume — so the halting tests are written NOW, against the read-only shape, and re-run against the first
   mutation.
 - **Failure**: a script that reads `ml.current` and then falls out of dialect leaves nothing behind.
+- **Copy semantics**, because the two halves differ and the difference is invisible until it bites: writing to a
+  `messages` row throws; writing to a `meta(id)` record does not and does not reach the real one; a SHALLOW copy of
+  a message still throws when a nested value is written, at the depth where the alias is; and the deep copy
+  (`JSON.parse(JSON.stringify(…))`) is mutable and reaches nothing. Four assertions, one of which — the shallow
+  case — is the one a model will actually write by accident.
 
 ## Open
 
