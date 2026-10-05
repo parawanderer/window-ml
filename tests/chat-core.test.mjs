@@ -442,6 +442,23 @@ test("Continue is offered only where the RUNTIME agrees the run stopped at its c
     store.dispose();
 });
 
+// --- is the model loaded: asked of the runtime that holds the session, or not known ---
+
+test("modelResident asks the entry about the session's OWN runtime, and is not known without one", async () => {
+    const { store } = world();
+    const platform = { kind: "web", prefs: { get: () => undefined, set() {} }, openImage() {}, saveFile() {}, copyText: async () => true };
+    // A page with no reading of any box: never "not loaded", which would say "Awakening…" about a machine it cannot see.
+    assert.equal(hostServices(store, platform).modelResident("laptop:run00001", "qwen3:32b"), undefined);
+
+    const asked = [];
+    const svc = hostServices(store, platform, { modelResident: (runtime, model) => { asked.push([runtime, model]); return runtime === "laptop" ? false : undefined; } });
+    assert.equal(svc.modelResident("laptop:run00001", "qwen3:32b"), false, "the entry's answer for that runtime");
+    assert.equal(svc.modelResident("lab:box:run00002", "gemma3:27b"), undefined, "another runtime: what the entry says, here not known");
+    assert.deepEqual(asked, [["laptop", "qwen3:32b"], ["lab:box", "gemma3:27b"]], "by the runtime in the key, split on the LAST colon");
+    assert.equal(svc.modelResident("not-a-key", "x"), undefined);
+    store.dispose();
+});
+
 // --- offering a resume: the one thing that works when a run's page has gone (slice 5) ---
 
 test("a resume is offered only where it would DO something, and refused where the composer already works", () => {
