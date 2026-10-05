@@ -16,6 +16,7 @@
 // also fans the run's start and result. So the index de-duplicates by meaning (a second start, a repeated result, a
 // repeated "seen", a chat turn's id), which holds whichever copy arrives first.
 import type { MlDebugEvent } from "./contract-debug";
+import { HASH_RE } from "./contract-run";
 import { SESSION_CONTRACT_VERSION, type RuntimeId, type SessionId, type SessionKind, type SessionStatus, type SessionStreamMessage, type SessionSummary, type StreamPosition } from "./session-host";
 
 /** Where one event came from. */
@@ -55,8 +56,6 @@ const KNOWN_KINDS = new Set(["chat", "chat-result", "chat-error", "agent", "agen
 /** Kinds that describe a SESSION rather than a chat or a run. They never create one: a note about a session this
  *  index does not hold is not a session, and the kind-from-prefix rule below would have to guess what it was. */
 const SESSION_KINDS = new Set(["session-resumed"]);
-/** A session hash as runtimes mint them. No `:`, so it composes into a SessionKey. */
-const HASH_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const TASK_CAP = 280;
 /** A row whose only change is `lastTs` is reported at most this often: a streaming run would otherwise upsert its row
  *  on every delta, and a list needs recency, not the millisecond. */

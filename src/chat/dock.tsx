@@ -20,6 +20,7 @@ import { followDrag } from "../sidebar/drag";
 import { DockBarSlot } from "../sidebar/panel-head";
 import { MenuItem } from "./menu";
 import { dockLayout, setDockLayout, type DockPanelId, type DockSide } from "./view-mode";
+import { useDismiss } from "../sidebar/use-dismiss";
 
 /** One panel the page has open, as the dock draws it. */
 export interface DockPanel {
@@ -27,8 +28,9 @@ export interface DockPanel {
     /** the tab's name */
     title: string;
     icon: ComponentChildren;
-    /** what the tab's tip says: whose it is, when that is not obvious */
-    tip?: string;
+    /** what the tab's tip says: whose it is, when that is not obvious — and, under a rule (`.tt-note`), what the
+     *  panel is FOR, where that explanation would otherwise be a paragraph sitting on top of the panel's content */
+    tip?: ComponentChildren;
     body: ComponentChildren;
     close(): void;
 }
@@ -71,7 +73,10 @@ export function DockFrame({ panels, narrow, children }: { panels: readonly DockP
     useEffect(() => {
         if (!zoomed) return;
         const onKey = (e: KeyboardEvent) => {
-            if (e.key !== "Escape" || e.defaultPrevented || document.querySelector(".chat-menu, .chat-dialog")) return;
+            // `:not(.leaving)` — a menu now stays in the DOM for the beat it takes to animate away (use-dismiss.ts),
+            // and a menu on its way out is not one that wants this key: without it, the Escape that closed a menu
+            // left a corpse that swallowed the NEXT Escape, so a zoomed panel could not be dismissed.
+            if (e.key !== "Escape" || e.defaultPrevented || document.querySelector(".chat-menu:not(.leaving), .chat-dialog")) return;
             maximized.value = null;
         };
         document.addEventListener("keydown", onKey);
@@ -180,13 +185,14 @@ function DockMenu({ panel, side, zoomed, full }: { panel: DockPanel; side: DockS
         return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); };
     }, [open]);
     const act = (run: () => void) => () => { setOpen(false); run(); };
+    const { show, closing } = useDismiss(open);
     return (
         <div class="dock-menu" ref={wrap}>
             <button class="tt hbtn" aria-label={`${panel.title} options`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
                 <IconMore /><span class="tt-pop left" role="tooltip">Where it sits, zoom, close</span>
             </button>
-            {open ? (
-                <div class="chat-menu dock-popup" role="menu" aria-label={`${panel.title} options`}>
+            {show ? (
+                <div class={`chat-menu dock-popup${closing ? " leaving" : ""}`} role="menu" aria-label={`${panel.title} options`}>
                     {full ? null : (
                         <div class="dock-sides" role="group" aria-label="Dock side">
                             <span class="dock-sides-label">Dock side</span>

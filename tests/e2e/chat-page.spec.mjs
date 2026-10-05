@@ -263,6 +263,106 @@ test("the box's panel and the Python bench are on this page, because THIS browse
     } finally { await ext.context.close(); await fake.stop(); }
 });
 
+test("the execution log is what the machinery did under the open run, which its steps never say", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const site = await startPageServer({});
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off" });
+        fake.setScript([{ content: "nothing to do" }]);
+
+        // A real run on a real tab, started the way a person would. It needs no tools: the mechanics this log is
+        // for happen AROUND a run — the browser is asked not to discard the tab the moment one is hosted there,
+        // and let go of it again when the run ends, and neither is visible anywhere else on the page.
+        const site1 = await ext.context.newPage();
+        await site1.goto(site.url + "/");
+        await waitForMl(site1);
+        const hash = await site1.evaluate(() => window.ml.agent("do nothing", { env: false }).then((r) => r.hash));
+
+        const { page: chat, errors } = await openChatPage(ext);
+        await chat.locator(".chat-row", { hasText: "do nothing" }).click();
+        await expect(chat).toHaveURL(new RegExp(`#/s/local%3A${hash}`));
+
+        // Offered beside the other panels, named for what it IS: it follows whichever session is open, so a title
+        // naming one run would go stale on the next click.
+        await chat.locator(".chat-gear-btn").click();
+        await chat.getByRole("menuitem", { name: "Panels" }).click();
+        const row = chat.getByRole("menuitemcheckbox", { name: /Execution log/ });
+        await expect(row).toHaveAccessibleName(/This browser/);
+        await row.click();
+
+        // Docked to the RIGHT by default: it is read line by line beside the steps it explains.
+        const panel = chat.locator(".chat-dock.chat-dock-right");
+        await expect(panel.locator(".runlog")).toBeVisible();
+        await expect(panel.locator(".r-outcell")).toContainText("pinned (hosting)");
+        await expect(panel.locator(".r-outcell")).toContainText("released");
+        // One tab hosted the whole run, so its id is the same on every line and is left off them: in a region
+        // this narrow that width is what turns a one-record line into two. It is still in the records.
+        await expect(panel.locator(".r-outcell")).not.toContainText("tab=");
+
+        // Escape closes the menu, but the key can land in the frame between the menu appearing and the effect
+        // that listens for it registering — invisible to a hand, reachable by a driver — so press until it takes
+        // rather than once and hope, or with a sleep long enough to hide the question.
+        const dismiss = () => expect.poll(async () => {
+            await chat.keyboard.press("Escape");
+            return panel.locator(".runlog-menu .menu").count();
+        }, { timeout: 5000 }).toBe(0);
+
+        // THE PANEL IS THE LOG. Its controls are in the DOCK'S bar, not in a row above the records — a toolbar
+        // and a paragraph were competing for the one width this region does not have.
+        await expect(panel.locator(".dock-bar .runlog-menu")).toBeVisible();
+        await expect(panel.locator(".runlog .hk-bar")).toHaveCount(0);
+        await panel.locator(".runlog-menu button").first().click();
+        await expect(panel.locator(".runlog-menu .menu")).toBeVisible();
+        // Exactly one subsystem is in play here, so there is nothing to filter between and no filter group — the
+        // only checkable row left is the colouring toggle, which is not one of them.
+        await expect(panel.locator(".menu-head")).toHaveCount(0);
+        await expect(panel.getByRole("menuitemcheckbox")).toHaveCount(1);
+        // The two exports this panel owes: the records themselves, and the run's WHOLE timeline, which is
+        // `run.json` rather than a fifth artifact that is almost it.
+        await expect(panel.getByRole("menuitem", { name: /Download the log/ })).toBeEnabled();
+        await expect(panel.getByRole("menuitem", { name: /Export all events/ })).toBeEnabled();
+
+        // COLOUR BY GROUP, on by default: the colour is what the group column is for. Nothing else is affected
+        // — colouring is asked for per CALLER (`TimedOutput`'s `groups`), and the housekeeping log does not ask.
+        await expect(panel.locator(".r-ts-g").first()).toBeVisible();
+        await panel.getByRole("menuitemcheckbox", { name: /Colour by group/ }).click();
+        await expect(panel.locator(".r-ts-g")).toHaveCount(0, { timeout: 5000 });
+        await panel.getByRole("menuitemcheckbox", { name: /Colour by group/ }).click();
+        await expect(panel.locator(".r-ts-g").first()).toBeVisible();
+        await dismiss();
+
+        // THE TIMESTAMP GUTTER IS AS WIDE AS THE STAMP, in `ch` — a fixed pixel width clipped the leading digit
+        // the moment the zoom below scaled the text, and was already a shade under `mm:ss` at the default size.
+        const stamp = panel.locator(".r-ts", { hasText: /\d/ }).first();
+        const fits = () => stamp.evaluate((el) => el.scrollWidth <= el.clientWidth + 1);
+        expect(await fits(), "the stamp fits its gutter").toBe(true);
+
+        // A ZOOM over the size the log already reads at, by the keys a hand reaches for. Pressed over the LOG,
+        // which is focusable because the output cell owns Ctrl+F — and prevented, so the browser does not zoom
+        // the whole page instead.
+        const size = () => panel.locator("pre.code").evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+        const before = await size();
+        await panel.locator(".r-outscroll").click();
+        await chat.keyboard.press("Control+=");
+        await expect.poll(size).toBeGreaterThan(before);
+        expect(await fits(), "and still fits it once the log is zoomed").toBe(true);
+        await chat.keyboard.press("Control+0");
+        await expect.poll(size).toBe(before);
+
+        // It is the OPEN run's, not the ring's: going back to the list leaves it with no run to describe rather
+        // than showing some other run's mechanics under nothing.
+        await chat.evaluate(() => { location.hash = "#/"; });
+        await expect(panel.locator(".runlog .hint")).toContainText("Open a session to read what happened underneath it");
+        await panel.locator(".runlog-menu button").first().click();
+        await expect(panel.locator(".runlog-menu .menu")).toBeVisible();
+        await expect(panel.getByRole("menuitem", { name: /Export all events/ })).toBeDisabled();
+        await dismiss();
+
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); await site.stop(); await fake.stop(); }
+});
+
 test("the start page holds through a worker restart, and its tab list is fresh and has the sites' icons", async () => {
     const fake = await startFakeLlm({ model: "fake-model" });
     // Pages with an icon: a tab's icon is what the runtime fetches and hands the picker as a data URL.

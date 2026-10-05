@@ -17,6 +17,7 @@
 
 import { bgRunResumable, pushReplay } from "./contract-run";
 import { moveTabKey } from "./tab-replaced";
+import { recordRunLog } from "./sw-run-log";
 import { type DerefRead } from "./contract-pointers";
 import { type NeutralMessage } from "./contract-chat";
 import { type StartRunPayload } from "./contract-messages";
@@ -173,6 +174,13 @@ export const navBarrier = createNavBarrier();
 
 export const activeRuns = new Map<number, Set<string>>();   // tabId → runIds hosted in that tab
 
+/** Records a mechanic for whichever run(s) this TAB is hosting — the shape every tab-keyed emitter needs, since
+ *  the machinery that reloads a discarded tab or attaches a debugger is addressed to a tab and the log is read
+ *  per run. Silent when no run is on the tab: this log is a run's, and there is no run to tell. */
+export const noteRunMechanic = (tabId: number, report: Parameters<typeof recordRunLog>[1]): void => {
+    for (const runId of activeRuns.get(tabId) ?? []) recordRunLog(runId, report);
+};
+
 // A PAGE-HOSTED run's loop lives in the page, so there is no runId the worker can vouch for: `derefByRun` is empty and
 // `activeRuns` holds only runs WE host. Its values are therefore held for the TAB, under this session name. Nothing the
 // page sends names it — the worker claims a value at the moment it DISCLOSES that value's key to the tab (the only way
@@ -251,6 +259,7 @@ export const trackRun = (tabId: number, runId: string, rebuild?: import("./contr
     s.add(runId); activeRuns.set(tabId, s);
     if (rebuild) runRebuilds.set(runId, rebuild);
     keepTabAwake(tabId, true);
+    recordRunLog(runId, { subsystem: "tab", kind: "pinned", reason: "hosting", detail: { tab: tabId } });
 };
 
 // True if a COMPLETED-but-resumable run still lives on this tab (bgRuns keeps a snapshot at completion for a
@@ -274,6 +283,7 @@ export const untrackRun = (tabId: number, runId: string): void => {
     if (!s.size) {
         activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId);
         keepTabAwake(tabId, false);   // nothing of ours is waiting on this tab any more
+        recordRunLog(runId, { subsystem: "tab", kind: "released", detail: { tab: tabId } });
         // Keep the replay buffer if a just-completed run is still resumable on this tab (bgRuns.set ran in the
         // run's .then, before this .finally) — a late/reloaded page replays it once (CONTENT_READY). Else drop it.
         if (!tabHasBgRun(tabId)) runReplayBuffer.delete(tabId);
@@ -323,7 +333,10 @@ export const tabPageUrl = new Map<number, string>();
  *  will ever send again, and the restored page's CONTENT_READY finds nothing to re-adopt. The barrier is not
  *  moved: its state belongs to the document that went away. */
 export const retabRuns = (from: number, to: number): number => {
+    // Read before the move: afterwards nothing is filed under the old id, which is the whole problem being fixed.
+    const hosted = [...(activeRuns.get(from) ?? [])];
     const moved = moveTabKey([activeRuns, runReplayBuffer, readoptPageInfo, tabPageUrl] as Array<Map<number, unknown>>, from, to);
+    for (const runId of hosted) recordRunLog(runId, { subsystem: "tab", kind: "replaced", detail: { tab: to, wasTab: from } });
     for (const snap of bgRuns.values()) if (snap.tabId === from) snap.tabId = to;
     navBarrier.forget(from);
     return moved;

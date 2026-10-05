@@ -66,9 +66,11 @@ const applyPanelPalette = (): void => {
 };
 
 /** The code colour theme (Settings → Code blocks): its stylesheet, plus the surface colours code blocks and the
- *  bench editor paint with. Those two ride `--code-bg`/`--code-fg` on the root, and are REMOVED for the default,
- *  which draws on the panel's own colours — so a theme whose light/dark differs from the panel's (a dark theme
- *  in a light panel) still puts its light tokens on its own dark background, not on the panel's white. */
+ *  bench editor paint with. Those two ride `--code-bg`/`--code-fg` on the root and are set for EVERY theme, the
+ *  default included — a theme paints `.hljs` itself, so withholding them left the declared colour and the drawn
+ *  one disagreeing, and anything matching a code block without an `.hljs` inside it (a raw cell, a JSON value)
+ *  came out the wrong shade. A theme whose light/dark differs from the panel's (a dark theme in a light panel)
+ *  still puts its light tokens on its own dark background, not on the panel's white. */
 export const applyCodeTheme = (panel: "dark" | "light" = resolveTheme()): void => {
     const active = activeCodeTheme(codeTheme.value, codeThemeCustom.value, panel);
     if (hljsStyleEl) hljsStyleEl.textContent = active.css;

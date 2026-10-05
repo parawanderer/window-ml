@@ -4,7 +4,8 @@
 import { PREDICT_KEY } from "../load-records";
 import type { ResourceSample } from "../resource-model";
 import { seriesCatalog, type TrackDef, stackRefusal, kindRefusal } from "../resource-presets";
-import { layout, editLayout, vramPalette, VRAM_PALETTE_KEY, VRAM_PALETTES } from "./panel-state";
+import { layout, editLayout } from "./panel-state";
+import { vramPalette, VRAM_PALETTE_KEY, VRAM_PALETTES } from "./palette";
 import { LANE_KINDS, toggleLaneKind } from "./resource-lane-ui";
 import { laneEnabled, showModels, SECTIONS_KEY, showLane, laneHidden, snapDot, SNAPDOT_KEY, timeGrid, TIMEGRID_KEY, predictView, resWindowPref, resWindowS, zoomRange, RESWIN_PREF_KEY, RESWIN_KEY, RESWIN_DEFAULT } from "./store";
 import { TipText } from "./ui-kit";
@@ -125,7 +126,10 @@ export function TrackEditor({ sample }: { sample: ResourceSample }) {
                         md="How far back the chart looks when it opens. Samples are kept for the whole session either way — dragging the strip changes the window you are looking at now, this sets where it starts." /></span>
                 </label>
                 <label class="tt rc-eopt rc-esel">
-                    <select value={vramPalette.value} aria-label="Model colours"
+                    {/* NOT "Model colours" any more: the same palette is what a LOG's groups are coloured from
+                        (the execution log, run-log-view.tsx), and a setting named after one of the two things it
+                        governs is how someone concludes it does not apply to the other. */}
+                    <select value={vramPalette.value} aria-label="Colour palette"
                         onChange={(e: any) => {
                             vramPalette.value = (e.target as HTMLSelectElement).value;
                             try { chrome.storage.local.set({ [VRAM_PALETTE_KEY]: vramPalette.value }); } catch { /* opaque origin */ }
@@ -140,7 +144,7 @@ export function TrackEditor({ sample }: { sample: ResourceSample }) {
                         tell two palettes apart without opening the select and watching the whole panel restyle. */}
                     <span class="pal-swatches">{(VRAM_PALETTES[vramPalette.value] ?? []).map((c) => <i key={c} style={{ background: c }} />)}</span>
                     <span class="tt-pop wrap" role="tooltip"><TipText
-                        md="Which palette a model's colour comes from. A model's colour is its identity everywhere in the panel, so which hues read as distinct is worth choosing. Assigned by a hash of the name, so a model keeps its colour within a palette." /></span>
+                        md="Which palette a colour is picked from wherever something is identified by NAME — a model in these graphs, a group in a log. That colour is its identity across every surface that draws it, so which hues read as distinct is worth choosing. Assigned by a hash of the name, so a thing keeps its colour within a palette." /></span>
                 </label>
             </div>
             {tracks.map((t, i) => (

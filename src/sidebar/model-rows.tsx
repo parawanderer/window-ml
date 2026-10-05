@@ -8,7 +8,8 @@ import { type ResourceSample, formatBytes, placementOf, isSplit } from "../resou
 import { poolHover } from "./chart-interaction";
 import { modelKindLabel } from "./model-status";
 import { rowTipSuppressed, ModelFacts, CostFacts } from "./panel-facts";
-import { hiddenModels, colorFor, toggleHidden, poolFacts } from "./panel-state";
+import { hiddenModels, toggleHidden, poolFacts } from "./panel-state";
+import { colorFor } from "./palette";
 import { hhmmss } from "./timestamps";
 import { useTipPlacement } from "./use-tip";
 import { hoverModel } from "./vram-focus";

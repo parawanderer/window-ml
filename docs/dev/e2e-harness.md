@@ -217,6 +217,28 @@ as in AGENTS.md — they are all under `src/`.
   `tests/e2e/artifacts/bench-completion-demo/`. Its first headless run caught the worker's per-run inputs being
   listed as kept variables, which is what a demo is for. The assertions are `tests/python.test.mjs` and
   `bench-dock.spec.mjs`.
+- **`run-log-demo.mjs`** — a **narrated demo, not a test** of the EXECUTION LOG panel (`docs/dev/run-log.md`):
+  `npm run build && node tests/e2e/run-log-demo.mjs` (`BEAT=`, `HOLD=0`; screenshots in
+  `tests/e2e/artifacts/run-log-demo/`). It loads the extension and uses the real chat page, because the panel is
+  extension-only (`ChatExtras.runLog`), and it stages the measured failure rather than drawing it: a run whose
+  first step is a `wait` that sits for twelve seconds, with the tab reported discarded out from under it. It
+  prints the records as the worker holds them and the panel's own text, so checking it does not mean opening
+  seventeen screenshots.
+  It turns the execution log's console echo on (`globalThis.__mlRunLog.echo()`, in the WORKER) and relays those
+  lines out through `ext.sw.on("console")`, which is worth copying into any spec or harness that cares what the
+  machinery did: the records stream as they happen instead of being read back out of `storage.session` at the
+  end. It is off by default for everyone who is not driving the browser.
+  **A REAL `chrome.tabs.discard` TAKES THE WHOLE BROWSER CONNECTION WITH IT.** Measured, in isolation, with no run
+  in flight and two tabs open: the discard succeeds, Chrome re-files the tab under a new id — and Playwright's
+  persistent context is gone (`pages()` is empty, every page `isClosed()`, the next call throws "Target page,
+  context or browser has been closed"). The target is destroyed and the connection does not survive it. So a spec
+  cannot stage a discard at all, and this demo patches Chrome's own `discarded` flag ONCE, on the one tab, which
+  is the single boolean `tabState` reads; everything after it — the probe that notices, the reload in place, the
+  re-adopt, the one retry — is real. The assertions are `tests/run-log.test.mjs`, the execution-log test in
+  `chat-page.spec.mjs`, and the pin/release half of `cross-page.spec.mjs`.
+  Two things this demo found that the specs did not: the log's story ended at "discarded, reloaded" with nothing
+  saying whether the run went on (so a retry that works now says so), and the tab id, identical on every line,
+  was spending exactly the width that wrapped each record into two.
 - **`touch-tips-demo.mjs`** — a **narrated demo, not a test** of READING A TOOLTIP WITHOUT A POINTER:
   `npm run build && node tests/e2e/touch-tips-demo.mjs` (`BEAT=`, `HOLD=0`; screenshots in
   `tests/e2e/artifacts/touch-tips-demo/`). One phone context (`hasTouch`), left open at the end. Five beats: the

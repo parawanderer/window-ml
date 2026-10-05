@@ -86,9 +86,13 @@ export function activeCodeTheme(id: string, custom: { name: string; text: string
     if (id === VSCODE_THEME_ID && custom) {
         try { const t = convertStored(custom); return { css: t.css, bg: t.bg, fg: t.fg, ui: t.ui }; } catch { /* fall through to the default */ }
     }
-    const { preset, file } = presetFile(id === VSCODE_THEME_ID ? DEFAULT_CODE_THEME : id, panel);
+    const { file } = presetFile(id === VSCODE_THEME_ID ? DEFAULT_CODE_THEME : id, panel);
     const css = CSS[file] ?? "";
-    if (preset.id === DEFAULT_CODE_THEME) return { css };
+    // THE DEFAULT REPORTS ITS COLOURS TOO. It used to withhold them, on the reasoning that it "draws on the
+    // panel's own colours" — but it does not: its stylesheet paints `.hljs` itself, so a code block was a box
+    // declared `var(--bg)` with the theme's own surface painted inside it. Everything else that wants to match a
+    // code block — a raw In/Out cell, a JSON tree's value — took the DECLARED colour and came out a different
+    // shade, which is the inconsistency this removes. One rule for every theme, read from the same stylesheet.
     const { bg, fg } = hljsBaseColors(css);
     return { css, ...(bg ? { bg } : {}), ...(fg ? { fg } : {}) };
 }

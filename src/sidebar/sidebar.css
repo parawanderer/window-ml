@@ -8,6 +8,11 @@
     --border: #3f3f46; --fg: #e4e4e7; --fg-dim: #a1a1aa; --fg-faint: #71717a;
     --accent: #6366f1; --accent-strong: #4f46e5; --accent-fg: #ffffff;
     --ok: #4ade80; --err: #f87171; --warn: #eab308; --err-border: #7f1d1d; --kind: #c7d2fe;
+    /* HOW HARD A GROUP COLOUR LANDS IN A LOG. The palettes (`VRAM_PALETTES`) are drawn for CHART LINES, which are
+       thin and want to carry across a plot; the same hue as a word in a wall of monospace is shouting. So the
+       colour is blended toward the ground before it is used — toward the dark background here, toward black on a
+       white one, which is the direction each needs to stop being the brightest thing on the line. */
+    --log-g-into: var(--bg); --log-g-strength: 76%;
     /* Something waiting on the person (an approval, an attention count). The warning yellow at a desk; the chat page
        turns it cyan on a touch screen (chat.css), where a yellow badge in a small frame read as an alarm. */
     --notice: var(--warn); --notice-fg: #1a1400;
@@ -29,6 +34,7 @@
     --border: #d4d4d8; --fg: #18181b; --fg-dim: #52525b; --fg-faint: #a1a1aa;
     --accent: #6366f1; --accent-strong: #4f46e5; --accent-fg: #ffffff;
     --ok: #16a34a; --err: #dc2626; --warn: #ca8a04; --err-border: #fecaca; --kind: #4338ca;
+    --log-g-into: #000; --log-g-strength: 70%;
     --j-key: #986801; --j-str: #50a14f; --j-lit: #0184bb; --j-base: #383a42;   /* atom-one-light, matches the code block */
 }
 * { box-sizing: border-box; }
@@ -1131,8 +1137,13 @@ textarea.cinput { resize: none; overflow-y: auto; line-height: 1.5; font: inheri
 .tag.saved { background: var(--accent-strong); color: var(--accent-fg); }
 /* "utility" provenance badge — the session ran on the utility model. */
 .profile { font-size: 0.75em; font-weight: 700; letter-spacing: .04em; padding: 1px 5px; border-radius: 999px; text-transform: uppercase; background: transparent; color: var(--accent); border: 1px solid var(--accent); }
-/* "agent" badge — this session is an ml.agent run, not a chat. */
-.agent-badge { font-size: 0.75em; font-weight: 700; letter-spacing: .04em; padding: 1px 6px; border-radius: 999px; text-transform: uppercase; background: #a855f7; color: #fff; }
+/* "agent" badge — this session is an ml.agent run, not a chat. INLINE-FLEX, because the glyph beside the word was
+   an inline SVG sitting on the TEXT BASELINE: in a pill whose text is uppercase and 0.75em, a baseline is nowhere
+   near the middle, so the robot rode high against a word it was also touching. Centred, with a gap. */
+.agent-badge { display: inline-flex; align-items: center; gap: 3px; font-size: 0.75em; font-weight: 700; letter-spacing: .04em; padding: 1px 6px; border-radius: 999px; text-transform: uppercase; background: #a855f7; color: #fff; }
+/* The glyph is drawn at 13px for a line of ordinary text; in the pill it should be the height of the capitals
+   beside it, which is what makes the two read as one object rather than a picture next to a word. */
+.agent-badge svg { width: 1.15em; height: 1.15em; flex: none; }
 
 /* ml.agent run view: a task, then one card per TURN (thought + batched tool
    calls), then the final answer. */
@@ -1283,9 +1294,14 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
    on the page you are meant to read carefully the most cramped. It belongs on the CARD and not on the sentence:
    padding the sentence alone would indent it out of line with the buttons underneath it.
 
-   In `em`, because this rule is also the DevTools panel's focus mode, where the base is 12px and the old figures
-   were right. The same proportion gives ~13px/15px at reading size and ~10px/11px there. */
-html[data-focus] .astep-approve { gap: .55em; margin: 6px 0; padding: .82em .95em; border-radius: 10px;
+   `data-calm`, NOT `data-focus`. The two were one attribute and they are two ideas: focus mode QUIETENS the dev
+   panel (the step pills, the badges, the previews — see the list further down, which stays on `data-focus`),
+   while this is the reading product's own approval card. Keying it to focus meant a developer who had turned the
+   noise down in the panel was handed the calm product's gate instead of the red/green one they were working
+   with, which is a different decision wearing the same switch.
+
+   In `em` all the same, because `data-calm` is also what the phone-shaped embed sets, where the base differs. */
+html[data-calm] .astep-approve { gap: .55em; margin: 6px 0; padding: .82em .95em; border-radius: 10px;
     background: var(--panel); border: none; }
 .astep-approve .appr-row { display: flex; align-items: center; gap: 8px; }
 /* The info control sits at the FAR end from the buttons, which is what keeps it out of the way of the decision:
@@ -1335,7 +1351,7 @@ html[data-focus] .astep-approve { gap: .55em; margin: 6px 0; padding: .82em .95e
 @media (pointer: coarse) { .appr-deny-more { min-width: 40px; justify-content: center; } }
 /* Focus view draws its buttons as pills with no outline until they are needed; the wrapper follows, or a round
    Approve would sit beside a square Deny. */
-html[data-focus] .appr-deny-wrap { border-radius: 999px; color: var(--fg-dim); }
+html[data-calm] .appr-deny-wrap { border-radius: 999px; color: var(--fg-dim); }
 /* The message itself: a field that can hold a sentence, not a line. */
 .appr-say { min-height: 72px; resize: vertical; font: inherit; }
 /* What the pointer gets from the tip, for everyone else: opened by the control, under the row it explains. */
@@ -1365,29 +1381,29 @@ html[data-focus] .appr-deny-wrap { border-radius: 999px; color: var(--fg-dim); }
    What the control must keep either way is that the two answers are TOLD APART instantly and that neither is the one
    an eye slides onto. So here: the page's own primary chip for yes, a quiet outline for no. Deny is NOT softened to
    "Skip" on any surface — denying is a decision about what an agent may do, not stepping past a wizard. */
-html[data-focus] .appr-btn { font-weight: 600; padding: 4px 13px; border-radius: 999px; border-color: transparent; }
+html[data-calm] .appr-btn { font-weight: 600; padding: 4px 13px; border-radius: 999px; border-color: transparent; }
 /* SIZED FOR THE PAGE where there is a page to size for. These are the panel's buttons, drawn for a 360px drawer, and
    at a reading measure they came out smaller than the prose around them — the one control on screen you are meant to
    stop and use. A coarse pointer already gets its 40px minimum below, so this is the mouse's case. */
 @media (min-width: 720px) and (pointer: fine) {
-    html[data-focus] .appr-btn { font-size: .95em; padding: 7px 18px; }
+    html[data-calm] .appr-btn { font-size: .95em; padding: 7px 18px; }
 }
-html[data-focus] .appr-btn.yes { color: var(--bg); background: var(--fg); border-color: var(--fg); font-weight: 700; }
+html[data-calm] .appr-btn.yes { color: var(--bg); background: var(--fg); border-color: var(--fg); font-weight: 700; }
 /* The outline is `--fg-dim`, the same token as the label, not `--border`. A border at `--border` sits about 1.4:1
    against this card — technically drawn, effectively invisible, which on one of two answers to a consent question
    is the wrong thing to be. WCAG's non-text minimum is 3:1; this lands near 5.8:1 and is still plainly the quieter
    of the pair, because Approve is FILLED. `tests/e2e/chat-web.spec.mjs` measures it rather than trusting the eye. */
-html[data-focus] .appr-btn.no { color: var(--fg-dim); border-color: var(--fg-dim); }
-html[data-focus] .appr-btn.no:hover { color: var(--fg); border-color: var(--fg-dim); background: var(--panel-2); }
+html[data-calm] .appr-btn.no { color: var(--fg-dim); border-color: var(--fg-dim); }
+html[data-calm] .appr-btn.no:hover { color: var(--fg); border-color: var(--fg-dim); background: var(--panel-2); }
 .appr-btn:hover { filter: brightness(1.08); }
 /* "Keep" (approve + remember): a hollow variant of the yes button so the plain Approve stays primary. */
 .appr-btn.yes.remember { background: none; color: var(--ok); }
 /* `background: none` RESTATED, not inherited. `.appr-btn.yes.remember` above already clears the filled
-   background, but `html[data-focus] .appr-btn.yes` outranks it (an attribute + an element), so in the focus
+   background, but `html[data-calm] .appr-btn.yes` outranks it (an attribute + an element), so in the focus
    view Keep kept the solid `--fg` pill and then took `color: var(--fg)` on top of it: white on white. */
-html[data-focus] .appr-btn.yes.remember { background: none; color: var(--fg); border-color: var(--fg-dim); font-weight: 600; }
+html[data-calm] .appr-btn.yes.remember { background: none; color: var(--fg); border-color: var(--fg-dim); font-weight: 600; }
 .appr-btn.yes.remember:hover { background: color-mix(in srgb, var(--ok) 16%, transparent); }
-html[data-focus] .appr-btn.yes.remember:hover { background: var(--panel-2); }
+html[data-calm] .appr-btn.yes.remember:hover { background: var(--panel-2); }
 /* The collapsed grant CARD: what "Keep" will persist. Summary line always shown; expand for the exact items.
    Extensible — generic over grant kind (a warm card, since it establishes a session-long consent). */
 .appr-grant { border-radius: 6px; padding: 4px 8px;
@@ -1632,7 +1648,17 @@ details.io[open] > summary .io-preview { display: none; }
 /* A header button + a small menu under it (the export-format picker). Anchored
    right so it can't spill past the panel's edge on a narrow sidebar. */
 .menuwrap { position: relative; display: inline-flex; align-items: center; }
+/* It ARRIVES the way the page's own menus do (`chat-pop`, chat.css) — the two sit a few pixels apart in a dock's
+   tab bar, and one popping in while the other snapped read as two different controls. Its own keyframes rather
+   than the page's: this menu is also drawn in the DevTools panel, where that stylesheet is not loaded. */
+@keyframes menu-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
+/* And the way out — see the same pair in chat.css. The element is held for `DISMISS_MS` (use-dismiss.ts) to make
+   room for it; a menu that vanished between two frames read as a different surface from the one that arrived. */
+@keyframes menu-unpop { to { opacity: 0; transform: translateY(4px) scale(.985); } }
+.menu.leaving { animation: menu-unpop .11s ease-in both; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .menu, .menu.leaving { animation: none; } }
 .menu {
+    animation: menu-pop .16s cubic-bezier(.2, .7, .3, 1) both;
     position: absolute; top: calc(100% + 5px); right: 0; z-index: 20;
     display: flex; flex-direction: column; min-width: 160px; padding: 4px;
     background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
@@ -1885,8 +1911,12 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
    column simply ended in mid-air with empty space under it. One absolutely-positioned line spans whatever
    height the container has, so both cases are the same rule and neither needs to know about the other.
    `--r-ts-w` is the gutter's width, and the line sits inside its right edge (border-box). */
-.r-timed { display: block; position: relative; --r-ts-w: 56px; }
-.r-timed.short { --r-ts-w: 38px; }      /* mm:ss — the hour is the current one, shown on hover */
+/* The gutter is as wide as the STAMP IT HOLDS — `hh:mm:ss` is eight characters, `mm:ss` is five — plus the rule's
+   own padding. In `ch`, not px: the figures are tabular in a monospace face, so a character is an exact unit, and
+   a fixed 38px was already a shade under `mm:ss` at the default size and clipped its leading digit outright the
+   moment anything scaled the text (the execution log's zoom is what found it). */
+.r-timed { display: block; position: relative; --r-ts-w: calc(8ch + 7px); }
+.r-timed.short { --r-ts-w: calc(5ch + 7px); }      /* mm:ss — the hour is the current one, shown on hover */
 /* THE GUTTER IS DRAWN IN THE SAME ELEMENT A PLAIN BLOCK IS — the inner `code.hljs`, which is what the
    highlighter's theme actually paints. `.code` on the `pre` carries the font and the border; the background
    and the text colour come from the theme's own rule, so a gutter drawn in a bare `div.code` sat on the
@@ -2751,7 +2781,9 @@ html[data-surface="card"] .appr-btn.no:hover {
 .card-export-menu { position: absolute; top: 34px; left: 2px; z-index: 6;
     display: flex; flex-direction: column; min-width: 200px; padding: 4px;
     background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 22px rgba(0, 0, 0, .45); }
-.card-export-menu .menu-head { padding: 4px 8px 5px; color: var(--fg-faint); font-size: .8em; font-weight: 600; letter-spacing: .02em; }
+/* A section head inside a menu: a glyph and a few words naming what the rows under it are, so a group of toggles
+   is not read as more things to do. Promoted out of `.card-export-menu`, which happened to need one first. */
+.menu-head { display: flex; align-items: center; gap: 6px; padding: 4px 8px 5px; color: var(--fg-faint); font-size: .8em; font-weight: 600; letter-spacing: .02em; }
 .card-work-toggle { display: flex; align-items: center; gap: 8px; width: 100%; background: transparent;
     border: none; color: var(--fg-dim); font: inherit; font-size: .95em; cursor: pointer; padding: 4px 0; }
 .card-work-toggle:hover { color: var(--fg); }
@@ -3155,6 +3187,66 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 /* THE HOUSEKEEPING LOG VIEW (header ⋮ → Housekeeping log): a toolbar, one line about what this is, then the log's
    output cell taking the rest of the height (it rides `.view-bench`'s non-scrolling column, like the full bench). */
 .hk-view { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px; }
+/* THE EXECUTION LOG PANEL (run-log-view.tsx), which is the same log view with everything else taken off it: its
+   filters and exports are one menu in the dock's own bar and its explanation is the tab's tooltip, so the panel
+   IS the records. No padding, because a region this narrow has no width to give a margin and the output cell
+   draws its own gutter — the padding read as the log floating in a white box. */
+.runlog { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+/* A log line's GROUP column when the surface asked for colouring (TimedOutput's `groups`), in the colour
+   `colorFor` gives that name from the chosen graph palette. Only the column is
+   tinted, never the whole line: the line is the thing being read, and a page of coloured prose is harder to read
+   than one with a coloured margin — what the colour is for is finding where one group ends and the next begins. */
+.r-ts-g { font-weight: 600; color: color-mix(in srgb, var(--g, currentColor) var(--log-g-strength, 76%), var(--log-g-into, currentColor)); }
+/* A ZOOM, never an absolute size. The log IS a code block, so the size it already follows is the device's "Code
+   size" (`--code-fs`) rather than the panel's — and this multiplies it, so changing that one still moves a log
+   somebody had zoomed instead of the two settings disagreeing. `pre.code` to out-specify `.chat .code`, which
+   is what pins the page's code to that variable in the first place. */
+.runlog { font-size: calc(1em * var(--runlog-zoom, 1)); }
+.runlog pre.code { font-size: calc(var(--code-fs, 0.92em) * var(--runlog-zoom, 1)); }
+/* The states that are not a log — nothing open, nothing recorded, unreadable — do want the margin back. */
+.runlog > .hint { padding: 8px; margin: 0; }
+/* A SECOND BLOCK IN A TOOLTIP, under a rule: the same divider `.tt-said` draws for a model's claim, without its
+   italic, for prose that is ours — what a panel is for, under the name of the thing it is on. */
+.tt-note { display: block; margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--tip-line); color: var(--fg-dim); }
+/* A menu's own divider, between a group of toggles and the actions under them. */
+.menu-rule { height: 1px; margin: 4px 2px; background: var(--border); }
+/* The panel's own menu sits at the RIGHT of the dock's bar, against the region's `\22EE` — the bar's slot stretches
+   (`.dock-slot > *`), so without this the button floats at the far left, a whole bar away from the other menu. */
+.runlog-menu { justify-content: flex-end; }
+/* THE −/VALUE/+ PILL (`Stepper`, ui-kit.tsx): one rounded control, not three loose buttons, because the three are
+   one question. Segment borders rather than gaps, so it reads as a single object at any size. */
+/* EVERY measurement here is in `em`, so the pill is sized BY THE TEXT IT SITS BESIDE rather than by a px figure
+   that is right in one place and wrong in the next — it is a control attached to a label, not a thing with a
+   size of its own. A touch under 1em overall: it is the second thing on its row, after the words saying what it
+   adjusts. */
+.ui-stepper { display: inline-flex; align-items: stretch; flex: 0 0 auto; font-size: .92em;
+    border: 1px solid var(--border); border-radius: 999px; background: var(--bg); overflow: hidden; }
+/* The two ends. The pill's curve belongs to the pill, so neither button rounds anything itself. */
+.ui-step-end { min-width: 1.8em; padding: 0 .45em; background: none; border: none; color: var(--fg-dim);
+    font: inherit; line-height: 1.6; cursor: pointer; }
+.ui-step-end:hover:not(:disabled) { background: var(--panel-2); color: var(--fg); }
+.ui-step-end:disabled { opacity: .35; cursor: default; }
+/* Where it stands, between them — and the button that puts it back. Tabular and floored in width, so stepping
+   through a ladder never shifts the ends under the cursor. */
+.ui-step-now { min-width: 3.1em; padding: 0 .2em; background: none; border: none;
+    border-left: 1px solid var(--border); border-right: 1px solid var(--border);
+    color: var(--fg-dim); font: inherit; font-variant-numeric: tabular-nums; text-align: center; line-height: 1.6; }
+button.ui-step-now { cursor: pointer; }
+button.ui-step-now:hover { background: var(--panel-2); color: var(--fg); }
+
+/* The text-size row in a panel's menu: what it adjusts, then the pill that adjusts it. */
+.menu-zoom { display: flex; align-items: center; gap: 8px; padding: 3px 8px 5px; }
+.menu-zoom-lbl { flex: 1 1 auto; }
+/* The keyboard way to do the same thing, said once at the foot of the menu rather than on the row. */
+.menu-foot { padding: 0 8px 4px; color: var(--fg-faint); font-size: .8em; }
+/* A CHECKABLE menu row — a filter rather than an action — reads ACROSS: tick, what it filters, how many of them.
+   `.menu-item` is a column because an action's hint belongs under its label, and that stacking turned a
+   three-word filter into three lines. */
+.menu-check { flex-direction: row; align-items: baseline; gap: 6px; }
+/* The tick column, a fixed width so the labels line up whether or not they are ticked. */
+.menu-tick { display: inline-block; width: 1em; flex: none; color: var(--accent); }
+/* How many records that subsystem has, pushed to the end of its row. */
+.menu-check .menu-hint { margin-left: auto; }
 /* Filter chips, the count, then download/clear pushed to the far end. */
 .hk-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 /* How many events the log holds, beside the chips — a status, not a control. */

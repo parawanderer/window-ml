@@ -29,9 +29,32 @@ test("subsystem names are padded to one column, and a hidden subsystem is left o
     assert.equal(lines.length, 2);
     assert.equal(marks.length, 2);
     assert.equal(lines[0].indexOf("evicted"), lines[1].indexOf("prewarm"), "the kinds line up once the widest subsystem is gone");
-    assert.deepEqual(housekeepingText([]), { text: "", marks: [] });
+    assert.deepEqual(housekeepingText([]), { text: "", marks: [], groups: [], headWidth: 0 });
+});
+
+test("each line says which GROUP it came from, for a surface that colours them — and which column it is in", () => {
+    const { groups, headWidth, text } = housekeepingText(EV);
+    // One per RENDERED line, in the same order, so a renderer can index them against the lines it splits.
+    assert.deepEqual(groups, ["sw", "fetch-cache", "pyodide"]);
+    assert.equal(headWidth, "fetch-cache".length);
+    for (const [i, line] of text.split("\n").entries())
+        assert.equal(line.slice(0, headWidth).trim(), groups[i], "the group is the line's first column");
+    // Hiding one drops its line AND its group, or the two lists stop lining up — which would colour every line
+    // after a filtered one as the group above it.
+    assert.deepEqual(housekeepingText(EV, new Set(["sw"])).groups, ["fetch-cache", "pyodide"]);
 });
 
 test("subsystemCounts keeps first-appearance order", () => {
     assert.deepEqual(subsystemCounts([...EV, EV[0]]), [["sw", 2], ["fetch-cache", 1], ["pyodide", 1]]);
+});
+
+test("an omitted detail key leaves the LINE, not the record — the width it was spending is what makes a line wrap", () => {
+    const evs = [{ t: 100, subsystem: "page", kind: "discarded", ms: 4000, origin: "worker", detail: { tab: 175215074, tool: "wait" } }];
+    assert.equal(housekeepingText(evs).text, "page  discarded  4.00s  tab=175215074  tool=wait");
+    assert.equal(housekeepingText(evs, new Set(), new Set(["tab"])).text, "page  discarded  4.00s  tool=wait");
+    // Omitting shortens the line, so the marks the gutter is drawn from must be computed over the SHORTENED
+    // text or every timestamp after the first lands on the wrong row.
+    const two = [...evs, { ...evs[0], t: 200, kind: "reloaded" }];
+    const { text, marks } = housekeepingText(two, new Set(), new Set(["tab"]));
+    assert.equal(timeForOffset(marks, text.indexOf("reloaded")), 200);
 });

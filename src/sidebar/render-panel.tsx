@@ -18,6 +18,7 @@ import { lineMapBetween } from "../line-map";
 import { services, type StoredTableRead } from "./services";
 import { summarizeColumns, summarizeRows, type ColumnSummary } from "../table-summary";
 import { rev, view, sessionMap, outMaxH, showOutTimes, focusMode, lsSet, BENCH_CODE_KEY, surface, codeLineNumbers, openBench, benchTimes } from "./store";
+import { poolColor } from "./palette";
 import { timeForOffset, alignedMarks, elideHour, hhmmss, hhmmssms, fmtDelta, fmtDur, hourNow, armHourTick, dayBreaks } from "./timestamps";
 import { markdown, truncate, pretty, highlight } from "./format";
 import { codeNotes, notesState, notesHidden, fetchLineNotes, toggleLineNotes } from "./summaries";
@@ -741,7 +742,7 @@ export { timeForOffset, alignedMarks, elideHour, fmtDelta } from "./timestamps";
  *  clocks. The gutter is its own element with `user-select: none`, so it is never part of the text you copy
  *  (and it was never part of what the model read). Falls back to a plain block when there are no marks or the
  *  gutter is switched off in Settings — the same markup either way, so the toggle changes only the gutter. */
-export function TimedOutput({ text, marks }: { text: string; marks?: [number, number][] }) {
+export function TimedOutput({ text, marks, groups, groupKeys, headWidth }: { text: string; marks?: [number, number][]; groups?: readonly string[]; groupKeys?: readonly string[]; headWidth?: number }) {
     if (!showOutTimes.value || !marks || !marks.length) return <Code text={text} lang="text" />;
     const lines = text.split("\n");
     // `hourNow` is a SIGNAL, not Date.now(): a single timer bumps it at each hour boundary, so every gutter on
@@ -754,6 +755,13 @@ export function TimedOutput({ text, marks }: { text: string; marks?: [number, nu
     // nothing marking the day. A divider row goes in at each change (and resets the repeat elision, so the
     // first stamp of the new day always prints).
     const breaks = dayBreaks(text, marks);
+    // GROUP COLOURS BY POSITION, not by hashing the name. A log's groups are a known, ordered, small set — the
+    // same thing a POOL is — so they can be given distinct colours by construction instead of colliding
+    // whenever two names happen to hash together, which on a four-group log is likely rather than unlucky.
+    // `poolColor` is that rule already, palette included, and it spreads hues evenly once there are more groups
+    // than the palette has colours. The order is the caller's and must be over EVERY group the log holds, not
+    // the ones currently shown, or hiding one would recolour the rest.
+    const colorOf = new Map((groupKeys ?? []).map((g, i) => [g, poolColor(i, (groupKeys ?? []).length)]));
     let off = 0, shown = "", prevTs: number | null = null;
     const rows: preact.ComponentChild[] = [];
     lines.forEach((line, i) => {
@@ -769,10 +777,18 @@ export function TimedOutput({ text, marks }: { text: string; marks?: [number, nu
         const tip = ts == null ? undefined
             : `${hhmmssms(ts)}${prevTs != null && ts !== prevTs ? ` · +${fmtDelta(ts - prevTs)} since the previous line` : ""}`;
         if (ts != null) prevTs = ts;
+        // GROUP COLOURING, when the caller asked for it: the leading column (the subsystem, the lane, whatever
+        // the caller groups by) is tinted from the SAME palette the resource panel draws with, so the person's
+        // "Colour palette" choice (Grafana and the rest) is what a log is coloured from too. Absent `groups` it
+        // draws exactly what it drew before.
+        const g = groups?.[i];
+        const head = g != null && headWidth ? line.slice(0, headWidth) : null;
         rows.push(
             <div class="r-ts-row" key={i}>
                 <span class={`r-ts${tip ? " hoverable" : ""}`} {...(tip ? cursorTipOn(tip) : {})}>{repeat ? "" : label}</span>
-                <span class="r-ts-line">{line}</span>
+                {head == null
+                    ? <span class="r-ts-line">{line}</span>
+                    : <span class="r-ts-line"><span class="r-ts-g" style={{ "--g": colorOf.get(g!) }}>{head}</span>{line.slice(headWidth)}</span>}
             </div>,
         );
     });

@@ -124,6 +124,21 @@ test("smoke: the extension loads and window.ml runs a one-shot agent @real-ok", 
     await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
     await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(2);
     await expect.poll(pinned, { timeout: 10000 }).toBe(true);   // released, or the tab is pinned for good
+
+    // AND THE RUN SAID SO. Both halves above are invisible while they work, which is exactly what the execution
+    // log (src/run-log.ts) is for: the pin and its release are the first mechanics it records, and a record that
+    // the sanitizer silently drops looks identical to a mechanic that never happened.
+    // POLLED, because the ring batches its writes by a second: a reader that wants the newest record goes
+    // through DUMP_RUN_LOG, which flushes first — reading storage.session straight is reading one flush behind.
+    const tabRecords = async () => {
+        const log = await ext.sw.evaluate(async () => (await chrome.storage.session.get("ml_run_log"))["ml_run_log"] || []);
+        return log.filter((e) => e.subsystem === "tab" && e.detail?.tab === tabId);
+    };
+    await expect.poll(async () => (await tabRecords()).map((e) => e.kind), { timeout: 10000 }).toEqual(expect.arrayContaining(["pinned", "released"]));
+    const tabLines = await tabRecords();
+    expect(new Set(tabLines.map((e) => e.run)).size, "both halves under the one run").toBe(1);
+    expect(tabLines.every((e) => e.origin === "worker" && typeof e.t === "number")).toBe(true);
+
     await page.close();
     await configureExtension(ext.sw, { debugMode: "off" });
 });

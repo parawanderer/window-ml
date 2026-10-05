@@ -19,7 +19,7 @@ import type { PlatformPrefs } from "./platform";
 import { CODE_DEFAULT, CODE_SIZES } from "../native/text-size";
 
 /** Preference keys, under the platform's own namespace. */
-export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", PINNED_MODELS_KEY = "view.pinnedModels", CODE_KEY = "view.codeSize", GROUP_ALL_KEY = "view.groupAll", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups", THEME_KEY = "view.theme";
+export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", PINNED_MODELS_KEY = "view.pinnedModels", CODE_KEY = "view.codeSize", GROUP_ALL_KEY = "view.groupAll", LOG_OPEN_KEY = "view.log", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups", THEME_KEY = "view.theme";
 
 /** Is the page in calm view? Read it in a render to re-render when it changes. */
 export const calm = signal(true);
@@ -42,6 +42,16 @@ export function setGroupAll(on: boolean): void {
  * instead of it — is the one the pane is really shaped for (docs/spec/CHAT_PAGE.md §The state inspector).
  */
 export const pane = signal<"resource" | null>(null);
+
+/**
+ * Is the open run's EXECUTION LOG showing? What the machinery did underneath a run — the tab that was discarded
+ * and reloaded, the CDP attach that was refused — which its steps cannot say (run-log.ts).
+ *
+ * Remembered per device, like the pane above: it is a choice about how this screen is laid out for working, not
+ * something to re-make on every reload. It follows whichever session is open rather than being pinned to a run,
+ * because the question it answers ("what happened under THIS") is always about what is being read.
+ */
+export const logOpen = signal<boolean>(false);
 
 /** Runtimes whose group in the list is folded away. By id, so a runtime that goes offline and comes back stays as
  *  it was left, and one this device has never seen starts open. */
@@ -89,8 +99,8 @@ export const panelSize = signal<number>(PANEL_FS_DEFAULT);
 
 /** An edge of the reading column a panel can be docked to. */
 export type DockSide = "top" | "right" | "bottom" | "left";
-/** The panels the page can dock: the box's resource panel and the Python bench. */
-export type DockPanelId = "resource" | "bench";
+/** The panels the page can dock: the box's resource panel, the Python bench, and the open run's execution log. */
+export type DockPanelId = "resource" | "bench" | "runlog";
 /** Where each panel is docked, how big each edge's region is, and which tab each edge is showing. */
 export interface DockLayout {
     side: Record<DockPanelId, DockSide>;
@@ -98,12 +108,16 @@ export interface DockLayout {
     size: Record<DockSide, number>;
     active: Partial<Record<DockSide, DockPanelId>>;
 }
-/** The graphs across the top, because a timeline is wide and short; the bench underneath, where a drawer is. */
+/** The graphs across the top, because a timeline is wide and short; the bench underneath, where a drawer is; the
+ *  execution log to the RIGHT, because it is read line by line beside the steps it explains. */
 export const DOCK_DEFAULT: DockLayout = {
-    side: { resource: "top", bench: "bottom" },
+    side: { resource: "top", bench: "bottom", runlog: "right" },
     size: { top: 300, bottom: 320, left: 380, right: 420 },
     active: {},
 };
+/** Every panel there is, from the defaults — so a stored layout is validated against the panels that EXIST
+ *  rather than against a list written out a second time, which is how the third panel went unrecognised. */
+const PANEL_IDS = Object.keys(DOCK_DEFAULT.side) as DockPanelId[];
 const SIDES: readonly DockSide[] = ["top", "right", "bottom", "left"];
 /** This device's dock layout. */
 export const dockLayout = signal<DockLayout>(DOCK_DEFAULT);
@@ -113,12 +127,12 @@ export const dockLayout = signal<DockLayout>(DOCK_DEFAULT);
 function readDock(v: unknown): DockLayout {
     const o = (v && typeof v === "object" ? v : {}) as Partial<DockLayout>;
     const side = { ...DOCK_DEFAULT.side }, size = { ...DOCK_DEFAULT.size }, active: DockLayout["active"] = {};
-    for (const id of Object.keys(side) as DockPanelId[]) if (SIDES.includes(o.side?.[id] as DockSide)) side[id] = o.side![id];
+    for (const id of PANEL_IDS) if (SIDES.includes(o.side?.[id] as DockSide)) side[id] = o.side![id];
     for (const sd of SIDES) {
         const n = o.size?.[sd];
         if (typeof n === "number" && Number.isFinite(n) && n >= 64) size[sd] = n;
         const a = o.active?.[sd];
-        if (a === "resource" || a === "bench") active[sd] = a;
+        if (PANEL_IDS.includes(a as DockPanelId)) active[sd] = a as DockPanelId;
     }
     return { side, size, active };
 }
@@ -133,7 +147,13 @@ let store: PlatformPrefs | null = null;
 
 /** Mirror `calm` onto the document, where the shared views' own reading rules already live. */
 function applyCalm(): void {
-    try { document.documentElement.toggleAttribute("data-focus", calm.value); } catch { /* no DOM (a unit test) */ }
+    try {
+        document.documentElement.toggleAttribute("data-focus", calm.value);
+        // `data-calm` SAYS WHICH PRODUCT THIS IS, where `data-focus` only says "quieten the chrome". The panel's
+        // focus mode sets the second and not the first, so a developer who turned the noise down there keeps the
+        // approval gate they were working with instead of being handed the reading view's card.
+        document.documentElement.toggleAttribute("data-calm", calm.value);
+    } catch { /* no DOM (a unit test) */ }
     // The shared views ask the STORE, not the document, whether they are being read quietly — a component cannot
     // re-render from an attribute. The panel's own focus toggle already sets this signal and derives the attribute
     // from it; calm is the same idea under another name, so it sets both and the two surfaces answer alike.
@@ -150,8 +170,13 @@ export function installViewPrefs(prefs: PlatformPrefs): void {
     const l = prefs.get<boolean>(LIST_KEY);
     calm.value = typeof c === "boolean" ? c : true;
     listOpen.value = typeof l === "boolean" ? l : true;
+    // ON unless this device said otherwise. Calm view's whole claim is that you read the conversation and reach
+    // for the machinery, and the conservative fold rule leaves a reading view full of rows nobody asked to see;
+    // someone who wants every call has the detailed view, which is what it is for. A device that turned it OFF
+    // keeps that — only the absence of an answer is what changed meaning.
     const ga = prefs.get<boolean>(GROUP_ALL_KEY);
-    groupAllTools.value = ga === true;
+    groupAllTools.value = ga !== false;
+    logOpen.value = prefs.get<boolean>(LOG_OPEN_KEY) === true;
     const pn = prefs.get<string>(PANE_KEY);
     pane.value = pn === "resource" ? pn : null;
     const f = prefs.get<string[]>(FOLDED_KEY);
@@ -241,6 +266,12 @@ export function setCalm(on: boolean): void {
 export function setListOpen(on: boolean): void {
     listOpen.value = on;
     store?.set(LIST_KEY, on);
+}
+
+/** Open or close the open run's execution log. */
+export function setLogOpen(on: boolean): void {
+    logOpen.value = on;
+    store?.set(LOG_OPEN_KEY, on);
 }
 
 /** Show something in the right-hand pane, or close it. */

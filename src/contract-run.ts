@@ -131,3 +131,6 @@ export const shortHash = (): string => {
         return [...b].map(x => x.toString(16).padStart(2, "0")).join("");
     } catch { return Array.from({ length: 4 }, () => Math.random().toString(16).slice(2, 10)).join(""); }
 };
+
+/** A session hash as runtimes mint them. No `:`, so it composes into a SessionKey. */
+export const HASH_RE = /^[A-Za-z0-9_-]{1,64}$/;

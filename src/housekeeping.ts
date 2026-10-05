@@ -9,6 +9,8 @@
 // Nothing reads this log to decide anything. It is a record, not an input — which is why page-reported events
 // may sit in it at all.
 
+import { StorageRing, type SessionArea } from "./storage-ring";
+
 /** Who reported an event. Set by the WORKER from the message's sender, never by the reporter. */
 export type HousekeepingOrigin = "worker" | "offscreen" | "extension" | "page";
 
@@ -50,18 +52,11 @@ export const PAGE_CAP = 200;
 export const IDLE_EVICT_MS = 30_000;
 /** Heartbeats are written at most this often, so the gap an inference reports can be this much too long. */
 export const HEARTBEAT_EVERY_MS = 5_000;
-const FLUSH_DELAY_MS = 1_000;
 
 const NAME = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const MAX_KEY = 512;
 const MAX_DETAIL_ENTRIES = 16;
 const MAX_DETAIL_STRING = 200;
-
-/** The slice of chrome.storage.session this needs — injectable so the log is testable with no browser. */
-export interface SessionArea {
-    get(keys: string[]): Promise<Record<string, unknown>>;
-    set(items: Record<string, unknown>): Promise<void>;
-}
 
 /**
  * A reported event made safe to store, or null when it is not one. Names are lowercase slugs, numbers finite
@@ -114,17 +109,17 @@ export function eventsForReader(events: HousekeepingEvent[], readerTab: number |
     });
 }
 
-/** The service worker's housekeeping log: buffers events in memory and writes them to storage in batches. */
-export class HousekeepingLog {
-    private pending: HousekeepingEvent[] = [];
-    private timer: ReturnType<typeof setTimeout> | null = null;
-    private chain: Promise<void> = Promise.resolve();
+/** The service worker's housekeeping log: buffers events in memory and writes them to storage in batches
+ *  (`StorageRing`), plus the heartbeat that makes an eviction inferable. */
+export class HousekeepingLog extends StorageRing<HousekeepingEvent> {
     private lastBeat = 0;
     /** Settles once `start` has written its events, so a read racing the worker's first moments — a dump is
      *  often the very message that woke it — still sees them. */
     private started: Promise<void> = Promise.resolve();
 
-    constructor(private area: SessionArea, private now: () => number = Date.now) {}
+    constructor(area: SessionArea, now: () => number = Date.now) {
+        super(area, LOG_KEY, trimRing, now);
+    }
 
     /**
      * Records the worker starting, and — when this extension session already had a worker — that the previous
@@ -172,46 +167,25 @@ export class HousekeepingLog {
     }
 
     /** Every stored event plus the unflushed ones, oldest first. */
-    async all(): Promise<HousekeepingEvent[]> {
+    override async all(): Promise<HousekeepingEvent[]> {
         await this.started;
-        await this.flush();
-        const got = await this.area.get([LOG_KEY]);
-        return Array.isArray(got[LOG_KEY]) ? (got[LOG_KEY] as HousekeepingEvent[]) : [];
+        return super.all();
     }
 
     /** Empties the log, leaving one `log/clear` event so a cleared log reads differently from an empty one. */
     async clear(): Promise<void> {
         await this.started;
-        this.pending = [];
-        this.chain = this.chain.then(() => this.area.set({ [LOG_KEY]: [{ t: this.now(), origin: "worker", subsystem: "log", kind: "clear" }] })).catch(() => {});
-        await this.chain;
+        await this.replace([{ t: this.now(), origin: "worker", subsystem: "log", kind: "clear" }]);
     }
 
-    /** Writes buffered events now. Serialized, so two flushes never read the same ring and drop each other's. */
-    flush(): Promise<void> {
-        if (this.timer) { clearTimeout(this.timer); this.timer = null; }
-        const batch = this.pending;
-        this.pending = [];
-        const beat = this.lastBeat;
-        this.chain = this.chain.then(async () => {
-            const items: Record<string, unknown> = beat ? { [SEEN_KEY]: beat } : {};
-            if (batch.length) {
-                const got = await this.area.get([LOG_KEY]);
-                const ring = Array.isArray(got[LOG_KEY]) ? (got[LOG_KEY] as HousekeepingEvent[]) : [];
-                items[LOG_KEY] = trimRing(ring.concat(batch));
-            }
-            if (Object.keys(items).length) await this.area.set(items);
-        }).catch(() => { /* a lost batch costs one inference, which the next start records anyway */ });
-        return this.chain;
+    /** The heartbeat rides along with whatever batch is being written: the last stamp this log saw, which is
+     *  what the next worker reads to tell how long nothing was here. */
+    protected override extras(): Record<string, unknown> {
+        return this.lastBeat ? { [SEEN_KEY]: this.lastBeat } : {};
     }
 
-    private push(e: HousekeepingEvent): void {
-        this.pending.push(e);
+    protected override push(e: HousekeepingEvent): void {
         this.lastBeat = Math.max(this.lastBeat, e.t);
-        this.schedule();
-    }
-
-    private schedule(): void {
-        if (!this.timer) this.timer = setTimeout(() => { this.timer = null; void this.flush(); }, FLUSH_DELAY_MS);
+        super.push(e);
     }
 }

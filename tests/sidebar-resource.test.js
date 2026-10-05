@@ -450,8 +450,8 @@ test("history: an evicted model keeps its colour, and says it is gone", async ()
 // VRAM_COLORS[i % 8] gave card 0 and System RAM the same indigo — in a legend whose only job is telling the
 // lines apart. (The 4×3090 NVLink rig, five pools, is the common version of this.)
 test("many pools: every pool gets its own colour, past the curated palette", async () => {
-    const { VRAM_COLORS } = await import("../src/sidebar/panel-state.ts");
-    const { poolColor } = await import("../src/sidebar/panel-state.ts");
+    const { VRAM_COLORS } = await import("../src/sidebar/palette.ts");
+    const { poolColor } = await import("../src/sidebar/palette.ts");
     // Inside the palette, the hand-picked colours are used as-is.
     assert.equal(poolColor(0, 5), VRAM_COLORS[0]);
     assert.equal(poolColor(4, 5), VRAM_COLORS[4]);
@@ -843,7 +843,7 @@ test("the chart's own settings live in the chart, and the window picker shows a 
     assert.equal(win.value, "900", "it shows the PREFERENCE, not the 56s the chart is currently drawing");
     assert.ok(![...win.options].some((o) => /dragged/.test(o.textContent)),
         "and it never grows an option describing where the scrub happens to be");
-    assert.ok(w.shadow.querySelector('[aria-label="Model colours"]'), "…as does the palette");
+    assert.ok(w.shadow.querySelector('[aria-label="Colour palette"]'), "…as does the palette");
 
     // And it is no longer in two places disagreeing. Checked by RENDERING every Settings tab, not by grepping
     // settings.tsx: a grep passes vacuously the day the settings UI moves to another file.

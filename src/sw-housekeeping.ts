@@ -1,11 +1,13 @@
 // sw-housekeeping.ts — the service worker's one housekeeping log (see housekeeping.ts) and its two messages:
 // HOUSEKEEPING_REPORT (another context says what it decided) and DUMP_HOUSEKEEPING (`ml.__housekeeping()`, the
 // DevTools panel). Kept out of background.ts, which only routes to it.
-import { HousekeepingLog, eventsForReader, type HousekeepingOrigin, type HousekeepingReport, type SessionArea } from "./housekeeping";
+import { HousekeepingLog, eventsForReader, type HousekeepingOrigin, type HousekeepingReport } from "./housekeeping";
+import { type SessionArea } from "./storage-ring";
 
 /** storage.session when the browser has it; an in-memory stand-in otherwise (a test harness without it), which
- *  still logs but cannot outlive the worker. */
-function sessionArea(): SessionArea {
+ *  still logs but cannot outlive the worker. Shared with the execution log (sw-run-log.ts), which keeps its own
+ *  ring in the same area — one accessor, so a harness without storage.session degrades the same way for both. */
+export function sessionArea(): SessionArea {
     const real = globalThis.chrome?.storage?.session;
     if (real) return real as unknown as SessionArea;
     const mem: Record<string, unknown> = {};

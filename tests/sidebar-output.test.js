@@ -421,9 +421,13 @@ test("exec code is beautified for display when the descriptor sets format", asyn
 });
 
 test("code colour theme: a stored preset or VS Code theme is applied when the panel loads", async () => {
-    // The default draws on the panel's own colours, so it sets no surface override.
+    // EVERY theme reports its surface, the default included. It used to withhold one, on the reasoning that it
+    // "draws on the panel's own colours" — but it does not: its stylesheet paints `.hljs` itself, so the declared
+    // colour and the drawn one disagreed and anything matching a code block WITHOUT an `.hljs` inside it (a raw
+    // In/Out cell, a JSON tree's value) came out a different shade. Its light/dark still tracks the panel's,
+    // which is what this world is: atom-one-LIGHT's surface, not the dark one's.
     const def = await loadSidebarWorld();
-    assert.equal(def.window.document.documentElement.style.getPropertyValue("--code-bg"), "");
+    assert.equal(def.window.document.documentElement.style.getPropertyValue("--code-bg").trim(), "#fafafa");
     // A stored preset: its stylesheet goes in, and its surface colours ride the root.
     const nord = await loadSidebarWorld({ local: { ml_code_theme: "nord" } });
     assert.equal(nord.window.document.documentElement.style.getPropertyValue("--code-bg").trim(), "#2E3440");

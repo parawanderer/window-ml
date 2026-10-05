@@ -15,7 +15,8 @@ import { benchOpen, groupAllTools, openBench, view } from "../sidebar/store";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
 import { StartMenu, type StartKind } from "./new-session";
-import { calm, pane, setCalm, setGroupAll, setListOpen, setPane } from "./view-mode";
+import { calm, logOpen, pane, setCalm, setGroupAll, setListOpen, setLogOpen, setPane } from "./view-mode";
+import { useDismiss } from "../sidebar/use-dismiss";
 
 /** What the MAIN pane shows instead of a session: the search page, this device's settings, or the attention list. Not
  *  stored as a preference: it lives in the URL (route.ts), so a reload keeps it and a fresh page does not. */
@@ -50,7 +51,9 @@ export function useEscapeCloses(own?: { current: Element | null }): void {
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             if (e.key !== "Escape" || e.defaultPrevented || (own && e.target === own.current)) return;
-            if (document.querySelector(".chat-menu, .chat-dialog")) return;
+            // `:not(.leaving)` for the same reason the dock's guard has it: a menu animating away (use-dismiss.ts)
+            // is still in the DOM and must not swallow the Escape meant for the sheet underneath it.
+            if (document.querySelector(".chat-menu:not(.leaving), .chat-dialog")) return;
             mainView.value = null;
         };
         document.addEventListener("keydown", onKey);
@@ -83,8 +86,8 @@ export function Rail({ store, onStart, gear }: { store: ChatStore; onStart: (kin
  * describe, already asked both questions by the caller: the open session's where it offers the view, otherwise the
  * first that does. Settings is always offered, because the page's own display settings need no runtime.
  */
-export function GearMenu({ graphsRt, benchRt, labelled }: {
-    graphsRt?: RuntimeInfo; benchRt?: RuntimeInfo; labelled?: boolean;
+export function GearMenu({ graphsRt, benchRt, logRt, labelled }: {
+    graphsRt?: RuntimeInfo; benchRt?: RuntimeInfo; logRt?: RuntimeInfo; labelled?: boolean;
 }) {
     const [open, setOpen] = useState(false);
     const wrap = useRef<HTMLDivElement>(null);
@@ -97,33 +100,45 @@ export function GearMenu({ graphsRt, benchRt, labelled }: {
         return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); };
     }, [open]);
     const pick = (run: () => void) => () => { setOpen(false); run(); };
+    // The menu stays drawn for one beat after the click that closed it, so choosing something eases the sheet
+    // away instead of deleting it between two frames.
+    const { show, closing } = useDismiss(open);
     return (
         <div class="chat-gear" ref={wrap}>
-            {open ? (
-                <div class="chat-menu chat-gear-menu" role="menu" aria-label="Page menu">
-                    <MenuItem icon={<IconBrain />} label="Calm view" on={calm.value} onPick={pick(() => setCalm(!calm.value))} />
-                    {/* Under "Calm view" and only offered WITH it: this folds nothing outside the reading view, and
-                        a toggle that does nothing where you are standing is worse than one that is absent.
-
-                        `note`, not `detail`: the right-hand slot is for WHICH thing a row acts on (the theme's
-                        current choice, a panel's device), and a gloss put there grew the menu wider than the column
-                        it rises in — which CLIPS, so the tick saying whether the toggle is on was the part that
-                        went. A second line costs no width. */}
-                    {calm.value
-                        ? <MenuItem icon={<IconFold />} label="Group all tool calls" note="one row per run of work"
-                            on={groupAllTools.value} onPick={pick(() => setGroupAll(!groupAllTools.value))} />
-                        : null}
+            {show ? (
+                <div class={`chat-menu chat-gear-menu${closing ? " leaving" : ""}`} role="menu" aria-label="Page menu">
+                    {/* HOW MUCH OF THE MACHINERY YOU SEE WHILE READING — the two rows that answer that, under one
+                        head. They were loose at the top level, where "Calm view" and a folding toggle read as two
+                        unrelated switches rather than the coarse and fine of one choice. The group says which
+                        view is on in its own row, so the mode is still legible without opening it. */}
+                    <MenuGroup icon={<IconBrain />} label="Reading" detail={calm.value ? "Calm" : "Detailed"}>
+                        {(sub) => <>
+                            <MenuItem sub={{ i: 0, open: sub }} icon={null} label="Calm view" note="the conversation, with the machinery one hover away"
+                                on={calm.value} onPick={pick(() => setCalm(!calm.value))} />
+                            {/* SHOWN AND DISABLED outside calm, not hidden: "is this only available in calm view?"
+                                is a question the menu should answer, and a row that vanishes answers it by making
+                                you wonder whether you imagined it. `note` carries the reason, which is what that
+                                slot is for. */}
+                            <MenuItem sub={{ i: 1, open: sub }} icon={null} label="Group all tool calls"
+                                note={calm.value ? "one row per run of work" : "only in Calm view — the detailed view is the one that shows every call"}
+                                off={!calm.value} on={groupAllTools.value} onPick={pick(() => setGroupAll(!groupAllTools.value))} />
+                        </>}
+                    </MenuGroup>
                     {/* THE PANELS TOGETHER, under one row. These two are a different kind of thing from the rows
                         around them: not how the page reads or what it is set to, but an extra surface opened ONTO a
                         runtime — so each needs to say which device it would open on, and neither belongs beside
                         "Calm view". Grouped, the device is said once by the rows themselves and the menu's top level
                         stays four plain choices. Drawn with the same opening row as the theme choices, because a
                         second disclosure that animated differently is how a menu ends up with two of them. */}
-                    {graphsRt || benchRt ? (
+                    {graphsRt || benchRt || logRt ? (
                         <MenuGroup icon={<IconDock side="right" />} label="Panels">
                             {(sub) => <>
                                 {graphsRt ? <MenuItem sub={{ i: 0, open: sub }} icon={null} label="Models and memory" detail={graphsRt.name} on={pane.value === "resource"} onPick={pick(() => setPane(pane.value === "resource" ? null : "resource"))} /> : null}
                                 {benchRt ? <MenuItem sub={{ i: 1, open: sub }} icon={null} label="Python bench" detail={benchRt.name} on={benchOpen.value} onPick={pick(() => (benchOpen.value ? (benchOpen.value = false) : openBench()))} /> : null}
+                                {/* Named for what it is rather than for the run it happens to be showing: it
+                                    follows whatever session is open, so a title naming one would go stale the
+                                    moment someone clicked another. */}
+                                {logRt ? <MenuItem sub={{ i: 2, open: sub }} icon={null} label="Execution log" detail={logRt.name} on={logOpen.value} onPick={pick(() => setLogOpen(!logOpen.value))} /> : null}
                             </>}
                         </MenuGroup>
                     ) : null}
