@@ -44,7 +44,7 @@ one name a second, safe meaning inside the dialect is a trap for everyone who re
 would mean the deny list no longer reads as "these are the ways out".
 
 `ml` is already the run-bound facade. `ml.answer` curates the run's answer set and `ml.dereference` reads a `@tool:`
-pointer, both resolving against _the run currently executing a tool_ and both throwing outside one (`tool-exec.ts`).
+pointer, both resolving against *the run currently executing a tool* and both throwing outside one (`tool-exec.ts`).
 `ml.current` is the third member of a family, not a new concept — and it inherits the sentence that matters:
 **the binding, not a permission check, is what scopes it.**
 
@@ -188,14 +188,15 @@ for the model to tell "not built yet" from "refused".
 
 First set, in rough order of how much a model can do with it. All of it is derived from events the run already has.
 
-| field                   | why it is there                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ts`, `sinceMs`         | wall clock, and the GAP to the previous message, pre-computed — a model doing arithmetic on two stamps pays tokens to get it slightly wrong                                                                                                                                                                                                                                                                                                                                                       |
-| `surface`               | where a user message was typed (`PromptSurface`, contract-run.ts) and what that implies: whether anyone can see the page. Already recorded per message                                                                                                                                                                                                                                                                                                                                            |
-| `tokens`, `tokensBasis` | the size of THIS message — what compaction would actually reclaim — and WHICH KIND of number it is: `counted` where the engine reported it (an assistant message IS one generation, and its completion count is real), `estimated` where nothing did and it falls back to ~chars/4. The precedent is `RunStats.genBasis`, which carries the same distinction for timing so that a surface can be honest about what it is showing; a bare number here would be read as counted, and is usually not |
-| `step`, `seq`           | which step produced it, so a message joins up with the transcript, the exports and a `@tool:` pointer                                                                                                                                                                                                                                                                                                                                                                                             |
-| `tool`                  | the tool a tool-result message came from                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `truncated`             | whether what the model was given was already cut (the output cap), so it does not reason about an ellipsis as though it were data                                                                                                                                                                                                                                                                                                                                                                 |
+| field | why it is there |
+| --- | --- |
+| `id` | the STABLE handle (decision 2), minted like a `@tool:` id with a check character. It lives here rather than on the message because the message is the wire shape and nothing derived belongs on it; within a snapshot the index already addresses a row, and this is what carries identity across a filter, a later read, or a mutation |
+| `ts`, `sinceMs` | wall clock, and the GAP to the previous message, pre-computed — a model doing arithmetic on two stamps pays tokens to get it slightly wrong |
+| `surface` | where a user message was typed (`PromptSurface`, contract-run.ts) and what that implies: whether anyone can see the page. Already recorded per message |
+| `tokens`, `tokensBasis` | the size of THIS message — what compaction would actually reclaim — and WHICH KIND of number it is: `counted` where the engine reported it (an assistant message IS one generation, so its completion count is real), `estimated` where nothing did and it falls back to ~chars/4. The precedent is `RunStats.genBasis`, which carries the same distinction for timing "so a surface can be honest about what the rate measures"; a bare number here would be read as counted, and usually is not |
+| `step`, `seq` | which step produced it, so a message joins up with the transcript, the exports and a `@tool:` pointer |
+| `tool` | the tool a tool-result message came from |
+| `truncated` | whether the tool output in this message was ALREADY cut before the model ever saw it (`resolveOutputCap`), so it does not reason about an ellipsis as though it were data. Nothing in `ml.current` cuts anything — this records a cut that happened upstream |
 
 ## The log
 
@@ -300,12 +301,16 @@ tool result or a fetched page abridges the same way the system prompt does — a
 system prompt" is a special case the next large thing walks straight past.
 
 **Considered and rejected: a String-like wrapper** whose `toString()` shows the first N characters and which needs
-`.toFullString()` for the rest. It is a live object with behaviour, which the Python-parity decision rules out — it
-crosses as neither a string nor a dict. It needs a new kind registered in the dialect's `kindOf` plus an allowlist
-entry, and `kindOf` defaults to deny, so it is a dialect extension owing adversarial tests rather than a data
-shape. And it protects the wrong path: `JSON.stringify` unwraps a String object to its full primitive, and
-serializing is how a model actually spends its context. Abridging the PRINT has none of those problems, because it
-touches no value at all.
+`.toFullString()` for the rest. Not because Python could not express it — it could, with `__str__` on a `str`
+subclass, and the same objection was made and withdrawn for the log. Two things that do hold: a value that is a
+string AND carries behaviour needs a kind registered in the dialect's `kindOf`, which defaults to deny, so it is a
+dialect extension owing adversarial tests rather than a data shape; and it protects the wrong path, since
+`JSON.stringify` unwraps a String object to its full primitive and serializing is how a model actually spends its
+context. Abridging the PRINT has neither problem, because it touches no value at all.
+
+Note the difference from `log.text`, which IS a wrapper of a sort and is kept: that one adds a property to an
+ordinary Array, so it stays structurally a plain value the dialect already understands. A String subclass is not
+structurally a string in the same way, which is the line between the two.
 
 ## What it must never expose
 
@@ -318,12 +323,13 @@ Outside a run it throws, because there is no run to be the subject of "current".
 
 Leaving a field out is only safe if adding it later is. The split:
 
-**Additive, so it can wait.** A new key on `meta`; a new member on `ml.current`; a new `tokensBasis` value. `meta`
-is derived, read-only, flat JSON, so a later key cannot collide with anything a model wrote against the earlier
-shape, and nothing has to be versioned for it.
+**Additive, so it can wait.** A new key on `meta`; a new member on `ml.current`; a new `tokensBasis` value; a new
+VIEW on an existing member, the way `text` sits on `log`. `meta` is derived, read-only, flat JSON, so a later key
+cannot collide with anything a model wrote against the earlier shape, and nothing has to be versioned for it.
 
-**Not additive, so it has to be right now.** Message ids and their check character; whether a write to `messages`
-throws or is absorbed; `meta` being synchronous; and the snapshot being consistent. Each of those is a property a
+**Not additive, so it has to be right now.** Message ids and their check character; `messages` being the verbatim
+wire shape rather than a report about it; whether a write to `messages` throws or is absorbed; the facade being
+plain data rather than promises; and the snapshot being consistent. Each of those is a property a
 model's code depends on structurally rather than a value it reads, and changing one later breaks scripts that were
 correct when they were written — which is the whole reason this document exists before the implementation.
 
@@ -353,9 +359,9 @@ later rather than now:
 
 ## Open
 
-- ~~`meta` per message is N host calls~~ — answered by making the whole facade plain data over the snapshot the
-  single `await` already fetched. N calls are then N lookups in the same realm, with no round trip, over an
-  array whose length is fixed before the loop starts. That is cheaper than `ml.queryAll` inside a `.map`,
+- ~~`meta` per message is N host calls~~ — answered by making the whole facade plain data, resolved up front.
+  There are no calls at all: `meta[i]` is an array index in the same realm, over an array whose length is fixed
+  before the loop starts. That is cheaper than `ml.queryAll` inside a `.map`,
   which the dialect already allows and which does real DOM work per call. No bulk form is needed; adding one
   for convenience is what would need a budget in front of it.
 - Nothing here says which messages the cap is ABOUT to drop. An earlier draft had a `dropsNext` field; it is
