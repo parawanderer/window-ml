@@ -3743,8 +3743,6 @@ button.ui-step-now:hover { background: var(--panel-2); color: var(--fg); }
 .stor-other { background: var(--ok); fill: var(--ok); }
 .stor-unm { background: var(--fg-faint); fill: var(--fg-faint); opacity: 0.5; }
 .stor-chart { margin: 0 4px; }
-.stor-chart svg { width: 100%; height: 90px; display: block; }
-.stor-axis { display: flex; justify-content: space-between; font-size: 0.8em; color: var(--fg-faint); }
 /* THE GRID IS THE LIST, not the row. Each row used to be its own grid, so its third column was sized by its own
    value — "3.70 KiB" and "468 B" are different widths, and the bars between them ended at different places, which
    is the one thing a row of bars is for. One grid over the whole list gives every row the same three columns. */
@@ -3758,6 +3756,33 @@ button.ui-step-now:hover { background: var(--panel-2); color: var(--fg); }
 .stor-toolrow > :first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stor-toolbar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
 .stor-toolbar > span { display: block; height: 100%; background: var(--warn); }
+/* A largest session you can OPEN (when the surface can open one): a button spanning its row, its cells still on the
+   list's grid through `subgrid`, so the size column lines up with the plain rows and the button has a box to hover,
+   focus and click — a `display: contents` button has none. */
+.stor-open { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; text-align: left;
+             font: inherit; color: inherit; background: none; border: 0; border-radius: 4px; padding: 2px 4px; margin: 0 -4px;
+             cursor: pointer; }
+.stor-open:hover, .stor-open:focus-visible { background: var(--panel-2); }
+.stor-open:focus-visible { outline: 1px solid var(--accent); }
+.stor-open:hover > :first-child { text-decoration: underline; }
+@media (pointer: coarse) { .stor-open { min-height: 40px; } }   /* a finger, not a cursor: the tap-target floor */
+
+/* A TIME CHART (time-chart.tsx): stacked areas over time with a readout. The series' own classes colour the areas
+   (`fill`) and the tooltip's swatches and the dots (`background`); the rule and the dots are HTML over a stretched SVG,
+   because a circle drawn inside it would be stretched into an ellipse. */
+.tc { display: block; }
+.tc-plot { position: relative; cursor: crosshair; touch-action: pan-y; outline: none; }
+.tc-plot:focus-visible { box-shadow: 0 0 0 1px var(--accent); border-radius: 2px; }
+.tc-plot svg { width: 100%; height: 100%; display: block; }
+.tc-rule { position: absolute; top: 0; bottom: 0; width: 1px; transform: translateX(-0.5px); background: var(--fg-dim); pointer-events: none; }
+.tc-dot { position: absolute; width: 7px; height: 7px; border-radius: 50%; transform: translate(-50%, -50%);
+          box-shadow: 0 0 0 1.5px var(--bg); pointer-events: none; }
+.tc-axis { display: flex; justify-content: space-between; font-size: 0.8em; color: var(--fg-faint); }
+.tc-tip { display: flex; flex-direction: column; gap: 2px; min-width: 150px; }
+.tc-tip-time { color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.tc-tip .rc-tip-line > :last-child { font-variant-numeric: tabular-nums; }
+.tc-tip-total { border-top: 1px solid var(--tip-line); padding-top: 2px; margin-top: 1px; }
+.tc-sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
 
 /* The Settings ARCHIVE FOLDER section (archive-section.tsx): one state at a time, its next step a primary button. */
 .arch { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }

@@ -5,6 +5,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { formatBytes } from "../resource-model";
 import type { StorageReport, StorageSnapshot, StoreBytes } from "../session-storage-stats";
+import { TimeChart } from "./time-chart";
 
 /** The four parts of a snapshot, in stacking order, with the class that colours each. */
 const PARTS: { key: "images" | "toolOutput" | "other" | "unmeasured"; label: string; cls: string }[] = [
@@ -27,25 +28,18 @@ function SplitBar({ s }: { s: StorageSnapshot }) {
     );
 }
 
-/** The history as stacked areas, oldest at the left. Nothing to draw until there are two days. */
+/** The history as stacked areas over time, oldest at the left, readable at every recorded day by hovering. Nothing to
+ *  draw until there are two days. */
 function HistoryChart({ history }: { history: StorageSnapshot[] }) {
     if (history.length < 2) return <div class="set-hint">Recorded once a day. The chart appears after the second day.</div>;
-    const W = 320, H = 90;
     const max = Math.max(1, ...history.map((s) => s.total));
-    const x = (i: number) => (i / (history.length - 1)) * W;
-    const y = (v: number) => H - (v / max) * H;
-    let below = history.map(() => 0);
-    const areas = PARTS.map((p) => {
-        const top = history.map((s, i) => below[i] + part(s, p.key));
-        const d = `M${top.map((v, i) => `${x(i)},${y(v)}`).join("L")}L${[...below].reverse().map((v, i) => `${x(history.length - 1 - i)},${y(v)}`).join("L")}Z`;
-        below = top;
-        return <path key={p.key} class={p.cls} d={d} />;
-    });
     const day = (t: number) => new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
     return (
         <div class="stor-chart">
-            <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label={`Storage from ${day(history[0].t)} to ${day(history.at(-1)!.t)}, peaking at ${formatBytes(max)}`}>{areas}</svg>
-            <div class="stor-axis"><span>{day(history[0].t)}</span><span>{formatBytes(max)} peak</span><span>{day(history.at(-1)!.t)}</span></div>
+            <TimeChart series={PARTS} format={formatBytes}
+                points={history.map((s) => ({ t: s.t, values: { images: part(s, "images"), toolOutput: part(s, "toolOutput"), other: part(s, "other"), unmeasured: part(s, "unmeasured") } }))}
+                label={`Storage from ${day(history[0].t)} to ${day(history.at(-1)!.t)}, peaking at ${formatBytes(max)}`}
+                axis={<><span>{day(history[0].t)}</span><span>{formatBytes(max)} peak</span><span>{day(history.at(-1)!.t)}</span></>} />
         </div>
     );
 }
@@ -53,9 +47,10 @@ function HistoryChart({ history }: { history: StorageSnapshot[] }) {
 /**
  * The Storage section's body. `load` fetches the report; injectable so a test needs no worker. `measure` reads every
  * saved session from disk, which only this browser can do, so without it (a remote runtime) there is no button.
- * `emptyText` is what a null report says, for a runtime that is not this browser.
+ * `emptyText` is what a null report says, for a runtime that is not this browser. `onOpen` opens a session by its hash,
+ * and turns each of the largest sessions into a button that does; without it they are plain rows.
  */
-export function StorageBody({ load, measure, emptyText = "This browser keeps no saved sessions." }: { load: () => Promise<StorageReport | null>; measure?: () => Promise<StoreBytes | null>; emptyText?: string }) {
+export function StorageBody({ load, measure, emptyText = "This browser keeps no saved sessions.", onOpen }: { load: () => Promise<StorageReport | null>; measure?: () => Promise<StoreBytes | null>; emptyText?: string; onOpen?: (hash: string) => void }) {
     const [report, setReport] = useState<StorageReport | null | undefined>(undefined);
     const [exact, setExact] = useState<StoreBytes | null | "loading">(null);
     const [err, setErr] = useState("");
@@ -87,9 +82,12 @@ export function StorageBody({ load, measure, emptyText = "This browser keeps no 
 
             {report.largest.length ? <>
                 <div class="stor-sub">Largest sessions</div>
-                <div class="stor-largest">{report.largest.map((r) => (
-                    <div key={r.hash} class="stor-toolrow"><span>{r.title || <code>{r.hash}</code>}{r.pinned ? " (pinned)" : ""}</span><span /><span>{formatBytes(r.bytes)}</span></div>
-                ))}</div>
+                <div class="stor-largest">{report.largest.map((r) => {
+                    const cells = <><span>{r.title || <code>{r.hash}</code>}{r.pinned ? " (pinned)" : ""}</span><span /><span>{formatBytes(r.bytes)}</span></>;
+                    return onOpen
+                        ? <button key={r.hash} type="button" class="stor-toolrow stor-open" aria-label={`Open ${r.title || r.hash}, ${formatBytes(r.bytes)}`} onClick={() => onOpen(r.hash)}>{cells}</button>
+                        : <div key={r.hash} class="stor-toolrow">{cells}</div>;
+                })}</div>
             </> : null}
 
             {measure ? <div class="set-field">

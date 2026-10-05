@@ -1211,7 +1211,8 @@ export function Settings() {
                 ) : null}
                 <StorageBody
                     load={() => new Promise((res, rej) => chrome.runtime.sendMessage({ type: "STORAGE_HISTORY" }, (r: any) => (r?.error ? rej(new Error(r.error)) : res(r?.data ?? null))))}
-                    measure={() => new Promise((res, rej) => chrome.runtime.sendMessage({ type: "SESSION_STORAGE_STATS" }, (r: any) => (r?.error ? rej(new Error(r.error)) : res(r?.data ?? null))))} />
+                    measure={() => new Promise((res, rej) => chrome.runtime.sendMessage({ type: "SESSION_STORAGE_STATS" }, (r: any) => (r?.error ? rej(new Error(r.error)) : res(r?.data ?? null))))}
+                    onOpen={(hash) => { view.value = { name: "detail", hash }; }} />
                 </Section>
 
                 <Section id="agenthud" title="Agent HUD">
