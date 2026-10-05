@@ -82,34 +82,41 @@ Handing back a silently-discarding copy would teach the model that editing its c
 it would then be right about the syntax and wrong about the effect, and there is no error anywhere to tell it apart.
 A throw is loud now and becomes the real operation later, so nothing learned here has to be unlearned.
 
-A model that wants to work the messages as data clones them ITSELF, and the dialect already allows that with no new
-rule. The clone has to be DEEP, and the spelling matters:
+A model that wants to work the messages as data has to copy them, and **the dialect cannot give it a deeply
+mutable copy today**. That is measured, not assumed (`tests/readonly-exec.test.mjs`):
 
 ```js
-const mine = JSON.parse(JSON.stringify(ml.current.messages));   // deep, and OWNED → freely mutable
-const flat = ml.current.messages.map(m => ({ ...m }));          // SHALLOW: nested values still alias
+const i = await ml.info(); i.compute = {};              // OK — the facade built this value for this call
+const c = { ...i };        c.mine = 1;                  // OK — the copy is the script's own object
+c.compute.supported_gpus.push(x);                       // REFUSED — the spread carried it by reference
+JSON.parse(JSON.stringify(i)).compute.system_compute.total_memory = 1;   // ALSO REFUSED
 ```
 
-A spread copies a row's own keys and nothing below them, so `flat[0].tool_calls` is still the array inside the real
-message. Editing it does not corrupt anything — the `owned` gate refuses a write to a container the script did not
-create, so it throws — but it throws one level deeper than the model was looking, which is a worse error than the
-flat case it was imitating. `structuredClone` is not in the dialect; `JSON.parse`/`JSON.stringify` are, and a
-`JSON.parse` result is explicitly owned (`readonly-exec.ts`), which is what makes the round trip both a deep copy
-and a mutable one.
+`own()` marks the value it is handed and does not recurse, for every source — an `ml.*` result, a spread, and a
+`JSON.parse` result alike. So the top level is writable and nothing below it is, by any route.
 
-That the round trip is LOSSLESS here is not luck: it follows from the Python-parity decision below, which already
-requires this to be JSON-shaped data with no `undefined`/`null` distinction carrying meaning. A shape that survives
-`JSON.parse(JSON.stringify(x))` unchanged is the same shape that crosses into Python unchanged, so one constraint
-buys both.
+That is exactly the guarantee this spec wants for `messages`, and it comes for free: a nested write is refused at
+the depth where the alias is, loudly, instead of silently editing something the script did not create. **It is also
+what stops the clone-and-edit workflow from working**, and those are the same rule, so one cannot be kept without
+the other unless the rule is narrowed.
 
-`ml.current.meta(id)` is the opposite case and gets the opposite treatment: a deep clone the script owns and may
-freely mutate. It can afford that because `meta` is never going to be writable — it is derived provenance, and the
+**Dependency, to be decided before building:** making a `JSON.parse` result owned RECURSIVELY would make the deep
+copy usable, and it is narrowly safe in a way the general case is not — `JSON.parse` can only produce fresh plain
+objects, arrays and primitives, so there is provably no live page object anywhere in its result to launder. No
+other source has that property, which is why this is a change to one branch rather than to `own()`. Per AGENTS.md
+it would owe adversarial tests of its own. Until it is made, the honest advice to a model is to rebuild what it
+needs at the depth it needs (`msgs.map(m => ({ role: m.role, content: m.content }))`) rather than to clone.
+
+`ml.current.meta(id)` is the opposite case and gets the opposite treatment: a fresh record per call, which the
+dialect marks owned, so the script may write to it — to the same one-level depth as everything else above, which is
+why `meta` is specified FLAT (see the table) rather than as a nested record. It can afford that because `meta` is never going to be writable — it is derived provenance, and the
 whole value of the timing fields is that the model cannot author them (decision 3). There is no future operation for
 an assignment here to collide with, so the convenient thing is also the safe one. Annotating a working copy of the
 metadata is the natural way to plan a compaction, and a frozen record would throw part-way through that and drop a
 reading script out of dialect and into the approval gate.
 
-The clone must be DEEP, or a nested structure still aliases the real record.
+Keeping `meta` flat is what makes that enough: with no nesting there is no second level for the ownership rule to
+refuse, and annotating a working copy — the natural way to plan a compaction — just works.
 
 ### 5. It is read from the DIALECT, never from a tool that dumps
 
@@ -129,7 +136,7 @@ First set, in rough order of how much a model can do with it. All of it is deriv
 | --- | --- |
 | `ts`, `sinceMs` | wall clock, and the GAP to the previous message, pre-computed — a model doing arithmetic on two stamps pays tokens to get it slightly wrong |
 | `surface` | where a user message was typed (`PromptSurface`, contract-run.ts) and what that implies: whether anyone can see the page. Already recorded per message |
-| `tokens` | the estimated size of THIS message — what compaction would actually reclaim |
+| `tokens`, `tokensBasis` | the size of THIS message — what compaction would actually reclaim — and WHICH KIND of number it is: `counted` where the engine reported it (an assistant message IS one generation, and its completion count is real), `estimated` where nothing did and it falls back to ~chars/4. The precedent is `RunStats.genBasis`, which carries the same distinction for timing so that a surface can be honest about what it is showing; a bare number here would be read as counted, and is usually not |
 | `step`, `seq` | which step produced it, so a message joins up with the transcript, the exports and a `@tool:` pointer |
 | `tool` | the tool a tool-result message came from |
 | `truncated` | whether what the model was given was already cut (the output cap), so it does not reason about an ellipsis as though it were data |
@@ -138,9 +145,33 @@ First set, in rough order of how much a model can do with it. All of it is deriv
 ## The log
 
 `ml.current.log` is the model-facing read of the execution log (`run-log.ts`, `docs/dev/run-log.md`), merged here
-because it answers the same kind of question: what happened to me that my transcript does not say — the tab that was
-discarded and reloaded, the CDP attach that was refused. The gate and the hazards are already written in that
+because it answers the same kind of question: what happened to me that my transcript does not say — the tab that
+was discarded and reloaded, the CDP attach that was refused. The gate and the hazards are already written in that
 document and are not re-decided here.
+
+**It is an array of RECORDS, not rendered text.** Each is the shape the log already stores — `ts`, `subsystem`,
+`kind`, optional `reason`, optional `detail` — so filtering is ordinary dialect code and needs no query language
+and no new methods:
+
+```js
+const log = await ml.current.log;
+log.slice(-20)                                             // the last twenty
+log.filter(r => r.subsystem === "page")                    // one subsystem
+log.filter(r => r.kind === "discarded" || r.kind === "unreachable")
+log.filter(r => r.ts > Date.now() - 60_000)                // the last minute
+```
+
+Records rather than a string, for three reasons. The dialect's array methods are already there, so a string would
+mean inventing a grep where `filter` exists. A regex over rendered text would match the rendering — the column
+layout and the human wording — rather than the facts, so the log's presentation could not change without breaking
+scripts written against it. And `kind` is a closed vocabulary that the log's own sanitizer enforces
+(`sanitizeRunReport` silently drops a record whose `subsystem`/`kind` is not a lowercase slug), which is exactly
+what makes an equality filter reliable and a substring search a guess.
+
+The array is already bounded — `PER_RUN_CAP` records per run — so "the whole log" is a known, small quantity and
+`slice(-n)` is the only recency control needed. If a model wants the human rendering (to quote it in an answer), it
+builds that from the records; `housekeepingText` is a UI renderer with marks and column widths and is not part of
+this contract.
 
 ## The kernel variable inspector shows the same objects
 
@@ -175,17 +206,19 @@ later rather than now:
   a new costume — so the halting tests are written NOW, against the read-only shape, and re-run against the first
   mutation.
 - **Failure**: a script that reads `ml.current` and then falls out of dialect leaves nothing behind.
-- **Copy semantics**, because the two halves differ and the difference is invisible until it bites: writing to a
-  `messages` row throws; writing to a `meta(id)` record does not and does not reach the real one; a SHALLOW copy of
-  a message still throws when a nested value is written, at the depth where the alias is; and the deep copy
-  (`JSON.parse(JSON.stringify(…))`) is mutable and reaches nothing. Four assertions, one of which — the shallow
-  case — is the one a model will actually write by accident.
+- **Copy semantics.** The depth rule is already asserted against the real dialect, for every route into it
+  (`tests/readonly-exec.test.mjs`, "ownership is ONE LEVEL deep"); what this still owes is the same assertions
+  against `ml.current` itself once it exists — that a `messages` row refuses a write, that a `meta(id)` record
+  accepts one and reaches nothing, and that neither can be reached around through a shallow copy.
 
 ## Open
 
 - `meta(id)` per message is N host calls for N messages. Fine for a few hundred; a bulk form would need a budget in
   front of it rather than being added for convenience.
-- `dropsNext` needs a real tokenizer to be exact, and today everything here estimates at ~chars/4. An estimate is
-  probably right for deciding WHAT to drop and wrong for deciding WHETHER to — worth measuring before promising it.
+- `dropsNext` is only as good as the numbers under it, and that is now a split question rather than one: the
+  `counted` messages are exact, and the `estimated` ones (every user and tool message, which is most of the
+  context) are ~chars/4 with no tokenizer. An estimate is probably right for deciding WHAT to drop and wrong for
+  deciding WHETHER to — worth measuring before promising it, and the mixed basis is what makes that measurable at
+  all rather than a single number nobody can audit.
 - Whether the system prompt appears in `messages`. It is in the context, so including it is consistent; it is also
   the largest single thing there and the one the model can do least about.
