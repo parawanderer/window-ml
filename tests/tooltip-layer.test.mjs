@@ -311,3 +311,87 @@ test("a MOUSE press still dismisses, which is what pressing anything should do",
         assert.equal(w.layer().hidden, true);
     } finally { w.stop(); }
 });
+
+// --- a later JSX prop must never silently replace a spread tip handler ---
+// `cursorTipOn` hands back pointer handlers that a call site SPREADS onto its trigger. JSX resolves a
+// duplicate prop last-one-wins, so an element that also writes its own `onPointerLeave` after the spread
+// drops the tip's and the tip stays up over nothing — which is what `.r-el` (a tool's element rows) did on
+// every surface, the chat UI included, because it wanted the page highlight cleared on the same event.
+// Nothing about that fails: it type-checks, renders, and the tip even appears. So it is checked statically,
+// over the whole tree rather than per call site, since the next one will be somewhere else.
+test("no call site restates a prop that cursorTipOn already spreads", async () => {
+    const { readFileSync, readdirSync } = await import("node:fs");
+    const { join } = await import("node:path");
+
+    // The handler names are READ OFF the real thing, both modes, so a new one is covered the day it is added
+    // rather than the day someone remembers this list.
+    const dom = new JSDOM("<body></body>", { pretendToBeVisual: true });
+    const g = globalThis;
+    const saved = { window: g.window, document: g.document, MutationObserver: g.MutationObserver };
+    Object.assign(g, { window: dom.window, document: dom.window.document, MutationObserver: dom.window.MutationObserver });
+    let owned;
+    try {
+        const { cursorTipOn } = await import("../src/sidebar/ui-kit.tsx");
+        owned = new Set([...Object.keys(cursorTipOn("x")), ...Object.keys(cursorTipOn("x", { delayMs: 1 }))].filter((k) => k.startsWith("on")));
+    } finally { Object.assign(g, saved); }
+    assert.ok(owned.size >= 2, "cursorTipOn returns pointer handlers to guard");
+
+    const files = [];
+    (function walk(dir) {
+        for (const e of readdirSync(dir, { withFileTypes: true })) {
+            if (e.name === "node_modules") continue;
+            if (e.isDirectory()) walk(join(dir, e.name));
+            // `*.gen.ts` is skipped: `build-diff.gen.ts` embeds the build-time `git diff` as a STRING, so it
+            // carries whatever source a working tree happens to hold and would report its own author's diff.
+            else if (/\.tsx?$/.test(e.name) && !e.name.endsWith(".gen.ts")) files.push(join(dir, e.name));
+        }
+    })("src");
+
+    const bad = [];
+    for (const f of files) {
+        const src = readFileSync(f, "utf8");
+        if (!src.includes("cursorTipOn")) continue;
+        // A call site may SPREAD the call directly (`{...cursorTipOn("…")}`) or park it in a local first
+        // (`const tip = cursorTipOn("…")` … `{...(tip ?? {})}`). Both end up spreading the same handlers, so
+        // collect the locals too — guarding only the inline form would stop covering a site the moment someone
+        // refactored it, which is exactly the shape the fix for `.r-el` has.
+        const held = new Set([...src.matchAll(/\b(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=[^;\n]*cursorTipOn\(/g)].map((m) => m[1]));
+        for (const m of src.matchAll(/\{\.\.\./g)) {
+            // BALANCE to the matching brace rather than stopping at the first one: `{...(isTok ? {} : cursorTipOn(…))}`
+            // closes an inner `{}` before its own, and a non-greedy match reads the spread as `(isTok ? {`.
+            let d = 0, close = -1;
+            for (let i = m.index; i < src.length; i++) {
+                if (src[i] === "{") d++;
+                else if (src[i] === "}" && --d === 0) { close = i; break; }
+            }
+            if (close < 0) continue;
+            const spread = src.slice(m.index + 4, close);
+            if (!spread.includes("cursorTipOn(") && ![...held].some((n) => new RegExp(`\\b${n}\\b`).test(spread))) continue;
+            // Walk to the end of the JSX opening tag: the first `>` outside any brace or paren.
+            let depth = 0, end = -1;
+            for (let i = m.index; i < src.length; i++) {
+                const c = src[i];
+                if (c === "{" || c === "(") depth++;
+                else if (c === "}" || c === ")") depth--;
+                else if (c === ">" && depth === 0) { end = i; break; }
+            }
+            if (end < 0) continue;
+            const tag = src.slice(m.index, end);
+            // Restating a prop is FINE as long as it calls the spread one through (`tip?.onPointerLeave?.()`),
+            // which is the only way an element can own two affordances that end on the same event. What is
+            // checked is that the tip's handler still RUNS, not that the prop was left alone.
+            const restated = [...owned].filter((k) => {
+                const at = tag.search(new RegExp(`\\b${k}=\\{`));
+                if (at < 0) return false;
+                let d = 0, i = at + tag.slice(at).indexOf("{");
+                for (; i < tag.length; i++) {
+                    if (tag[i] === "{") d++;
+                    else if (tag[i] === "}" && --d === 0) { i++; break; }
+                }
+                return !new RegExp(`\\.${k}\\b`).test(tag.slice(at, i));
+            });
+            if (restated.length) bad.push(`${f}:${src.slice(0, m.index).split("\n").length} restates ${restated.join(", ")}`);
+        }
+    }
+    assert.deepEqual(bad, [], "a spread cursorTipOn handler is silently replaced here; CALL it from the element's own handler instead of restating the prop");
+});
