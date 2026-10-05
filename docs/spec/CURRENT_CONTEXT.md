@@ -21,17 +21,17 @@ today and both come up constantly:
 - **When.** Wall-clock times and the gaps between them. A model has no idea whether the page it read was read ten
   seconds or forty minutes ago, whether the person went away between two turns, or how long it has been working.
   This is the single highest-value field precisely because it is the one the model cannot author or infer.
-- **What is about to go.** Which messages the context cap is closest to dropping, and how large each one is. That is
-  the only question whose answer makes self-compaction actionable, which is why it is in the READ half rather than
-  waiting for the write half.
+- **How big each part of it is**, and whether that size is a real count or an estimate. This is what makes
+  self-compaction actionable at all, which is why it belongs in the READ half rather than waiting for the write
+  half. (Which messages the cap is about to DROP is a further question, deliberately left open.)
 
 ## The shape
 
 ```js
-ml.current.run                 // { id, model, step, maxSteps, startedTs } — which run this is
-ml.current.messages            // the array the NEXT model call would receive, each row carrying a stable `id`
-ml.current.meta(id)            // what we KNOW about that message; read-only, now and after mutation lands
-ml.current.log                 // this run's execution log (run-log.ts), gated — see "The log" below
+ml.current.run; // { id, model, step, maxSteps, startedTs } — which run this is
+ml.current.messages; // the array the NEXT model call would receive, each row carrying a stable `id`
+ml.current.meta(id); // what we KNOW about that message; read-only, now and after mutation lands
+ml.current.log; // this run's execution log (run-log.ts), gated — see "The log" below
 ```
 
 Five decisions make it survive the write half. Each is the non-obvious choice.
@@ -44,7 +44,7 @@ one name a second, safe meaning inside the dialect is a trap for everyone who re
 would mean the deny list no longer reads as "these are the ways out".
 
 `ml` is already the run-bound facade. `ml.answer` curates the run's answer set and `ml.dereference` reads a `@tool:`
-pointer, both resolving against *the run currently executing a tool* and both throwing outside one (`tool-exec.ts`).
+pointer, both resolving against _the run currently executing a tool_ and both throwing outside one (`tool-exec.ts`).
 `ml.current` is the third member of a family, not a new concept — and it inherits the sentence that matters:
 **the binding, not a permission check, is what scopes it.**
 
@@ -86,10 +86,12 @@ A model that wants to work the messages as data has to copy them, and **the dial
 mutable copy today**. That is measured, not assumed (`tests/readonly-exec.test.mjs`):
 
 ```js
-const i = await ml.info(); i.compute = {};              // OK — the facade built this value for this call
-const c = { ...i };        c.mine = 1;                  // OK — the copy is the script's own object
-c.compute.supported_gpus.push(x);                       // REFUSED — the spread carried it by reference
-JSON.parse(JSON.stringify(i)).compute.system_compute.total_memory = 1;   // ALSO REFUSED
+const i = await ml.info();
+i.compute = {}; // OK — the facade built this value for this call
+const c = { ...i };
+c.mine = 1; // OK — the copy is the script's own object
+c.compute.supported_gpus.push(x); // REFUSED — the spread carried it by reference
+JSON.parse(JSON.stringify(i)).compute.system_compute.total_memory = 1; // ALSO REFUSED
 ```
 
 `own()` marks the value it is handed and does not recurse, for every source — an `ml.*` result, a spread, and a
@@ -128,19 +130,54 @@ lands in it. `ml.current.meta(id).sinceMs` over three hundred messages costs wha
 Anything genuinely large is addressed rather than copied, through the value store and a `@tool:` pointer, which is
 the machinery that already exists for exactly this.
 
+## Joining `meta` to `messages` — and why that makes `meta` synchronous
+
+Combining the two is the main thing anyone will do with this, so it decides the shape rather than following from
+it. The dialect allows a SYNC `ml.*` read inside a `.map`/`.filter` callback and refuses an ASYNC one — the sync
+driver cannot await there, so the call falls out of dialect and the whole survey escalates to a human
+(`tests/readonly-exec.test.mjs`). The natural join is a lookup inside a map:
+
+```js
+const msgs = await ml.current.messages; // ONE await, at the top level
+const stale = msgs
+    .map((m) => ({ m, meta: ml.current.meta(m.id) })) // SYNC — an async read here would fall out of dialect
+    .filter((x) => x.meta.tokens > 500 && x.meta.sinceMs > 10 * 60_000)
+    .map(
+        (x) =>
+            `${x.m.id} ${x.m.role} ${x.meta.tokens}t ${Math.round(x.meta.sinceMs / 60_000)}m ago`,
+    );
+```
+
+So **`meta(id)` is synchronous**, which forces the rest: on a background-hosted run `ml.current` is reached from
+`exec` on the page while the context lives in the worker, so something has to cross. It crosses ONCE — the `await`
+on `messages` — and populates a run-bound snapshot that `meta` then reads locally.
+
+That is a better arrangement than it looks, because `ml.current` is therefore a SNAPSHOT rather than a live view:
+every row and every record describes the same instant. A run advances while a survey is being written, and a join
+whose two halves were fetched separately could pair a message with metadata from a later step and be wrong in a way
+nothing would report.
+
+**The JSDoc on the contract type carries this example**, because `agent_api_docs` lifts contract JSDoc verbatim
+into what the model reads, and the join is the part worth showing — a model that knows `messages` and `meta` exist
+but writes the async form gets an escalation instead of an answer. The same example belongs on `meta` itself, not
+only on the facade, since that is where `agent_api_docs --member` will land.
+
+**Do not add the contract type before the implementation.** The generator advertises whatever is in `contract.ts`,
+so a type landing early would put a method in the model's own API reference that throws when called, on every run,
+with no way for the model to tell "not built yet" from "refused".
+
 ## What `meta` carries
 
 First set, in rough order of how much a model can do with it. All of it is derived from events the run already has.
 
-| field | why it is there |
-| --- | --- |
-| `ts`, `sinceMs` | wall clock, and the GAP to the previous message, pre-computed — a model doing arithmetic on two stamps pays tokens to get it slightly wrong |
-| `surface` | where a user message was typed (`PromptSurface`, contract-run.ts) and what that implies: whether anyone can see the page. Already recorded per message |
+| field                   | why it is there                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ts`, `sinceMs`         | wall clock, and the GAP to the previous message, pre-computed — a model doing arithmetic on two stamps pays tokens to get it slightly wrong                                                                                                                                                                                                                                                                                                                                                       |
+| `surface`               | where a user message was typed (`PromptSurface`, contract-run.ts) and what that implies: whether anyone can see the page. Already recorded per message                                                                                                                                                                                                                                                                                                                                            |
 | `tokens`, `tokensBasis` | the size of THIS message — what compaction would actually reclaim — and WHICH KIND of number it is: `counted` where the engine reported it (an assistant message IS one generation, and its completion count is real), `estimated` where nothing did and it falls back to ~chars/4. The precedent is `RunStats.genBasis`, which carries the same distinction for timing so that a surface can be honest about what it is showing; a bare number here would be read as counted, and is usually not |
-| `step`, `seq` | which step produced it, so a message joins up with the transcript, the exports and a `@tool:` pointer |
-| `tool` | the tool a tool-result message came from |
-| `truncated` | whether what the model was given was already cut (the output cap), so it does not reason about an ellipsis as though it were data |
-| `dropsNext` | this message is nearest the context cap — the bridge to the write half, and useless to add later because it is the reason to act at all |
+| `step`, `seq`           | which step produced it, so a message joins up with the transcript, the exports and a `@tool:` pointer                                                                                                                                                                                                                                                                                                                                                                                             |
+| `tool`                  | the tool a tool-result message came from                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `truncated`             | whether what the model was given was already cut (the output cap), so it does not reason about an ellipsis as though it were data                                                                                                                                                                                                                                                                                                                                                                 |
 
 ## The log
 
@@ -155,10 +192,10 @@ and no new methods:
 
 ```js
 const log = await ml.current.log;
-log.slice(-20)                                             // the last twenty
-log.filter(r => r.subsystem === "page")                    // one subsystem
-log.filter(r => r.kind === "discarded" || r.kind === "unreachable")
-log.filter(r => r.ts > Date.now() - 60_000)                // the last minute
+log.slice(-20); // the last twenty
+log.filter((r) => r.subsystem === "page"); // one subsystem
+log.filter((r) => r.kind === "discarded" || r.kind === "unreachable");
+log.filter((r) => r.ts > Date.now() - 60_000); // the last minute
 ```
 
 Records rather than a string, for three reasons. The dialect's array methods are already there, so a string would
@@ -187,12 +224,52 @@ getters that look like properties but perform I/O, Proxies, array methods AS the
 `undefined` and `null` carrying meaning. `ml.current.messages` is a list of dicts; `ml.current.meta(id)` is a
 function. Absent is one value, spelled one way.
 
+## A large message is CAPPED, and its full text is a separate ask
+
+The system prompt is the case that forces this — around 3.2k tokens, re-sent every turn, the largest single thing
+in the context and the one the model can least act on. It appears in `messages`, because it IS in the context and a
+list that omitted it would make every total wrong. But its `content` is CAPPED, with `truncated: true` and the real
+`tokens` beside it, and the full text is a separate explicit call:
+
+```js
+ml.current.messageText(id); // the whole thing, when you actually want it
+```
+
+The rule is by SIZE, not by role: any message over the cap is treated the same way, because the system prompt is
+not the only large thing in a context — a screenshot-bearing tool result or a fetched page is — and a rule keyed to
+"is this the system prompt" is a special case that the next large thing walks straight past. The cap itself is the
+one the repo already applies to model-facing output (`resolveOutputCap`, contract-pointers.ts) rather than a new
+number.
+
+**Considered and rejected: a String-like wrapper** whose `toString()` shows the first N characters and which needs
+`.toFullString()` for the rest. It is a tidier idea at the call site and it loses on three counts. It is a live
+object with behaviour, which is exactly what the Python-parity decision rules out — it crosses as neither a string
+nor a dict, and the Python half would need a bespoke class to match. It needs a new kind registered in the
+dialect's `kindOf` plus an allowlist entry, and `kindOf` defaults to deny, so it is a dialect extension owing
+adversarial tests rather than a data shape. And it protects the wrong path: a model is most likely to spend its
+context by serializing, and `JSON.stringify` unwraps a String object to its full primitive, so the protection would
+be absent from the one route that actually costs. A cap plus an explicit fetch is the same affordance — you have to
+ask for the spam — as plain data, with none of that.
+
 ## What it must never expose
 
 Reading messages the model already has adds no information, which is what makes this safe — so the invariant is
 exactly that: **nothing here may return anything the running model was not already given.** No other session's
 messages, no configuration the page cannot read (`MlConfig`'s omissions are a security boundary), no credentials.
 Outside a run it throws, because there is no run to be the subject of "current".
+
+## What can be added later, and what cannot
+
+Leaving a field out is only safe if adding it later is. The split:
+
+**Additive, so it can wait.** A new key on `meta`; a new member on `ml.current`; a new `tokensBasis` value. `meta`
+is derived, read-only, flat JSON, so a later key cannot collide with anything a model wrote against the earlier
+shape, and nothing has to be versioned for it.
+
+**Not additive, so it has to be right now.** Message ids and their check character; whether a write to `messages`
+throws or is absorbed; `meta` being synchronous; and the snapshot being consistent. Each of those is a property a
+model's code depends on structurally rather than a value it reads, and changing one later breaks scripts that were
+correct when they were written — which is the whole reason this document exists before the implementation.
 
 ## What it owes before it ships
 
@@ -213,12 +290,20 @@ later rather than now:
 
 ## Open
 
-- `meta(id)` per message is N host calls for N messages. Fine for a few hundred; a bulk form would need a budget in
-  front of it rather than being added for convenience.
-- `dropsNext` is only as good as the numbers under it, and that is now a split question rather than one: the
-  `counted` messages are exact, and the `estimated` ones (every user and tool message, which is most of the
-  context) are ~chars/4 with no tokenizer. An estimate is probably right for deciding WHAT to drop and wrong for
-  deciding WHETHER to — worth measuring before promising it, and the mixed basis is what makes that measurable at
-  all rather than a single number nobody can audit.
-- Whether the system prompt appears in `messages`. It is in the context, so including it is consistent; it is also
-  the largest single thing there and the one the model can do least about.
+- ~~`meta(id)` per message is N host calls~~ — answered by making `meta` SYNCHRONOUS over the snapshot the
+  single `await` already fetched. N calls are then N lookups in the same realm, with no round trip, over an
+  array whose length is fixed before the loop starts. That is cheaper than `ml.queryAll` inside a `.map`,
+  which the dialect already allows and which does real DOM work per call. No bulk form is needed; adding one
+  for convenience is what would need a budget in front of it.
+- Nothing here says which messages the cap is ABOUT to drop. An earlier draft had a `dropsNext` field; it is
+  out, because its semantics have not been looked at and a guessed field in a contract is the one thing this
+  document is otherwise careful not to do. It is also the field that can most afford to wait: `tokens` +
+  `tokensBasis` already let a model reason about size, and an eviction rule can be added once it is a
+  decision rather than a hunch.
+- How good the numbers under such a field would be is already a split question: the `counted` messages are
+  exact, and the `estimated` ones — every user and tool message, so most of the context — are ~chars/4 with
+  no tokenizer. An estimate is probably right for deciding WHAT to drop and wrong for deciding WHETHER to.
+  `tokensBasis` is what makes that measurable at all rather than one number nobody can audit.
+- Nothing is specified about a message arriving over the hub from a REMOTE runtime, where the context lives on
+  another machine. The snapshot would have to cross a seal, and `LIVE_PREVIEW_CHARS` exists because that path
+  already caps text once.
