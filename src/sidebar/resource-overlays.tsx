@@ -7,7 +7,8 @@
 import { type RunGap, axisGaps, axisFrac, timeAtFraction, runFrac, gridStep, gridTimes } from "../resource-axis";
 import type { RibbonSpan } from "../resource-gens";
 import { placeEvents } from "../resource-lane";
-import { type ResourceEvent, type EventPlacement, loadEdges, eventsIn, type ResourceSample, loadTrace } from "../resource-model";
+import { type ResourceSample, loadTrace } from "../resource-model";
+import { type ResourceEvent, type EventPlacement, loadEdges, eventsIn } from "../resource-timeline";
 import { live, eventKey, hotEvent, barKey, eventHover, trackCursor, gapHover, snapUnder, litBy, hoverAt } from "./chart-interaction";
 import { colorFor, resourceHistory } from "./panel-state";
 import { phaseFill } from "./resource-lane-ui";

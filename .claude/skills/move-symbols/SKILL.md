@@ -72,6 +72,10 @@ failure cannot be overridden.
 
 ## Gotchas
 
+- **`--to` an EXISTING file appends, and says nothing about whether it should.** The plan, the typecheck and the
+  cycle check all pass, and you get one module holding two subjects under a header describing one. Run
+  `node scripts/index.mjs '<name>' --kind file` on the target name before the first move: `resource-events.ts`
+  already held the event-stream frame reader when the panel's `ResourceEvent` was nearly appended to it.
 - **It is a dry run until you drop `--dry-run`**, and a blocked run writes nothing either way.
 - **The new file has no header comment.** Write one saying what the module is for; that is the one part of
   a move that is not mechanical. **Leave a blank line after it.** A `//` run touching the first declaration
@@ -96,6 +100,10 @@ failure cannot be overridden.
 - **The in-memory check runs TypeScript 6** (bundled by `@ts-morph/common`, because 7.x is the Go port and has
   no JS API or move refactor yet) over the files around the move. The whole-project `tsc` after writing is
   the repo's own 7.x, and it has the last word.
+  Its standard library comes from `@ts-morph/common`'s in-memory lib files (`project.mjs`): before that was wired
+  up it saw no `Map` or `Omit` at all, and the typecheck gate blocked moves on reworded noise. What still differs
+  from 7.x is small and stable (`tests/md-ladder.test.mjs` assigning `globalThis.chrome` reads as a declaration of
+  the global to 6.x), and the gate compares by message, so it never blocks on it.
 - **A moved `const x = compute()` runs earlier than before**: when the target is first imported, not when the
   rest of the source runs. The plan prints a `note` for any moved initializer that calls something.
 - **Tests are not moved.** If a test file covers only what moved, split or rename it yourself; the imports

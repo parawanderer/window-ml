@@ -31,7 +31,7 @@ import { expandPointers } from "./pointer-macro";
 import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_CLOSED_NOTE, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE } from "./prompts";
 import { evalReadonly } from "./readonly-exec";
 import { descriptorFor } from "./render-descriptor";
-import { parseInfo } from "./resource-model";
+import { parseInfo } from "./resource-capacity";
 import { registerRun, endRun, runAnswer } from "./run-delegation";
 import { isSelfSourceUrl } from "./self-source";
 import { TokenStore } from "./token-pipe";
@@ -787,7 +787,7 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
             try { toolJson = JSON.stringify(toolset.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }))); } catch { /* skip */ }
             // The machine: devices and memory, from /api/info (null on a server that does not serve it).
             // Asked only for a LOCAL model: a cloud model's hardware is not this box's.
-            let capacity: import("./resource-model").Capacity | null | undefined;
+            let capacity: import("./resource-capacity").Capacity | null | undefined;
             if (local === true) { try { const raw = await mlApi.info(); capacity = raw ? parseInfo(raw) : null; } catch { capacity = null; } }
             // Where the user is, from the worker (only it sees the browser's focus), relative to THIS tab.
             let userFocus: string | null = null;

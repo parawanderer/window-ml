@@ -8,12 +8,12 @@
 import { useEffect, useState } from "preact/hooks";
 import type { RuntimeInfo } from "../session-host";
 import { IconInbox } from "../sidebar/icons";
-import { attentionItems, attentionLabel, certItems, deviceItems, sortAttention, type AttentionFix, type AttentionItem, type CertState } from "./attention";
+import { attentionItems, attentionLabel, certItems, deviceItems, revokerItems, sortAttention, type AttentionFix, type AttentionItem, type CertState } from "./attention";
 import { exportTaskItems, exportTasks } from "./export-tasks";
 import { deviceEnv } from "./app-badge";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
-import { devicesStep, type Membership, type PairingApi, certChanged } from "../pairing/api";
+import { accountRevoker, devicesStep, type Membership, type PairingApi, certChanged } from "../pairing/api";
 import { cursorTipOn } from "../sidebar/ui-kit";
 import { mainView, useEscapeCloses } from "./nav";
 import { SheetHead, settingsTab } from "./settings-page";
@@ -78,6 +78,8 @@ export function useAttention(store: ChatStore, extras?: ChatExtras, cert?: CertS
         items: sortAttention([
             ...attentionItems(store.runtimes.value, NONE, canFix, dismissed.value, repeat),
             ...certItems(cert ?? null, Date.now()),
+            // About the ACCOUNT rather than a runtime, and silent unless the hub keeps the record and holds none.
+            ...revokerItems(accountRevoker.value, dismissed.value),
             ...deviceItems(deviceEnv(), dismissed.value),
             ...exportTaskItems(exportTasks.value),
         ]),

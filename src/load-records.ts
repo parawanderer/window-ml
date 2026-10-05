@@ -6,7 +6,8 @@
 // fits the predictor wants what the server said, not our reading of it — beside the measured trace, which only
 // the client can build (the server reports the load's end state, not the curve that got there).
 import type { ResourceFrame } from "./resource-events";
-import { parseInfo, loadTrace, normModel, type LoadTrace, type ResourceSample } from "./resource-model";
+import { loadTrace, normModel, type LoadTrace, type ResourceSample } from "./resource-model";
+import { parseInfo } from "./resource-capacity";
 
 /** storage.local: show the predictor's figures on loads, and collect these records. Off by default. */
 export const PREDICT_KEY = "ml_res_predict";

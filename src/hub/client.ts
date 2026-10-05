@@ -124,10 +124,10 @@ export class HubClient {
         private readonly receiver: Receiver,
         /**
          * Who the hub says signs this account's revocations, ALREADY VERIFIED against the account root (`readRevoker`).
-         * `known: false` covers no record, a record that did not verify, and a hub too old to send the field, which
-         * are one answer from here: it does not mean the account has no signer.
+         * Three answers: a verified `signer`, `none` from a hub that keeps the record and holds none, and `unknown`
+         * for everything else — no record, one that did not verify, and a hub that does not keep one.
          */
-        readonly revoker: RevokerRecord = { known: false },
+        readonly revoker: RevokerRecord = { state: "unknown" },
     ) {}
 
     /** Connect, check the hub's name, answer its challenge, and wait for the welcome. */
@@ -228,7 +228,7 @@ export class HubClient {
         if (!limits) throw new ConnectError("protocol", "the hub's welcome carried no limits");
         // Verified HERE, once, at the point it arrives: what the rest of the client sees is the answer, never the
         // hub's claim. A hub that invents a signer has to forge a root signature to be believed.
-        const revoker = await readRevoker(config.accountRoot, answer.welcome.revoker, Date.now());
+        const revoker = await readRevoker(config.accountRoot, answer.welcome.revoker, Date.now(), answer.welcome.features);
         const client = new HubClient(socket, config, principal, account, limits, receiver, revoker);
         client.adopt(reader, incoming);
         return client;

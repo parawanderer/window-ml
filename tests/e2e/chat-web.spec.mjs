@@ -2711,6 +2711,40 @@ test("a run streams its thinking, with nothing to ask about it", async () => {
     await page.close();
 });
 
+test("an account with nobody to sign a removal says so, and only once a hub is able to mean it", async () => {
+    // The seam the unit tests cannot reach: the hub's answer is a signal written by the host (`accountRevoker`), and
+    // this is it arriving in the DOM. The rule itself is tests/hub-revocation.test.mjs (all four decode rows) and the
+    // wording is tests/chat-core.test.mjs; what is checked here is that the card appears at all, and that the two
+    // silences leave the inbox exactly as it was.
+    const { page, errors } = await open(DESKTOP);
+    await page.evaluate(() => {
+        globalThis.__pairFake.setMembership({
+            label: "Shane's phone", role: "client", hubUrl: "wss://hub.example", fingerprint: "5ab0e19c44d2",
+            root: true, mayPair: true, principal: "5ab0e19c".repeat(8),
+            renewable: true, notAfterMs: Date.now() + 80 * 86_400_000,
+        });
+    });
+    await page.locator(".chat-att-btn, .chat-gear-btn").first().click();
+    const card = page.locator(".chat-att-item", { hasText: "remove another" });
+
+    // A HUB THAT CANNOT SAY SAYS NOTHING. `unknown` is an older hub, a record that did not verify, and an account
+    // nobody has asked about: a warning fired on any of them would be wrong far more often than right.
+    await page.evaluate(() => globalThis.__pairFake.setRevoker("unknown"));
+    await expect(card).toHaveCount(0);
+    await page.evaluate(() => globalThis.__pairFake.setRevoker("signer"));
+    await expect(card).toHaveCount(0);
+
+    // Only a hub that keeps the record and holds none.
+    await page.evaluate(() => globalThis.__pairFake.setRevoker("none"));
+    await expect(card.first()).toBeVisible();
+    // What FAILS, rather than a verdict on the account: the removal works where you make it and reaches nothing else.
+    await expect(card.first()).toContainText("go on trusting the removed device");
+    await expect(card.first()).toContainText("root key");
+    await expect(card.first().getByRole("button", { name: "Pair a device" })).toBeVisible();
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 test("the signer refreshes its pairing from the inbox: one press to the code, saying who should scan it", async () => {
     // The one device on an account that cannot renew itself is the one that signs revocations, and its quarter is a
     // refreshed pairing. The inbox used to send it to "the device holding the account's root key", which has no

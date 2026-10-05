@@ -6,7 +6,9 @@
 
 import { segments, runFrac } from "../resource-axis";
 import { hostBands, deviceBands, type Band } from "../resource-bands";
-import { type ResourceSample, type ResourceEvent, ceilingsFor, formatBytes, formatShare, type DeviceCapacity } from "../resource-model";
+import { type ResourceSample, ceilingsFor, formatBytes, formatShare } from "../resource-model";
+import { type ResourceEvent } from "../resource-timeline";
+import { type DeviceCapacity, utilOf } from "../resource-capacity";
 import { type TrackDef, boxAxis } from "../resource-presets";
 import { bridgeOrder, bridgeWalls, linkPhrase } from "../resource-topology";
 import { noteRuns, notePools, trackCursor, hoverAt, hoverPool, enterPool, leavePool, snapUnder, poolHover } from "./chart-interaction";
@@ -15,7 +17,7 @@ import { hiddenPools, sampleGapMs, poolColor, togglePool } from "./panel-state";
 import { HideTrack } from "./resource-device-view";
 import { startBrush, BrushOverlay, EventTip } from "./resource-lane-ui";
 import { useInstants, trackCrosshair, Crosshair, TimeGrid, onAxis, InstantRules, HoverSpan } from "./resource-overlays";
-import { PoolsTip, hoveredSample, GapTip, UtilTip, utilOf } from "./resource-tips";
+import { PoolsTip, hoveredSample, GapTip, UtilTip } from "./resource-tips";
 import { crosshair } from "./store";
 import { kbFocus, kbPool, hoverModel } from "./vram-focus";
 

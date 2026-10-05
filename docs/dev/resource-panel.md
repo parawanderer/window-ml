@@ -1,6 +1,6 @@
 # The resource panel and event lane
 
-Implementation notes for the VRAM/RAM panel (`resource-model.ts`, `resource-bands.ts`, `resource-topology.ts`, `resource-presets.ts`, `resource-gens.ts`, the chart's files in `sidebar/`, `vram.tsx` and the files split out of it) and its event lane. The spec with ASCII mocks is docs/spec/RESOURCE_PANEL.md, moved out of AGENTS.md on 2026-09-12 so they are read when that code is being
+Implementation notes for the VRAM/RAM panel (`resource-model.ts` with `resource-capacity.ts`, `resource-decode.ts` and `resource-timeline.ts`, `resource-bands.ts`, `resource-topology.ts`, `resource-presets.ts`, `resource-gens.ts`, the chart's files in `sidebar/`, `vram.tsx` and the files split out of it) and its event lane. The spec with ASCII mocks is docs/spec/RESOURCE_PANEL.md, moved out of AGENTS.md on 2026-09-12 so they are read when that code is being
 changed rather than loaded into every session. AGENTS.md keeps the repository's working rules and the traps that
 bite; this file keeps how the subsystem works and why it is built that way. Paths name files by their bare name,
 as in AGENTS.md — they are all under `src/`.
@@ -12,7 +12,9 @@ HTML — which must read as "capacity unknown", never as zero. `LoadedModel` als
 `vramBytes`/`sizeBytes` beside the rounded GB, and `gpus[]` for per-device placement; a CPU-resident model has
 **no `gpus` key at all**, and that absence is the server's signal, preserved rather than normalised to `[]`.
 
-**Resource panel (VRAM/RAM).** `resource-model.ts` is the pure, unit-tested layer (parsing, ceilings, residency,
+**Resource panel (VRAM/RAM).** `resource-model.ts` and the three files split from it (`resource-capacity.ts` the
+`/api/info` parse, `resource-decode.ts` expected decode and activity, `resource-timeline.ts` the lane's events) are
+the pure, unit-tested layer (parsing, ceilings, residency,
 history segmentation), with `resource-topology.ts` holding the GPU link graph, `resource-presets.ts` the
 series/tracks/presets and the rules that judge a layout, and `resource-gens.ts` one generation's own edges; the drawing is in `src/sidebar/`. `resource-chart.tsx` is the chart's frame (the window, the axis, the tick, and
 which view draws each track); the views are `resource-device-view.tsx` (one pool) and `resource-box-views.tsx` (the

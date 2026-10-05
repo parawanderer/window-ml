@@ -837,10 +837,12 @@ thing. The parts:
   Narrated demos (watched, never asserting):
   `approval-demo`, `resource-demo` (`BOX=`), `line-map-demo`, `cursor-demo`, `panel-news-demo`, `whole-box-demo`,
   `stream-demo`, `bench-editor-demo`, `bench-completion-demo`, `pairing-demo` (the named grants and their switches,
-  then the one device that refreshes its pairing rather than renewing; serves `dist-web/`, so it needs no extension),
+  the one device that refreshes its pairing rather than renewing, and an account with nobody left to sign a removal;
+  serves `dist-web/`, so it needs no extension),
   `streak-demo` (the reading view folding runs of the same tool, appended ONE STEP AT A TIME — every rule
   here is about the turns AROUND a step, so a finished transcript cannot show you why a stretch folded and the
-  one under it did not; drives the fake host rather than a model, serves `dist-web/`, so it needs no extension),
+  one under it did not; part two is the ⋮ menu's "group all tool calls"; drives the fake host rather than a model,
+  serves `dist-web/`, so it needs no extension),
   `table-demo` (fetching CSV/Parquet, then
   scanning, surveying and analysing them through pipe / readonly exec / full exec / python_exec; part two is the
   Arrow + cross-runtime pointer TARGET, captioned with what actually happened). Acceptance specs for unbuilt

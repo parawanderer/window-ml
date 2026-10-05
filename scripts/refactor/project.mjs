@@ -16,6 +16,14 @@ import path from "node:path";
 const ts = tsMorphCommon.ts;
 export { ts };
 
+/** TypeScript's own lib files (`lib.es2022.d.ts`, `lib.dom.d.ts`, …), keyed by the path the bundled compiler asks for.
+ *  `@ts-morph/common` ships them as strings, not on disk: `ts.getDefaultLibFilePath` points at a `dist/` folder that
+ *  does not exist, and without these every file reported `Cannot find name 'Map'`, hundreds of errors deep. The
+ *  typecheck gate diffs diagnostics by message, so that noise surfaced as "new" errors whenever a move re-worded one
+ *  (a union printed in another order), blocking moves that changed nothing a real compiler would see. */
+const LIB_DIR = tsMorphCommon.libFolderInMemoryPath;
+const LIBS = new Map(tsMorphCommon.getLibFiles().map((f) => [path.resolve(LIB_DIR, f.fileName), f.text]));
+
 /** The repo's layout: 4-space indent, double quotes, and whatever specifier ending the importing file already uses
  *  (extensionless inside src/, `.ts` in the tests). */
 export const FORMAT = { ...ts.getDefaultFormatCodeSettings("\n"), indentSize: 4, tabSize: 4, convertTabsToSpaces: true };
@@ -49,13 +57,13 @@ export class Project {
                 return text == null ? undefined : ts.ScriptSnapshot.fromString(text);
             },
             getCurrentDirectory: () => this.root,
-            getDefaultLibFileName: ts.getDefaultLibFilePath,
+            getDefaultLibFileName: (o) => path.resolve(LIB_DIR, ts.getDefaultLibFileName(o)),
             fileExists: (f) => this.read(f) != null,
             readFile: (f) => this.read(f) ?? undefined,
             readDirectory: ts.sys.readDirectory,
             // A directory that exists only because an in-memory file lives in it — a move into a new `src/util/`.
             // Without this, module resolution refuses every import of the new file.
-            directoryExists: (d) => ts.sys.directoryExists(d) || [...this.edits.keys()].some((f) => f.startsWith(path.resolve(d) + path.sep)),
+            directoryExists: (d) => path.resolve(d) === path.resolve(LIB_DIR) || ts.sys.directoryExists(d) || [...this.edits.keys()].some((f) => f.startsWith(path.resolve(d) + path.sep)),
             getDirectories: ts.sys.getDirectories,
             realpath: ts.sys.realpath,
         };
@@ -73,6 +81,8 @@ export class Project {
         const a = path.resolve(f);
         const e = this.edits.get(a);
         if (e) return e.text;
+        const lib = LIBS.get(a);
+        if (lib != null) return lib;
         try { return fs.readFileSync(a, "utf8"); } catch { return null; }
     }
 

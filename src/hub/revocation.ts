@@ -110,12 +110,29 @@ export async function verifyRevocations(root: Bytes, list: RevocationList, nowMs
 /** The encoded list, as it travels on the revoker's channel (signed, not sealed). */
 export const encodeRevocations = (list: RevocationList): Bytes => bytes(RevocationList.encode(list).finish());
 
-/** What a hub's `Welcome.revoker` establishes about this account, which is two answers rather than three. */
+/** The name a hub announces in `Welcome.features` when `revoker` is its record of the account's signer. Tested for
+ *  by name, never by position: the list is the server's own and additive, so an unknown name is not an error. */
+export const REVOKER_FEATURE = "revoker";
+
+/**
+ * What a hub's `Welcome` establishes about who signs this account's revocations. Three answers, and which one you get
+ * turns on TWO fields rather than on the certificate alone (window-ml-hub `tmp/hub-revoker-reading-rule.md`):
+ *
+ * | hub | `features` | `revoker` | this |
+ * | --- | --- | --- | --- |
+ * | before v0.4.2 | `[]` | absent | `unknown` |
+ * | v0.4.2 | `[]` | either | `signer` when one verifies, else `unknown` |
+ * | v0.4.3 | `["revoker"]` | present | `signer` when it verifies, else `unknown` |
+ * | v0.4.3 | `["revoker"]` | absent | `none` |
+ */
 export type RevokerRecord =
-    /** no record, OR a record that did not verify, OR a hub too old to send the field: all the same from here */
-    | { known: false }
+    /** no record, a record that did not verify, or a hub that does not keep one. NOT proof that there is no signer */
+    | { state: "unknown" }
     /** verified under the account root: this principal signs, and `label` is its own words for itself */
-    | { known: true; principal: string; label: string };
+    | { state: "signer"; principal: string; label: string }
+    /** this hub keeps the record and holds none: no device on the account can sign a removal. The one case a warning
+     *  may be built on, and the only reason `features` exists */
+    | { state: "none" };
 
 /**
  * Read the hub's record of who signs this account's revocations: VERIFY IT, never believe it.
@@ -129,20 +146,33 @@ export type RevokerRecord =
  * `may_revoke` is never delegable, so this certificate is signed by the account ROOT: one `verifyChain` against the
  * root the client already holds, and a hub that invents a signer has to forge a root signature.
  *
- * ABSENT IS NOT "NONE", and that is a real limit rather than caution. An older hub sends nothing here either, and
- * no protocol number or capability distinguishes the two, so "no record" and "cannot say" are the same answer to a
- * reader. A caller may use `known: true` to stop offering the grant; it may NOT conclude from `known: false` that an
- * account has no signer. See docs/spec/NOTIFICATIONS.md for what that still blocks.
+ * ABSENT ALONE IS NOT "NONE", which is what `features` fixes. An absent `revoker` is the same bytes from a hub that
+ * holds no signer and from one too old to know the field, so the NAME is what makes the silence mean something: only
+ * a hub that announces `revoker` is saying anything by omitting it. Without the name this returns `unknown`, exactly
+ * as it did before the field existed, so no warning can fire against an older hub.
+ *
+ * A PRESENT CERTIFICATE THAT DOES NOT VERIFY IS `unknown`, NEVER `none` — even from a hub that announces the name.
+ * That is a lying or broken hub, and reading it as "the account has none" would let one manufacture the warning.
+ *
+ * What the three answers are for, and the bound on believing `none`: docs/spec/NOTIFICATIONS.md.
  */
-export async function readRevoker(accountRoot: Bytes, cert: Certificate | undefined, nowMs: number): Promise<RevokerRecord> {
-    if (!cert) return { known: false };
+export async function readRevoker(
+    accountRoot: Bytes,
+    cert: Certificate | undefined,
+    nowMs: number,
+    features: readonly string[] = [],
+): Promise<RevokerRecord> {
+    // Whether this hub's silence means anything. Read first, because it is the only thing that separates the two
+    // answers an absent certificate can carry.
+    const keepsRecord = features.includes(REVOKER_FEATURE);
+    if (!cert) return keepsRecord ? { state: "none" } : { state: "unknown" };
     try {
         const verified = await verifyChain(accountRoot, [cert], nowMs);
         // A record whose certificate does not actually carry the grant is not a record of anything.
-        if (!verified.leaf.mayRevoke) return { known: false };
-        return { known: true, principal: hex(await principalId(bytes(verified.leaf.subject))), label: verified.leaf.label || "" };
+        if (!verified.leaf.mayRevoke) return { state: "unknown" };
+        return { state: "signer", principal: hex(await principalId(bytes(verified.leaf.subject))), label: verified.leaf.label || "" };
     } catch {
-        // A lying or broken hub. Treated exactly as silence: nothing is said that would not be said without it.
-        return { known: false };
+        // A lying or broken hub. Treated exactly as silence, and deliberately NOT as `none`: see above.
+        return { state: "unknown" };
     }
 }

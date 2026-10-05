@@ -18,7 +18,8 @@ import type { RenderDescriptor, ToolFeedback, TokenRender } from "./contract-ren
 import type { SubcallUsage } from "./contract-debug";
 import { tableOf } from "./table-data";
 import { runStats, fmtTokPerSec, UI_OUT_CAP } from "./contract-chat";
-import { formatBytes, type Capacity } from "./resource-model";
+import { formatBytes } from "./resource-model";
+import { type Capacity } from "./resource-capacity";
 import { UNATTENDED_REFUSAL } from "./prompts";
 import { toolToken } from "./util";
 import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, shortType, isAliasRef, parseLabel, DEREF_TOOL, type TokenKind, type TokenValue, type DerefRead } from "./token-pipe";

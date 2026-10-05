@@ -23,6 +23,7 @@
 import type { ChannelKey } from "../hub/seal";
 import type { Bytes } from "../hub/hpke";
 import { StreamReader } from "../hub/seal";
+import { accountRevoker } from "../pairing/api";
 import { Role } from "../hub/wire";
 import type {
     Command, CommandResult, HostStatus, Principal, RuntimeCapabilities, RuntimeId, RuntimeInfo, SessionHost, SessionId,
@@ -236,6 +237,9 @@ export class HubHost implements SessionHost {
         this.retry = null;
         this.conn?.close();
         this.conn = null;
+        // Leaving the account, which is the one event that makes this another account's answer. A blip deliberately
+        // does not clear it: see `accountRevoker`.
+        accountRevoker.value = "unknown";
     }
 
     private async connect(): Promise<void> {
@@ -283,6 +287,10 @@ export class HubHost implements SessionHost {
             this.announceRuntimes();
             for (const l of this.peerListeners) l(this.peers);
         });
+        // The account's revocation record, as this welcome answered it: already verified against the account root, so
+        // what the inbox reads is never the hub's unchecked word (`readRevoker`). Written here rather than polled
+        // because it can only change with a new welcome.
+        accountRevoker.value = conn.hubClient.revoker.state;
         for (const f of this.followers) { try { f.attach(conn); } catch { /* one stream cannot fail the connection */ } }
         conn.onClose((reason) => {
             if (this.conn !== conn) return;
@@ -445,7 +453,10 @@ export class HubHost implements SessionHost {
         // presence cannot: a signer that exists but is asleep has no presence to read. It is verified against the
         // account root before it gets here, so this is not the hub's word (`readRevoker`).
         const record = this.conn?.hubClient.revoker;
-        if (record?.known) return { principal: record.principal, label: record.label || record.principal.slice(0, 8) };
+        if (record?.state === "signer") return { principal: record.principal, label: record.label || record.principal.slice(0, 8) };
+        // A hub that KEEPS the record and holds none is a definite answer, and the one presence cannot give: there is
+        // nothing asleep to find, so no fallback can improve on it.
+        if (record?.state === "none") return null;
         // No record, a record that did not verify, or a hub too old to send one: fall back to what is online now.
         // Still not proof that the account has no signer, which is why nothing here says so.
         const seen = this.peers.find((p) => p.mayRevoke);

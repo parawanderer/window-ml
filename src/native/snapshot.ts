@@ -6,7 +6,7 @@ import type { AgentTarget, Principal, RuntimeInfo, SessionKey, SessionSummary, S
 import { formatBytes } from "../resource-model";
 import { mayCommand, mayStart, resumableHere } from "../chat/grants";
 import type { AttentionRow, RuntimeStorageView, SessionChrome } from "./bridge";
-import { attentionCount, attentionItems, certItems, type CertState } from "../chat/attention";
+import { attentionCount, attentionItems, certItems, revokerItems, type CertState, type RevokerState } from "../chat/attention";
 
 /** The chrome for one open session. `live` is the transcript's own view of it (a run in flight shows as `pending` there
  *  before the index says `running`); `pageOwnsModel` is true once the runtime refused a switch because a page script
@@ -60,11 +60,15 @@ export function sessionChrome(key: SessionKey, summary: SessionSummary | undefin
  * every fix is a click in the runtime's own browser or its Settings, so each item says which device, and the app
  * offers no button that could not work. Dismissed suggestions are the app's to remember; it gets them all.
  */
-export function attentionForApp(runtimes: readonly RuntimeInfo[], cert?: CertState | null, nowMs: number = Date.now()): { items: AttentionRow[]; count: number } {
+export function attentionForApp(runtimes: readonly RuntimeInfo[], cert?: CertState | null, nowMs: number = Date.now(), revoker: RevokerState = "unknown"): { items: AttentionRow[]; count: number } {
     // The per-runtime codes, and THIS DEVICE'S OWN CERTIFICATE — which the phone needs more than the page does, since
     // a phone is the device most likely to be away while its access runs out. `deviceItems` still does not travel:
     // those are the page's install story, and the app's is the App Store's.
-    const items = [...attentionItems(runtimes, new Map(), () => false), ...certItems(cert ?? null, nowMs)];
+    //
+    // THE ACCOUNT'S REVOCATION RECORD travels too, and on a phone it is the surface that can act on it: the root is
+    // usually the phone, so "pair a device and give it that grant" is a thing to do here rather than elsewhere. It
+    // carries no fix because `AttentionRow` has no channel for one; the sentence names the remedy instead.
+    const items = [...attentionItems(runtimes, new Map(), () => false), ...certItems(cert ?? null, nowMs), ...revokerItems(revoker)];
     return {
         items: items.map((i) => ({
             key: i.key, level: i.level, title: i.title, detail: i.detail,
