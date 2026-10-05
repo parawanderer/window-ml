@@ -16,6 +16,7 @@ import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
 import { StartMenu, type StartKind } from "./new-session";
 import { calm, logOpen, pane, setCalm, setGroupAll, setListOpen, setLogOpen, setPane } from "./view-mode";
+import { useDismiss } from "../sidebar/use-dismiss";
 
 /** What the MAIN pane shows instead of a session: the search page, this device's settings, or the attention list. Not
  *  stored as a preference: it lives in the URL (route.ts), so a reload keeps it and a fresh page does not. */
@@ -50,7 +51,9 @@ export function useEscapeCloses(own?: { current: Element | null }): void {
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             if (e.key !== "Escape" || e.defaultPrevented || (own && e.target === own.current)) return;
-            if (document.querySelector(".chat-menu, .chat-dialog")) return;
+            // `:not(.leaving)` for the same reason the dock's guard has it: a menu animating away (use-dismiss.ts)
+            // is still in the DOM and must not swallow the Escape meant for the sheet underneath it.
+            if (document.querySelector(".chat-menu:not(.leaving), .chat-dialog")) return;
             mainView.value = null;
         };
         document.addEventListener("keydown", onKey);
@@ -97,10 +100,13 @@ export function GearMenu({ graphsRt, benchRt, logRt, labelled }: {
         return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); };
     }, [open]);
     const pick = (run: () => void) => () => { setOpen(false); run(); };
+    // The menu stays drawn for one beat after the click that closed it, so choosing something eases the sheet
+    // away instead of deleting it between two frames.
+    const { show, closing } = useDismiss(open);
     return (
         <div class="chat-gear" ref={wrap}>
-            {open ? (
-                <div class="chat-menu chat-gear-menu" role="menu" aria-label="Page menu">
+            {show ? (
+                <div class={`chat-menu chat-gear-menu${closing ? " leaving" : ""}`} role="menu" aria-label="Page menu">
                     {/* HOW MUCH OF THE MACHINERY YOU SEE WHILE READING — the two rows that answer that, under one
                         head. They were loose at the top level, where "Calm view" and a folding toggle read as two
                         unrelated switches rather than the coarse and fine of one choice. The group says which

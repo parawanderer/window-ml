@@ -164,8 +164,12 @@ export function installViewPrefs(prefs: PlatformPrefs): void {
     const l = prefs.get<boolean>(LIST_KEY);
     calm.value = typeof c === "boolean" ? c : true;
     listOpen.value = typeof l === "boolean" ? l : true;
+    // ON unless this device said otherwise. Calm view's whole claim is that you read the conversation and reach
+    // for the machinery, and the conservative fold rule leaves a reading view full of rows nobody asked to see;
+    // someone who wants every call has the detailed view, which is what it is for. A device that turned it OFF
+    // keeps that — only the absence of an answer is what changed meaning.
     const ga = prefs.get<boolean>(GROUP_ALL_KEY);
-    groupAllTools.value = ga === true;
+    groupAllTools.value = ga !== false;
     logOpen.value = prefs.get<boolean>(LOG_OPEN_KEY) === true;
     const pn = prefs.get<string>(PANE_KEY);
     pane.value = pn === "resource" ? pn : null;

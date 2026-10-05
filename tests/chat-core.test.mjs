@@ -483,19 +483,24 @@ const fakePrefs = (seed = {}) => {
     return { get: (k) => m.get(k), set: (k, v) => m.set(k, v), all: m };
 };
 
-test("view prefs: group-all is OFF unless this device said otherwise, and it writes back", () => {
-    // Off is the default because the conservative fold rule is what someone who has not asked should get; and the
-    // flag is mirrored onto a signal in `src/sidebar/store`, since the shared session views may not import from
-    // `src/chat/` at all.
+test("view prefs: group-all is ON unless this device turned it off, and it writes back", () => {
+    // On is the default because calm view's claim is that you read the conversation and reach for the machinery,
+    // and the conservative fold rule leaves it full of rows nobody asked to see. The flag is mirrored onto a
+    // signal in `src/sidebar/store`, since the shared session views may not import from `src/chat/` at all.
     installViewPrefs(fakePrefs());
-    assert.equal(groupAllTools.value, false);
+    assert.equal(groupAllTools.value, true);
+
+    // THE UPGRADE, which is the case a changed default actually has to get right: a device that turned it OFF
+    // before the default moved must still find it off, and only the ABSENCE of an answer changes meaning.
+    installViewPrefs(fakePrefs({ [GROUP_ALL_KEY]: false }));
+    assert.equal(groupAllTools.value, false, "a device that said no keeps its answer across the change");
 
     installViewPrefs(fakePrefs({ [GROUP_ALL_KEY]: true }));
     assert.equal(groupAllTools.value, true, "a device that asked for it keeps its answer across a reload");
 
     // A stored value of the wrong shape is not an answer: installing IS the answer to "how does this device read".
     installViewPrefs(fakePrefs({ [GROUP_ALL_KEY]: "yes" }));
-    assert.equal(groupAllTools.value, false);
+    assert.equal(groupAllTools.value, true);
 
     const prefs = fakePrefs();
     installViewPrefs(prefs);

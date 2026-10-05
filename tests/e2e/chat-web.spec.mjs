@@ -26,15 +26,32 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { await browser?.close(); server?.close(); });
 
-/** A fresh page at a viewport, failing the test on any page error. */
-async function open(viewport, hash = "") {
+/** A fresh page at a viewport, failing the test on any page error. `prefs` seeds this device's stored view
+ *  preferences before the first paint (the web adapter keeps them in localStorage under `wml-chat:`), which is
+ *  how a test says which READING RULES it is about rather than inheriting whatever the defaults happen to be. */
+async function open(viewport, hash = "", prefs = null) {
     const page = await browser.newPage({ viewport });
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
+    if (prefs) await page.addInitScript((p) => {
+        for (const [k, v] of Object.entries(p)) { try { localStorage.setItem("wml-chat:" + k, JSON.stringify(v)); } catch { /* no storage */ } }
+    }, prefs);
     await page.goto(server.url + hash);
     await page.locator(".chat").waitFor();
     return { page, errors };
 }
+/** The reading view with the ORDINARY fold rule — the conservative one, which groups only a run of the same tool.
+ *  Named because five tests are about that rule and none of them should break the day its default moves again:
+ *  "group all tool calls" is ON by default now, and these are the tests of what it replaced. */
+const ORDINARY_FOLD = { "view.groupAll": false };
+/** Open the gear's READING group, where Calm view and the folding toggle live. `/^Calm view/` and not the bare
+ *  string because a menu row's accessible name is its label AND its note, and the folding row's note has to say
+ *  "only in Calm view" — which makes the plain name match two rows. */
+async function reading(page) {
+    await page.locator(".chat-gear-btn").first().click();
+    await page.getByRole("menuitem", { name: /^Reading/ }).click();
+}
+const calmRow = (page) => page.getByRole("menuitemcheckbox", { name: /^Calm view/ });
 // The row in the session's OWN runtime group. A session waiting on you is also listed in "Needs you" at the top, so
 // this matches twice; `.last()` is the one where it lives, which is the one every assertion here means.
 const row = (page, key) => page.locator(`.chat-row[data-session="${key}"]`).last();
@@ -184,7 +201,7 @@ test("desktop: a runtime that lost a session's history keeps what is shown and s
 });
 
 test("calm view is what the page opens in, and the toggle hands the panel's detail back", async () => {
-    const { page } = await open(DESKTOP, `#s=${encodeURIComponent(WAITING)}`);
+    const { page } = await open(DESKTOP, `#s=${encodeURIComponent(WAITING)}`, ORDINARY_FOLD);
     await expect(page.locator(".chat")).toHaveClass(/calm/);
     // Calm rides the shared reading attribute, so the step counters the panel draws are quiet here…
     expect(await page.evaluate(() => document.documentElement.hasAttribute("data-focus"))).toBe(true);
@@ -192,8 +209,8 @@ test("calm view is what the page opens in, and the toggle hands the panel's deta
     // …but nothing has left the document: the toggle brings all of it back, and the approval never quiets.
     await expect(page.locator(".astep-approve")).toBeVisible();
     // The page's tools live in the gear's menu at the bottom-left, rather than in a band across the top.
-    await page.locator(".chat-gear-btn").click();
-    await page.getByRole("menuitemcheckbox", { name: "Calm view" }).click();
+    await reading(page);
+    await calmRow(page).click();
     await expect(page.locator(".chat")).not.toHaveClass(/calm/);
     await expect(page.locator(".step-pill").first()).toBeVisible();
     // The choice is this device's, so it survives a reload.
@@ -881,7 +898,7 @@ test("the two answers to an approval are both legible, measured rather than eyeb
 // it measured. What is asserted is the MECHANISM — the node carried `closing` before it was removed — not a
 // duration, which would be a flake on a loaded machine.
 test("what eases open eases shut: a think block, and the gate you just answered", async () => {
-    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CAPPED)}`);
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CAPPED)}`, ORDINARY_FOLD);
     await page.addInitScript(() => {
         globalThis.__closed = [];
         new MutationObserver((rs) => {
@@ -969,7 +986,7 @@ test("a gate the run ended without answering keeps what was asked and loses the 
 // set directly; that is the hazard, because a citation that silently did nothing would be a new way to break the
 // thing `scrollToStepSeq` exists to prevent.
 test("a run of the same tool folds into one row, and opens again", async () => {
-    const { page, errors } = await open(DESKTOP);
+    const { page, errors } = await open(DESKTOP, "", ORDINARY_FOLD);
     await page.evaluate(() => {
         const key = "laptop:5e6f7a80", hash = "5e6f7a80", now = Date.now();
         // Six more `exec` turns after the run's own steps: adjacent, one tool each, nothing said between them.
@@ -1005,8 +1022,8 @@ test("a run of the same tool folds into one row, and opens again", async () => {
     // AND NONE OF IT REACHES THE BUSY VIEW. That is the developer's whole trace, where a collapsed row shows the
     // value the call RETURNED — so the rows there are distinguishable, the argument for folding them never applies,
     // and the fold is asked for behind `focusMode` rather than styled away. Turning calm off must restore every row.
-    await page.locator(".chat-gear-btn").first().click();
-    await page.getByRole("menuitemcheckbox", { name: "Calm view" }).click();
+    await reading(page);
+    await calmRow(page).click();
     await expect(page.locator(".astreak")).toHaveCount(0);
     await expect(page.locator('[data-astep-seq="303"]')).toHaveCount(1);
     // …and the preview that makes them distinguishable is on screen, which is the reason the rule differs at all.
@@ -1042,17 +1059,21 @@ test("group all tool calls: a mixed run becomes one row, a pending gate does not
         step(4, "exec"); step(5, "exec");
     });
     await page.goto(`${server.url}#s=laptop%3A5e6f7a80`);
-    // The ordinary rule produces no MIXED group at all — it cannot, by construction — which is the whole reason
-    // the toggle exists and is what makes the assertions after it mean something.
-    await expect(page.locator(".astreak-calls")).toHaveCount(0);
 
     await page.locator(".chat-gear-btn").first().click();
     // Under "Reading", with Calm view: the two are the coarse and fine of one choice about how much of the
     // machinery a transcript shows, so they live under one head rather than loose at the menu's top level.
     await page.getByRole("menuitem", { name: /^Reading/ }).click();
     const toggle = page.getByRole("menuitemcheckbox", { name: "Group all tool calls" });
-    await expect(toggle).toHaveAttribute("aria-checked", "false");   // OFF by default
+    await expect(toggle).toHaveAttribute("aria-checked", "true");   // ON by default in the reading view
+
+    // TURNED OFF, the ordinary rule produces no MIXED group at all — it cannot, by construction — which is what
+    // the toggle is for and what makes the assertions after it mean something.
     await toggle.click();
+    await expect(page.locator(".astreak-calls")).toHaveCount(0);
+    await page.locator(".chat-gear-btn").first().click();
+    await page.getByRole("menuitem", { name: /^Reading/ }).click();
+    await page.getByRole("menuitemcheckbox", { name: "Group all tool calls" }).click();
 
     // The mixed run is one row now, counted in CALLS and naming every tool, because it can no longer name one.
     // Found BY that — "N tool calls" is what a multi-tool row says and a single-tool one never does, so this
@@ -1116,7 +1137,7 @@ test("the ⋮ and the approval bar share the corner without landing on each othe
 // pulled onto the output cell instead and sat over the last lines of the result. Geometry is the only way to ask
 // this: both arrangements have exactly the same DOM, and the one that is wrong is wrong by 1.6em.
 test("the pointer chip joins the footer line when there is one, and keeps its own row when there is not", async () => {
-    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(POINTERS)}`);
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(POINTERS)}`, ORDINARY_FOLD);
     const steps = page.locator(".astep.tool");
     await steps.first().waitFor();
     const n = await steps.count();
@@ -1981,7 +2002,7 @@ test("phone (touch): the tab picker opens without raising the keyboard, and stay
 // because expanding a folded run is the gesture that means "I am investigating what happened". Everywhere else it
 // would be one more thing per row, and in the busy view the row already carries the value the call returned.
 test("a call's own title: in the tip always, inline only inside an open group in the reading view", async () => {
-    const { page, errors } = await open(DESKTOP);
+    const { page, errors } = await open(DESKTOP, "", ORDINARY_FOLD);
     await page.evaluate(() => {
         const key = "laptop:5e6f7a80", hash = "5e6f7a80", now = Date.now();
         for (let i = 0; i < 4; i++) {
@@ -2009,8 +2030,8 @@ test("a call's own title: in the tip always, inline only inside an open group in
 
     // THE BUSY VIEW NEVER DRAWS IT INLINE. A collapsed row there carries the value the call RETURNED, which is
     // what a developer is reading; a model's claim about itself is not that.
-    await page.locator(".chat-gear-btn").first().click();
-    await page.getByRole("menuitemcheckbox", { name: "Calm view" }).click();
+    await reading(page);
+    await calmRow(page).click();
     await expect(page.locator('[data-astep-seq="601"]')).toBeVisible();   // the row is back, unfolded
     await expect(page.locator('[data-astep-seq="601"] .astep-said')).toBeHidden();
     expect(errors).toEqual([]);

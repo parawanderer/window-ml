@@ -1137,8 +1137,13 @@ textarea.cinput { resize: none; overflow-y: auto; line-height: 1.5; font: inheri
 .tag.saved { background: var(--accent-strong); color: var(--accent-fg); }
 /* "utility" provenance badge — the session ran on the utility model. */
 .profile { font-size: 0.75em; font-weight: 700; letter-spacing: .04em; padding: 1px 5px; border-radius: 999px; text-transform: uppercase; background: transparent; color: var(--accent); border: 1px solid var(--accent); }
-/* "agent" badge — this session is an ml.agent run, not a chat. */
-.agent-badge { font-size: 0.75em; font-weight: 700; letter-spacing: .04em; padding: 1px 6px; border-radius: 999px; text-transform: uppercase; background: #a855f7; color: #fff; }
+/* "agent" badge — this session is an ml.agent run, not a chat. INLINE-FLEX, because the glyph beside the word was
+   an inline SVG sitting on the TEXT BASELINE: in a pill whose text is uppercase and 0.75em, a baseline is nowhere
+   near the middle, so the robot rode high against a word it was also touching. Centred, with a gap. */
+.agent-badge { display: inline-flex; align-items: center; gap: 3px; font-size: 0.75em; font-weight: 700; letter-spacing: .04em; padding: 1px 6px; border-radius: 999px; text-transform: uppercase; background: #a855f7; color: #fff; }
+/* The glyph is drawn at 13px for a line of ordinary text; in the pill it should be the height of the capitals
+   beside it, which is what makes the two read as one object rather than a picture next to a word. */
+.agent-badge svg { width: 1.15em; height: 1.15em; flex: none; }
 
 /* ml.agent run view: a task, then one card per TURN (thought + batched tool
    calls), then the final answer. */
@@ -1642,7 +1647,11 @@ details.io[open] > summary .io-preview { display: none; }
    tab bar, and one popping in while the other snapped read as two different controls. Its own keyframes rather
    than the page's: this menu is also drawn in the DevTools panel, where that stylesheet is not loaded. */
 @keyframes menu-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
-@media (prefers-reduced-motion: reduce) { .menu { animation: none; } }
+/* And the way out — see the same pair in chat.css. The element is held for `DISMISS_MS` (use-dismiss.ts) to make
+   room for it; a menu that vanished between two frames read as a different surface from the one that arrived. */
+@keyframes menu-unpop { to { opacity: 0; transform: translateY(4px) scale(.985); } }
+.menu.leaving { animation: menu-unpop .11s ease-in both; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .menu, .menu.leaving { animation: none; } }
 .menu {
     animation: menu-pop .16s cubic-bezier(.2, .7, .3, 1) both;
     position: absolute; top: calc(100% + 5px); right: 0; z-index: 20;

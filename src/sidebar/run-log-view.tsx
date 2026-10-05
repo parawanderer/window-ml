@@ -18,6 +18,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { OutputCell, TimedOutput } from "./render-panel";
 import { housekeepingText, subsystemCounts } from "./housekeeping-log";
 import { PanelHead } from "./panel-head";
+import { useDismiss } from "./use-dismiss";
 import { Stepper } from "./ui-kit";
 import { IconFilter, IconGear } from "./icons";
 import { downloadBlob } from "./download";
@@ -167,6 +168,7 @@ function RunLogMenu({ run, records, counts, hidden, setHidden }: {
         return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); };
     }, [open]);
     const act = (fn: () => void) => () => { setOpen(false); fn(); };
+    const { show, closing } = useDismiss(open);
     const toggle = (s: string) => setHidden((h) => { const n = new Set(h); if (n.has(s)) n.delete(s); else n.add(s); return n; });
     // The RECORDS, not the rendered lines: they are structured for the same reason they are stored that way, and
     // a consumer of the rendered text would be parsing a layout. Published shape, so it carries its version and
@@ -185,8 +187,8 @@ function RunLogMenu({ run, records, counts, hidden, setHidden }: {
                     but it is the one number someone wants at a glance, and a tooltip costs no width. */}
                 {open ? null : <span class="tt-pop left" role="tooltip">Filters and exports<span class="tt-note">{n} record{n === 1 ? "" : "s"}</span></span>}
             </button>
-            {open ? (
-                <div class="menu" role="menu">
+            {show ? (
+                <div class={`menu${closing ? " leaving" : ""}`} role="menu">
                     {counts.length > 1 ? (
                         <>
                             <div class="menu-head"><IconFilter />Filters</div>

@@ -16,6 +16,7 @@ import { mayCommand } from "./grants";
 import { MenuItem } from "./menu";
 import { addPin, dropPin, pinned } from "./view-mode";
 import { services } from "../sidebar/services";
+import { useDismissAt } from "../sidebar/use-dismiss";
 
 /** Which row's menu is open, and where: ONE for the whole list, so opening a second closes the first. Local state per
  *  row let every `⋮` think it was the only one, and a click on another row's `⋮` counted as a click inside a menu. */
@@ -132,14 +133,15 @@ export function RowMenu({ store, s, rt, title }: { store: ChatStore; s: SessionS
         const up = r.bottom + 110 > window.innerHeight;   // not enough room below: open upwards
         setAt({ top: up ? r.top - 4 : r.bottom + 4, left: Math.max(8, r.right - 190), up });
     };
+    const { at: shown, closing } = useDismissAt(at);
     return (
         <>
             <button ref={btn} class={`chat-row-more hbtn${at ? " on" : ""}`} aria-label={`Options for ${truncate(title, 60)}`}
                 aria-haspopup="menu" aria-expanded={!!at} onClick={(e) => { e.stopPropagation(); if (at) setAt(null); else open(); }}>
                 <IconMore />
             </button>
-            {at ? (
-                <div ref={menu} class={`chat-menu chat-row-menu${at.up ? " up" : ""}`} role="menu" style={`top:${at.top}px;left:${at.left}px`}>
+            {shown ? (
+                <div ref={menu} class={`chat-menu chat-row-menu${shown.up ? " up" : ""}${closing ? " leaving" : ""}`} role="menu" style={`top:${shown.top}px;left:${shown.left}px`}>
                     <SessionActions store={store} s={s} rt={rt} title={title} onPicked={() => setAt(null)} />
                 </div>
             ) : null}

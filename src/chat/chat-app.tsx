@@ -12,6 +12,7 @@ import { parseSessionKey } from "../session-host";
 import { DetailView } from "../sidebar/session-detail";
 import { Composer } from "../sidebar/composer";
 import { RUN_LOG_ABOUT } from "../run-log";
+import { useDismissAt } from "../sidebar/use-dismiss";
 import { IconBack, IconBench, IconBrain, IconCopy, IconCamera, IconClose, IconExport, IconLog, IconMore, IconSave, IconVram } from "../sidebar/icons";
 import { ContextMenu, CursorTipLayer, Hash } from "../sidebar/ui-kit";
 import { benchOpen, openBench, rev, sessionMap, view } from "../sidebar/store";
@@ -184,12 +185,13 @@ function SessionMenu({ store, s, rt, title, sessionKey, partial, floating }: {
     }, [at]);
     const open = () => { const r = btn.current!.getBoundingClientRect(); setAt({ top: r.bottom + 6, right: Math.max(8, innerWidth - r.right) }); };
     const act = (f: () => void) => () => { setAt(null); f(); };
+    const { at: shown, closing } = useDismissAt(at);
     return (
         <>
             <button ref={btn} class={`hbtn chat-head-more${floating ? " chat-more-float" : ""}`} aria-label="Session options" aria-haspopup="menu" aria-expanded={!!at}
                 onClick={() => (at ? setAt(null) : open())}><IconMore /></button>
-            {at ? (
-                <div ref={menu} class="chat-menu chat-head-menu" role="menu" aria-label="Session options" style={`top:${at.top}px;right:${at.right}px`}>
+            {shown ? (
+                <div ref={menu} class={`chat-menu chat-head-menu${closing ? " leaving" : ""}`} role="menu" aria-label="Session options" style={`top:${shown.top}px;right:${shown.right}px`}>
                     {title ? <div class="chat-head-menu-title" role="presentation">{title}</div> : null}
                     {/* CALM VIEW IS NOT HERE. It is how the whole page reads, not something done to this session, and
                         it already lives in the gear's menu — where it was duplicated behind a condition on the window's

@@ -1086,6 +1086,13 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-more-float { transition: opacity .12s linear; }
 @keyframes chat-fade { from { opacity: 0; } }
 @keyframes chat-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
+/* AND THE WAY OUT. A sheet that eased in and then ceased to exist between two frames read as two different
+   surfaces, and the vanish lands exactly where the eye is. Quicker than the entrance: arriving wants to be
+   noticed, leaving does not. The duration is `DISMISS_MS` (use-dismiss.ts), which is what keeps the element
+   mounted for exactly this long. */
+@keyframes chat-unpop { to { opacity: 0; transform: translateY(4px) scale(.985); } }
+.chat-menu.leaving { animation: chat-unpop .11s ease-in both; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .chat-menu, .chat-menu.leaving { animation: none; } }
 
 /* ===================== THE RAIL, THE GEAR, AND THE SEARCH PAGE (nav.tsx, search-page.tsx) =====================
    Gemini's chrome, because it is the quietest there is: with the list away, the left edge keeps a column of glyphs —
@@ -1129,7 +1136,10 @@ button.chat-page-go:hover { color: var(--fg); }
 /* The reason a row cannot be used, under its own label. A SECOND LINE rather than a tooltip: a tooltip is
    pointer-only, and a row that cannot be used is exactly the one a finger or a screen reader most needs told. */
 .chat-menu-note { display: block; color: var(--fg-faint); font-size: .84em; line-height: 1.3; margin-top: 1px; white-space: normal; }
-.chat-menu-item.off { cursor: default; opacity: .62; }
+/* A ROW THAT CANNOT BE USED READS AS ONE. Opacity alone left near-black text still looking black — it dimmed the
+   row without greying it, so the only thing saying the row was unavailable was that clicking did nothing. */
+.chat-menu-item.off { cursor: default; color: var(--fg-faint); }
+.chat-menu-item.off .chat-menu-ico, .chat-menu-item.off .chat-menu-on { opacity: .5; }
 .chat-menu-item.off:hover { background: none; }
 .chat-menu-on { display: inline-flex; color: var(--fg); }
 /* A menu row's current value, dim at its right (the theme row: "Dark"), and its caret, turned down while open. */
@@ -1622,7 +1632,7 @@ button.chat-page-go:hover { color: var(--fg); }
    now. Not the accent for success either — it already means "waiting on you" and "this came from a tool" here, and
    a third meaning would empty it of all three. The busy view keeps the full green/amber/red taxonomy, which is
    what you want when you are scanning twelve steps for the one that broke. */
-.chat.calm .dot.ok { background: var(--fg-faint); }
+/* .chat.calm .dot.ok { background: var(--fg-faint); } */
 
 /* ===================== A FINGER, NOT A MOUSE =====================
    Where the pointer is coarse (a phone, a tablet), anything tapped is at least 40px: the icon buttons of the headers
