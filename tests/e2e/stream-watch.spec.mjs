@@ -89,7 +89,8 @@ for (const mode of ["overlay", "devtools", "off"]) {
             // the answer and not yet the whole of it.
             const live = chat.locator(".msg.asst.streaming");
             await expect(live, "a streaming reply bubble is drawn while the model generates").toBeVisible({ timeout: 20000 });
-            await expect(live.locator(".live-dot")).toBeVisible();
+            // NOT the live pulse: the reading view hides it while text is arriving, because the words appearing
+            // are the liveness signal and a lone dot beside them is the same thing said twice (chat.css).
             await expect(live).toContainText("this answer arrives", { timeout: 20000 });
 
             // And it settles into the finished reply, with the streaming bubble gone.

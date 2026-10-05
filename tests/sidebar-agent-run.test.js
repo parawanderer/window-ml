@@ -463,6 +463,46 @@ test("the footer counts THIS turn's steps: a follow-up starts a new loop and the
     assert.match(w.shadow.querySelector(".pending-note .psteps")?.textContent ?? "", /1 step\b/);
 });
 
+test("while the model streams, the footer marks itself a DUPLICATE of the text already on screen", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("agD", "write me a joke"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    // Nothing on screen yet, so the footer is the only thing saying anything is happening.
+    assert.ok(!w.shadow.querySelector(".pending-note.dup"), "not a duplicate before anything streams");
+    assert.match(w.shadow.querySelector(".pending-note").textContent, /Waiting for the model/i);
+
+    // THINKING streams: the thought block renders it, so the footer's "Thinking… (N tok)" is a second copy.
+    await w.dispatch({ kind: "agent-stream", id: "agD", ts: Date.now(), save: false, session: { hash: "agD", turn: 1 }, step: 1, localStep: 1, reasoning: "let me think about this", reasoningTokens: 9 });
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".pending-note.dup"), "a streamed THOUGHT is already drawn above");
+
+    // The REPLY streams: likewise — the words appearing are the liveness signal.
+    await w.dispatch({ kind: "agent-stream", id: "agD", ts: Date.now() + 1, save: false, session: { hash: "agD", turn: 1 }, step: 1, localStep: 1, content: "A man walks into a bar", tokens: 12 });
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".pending-note.dup"), "a streamed REPLY is already drawn above");
+
+    // The step lands: the live view is superseded, nothing is drawing the model's output any more, and the
+    // footer goes back to being the only thing that says the run is still going.
+    await w.dispatch(agentStep("agD", 1, { seq: 1, tool: "exec", arguments: {}, result: "ok" }));
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".pending-note"), "the footer is still there");
+    assert.ok(!w.shadow.querySelector(".pending-note.dup"), "and no longer a duplicate of anything");
+});
+
+test("an approval is never a duplicate: it is the one thing no stream above can be saying", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("agDA", "do a thing"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    await w.dispatch({ kind: "agent-stream", id: "agDA", ts: Date.now(), save: false, session: { hash: "agDA", turn: 1 }, step: 1, localStep: 1, content: "I will click it" });
+    await w.dispatch(agentStep("agDA", 1, { seq: 1, pending: true, awaitingApproval: true, tool: "click", arguments: { selector: "#go" } }));
+    await w.tick();
+    const note = w.shadow.querySelector(".pending-note");
+    assert.ok(note.classList.contains("blocked"), "blocked while awaiting approval");
+    assert.ok(!note.classList.contains("dup"), "and shown, whatever was streaming a moment ago");
+});
+
 test("the DEBUG DETAIL does NOT render answer media (that's HUD-only, the sidebar is a trace)", async () => {
     const w = await loadSidebarWorld();
     const hash = "ansmedia2";

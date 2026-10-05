@@ -1137,8 +1137,15 @@ export function PendingNote({ s }: { s: Session }) {
     // `undefined` where no /api/ps reading exists (a remote runtime, or the panel never opened), which
     // orbStatus reads as "we don't know" rather than "not loaded".
     const live = blocked ? null : orbStatus(s, now, services().modelResident(s.hash, s.model));
+    // IS THIS THE SAME EVENT, DRAWN TWICE? While the model streams, `LiveStream` is rendering that very text
+    // just above — so the orb's phrase is a second copy of it, and the reading view ends up showing the reply
+    // and a clone of the reply's first line under it. The HUD needs the phrase (it has no transcript to show
+    // the text in); a surface that already draws the stream does not. Marked rather than removed, because the
+    // panel is an instrumentation surface where a steady running bar is wanted and the reading view is not:
+    // chat.css hides it there. The rule is "a status indicator only where nothing else shows liveness".
+    const dup = !blocked && !!(s.liveStream?.content || s.liveStream?.reasoning);
     return (
-        <div class={`pending-note${blocked ? " blocked" : ""}`}>
+        <div class={`pending-note${blocked ? " blocked" : ""}${dup ? " dup" : ""}`}>
             {/* BOTH are drawn and the view picks one in CSS: the bar in the panel, where it matches the
                 instrumentation around it, and the glyph in the reading view, where a full-width rule is furniture.
                 A hidden element's animations do not run, so the one that is not shown costs nothing. */}
