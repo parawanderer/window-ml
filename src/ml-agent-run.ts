@@ -103,7 +103,7 @@ import { validateArgs } from "./validate";
  *   `elements` is the live DOM node(s) the model designated via an
  *   `answer`-capable tool (empty for tasks that just act on the page).
  */
-export const agent = async function(this: MlApi, task: string, { tools = null, extraTools = [], serverTools = [], commanderTools = false, system = null, systemAppend = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, crossOrigin = false, approvalRouting = "ui", stream = false, toolTokens = false, images = [], _control = null, _onSession = null }: {
+export const agent = async function(this: MlApi, task: string, { tools = null, extraTools = [], serverTools = [], commanderTools = false, system = null, systemAppend = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, crossOrigin = false, approvalRouting = "ui", stream = false, toolTokens = false, images = [], origin = null, _control = null, _onSession = null }: {
     tools?: MlTool[] | null;
     extraTools?: MlTool[];
     serverTools?: string[];
@@ -128,6 +128,10 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
     crossOrigin?: boolean;   // may `navigate` cross to OTHER SITES (different origins)? default false — same-site only
     approvalRouting?: "ui" | "both" | "external";   // where privileged gates resolve (bg runs): human UI (default) · UI + IPC · IPC only
     stream?: boolean;   // STREAM the model's thinking/reply live (agent-stream deltas) so a long reasoning phase isn't a frozen token count. Default false.
+    /** WHERE THIS PROMPT WAS TYPED (contract-run.ts), for `chat_metadata` and the run's provenance clause.
+     *  The extension's own surfaces stamp it from the channel the message arrived on; a direct call from a
+     *  console or a userscript leaves it unset, which reads as `console`. */
+    origin?: import("./contract-run").PromptOrigin | null;
     toolTokens?: boolean;   // surface `@tool:<id>` on rich tool results so the model can cite exact outputs. Default false; HUD auto-on.
     images?: (string | HTMLImageElement)[];   // attachments for THIS turn (composer paste/upload)
     _control?: AgentControl | null;   // internal: a handle's persistent session state (ml.createAgent). Absent → a throwaway per-call one.
@@ -501,7 +505,7 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
                 // `control.maxSteps`, not the destructured option: the handle's setter is what a raised cap goes
                 // through, and a handle whose run is hosted in the BACKGROUND would otherwise send the cap it was
                 // created with and quietly ignore the new one.
-                maxSteps: control.maxSteps, autoApprovePython: autoPy, autoApproveReadonly: autoRO, autoApproveSameOriginAuth: autoSOA, autoApproveSelfSource: autoSelfSrc, labelMatch, surface: bgSurface, stream: stream || undefined, toolTokens: toolTokens || undefined,
+                maxSteps: control.maxSteps, autoApprovePython: autoPy, autoApproveReadonly: autoRO, autoApproveSameOriginAuth: autoSOA, autoApproveSelfSource: autoSelfSrc, labelMatch, surface: bgSurface, stream: stream || undefined, toolTokens: toolTokens || undefined, origin: origin || undefined,
                 images: pendingImages,   // native-vision composer attachments for this turn's user message
                 // (OCR fallback for a text-only driver is already folded into `task` above)
                 unattended: unattended || undefined, silent: silent || undefined,
@@ -763,7 +767,8 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
         drainInbox: () => {
             const items = control.inbox.splice(0);
             if (control.hash) for (const it of items) emitDebug({ kind: "agent-say-seen", id: control.hash, ts: Date.now(), save: false, session: { hash: control.hash, turn: 0 }, sayId: it.id });
-            return items.map(it => it.text);
+            // Each carries where it was typed, so a run steered from another surface reports THAT one.
+            return items.map(it => (it.origin ? { text: it.text, origin: it.origin } : it.text));
         },
         pushUser: (messages, text) => (messages as NeutralMessage[]).push({ role: "user", content: text }),
         // #3 inline vision: a tool result can't carry an image, so hand any screenshots this step
@@ -814,7 +819,7 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
         answerSet.clear();   // the answer set reflects THIS turn's designations only
         enterAgentRun();   // suppress orphan chat sessions from a tool's internal ml.chat; finally-decremented
         try {
-            const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended, toolTokens, runHash, seqBase: control.seqBase, ...(turnsRun++ > 0 ? { after: "human" as const } : {}), stream, tokenStore: (control.tokens ??= new TokenStore()), labelMatch, tokenSink: (fn) => { pageDeref = fn; } }, deps);
+            const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended, toolTokens, runHash, seqBase: control.seqBase, ...(turnsRun++ > 0 ? { after: "human" as const } : {}), stream, ...(origin ? { origin } : {}), tokenStore: (control.tokens ??= new TokenStore()), labelMatch, tokenSink: (fn) => { pageDeref = fn; } }, deps);
             control.seqBase += turnMaxSeq; turnMaxSeq = 0;   // next turn's step seqs continue past this turn's
             control.stepBase += turnMaxStep; turnMaxStep = 0;   // …and its step numbers, so turn groups stay distinct
             // The bottom-of-answer render: the outputs the model DESIGNATED into the answer set, minus

@@ -161,7 +161,7 @@ export const hydrationDone: Promise<void> = (typeof chrome !== "undefined" && ch
 // Per-run steering inbox (a.say() mid-run): the SW-side twin of the page loop's control.inbox. INJECT_MESSAGE
 // pushes here (only the owning tab may); the run's loop drains it at each step boundary (deps.drainInbox).
 // Present only while a run is live (set at start, deleted in finally).
-export const runInboxes = new Map<string, { tabId: number; queue: { id?: string; text: string }[] }>();
+export const runInboxes = new Map<string, { tabId: number; queue: { id?: string; text: string; origin?: import("./contract-run").PromptOrigin }[] }>();
 
 // ---- Cross-page persistence (Variant A; design tmp/cross-page-agent.md) ----
 // A background-hosted run delegates each DOM tool to its tab by tabId. When the page NAVIGATES the old

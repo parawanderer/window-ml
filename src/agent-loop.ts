@@ -16,6 +16,8 @@ import type { ToolCall, TokenUsage, RunStats } from "./contract-chat";
 import type { AgentResult, AgentTranscriptEntry, ApprovalDecision } from "./contract-agent";
 import type { RenderDescriptor, ToolFeedback, TokenRender } from "./contract-render";
 import type { SubcallUsage } from "./contract-debug";
+import type { PromptOrigin } from "./contract-run";
+import { promptSurfaceNote } from "./prompt-surface";
 import { tableOf } from "./table-data";
 import { runStats, fmtTokPerSec, UI_OUT_CAP } from "./contract-chat";
 import { formatBytes } from "./resource-model";
@@ -89,7 +91,7 @@ export interface AgentLoopDeps {
     // Mid-run STEERING (a.say()): drained at each step boundary (before the model call) — returns any user
     // messages queued since the last step, injected via pushUser so the model sees them on its next turn.
     // Omit → no steering. The queue lives in the caller's world (page handle / SW inbox).
-    drainInbox?(): string[];
+    drainInbox?(): (string | { text: string; origin?: PromptOrigin })[];
     pushUser?(messages: unknown[], text: string): void;
     // Self-introspection (ml.chatMetaTool): resolve the run's model facts for the metadata summary.
     // World-specific (page: ml.capabilities/ml.ps/config; background: the SW's caches). The token/message
@@ -169,12 +171,18 @@ function formatChatMeta(
     rs: RunStats,
     messages: unknown[],
     tools: ToolMeta[],
+    origin?: PromptOrigin | null,
 ): string {
     const role = (r: string) => messages.filter(m => (m as { role?: string }).role === r).length;
     const imgs = messages.filter(m => Array.isArray((m as { images?: unknown[] }).images) && (m as { images?: unknown[] }).images!.length).length;
     const L: string[] = [];
     // model + where it runs
     const where = cm?.local === true ? " (local · Ollama)" : cm?.local === false ? " (cloud / remote)" : "";
+    // WHERE THE LAST INSTRUCTION WAS TYPED. First, because it frames everything under it: the same answer is
+    // right or wrong depending on whether the person is looking at the page. Omitted when unknown rather than
+    // guessed — an older runtime records none, and naming a surface is a claim about where someone is sitting.
+    const originNote = promptSurfaceNote(origin);
+    if (originNote) L.push(originNote);
     L.push(`model: ${cm?.model || "(default — unresolved)"}${where}`);
     if (cm?.backend) L.push(`routed via: ${cm.backend}`);
     if (cm?.capabilities?.length) L.push(`supports: ${cm.capabilities.join(", ")}`);
@@ -269,6 +277,9 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
      *  throttled `ctx.stream(text)` so a tool that supports it (exec's console.log, python_exec's print) streams
      *  its output as it runs. Off → tools return the full result at the end, unchanged. */
     stream?: boolean;
+    /** Where the STARTING prompt was typed (contract-run.ts). A drained steering message may carry its own,
+     *  and the later one wins — `chat_metadata` reports the LAST instruction's surface, not the run's first. */
+    origin?: PromptOrigin;
 }
 
 // Live tool-output streaming: throttle the fan (a chatty loop can't flood the bus) and cap the accumulated
@@ -348,6 +359,9 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     // (a.maxSteps = 40) and the loop keeps going instead of stopping at the original value.
     const maxSteps = () => { const m = typeof opts.maxSteps === "function" ? opts.maxSteps() : opts.maxSteps; return m ?? 10; };
     const byName = new Map(tools.map(t => [t.name, t]));
+    // The surface of the LATEST instruction: the run's own to begin with, replaced by a steering message
+    // that says where it was typed. `chat_metadata` reports this one, not the run's first.
+    let lastOrigin: PromptOrigin | null = opts.origin ?? null;
     const messages = deps.buildMessages(task);
     const transcript: AgentTranscriptEntry[] = [];
     // Per-step render data for citable steps, so the outputs resolver can turn a cited/designated token into its
@@ -610,7 +624,14 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         if (signal?.aborted) return cancelled(step - 1);
         // Mid-run steering: inject any user messages queued via a.say() since the last step, so the model
         // sees them on THIS turn — landing after the previous step's tool resolved, before the next model call.
-        for (const text of deps.drainInbox?.() ?? []) deps.pushUser?.(messages, text);
+        for (const queued of deps.drainInbox?.() ?? []) {
+            // A steering message may say where IT was typed, and that supersedes the run's own: a run started
+            // from the HUD and steered from the chat app is being driven by someone who has stopped looking at
+            // the page. A plain string carries no origin and leaves the current one standing.
+            const text = typeof queued === "string" ? queued : queued.text;
+            if (typeof queued !== "string" && queued.origin) lastOrigin = queued.origin;
+            deps.pushUser?.(messages, text);
+        }
         // A CANCEL_RUN mid-generation aborts the in-flight fetch, which REJECTS here — convert that to a
         // clean cancel (don't propagate as a run error), same as the boundary check. Re-throw a real error.
         let msg;
@@ -677,7 +698,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 // and message list, so the numbers are accurate on both the page and background paths with no
                 // extra plumbing. Never gated, never delegated to runTool (it only reads its own run's state).
                 const cm = deps.chatMeta ? await deps.chatMeta() : null;
-                result = formatChatMeta(cm, { promptLast, genTotal, calls: modelCalls, sub: deps.subcallTokens?.() }, runStats(usages), messages, tools);
+                result = formatChatMeta(cm, { promptLast, genTotal, calls: modelCalls, sub: deps.subcallTokens?.() }, runStats(usages), messages, tools, lastOrigin);
             } else if (meta.requiresApproval) {
                 // Read-only try FIRST: the mediated interpreter can't mutate, so if the call is in its
                 // dialect it's already run safely — auto-approve with its result, no gate, no runTool.

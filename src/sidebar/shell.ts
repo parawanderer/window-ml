@@ -339,6 +339,11 @@ const busLive = (): boolean => mode !== "off" || listPageSessions;
 // The corner HUD (card/pill) is active in OFF mode, and in DEVTOOLS when the coexist toggle is on
 // (OVERLAY never uses it — the slide-out already covers the page).
 const hudActive = (): boolean => mode === "off" || (mode === "devtools" && agentHudInDevtools);
+/** WHICH SURFACE the person typed into, derived from this shell's own mode rather than taken from the frame —
+ *  a value the page could choose would be worth nothing. In `overlay` the composer is the sidebar panel over
+ *  the page; in `off` (and in `devtools`, where only the corner card lives in the page) it is the Commander
+ *  HUD. The DevTools panel stamps its own, in panel.ts, because its composer is not in this document at all. */
+const promptSurface = (): import("../contract-run").PromptSurface => (mode === "overlay" ? "overlay" : "hud");
 // Background-run events buffered while the card iframe loads (off mode feeds the card ONLY from the
 // background stream, tagged __mlFromBg — the page's bus stays dormant — so no cross-source ordering).
 const CARD_RING_MAX = 200;
@@ -837,6 +842,7 @@ function onWindowMessage(e: MessageEvent): void {
             // A run the person started here is kept unless they turned that off. A run started from CODE is not:
             // `ml.agent()` stays as long as the page, which is the rule `ml.createChat({ save: true })` follows.
             keep: persistUiRuns,
+            surface: promptSurface(),
         } }, "*");
         return;
     }
@@ -849,7 +855,7 @@ function onWindowMessage(e: MessageEvent): void {
         // through — the element reference IS the payload; the page folds it into the appended message.
         const elementContext = (d.elementContext && typeof d.elementContext.selector === "string") ? d.elementContext : undefined;
         if (d.text.trim() || cleanImages(d.images) || elementContext)
-            window.postMessage({ __mlSessionSend: { hash: d.hash, text: d.text, images: cleanImages(d.images), elementContext } }, "*");
+            window.postMessage({ __mlSessionSend: { hash: d.hash, text: d.text, images: cleanImages(d.images), elementContext, surface: promptSurface() } }, "*");
         return;
     }
     if (d.__mlSidebarApp === "continueRun" && frame && e.source === frame.contentWindow && typeof d.hash === "string") {

@@ -429,7 +429,7 @@ export interface MlAgentHandle {
     run(task?: string, images?: (string | HTMLImageElement)[]): Promise<AgentResult>;
     /** put a user message into the session: MID-RUN it steers (injected at the next step boundary); IDLE it
      *  appends to history for the next run() (with a console note). Never throws. */
-    say(text: string): void;
+    say(text: string, origin?: import("./contract-run").PromptOrigin): void;
     /** abort the in-flight loop → it resolves { cancelled: true }. */
     cancel(): void;
     /** a NEW handle (fresh hash) seeded with a COPY of this history — diverge without touching this one. */

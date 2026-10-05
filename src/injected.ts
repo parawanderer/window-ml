@@ -13,7 +13,8 @@ import { tableFromDelimited, tableShape, asTable } from "./table-data";
 import { isTable } from "./table-brand";
 import { makeAnswerFacade } from "./answer-set";
 import { accessibleName, roleOf, ariaState } from "./a11y";
-import { HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, askAboutTask } from "./prompts";
+import { HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, askAboutTask } from "./prompts";
+import { promptSurfaceClause } from "./prompt-surface";
 import { pageContext, resolvePoint, resolveBox, agentState, mlRange } from "./util";
 import { suspiciousChars } from "./security";
 import { emitDebug, sessionRegistry, agentRegistry, handleRegistry } from "./bus";
@@ -663,7 +664,14 @@ import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } fro
         // Commander/HUD runs allow cross-origin navigation by default — a HUD user driving a real task often
         // needs to cross sites, and each crossing still hits the consent gate (a new origin prompts), so it's
         // safe. A scripted console `ml.agent()` still defaults to same-site only.
-        const opts: Record<string, unknown> = { extraTools: [ml.clickTool(), ml.typeTool(), ml.pythonTool(), ml.chatMetaTool()], systemAppend: HUD_HINT + proseClause, crossOrigin: true };
+        // WHERE THIS PROMPT WAS TYPED, as the sender's own channel reported it (the content shell knows its mode,
+        // the session relay knows a command came over the port). Unrecognised or absent → the HUD, which is the
+        // only surface that reaches this handler without one.
+        const surface = e.data.__mlStartAgent.surface;
+        const origin = { surface: (surface === "overlay" || surface === "devtools" || surface === "chat" ? surface : "hud") as import("./contract-run").PromptSurface };
+        // The provenance clause replaces a hint that could only say "the HUD, not the console": there are four
+        // places a prompt can come from now, and which one it was changes whether the person can see the page.
+        const opts: Record<string, unknown> = { extraTools: [ml.clickTool(), ml.typeTool(), ml.pythonTool(), ml.chatMetaTool()], systemAppend: promptSurfaceClause(origin) + proseClause, crossOrigin: true, origin };
         if (Number.isFinite(maxSteps) && maxSteps > 0) opts.maxSteps = maxSteps;   // the composer's step budget
         // The composer's per-call model pick (omitted ⇒ the configured default) + a per-call FORCE-NATIVE
         // vision override for a non-Ollama model (omitted ⇒ ml.agent's default vision routing). Same knobs a
@@ -720,7 +728,7 @@ import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } fro
 
     window.addEventListener("message", (e: MessageEvent) => {
         if (e.source !== window || !e.data) return;
-        const d = e.data as { __mlSessionSend?: { hash: string; text: string; images?: string[]; elementContext?: import("./contract").ElementContext; reqId?: string }; __mlCancelSession?: { hash: string; reqId?: string }; __mlContinueRun?: { hash: string; maxSteps?: number; reqId?: string } };
+        const d = e.data as { __mlSessionSend?: { hash: string; text: string; images?: string[]; elementContext?: import("./contract").ElementContext; reqId?: string; surface?: string }; __mlCancelSession?: { hash: string; reqId?: string }; __mlContinueRun?: { hash: string; maxSteps?: number; reqId?: string } };
         // A request the shell relayed from an extension page (the chat page) carries a `reqId` and wants to hear what
         // happened, so the page can say "steered", "started a turn" or "not on this page" instead of guessing.
         const reqId = d.__mlSessionSend?.reqId ?? d.__mlCancelSession?.reqId ?? d.__mlContinueRun?.reqId;
@@ -760,7 +768,13 @@ import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } fro
                 const h = handleRegistry.get(hash);
                 // An AGENT handle holds live state: steer a RUNNING loop (say — text only, no image mid-steer),
                 // else a new turn (run, which carries this turn's images).
-                if (h) { if (h.running) { h.say(text); done("steer"); } else { void h.run(text, images); done("turn"); } return; }
+                // Where THIS message was typed, from the channel that relayed it. It supersedes the run's own
+                // for `chat_metadata`: a run started at the HUD and steered from the chat app is being driven
+                // by someone who has stopped looking at the page.
+                const sf = d.__mlSessionSend?.surface;
+                const sayOrigin = (sf === "hud" || sf === "overlay" || sf === "devtools" || sf === "chat")
+                    ? { surface: sf as import("./contract-run").PromptSurface } : undefined;
+                if (h) { if (h.running) { h.say(text, sayOrigin); done("steer"); } else { void h.run(text, images); done("turn"); } return; }
                 // No local handle — e.g. a HUD run that NAVIGATED (its page-side handle died with the old
                 // document). If it re-adopted as a resumable BACKGROUND run (agentRegistry, keyed by hash),
                 // continue it with a follow-up TURN rather than dropping the message into the chat path.

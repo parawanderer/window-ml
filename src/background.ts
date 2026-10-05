@@ -199,7 +199,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // NAMED fields, not a spread: this forwards a message from an extension page to a content script, and
         // copying the whole thing would carry anything the panel happened to put on it. The cost is that a new
         // field must be added HERE too — a step budget added everywhere else still arrived undefined until it was.
-        try { void chrome.tabs.sendMessage(message.tabId, { type: "ML_SESSION_TO_PAGE", action: message.action, hash: message.hash, text: message.text, images: message.images, ...(typeof message.maxSteps === "number" ? { maxSteps: message.maxSteps } : {}) }).catch(() => {}); } catch { /* tab gone */ }
+        try { void chrome.tabs.sendMessage(message.tabId, { type: "ML_SESSION_TO_PAGE", action: message.action, hash: message.hash, text: message.text, images: message.images, ...(message.surface ? { surface: message.surface } : {}), ...(typeof message.maxSteps === "number" ? { maxSteps: message.maxSteps } : {}) }).catch(() => {}); } catch { /* tab gone */ }
         return;
     }
     // PDF export prints from a REAL browser tab, not the sidebar app's own frame: window.print() is
@@ -363,7 +363,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         const p = message.payload as InjectMessagePayload;
         const inbox = runInboxes.get(p.runId);
         const injected = !!(inbox && inbox.tabId === sender.tab?.id && typeof p.text === "string");
-        if (injected) inbox!.queue.push({ id: p.sayId, text: p.text });
+        if (injected) inbox!.queue.push({ id: p.sayId, text: p.text, ...(p.origin ? { origin: p.origin } : {}) });
         sendResponse({ data: injected });
         return true;
     }
