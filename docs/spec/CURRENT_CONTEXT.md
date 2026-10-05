@@ -71,27 +71,30 @@ cannot author them.
 So: `meta` is read-only permanently, including after the write half lands. Same object graph, two trust levels, kept
 apart by shape rather than by a rule in a document.
 
-### 4. Every read hands back a COPY the script owns
+### 4. Writing to `messages` THROWS; `meta` hands back a copy you own
 
-`ml.current.messages` and `ml.current.meta(id)` return a deep clone, not a view. Writing to it changes nothing.
+The two halves differ in write semantics, not only in content, and the rule is: **throw where a write will one day
+mean something; copy where it never will.**
 
-The obvious alternative — a frozen object, or one that throws on write — is hostile in a dialect. The natural
-thing to do with this data is to work it: annotate rows, sort them, build a plan for what to drop. A frozen row
-throws part-way through that and the whole script falls out of dialect, which degrades to "asks the human" for a
-script that was only ever reading.
+`ml.current.messages` is read-only and writing to it throws. Not because writing is dangerous today — it would be
+discarded either way — but because assignment to a message is exactly what the write half will eventually MEAN.
+Handing back a silently-discarding copy would teach the model that editing its context works, when nothing happened;
+it would then be right about the syntax and wrong about the effect, and there is no error anywhere to tell it apart.
+A throw is loud now and becomes the real operation later, so nothing learned here has to be unlearned.
 
-But the real reason is the write half. If a read returned a LIVE object, the obvious expectation would be that
-assigning to it mutates the context — so the moment named mutation operations arrive there are two ways to say the
-same thing, one of which works and one of which silently does not. A copy makes the split unambiguous before the
-question can be asked: **what you are handed is yours; changing the context is something you CALL.**
+A model that wants to work the messages as data clones them ITSELF — `ml.current.messages.map(m => ({ ...m }))` —
+and the dialect already allows that with no new rule: a container the script built is in `owned`
+(`readonly-exec.ts`), and method results are owned too, precisely so a live page container cannot be laundered into
+one. The copy is the script's and it may do as it likes with it.
 
-The dialect already has the mechanism and needs no new concept. `owned` (`readonly-exec.ts`) is a WeakSet of
-containers the script created, and the mutation gate is "is this owned", kept deliberately orthogonal to which
-methods a kind allows. A clone handed out here is marked owned, so the script may mutate its copy exactly as it may
-mutate an array it built itself, and the page's own objects stay out of reach by the same rule as before.
+`ml.current.meta(id)` is the opposite case and gets the opposite treatment: a deep clone the script owns and may
+freely mutate. It can afford that because `meta` is never going to be writable — it is derived provenance, and the
+whole value of the timing fields is that the model cannot author them (decision 3). There is no future operation for
+an assignment here to collide with, so the convenient thing is also the safe one. Annotating a working copy of the
+metadata is the natural way to plan a compaction, and a frozen record would throw part-way through that and drop a
+reading script out of dialect and into the approval gate.
 
-The clone must be DEEP, or a nested `tool_calls` array still aliases the real message. That is a real cost on a long
-context, which is one more reason the read is a filter in the dialect rather than a dump into the transcript.
+The clone must be DEEP, or a nested structure still aliases the real record.
 
 ### 5. It is read from the DIALECT, never from a tool that dumps
 
