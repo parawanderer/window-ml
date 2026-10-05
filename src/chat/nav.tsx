@@ -103,9 +103,14 @@ export function GearMenu({ graphsRt, benchRt, labelled }: {
                 <div class="chat-menu chat-gear-menu" role="menu" aria-label="Page menu">
                     <MenuItem icon={<IconBrain />} label="Calm view" on={calm.value} onPick={pick(() => setCalm(!calm.value))} />
                     {/* Under "Calm view" and only offered WITH it: this folds nothing outside the reading view, and
-                        a toggle that does nothing where you are standing is worse than one that is absent. */}
+                        a toggle that does nothing where you are standing is worse than one that is absent.
+
+                        `note`, not `detail`: the right-hand slot is for WHICH thing a row acts on (the theme's
+                        current choice, a panel's device), and a gloss put there grew the menu wider than the column
+                        it rises in — which CLIPS, so the tick saying whether the toggle is on was the part that
+                        went. A second line costs no width. */}
                     {calm.value
-                        ? <MenuItem icon={<IconFold />} label="Group all tool calls" detail="one row per run of work"
+                        ? <MenuItem icon={<IconFold />} label="Group all tool calls" note="one row per run of work"
                             on={groupAllTools.value} onPick={pick(() => setGroupAll(!groupAllTools.value))} />
                         : null}
                     {/* THE PANELS TOGETHER, under one row. These two are a different kind of thing from the rows

@@ -1163,6 +1163,13 @@ button.chat-page-go:hover { color: var(--fg); }
 /* The gear's menu rises from the gear, with room for its longer rows. */
 .chat-gear { position: relative; }
 .chat-gear-menu { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 40; min-width: 240px; transform-origin: bottom left; }
+/* AND NEVER WIDER THAN THE COLUMN IT RISES IN. `.chat-list` clips, and has to: the pane slides out from under the
+   page and its rows must not be seen leaving. So a menu that outgrows the list does not merely look untidy — its
+   right-hand side is simply gone, and that is the side the tick is on, which is the one thing a toggle row has to
+   show. The rows give instead: a trailing value ellipsizes, and `aria-label` already carries it whole. */
+.chat-list-foot .chat-gear-menu { max-width: calc(var(--list-w) - 20px); }
+.chat-menu-item { min-width: 0; }
+.chat-menu-val { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* On a PHONE the gear is in the list's top bar, not its foot, so its menu drops DOWN from it: rising, it opened above
    the top of the screen and nothing of it could be seen. */
 .chat.narrow .chat-list .head .chat-gear-menu { top: calc(100% + 8px); bottom: auto; left: auto; right: 0; transform-origin: top right; max-width: calc(100vw - 16px); }

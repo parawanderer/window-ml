@@ -1002,6 +1002,16 @@ test("a run of the same tool folds into one row, and opens again", async () => {
     await streak.locator(".astreak-rail").click();
     await expect(page.locator('[data-astep-seq="303"]')).toHaveCount(0);
 
+    // AND NONE OF IT REACHES THE BUSY VIEW. That is the developer's whole trace, where a collapsed row shows the
+    // value the call RETURNED — so the rows there are distinguishable, the argument for folding them never applies,
+    // and the fold is asked for behind `focusMode` rather than styled away. Turning calm off must restore every row.
+    await page.locator(".chat-gear-btn").first().click();
+    await page.getByRole("menuitemcheckbox", { name: "Calm view" }).click();
+    await expect(page.locator(".astreak")).toHaveCount(0);
+    await expect(page.locator('[data-astep-seq="303"]')).toHaveCount(1);
+    // …and the preview that makes them distinguishable is on screen, which is the reason the rule differs at all.
+    await expect(page.locator('[data-astep-seq="303"] .astep-preview')).toBeVisible();
+
     expect(errors).toEqual([]);
     await page.close();
 });
@@ -1958,6 +1968,73 @@ test("phone (touch): the tab picker opens without raising the keyboard, and stay
         expect(box.y + box.height, "the list fits the window the keyboard left").toBeLessThanOrEqual(480);
         expect(errors).toEqual([]);
     } finally { await ctx.close(); }
+});
+
+// NO POPUP IS CUT OFF, by the window OR by whatever clips it. This is a different failure from "off the screen",
+// which the touch probe below already measures, and it is the quieter one: the gear's menu rises inside
+// `.chat-list`, which sets `overflow: hidden` because the pane slides out from under the page — so a menu that
+// outgrows the column is not merely untidy, its right-hand side is GONE, and that is the side a toggle's tick is
+// on. It was found by a row whose gloss made the menu wider than the list, not by anything the menu itself did,
+// which is why the check is general: any row added anywhere can cause it, in a place nobody was looking.
+const popupCutoffs = (page) => page.evaluate(async () => {
+    // Measured at rest: every menu here pops with a scale, and a menu mid-pop is smaller than the one that lands.
+    await Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity).map((a) => a.finished.catch(() => {})));
+    const out = [], round = (n) => Math.round(n);
+    for (const pop of document.querySelectorAll('[role=menu], .chat-menu, .chat-dialog')) {
+        const r = pop.getBoundingClientRect();
+        if (!r.width || !r.height || getComputedStyle(pop).visibility === "hidden") continue;
+        const name = (pop.getAttribute("aria-label") || pop.className || "popup").trim().slice(0, 40);
+        if (r.left < -1 || r.right > innerWidth + 1 || r.top < -1 || r.bottom > innerHeight + 1)
+            out.push(`off the window: "${name}" at ${round(r.left)}..${round(r.right)} x ${round(r.top)}..${round(r.bottom)} in ${innerWidth}x${innerHeight}`);
+        // A `fixed` popup is laid out against the window and is NOT clipped by an ancestor's overflow, so walking
+        // them would report a cut that does not happen. (Strictly a transformed ancestor would make one a
+        // containing block again; nothing here does, and a false NEGATIVE is the safe direction for a guard.)
+        if (getComputedStyle(pop).position === "fixed") continue;
+        for (let el = pop.parentElement; el; el = el.parentElement) {
+            const cs = getComputedStyle(el);
+            if (!/hidden|clip|auto|scroll/.test(cs.overflowX + " " + cs.overflowY)) continue;
+            const b = el.getBoundingClientRect();
+            if (r.right > b.right + 1 || r.left < b.left - 1 || r.bottom > b.bottom + 1 || r.top < b.top - 1)
+                out.push(`"${name}" is cut off by .${String(el.className).split(" ")[0]} (${round(r.left)}..${round(r.right)} outside ${round(b.left)}..${round(b.right)})`);
+        }
+    }
+    return out;
+});
+
+test("no menu is cut off — by the window or by the column it opens in", async () => {
+    for (const viewport of [DESKTOP, PHONE]) {
+        const page = await browser.newPage({ viewport, ...(viewport === PHONE ? { hasTouch: true, isMobile: true } : {}) });
+        const errors = [];
+        page.on("pageerror", (e) => errors.push(e.message));
+        const where = viewport === PHONE ? "phone" : "desktop";
+        try {
+            // The PAGE's menu, from the list and from a session — on a wide screen it rises from the list's foot
+            // and on a phone it drops from the list's header, which are two different sets of edges to be cut by.
+            for (const hash of ["", `#/s/${encodeURIComponent(WAITING)}`]) {
+                await page.goto(server.url + hash);
+                await page.locator(".chat").waitFor();
+                if (hash && viewport === PHONE) continue;   // the list (and its gear) is not on screen beside a session here
+                await page.locator(".chat-gear-btn").first().click();
+                await expect(page.locator(".chat-gear-menu")).toBeVisible();
+                expect(await popupCutoffs(page), `${where}, the gear's menu on ${hash || "the list"}`).toEqual([]);
+                // …and with its longest row open, which is where a sub-list can reach past the column.
+                await page.getByRole("menuitem", { name: /Theme for this page/ }).click();
+                expect(await popupCutoffs(page), `${where}, the gear's menu with Theme open`).toEqual([]);
+                await page.keyboard.press("Escape");
+            }
+            // A SESSION ROW's own menu, which opens against the list's right edge rather than rising from its foot.
+            await page.goto(server.url);
+            await page.locator(".chat-row").first().hover();
+            const rowMenu = page.locator(".chat-row-wrap .hbtn, .chat-row-more").first();
+            if (await rowMenu.count()) {
+                await rowMenu.click();
+                expect(await popupCutoffs(page), `${where}, a session row's menu`).toEqual([]);
+            }
+            expect(errors).toEqual([]);
+        } finally {
+            await page.close();
+        }
+    }
 });
 
 test("phone (touch): no view scrolls sideways, and everything a finger taps is at least 40px @mobile", async () => {
