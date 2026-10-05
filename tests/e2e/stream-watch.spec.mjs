@@ -33,17 +33,28 @@ async function watch(chat, task) {
 }
 
 /** A tool that is not gated and reports its work as it goes, so the tool-output stream has a producer we control. */
+/**
+ * A tool that is not gated, streams a line, and then HOLDS until the test releases it.
+ *
+ * It waited on a timer first, and that is the test being timed rather than the product: the live window was
+ * 1.2 s, which a laptop catches and a contended CI runner does not, so two of these failed on CI having passed
+ * every local run. Holding on a flag makes the window as long as the watcher needs and not one beat longer —
+ * the test releases it the moment it has seen what it came for. The cap is a failsafe, so a test that never
+ * releases fails instead of hanging the suite.
+ */
 const TICKER = `{
-    name: "tick", description: "count to three, slowly",
+    name: "tick", description: "report a line, then wait to be released",
     parameters: { type: "object", properties: {} },
     run: async (args, ctx) => {
-        for (const w of ["one", "two", "three"]) {
-            ctx.stream && ctx.stream(w + "\\n");
-            await new Promise(r => setTimeout(r, 400));
-        }
+        ctx.stream && ctx.stream("one\\n");
+        for (let i = 0; i < 300 && !window.__mlReleaseTick; i++) await new Promise(r => setTimeout(r, 50));
+        ctx.stream && ctx.stream("two\\nthree\\n");
         return "one\\ntwo\\nthree";
     },
 }`;
+
+/** Let the held tool finish, once the live output has been seen. */
+const releaseTick = (site) => site.evaluate(() => { window.__mlReleaseTick = true; });
 
 /**
  * Start a run on an ordinary page and DO NOT await it: the point is to look at it while it is still going.
@@ -84,6 +95,7 @@ for (const mode of ["overlay", "devtools", "off"]) {
                 const n = document.querySelector(".astep.tool.pending");
                 return n ? n.textContent : "";
             }), { timeout: 20000, message: "the tool's live output reaches the watching page" }).toMatch(/one/);
+            await releaseTick(site);   // seen it — let the tool finish so the run can reach its answer
 
             // THE MODEL'S REPLY, mid-generation: the streaming bubble with its live pulse, carrying a PREFIX of
             // the answer and not yet the whole of it.
@@ -129,6 +141,7 @@ test("a PAGE-hosted run streams its tool's output but not the model's reply — 
             const n = document.querySelector(".astep.tool.pending");
             return n ? n.textContent : "";
         }), { timeout: 20000, message: "a page-hosted run's tool output still streams" }).toMatch(/one/);
+        await releaseTick(site);
 
         // The model's reply does not: no `agent-stream` is ever emitted, so the answer lands whole at the end.
         await expect(chat.locator(".chat-main")).toContainText(SLOW_ANSWER, { timeout: 30000 });
