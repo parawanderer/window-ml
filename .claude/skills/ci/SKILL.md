@@ -95,6 +95,19 @@ Starvation is real here and arrives in windows: on 2026-10-05 between 19:48 and 
 runs and one PR sat queued 25-54 minutes and were cancelled without ever getting a runner. Nothing was
 broken. If several unrelated runs go red at once, check the queue times before the code.
 
+**MAKING A CHECK REQUIRED BLOCKS EVERY PR WHOSE BRANCH PREDATES THE JOB.** A required context that never
+reports is not a failure, it is an indefinite wait, and a branch forked before the job existed has no such
+job to run. So the order is: merge the workflow first, then add the context, and update any branch already
+open. Adding `mobile-bundle` to the ruleset on 2026-10-06 put #365 straight into `MERGEABLE/BLOCKED` with no
+`mobile-bundle` row at all; a rebase onto main was the whole fix. The same applies to RENAMING a job, which
+is a remove plus an add as far as the ruleset is concerned.
+
+A CONDITIONAL job can still be required: a job that runs and is SKIPPED by its own `if:` satisfies the
+ruleset here, which is why `e2e` and `bench` are required and a docs-only PR is `CLEAN` with both
+`skipping`. That is worth re-confirming on a docs-only PR before requiring a new conditional check, rather
+than assuming — the failing shape (never reported at all) and the passing one (reported as skipped) look
+alike from the outside.
+
 **Do not run it in the foreground and wait.** Use `run_in_background: true` and carry on; the result
 arrives as a task notification. The e2e suite runs as three shards (`e2e (1/3)` … `e2e (3/3)`, each with 3 workers) plus an `e2e` job that is
 green only when all three are; a full run is about 6 minutes, the slowest shard still being the long pole.
