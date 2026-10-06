@@ -19,7 +19,7 @@ modified) and [llama.cpp](https://github.com/parawanderer/llama.cpp).
 So this is a hypothesis-testing apparatus more than a codebase. Every row of the table below is a claim that might
 be wrong rather than a feature that is planned. What should outlast any of them is the finding: a short technical
 note on how the thing works and whether it held up, and a proper implementation wherever it actually belongs. That
-is what the third column is saying. None of them point back here.
+is what the third column is saying. None of those places is this repository.
 
 ## About the code
 
@@ -28,13 +28,14 @@ it was the aim: until recently, trying ideas at this scale meant first employing
 exploring what becomes possible once that cost is close to zero is part of the point. Call it post-SWE exploratory
 research.
 
-Whether agents can keep a codebase this size working with nobody reading it is itself one of the experiments, and
-the most interesting one. In its first three months this repository reached about 240,000 lines over 1,800
-commits, and about 285,000 counting the hub and what the forks add to their upstreams (October 2026). So far they
-have.
+Whether agents can keep a codebase this size working with no person reading or reviewing it is itself one of the
+experiments, and the most interesting one. Until recently it could not have been tried at all: no model could keep
+even a small codebase working on its own. In its first three months this repository reached about 240,000 lines
+over 1,800 commits, and about 285,000 counting the hub and what the forks add to their upstreams (October 2026). So
+far they have.
 
-It is glue: whatever an idea needed in order to be tried at all, and that turns out to be a lot. The tests are not a quality claim either. They
-are there so the agent does not break the rest of the glue while it builds the next piece.
+It is glue: whatever an idea needed in order to be tried at all, and that turns out to be a lot. The tests are not
+a quality claim. They are there so the agents do not break the rest of the glue while they build the next piece.
 
 So expect it to be uneven, and expect interfaces to change whenever an experiment needs them to. It is not a
 framework or a product, and it will not become one. It is not a reference implementation either: if an idea here
