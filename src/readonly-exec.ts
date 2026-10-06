@@ -1006,17 +1006,21 @@ const ABRIDGE_PREVIEW = 120;
 function abridgeRow(m: Record<string, unknown>, index: number): unknown {
     const content = typeof m.content === "string" ? m.content : "";
     const calls = Array.isArray(m.tool_calls) ? m.tool_calls : null;
-    const chars = content.length + (calls ? JSON.stringify(calls).length : 0);
+    const callsText = calls ? JSON.stringify(calls) : "";
+    const chars = content.length + callsText.length;
     if (chars <= ABRIDGE_OVER) return m;
     const images = Array.isArray(m.images) ? m.images.length : 0;
+    // Point at the part that is LARGE. A tool-calling assistant turn often has empty content and long arguments, and
+    // "print .content for all 0 chars" (what this said first, caught by the demo) sends the reader to nothing.
+    const [part, text] = content.length >= callsText.length ? ["content", content] : ["tool_calls", callsText];
     return {
         role: m.role,
         ...(typeof m.tool_call_id === "string" ? { tool_call_id: m.tool_call_id } : {}),
         ...(calls ? { tool_calls: calls.length } : {}),
         ...(images ? { images } : {}),
         chars,
-        preview: content.length > ABRIDGE_PREVIEW ? `${content.slice(0, ABRIDGE_PREVIEW)}…` : content,
-        abridged: `print ml.current.messages[${index}].content for all ${content.length} chars`,
+        preview: text.length > ABRIDGE_PREVIEW ? `${text.slice(0, ABRIDGE_PREVIEW)}…` : text,
+        abridged: `print ml.current.messages[${index}].${part} for all ${text.length} chars`,
     };
 }
 
@@ -1722,7 +1726,9 @@ export async function evalReadonly(code: string, doc: Document | null, ml?: unkn
     const logs: string[] = [];
     // Printed through the evaluator's print boundary once it exists (it abridges `ml.current.messages` rows).
     let printable: (v: unknown) => unknown = (v) => v;
-    const rec = (...a: unknown[]) => logs.push(a.map(x => typeof x === "string" ? x : safeStr(printable(x))).join(" "));
+    // A statement, not an expression: it returned `logs.push`'s count, so a survey ending in `console.log(…)` had the
+    // VALUE 1 (seen in the ml.current demo) where JavaScript gives `undefined`.
+    const rec = (...a: unknown[]): void => { logs.push(a.map(x => typeof x === "string" ? x : safeStr(printable(x))).join(" ")); };
     const reused: string[] = [];   // ml.fetch cache hits — URLs this survey re-read from a prior approval
     // The pipe charges the step budget, which lives on the evaluator built below: the meter forwards to it once it exists.
     let charge: (steps: number) => void = () => {};
