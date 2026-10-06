@@ -65,6 +65,36 @@ echo "$out"    # every line must say pass (or skipping) before merging
 This is the "confirm with a real poll" step above, done once instead of after the fact, and it is immune to
 both traps because it never trusts an exit code.
 
+**A CANCELLED check prints as `fail`, and that is not a failure.** `gh pr checks` has no third word: a job
+that never ran reads exactly like one whose tests broke. So before investigating a red check, or reporting
+one, RESOLVE ITS CONCLUSION:
+
+```bash
+# every job on a run that is not a clean pass, with its real conclusion
+gh api repos/$REPO/actions/runs/$RUN/jobs --paginate \
+  -q '.jobs[] | select(.conclusion != "success" and .conclusion != "skipped") | "\(.name) -> \(.conclusion)"'
+```
+
+`cancelled` means nothing was learned, so a re-run is the whole fix; `failure` is the only one worth reading
+a log for. The DURATION is the tell that costs nothing to look at: a `test` leg that normally takes 3 minutes
+sitting at 22, or five jobs all ending within a few minutes of each other at ~27, is a cancellation, not a
+test that got slower. Confirm it by comparing each job's `started_at` against when it finished — a job
+starved of a runner never ran at all, and a sibling leg of the SAME matrix finishing green in 3 minutes
+while the others are killed is the signature.
+
+Three readings in one session were wrong in this one direction, each because a convenient view was trusted
+over the specific thing:
+
+- the e2e SHARDS were green while the required `e2e` aggregate was cancelled — the shards are not the gate;
+- a run's `conclusion` was `failure` while every job under it was `cancelled` — one failed-or-cancelled job
+  makes the RUN a failure, so the run's own conclusion cannot tell the two apart;
+- `gh run list` returned a stale page, and a watch loop exited on runs from two weeks earlier. **Poll a run
+  by ID** (`actions/runs/<id>`) whenever you already have one; a listing can come back pointing elsewhere.
+
+Starvation is real here and arrives in windows: on 2026-10-05 between 19:48 and 20:42, jobs across four main
+runs and one PR sat queued 25-54 minutes and were cancelled without ever getting a runner. Nothing was
+broken. If several unrelated runs go red at once, check the queue times before the code.
+
 **Do not run it in the foreground and wait.** Use `run_in_background: true` and carry on; the result
 arrives as a task notification. The e2e suite runs as three shards (`e2e (1/3)` … `e2e (3/3)`, each with 3 workers) plus an `e2e` job that is
 green only when all three are; a full run is about 6 minutes, the slowest shard still being the long pole.
