@@ -55,3 +55,21 @@ test("outputCapPrecheck: a raise with NO reason is refused with an actionable me
     assert.equal(outputCapPrecheck("exec", { js: "x" }), null, "no raise → nothing to justify");
     assert.equal(outputCapPrecheck("python_exec", { code: "x", maxChars: 5000 }), outputCapPrecheck("python_exec", { code: "x", maxChars: 5000 }));
 });
+
+test("every place that STATES a cap reads it from OUTPUT_CAP, so changing the table changes what the model is told", async () => {
+    // The cap was written down four times: this table, a literal 500 in the read-only formatter (the path most surveys
+    // take), "~500" in the exec description, and `outputCapParams(500, 8000, …)`. Changing the table alone would
+    // have moved approved runs and left read-only surveys, and the model's instructions, on the old number.
+    const { outputCapParams } = await import("../src/tool-params.ts");
+    for (const tool of ["exec", "python_exec"]) {
+        const { default: d, ceiling: c } = OUTPUT_CAP[tool];
+        const p = outputCapParams(tool, "x");
+        assert.match(p.maxChars.description, new RegExp(`\\(default ${d}, max ${c}\\)`), tool);
+        assert.match(p.maxCharsReason.description, new RegExp(`default ${d} chars`), tool);
+    }
+    // The read-only path clips at the same default, and its note states it.
+    const { formatReadonlyExec } = await import("../src/approval.ts");
+    const d = OUTPUT_CAP.exec.default;
+    assert.match(formatReadonlyExec("x".repeat(d + 100), []).result, new RegExp(`^x{${d}}… \\[first ${d} of ${d + 100} chars\\]$`));
+    assert.match(formatReadonlyExec(null, ["y".repeat(d + 7)]).result, new RegExp(`… \\[first ${d} of ${d + 7} chars\\]`));
+});

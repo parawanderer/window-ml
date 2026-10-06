@@ -30,7 +30,7 @@ import type { InvocationInfo } from "./contract-server";
 import { ML_READONLY_METHODS } from "./readonly-exec";
 // Generated from contract.ts at build time (scripts/gen-api-docs.mjs) — the public MlApi
 // surface, so the doc the model reads can never drift from the interface it describes.
-import { resolveOutputCap, outputCapPrecheck } from "./contract-pointers";
+import { resolveOutputCap, outputCapPrecheck, OUTPUT_CAP } from "./contract-pointers";
 import { UI_OUT_CAP } from "./contract-chat";
 import { ML_API_PARTS } from "./api-docs.gen";
 import { queryApiDocs, isDefaultQuery, type ApiDocsQuery } from "./api-docs-query";
@@ -496,10 +496,10 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 "(e.g. `[...document.querySelectorAll('.card')].map(c => c.innerText.slice(0,80))`), " +
                 "or both. Async is supported: you may `await` inside and `return` a value " +
                 "(e.g. `const r = await fetch('/api').then(x => x.json()); return r.length`). " +
-                "The returned value AND the console output are EACH truncated to ~500 chars, so " +
+                `The returned value AND the console output are EACH truncated to ${OUTPUT_CAP.exec.default} chars, and the note at the cut says how much of how much you got, so ` +
                 "don't dump whole elements/pages — return a compact, filtered summary (counts, a " +
                 "handful of fields, the few items you actually need), not a full outerHTML dump. " +
-                "If you GENUINELY need more room for ONE call, pass `maxChars` (up to 8000) WITH a " +
+                `If you GENUINELY need more room for ONE call, pass \`maxChars\` (up to ${OUTPUT_CAP.exec.ceiling}) WITH a ` +
                 "`maxCharsReason` — that raise asks the human first (a bigger dump costs your own context). " +
                 // Define "read-only" so the model writes qualifying code instead of guessing why some
                 // exec calls run instantly and others prompt (the auto-run is the autoApproveReadonly flag):
@@ -576,8 +576,8 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
             parameters: {
                 type: "object",
                 properties: {
-                    js: { type: "string", description: "JavaScript to run. console.log to print observations and/or end with an expression to return its value. Output is truncated to ~500 chars — return a filtered summary, not a full dump." },
-                    ...outputCapParams(500, 8000, "Prefer a filtered summary instead."),
+                    js: { type: "string", description: `JavaScript to run. console.log to print observations and/or end with an expression to return its value. Output is truncated to ${OUTPUT_CAP.exec.default} chars — return a filtered summary, not a full dump.` },
+                    ...outputCapParams("exec", "Prefer a filtered summary instead."),
                     ...retryParams("exec"),
                 },
                 required: ["js"]
@@ -628,7 +628,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     }));
                     pointerMs = Date.now() - tPointers;
                 }
-                // Effective per-slot output cap. Default 500; a raise past it is only reachable AFTER the human
+                // Effective per-slot output cap (default: OUTPUT_CAP.exec); a raise past it is only reachable AFTER the human
                 // gate (the readonly try refuses to auto-approve an escalated call), clamped to the ceiling.
                 const { cap, clamped } = resolveOutputCap("exec", maxChars, maxCharsReason);
                 // The model can't see the page's console, and expressions like

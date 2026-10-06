@@ -12,10 +12,14 @@
 // a shared description written for one caller is how the wording gets vague enough to fit both and useful to
 // neither.
 import type { JsonSchema } from "./contract";
+import { OUTPUT_CAP, type OutputCapTool } from "./contract-pointers";
 
-/** The output-truncation pair. `defaultChars` and `max` differ per tool (an exec slot is smaller than a
- *  python one), and `advice` is the tool's own suggestion for what to do instead of raising the cap. */
-export function outputCapParams(defaultChars: number, max: number, advice: string): Record<string, JsonSchema> {
+/** The output-truncation pair for a tool in {@link OUTPUT_CAP}. Takes the TOOL, not the numbers: they were passed in
+ *  as literals (`outputCapParams(500, 8000, …)`), a second copy of the table that nothing kept in step, so changing
+ *  the cap would have told the model the old one. `advice` is the tool's own suggestion for what to do instead of
+ *  raising the cap. */
+export function outputCapParams(tool: OutputCapTool, advice: string): Record<string, JsonSchema> {
+    const { default: defaultChars, ceiling: max } = OUTPUT_CAP[tool];
     return {
         maxChars: { type: "number", description: `Raise the per-slot output truncation for THIS call (default ${defaultChars}, max ${max}). A raise needs human approval + \`maxCharsReason\`. ${advice}` },
         maxCharsReason: { type: "string", description: `Why this call needs more than the default ${defaultChars} chars — required when \`maxChars\` exceeds it; shown to the human on the approval card.` },

@@ -32,12 +32,18 @@ export const clip = (str: string, n: number): string => {
     return str.length > n ? str.slice(0, n) + "…" : str;
 };
 
-/** Like {@link clip}, but for TOOL OUTPUT fed back to the model: it reports HOW MANY chars
- *  were dropped, so the model knows it's seeing a prefix (and a runaway result — e.g. a
- *  string-concat blowup — can't silently flood the context). */
+/** Like {@link clip}, but for TOOL OUTPUT fed back to the model: the note says how much of the whole this IS, so the
+ *  model knows it is reading a prefix and how big the rest is (and a runaway result — e.g. a string-concat blowup —
+ *  can't silently flood the context).
+ *
+ *  It states BOTH numbers, seen and total, because the old note gave only the dropped count (`[+11845 chars
+ *  truncated]`), and models visibly misjudged how much they had read: working out "500 of 12,345" took a cap stated
+ *  somewhere else, as "~500", in a tool whose cap the model can raise per call. It describes the STRING rather than
+ *  the reader ("first", not "you saw") because the same function clips the panel's longer copy, where "you saw" would
+ *  be false. Plain digits, so `json-repair`'s parse needs no locale. */
 export const clipOut = (str: string, n: number): string => {
     str = String(str == null ? "" : str);
-    return str.length > n ? `${str.slice(0, n)}… [+${str.length - n} chars truncated]` : str;
+    return str.length > n ? `${str.slice(0, n)}… [first ${n} of ${str.length} chars]` : str;
 };
 
 /** A tool's returned VALUE, clipped twice: to the MODEL's cap for the result it reads, and to the (larger) UI cap for
