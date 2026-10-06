@@ -370,6 +370,13 @@ extension's `ClientPlatform`, and the same `ChatApp` the web build renders again
 **Sessions → Open** opens it, focusing the tab when one is already open, since two of them would each hold their
 own port and their own scroll position.
 
+**The extension's Settings, inside the page's.** Settings → Extension draws the DevTools Settings view
+(`sidebar/settings.tsx`), and the page already has its own pill tabs above it. So the view takes a `layout`: the page
+asks for `pills` on a wide screen (its five groups as a secondary pill row in the page's `chat-seg` style) and
+`one-page` on a phone (`useNarrow`, `chat/narrow.ts`: no inner tabs, every group under its heading). `one-page` is the
+layout a search already draws, so a search lands on the matching section either way. The DevTools panel and the overlay
+keep the default `tabs`.
+
 It sits at `src/` rather than in `src/chat/` because it is the one file of the chat page that knows `chrome`
 exists, and everything under `src/chat/` has to build for a phone. `sidebar/services-ext.ts` sits beside its seam
 for the same reason.

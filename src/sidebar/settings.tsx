@@ -944,7 +944,19 @@ function useVisionProbe(model: string): boolean | null {
 /** THE SETTINGS VIEW — the SUPERSET of the toolbar popup: every user-editable config surfaces here, and
  *  a new flag MUST appear here even if it never reaches the popup (the popup is a curated subset of the
  *  common knobs; inverting that is the rule this exists to hold). */
-export function Settings() {
+/**
+ * How Settings arranges its five groups. `tabs` is the DevTools panel and the overlay: the underline tab bar. The chat
+ * page, which already has its own pill tabs above this view, asks for `pills` (the same groups as a secondary pill row
+ * in the page's style) on a wide screen and `one-page` on a phone (no inner tabs: every group under its heading, which
+ * is the layout a search already uses, so a search lands on the matching section in either).
+ */
+export type SettingsLayout = "tabs" | "pills" | "one-page";
+
+/**
+ * The extension's settings form: every user-editable config field, grouped in five tabs.
+ * @param props `layout`, how the groups are arranged (default `tabs`, the DevTools panel's)
+ */
+export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) {
     const c = config.value;
     const tab = settingsTab.value;
     const utilOn = !!c.utilityModel.trim();
@@ -1028,20 +1040,31 @@ export function Settings() {
         mo.observe(el, { childList: true, subtree: true });
         return () => mo.disconnect();
     }, [searching]);
-    const show = (t: SettingsTab) => searching || tab === t;
-    const head = (t: SettingsTab) => (searching ? <div class="set-search-tab">{SETTINGS_TABS.find((x) => x.id === t)!.label}</div> : null);
+    // Every group at once: while searching (so a match is found whatever tab it is on), and always in `one-page`.
+    const all = searching || layout === "one-page";
+    const show = (t: SettingsTab) => all || tab === t;
+    const head = (t: SettingsTab) => (all ? <div class="set-search-tab">{SETTINGS_TABS.find((x) => x.id === t)!.label}</div> : null);
     return (
         <div class="settings">
             <input class="set-search" type="search" placeholder="Search every setting…" aria-label="Search settings" value={q}
                 onInput={(e: any) => { settingsQuery.value = e.target.value; }}
                 onKeyDown={(e: KeyboardEvent) => { if (e.key === "Escape" && settingsQuery.value) { e.preventDefault(); e.stopPropagation(); settingsQuery.value = ""; } }} />
-            {searching ? null : <div class="set-tabs" role="tablist">
-                {SETTINGS_TABS.map(t => (
-                    <button key={t.id} role="tab" aria-selected={tab === t.id}
-                        class={`set-tab${tab === t.id ? " on" : ""}`}
-                        onClick={() => { settingsTab.value = t.id; }}>{t.label}</button>
-                ))}
-            </div>}
+            {all ? null : layout === "pills"
+                // The chat page's own segmented pills (chat.css), so the page does not show two tab styles stacked.
+                ? <div class="chat-seg set-pills" role="tablist" aria-label="Extension settings">
+                    {SETTINGS_TABS.map(t => (
+                        <button key={t.id} role="tab" aria-selected={tab === t.id}
+                            class={`chat-seg-opt${tab === t.id ? " on" : ""}`}
+                            onClick={() => { settingsTab.value = t.id; }}>{t.label}</button>
+                    ))}
+                  </div>
+                : <div class="set-tabs" role="tablist">
+                    {SETTINGS_TABS.map(t => (
+                        <button key={t.id} role="tab" aria-selected={tab === t.id}
+                            class={`set-tab${tab === t.id ? " on" : ""}`}
+                            onClick={() => { settingsTab.value = t.id; }}>{t.label}</button>
+                    ))}
+                  </div>}
 
             {searching && !hits ? <div class="set-hint set-search-none">No setting matches “{q.trim()}”.</div> : null}
             <div class="set-body" ref={bodyRef}>

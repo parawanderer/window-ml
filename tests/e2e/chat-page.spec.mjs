@@ -581,3 +581,34 @@ test("a run starts on a tab whose content script is gone, by putting it back", a
         fs.rmSync(dist, { recursive: true, force: true });
     }
 });
+
+// THE EXTENSION'S SETTINGS ON THE CHAT PAGE. The page has its own pill tabs above the view, so the view's five groups
+// take the page's style (settings.tsx `layout`): a secondary pill row on a wide screen, and on a phone no inner tabs at
+// all, every group under its heading, which is the layout a search already uses. The search must still land on the
+// section a match is in, which on a phone is the only way to reach a setting without scrolling for it.
+test("the extension's settings on the chat page: pills on a wide screen, one page on a phone, and search finds a setting in either", async () => {
+    const ext = await launchExtension();
+    try {
+        for (const [width, phone] of [[1300, false], [390, true]]) {
+            const page = await ext.context.newPage();
+            await page.setViewportSize({ width, height: 820 });
+            await page.goto(`chrome-extension://${ext.extensionId}/chat.html#/settings/extension`);
+            await page.locator(".settings .set-search").waitFor();
+            expect(await page.locator(".settings .set-tabs").count(), "never the DevTools underline tabs on the chat page").toBe(0);
+            if (phone) {
+                expect(await page.locator(".set-pills").count(), "no inner tabs on a phone").toBe(0);
+                expect(await page.locator(".set-search-tab").allTextContents()).toEqual(["Connection", "Models", "Appearance", "Advanced", "Permissions"]);
+            } else {
+                expect(await page.locator(".set-pills [role=tab]").allTextContents()).toEqual(["Connection", "Models", "Appearance", "Advanced", "Permissions"]);
+                await page.locator(".set-pills [role=tab]", { hasText: "Permissions" }).click();
+                await expect(page.getByText("Self-approval whitelist")).toBeVisible();
+            }
+            // "has done nothing" is in a help text on the Appearance group, not in any label.
+            await page.locator(".settings .set-search").fill("has done nothing");
+            const headings = page.locator(".set-search-tab:not(.set-miss)");
+            await expect(headings).toHaveText(["Appearance"]);
+            await expect(page.locator(".set-field:not(.set-miss)", { hasText: "Keep unpinned sessions for" })).toBeVisible();
+            await page.close();
+        }
+    } finally { await ext.close(); }
+});
