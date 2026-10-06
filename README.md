@@ -29,8 +29,9 @@ exploring what becomes possible once that cost is close to zero is part of the p
 research.
 
 Whether agents can keep a codebase this size working with nobody reading it is itself one of the experiments, and
-the most interesting one. In its first three months it reached about 240,000 lines over 1,800 commits (October
-2026). So far they have.
+the most interesting one. In its first three months this repository reached about 240,000 lines over 1,800
+commits, and about 285,000 counting the hub and what the forks add to their upstreams (October 2026). So far they
+have.
 
 It is glue: whatever an idea needed in order to be tried at all, and that turns out to be a lot. The tests are not a quality claim either. They
 are there so the agent does not break the rest of the glue while it builds the next piece.
