@@ -19,7 +19,7 @@ const DEFAULT_DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
  * `dist` loads a DIFFERENT build directory than `dist/` — how the bench runs an experimental variant
  * (an esbuild `--define`d build in its own outdir) without the experiment ever becoming a product flag.
  */
-export async function launchExtension(/** @type {{ headful?: boolean, dist?: string }} */ { dist, headful } = {}) {
+export async function launchExtension(/** @type {{ headful?: boolean, dist?: string, args?: string[] }} */ { dist, headful, args = [] } = {}) {
     // `E2E_DIST` runs a whole spec against a bundle built ELSEWHERE (`node build.mjs --outdir <dir>`), so a suite
     // can test a change while `dist/` is still loaded in a window someone is using — rebuilding it underneath a
     // live extension is exactly the hazard the build rule warns about.
@@ -43,6 +43,9 @@ export async function launchExtension(/** @type {{ headful?: boolean, dist?: str
             `--load-extension=${DIST}`,
             "--no-first-run",
             "--no-default-browser-check",
+            // Extra switches for one spec, e.g. `--host-resolver-rules` so several hostnames reach one local server
+            // as distinct origins (tests/e2e/site-access.spec.mjs).
+            ...args,
         ],
     });
     // The background service worker registers on load; wait for it if it hasn't appeared yet.
