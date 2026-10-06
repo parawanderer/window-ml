@@ -25,6 +25,19 @@ concurrency:
   group: tests-${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'ref' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+# WHAT THE TOKEN MAY DO is decided HERE, not in the repository's settings. Every job reads unless it says otherwise,
+# and the two that write (`pages`, `mobile-android`) declare exactly what for, so the file is the whole policy and a
+# reviewer sees a change to it in a diff.
+#
+# It used to live in the repository setting, and that is how it broke: the setting moved to read-only at some point
+# after 2026-10-04, nothing in the repo recorded it, and publishing the rolling `android-latest` release then failed
+# with "Resource not accessible by integration" despite the job's own `contents: write` (and, because the step
+# deletes before it creates, the release was simply gone). The repository default is now read-and-write,
+# which is safe ONLY because of this line: without it, the eleven jobs below that run `npm ci` and then the
+# branch's own code would each hold a token that can push.
+permissions:
+  contents: read
+
 jobs:
   # Can this change POSSIBLY affect the browser jobs? They take five to fifteen minutes, and a markdown
   # edit cannot reach them — but a wrong answer here silently skips a real check, which is worse than
