@@ -24,6 +24,8 @@ import { formatBytes } from "./resource-model";
 import { type Capacity } from "./resource-capacity";
 import { UNATTENDED_REFUSAL } from "./prompts";
 import { toolToken } from "./util";
+import { recordAppended, snapshotCurrent, type CurrentSnapshot, type RecordedMeta } from "./current-context";
+import type { RunLogEvent } from "./run-log";
 import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, shortType, isAliasRef, parseLabel, DEREF_TOOL, type TokenKind, type TokenValue, type DerefRead } from "./token-pipe";
 
 export type Approval = "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled";
@@ -262,6 +264,12 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
      *  ToolContext so `ml.dereference` inside an approved exec reads THIS run's outputs — and only while a
      *  tool of this run is executing. The loop owns the store, so it is the only place that can hand this out. */
     tokenSink?: (resolve: (ref: string, pipe?: string | string[]) => DerefRead) => void;
+    /** Called once at run start with a way to SNAPSHOT this run's context, for `ml.current` in a read-only `exec`
+     *  (docs/spec/CURRENT_CONTEXT.md). The same arrangement as `tokenSink`, for the same reason: the loop is the only
+     *  thing holding the messages and what it recorded about each, so it hands out the reader. The host adds what
+     *  the loop does not know (the model's name, the run's execution log) and passes the result to the evaluator.
+     *  Each call is a fresh copy at that instant, so a survey's messages and meta always describe the same moment. */
+    contextSink?: (snapshot: (extra?: { model?: string | null; log?: readonly RunLogEvent[] }) => CurrentSnapshot) => void;
     /** Which lexical metric ranks a near-miss on a pointer label (config `labelMatch`). Omitted = the
      *  default; the benchmark varies it. */
     labelMatch?: import("./contract").LexicalMetric;
@@ -353,6 +361,25 @@ async function preRender(
     finally { if (timer) clearTimeout(timer); }
 }
 
+/** The engine's count for an assistant message, when it measures the message. The completion count is the whole
+ *  GENERATION, so it measures the message only when nothing else was generated: a turn that also produced reasoning
+ *  counted that too, and reasoning is not re-sent in history, so its count would overstate what compacting the message
+ *  reclaims. Null then, and the size is estimated from what is actually in the context. (A model whose reasoning is
+ *  hidden entirely, never returned, cannot be told apart here and is counted.) */
+function countedFor(msg: { usage?: unknown; reasoning?: unknown }): number | null {
+    if (!msg.usage) return null;
+    if (typeof msg.reasoning === "string" ? msg.reasoning.trim() : msg.reasoning) return null;
+    const n = usageTokens(msg.usage).completion;
+    return n > 0 ? n : null;
+}
+
+/** Whether a tool's output was cut BEFORE the model saw it: the render says how many characters the model
+ *  received (`seen`, `valueSeen`), and the panel holds more. Absent means the model got all of it. */
+function cutBeforeModel(r: RenderDescriptor | undefined): boolean {
+    if (!r || (r.type !== "exec-out" && r.type !== "python-out")) return false;
+    return (r.seen != null && (r.stdout?.length ?? 0) > r.seen) || (r.valueSeen != null && (r.value?.length ?? 0) > r.valueSeen);
+}
+
 export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: AgentLoopDeps): Promise<Omit<AgentResult, "hash">> {
     const { tools, signal } = opts;
     // maxSteps is read LIVE each iteration (not destructured) so a handle can raise the cap mid-run
@@ -363,6 +390,32 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     // that says where it was typed. `chat_metadata` reports this one, not the run's first.
     let lastOrigin: PromptOrigin | null = opts.origin ?? null;
     const messages = deps.buildMessages(task);
+    // WHAT IS KNOWN ABOUT EACH MESSAGE, recorded at the moment it is appended, since nothing can reconstruct it
+    // afterwards (when it arrived, which step and tool, where it was typed, the engine's own size for it). Parallel
+    // to `messages`; read only through `contextSink`.
+    const startedTs = Date.now();
+    const recorded: (RecordedMeta | undefined)[] = [];
+    // The system prompt is built for this run; history carried in from an earlier turn is not this turn's, so it
+    // stays unknown rather than being stamped now; the task is the last message when it is this turn's prompt.
+    messages.forEach((m, i) => {
+        const role = (m as { role?: string }).role;
+        if (role === "system") recordAppended(recorded, i, i + 1, { ts: startedTs, step: 0 });
+        else if (i === messages.length - 1 && role === "user" && (m as { content?: unknown }).content === task)
+            recordAppended(recorded, i, i + 1, { ts: startedTs, step: 0, surface: opts.origin?.surface ?? null });
+    });
+    let currentStep = 0;
+    // A run with no hash still gets stable ids within itself.
+    const contextId = opts.runHash ?? `run-${startedTs.toString(36)}`;
+    opts.contextSink?.((extra) => snapshotCurrent({
+        run: { id: contextId, model: extra?.model ?? null, step: currentStep, maxSteps: maxSteps(), startedTs },
+        messages: messages as import("./contract-chat").NeutralMessage[], recorded, log: extra?.log, now: Date.now(),
+    }));
+    /** Run one of the host's push helpers and record whatever it appended. */
+    const pushed = (push: () => void, fact: Partial<RecordedMeta>): void => {
+        const from = messages.length;
+        push();
+        recordAppended(recorded, from, messages.length, { ts: Date.now(), step: currentStep, ...fact });
+    };
     const transcript: AgentTranscriptEntry[] = [];
     // Per-step render data for citable steps, so the outputs resolver can turn a cited/designated token into its
     // structured value (res.outputs — the headless-scripting payload).
@@ -621,6 +674,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     const cancelled = (steps: number): Omit<AgentResult, "hash"> => ({ summary: "Cancelled by the caller.", steps, transcript, elements: [], cancelled: true, tokenRenders });
 
     for (let step = 1; step <= maxSteps(); step++) {
+        currentStep = step;
         if (signal?.aborted) return cancelled(step - 1);
         // Mid-run steering: inject any user messages queued via a.say() since the last step, so the model
         // sees them on THIS turn — landing after the previous step's tool resolved, before the next model call.
@@ -630,7 +684,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // the page. A plain string carries no origin and leaves the current one standing.
             const text = typeof queued === "string" ? queued : queued.text;
             if (typeof queued !== "string" && queued.origin) lastOrigin = queued.origin;
-            deps.pushUser?.(messages, text);
+            pushed(() => deps.pushUser?.(messages, text), { surface: lastOrigin?.surface ?? null });
         }
         // A CANCEL_RUN mid-generation aborts the in-flight fetch, which REJECTS here — convert that to a
         // clean cancel (don't propagate as a run error), same as the boundary check. Re-throw a real error.
@@ -648,7 +702,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             if (msg.usage || msg.reasoning) deps.emit?.({ step, usage: msg.usage, reasoning: msg.reasoning });
             // Record the answer in history so a background-hosted RESUME continues WITH it in context
             // (mirrors the page loop). Harmless for a one-shot run — the messages array is then dropped.
-            deps.pushAssistant(messages, { content: msg.content || "" });
+            pushed(() => deps.pushAssistant(messages, { content: msg.content || "" }), { counted: countedFor(msg) });
             // Record the answer in the transcript too, so res.transcript is a complete turn (its actions
             // AND its reply) — otherwise a run reads as tool calls with no conclusion. Skip an empty answer.
             // SALVAGE: a thinking model can put its whole conclusion in the reasoning/thinking channel and
@@ -669,7 +723,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             if (thought) transcript.push({ thought });
             deps.emit?.({ step, thought: thought || undefined, reasoning: msg.reasoning, usage: msg.usage });
         }
-        deps.pushAssistant(messages, msg);
+        pushed(() => deps.pushAssistant(messages, msg), { counted: countedFor(msg) });
 
         const pendingImages: { image: string; label: string }[] = [];   // inline vision — injected after the step
         let stopRun = false;   // a gate resolved as CANCELLED (Stop) → exit after this step, even if the signal never aborted
@@ -880,7 +934,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const renderInWithDiff = revision && tr?.renderIn && (tr.renderIn.type === "code" || tr.renderIn.type === "python-in")
                 ? { ...tr.renderIn, revision } : tr?.renderIn;
             deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, ...(tokenId ? { token: tokenId } : {}), ...(forModel !== result ? { modelResult: forModel } : {}), approval, renderIn: renderInWithDiff, renderOut: tr?.renderOut, feedback: tr?.feedback, elements: tr?.elements, reused: tr?.reused, ...(lastToolMs != null ? { toolMs: lastToolMs } : {}), ...(lastApproveMs != null ? { approveMs: lastApproveMs } : {}), ...(lastDispatchMs ? { dispatchMs: lastDispatchMs } : {}), ...(tr?.remoteMs ? { remoteMs: tr.remoteMs } : {}) });   // DONE (patches the START)
-            deps.pushToolResult(messages, call, forModel);
+            pushed(() => deps.pushToolResult(messages, call, forModel), { seq: s, tool: call.name, truncated: cutBeforeModel(tr?.renderOut) });
             if (tr?.image) pendingImages.push({ image: tr.image, label: tr.imageLabel || "screenshot" });
             // Multiple images from one call (look's overlay + no-overlay) → each becomes its own inline image.
             if (tr?.images) for (const im of tr.images) pendingImages.push({ image: im.image, label: im.label || "screenshot" });
@@ -890,7 +944,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         if (signal?.aborted || stopRun) return cancelled(step);
         // Inline vision: hand any screenshots this step captured to the model as a user turn, so the
         // next step reasons over the real pixels (the native `look` path; a text-only driver omits the dep).
-        if (pendingImages.length) deps.pushToolImages?.(messages, pendingImages);
+        if (pendingImages.length) pushed(() => deps.pushToolImages?.(messages, pendingImages), {});
     }
     return { summary: `Stopped at the ${maxSteps()}-step cap without finishing.`, steps: maxSteps(), transcript, elements: [], hitCap: true, tokenRenders };
 }
