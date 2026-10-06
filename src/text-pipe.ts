@@ -65,9 +65,29 @@ export const PIPE_SYNTAX =
     "A stage's argument needs quoting if it contains spaces; you can also pass an ARRAY with one stage per " +
     "entry ([\"grep -E error|warn\", \"head 5\"]), which is never re-split, so a `|` inside a stage needs no quotes.";
 const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** What a CALLER that cannot trust the pipeline's input may hold it to. The read-only `exec` dialect is the one
+ *  that passes these: there a pipe is a single host call doing work the dialect's step budget cannot see, over a
+ *  pattern the model wrote. Every other caller passes nothing and gets the pipeline exactly as before. */
+export interface PipeLimits {
+    /** Called with every regex SOURCE just before it is compiled (after `-F` escaping and `-w` wrapping, so it is
+     *  the pattern that will actually run). Throw to refuse it. */
+    onPattern?(source: string): void;
+    /** Called once per stage with the size of that stage's input, in characters. Throw to stop the pipeline. */
+    charge?(chars: number): void;
+    /** Characters a stage may produce. Every stage's output is checked after it runs. The two that can grow their
+     *  input by MORE than a constant factor are checked before they build anything, since there the allocation is
+     *  the cost: `sed` (one replacement per match, a match per character with `g`) and the JSON stages that
+     *  pretty-print (quadratic in nesting depth). */
+    maxChars?: number;
+    /** How an exceeded `maxChars` is reported. Absent: an ordinary Error. */
+    tooLarge?(message: string): never;
+}
 /** Split on newlines, dropping a single trailing "\n" so a text that ends in a newline isn't seen as having a
  *  phantom empty last line (matches how the shell tools treat a trailing line terminator). */
 const toLines = (text: string): string[] => text.replace(/\n$/, "").split("\n");
+/** The characters {@link fromLines} would produce: every line plus its newline. */
+const charsOf = (lines: string[]): number => { let n = lines.length; for (const l of lines) n += l.length; return n; };
 const fromLines = (lines: string[]): string => lines.join("\n");
 
 /** Quote-aware split of a pipeline STRING into stage strings, on unquoted `|` only. Respects '…' and "…"
@@ -149,7 +169,7 @@ function parseArgs(cmd: string, argv: string[], allowed: string, numeric: string
     return { flags, nums, pos };
 }
 
-function grep(lines: string[], argv: string[]): string[] {
+function grep(lines: string[], argv: string[], limits?: PipeLimits): string[] {
     // `E` (extended regex) is accepted as a NO-OP — JS RegExp is already extended-style, so `grep -E` just works.
     const { flags, nums, pos } = parseArgs("grep", argv, "ivncFwoE", "ABC");
     if (!pos.length) throw new Error("`grep` needs a PATTERN, e.g. `grep -i pricing`.");
@@ -157,6 +177,7 @@ function grep(lines: string[], argv: string[]): string[] {
     const i = flags.has("i"), v = flags.has("v"), n = flags.has("n"), count = flags.has("c"), only = flags.has("o");
     let src = flags.has("F") ? escapeRegex(pattern) : pattern;
     if (flags.has("w")) src = `\\b(?:${src})\\b`;
+    limits?.onPattern?.(src);
     let testRe: RegExp, gRe: RegExp;
     try { testRe = new RegExp(src, i ? "i" : ""); gRe = new RegExp(src, i ? "gi" : "g"); }
     catch (e) { throw new Error(`\`grep\` — invalid regex ${JSON.stringify(pattern)} (${(e as Error).message}). Use -F for a literal string.`); }
@@ -232,7 +253,7 @@ function sortLines(lines: string[], argv: string[]): string[] {
  * `s|a|b|` is how a shell user already writes that. `$1`-style backreferences work, since the replacement is
  * handed to `String.replace` as written.
  */
-function sed(lines: string[], argv: string[]): string[] {
+function sed(lines: string[], argv: string[], limits?: PipeLimits): string[] {
     // argv[0] is the verb itself (the dispatcher passes the whole stage), and the expression is everything
     // after it — rejoined, because a substitution may legitimately contain spaces.
     const expr = argv.slice(1).join(" ").trim();
@@ -263,10 +284,39 @@ function sed(lines: string[], argv: string[]): string[] {
     const flags = rawFlags.trim();
     const bad = [...flags].find((f) => !"gi".includes(f));
     if (bad) throw new Error(`sed: unknown flag "${bad}" — only g (every match on a line) and i (ignore case) are supported.`);
+    limits?.onPattern?.(pattern);
     let re: RegExp;
     try { re = new RegExp(pattern, flags.includes("g") ? (flags.includes("i") ? "gi" : "g") : (flags.includes("i") ? "i" : "")); }
     catch (e) { throw new Error(`sed: ${String((e as Error).message)}. Escape a literal metacharacter, or use grep -F to match one literally.`); }
-    return lines.map((l) => l.replace(re, replacement));
+    const max = limits?.maxChars;
+    if (max == null) return lines.map((l) => l.replace(re, replacement));
+    // The one stage that can GROW its input, and by a product: `s/./<a long string>/g` puts a copy of the
+    // replacement at every character. So the size is bounded BEFORE a line is built, not after, since the
+    // allocation is the cost. A `$&`/`$1`/`$<name>`/`` $` ``/`$'` in the replacement inserts text from the line,
+    // so each one is counted as a whole line: an upper bound, never an estimate.
+    const refs = (replacement.match(/\$(?:[&`']|\d|<[^>]*>)/g) ?? []).length;
+    const out: string[] = [];
+    let total = 0;
+    for (const l of lines) {
+        const perMatch = replacement.length + refs * l.length;
+        let bound = l.length + (re.global ? (l.length + 1) * perMatch : perMatch);
+        // The worst case is loose for a `g` substitution on a long line. Before refusing on it, count the matches
+        // that will actually be replaced: linear in the line for any pattern `onPattern` let through.
+        if (total + bound > max && re.global) {
+            let n = 0;
+            for (const _ of l.matchAll(re)) n++;
+            bound = l.length + n * perMatch;
+        }
+        if (total + bound > max) {
+            const msg = `sed: this substitution would produce over ${max.toLocaleString("en-US")} characters`;
+            if (limits?.tooLarge) limits.tooLarge(msg);
+            throw new Error(msg);
+        }
+        const next = l.replace(re, replacement);
+        total += next.length + 1;
+        out.push(next);
+    }
+    return out;
 }
 
 function uniq(lines: string[], argv: string[]): string[] {
@@ -315,6 +365,33 @@ function parseJson(lines: string[], cmd: string): unknown {
     catch (e) { throw new Error(`\`${cmd}\` — this looks like JSON but doesn't parse (${(e as Error).message}).`); }
 }
 const emit = (v: unknown): string[] => toLines(typeof v === "string" ? v : JSON.stringify(v, null, 2));
+
+/** {@link emit}, refused BEFORE it allocates when the pretty-printed result would exceed `limits.maxChars`.
+ *
+ *  Pretty-printing is QUADRATIC in nesting depth: every line is indented by its depth, so `"[".repeat(3000) +
+ *  "]".repeat(3000)` (6,000 characters) re-emits through `.` as 18,000,000 — measured. Checking the output after the
+ *  fact is too late, since building it is the cost. So the size is bounded first, by an ITERATIVE walk (a recursive
+ *  one overflows the stack at the same depth `JSON.stringify` does): every node costs at most its indentation and a
+ *  newline, so the result is at most `compact + nodes x (2 x depth + 2)`. Exact for the deep-array case, loose for
+ *  ordinary JSON, where it is far under the cap anyway. */
+function emitWithin(v: unknown, compact: number, limits?: PipeLimits): string[] {
+    const max = limits?.maxChars;
+    if (max != null && v !== null && typeof v === "object") {
+        let nodes = 0, depth = 0;
+        const stack: [unknown, number][] = [[v, 0]];
+        while (stack.length) {
+            const [x, d] = stack.pop()!;
+            nodes++; if (d > depth) depth = d;
+            if (x !== null && typeof x === "object") for (const c of Object.values(x as object)) stack.push([c, d + 1]);
+        }
+        if (compact + nodes * (2 * depth + 2) > max) {
+            const msg = `this would print over ${max.toLocaleString("en-US")} characters (${nodes.toLocaleString("en-US")} values nested ${(depth + 1).toLocaleString("en-US")} levels deep)`;
+            if (limits?.tooLarge) limits.tooLarge(msg);
+            throw new Error(msg);
+        }
+    }
+    return emit(v);
+}
 
 /** `.a.b[0]` → the value there. Names the segment that failed and what WAS available, so a wrong path is a
  *  one-step correction rather than a bare `undefined`. */
@@ -366,7 +443,7 @@ function keysOf(lines: string[]): string[] {
  *  prelude makes for `pd.read_csv('current')`.
  *
  *  Pure: no I/O, no DOM, no tokens spent. Throws the dialect's own actionable Error on a bad stage. */
-export function mlPipe(source: unknown, pipe?: string | string[] | null): string {
+export function mlPipe(source: unknown, pipe?: string | string[] | null, limits?: PipeLimits): string {
     let text: unknown = source;
     if (source && typeof source === "object") {
         const r = source as { markdown?: unknown; text?: unknown };
@@ -376,7 +453,7 @@ export function mlPipe(source: unknown, pipe?: string | string[] | null): string
         throw new Error(`ml.pipe needs a string (or a fetch result), got ${text === null ? "null" : Array.isArray(text) ? "an array" : typeof text}. For an object, JSON.stringify it first — the \`.path\`/keys/schema stages then read it.`);
     }
     if (pipe == null || (Array.isArray(pipe) ? !pipe.length : !pipe.trim())) return text;   // no stages = unchanged
-    return runPipe(text, pipe);
+    return runPipe(text, pipe, limits);
 }
 
 /** Run a `grep | head | …` pipeline over `text`, returning the transformed text. Throws an actionable Error on
@@ -385,19 +462,22 @@ export function mlPipe(source: unknown, pipe?: string | string[] | null): string
  *  `pipe` is either the dialect STRING (`"grep -i x | head 5"`, split on unquoted `|`) or an ARRAY with one
  *  stage per entry (`["grep -E error|warn", "head 5"]`), which is never re-split — so a stage may contain a
  *  bare `|` with no quoting. The two forms are equivalent for stages that contain no `|`. */
-export function runPipe(text: string, pipe: string | string[]): string {
+export function runPipe(text: string, pipe: string | string[], limits?: PipeLimits): string {
     const stages = pipelineArgv(pipe);
     let lines = toLines(text);
     for (const argv of stages) {
         const cmd = argv[0];
+        // Charged on what THIS stage reads, so a stage after a `head 5` costs what five lines cost.
+        const read = charsOf(lines);
+        limits?.charge?.(read);
         switch (cmd) {
-            case "grep": lines = grep(lines, argv); break;
+            case "grep": lines = grep(lines, argv, limits); break;
             case "head": lines = headTail("head", lines, argv); break;
             case "tail": lines = headTail("tail", lines, argv); break;
             case "wc": lines = wc(lines, argv); break;
             case "sort": lines = sortLines(lines, argv); break;
             case "uniq": lines = uniq(lines, argv); break;
-            case "sed": lines = sed(lines, argv); break;
+            case "sed": lines = sed(lines, argv, limits); break;
             case "cat": break;   // a harmless no-op if the model prefixes `cat |` out of habit
             // `count` is the STRUCTURE-AWARE size: elements of an array, rows of a table, keys of an object,
             // lines of text. `wc -l` counts LINES, which after a path stage means the lines of pretty-printed
@@ -418,7 +498,7 @@ export function runPipe(text: string, pipe: string | string[]): string {
             case "values": {
                 const j = parseJson(lines, "values");
                 if (!isObj(j)) throw new Error(`\`values\` needs an object; this is ${describeValue(j)}.`);
-                lines = emit(Object.values(j)); break;
+                lines = emitWithin(Object.values(j), read, limits); break;
             }
             // The SHAPE, not the data — the cheapest read of a big structure, and what to reach for first.
             // `jsonschema` is accepted as the same thing: models reach for that name.
@@ -430,8 +510,21 @@ export function runPipe(text: string, pipe: string | string[]): string {
                 break;
             }
             default:
-                if (cmd.startsWith(".")) { lines = emit(pickPath(parseJson(lines, cmd), cmd)); break; }
+                if (cmd.startsWith(".")) { lines = emitWithin(pickPath(parseJson(lines, cmd), cmd), read, limits); break; }
                 throw new Error(`\`${cmd}\` isn't a supported text command. This is a small scanning pipeline (${CMDS}), NOT a real shell — for a transform, process the text in a script instead.`);
+        }
+        // Every stage's OUTPUT is held to the same bound, not only the two that are checked before they build: the
+        // line stages grow linearly — `grep -on .` emits a numbered line per character, four times its input
+        // (measured) — so after one of those the result can be over the cap with nothing quadratic involved.
+        // Charged as well as checked, since producing it was work proportional to it.
+        if (limits) {
+            const made = charsOf(lines);
+            if (limits.maxChars != null && made > limits.maxChars) {
+                const msg = `\`${cmd}\` produced over ${limits.maxChars.toLocaleString("en-US")} characters`;
+                if (limits.tooLarge) limits.tooLarge(msg);
+                throw new Error(msg);
+            }
+            limits.charge?.(made);
         }
     }
     return fromLines(lines);

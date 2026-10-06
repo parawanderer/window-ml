@@ -55,6 +55,12 @@ export const MAX_STRING = 10_000_000;
  *  any real DOM or JSON tree, and far below where the JS stack itself would overflow, so the cap is what stops a
  *  runaway rather than a RangeError a dialect `try` could catch. */
 export const MAX_CALL_DEPTH = 256;
+/** Characters of pipe INPUT that cost one step. `ml.pipe` is one host call doing work proportional to its input, which
+ *  the step budget never sees, so each stage is charged for what it reads. Measured (M-series laptop, 1 MB of mixed
+ *  config and prose lines): `sort` is the slowest stage at ~200M chars/s, `sed` 260M, `grep -E` 510M, `head` 2.7G.
+ *  At ~3.2M steps/s that makes 64 chars a step for the slowest, so a whole budget spent on pipes is about a second of
+ *  sorting, the same bound the budget sets on everything else, and every faster stage is charged MORE than it costs. */
+export const PIPE_CHARS_PER_STEP = 64;
 
 /** A regex that can backtrack exponentially: a REPEATED group that itself contains a quantifier or an alternation
  *  (`(a+)+`, `(\w+\s?)*`, `(a|a)+`). V8 has no match timeout, so one `.test()` of such a pattern on a 40-character
@@ -886,7 +892,7 @@ export const ML_READONLY_METHODS = ["getModel", "config", "models", "capabilitie
 /** Build the `ml` object the dialect sees: ONLY {@link ML_READONLY_METHODS}, bound to the real API.
  *  A purpose-built facade rather than `window.ml` itself, so the free set is enforced by what exists,
  *  not only by a name check. Returns null when there's no ml (→ `ml` isn't in scope at all). */
-function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown): Record<string, unknown> | null {
+function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown, meter?: { charge(steps: number): void }): Record<string, unknown> | null {
     if (!ml || typeof ml !== "object") return null;
     const out: Record<string, unknown> = Object.create(null);
     for (const name of ML_READONLY_METHODS) {
@@ -921,6 +927,44 @@ function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown): Recor
             // you are on reused no grant, so it is not reported as one.
             if (!(r as { live?: unknown }).live) reused?.push(String(url));
             return r;
+        };
+    }
+    // `ml.pipe(text, stages)` — the `grep | head` line scanner, which models reach for constantly, often in place of
+    // the JS they would otherwise have to write (`ml.pipe(JSON.stringify(cfg, null, 1), "grep -iE 'model|approve' |
+    // head 40")`). Pure: no I/O, no DOM, no tokens. Free here on three conditions the host enforces through `limits`,
+    // because one pipe is one host call the step budget cannot otherwise see:
+    //   - every regex it is about to compile passes `riskyRegex` (V8 has no match timeout, and `grep -E` and `sed`
+    //     compile what the model wrote), else the survey goes to the human;
+    //   - each stage is charged its input at PIPE_CHARS_PER_STEP, so a pipe inside a `.map` costs what it does;
+    //   - no stage may produce more than MAX_STRING characters, and the two that grow by more than a constant factor
+    //     (`sed`, and JSON pretty-printing, which is quadratic in depth) are refused BEFORE they build it.
+    // The SOURCE is unwrapped HERE, from own data properties only: handing the host an arbitrary object would let
+    // it read a getter, and on the page a getter is the page's code. A third argument from the script is never
+    // forwarded, so a script cannot pass its own (absent) limits.
+    const hostPipe = (ml as Record<string, unknown>)["pipe"];
+    if (typeof hostPipe === "function") {
+        const own = (o: object, k: string): unknown => Object.getOwnPropertyDescriptor(o, k)?.value;
+        out.pipe = (source: unknown, stages?: unknown): unknown => {
+            let text: unknown = source;
+            if (source !== null && typeof source === "object" && (Array.isArray(source) || isWritableTarget(source))) {
+                const md = own(source, "markdown"), tx = own(source, "text");
+                if (typeof md === "string" || typeof tx === "string") text = typeof md === "string" ? md : tx;
+            }
+            if (typeof text !== "string") {
+                const got = text === null ? "null" : Array.isArray(text) ? "an array" : typeof text === "object" ? "an object" : typeof text;
+                throw new Error(`ml.pipe needs a string (or a fetch result), got ${got}. For an object, JSON.stringify it first — the \`.path\`/keys/schema stages then read it.`);
+            }
+            if (stages != null && typeof stages !== "string" && !(Array.isArray(stages) && stages.every(x => typeof x === "string")))
+                throw new Error("ml.pipe's stages are a string (\"grep x | head 5\") or an array of strings, one stage each.");
+            return (hostPipe as (...a: unknown[]) => unknown).call(ml, text, Array.isArray(stages) ? [...stages] : stages, {
+                onPattern: (src: string) => {
+                    const why = riskyRegex(src);
+                    if (why) throw new Denied(`ml.pipe: the pattern ${JSON.stringify(src)} has ${why}, which can run for hours on one line — it needs approval`);
+                },
+                charge: (chars: number) => meter?.charge(Math.ceil(chars / PIPE_CHARS_PER_STEP)),
+                maxChars: MAX_STRING,
+                tooLarge: (msg: string): never => { throw new NotInDialect(`${msg}, too much to build without asking`); },
+            });
         };
     }
     // `ml.answer` — the run's curated answer set (a curate-only facade: add/remove/clear/dump/length, built by
@@ -961,6 +1005,8 @@ class Evaluator {
     // property write on one of these is refused: that is what keeps every loop's trip count fixed at its start.
     private iterating = new Map<object, number>();
 
+    /** Charge work a host call does that the evaluator cannot see (a pipe's stages), against the same budget. */
+    spend(n: number): void { this.tick(n); }
     private tick(n = 1): void {
         if ((this.fuel -= n) < 0) throw new NotInDialect(`too much work to run without asking: over ${this.budget} steps`);
     }
@@ -1562,7 +1608,9 @@ export async function evalReadonly(code: string, doc: Document, ml?: unknown, an
     const logs: string[] = [];
     const rec = (...a: unknown[]) => logs.push(a.map(x => typeof x === "string" ? x : safeStr(x)).join(" "));
     const reused: string[] = [];   // ml.fetch cache hits — URLs this survey re-read from a prior approval
-    const facade = mlFacade(ml, reused, answerFacade);
+    // The pipe charges the step budget, which lives on the evaluator built below: the meter forwards to it once it exists.
+    let charge: (steps: number) => void = () => {};
+    const facade = mlFacade(ml, reused, answerFacade, { charge: (n) => charge(n) });
     const root: Record<string, unknown> = Object.create(null);
     Object.assign(root, {
         document: doc, Array, Object, JSON, Math, String, Number, Boolean, Promise,
@@ -1586,6 +1634,7 @@ export async function evalReadonly(code: string, doc: Document, ml?: unknown, an
     // asked to approve a script whose first half had already run. The caller's checkpoint restores it.
     const restore = opts.checkpoint?.();
     const ev = new Evaluator(facade, opts.stepBudget);
+    charge = (n) => ev.spend(n);
     try {
         const value = await runAsync(ev.eval(ast, top));
         return { value, logs, reused };

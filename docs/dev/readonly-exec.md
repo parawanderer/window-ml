@@ -256,9 +256,21 @@ still take hours: loops nested over large collections, an array doubled forty ti
 | `STEP_BUDGET` | 3,000,000 steps | Every node evaluated and every element iterated costs one. About a second of main thread when exhausted (measured at 3.2M steps/s); a filter-and-map survey over 20,000 table rows uses 207k. Deterministic. |
 | `MAX_COLLECTION` | 1,000,000 | The largest array, `Set` or `Map` one step may produce, checked before `Array(n)`, `new Array(n)` and `Array.from({ length })` run and after every host call. |
 | `MAX_STRING` | 10,000,000 chars | The longest string one step may produce: checked before `repeat`, `padStart`, `padEnd` and `join`, and after `+`, templates and host calls. |
-| `riskyRegex` | pattern check | A repeated group that contains a quantifier or an alternation (`(a+)+`, `(\w+\s?)*`, `(a\|a)+`) can backtrack exponentially inside one host call, where no budget reaches. Refused before it runs, for regex literals, `new RegExp` and string patterns given to `match`, `matchAll` and `search`. |
+| `riskyRegex` | pattern check | A repeated group that contains a quantifier or an alternation (`(a+)+`, `(\w+\s?)*`, `(a\|a)+`) can backtrack exponentially inside one host call, where no budget reaches. Refused before it runs, for regex literals, `new RegExp`, string patterns given to `match`, `matchAll` and `search`, and every pattern `ml.pipe`'s `grep`/`sed` stages are about to compile. |
+| `PIPE_CHARS_PER_STEP` | 64 chars | `ml.pipe` is one host call doing work proportional to its input, which the step count never sees: a pipe inside a `.map` would cost one step per call. So each stage is charged its input and its output at this rate. Calibrated on the slowest stage (`sort`, ~200M chars/s) so a budget spent on pipes is about a second, like everything else. |
 
 Going over any limit throws `NotInDialect`, so the script goes to the human, who sees the code.
+
+**`ml.pipe` is the one host call that can GROW its input by more than a constant factor**, so `MAX_STRING` alone does
+not bound it: that check runs after a host call returns, and there the allocation already happened. Two stages are
+refused BEFORE they build: `sed` (a copy of the replacement per match, and a match per character with `g`; a `$&`
+counts as a whole line) and the JSON stages that pretty-print (`.path`, `values`), which are quadratic in nesting
+depth: `"[".repeat(3000) + "]".repeat(3000)`, 6,000 characters, re-emitted through `.` as 18,000,000 in one call
+(measured), bounded by an iterative walk since the recursive one overflows the stack at the same depth stringify
+does. Every other stage's output is checked after it runs, which catches the linear growers (`grep -on .` is four
+times its input). The pipe's SOURCE is unwrapped by the dialect from own DATA properties, never by the host, so a
+getter on a page object never runs, and a third argument from the script is never forwarded, so it cannot pass limits
+of its own (`tests/readonly-pipe.test.mjs`).
 
 **How it was lost once.** Recursion has been possible since the first version (2026-07-20), bounded only by a
 5000-deep guard the JS stack overflowed before reaching, and exponential when a function called itself twice.

@@ -140,6 +140,7 @@ const selfIntrospectionSection = async (): Promise<string> => {
     return ["## Reading your own setup (no approval needed)", "",
         `\`${ML_READONLY_METHODS.map(m => `ml.${m}()`).join("`, `")}\` are read-only, so calling them ` +
         "from `exec` runs with NO approval prompt — that's how to answer \"which model am I?\" and the like. " +
+        "`ml.pipe(text, stages)` is free too, unless a `grep`/`sed` pattern could backtrack. " +
         "Every other `ml` method still asks the user first."].join("\n");
 };
 
