@@ -48,6 +48,16 @@ export function promptSurfaceNote(origin?: PromptOrigin | null): string | null {
     return `This instruction was typed in ${means}.`;
 }
 
+/**
+ * The surface a relayed message names, if it is one a person can type into; anything else is no surface at all. The
+ * one reading of a `surface` field that crossed a relay, so the places that read one cannot disagree about what counts.
+ * @param s the field as it arrived
+ * @returns the surface, or undefined
+ */
+export function promptSurfaceOf(s: unknown): PromptSurface | undefined {
+    return s === "hud" || s === "overlay" || s === "devtools" || s === "chat" ? s : undefined;
+}
+
 /** The provenance clause for a run's system prompt. Replaces the HUD-only hint: every surface gets one, and the
  *  console case says so too, because "how do I invoke you?" deserves the answer they are living in. */
 export function promptSurfaceClause(origin?: PromptOrigin | null): string {

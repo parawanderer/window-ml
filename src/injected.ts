@@ -3,7 +3,7 @@
 import type { MlApi } from "./contract";
 import type { DerefValue } from "./contract-pointers";
 import type { MlHistory } from "./contract-chat";
-import type { MlTool, MlAgentHandle, MlAnswer } from "./contract-agent";
+import type { MlTool, MlAnswer } from "./contract-agent";
 import type { AnswerMedia } from "./contract-render";
 import type { RebuildConfig } from "./contract-messages";
 import { htmlToMarkdown } from "./html-to-md";
@@ -14,8 +14,8 @@ import { tableFromDelimited, tableShape, asTable } from "./table-data";
 import { isTable } from "./table-brand";
 import { makeAnswerFacade } from "./answer-set";
 import { accessibleName, roleOf, ariaState } from "./a11y";
-import { HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, askAboutTask } from "./prompts";
-import { promptSurfaceClause } from "./prompt-surface";
+import { askAboutTask } from "./prompts";
+import { promptSurfaceOf } from "./prompt-surface";
 import { pageContext, resolvePoint, resolveBox, agentState, mlRange } from "./util";
 import { suspiciousChars } from "./security";
 import { emitDebug, sessionRegistry, agentRegistry, handleRegistry } from "./bus";
@@ -565,13 +565,17 @@ import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } fro
     // async <script> injection.
     window.addEventListener("message", (e: MessageEvent) => {
         if (e.source !== window || !e.data || e.data.type !== "ADOPT_RUN") return;
-        const { runId, rebuild, resume } = e.data as { runId?: string; rebuild?: RebuildConfig; resume?: boolean };
+        const { runId, rebuild, resume, reply } = e.data as { runId?: string; rebuild?: RebuildConfig; resume?: boolean; reply?: string };
         if (!runId || !rebuild) return;
         try { (window.ml as unknown as MlApi)._adoptRun(runId, rebuild); }
         catch { /* rebuild failed → the barrier times out and the loop gets a clear "no active run" error */ }
         // Carry the DESTINATION page's context back: the background folds it into the `navigate` tool's
         // result, so the model's next turn is oriented on the new page without a wasted look()/pageInfo turn.
-        window.postMessage({ type: "RUN_READOPTED", runId, pageInfo: pageContext(n => (rebuild.toolNames || []).includes(n)) }, "*");
+        const pageInfo = pageContext(n => (rebuild.toolNames || []).includes(n));
+        // A run the WORKER is starting here (sw-run-start.ts) asked for this adopt and is waiting on its own reply id:
+        // it is not a navigation, so it must not release a barrier or leave a page context for a `navigate` to read.
+        if (reply) { window.postMessage({ type: "RUN_ADOPTED_NOW", reply, pageInfo }, "*"); return; }
+        window.postMessage({ type: "RUN_READOPTED", runId, pageInfo }, "*");
         // Durable resume: an INTERRUPTED (SW-evicted) run auto-CONTINUES from its checkpointed history — the
         // resume handle _adoptRun just re-registered drives a RESUME_RUN (empty follow-up = "carry on").
         if (resume) {
@@ -580,24 +584,6 @@ import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } fro
         }
     });
     window.postMessage({ type: "PAGE_ADOPT_HELLO" }, "*");
-
-    // The chat page's `session.resume`: a SAVED run picked up on THIS page, relayed by the shell as
-    // __mlAdoptSession. The same `_adoptRun` a navigation uses, and for the same reason — the run's builtin
-    // toolset has to exist in THIS document for the loop's held delegated tool to run here.
-    //
-    // It starts nothing. Adopting registers the run by hash, so the person's next message reaches it through the
-    // `agentRegistry` branch of __mlSessionSend, exactly as a run that navigated does. A resume that took a turn
-    // would be a turn nobody asked for.
-    window.addEventListener("message", (e: MessageEvent) => {
-        if (e.source !== window || !e.data || !e.data.__mlAdoptSession) return;
-        const { hash, rebuild, reqId } = e.data.__mlAdoptSession as { hash?: string; rebuild?: RebuildConfig; reqId?: string };
-        const done = (outcome: string): void => {
-            if (typeof reqId === "string") window.postMessage({ __mlSessionDone: { reqId, outcome } }, "*");
-        };
-        if (!hash || !rebuild) { done("none"); return; }
-        try { (window.ml as unknown as MlApi)._adoptRun(hash, rebuild); done("adopted"); }
-        catch { done("none"); }   // the toolset could not be rebuilt here: the worker un-hydrates and says so
-    });
 
     // Sidebar hover-highlight for @pt/@box: the shell (a content script) can't read this main-world
     // point/box registry, so it asks us to resolve a token to viewport coords, then draws the overlay
@@ -625,84 +611,6 @@ import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } fro
         const point = resolvePoint(token);
         const box = point ? null : resolveBox(token);
         window.postMessage({ type: "ML_HL_AT", seq: e.data.seq, point: point || null, box: box || null }, "*");
-    });
-
-    // The HUD composer (Spotlight bar) asks the page to START a run — relayed by the shell as
-    // __mlStartAgent. Run it as a real ml.agent() call so it's a genuine session (hash, resumable,
-    // appendable), which in off/devtools mode routes to the background-hosted loop like a console run.
-    // Grants nothing extra: the page already has window.ml.agent, and every tool gates on the background.
-    window.addEventListener("message", (e: MessageEvent) => {
-        if (e.source !== window || !e.data || !e.data.__mlStartAgent) return;
-        let task = String(e.data.__mlStartAgent.task || "").trim();
-        // Composer attachments (pasted/uploaded screenshots) — the shell already sanitised them to data URLs.
-        const images = Array.isArray(e.data.__mlStartAgent.images) ? e.data.__mlStartAgent.images as string[] : undefined;
-        // Right-click "ask about this": the shell resolved the clicked element to a clean ElementContext.
-        // Frame it around the user's question (content as context + the scope selector for the DOM tools).
-        const elementContext = e.data.__mlStartAgent.elementContext as import("./contract").ElementContext | undefined;
-        if (elementContext && typeof elementContext.selector === "string") task = askAboutTask(task, elementContext);
-        // A `reqId` means somebody is WAITING to be told which session this became: the chat page's `agent.start`,
-        // which must answer with a session id. The HUD composer sends none and is unchanged.
-        const reqId = typeof e.data.__mlStartAgent.reqId === "string" ? e.data.__mlStartAgent.reqId : undefined;
-        const answer = (outcome: string, hash?: string): void => {
-            if (reqId) window.postMessage({ __mlSessionDone: { reqId, outcome, ...(hash ? { hash } : {}) } }, "*");
-        };
-        if (!task && !(images && images.length)) { answer("none"); return; }   // allow an image-only start
-        // A UI-started run is a PRODUCT surface (a user typing "click the button" expects click to work),
-        // so give it a capable default kit — click/type/python ON TOP of the default domTools + auto-wired
-        // look/locate. (The console `ml.agent` primitive stays minimal — callers compose their own.) Each
-        // added tool still requires approval, gated by the unforgeable card.
-        const maxSteps = Number(e.data.__mlStartAgent.maxSteps);
-        const ml = window.ml as unknown as {
-            createAgent: (o?: unknown) => MlAgentHandle & { run: (t?: string, images?: (string | HTMLImageElement)[]) => Promise<unknown> };
-            clickTool: () => unknown; typeTool: () => unknown; pythonTool: () => unknown; chatMetaTool: () => unknown;
-        };
-        // `systemAppend` (appended to the system prompt) rather than `system` (which would REPLACE the
-        // preamble): the run still needs the whole method, it just isn't a console call.
-        // chatMetaTool: a HUD user often asks "which model am I / how much context have I used?" — give the
-        // HUD agent the self-introspection tool by default (a scripted ml.agent still opts in via extraTools).
-        // HUD verbosity (passed by the shell): quiet → tell the model to stay silent between steps; progress
-        // → keep between-step prose to one short live line. Defaults to progress.
-        const proseClause = e.data.__mlStartAgent.hud === "quiet" ? HUD_PROSE_QUIET : HUD_PROSE_PROGRESS;
-        // Commander/HUD runs allow cross-origin navigation by default — a HUD user driving a real task often
-        // needs to cross sites, and each crossing still hits the consent gate (a new origin prompts), so it's
-        // safe. A scripted console `ml.agent()` still defaults to same-site only.
-        // WHERE THIS PROMPT WAS TYPED, as the sender's own channel reported it (the content shell knows its mode,
-        // the session relay knows a command came over the port). Unrecognised or absent → the HUD, which is the
-        // only surface that reaches this handler without one.
-        const surface = e.data.__mlStartAgent.surface;
-        const origin = { surface: (surface === "overlay" || surface === "devtools" || surface === "chat" ? surface : "hud") as import("./contract-run").PromptSurface };
-        // The provenance clause replaces a hint that could only say "the HUD, not the console": there are four
-        // places a prompt can come from now, and which one it was changes whether the person can see the page.
-        const opts: Record<string, unknown> = { extraTools: [ml.clickTool(), ml.typeTool(), ml.pythonTool(), ml.chatMetaTool()], systemAppend: promptSurfaceClause(origin) + proseClause, crossOrigin: true, origin };
-        if (Number.isFinite(maxSteps) && maxSteps > 0) opts.maxSteps = maxSteps;   // the composer's step budget
-        // The composer's per-call model pick (omitted ⇒ the configured default) + a per-call FORCE-NATIVE
-        // vision override for a non-Ollama model (omitted ⇒ ml.agent's default vision routing). Same knobs a
-        // console ml.agent({ model, vision }) exposes — the HUD just wires the picker to them.
-        const startModel = e.data.__mlStartAgent.model;
-        if (typeof startModel === "string" && startModel.trim()) opts.model = startModel.trim();
-        if (e.data.__mlStartAgent.vision === true) opts.vision = true;
-        if (e.data.__mlStartAgent.stream === true) opts.stream = true;   // the composer's "live" toggle → stream the thinking
-        opts.toolTokens = true;   // HUD runs auto-enable tool tokens (the rich answer card is where citing exact outputs pays off)
-        // createAgent (not ml.agent) so the run registers a HANDLE the sidebar/HUD composer can drive —
-        // follow-up run()s + say() steering from the "Send a message to this session…" box.
-        // Bundles the user marked always-present. Read HERE rather than inside `ml.agent`, because this is
-        // the surface that needs them: a Commander run has no code to name a bundle, while a scripted
-        // `ml.agent()` said exactly what it wanted and must not have tools added behind its back.
-        // `commanderTools` rather than resolving the bundles HERE: reading the config first made starting a
-        // run wait on a message round-trip, so a slow or unanswered read delayed — or never started — a run
-        // the user had already typed. The loop already reads the config in its own async setup.
-        opts.commanderTools = true;
-        // The hash is minted inside the loop, so the run itself reports it (`_onSession`) rather than the caller
-        // polling the handle for one that is not there yet. Two listeners want it and they are not the same: a
-        // command that is waiting for its answer, and — when this browser's own UI started the run and is keeping
-        // its sessions — the worker, which is what holds them (sidebar/shell-session-relay.ts).
-        const keep = e.data.__mlStartAgent.keep === true;
-        opts._onSession = (hash: string) => {
-            answer("started", hash);
-            if (keep) window.postMessage({ __mlSessionKeep: { hash } }, "*");
-        };
-        try { void ml.createAgent(opts).run(task, images); }
-        catch (err) { console.error("ml: UI-started run failed:", err); answer("none"); }
     });
 
     // Sidebar/HUD composer → drive a handle-backed session by hash. The app decides which to send from the
@@ -774,8 +682,7 @@ import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } fro
                 // for `chat_metadata`: a run started at the HUD and steered from the chat app is being driven
                 // by someone who has stopped looking at the page.
                 const sf = d.__mlSessionSend?.surface;
-                const sayOrigin = (sf === "hud" || sf === "overlay" || sf === "devtools" || sf === "chat")
-                    ? { surface: sf as import("./contract-run").PromptSurface } : undefined;
+                const sayOrigin = promptSurfaceOf(sf) ? { surface: promptSurfaceOf(sf)! } : undefined;
                 if (h) { if (h.running) { h.say(text, sayOrigin); done("steer"); } else { void h.run(text, images); done("turn"); } return; }
                 // No local handle — e.g. a HUD run that NAVIGATED (its page-side handle died with the old
                 // document). If it re-adopted as a resumable BACKGROUND run (agentRegistry, keyed by hash),

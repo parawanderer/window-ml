@@ -271,7 +271,7 @@ test("a run's history is kept for a session the store holds, and dropped for one
     } }, tab(7));
 
     // Kept: this browser's own UI reported the session so the worker keeps it past its life.
-    void bg.send({ type: "ML_KEEP_SESSION", hash: "run00010" }, tab(7));
+    bg.context.__mlKeepSessionForTest("run00010");
     await run("run00010");
     await flush();
     const row = await storedRow(idb, "run00010");
@@ -373,7 +373,7 @@ test("every event of a saved session reaches the store, not only the ones that c
     const { IDBFactory } = require("fake-indexeddb");
     const idb = new IDBFactory();
     const bg = loadBackground({ config, indexedDB: idb });
-    void bg.send({ type: "ML_KEEP_SESSION", hash: "cccc0001" }, tab(7));
+    bg.context.__mlKeepSessionForTest("cccc0001");
     void bg.send({ type: "ML_DEBUG_EVENT", event: start("cccc0001") }, tab(7));
     for (let i = 1; i <= 6; i++) void bg.send({ type: "ML_DEBUG_EVENT", event: ev("cccc0001", "agent-step", { step: i, seq: i, tool: "exec", result: `r${i}` }) }, tab(7));
     let row = null;
@@ -387,7 +387,7 @@ test("a kept session's live events say where they sit, and session.backfill coun
     const { IDBFactory } = require("fake-indexeddb");
     const bg = loadBackground({ config, indexedDB: new IDBFactory() });
     const { port } = openPage(bg);
-    void bg.send({ type: "ML_KEEP_SESSION", hash: "dddd0001" }, tab(7));
+    bg.context.__mlKeepSessionForTest("dddd0001");
     void bg.send({ type: "ML_DEBUG_EVENT", event: start("dddd0001") }, tab(7));
     await flush();
     port.send({ type: "events", sub: 1, hash: "dddd0001" });
@@ -488,7 +488,7 @@ test("session storage stats answer an extension page and refuse a page", T, asyn
     const { IDBFactory } = require("fake-indexeddb");
     const idb = new IDBFactory();
     const bg = loadBackground({ config, indexedDB: idb });
-    void bg.send({ type: "ML_KEEP_SESSION", hash: "ffff0001" }, tab(7));
+    bg.context.__mlKeepSessionForTest("ffff0001");
     void bg.send({ type: "ML_DEBUG_EVENT", event: start("ffff0001") }, tab(7));
     void bg.send({ type: "ML_DEBUG_EVENT", event: ev("ffff0001", "agent-step", { step: 1, seq: 1, tool: "exec", result: "r".repeat(300) }) }, tab(7));
     for (let i = 0; i < 100 && !((await storedRow(idb, "ffff0001", 1))?.count >= 2); i++) await new Promise((r) => setTimeout(r, 20));
@@ -540,7 +540,7 @@ test("the runtime titles a session it keeps, once, never one it does not, and a 
     });
     const page = openPage(bg);
     await flush();
-    void bg.send({ type: "ML_KEEP_SESSION", hash: "abcd0001" }, tab(7));
+    bg.context.__mlKeepSessionForTest("abcd0001");
     void bg.send({ type: "ML_DEBUG_EVENT", event: start("abcd0001") }, tab(7));
     void bg.send({ type: "ML_DEBUG_EVENT", event: start("abcd0002") }, tab(8));   // a page script's: not kept
     for (let i = 0; i < 100 && !page.rows().get("abcd0001")?.title; i++) await new Promise((r) => setTimeout(r, 20));
@@ -609,7 +609,7 @@ test("the storage history is recorded at startup, answered over the contract, an
     const { IDBFactory } = require("fake-indexeddb");
     const idb = new IDBFactory();
     const bg = loadBackground({ config, indexedDB: idb });
-    void bg.send({ type: "ML_KEEP_SESSION", hash: "5709a001" }, tab(7));
+    bg.context.__mlKeepSessionForTest("5709a001");
     void bg.send({ type: "ML_DEBUG_EVENT", event: start("5709a001") }, tab(7));
     void bg.send({ type: "ML_DEBUG_EVENT", event: ev("5709a001", "agent-step", { step: 1, seq: 1, tool: "exec", result: "r".repeat(500) }) }, tab(7));
     for (let i = 0; i < 100 && !((await storedRow(idb, "5709a001", 1))?.count >= 2); i++) await new Promise((r) => setTimeout(r, 20));

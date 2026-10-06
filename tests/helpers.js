@@ -275,6 +275,12 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 // What `tabs.query({})` answers: `openTabs`, as the browser reports them (a tab on a site the
                 // extension may not read has no `url` and no `title`).
                 query: async () => openTabs.map((t) => ({ ...t })),
+                // One of `openTabs` by id, rejecting like the real API for a tab that is not there.
+                get: async (id) => {
+                    const t = openTabs.find((x) => x.id === id);
+                    if (!t) throw new Error(`No tab with id: ${id}.`);
+                    return { ...t };
+                },
             }
         }
     };

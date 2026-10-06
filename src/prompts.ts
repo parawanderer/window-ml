@@ -258,8 +258,9 @@ export const UNATTENDED_PY_NOTE =
     " NOTE: this run is UNATTENDED — only readonly-mode runs here; full mode (network) is refused.";
 
 /** Frame a right-click "ask about this" run: the resolved element's clean content as CONTEXT + the scope
- *  selector the agent can keep interacting through, wrapped around the user's question. Built page-side
- *  from an ElementContext (dom.ts domToContext) at the __mlStartAgent handler. */
+ *  selector the agent can keep interacting through, wrapped around the user's question. The shell resolves the
+ *  ElementContext (dom.ts domToContext); the framing happens in the worker's run recipe (run-assembly.ts
+ *  userRunOptions) and, for a page-built session's follow-up, page-side. */
 export const askAboutTask = (userTask: string, ctx: ElementContext): string => {
     const parts: string[] = [
         "The user RIGHT-CLICKED an element on the page to ask about it. Its clean content is below.",

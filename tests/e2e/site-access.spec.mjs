@@ -22,7 +22,7 @@ import { startHostileSite, HOSTILE_RESOLVER_ARGS } from "./fixtures/hostile/serv
 
 /** The slices of docs/spec/SITE_ACCESS.md that have NOT landed. Each attack below names the slice that closes it; while
  *  that slice is listed here, the test asserts the attack works. Flip an entry in the change that lands the slice. */
-const OPEN = { slice0: true, slice1: true, slice2: true, slice4: true };
+const OPEN = { slice0: false, slice1: true, slice2: true, slice4: true };
 
 /** Whether `slice` is still open, recording it on the test so the report says which holes this run demonstrated. */
 function holeOpen(slice, what) {

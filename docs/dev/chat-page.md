@@ -259,7 +259,7 @@ browser. Nothing new decides a gate, starts a loop or builds a request.
 | `tab.screenshot` | `captureVisibleTab`, only for a tab in front in its window; PNG, then JPEG at falling quality until it fits `maxBytes` (ceiling 4 MB); size read from the image header |
 | `tabs.list` | `chrome.tabs.query`, http(s) tabs only, in strip order with the focused window first (`stripOrder`). Icons from each tab's `favIconUrl`, fetched by the worker without cookies, once per icon URL, images of 16 KB or less, as data URLs (`tab-favicons.ts`); a slow one is left out of this answer and cached for the next. `groups` from `chrome.tabGroups`, an OPTIONAL permission (install warning "View and manage your tab groups"), granted from Settings → DevTools; without it, `groupId` alone still groups. The `favicon` permission was not used: it carries a warning too, and `favIconUrl` needs none |
 | `chat.start` | a chat the worker hosts itself: `sw-chat.ts` (below) |
-| `agent.start` | the target tab's own start path, the one the HUD composer uses (below) |
+| `agent.start` | the worker's run start (`sw-run-start.ts`), the one the HUD composer uses (below) |
 
 **Retention** (`sessionRetentionDays`, 0 = keep): a saved, unpinned session that has done nothing for that many days
 is deleted, measured from its last activity. `planExpiry` (session-store.ts) is the rule; the store applies it at
@@ -340,25 +340,27 @@ so the cap costs a round trip rather than a conversation. A chat mid-turn is nev
 
 ## Starting a run from an extension page
 
-`agent.start` does not start a run. It asks a tab's page to start one, through `ML_START_AGENT` → the shell →
-`__mlStartAgent` → `ml.createAgent().run()`: the same path the HUD composer uses. That is deliberate. The page
-builds the toolset and the system prompt, because it has the DOM, the config and the tool factories; a second
-start path in the worker would be a second set of defaults to drift from the first. The run then routes itself to
-the background loop in off and devtools modes exactly as a console run does.
+`agent.start` starts the run in the WORKER (`sw-run-start.ts`), the same way the HUD composer's Send does. It used to
+ask the tab's page to start one, through `ML_START_AGENT` → the shell → `__mlStartAgent` → `ml.createAgent().run()`,
+which meant the page assembled a run the PERSON asked for, in its own world, and could rewrite its task, tools and
+system prompt before it started (docs/spec/SITE_ACCESS.md, slice 0; attack 12 in `tests/e2e/site-access.spec.mjs`).
 
-**How the command learns which session it got.** The hash is minted inside the loop, after its own async setup, so
-it does not exist when `run()` is called. Rather than poll the handle for it, the run reports it: an internal
-`_onSession(hash)` option, called once on the first turn at the moment the hash is assigned, which the
-`__mlStartAgent` handler turns into the same `__mlSessionDone` acknowledgement the other page commands use
-(`outcome: "started"`, plus the hash). A start gets a longer deadline than a send (`START_DONE_MS`, ten seconds
-against three), because it is waiting for the loop's setup and not merely for a page to receive a message.
+The worker assembles the run with the same function a console `ml.agent()` uses (`assembleRun`, run-assembly.ts),
+handed `workerMl` instead of `window.ml`, so the two paths cannot drift. It then pushes the builtin toolset into the
+tab (`ADOPT_RUN_NOW`, the same `_adoptRun` a navigation's re-adopt uses), and the page answers with its page context.
+That answer is the only thing the page supplies; it is folded into the system prompt under "Current page context".
+
+**How the command learns which session it got.** The worker mints the hash before anything starts and returns it,
+so the command answers as soon as the toolset is registered and the loop is running. A follow-up, Continue and
+steering for a run the worker built go to the worker too (`userRunAction`): the chat page's `session.send` reaches it
+before `toPage` would ask the page.
 
 **A blank tab is a real page.** The browser's own new-tab page cannot host a run: the extension is not allowed to
 run there, so an agent would open on a page it cannot see. `{ kind: "blank" }` therefore opens a tab at the
 command's `url`, or at the `agentStartPage` setting, and refuses when it has neither. Having opened it, the worker
 waits for **`window.ml` to exist in the new page's main world**, not for the tab to report `complete` and not for
-the content script to answer: the content script registers its listener before `injected.js` runs, so a start
-relayed on that signal reaches a page whose `__mlStartAgent` listener does not exist yet, and the run is lost to a
+the content script to answer: the content script registers its listener before `injected.js` runs, so a toolset
+pushed on that signal reaches a page whose `ADOPT_RUN` listener does not exist yet, and the start is lost to a
 timeout.
 
 A tab whose URL is not http(s) is refused with `forbidden` before anything is started, for the same reason.
@@ -914,8 +916,9 @@ resume and reset already are the reconciliation.
   panel is fed, never at a second point: a background run's start and result are emitted page-side on some surfaces and
   background-side on others, and feeding both records a run twice. A page's forwarded event is untrusted and bound to
   its tab. The ONE session with no such pair is a chat the worker hosts itself (`chat.start`, `sw-chat.ts`): it has no
-  tab, so no panel can be attached to it, and its events reach the index and nothing else. A run started from an
-  extension page (`agent.start`) goes through the target tab's OWN start path, because the page builds the toolset
-  and the system prompt; the worker has no second way to start one. The extension-only views (the resource panel,
+  tab, so no panel can be attached to it, and its events reach the index and nothing else. A run the USER starts
+  (the HUD Commander, `agent.start`, a follow-up or Continue on such a run) is ASSEMBLED IN THE WORKER
+  (`sw-run-start.ts`), never by the page it acts on: the page used to build it, and could rewrite its task and prompt.
+  Both hosts call one `assembleRun` (run-assembly.ts), so a console `ml.agent()` and a Commander run cannot drift. The extension-only views (the resource panel,
   the Python bench) reach the chat page through `ChatExtras`, asked PER RUNTIME: the runtime says the capability
   exists and the device says it can draw it, and a page that answers only one of the two shows nothing.
