@@ -61,6 +61,19 @@ So far this is mostly glue. Few of the ideas have actually been tested; the midd
 the pointer A/B needs the benchmark, so both are paused until it is done. On the server side I am working on
 predicting placement and keep-alive from recorded use, which is a statistics problem rather than a coding one.
 
+## Related repositories
+
+The forks exist for the ideas that need a change below the client. They are not kept in step with upstream, and
+nothing is written up in them: notes and findings land here, in `docs/`.
+
+- [ollama](https://github.com/parawanderer/ollama): the scheduler and serving layer. What the server reports about
+  itself, and what it learns to predict from use.
+- [llama.cpp](https://github.com/parawanderer/llama.cpp): the inference engine, for what Ollama cannot see or change.
+- [open-webui](https://github.com/parawanderer/open-webui): the chat server, where the client needs a route it does
+  not have.
+- [window-ml-hub](https://github.com/parawanderer/window-ml-hub): not a fork. The relay that lets devices reach each
+  other's runtimes.
+
 ## If you run it
 
 `window.ml` lives in the page's main world, so any page the extension is active on can call it, and a hostile page
