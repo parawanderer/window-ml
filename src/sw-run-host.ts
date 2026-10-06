@@ -4,6 +4,13 @@
 // over and keeps the channel open until the run finishes.
 
 import { runBackgroundAgent } from "./agent-host";
+// DEMO WIRING (demo/ml-current-e2e, not for merging): the worker-first read-only try. The real one is the
+// site-access work's slice 2.
+import { evalReadonlyInWorker } from "./sw-readonly";
+import { mlPipe } from "./text-pipe";
+import { mlRange } from "./util";
+import { eventsForRun, RUN_LOG_KEY, type RunLogEvent } from "./run-log";
+import type { CurrentSnapshot } from "./current-context";
 import { watchWhileWaiting, PageUnreachable } from "./page-reachable";
 import type { TabState } from "./page-reachable";
 import type { ToolMeta } from "./agent-loop";
@@ -356,6 +363,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     // against the old number and the next Continue would offer the old budget back. `agent-cap` is the same event
     // a handle's setter fans page-side, and the reducer already folds it into the session.
     else if (capRaised) fanEvent({ kind: "agent-cap", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, maxSteps: p.maxSteps });
+    let snapshotCurrent: ((extra?: { model?: string | null; log?: readonly RunLogEvent[] }) => CurrentSnapshot) | null = null;
     runBackgroundAgent(
         { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSameOriginAuth: p.autoApproveSameOriginAuth, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, ...(p.origin ? { origin: p.origin } : {}), runId, seqBase, tokenStore: sessionTokens(runId), labelMatch: p.labelMatch, resumeMessages, images: p.images,
           // A resumed turn follows a PERSON (a follow-up, Continue, Retry) — except a run resurrected after the
@@ -623,10 +631,21 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             // Keep this run's pointer resolver so a page-side tool's `ml.dereference` (DEREF_TOKEN) can
             // read the outputs THIS run captured. Dropped in the run's finally, with the other per-run state.
             tokenSink: (fn) => { derefByRun.set(runId, fn); },
+            contextSink: (fn) => { snapshotCurrent = fn; },
             // A pointer to a stored table: this session holds it until the session is released.
             claimValue: (key) => claimValue(key, runId),
             tryReadonly: p.autoApproveReadonly ? async (name, args) => {
                 if (name !== "exec") return null;
+                // The WORKER first: a survey that reads only the run is answered here, where its context lives, and
+                // never enters the page. One that reaches for the page comes back `needs-page` and goes there below.
+                if (snapshotCurrent) {
+                    const snap = snapshotCurrent;
+                    const wantsLog = typeof args.js === "string" && /\bcurrent\b/.test(args.js);
+                    const log = wantsLog ? eventsForRun(((await chrome.storage.session.get(RUN_LOG_KEY))[RUN_LOG_KEY] ?? []) as RunLogEvent[], runId) : [];
+                    const w = await evalReadonlyInWorker(args, { current: () => snap({ model: modelNow(), log }), ml: { pipe: mlPipe, range: mlRange } });
+                    if (w.kind === "answered") return { result: w.result, renderIn: w.renderIn, renderOut: w.renderOut };
+                    if (w.kind === "refused") return null;
+                }
                 const env = await sendTool({ runId, name, args, readonlyTry: true })
                     .catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
                 return env && env.readonly ? { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut, reused: env.reused } : null;
