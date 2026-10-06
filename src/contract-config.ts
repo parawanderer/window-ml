@@ -316,6 +316,34 @@ export type MlPublicConfig = Pick<MlConfig,
 };
 
 /**
+ * The non-secret config a page may read back (`ml.config()`, the GET_CONFIG message), and the same view the service
+ * worker hands its own run assembly (`workerMl`), so a run assembled in either place reads one config. The URL, the
+ * API key and the model filter are left out on purpose: that omission is a security boundary.
+ * @param config the full stored config
+ * @param senderUrl the URL of the page this view is for, as the BROWSER reports it (a tab URL, never a value the page
+ *   sent), used only to compute `pageApprovalAllowed`
+ * @returns the public subset
+ */
+export function publicConfig(config: MlConfig, senderUrl: string): MlPublicConfig {
+    let pageApprovalAllowed = false;
+    try {
+        const host = senderUrl ? new URL(senderUrl).hostname : "";
+        pageApprovalAllowed = !!host && (config.pageApprovalDomains || []).includes(host);
+    } catch { /* opaque/blank origin → not allowed */ }
+    return {
+        model: config.model, ocrModel: config.ocrModel, ocrNumCtx: config.ocrNumCtx, apiFormat: config.apiFormat,
+        defaultModelVision: config.defaultModelVision,
+        utilityModel: config.utilityModel, utilityNumCtx: config.utilityNumCtx, utilityForceCpu: config.utilityForceCpu,
+        autoApproveReadonly: config.autoApproveReadonly, autoApprovePython: config.autoApprovePython,
+        serverToolsOff: config.serverToolsOff || [], commanderServerTools: config.commanderServerTools || [],
+        autoApproveSameOriginAuth: config.autoApproveSameOriginAuth, autoApproveSelfSource: config.autoApproveSelfSource,
+        pierceClosedShadow: config.pierceClosedShadow, cdp: config.cdp,
+        groundingEnabled: config.groundingEnabled, groundingModel: config.groundingModel,
+        groundingRange: config.groundingRange, debugMode: config.debugMode, pageApprovalAllowed,
+    } as MlPublicConfig;
+}
+
+/**
  * WHERE A RUN STANDS WHEN IT ASKED FOR AN EMPTY TAB and nobody named a page.
  *
  * A run has to begin on a real http(s) page: Chrome refuses to let an extension touch its own new-tab page

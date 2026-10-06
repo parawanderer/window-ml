@@ -37,25 +37,33 @@ import { POINT_RE, resolvePoint, PT_LOOK_RADIUS, cropDataUrl, BOX_RE, resolveBox
  */
 export const read = async function(this: MlApi, image: string | HTMLImageElement, { model = null, prompt = null, numCtx = null }: { model?: string | null; prompt?: string | null; numCtx?: number | null } = {}): Promise<string> {
     const dataUrl = await this._imageToDataUrl(image);
-    const instruction = prompt ||
-        "Transcribe all text in this image exactly as it appears, " +
-        "preserving reading order. Output only the transcribed text — " +
-        "no commentary, no descriptions, no markdown.";
-    const reply = await makeBackgroundTaskPromise<string>(
-        "LLM_REQUEST",
-        "LLM_RESPONSE",
-        {
-            "messages": [{ role: "user", content: instruction, images: [dataUrl] }],
-            "think": null,
-            "model": model,
-            // Per-call override; when omitted, prepareRequest applies the small config.ocrNumCtx
-            // default (residency-guarded, so a bigger already-loaded model is reused, not reloaded).
-            "numCtx": typeof numCtx === "number" ? numCtx : undefined,
-            "ocr": true
-        }
-    );
+    const reply = await makeBackgroundTaskPromise<string>("LLM_REQUEST", "LLM_RESPONSE", ocrRequest(dataUrl, { model, prompt, numCtx }));
     return reply.trim();
 };
+
+/** The transcription instruction `read` sends when the caller gives none. */
+export const OCR_INSTRUCTION = "Transcribe all text in this image exactly as it appears, " +
+    "preserving reading order. Output only the transcribed text — " +
+    "no commentary, no descriptions, no markdown.";
+
+/**
+ * The model request behind `read`: one image and the transcription instruction, to the OCR model. Shared with the
+ * service worker's `read` (worker-ml.ts), so a pasted image is transcribed the same way whichever host built the run.
+ * @param dataUrl the image as a data URL
+ * @param opts the per-call model, instruction and context-size overrides
+ * @returns the FETCH_LLM payload
+ */
+export function ocrRequest(dataUrl: string, { model = null, prompt = null, numCtx = null }: { model?: string | null; prompt?: string | null; numCtx?: number | null } = {}): import("./contract").FetchLlmPayload {
+    return {
+        messages: [{ role: "user", content: prompt || OCR_INSTRUCTION, images: [dataUrl] }],
+        think: null,
+        model,
+        // Per-call override; when omitted, prepareRequest applies the small config.ocrNumCtx
+        // default (residency-guarded, so a bigger already-loaded model is reused, not reloaded).
+        numCtx: typeof numCtx === "number" ? numCtx : undefined,
+        ocr: true,
+    };
+}
 
 /**
  * Screenshot to a PNG data URL. With no target, captures the whole visible

@@ -19,6 +19,8 @@ const INJECTED_ABSENT_GRACE_MS = 4_000;
 // (a long `wait`, a heavy `python_exec`) — so it only ever catches a genuine hang, not a slow-but-live tool.
 const TOOL_RELAY_TIMEOUT_MS = 120_000;
 const CSP_BLOCK_MSG = (name: string): string => `Error: this page blocks the extension's page script, so "${name}" can't run here. Its Content-Security-Policy disables injected scripts — raw.githubusercontent.com does this (it serves files with a "sandbox" CSP). Better: don't navigate here at all — if you just need this URL's CONTENT, navigate BACK to a working page and use \`fetch_url\` (or \`ml.fetch(url)\`) to read it directly (a background GET, no injected script needed). Otherwise open a normal page (e.g. the github.com "…/blob/…" view, not the raw host).`;
+/** Why a run cannot start on a page whose CSP keeps the extension's page script from running. */
+const CSP_START_MSG = "this page blocks the extension's page script (its Content-Security-Policy disables injected scripts), so an agent cannot run on it. Open an ordinary page and start the run there.";
 const s = document.createElement("script");
 s.src = chrome.runtime.getURL("injected.js");
 s.onload = () => s.remove();
@@ -155,8 +157,33 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
         window.postMessage({ type: "PYTHON_STREAM", requestId: (message as { requestId?: string }).requestId, chunk: (message as { chunk?: string }).chunk, ts: (message as { ts?: number }).ts }, "*");
         return undefined;
     }
+    // A run the WORKER is starting on this tab (sw-run-start.ts): register its builtin toolset here, exactly as a
+    // navigation's re-adopt does, and answer with this page's context. The worker built the run; the page supplies
+    // only what it is (its context) and, later, the tool executions.
+    if (message && message.type === "ADOPT_RUN_NOW") {
+        const { runId, rebuild } = (message.payload || {}) as { runId?: string; rebuild?: unknown };
+        if (injectedBlocked) { sendResponse({ error: CSP_START_MSG }); return true; }
+        const reply = Math.random().toString(36).slice(2);
+        let done = false;
+        const finish = (r: { pageInfo?: string; error?: string }) => {
+            if (done) return;
+            done = true; clearTimeout(timer);
+            window.removeEventListener("message", onAdopted);
+            sendResponse(r);
+        };
+        const onAdopted = (event: MessageEvent) => {
+            if (event.source !== window || !event.data || event.data.type !== "RUN_ADOPTED_NOW" || event.data.reply !== reply) return;
+            finish({ pageInfo: typeof event.data.pageInfo === "string" ? event.data.pageInfo : "" });
+        };
+        // Same two bounds as a delegated tool: short while the page script has not proved it is alive, long once it has.
+        const timer = setTimeout(() => finish({ error: injectedAlive ? "the page did not answer while the run was starting" : CSP_START_MSG }),
+            injectedAlive ? TOOL_RELAY_TIMEOUT_MS : INJECTED_ABSENT_GRACE_MS);
+        window.addEventListener("message", onAdopted);
+        window.postMessage({ type: "ADOPT_RUN", runId, rebuild, reply }, "*");
+        return true;
+    }
     if (!message || message.type !== "RUN_TOOL_IN_PAGE") return undefined;
-    const { runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, stream } = (message.payload || {}) as { runId: string; name: string; args: unknown; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean };
+    const { runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, stream, finish: finishTurn, summary } = (message.payload || {}) as { runId: string; name: string; args: unknown; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean; summary?: string };
     // window.ml's script was fetch-refused by CSP (script-src 'none') — nothing will ever answer. Fail fast.
     if (injectedBlocked) { sendResponse({ result: CSP_BLOCK_MSG(name) }); return true; }
     const callId = Math.random().toString(36).slice(2);
@@ -189,7 +216,7 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
         finish({ result: `Error: the page didn't respond while running "${name}" (timed out). It may be mid-navigation. Re-check the page (look / pageInfo) and retry, or navigate to a different page.` }, false);
     }, TOOL_RELAY_TIMEOUT_MS);
     window.addEventListener("message", onResult);
-    window.postMessage({ type: "PAGE_TOOL_RUN", callId, runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, stream }, "*");
+    window.postMessage({ type: "PAGE_TOOL_RUN", callId, runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, stream, finish: finishTurn, summary }, "*");
     return true;   // async sendResponse (the window round-trip completes later)
 });
 

@@ -93,7 +93,8 @@ model, the server-tool bundles, the unattended and tool-token shaping, the syste
 worker passes an adapter whose `config`/`capabilities`/`models`/`serverTools`/`chat` call the worker's functions
 directly and whose tool factories are the SAME factories the page uses. The factories need no DOM to build a tool
 (checked: they run in plain Node), so the descriptors the worker sends the model, approval flags included, come from
-the code the page runs, and there is no second copy to drift. A tool's `run` is simply never called in the worker.
+the code the page runs, and there is no second copy to drift. A builtin tool's `run` is never called in the worker;
+a remote tool's is (below).
 
 **Starting.** The worker mints the run id, assembles the run, then pushes the run's `RebuildConfig` into the tab:
 the same adopt a navigation already uses (`_adoptRun`), sent instead of asked for. The page registers the builtin
@@ -261,11 +262,31 @@ wait is on a run finishing or a state change, never a timer.
 The README's security paragraph changes after slice 2, not before: until then a run on a page still lends it the
 API.
 
+## Where the build differs from this spec
+
+Recorded as each slice lands, with the reason.
+
+- **Slice 0 exists.** It was not in the original spec; see [above](#runs-the-user-starts-are-built-in-the-worker-slice-0).
+- **A page may not start a turn in, resume or steer a run the worker built** (`isWorkerRun`, refused at the router),
+  even knowing its id. Found while building slice 0: the id reaches the page in the run's own debug events, so without
+  this the page could put a turn of its choosing into the person's run, with that run's tools, after slice 0 had
+  stopped it rewriting the first one.
+- **Removed, not gated: `ML_KEEP_SESSION` and the page's `__mlSessionKeep`.** They existed so the page could report
+  which session a UI-started run became; the worker now mints that id itself. Any page could post the old message.
+- **A step budget a person picks is capped at `MAX_CONTINUE_STEPS` (200) for a start too**, through one validator
+  (`stepBudget`); before, only a Continue was capped.
+- **Not fixed, noticed:** `GET_CONFIG` never sent `labelMatch`, so a page-built run always used the default metric.
+  `publicConfig` keeps that behaviour; the worker path inherits it.
+
 ## Open questions
 
 - **`shadow-patch.js`.** Keep it on every page (detectable, and the agent sees closed shadow roots anywhere a run
   goes), or only on approved origins plus a best-effort inject on run navigation (less detectable, and closed roots
   on a run-visited page are sometimes missed)? Leaning towards keeping it: capability matters more than detection.
+- **The page context sits in the system prompt.** A run's "Current page context" is the page's own answer (URL, title,
+  language, time), appended to the SYSTEM prompt under its heading, as it always was. A hostile page can put any text
+  there, in a position models weigh more than a tool result. Moving it into the first user turn would label it as data
+  more plainly, at the cost of changing every run's prompt. Not changed in slice 0.
 - **Page-hosted runs.** A run on a `pageApprovalDomains` site runs its loop in the page today, which makes its model
   calls page messages. That is fine under this spec, since the site is approved, but it means that path never gets
   the delegation protection. It stays as is.

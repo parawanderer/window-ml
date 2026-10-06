@@ -122,6 +122,14 @@ export const grantsFor = (tabId: number): TabGrants => {
     return g;
 };
 
+/** Whether a message or port comes from one of the extension's OWN pages or frames (the sidebar app, the popup, the
+ *  chat page, a DevTools panel, the offscreen document), as opposed to a content script speaking for a web page. Read
+ *  from the browser-stamped `sender.url`, which a page cannot set. The one test for "is this the extension", so the
+ *  places that ask it cannot disagree. */
+export function isExtensionSender(sender: chrome.runtime.MessageSender | undefined): boolean {
+    return (sender?.url || "").startsWith(chrome.runtime.getURL(""));
+}
+
 /** Hostname of the message's real sender (the browser-stamped tab URL — a page can't forge it). */
 function senderHost(sender: chrome.runtime.MessageSender): string {
     try { return new URL(sender.tab?.url || sender.url || "").hostname.toLowerCase(); } catch { return ""; }

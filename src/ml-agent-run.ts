@@ -36,7 +36,7 @@ import { isSelfSourceUrl } from "./self-source";
 import { TokenStore } from "./token-pipe";
 import { toolContext, executeTool, withRunDeref } from "./tool-exec";
 import { pageContext } from "./util";
-import { assembleRun, withPageContext, type AssemblyMl } from "./run-assembly";
+import { assembleRun, withPageContext, startPayload, type AssemblyMl } from "./run-assembly";
 import { validateArgs } from "./validate";
 
 /**
@@ -268,27 +268,18 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
                 } finally { exitAgentRun(); }
             },
         });
-        const descriptors = toolset.map(t => ({
-            name: t.name, description: t.description, parameters: t.parameters,
-            requiresApproval: !!t.requiresApproval, capabilities: t.capabilities || [], summary: t.summary,
-            precheck: typeof t.precheck === "function",   // has a doomed-action precheck → the background delegates it before gating
-            // Where a remote tool actually dispatches to. Travels so the background's approval card
-            // and its per-call grant read the SAME identity — a page cannot make one say search_web
-            // while the other authorises send_email.
-            ...(t.remote ? { remote: t.remote } : {}),
-        }));
         enterAgentRun();   // suppress orphan chat sessions from a delegated tool's internal ml.chat
         try {
             const res = await makeBackgroundTaskPromise<AgentResult>("START_RUN_REQUEST", "START_RUN_RESPONSE", {
-                runId: runHash, task, systemPrompt, tools: descriptors,
-                model: runModel, think: (think === true || think === false) ? think : null,
-                // `control.maxSteps`, not the destructured option: the handle's setter is what a raised cap goes
-                // through, and a handle whose run is hosted in the BACKGROUND would otherwise send the cap it was
-                // created with and quietly ignore the new one.
-                maxSteps: control.maxSteps, autoApprovePython: autoPy, autoApproveReadonly: autoRO, autoApproveSameOriginAuth: autoSOA, autoApproveSelfSource: autoSelfSrc, labelMatch, surface: bgSurface, stream: stream || undefined, toolTokens: toolTokens || undefined, origin: origin || undefined,
-                images: pendingImages,   // native-vision composer attachments for this turn's user message
-                // (OCR fallback for a text-only driver is already folded into `task` above)
-                unattended: unattended || undefined, silent: silent || undefined,
+                ...startPayload(asm, {
+                    runId: runHash, systemPrompt, think: (think === true || think === false) ? think : null,
+                    // `control.maxSteps`, not the destructured option: the handle's setter is what a raised cap goes
+                    // through, and a handle whose run is hosted in the BACKGROUND would otherwise send the cap it was
+                    // created with and quietly ignore the new one.
+                    maxSteps: control.maxSteps, surface: bgSurface, stream, toolTokens, origin, unattended, silent,
+                    navigate, crossOrigin, approvalRouting,
+                    page: { origin: location.origin, url: location.href, title: document.title || undefined },
+                }),
                 // A handle's prior history (empty on the first turn) → the background CONTINUES it,
                 // so control.messages stays authoritative across turns even on the background path.
                 resumeMessages: control.messages.length ? control.messages : undefined,
@@ -296,20 +287,6 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
                 // turn groups stay distinct on the background path too — otherwise turn N's step 1
                 // collides with turn 1's and the chat log scrambles).
                 stepBase: control.stepBase, seqBase: control.seqBase,
-                // Cross-page persistence: whether to track this run against its tab (survive a nav) +
-                // the serializable state a fresh document needs to rebuild the BUILTIN toolset on
-                // re-adopt. `navigate: false` opts out of both.
-                crossPage: navigate,
-                crossOrigin,   // may leave the origin (cross-origin nav gates for consent)
-                approvalRouting,   // where privileged gates resolve (idea #2): ui | both | external
-                pageOrigin: location.origin,   // seeds the run's consented-origins (cross-origin nav consent)
-                pageUrl: location.href, pageTitle: document.title || undefined,   // provenance: WHICH page this ran on
-                rebuild: {
-                    toolNames: toolset.map(t => t.name),
-                    model: runModel, driverSees, visionModel: runVisionModel,
-                    groundingModel: runGroundingModel, groundingRange: runGroundingRange,
-                    pierceClosed, cdp: cdpOn, crossOrigin,
-                },
             }, (result, data) => {
                 // Sync the run's final history back into the handle (page-authoritative). This is why
                 // a.messages populates + a follow-up run()/say() continues, on the background path too.

@@ -14,3 +14,13 @@ export const MAX_CONTINUE_STEPS = 200;
 /** The step budgets a person is OFFERED, in the Commander's composer and on a capped run's Continue. Both surfaces
  *  read this one list so a budget you can start a run with is a budget you can carry one on with. */
 export const STEP_BUDGETS = [10, 20, 50];
+
+/**
+ * A step budget that arrived from elsewhere (a composer, a relay, a hub), as the worker honours it: a positive whole
+ * number, capped at {@link MAX_CONTINUE_STEPS}; anything else is no budget, and the run keeps the one it has.
+ * @param v the value as it arrived
+ * @returns the budget, or undefined
+ */
+export function stepBudget(v: unknown): number | undefined {
+    return typeof v === "number" && Number.isInteger(v) && v > 0 ? Math.min(v, MAX_CONTINUE_STEPS) : undefined;
+}

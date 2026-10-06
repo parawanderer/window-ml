@@ -92,7 +92,8 @@ export interface CommandDeps {
     /** note in the session's own transcript that it has been picked up on another page */
     noteResumed(hash: string, tabId: number, note: { id: string; url: string; fromUrl?: string; afterMs: number; dropped: string[] }): void;
     /** start a run on a tab, through that page's own start path; resolves with what the page reported */
-    startAgent(tabId: number, opts: { task: string; images?: string[]; model?: string; maxSteps?: number; vision?: true; stream?: true }): Promise<{ outcome: PageOutcome | "started"; hash?: string }>;
+    /** `error`: why nothing started, in words the person can act on */
+    startAgent(tabId: number, opts: { task: string; images?: string[]; model?: string; maxSteps?: number; vision?: true; stream?: true }): Promise<{ outcome: PageOutcome | "started"; hash?: string; error?: string }>;
     /** open a new tab at a URL and wait until the extension can talk to it; rejects when it never answers */
     openTab(url: string): Promise<number>;
     /** the page a blank agent target opens when the command names no URL ("" when unset) */
@@ -355,6 +356,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
             }
             // The page answered that it started nothing, or never answered at all. A run that started anyway would
             // still appear in the index, so this says what is known rather than inventing a session id.
+            if (r.error) return fail("failed", r.error);
             if (r.outcome === "none") return fail("failed", "the page did not start a run");
             return fail("unavailable", "the page did not answer; it may still be loading, or the extension cannot run there");
         },

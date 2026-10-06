@@ -240,10 +240,11 @@ test("a run the browser's own UI starts is kept; one started from code is not", 
         await page.goto(site.url + "/");
         await waitForMl(page);
 
-        // What the SHELL posts into the page for a UI-started run, `keep` being the setting it read. Driving the HUD
-        // composer itself would add the composer's own plumbing to a test about what happens after it: the shell's
-        // one line (`keep: persistUiRuns`) is the only step below this that a person's click adds.
-        await page.evaluate(() => window.postMessage({ __mlStartAgent: { task: "read the page", keep: true, maxSteps: 1 } }, "*"));
+        // What the worker does for a UI-started run, `keep` being the setting the shell read (shell.ts, `startRun` →
+        // `USER_START_RUN`). Driving the HUD composer itself would add the composer's own plumbing to a test about what
+        // happens after it: the shell's one field (`keep: persistUiRuns`) is the only step below this a click adds.
+        const tabId = await ext.sw.evaluate(async (u) => (await chrome.tabs.query({})).find((t) => t.url?.startsWith(u))?.id, site.url);
+        await ext.sw.evaluate((id) => globalThis.__mlStartUserRunForTest(id, { task: "read the page", maxSteps: 1 }, { keep: true }), tabId);
         await expect.poll(() => savedOf(rows.page, "read the page")).toBe(true);
 
         // A console call is not the UI: it lasts as long as the page unless it asks to be saved.

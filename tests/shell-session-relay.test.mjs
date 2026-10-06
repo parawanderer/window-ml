@@ -10,7 +10,7 @@ import assert from "node:assert";
 const posted = [];
 globalThis.window = { postMessage: (m) => posted.push(m) };
 
-const { onSessionDone, relaySessionToPage, relayStartAgent } = await import("../src/sidebar/shell-session-relay.ts");
+const { onSessionDone, relaySessionToPage } = await import("../src/sidebar/shell-session-relay.ts");
 
 const reset = () => { posted.length = 0; };
 
@@ -80,21 +80,4 @@ test("a second answer for the same request is ignored", async () => {
 test("an answer for an unknown request is dropped rather than throwing", () => {
     assert.equal(onSessionDone({ reqId: "never-asked", outcome: "sent" }), true);
     assert.equal(onSessionDone(undefined), true);
-});
-
-test("agent.start carries the shell's hud setting and the caller's fields, dropping the ones it did not send", () => {
-    reset();
-    let replied;
-    const async_ = relayStartAgent({ type: "ML_START_AGENT", reqId: "s1", task: "do it", maxSteps: 4, model: "  m1  ", stream: true }, (r) => { replied = r; }, "quiet");
-    assert.equal(async_, true);
-    const sent = posted[0].__mlStartAgent;
-    assert.equal(sent.task, "do it");
-    assert.equal(sent.maxSteps, 4);
-    assert.equal(sent.model, "m1", "a model id is trimmed");
-    assert.equal(sent.stream, true);
-    assert.equal(sent.vision, undefined, "not requested, so not asserted as false");
-    assert.equal(sent.hud, "quiet", "the shell owns the hud setting and passes it in");
-
-    onSessionDone({ reqId: "s1", outcome: "started", hash: "deadbeef" });
-    assert.deepEqual(replied, { outcome: "started", hash: "deadbeef" });
 });

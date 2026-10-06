@@ -10,8 +10,12 @@
 
 import { CITABLE_TOOLS } from "./agent-loop";
 import { buildServerTools } from "./builtin-tools";
-import { type MlApi, type MlTool, type MlPublicConfig, DEFAULT_GROUNDING_RANGE, type VisionMemory, detectGroundingModel, type LexicalMetric } from "./contract";
-import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_CLOSED_NOTE, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE } from "./prompts";
+import { type MlApi, type MlTool, type MlPublicConfig, DEFAULT_GROUNDING_RANGE, type VisionMemory, detectGroundingModel, type LexicalMetric, type ElementContext } from "./contract";
+import type { PromptOrigin } from "./contract-run";
+import type { StartRunPayload, RebuildConfig } from "./contract-messages";
+import { promptSurfaceClause, promptSurfaceOf } from "./prompt-surface";
+import { stepBudget } from "./step-budget";
+import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_CLOSED_NOTE, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, askAboutTask } from "./prompts";
 import { citeParam, withCallTitle } from "./tool-params";
 import { buildDereferenceTool } from "./tools";
 
@@ -315,4 +319,152 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
  */
 export function withPageContext(systemPrompt: string, ctx: string | null | undefined): string {
     return ctx ? `${systemPrompt}\n\nCurrent page context:\n${ctx}` : systemPrompt;
+}
+
+/** A run the USER asked for from one of the extension's own surfaces: the HUD Commander, the chat page, a right-click
+ *  "ask about this". Everything here came from the person, not from the page the run will act on. */
+export interface UserRunRequest {
+    task: string;
+    /** composer attachments, already data URLs */
+    images?: string[];
+    /** a right-clicked element, resolved by the shell; the task is framed around it */
+    elementContext?: ElementContext;
+    /** the composer's step budget */
+    maxSteps?: number;
+    /** the composer's model pick (absent: the configured default) */
+    model?: string;
+    /** force native vision on the picked model */
+    vision?: true;
+    /** stream the model's thinking live */
+    stream?: true;
+    /** the HUD verbosity setting: "quiet" keeps the model silent between steps */
+    hud?: string;
+    /** where the prompt was typed; anything unrecognised reads as the HUD */
+    surface?: string;
+}
+
+/** The Commander kit's extra tools, from whichever host's factories. */
+type KitMl = Pick<MlApi, "clickTool" | "typeTool" | "pythonTool" | "chatMetaTool">;
+
+/**
+ * The recipe for a run the user started from a surface: a capable kit (click, type, python and `chat_metadata` on top
+ * of the default DOM tools and the auto-wired vision tools), the provenance and verbosity clauses, cross-origin
+ * navigation (each crossing still asks), tool tokens, and the server-tool bundles marked always-present. The
+ * worker assembles every such run from this (sw-run-start.ts).
+ * @param ml the host's factories for the kit's extra tools
+ * @param req what the person asked for
+ * @returns the task (framed around a right-clicked element when there is one), the run's provenance, and the options
+ *   to assemble it with
+ */
+export function userRunOptions(ml: KitMl, req: UserRunRequest): { task: string; origin: PromptOrigin; maxSteps?: number; stream: boolean; options: AssemblyOptions } {
+    let task = String(req.task || "").trim();
+    const ctx = req.elementContext;
+    if (ctx && typeof ctx.selector === "string") task = askAboutTask(task, ctx);
+    const origin: PromptOrigin = { surface: promptSurfaceOf(req.surface) ?? "hud" };
+    const proseClause = req.hud === "quiet" ? HUD_PROSE_QUIET : HUD_PROSE_PROGRESS;
+    const maxSteps = stepBudget(req.maxSteps);
+    const model = typeof req.model === "string" && req.model.trim() ? req.model.trim() : undefined;
+    return {
+        task, origin,
+        ...(maxSteps ? { maxSteps } : {}),
+        stream: req.stream === true,
+        options: {
+            extraTools: [ml.clickTool(), ml.typeTool(), ml.pythonTool(), ml.chatMetaTool()],
+            // `systemAppend`, not `system`: the run still needs the whole method, it just is not a console call.
+            systemAppend: promptSurfaceClause(origin) + proseClause,
+            crossOrigin: true,
+            toolTokens: true,
+            commanderTools: true,
+            ...(model ? { model } : {}),
+            ...(req.vision === true ? { vision: true } : {}),
+            images: Array.isArray(req.images) ? req.images : undefined,
+        },
+    };
+}
+
+/**
+ * The serializable descriptors a background-hosted run holds for its tools: what the model is shown, and what decides
+ * how a call is gated. Built from the toolset by the host that assembled it, never from anything a page reports.
+ * @param toolset the assembled tools
+ * @returns one descriptor per tool, in order
+ */
+export function toolDescriptors(toolset: MlTool[]): StartRunPayload["tools"] {
+    return toolset.map(t => ({
+        name: t.name, description: t.description, parameters: t.parameters,
+        requiresApproval: !!t.requiresApproval, capabilities: t.capabilities || [], summary: t.summary,
+        precheck: typeof t.precheck === "function",   // has a doomed-action precheck → the background delegates it before gating
+        // Where a remote tool actually dispatches to. Travels so the background's approval card
+        // and its per-call grant read the SAME identity — a page cannot make one say search_web
+        // while the other authorises send_email.
+        ...(t.remote ? { remote: t.remote } : {}),
+    }));
+}
+
+/**
+ * What a fresh document needs to rebuild an assembled run's BUILTIN toolset: tool names and the vision facts, CARRIED
+ * rather than re-probed. Remote tools are left out: they are never rebuilt in a page.
+ * @param asm the assembled run
+ * @param crossOrigin whether its `navigate` may cross origins
+ * @param builtBy "worker" for a run the worker built and drives
+ * @returns the rebuild config
+ */
+export function rebuildFor(asm: AssembledRun, crossOrigin: boolean, builtBy?: "worker"): RebuildConfig {
+    return {
+        ...(builtBy ? { builtBy } : {}),
+        toolNames: asm.toolset.filter((t) => !t.remote).map((t) => t.name),
+        model: asm.runModel, driverSees: asm.driverSees, visionModel: asm.runVisionModel,
+        groundingModel: asm.runGroundingModel, groundingRange: asm.runGroundingRange,
+        pierceClosed: asm.pierceClosed, cdp: asm.cdpOn, crossOrigin,
+    };
+}
+
+/** How an assembled run is to be hosted: what the host decides rather than what assembly produced. */
+export interface RunHosting {
+    runId: string;
+    /** the full prompt, page context included */
+    systemPrompt: string;
+    maxSteps: number;
+    think: boolean | null;
+    surface: StartRunPayload["surface"];
+    stream?: boolean;
+    toolTokens?: boolean;
+    origin?: PromptOrigin | null;
+    unattended?: boolean;
+    silent?: boolean;
+    /** may the run navigate (and survive a navigation)? */
+    navigate: boolean;
+    crossOrigin: boolean;
+    approvalRouting: StartRunPayload["approvalRouting"];
+    /** the page the run starts on: its origin seeds the cross-origin consent, the rest is provenance */
+    page: { origin: string; url: string; title?: string };
+    /** "worker" for a run the worker built (sw-run-start.ts) */
+    builtBy?: "worker";
+}
+
+/**
+ * The START_RUN payload for an assembled run: the ONE place its fields are filled, for a run the page built and one
+ * the worker built alike, so a field added to the payload cannot reach one host and silently miss the other.
+ * @param asm the assembled run
+ * @param h how it is hosted
+ * @returns the payload; a host adds what only it has (a handle's history and offsets)
+ */
+export function startPayload(asm: AssembledRun, h: RunHosting): StartRunPayload {
+    return {
+        runId: h.runId, task: asm.task, systemPrompt: h.systemPrompt, tools: toolDescriptors(asm.toolset),
+        model: asm.runModel, think: h.think, maxSteps: h.maxSteps,
+        autoApprovePython: asm.autoPy, autoApproveReadonly: asm.autoRO, autoApproveSameOriginAuth: asm.autoSOA, autoApproveSelfSource: asm.autoSelfSrc,
+        labelMatch: asm.labelMatch, surface: h.surface,
+        stream: h.stream || undefined, toolTokens: h.toolTokens || undefined, origin: h.origin || undefined,
+        // native-vision composer attachments for this turn's user message (an OCR fallback is already in `task`)
+        images: asm.pendingImages,
+        unattended: h.unattended || undefined, silent: h.silent || undefined,
+        // Cross-page persistence: whether to track this run against its tab (survive a nav), and what a fresh document
+        // needs to rebuild the builtin toolset on re-adopt. `navigate: false` opts out of both.
+        crossPage: h.navigate,
+        crossOrigin: h.crossOrigin,
+        approvalRouting: h.approvalRouting,
+        pageOrigin: h.page.origin, pageUrl: h.page.url, pageTitle: h.page.title || undefined,
+        rebuild: rebuildFor(asm, h.crossOrigin, h.builtBy),
+        ...(h.builtBy ? { builtBy: h.builtBy } : {}),
+    };
 }

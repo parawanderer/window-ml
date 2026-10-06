@@ -1772,7 +1772,7 @@ test("ML_HL_REMOTE: the panel's hover-highlight is relayed to the inspected tab'
     assert.equal(bg.tabMessages.length, 2, "no tabId → not relayed");
 });
 
-test("ML_SESSION_REMOTE: the panel's composer Send/Stop is relayed to the inspected tab (parity with the overlay)", () => {
+test("ML_SESSION_REMOTE: the panel's composer Send/Stop is relayed to the inspected tab (parity with the overlay)", async () => {
     // Panel parity for the composer. The overlay app posts sessionSend/sessionCancel to its shell parent,
     // which reaches __mlSessionSend/__mlCancelSession directly. The DevTools panel can't touch the inspected
     // page, so panel.ts posts ML_SESSION_REMOTE{tabId, action} to the background, which forwards
@@ -1780,6 +1780,9 @@ test("ML_SESSION_REMOTE: the panel's composer Send/Stop is relayed to the inspec
     // Different backend mechanism, same behaviour. Fire-and-forget (no sendResponse) → don't await.
     const bg = loadBackground({ config: baseConfig() });
     bg.send({ type: "ML_SESSION_REMOTE", tabId: 5, action: "send", hash: "abc", text: "steer left", images: [] });
+    // A Send is offered to the worker first (a run it built is driven from there, sw-run-start.ts); "abc" is not one,
+    // so it reaches the page a turn later.
+    await new Promise((r) => setTimeout(r, 0));
     assert.equal(bg.tabMessages.length, 1, "one relay to the tab");
     assert.equal(bg.tabMessages[0][0], 5, "addressed to the inspected tab");
     assert.deepEqual(bg.tabMessages[0][1], { type: "ML_SESSION_TO_PAGE", action: "send", hash: "abc", text: "steer left", images: [] }, "Send is forwarded verbatim");
