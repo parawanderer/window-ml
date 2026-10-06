@@ -954,6 +954,13 @@ BACKGROUND (`gh pr checks --watch`, ~6 minutes for a full run, the slowest of th
 KNOWN-BAD failures that arrived from other branches, so a red check that is not yours is named in the PR
 body rather than chased or silently re-run.
 
+**A CANCELLED check prints as `fail`, so a red page is not evidence of a broken test.** `gh pr checks` has no
+third word, and a run whose every job was cancelled still concludes `failure` — so resolve the JOB conclusions
+(`gh api repos/<repo>/actions/runs/<id>/jobs`) before reading a log or blaming a change. Durations give it away
+for free: a 3-minute `test` leg sitting at 22, or a row of jobs all ending at ~27, was starved of a runner
+rather than slowed down. Poll a run by ID too — `gh run list` has returned a stale page and sent a watch loop
+off onto runs from a fortnight earlier. Four red mains on 2026-10-05 were all of this and none were real.
+
 **And the `background-work` skill (`.claude/skills/background-work/SKILL.md`) is how to run ANY slow
 thing** — CI, an e2e suite (minutes, even parallel), a bench sweep — without stalling the session: start it with
 `run_in_background: true` and go and do other work, because the harness re-invokes you when it exits.
