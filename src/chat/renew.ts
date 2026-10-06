@@ -6,7 +6,8 @@
 //
 // Why a device asks for its own: a certificate lives in the keyring of the device it is about and nothing can push one
 // there, so the asker has to be the recipient (docs/spec/SESSION_CONTRACT.md, `device.renew`).
-import { certChanged, type PairingApi } from "../pairing/api";
+import { type PairingApi } from "../pairing/api";
+import { certChanged } from "../pairing/pairing-state";
 import type { RuntimeInfo, SessionHost } from "../session-host";
 
 /** What came of it, in the words a surface can show without rewording a failure it does not understand. */

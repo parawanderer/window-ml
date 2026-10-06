@@ -4,7 +4,7 @@
 // cannot fake from one screen: the other device answering a join, or the hub giving up on it.
 
 import type { DeviceInfo } from "../session-host";
-import { accountRevoker, certChanged } from "./api";
+import { accountRevoker, certChanged } from "./pairing-state";
 import type { FoundOffer, Grant, HubLogLine, Membership, OfferHandle, PairingApi, PairRole, RevokeOutcome } from "./api";
 
 /** The error shape the library's `PairingError` has: a reason the screens turn into words. */
