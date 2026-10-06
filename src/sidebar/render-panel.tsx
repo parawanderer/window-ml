@@ -48,10 +48,16 @@ export function RenderElements({ items }: { items: { path: string; text?: string
                     { label: "Copy document.querySelector(…)", run: () => copyText(elementReference(it.path, it.index)) },
                     { label: "Copy selector", run: () => copyText(it.path) },
                 ]);
+                // This row has TWO pointer affordances — the cursor tip and the page highlight — and both end on
+                // leave. `cursorTipOn` hands back its own `onPointerLeave`, and a JSX prop written after a spread
+                // REPLACES the spread's silently, so writing `onPointerLeave={clearHighlight}` here left the tip up
+                // over nothing until something else happened to unmount the row. Compose them, never restate one.
+                const tip = isTok ? null : cursorTipOn("Right-click to copy a document.querySelector(…) for this element.");
                 return (
                     <div class="r-el" key={it.index ?? i}
-                        {...(isTok ? {} : cursorTipOn("Right-click to copy a document.querySelector(…) for this element."))}
-                        onPointerEnter={() => (isTok ? highlightToken(it.path) : highlightEl(it.path))} onPointerLeave={clearHighlight}
+                        {...(tip ?? {})}
+                        onPointerEnter={() => (isTok ? highlightToken(it.path) : highlightEl(it.path))}
+                        onPointerLeave={() => { tip?.onPointerLeave?.(); clearHighlight(); }}
                         onContextMenu={isTok ? undefined : menu}>
                         {single ? null : <span class="r-el-idx">#{it.index ?? i}</span>}
                         {it.text ? <span class="r-el-text">«{it.text}»</span> : null}

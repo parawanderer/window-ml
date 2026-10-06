@@ -4,7 +4,7 @@
 const { test, after } = require("node:test");
 const assert = require("node:assert");
 const { closeSidebarWorlds, loadSidebarWorld } = require("./helpers");
-const { agentStart, agentStep, agentResult, locateRender } = require("./sidebar-helpers");
+const { agentStart, agentStep, agentResult, locateRender, hoverTip } = require("./sidebar-helpers");
 
 // Close every jsdom window after the file — the VRAM panel's setInterval keeps a
 // window's timers alive, which would otherwise hang the runner after all pass.
@@ -304,6 +304,40 @@ test("debug In render of a click step is a hoverable element reference, not the 
     assert.match(elRef.querySelector(".r-el-path").textContent, /#bigToggle/, "shows the selector (copyable/hoverable)");
     assert.match(elRef.textContent, /Show the giant scrolling table/, "shows the human label too");
     assert.ok(!toolStep.querySelector(".action-sentence"), "the user-facing intent sentence stays OUT of the debug log");
+});
+
+test("an element row's cursor tip goes down when the pointer leaves, and so does the page highlight", async () => {
+    // Regression: the row carries TWO pointer affordances that both end on leave — the cursor tip
+    // ("Right-click to copy a document.querySelector(…)") and the page highlight. `cursorTipOn`'s handlers are
+    // SPREAD onto the row, and a JSX prop written after a spread REPLACES the spread's one silently, so the row's
+    // own `onPointerLeave={clearHighlight}` dropped the tip's. The tip then stayed on screen over nothing until
+    // something happened to unmount the row — on every surface that draws this renderer, the chat UI included.
+    const w = await loadSidebarWorld();
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.dispatch(agentStart("tipel", "find the readme", "m"));
+    await w.dispatch(agentStep("tipel", 1, {
+        seq: 0, tool: "findByText", arguments: { text: "README" }, result: "found 1",
+        renderOut: { type: "elements", items: [{ path: "#folder-row-19 > a", text: "README.md", index: 0 }] },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const toolStep = w.shadow.querySelector(".astep.tool");
+    toolStep.querySelector(".astep-head").click();   // steps start COLLAPSED — the row is not in the DOM until this
+    await w.tick();
+
+    const row = toolStep.querySelector(".r-el");
+    assert.ok(row, "the elements render is a hoverable row");
+    row.dispatchEvent(new w.window.PointerEvent("pointerenter", { bubbles: true }));
+    assert.ok(posted.some((m) => m.__mlHighlight?.selector === "#folder-row-19 > a"), "entering outlines it on the page");
+    assert.match(await hoverTip(w, row), /Right-click to copy/, "and hovering raises the tip");
+
+    posted.length = 0;
+    // pointerleave does NOT bubble in a browser, so it is dispatched on the row itself.
+    row.dispatchEvent(new w.window.PointerEvent("pointerleave"));
+    await w.flush();
+    assert.equal(w.shadow.querySelector(".cursor-tip"), null, "leaving takes the tip down");
+    assert.ok(posted.some((m) => m.__mlHighlight === null), "and still clears the page highlight");
 });
 
 test("agent tool In/Out carry a grey inline preview (minified args / newline-collapsed output)", async () => {
