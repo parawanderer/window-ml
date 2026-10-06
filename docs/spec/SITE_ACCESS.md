@@ -1,6 +1,7 @@
 # Spec: sites get `window.ml` only when someone said yes
 
-**Status: spec, not started.** Written 2026-10-06. Supersedes the idea recorded on 2026-07-29 (a consent prompt only
+**Status: building.** Hostile-site suite landed first (#373, every attack shown working against the old build); slice 0
+in progress. Written 2026-10-06. Supersedes the idea recorded on 2026-07-29 (a consent prompt only
 when the extension holds "on all sites"): this gates every site, whatever the browser's site-access setting is.
 
 ## The problem
@@ -53,6 +54,65 @@ scheme, and any frame that is not the top frame. A cross-origin iframe never inh
   revoke).
 - A revoke takes effect on the next message, with no reload: the check reads the list on every call. Calls already
   in flight finish.
+
+## Runs the user starts are built in the worker (slice 0)
+
+Added while building, after the rest of this spec was written. It is a precondition for everything below.
+
+### The gap
+
+Every run the USER starts on a page, rather than a page starting for itself, was ASSEMBLED in that page's own world:
+the HUD Commander, the chat page's `agent.start`, Continue (+N), a follow-up turn, adopting a stored session onto a
+tab. The shell posts `__mlStartAgent` (or `__mlSessionSend`, `__mlContinueRun`, `__mlAdoptSession`) into the page,
+and the page's `ml.agent` builds the toolset, the system prompt and the task, then sends `START_RUN`. Two
+consequences:
+
+- **The page decides what the user's run is.** It sees the start message first (its own scripts register listeners
+  before `injected.js` does) and can change the task, the tools or the system prompt. Attack 12 does exactly that
+  against the old build. Approving or not approving the page changes nothing here.
+- **The origin gate would break the Commander everywhere.** A plain gate refuses `START_RUN` from an unapproved
+  page, so the user's own run could not start on any site they had not approved, and the run's pre-start probes
+  (`GET_CONFIG`, `MODEL_CAPS`) would fail too.
+
+Four ways out were weighed: a one-time ticket that let the page start one run after a user action (keeps the hijack),
+approving a site when the user runs the agent on it (lends the page the API, which this spec rejects), refusing the
+Commander on unapproved sites (the literal reading, and a large regression), and building the run in the worker.
+The owner chose the last, on 2026-10-06.
+
+### The design
+
+**What the page supplies, and what it never does.** The page runs the tools and answers one question at start: its
+own page context (URL, title, language, time, locale), the text `pageContext()` already produces. It never supplies
+the task, the model, the system prompt, the toolset, or anything that decides approval. Its page context is page
+data, exactly as a tool result is: a hostile page can lie in it, which is the prompt-injection problem approvals
+exist for.
+
+**One assembly, two hosts.** The code that turns options into a run (which tools, which vision reader, the grounding
+model, the server-tool bundles, the unattended and tool-token shaping, the system prompt) moves out of
+`ml-agent-run.ts` into a module both hosts call with an `ml` of their own. The page passes its `window.ml`; the
+worker passes an adapter whose `config`/`capabilities`/`models`/`serverTools`/`chat` call the worker's functions
+directly and whose tool factories are the SAME factories the page uses. The factories need no DOM to build a tool
+(checked: they run in plain Node), so the descriptors the worker sends the model, approval flags included, come from
+the code the page runs, and there is no second copy to drift. A tool's `run` is simply never called in the worker.
+
+**Starting.** The worker mints the run id, assembles the run, then pushes the run's `RebuildConfig` into the tab:
+the same adopt a navigation already uses (`_adoptRun`), sent instead of asked for. The page registers the builtin
+toolset under the run id and answers with its page context; the worker folds it into the system prompt and starts
+the loop it already hosts. The URL and title in the run's provenance are read from `chrome.tabs`, which the browser
+sets, not from the page.
+
+**Remote (server) tools run in the worker.** A run's server-tool bundles are executed by the worker
+(`sw-tools.ts`), not delegated to the page: the page would otherwise have to fetch the tool list itself, which is a
+backend read, and a remote call's arguments leave the machine, which is not a page's business.
+
+**Entry points.** The HUD composer, Continue, a follow-up turn and steering go from the extension's own frame (the
+card or overlay app, an extension origin) straight to the worker. The chat page's `agent.start` and adopting a
+stored session call the worker's start directly instead of relaying through the page. A console `ml.agent()` on an
+approved page keeps its page path: the page asked for that run, and its options (custom tools, a custom system
+prompt, `approve`, `onStep`) only exist there.
+
+**What does not change.** The loop, the approval gate, delegation and its navigation barrier, the run's events and
+how every surface renders them.
 
 ## Runs on pages that are not approved
 
@@ -190,6 +250,8 @@ wait is on a run finishing or a state change, never a timer.
 
 ## Slices
 
+0. Runs the user starts are built in the worker ([above](#runs-the-user-starts-are-built-in-the-worker-slice-0)).
+   Attack 12.
 1. The background check and the approved/denied lists, with the settings UI. Unapproved pages still get the full
    `injected.js` but every call is refused. Red-team enumeration tests.
 2. Delegation tokens, and the vision tools' model calls moved to the background. Tests 9 to 11.

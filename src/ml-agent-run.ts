@@ -16,19 +16,18 @@
 //     config read, say -- the command times out; moved onto every turn it fires repeatedly.
 //     `tests/e2e/session-index.spec.mjs` fails if the call disappears.
 
-import { CITABLE_TOOLS, type AgentLoopDeps, shotTurnMessage, runAgentLoop } from "./agent-loop";
+import { type AgentLoopDeps, shotTurnMessage, runAgentLoop } from "./agent-loop";
 import { resolveOutputs, makeAnswerFacade, finalizeAnswer } from "./answer-set";
 import { defaultApprove, logStep, normalizeApproval, formatReadonlyExec, readonlyRefused } from "./approval";
 import { autoApprovePython } from "./auto-approve";
 import { makeBackgroundTaskPromise } from "./bridge";
 import { BUILD_INFO } from "./build-info.gen";
-import { buildServerTools, setCdpEnabled } from "./builtin-tools";
+import { setCdpEnabled } from "./builtin-tools";
 import { agentRegistry, resetSubcallUsage, handleRegistry, emitDebug, enterAgentRun, exitAgentRun, subcallUsage } from "./bus";
-import { type MlApi, type MlTool, type ApprovalRequest, type ApprovalDecision, type AgentResult, DEFAULT_GROUNDING_RANGE, type VisionMemory, detectGroundingModel, shortHash, type MlAgentHandle, type NeutralMessage, type RenderDescriptor, type ToolFeedback, type TokenUsage, hintSession, type DerefRead, type ToolRenderInput, outputCapEscalated } from "./contract";
+import { type MlApi, type MlTool, type ApprovalRequest, type ApprovalDecision, type AgentResult, shortHash, type MlAgentHandle, type NeutralMessage, type RenderDescriptor, type ToolFeedback, type TokenUsage, hintSession, type DerefRead, type ToolRenderInput, outputCapEscalated } from "./contract";
 import { setPierceClosedShadow, externalSheetIds, isCurrentPage, elLine, errText } from "./dom";
 import { type AgentControl, columnsViaBackground, sameOriginNav, sameOriginFetch } from "./ml-agent";
 import { expandPointers } from "./pointer-macro";
-import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_CLOSED_NOTE, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE } from "./prompts";
 import { evalReadonly } from "./readonly-exec";
 import { descriptorFor } from "./render-descriptor";
 import { parseInfo } from "./resource-capacity";
@@ -36,9 +35,8 @@ import { registerRun, endRun, runAnswer } from "./run-delegation";
 import { isSelfSourceUrl } from "./self-source";
 import { TokenStore } from "./token-pipe";
 import { toolContext, executeTool, withRunDeref } from "./tool-exec";
-import { citeParam, withCallTitle } from "./tool-params";
-import { buildDereferenceTool } from "./tools";
 import { pageContext } from "./util";
+import { assembleRun, withPageContext, type AssemblyMl } from "./run-assembly";
 import { validateArgs } from "./validate";
 
 /**
@@ -153,234 +151,16 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
     // span turns; a plain ml.agent() call gets a throwaway one. The page loop reads history / inbox /
     // cap / seq from it, so there's a single code path — a handle just persists it across turns.
     const control: AgentControl = _control ?? { hash: null, messages: [], inbox: [], maxSteps, running: false, seqBase: 0, stepBase: 0 };
-    let toolset = [...(tools || this.domTools || []), ...extraTools];
-    // Server-side tools, opt-in by bundle id. Resolved here rather than by the caller so the
-    // function schemas the model sees are the server's own. A bundle that does not resolve (a stock
-    // backend, a revoked key, a wrong id) is simply absent — a run should degrade to the tools it
-    // does have rather than failing before it starts.
-    // The user's curation is read beside the resolution it shapes. A config that cannot be read
-    // curates NOTHING out and adds nothing: a run losing its tools because a message failed is worse
-    // than one offering a tool the user had hidden.
-    let srvOff: string[] = [], srvAlways: string[] = [];
-    if (serverTools.length || commanderTools) {
-        try {
-            const cfg = await this.config();
-            srvOff = cfg?.serverToolsOff || [];
-            // Bundles marked always-present, for a run started from the HUD. Only that surface: a
-            // scripted `ml.agent()` said exactly what it wanted and must not gain tools behind its
-            // back.
-            if (commanderTools) srvAlways = cfg?.commanderServerTools || [];
-        } catch { /* no curation, no additions */ }
-    }
-    const wantBundles = [...new Set([...serverTools, ...srvAlways])];
-    if (wantBundles.length) {
-        try {
-            const bundles = await this.serverTools();
-            toolset = [...toolset, ...buildServerTools(this as unknown as MlApi, bundles, wantBundles, srvOff)];
-        } catch { /* unreachable backend → no server tools, run anyway */ }
-    }
-    // Vision facts resolved ONCE below and carried on every tool's ToolContext, so nothing re-derives
-    // them: `driverSees` = the agent's own model sees the pixels natively this run (drove native vs
-    // delegated `look`; read by `locate`'s snap-feedback); `runVisionModel` = the resolved reader a
-    // delegated vision sub-call uses. Both stay at their defaults unless a vision model resolves.
-    let driverSees = false;
-    let runVisionModel: string | null = null;
-    // Grounding facts (opt-in) resolved in the vision block below — hoisted so the cross-page
-    // rebuild-config can carry them, letting a re-adopted page rebuild `locate` identically.
-    let runGroundingModel: string | null = null;
-    let runGroundingRange = DEFAULT_GROUNDING_RANGE;
-    // Config, fetched once (used for vision resolution + the read-only exec
-    // auto-approve fast-path below).
-    const agentCfg = await this.config().catch(() => null);
-    // The run's driver model — the SINGLE resolution reused for vision wiring, the ToolContext, and the
-    // loop below (was computed twice). The fresh-config fallback covers a momentarily-null agentCfg so
-    // this can't be null while the reader resolves non-null. Null only when neither a per-call model nor
-    // a configured default exists — the run then fails downstream at prepareRequest ("No model configured").
-    const runModel = model || agentCfg?.model || (await this.config().catch(() => null))?.model || null;
-    const autoRO = !!(agentCfg && (agentCfg as { autoApproveReadonly?: boolean }).autoApproveReadonly);
-    const autoPy = !!(agentCfg && (agentCfg as { autoApprovePython?: boolean }).autoApprovePython);
-    const autoSOA = !!(agentCfg && (agentCfg as { autoApproveSameOriginAuth?: boolean }).autoApproveSameOriginAuth);
-    const autoSelfSrc = !!(agentCfg && (agentCfg as { autoApproveSelfSource?: boolean }).autoApproveSelfSource);
-    // Which lexical metric ranks a near-miss on a pointer LABEL. Undefined = the built-in default;
-    // it is a config value so the benchmark can vary it without a rebuild.
-    const labelMatch = (agentCfg as { labelMatch?: import("./contract").LexicalMetric } | null)?.labelMatch;
-    // Closed-shadow-root piercing (opt-in). Set the dom.ts module flag from THIS run's config before
-    // any DOM tool executes — it governs both loop paths (the page loop below AND the background's
-    // delegated page-side tool execution, since both call into the same main-world dom.ts). Off →
-    // closed roots stay unreachable, exactly as before.
-    const pierceClosed = !!(agentCfg && (agentCfg as { pierceClosedShadow?: boolean }).pierceClosedShadow);
+    const asm = await assembleRun(this as unknown as AssemblyMl, task, { tools, extraTools, serverTools, commanderTools, system, systemAppend, model, vision, unattended, navigate, crossOrigin, toolTokens, images });
+    const { toolset, byName, toolDefs, turnImages, agentCfg, runModel, driverSees, autoRO, autoPy, autoSOA, autoSelfSrc, labelMatch, pierceClosed, cdpOn } = asm;
+    const runVisionModel = asm.runVisionModel, runGroundingModel = asm.runGroundingModel, runGroundingRange = asm.runGroundingRange;
+    let pendingImages = asm.pendingImages;
+    task = asm.task;
+    // Closed-shadow-root piercing (opt-in), from THIS run's config, before any DOM tool executes. It governs both
+    // loop paths: the page loop below and the background's delegated page-side tools call the same dom.ts.
     setPierceClosedShadow(pierceClosed);
-    // CDP-trusted input flag — set AFTER the surface decision below (it's only usable on the
-    // background-hosted path; gating it on that avoids regressing page-hosted canvas clicks to a no-op).
-    const cdpOn = !!(agentCfg && (agentCfg as { cdp?: boolean }).cdp);
-    // #8 + #3: give the agent eyes with no wiring, preferring NATIVE vision.
-    // If the agent's OWN model is vision-capable, register a capture-only
-    // `look` whose screenshot ml.agent injects straight into the model's
-    // history (#3 inline vision), so it reasons over the real pixels instead
-    // of a lossy delegated text summary — the failure mode where a model
-    // "stumbles around" on an easy task. If only the OCR model can see, fall
-    // back to the delegated `lookTool` (#8). A forced `vision:"<model>"` is
-    // always delegated (can't inline a model that isn't the agent's).
-    if (vision !== false && !toolset.some(t => t.capabilities && t.capabilities.includes("vision"))) {
-        // The model that will SEE: forced value → agent's own (if it reports
-        // vision) → the OCR model → null. `look` prefers NATIVE inline vision
-        // when the agent's own model can see; otherwise it's delegated. `locate`
-        // is ALWAYS delegated (it reads badges), so it just needs any resolved
-        // reader — added alongside look whenever one exists.
-        const visionModel = await this._resolveVisionModel(model, vision);
-        if (visionModel) {
-            runVisionModel = visionModel;
-            // The driver sees the injected pixels NATIVELY iff the reader `_resolveVisionModel` picked
-            // IS the agent's own model (`runModel`) — it returns that only when forced-native (`vision:true`)
-            // or a probe confirms it sees; otherwise it returns a DELEGATED reader (the OCR model). Deriving
-            // driverSees from that ONE decision — not a second, independently-resolved `_modelSees` probe —
-            // is what stops look-wiring and locate's snap-feedback from disagreeing: the bug where a
-            // vision-capable Ollama agent (gemma4) hit the delegated "you can't see images" path even though
-            // its own model resolves as the reader.
-            driverSees = !!runModel && visionModel === runModel;
-            // One near-area memory SHARED by look + locate this run: a look({@pt}) or a locate
-            // snap-inject records the spot, so a re-snap onto it doesn't re-inject the same crop.
-            const visionMemory: VisionMemory = { seen: [], boundariesSeen: new Set() };
-            if (driverSees) {
-                toolset.push(this._nativeLookTool(visionMemory));
-            } else {
-                toolset.push(this.lookTool({ model: visionModel, memory: visionMemory }));
-            }
-            // Grounding (opt-in): the effective model is the explicit field, or
-            // the auto-detected qwen when it's blank; plus its coordinate range.
-            let groundingModel: string | null = null, groundingRange = DEFAULT_GROUNDING_RANGE;
-            try {
-                const cfg = await this.config();
-                if (cfg.groundingEnabled) {
-                    groundingRange = cfg.groundingRange || DEFAULT_GROUNDING_RANGE;
-                    groundingModel = cfg.groundingModel.trim() || detectGroundingModel(await this.models()) || null;
-                }
-            } catch { /* config/models unavailable → Set-of-Marks only */ }
-            runGroundingModel = groundingModel; runGroundingRange = groundingRange;   // carried for cross-page rebuild
-            // driverSees rides the ToolContext (below), not a build opt; memory is the shared dedup registry.
-            toolset.push(this.locateTool({ model: visionModel, groundingModel, groundingRange, memory: visionMemory }));
-        }
-    }
-    // Cross-page navigation (idea #1). Default ON: wire a `navigate(url)` tool so a background-hosted
-    // run can walk between same-site pages, surviving the full-page load (the barrier + re-adopt path
-    // below). `navigate: false` disables it entirely — no tool, no cross-page persistence (the run
-    // ends at a nav), and NAV_OFF_CLAUSE tells the model so instead of it wasting steps trying.
-    if (navigate && !toolset.some(t => t.name === "navigate")) toolset.push(this.navigateTool({ crossOrigin }));
-    // fetch_url: READ a URL the page can't (a raw file / API / other site) WITHOUT navigating — a gated
-    // GET (uncredentialed by default; `credentials`/`rendered` opt into the user's session / a JS render).
-    // Auto-wired into the DEFAULT kit only (`tools` not overridden); it needs no
-    // navigation, so it's added even on a navigate:false run. A caller who hand-picks `tools` gets exactly
-    // what they list (add `ml.fetchTool()` to include it) — unlike the vision tools, which augment any
-    // driver because they're capability-probed. requiresApproval, so default-on is safe.
-    if (!tools && !toolset.some(t => t.name === "fetch_url")) toolset.push(this.fetchTool());
-    // Composer attachments for THIS turn's first user message (a screenshot pasted/uploaded into the
-    // HUD/sidebar). A vision-capable driver sees them natively; otherwise transcribe via the reader
-    // (ml.read → the OCR model) and fold the text into the task, so a text-only agent still gets the
-    // content — with an honest note it didn't see the pixels itself. driverSees/runVisionModel are the
-    // SAME values that chose native-vs-delegated `look`, so the image path matches the tool path.
-    let pendingImages: string[] | undefined;
-    let turnImages: string[] = [];   // the resolved data URLs, for the debug transcript (shown in BOTH the vision + OCR cases)
-    if (images && images.length) {
-        try {
-            const urls = await Promise.all(images.map(im => this._imageToDataUrl(im)));
-            turnImages = urls;
-            if (driverSees) pendingImages = urls;
-            else {
-                const notes: string[] = [];
-                for (let i = 0; i < urls.length; i++) {
-                    let txt = "";
-                    try { txt = await this.read(urls[i], { model: runVisionModel }); } catch { /* reader unavailable → leave blank */ }
-                    const which = urls.length > 1 ? ` ${i + 1}` : "";
-                    notes.push(`[Pasted image${which} — you can't see images, so here is its transcribed text:]\n${txt || "(could not read the image)"}`);
-                }
-                task = task ? `${task}\n\n${notes.join("\n\n")}` : notes.join("\n\n");
-            }
-        } catch { /* image conversion failed → proceed without the attachment */ }
-    }
-    // Unattended run: no human to approve, so shape the toolset for read-only autonomy. exec and
-    // python_exec are kept ONLY when their read-only auto-approve path is configured on (a readonly
-    // survey / the hardened sandbox run without a prompt); otherwise every call would need approval,
-    // so they're dropped entirely. The kept ones get a note that the mutating/full half is refused.
-    // Other approval-gated tools (click/type/…) stay wired but are refused at the gate below — the
-    // model is told, not silently disarmed. Clone (don't mutate) the shared tool defs.
-    if (unattended) {
-        toolset = toolset.flatMap(t => {
-            if (t.name === "exec") return autoRO ? [{ ...t, description: t.description + UNATTENDED_EXEC_NOTE }] : [];
-            if (t.name === "python_exec") return autoPy ? [{ ...t, description: t.description + UNATTENDED_PY_NOTE }] : [];
-            return [t];
-        });
-    }
-    // Tool tokens (opt-in): expose a `token` param ONLY on the result-producing tools, and ONLY when the
-    // run has tokens enabled — so a normal run's schemas aren't cluttered with a param that does nothing.
-    // The model sets `token: true` on a call whose output it intends to CITE; the loop surfaces the
-    // @tool:<id> only for those (see agent-loop). Clone the shared defs; don't mutate them.
-    if (toolTokens) {
-        // The other half of tool tokens: a token is a POINTER, not only a citation. `dereference` reads
-        // the value back — cheaper than re-running a tool, and it reaches the FULL output rather than
-        // the truncated copy the model was shown. The run loop answers it (agent-loop's derefLocally);
-        // this only advertises the schema.
-        toolset = [...toolset, buildDereferenceTool(window.ml.defineTool)];
-        toolset = toolset.map(t => CITABLE_TOOLS.has(t.name)
-            ? { ...t, parameters: { ...t.parameters, properties: { ...(t.parameters as { properties?: Record<string, unknown> }).properties,
-                token: citeParam("the pricing table") } } }
-            : t);
-    }
-    // THE MODEL'S OWN ACCOUNT of each call, offered on every tool. Injected into the TOOLSET and not only into
-    // the model-facing `toolDefs`, which matters in three places at once: the background run's descriptors are
-    // built from the toolset too (so one injection covers both loops), and both the loop's `validateArgs` and the
-    // panel's argument-issue strip read `tool.parameters` — against which an unannounced `title` would read as an
-    // unknown property and put a ⚠ on every call that used it.
-    toolset = toolset.map(t => ({ ...t, parameters: withCallTitle(t.parameters) }));
-    const byName = Object.fromEntries(toolset.map(t => [t.name, t]));
-    const toolDefs = toolset.map(t => ({
-        type: "function",
-        function: { name: t.name, description: t.description, parameters: t.parameters }
-    }));
-    const hasCap = (cap: "vision" | "answer") => toolset.some(t => t.capabilities && t.capabilities.includes(cap));
-    let systemPrompt = system || AGENT_SYSTEM;
-    if (!system) {
-        // Adapt the default prompt to what the toolset can actually do.
-        systemPrompt += CALL_TITLE_CLAUSE;   // every tool carries the param, so the instruction is unconditional
-        if (hasCap("vision")) systemPrompt += VISION_CLAUSE;
-        if (hasCap("answer")) systemPrompt += ANSWER_CLAUSE;
-        if (toolTokens) systemPrompt += TOOLTOKENS_CLAUSE + DEREF_CLAUSE;   // rich results carry an @tool: id — to cite verbatim, and to read back
-        if (toolset.some(t => t.name === "wait")) systemPrompt += WAIT_CLAUSE;
-        // The DOM tools all pierce open shadow roots + resolve `>>>` — tell the model, plus (only when
-        // exec is wired) how the notation maps to JS. Gated on a representative DOM tool being present.
-        if (toolset.some(t => ["findByText", "describeElement", "interactives", "click", "type"].includes(t.name))) {
-            // The closed-root sentence differs by whether piercing is enabled (reachable via `>>>` vs
-            // visual-only). SHADOW_EXEC_NOTE (`>>>` → JS) is still accurate either way.
-            systemPrompt += SHADOW_CLAUSE + (pierceClosed ? SHADOW_CLOSED_PIERCE_NOTE : SHADOW_CLOSED_NOTE) + IFRAME_CLAUSE;
-            if (toolset.some(t => t.name === "exec")) systemPrompt += SHADOW_EXEC_NOTE;
-        }
-        if (toolset.some(t => t.name === "agent_api_docs")) systemPrompt += SELF_CLAUSE;
-        // The pipe dialect, ONCE, when anything in this toolset actually takes a `pipe`. Detected
-        // from the SCHEMA rather than a list of tool names, so a new tool that grows a `pipe`
-        // parameter is covered without anyone remembering this line — and a toolset with none of
-        // them pays nothing. The tool and its dialect always arrive together, which is what lets
-        // the parameters themselves be one sentence pointing here.
-        if (toolset.some(t => !!(t.parameters?.properties as Record<string, unknown> | undefined)?.pipe))
-            systemPrompt += PIPE_CLAUSE;
-        // Deterministic-compute clause. python_exec is the better calculator; when it's
-        // absent, exec (read-only JS: Array/Math/.reduce) is the fallback — either way the
-        // model must compute, never guess. Mutually exclusive so the prompt isn't doubled.
-        if (toolset.some(t => t.name === "python_exec")) systemPrompt += PYTHON_CLAUSE;
-        else if (toolset.some(t => t.name === "exec")) systemPrompt += EXEC_COMPUTE_CLAUSE;
-        // exec (JS) style: functional idioms + ml.range instead of loops/mutation. Independent of the
-        // compute clause above (applies even alongside python_exec, since it's about exec JS specifically).
-        if (toolset.some(t => t.name === "exec")) systemPrompt += EXEC_RANGE_CLAUSE;
-        // Headless run: tell the model upfront it's unattended (read-only only), so it doesn't
-        // waste steps attempting clicks/typing/mutations that the gate below will just refuse.
-        if (unattended) systemPrompt += UNATTENDED_CLAUSE;
-        // Navigation disabled: say so upfront (no navigate tool + a nav ends the run) so the model
-        // reports back instead of clicking a link and silently dying.
-        if (!navigate) systemPrompt += NAV_OFF_CLAUSE;
-    }
-    if (systemAppend) systemPrompt += `\n\nTask-specific notes:\n${systemAppend}`;
-    if (env) {
-        const ctx = pageContext(n => toolset.some(t => t.name === n));
-        if (ctx) systemPrompt += `\n\nCurrent page context:\n${ctx}`;
-    }
+    let systemPrompt = asm.systemPrompt;
+    if (env) systemPrompt = withPageContext(systemPrompt, pageContext(n => toolset.some(t => t.name === n)));
     // The run's curated answer set lives on the ToolContext (built at `toolCtx` below); the loop reads
     // `answerSet.elements()` / `.media()` / `.toMarkdown()` at assembly. (Was two accumulator arrays.)
     // Debug sidebar: announce the run + each step. Its own session hash
