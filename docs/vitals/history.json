@@ -1,0 +1,323 @@
+{
+  "schema": 1,
+  "repos": {
+    "window-ml": {
+      "months": {
+        "2026-07": {
+          "lines": {
+            "total": 25000,
+            "code": 15577,
+            "test": 6630,
+            "docs": 2609,
+            "data": 78,
+            "generated": 0,
+            "other": 106
+          },
+          "bigFiles": 4,
+          "commits": {
+            "total": 203,
+            "other": 190,
+            "build": 1,
+            "docs": 5,
+            "tools": 1,
+            "test": 1,
+            "refactor": 4,
+            "feat": 1
+          },
+          "ci": {
+            "main": {
+              "runs": 32,
+              "success": 20,
+              "failure": 12,
+              "cancelled": 0
+            }
+          }
+        },
+        "2026-08": {
+          "lines": {
+            "total": 54103,
+            "code": 31469,
+            "test": 18879,
+            "docs": 3428,
+            "data": 119,
+            "generated": 0,
+            "other": 208
+          },
+          "bigFiles": 11,
+          "commits": {
+            "total": 384,
+            "feat": 114,
+            "fix": 79,
+            "docs": 11,
+            "other": 148,
+            "test": 19,
+            "perf": 3,
+            "refactor": 4,
+            "chore": 4,
+            "ci": 1,
+            "tools": 1
+          },
+          "ci": {
+            "main": {
+              "runs": 73,
+              "success": 50,
+              "failure": 23,
+              "cancelled": 0
+            }
+          }
+        },
+        "2026-09": {
+          "lines": {
+            "total": 222882,
+            "code": 97100,
+            "test": 75768,
+            "docs": 15170,
+            "data": 28904,
+            "generated": 5055,
+            "other": 885
+          },
+          "bigFiles": 20,
+          "commits": {
+            "total": 1118,
+            "docs": 75,
+            "merge": 271,
+            "feat": 345,
+            "test": 66,
+            "fix": 227,
+            "tools": 11,
+            "refactor": 76,
+            "chore": 15,
+            "ci": 8,
+            "other": 16,
+            "style": 4,
+            "build": 2,
+            "perf": 2
+          },
+          "ci": {
+            "pr": {
+              "runs": 576,
+              "success": 398,
+              "failure": 88,
+              "cancelled": 90
+            },
+            "main": {
+              "runs": 330,
+              "success": 253,
+              "failure": 37,
+              "cancelled": 40
+            }
+          }
+        },
+        "2026-10": {
+          "lines": {
+            "total": 238219,
+            "code": 104271,
+            "test": 82168,
+            "docs": 16633,
+            "data": 29026,
+            "generated": 5114,
+            "other": 1007
+          },
+          "bigFiles": 18,
+          "commits": {
+            "total": 129,
+            "fix": 25,
+            "ci": 6,
+            "docs": 8,
+            "feat": 33,
+            "merge": 25,
+            "refactor": 23,
+            "chore": 2,
+            "perf": 2,
+            "test": 3,
+            "tools": 2
+          },
+          "partial": true,
+          "ci": {
+            "pr": {
+              "runs": 118,
+              "success": 78,
+              "failure": 10,
+              "cancelled": 30
+            },
+            "main": {
+              "runs": 81,
+              "success": 39,
+              "failure": 24,
+              "cancelled": 18
+            }
+          }
+        }
+      }
+    },
+    "window-ml-hub": {
+      "months": {
+        "2026-09": {
+          "lines": {
+            "total": 20126,
+            "code": 13984,
+            "test": 3191,
+            "docs": 2236,
+            "data": 191,
+            "generated": 0,
+            "other": 524
+          },
+          "bigFiles": 0,
+          "commits": {
+            "total": 100,
+            "feat": 29,
+            "fix": 12,
+            "chore": 2,
+            "docs": 10,
+            "merge": 36,
+            "test": 3,
+            "tools": 1,
+            "perf": 4,
+            "ci": 1,
+            "other": 2
+          },
+          "ci": {
+            "main": {
+              "runs": 56,
+              "success": 47,
+              "failure": 9,
+              "cancelled": 0
+            },
+            "pr": {
+              "runs": 66,
+              "success": 58,
+              "failure": 5,
+              "cancelled": 3
+            }
+          }
+        },
+        "2026-10": {
+          "lines": {
+            "total": 21068,
+            "code": 14473,
+            "test": 3297,
+            "docs": 2451,
+            "data": 191,
+            "generated": 0,
+            "other": 656
+          },
+          "bigFiles": 2,
+          "commits": {
+            "total": 11,
+            "docs": 2,
+            "chore": 3,
+            "feat": 3,
+            "ci": 2,
+            "fix": 1
+          },
+          "partial": true,
+          "ci": {
+            "main": {
+              "runs": 11,
+              "success": 11,
+              "failure": 0,
+              "cancelled": 0
+            },
+            "pr": {
+              "runs": 12,
+              "success": 11,
+              "failure": 0,
+              "cancelled": 1
+            }
+          }
+        }
+      }
+    }
+  },
+  "forks": {
+    "ollama": {
+      "months": {
+        "2026-08": {
+          "commits": {
+            "total": 4,
+            "other": 4
+          }
+        },
+        "2026-09": {
+          "commits": {
+            "total": 101,
+            "other": 99,
+            "chore": 1,
+            "merge": 1
+          }
+        },
+        "2026-10": {
+          "diff": {
+            "branch": "slop",
+            "upstream": "ollama:main",
+            "measured": "2026-10-06",
+            "aheadBy": 105,
+            "behindBy": 84,
+            "files": 134,
+            "additions": 18483,
+            "deletions": 199
+          }
+        }
+      }
+    },
+    "llama.cpp": {
+      "months": {
+        "2026-08": {
+          "commits": {
+            "total": 38,
+            "other": 36,
+            "merge": 2
+          }
+        },
+        "2026-09": {
+          "commits": {
+            "total": 8,
+            "merge": 2,
+            "other": 6
+          }
+        },
+        "2026-10": {
+          "diff": {
+            "branch": "slop",
+            "upstream": "ggml-org:master",
+            "measured": "2026-10-06",
+            "aheadBy": 46,
+            "behindBy": 420,
+            "files": 50,
+            "additions": 3388,
+            "deletions": 38
+          }
+        }
+      }
+    },
+    "open-webui": {
+      "months": {
+        "2026-09": {
+          "commits": {
+            "total": 13,
+            "feat": 4,
+            "fix": 3,
+            "other": 6
+          }
+        },
+        "2026-10": {
+          "commits": {
+            "total": 1,
+            "other": 1
+          },
+          "diff": {
+            "branch": "ml/tool-execute-api",
+            "upstream": "open-webui:main",
+            "measured": "2026-10-06",
+            "aheadBy": 14,
+            "behindBy": 327,
+            "files": 9,
+            "additions": 1317,
+            "deletions": 19
+          }
+        }
+      }
+    }
+  },
+  "updated": "2026-10-06T09:20:17.033Z"
+}

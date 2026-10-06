@@ -621,6 +621,13 @@ beside the score rather than folded into it. Playbook: `.claude/skills/file-size
 decay is inert and the ranking is plain churn; a file whose ratio falls below about half is one whose work has
 stopped. **Decay can never hide bloat**: every file over 800 lines that does not make the ranking is listed
 underneath it anyway, with its commit count, because big-and-quiet is exactly what a decayed score buries.
+
+**The codebase is itself an experiment, and `node scripts/vitals.mjs` is its record.** Whether agents can keep a
+codebase nobody reads working as it grows is one of the questions this repo exists to answer, so it keeps monthly
+figures in `docs/vitals/history.json`: lines by kind, big files, commits by conventional kind, CI failures on main and
+on PRs, for this repo, the hub and the forks. Run it about once a month and commit the result; CI history ages out
+of GitHub, so a month nobody recorded is lost. Commit subjects are what it classifies, so keep using the
+`feat:`/`fix:` prefixes. Skill: `.claude/skills/vitals/SKILL.md`.
 Tests are exempt: a long test file is a long LIST, which is not the same failure as a long module.
 
 **To see what actually connects two files, ask `node scripts/imports.mjs`** — `<file>` for its in- and
