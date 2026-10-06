@@ -202,6 +202,14 @@ test("THE PRINT BOUNDARY: a large message prints as a summary naming how to prin
     assert.equal(printed[0].chars, 3600);
     assert.equal(printed[1].content, "find the price", "a small message prints whole");
     assert.match(printed[3].abridged, /messages\[3\]/, "by SIZE, not role: a large tool result abridges too");
+    // A tool-calling turn whose bulk is its ARGUMENTS points at them, not at its empty content.
+    const big = sampleSnapshot();
+    big.messages[2].tool_calls[0].arguments = { js: "x".repeat(800) };
+    const callTurn = JSON.parse((await inWorkerRealm(`console.log(ml.current.messages[2])`, big)).logs[0]);
+    assert.equal(callTurn.abridged, `print ml.current.messages[2].tool_calls for all ${JSON.stringify(big.messages[2].tool_calls).length} chars`);
+    assert.match(callTurn.preview, /^\[\{"id":"c1"/);
+    // And a survey that ENDS in console.log has the value JavaScript gives it.
+    assert.equal((await inWorkerRealm(`console.log("hi")`)).value, undefined);
     // Naming the content prints it, an explicit act over honest data.
     const named = await inWorkerRealm(`console.log(ml.current.messages[0].content)`);
     assert.equal(named.logs[0].length, LONG_SYSTEM.length);
