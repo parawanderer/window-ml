@@ -1709,12 +1709,11 @@ test("SAVE_SESSION persists a session that GET_SESSION reads back", async () => 
 
 test("devtools panel: buffers debug events per tab, replays on connect, relays live, resets", async () => {
     const bg = loadBackground({ config: baseConfig() });
-    // Fire-and-forget: the ML_DEBUG_* handlers don't sendResponse, so we don't await —
-    // they run synchronously inside the send() executor.
+    // Fire-and-forget, but a page's forward passes the origin gate first, so each is awaited before the next.
     const dbg = (n, id) => bg.send({ type: "ML_DEBUG_EVENT", event: { kind: "chat", n } }, { tab: { id } });
 
     // Events arrive for tab 7 BEFORE any panel is open → buffered. Tab 8 must not leak in.
-    dbg(1, 7); dbg(2, 7); dbg(99, 8);
+    await dbg(1, 7); await dbg(2, 7); await dbg(99, 8);
 
     // A panel opens for tab 7 → gets a replay burst of exactly tab 7's events, in order.
     const panel = bg.connect("ml-devtools");
@@ -1724,7 +1723,7 @@ test("devtools panel: buffers debug events per tab, replays on connect, relays l
     assert.deepEqual(replay.replay.map(e => e.n), [1, 2], "replay is tab 7's events, no tab-8 leak");
 
     // A live event now fans out to the connected panel.
-    dbg(3, 7);
+    await dbg(3, 7);
     const live = panel.messages.filter(m => m.__mlDebug);
     assert.equal(live.length, 1, "one live relay");
     assert.equal(live[0].__mlDebug.n, 3);
@@ -2400,7 +2399,12 @@ test("SECURITY (FETCH_URL): an untrusted page with NO consent is refused — loc
     // A LOCAL page is refused too — for another file, and for ITS OWN URL in any mode that needs the file's
     // BYTES (Chrome's fetch has no file scheme). A session render of itself is answered page-side from the live
     // DOM and never reaches here, so each refusal names that mode, and the model stops retrying the same thing.
+    // A local page is never an approved site (docs/spec/SITE_ACCESS.md), so with no run on it the origin gate answers
+    // before this handler does. With a run on it, its tools reach the handler, and these are the refusals they get.
     const local = { tab: { id: 9, url: "file:///Users/me/page.html#top" } };
+    const gated = await bg.send({ type: "FETCH_URL", payload: { url: "file:///Users/me/.ssh/id_ed25519" } }, local);
+    assert.match(gated.error, /only an http or https page can use window\.ml/);
+    bg.context.__mlSeedActiveRunForTest(9, "local-run");   // the tab now hosts a run, as when a person starts one there
     const other = await bg.send({ type: "FETCH_URL", payload: { url: "file:///Users/me/.ssh/id_ed25519" } }, local);
     assert.match(other.error, /cannot read local files.*the page you are on \(file:\/\/\/Users\/me\/page\.html\), with rendered: true and credentials: true/i);
     const own = await bg.send({ type: "FETCH_URL", payload: { url: "file:///Users/me/page.html" } }, local);
@@ -3065,13 +3069,17 @@ test("PDF print: GET_PRINT_DOC for an unknown key returns null (no crash)", asyn
 test("DEREF_TOKEN answers only for a run this worker hosts, and forgets it when the run ends", async () => {
     const bg = loadBackground({ config: baseConfig() });
     // No such run → an actionable error, never a silent empty value the tool would treat as data.
-    const missing = await bg.send({ type: "DEREF_TOKEN", runId: "nope", ref: "@tool:a1b2c3f" }, { tab: { id: 9 } });
+    const missing = await bg.send({ type: "DEREF_TOKEN", runId: "nope", ref: "@tool:a1b2c3f" }, {});
     assert.match(missing.error, /No active background run "nope"/);
     assert.equal(missing.value, undefined, "nothing is returned for a run we don't host");
+    // From a PAGE, a run that is not on that page is not even looked up: the run id reaches pages in debug events, so
+    // knowing it proves nothing (docs/spec/SITE_ACCESS.md, attack 14).
+    const fromPage = await bg.send({ type: "DEREF_TOKEN", runId: "nope", ref: "@tool:a1b2c3f" }, { tab: { id: 9 } });
+    assert.match(fromPage.error, /No run on this page holds those pointers/);
 
     // A run this worker never hosted can't be read by naming it either — the resolver map is populated ONLY by
     // the loop's tokenSink at run start, so a page cannot conjure a pointer store for an arbitrary runId.
-    const forged = await bg.send({ type: "DEREF_TOKEN", runId: "../../etc", ref: "@tool:a1b2c3f" }, { tab: { id: 9 } });
+    const forged = await bg.send({ type: "DEREF_TOKEN", runId: "../../etc", ref: "@tool:a1b2c3f" }, {});
     assert.match(forged.error, /No active background run/);
     assert.equal(forged.value, undefined);
 });

@@ -238,15 +238,16 @@ test("window.ml signals readiness via the ml:ready event and ml.ready promise", 
     assert.strictEqual(await world.ml.ready, world.ml);
 });
 
-test("CANCEL_RUN_REQUEST relays a fire-and-forget CANCEL_RUN so a handle kills its background loop", async () => {
+// --- the page's cancel of its own run: its own message type, so the origin gate can refuse it (SITE_ACCESS.md) ---
+test("CANCEL_RUN_REQUEST relays a fire-and-forget PAGE_CANCEL_RUN so a handle kills its background loop", async () => {
     // A createAgent handle's cancel() posts this for a BACKGROUND run: aborting the page controller alone
     // only kills a FETCH_LLM (via ABORT_TASK), not the SW-side loop — which would keep stepping and emit a
-    // stale approval AFTER the "cancelled" bubble. content.js must relay it as a runtime CANCEL_RUN.
+    // stale approval AFTER the "cancelled" bubble. content.js must relay it as a runtime PAGE_CANCEL_RUN.
     const world = loadPageWorld({ onRuntimeMessage: () => undefined });
     world.context.window.postMessage({ type: "CANCEL_RUN_REQUEST", payload: { runId: "run42" } });
     await new Promise(r => setTimeout(r, 0));   // the harness posts on a microtask
-    const cancel = world.runtimeCalls.find(m => m.type === "CANCEL_RUN");
-    assert.ok(cancel, "content.js relayed a CANCEL_RUN runtime message");
+    const cancel = world.runtimeCalls.find(m => m.type === "PAGE_CANCEL_RUN");
+    assert.ok(cancel, "content.js relayed the page's cancel under its own type, so the origin gate can tell it from the shell's Stop");
     assert.equal(cancel.payload.runId, "run42", "carrying the run id to abort");
 });
 

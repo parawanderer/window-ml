@@ -16,13 +16,13 @@
 // every wait is on a run finishing, a reply arriving, or a state change.
 
 import { test, expect } from "@playwright/test";
-import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, approveOrigin } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startHostileSite, HOSTILE_RESOLVER_ARGS } from "./fixtures/hostile/server.mjs";
 
 /** The slices of docs/spec/SITE_ACCESS.md that have NOT landed. Each attack below names the slice that closes it; while
  *  that slice is listed here, the test asserts the attack works. Flip an entry in the change that lands the slice. */
-const OPEN = { slice0: false, slice1: true, slice2: true, slice4: true };
+const OPEN = { slice0: false, slice1: false, slice2: true, slice4: true };
 
 /** Whether `slice` is still open, recording it on the test so the report says which holes this run demonstrated. */
 function holeOpen(slice, what) {
@@ -44,11 +44,12 @@ async function setup({ debugMode = "off" } = {}) {
     return { fake, site, ext, close };
 }
 
-/** Open `url` and wait for the extension's page half to come up on it. */
-async function open(ext, url) {
+/** Open `url` and wait for the extension's page half to come up on it. The page stays UNAPPROVED unless asked: the
+ *  hostile site is never one the person allowed. */
+async function open(ext, url, { approve = false } = {}) {
     const page = await ext.context.newPage();
     await page.goto(url);
-    await waitForMl(page);
+    await waitForMl(page, { approve });
     return page;
 }
 
@@ -213,7 +214,7 @@ test.describe("@security a run the user started on an unapproved page", () => {
             const hash = await userStartsRun(ext, idx, page, "what is the code on this page?");
             const status = await idx.settled(hash);
             expect(await page.evaluate(() => window.__cancelled)).toEqual([hash]);   // the attack was attempted
-            if (holeOpen("slice2", "CANCEL_RUN is relayed from the page, and the run id reaches it in debug events")) {
+            if (holeOpen("slice1", "CANCEL_RUN is relayed from the page, and the run id reaches it in debug events")) {
                 expect(status).toBe("cancelled");
                 return;
             }
@@ -237,6 +238,40 @@ test.describe("@security a run the user started on an unapproved page", () => {
             }
             expect((await page.evaluate(() => window.__spent)).error).toMatch(/refused|not approved/i);
             expect(JSON.stringify(fake.calls())).not.toContain("EVIL SPEND");
+        } finally { await close(); }
+    });
+});
+
+test.describe("@security approval", () => {
+    test("an approved site uses window.ml; the same host on another scheme or a sub-domain does not", async () => {
+        // The positive control for every refusal above: approval is what changes the answer, nothing else.
+        const { fake, site, ext, close } = await setup();
+        try {
+            await approveOrigin(ext.sw, site.origin("approved.test"));
+            const ok = await open(ext, site.url("approved.test"));
+            fake.setScript([{ content: "allowed" }]);
+            expect(await ok.evaluate(() => window.ml.chat("hello"))).toBe("allowed");
+            const sub = await open(ext, site.url("s01.approved.test"));
+            const out = await sub.evaluate(() => window.ml.chat("hello").then((r) => ({ ok: r }), (e) => ({ err: String(e) })));
+            expect(out.err, JSON.stringify(out)).toMatch(/not approved/);
+            expect(fake.calls().length).toBe(1);
+        } finally { await close(); }
+    });
+
+    test("attack 8: approved, then revoked, and still calling without a reload: refused from the revoke on", async () => {
+        const { fake, site, ext, close } = await setup();
+        try {
+            await approveOrigin(ext.sw, site.origin("evil.test"));
+            const page = await open(ext, site.url("evil.test"));
+            fake.setScript([{ content: "one" }, { content: "two" }]);
+            expect(await page.evaluate(() => window.ml.chat("first"))).toBe("one");
+            // The person revokes from the settings: the extension's own page edits the list, as the UI does.
+            const settings = await ext.context.newPage();
+            await settings.goto(`chrome-extension://${ext.extensionId}/popup.html`);
+            await settings.evaluate((o) => chrome.runtime.sendMessage({ type: "SITE_ACCESS", payload: { edit: { op: "revoke", origin: o } } }), site.origin("evil.test"));
+            const out = await page.evaluate(() => window.ml.chat("second").then((r) => ({ ok: r }), (e) => ({ err: String(e) })));
+            expect(out.err, JSON.stringify(out)).toMatch(/not approved/);
+            expect(JSON.stringify(fake.calls())).not.toContain("second");
         } finally { await close(); }
     });
 });

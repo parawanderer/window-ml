@@ -318,7 +318,8 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
         // forwarder) — EXCEPT once the run has navigated, when that caller's context is gone, so the
         // background fans to the destination page instead. UNLIKE per-step events (background-only source),
         // lifecycle is ALSO emitted page-side here, so relaying it below early would DOUBLE in the panel.
-        // A run the WORKER built has no page-side caller at all, on any surface, so it fans its own from the start.
+        // A run the WORKER built (or was handed: a durable resume, `makeWorkerRun`) has no page-side caller at all, on
+        // any surface, so it fans its own from the start.
         if (p.surface !== "off" && !hasNavigated && p.builtBy !== "worker") return;
         chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
         // We're the SOLE fanner in this branch (off, or overlay/devtools post-nav), so feed a connected panel
