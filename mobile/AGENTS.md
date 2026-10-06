@@ -78,6 +78,14 @@ API from memory.** `expo-file-system` in particular is the `File` / `Directory` 
   after it with `&&`. Type-only imports are erased and may come from anywhere. `tests/mobile-imports.test.mjs` fails on
   a value import from elsewhere, because nothing else catches it — a PR builds the DEBUG apk only, and the release one
   runs on main.
+- **And a WATCHED folder can break the bundle without the app importing anything new.** The rule above is about the
+  app's own imports; the other half is what a shared module imports. `src/pairing/api.ts` gained
+  `import { signal } from "@preact/signals"` for three signals no screen here reads, and Metro resolves a module-scope
+  import whether or not anything uses what it binds — so the release bundle failed for two days while every PR stayed
+  green, because `mobile-android` is skipped on a PR touching none of the watched paths. **A module shared with the
+  phone may import only packages `mobile/package.json` declares**; state a browser re-renders from goes in a sibling
+  the phone never imports (`src/pairing/pairing-state.ts` is the one that split off). The second test in
+  `tests/mobile-imports.test.mjs` walks the graph the app actually reaches and names the file and the package.
 - **Anything the app sends rides one sealed hub command, at most 1 MiB** (`src/hub/seal.ts`), base64 and JSON included.
   A phone photo alone is several times that: images are shrunk to `image-budget.ts`'s budget before they are attached.
 - **React Native's `Image` draws no SVG**, and says nothing: the viewer opened on a black screen for the demo's SVG

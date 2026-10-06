@@ -10,7 +10,8 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { encode } from "uqr";
 import { ConnectionHistory, DevicesList } from "./devices-ui";
 import { QrScanner, canScan } from "./qr-scan";
-import { devicesStep, groupFour, pairingProblem, profileOf, profilesFor, roleName, SCOPES, type FoundOffer, type Grant, type HubConnectionView, type Membership, type OfferHandle, type PairingApi } from "./api";
+import { groupFour, pairingProblem, profileOf, profilesFor, roleName, SCOPES, type FoundOffer, type Grant, type HubConnectionView, type Membership, type OfferHandle, type PairingApi } from "./api";
+import { devicesStep } from "./pairing-state";
 
 /** A fingerprint as both screens draw it: four-character groups in the code face, large enough to compare. */
 export function Fingerprint({ value }: { value: string }) {

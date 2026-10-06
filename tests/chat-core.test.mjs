@@ -896,7 +896,7 @@ test("renewSelf: tries each browser that is awake, installs what comes back, and
     // AND A KEPT CERTIFICATE SAYS SO, so whatever is showing the old window re-reads at once. The keyring is
     // otherwise only re-read hourly, and nothing told the inbox that the thing it was warning about had just been
     // fixed: the card kept saying "your access runs out in 5 days", which reads as a press that did nothing.
-    const { certChanged } = await import("../src/pairing/api.ts");
+    const { certChanged } = await import("../src/pairing/pairing-state.ts");
     const before = certChanged.value;
     w = world(() => ok());
     await renewSelf(w.host, w.pairing, [rt("a")], "p");
