@@ -61,8 +61,13 @@ jobs:
       - id: filter
         run: |
           base=""
+          # A PR is checked out as the MERGE commit GitHub built against main's tip at that moment, so the PR's own
+          # change is that commit against its first parent. NOT `pull_request.base.sha`: that is main as the event
+          # recorded it, and on a repo where main moves several times an hour it is routinely older than the merge
+          # commit's parent. The diff then carries every PR merged in between, which made a README-only PR (#366)
+          # run the whole browser suite and the sixteen-minute Android build.
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            base="${{ github.event.pull_request.base.sha }}"
+            base=$(git rev-parse -q --verify HEAD^1 || true)
           elif [ "${{ github.event_name }}" = "push" ]; then
             base="${{ github.event.before }}"
           fi
@@ -120,9 +125,9 @@ jobs:
           if [ -n "$files" ] && [ -z "$other" ]; then
             echo "code=false" >> "$GITHUB_OUTPUT"
             {
-              echo "### Nothing here can reach a browser — skipped \`e2e\` and \`bench\`"
+              echo "### Nothing here can reach the code — skipped \`test\`, \`build\`, \`e2e\` and \`bench\`"
               echo ""
-              echo "Only prose and/or \`openwebui/\` Python changed, so the browser jobs cannot be affected. Files:"
+              echo "Only prose and/or \`openwebui/\` Python changed (its tests run in \`tools\`). Files:"
               echo ""
               echo '```'
               echo "$files"
@@ -168,6 +173,10 @@ jobs:
       - run: npm test
 
   test:
+    # Skipped only when `changes` PROVED nothing but prose changed: no test reads a markdown file from the repo
+    # (checked when this gate was added), and `tools` still runs the format and index checks over it.
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     strategy:
       # `fail-fast: false` for the same reason the e2e shards have it, and with a sharper edge here: a
@@ -300,6 +309,9 @@ jobs:
           node scripts/check-file-size.mjs "$base"
 
   build:
+    # Never skipped on main: `pages` publishes from its artifact.
+    needs: changes
+    if: github.ref == 'refs/heads/main' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
