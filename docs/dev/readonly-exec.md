@@ -404,6 +404,11 @@ promise.
 - **The print boundary** abridges a large message row (over `ABRIDGE_OVER` characters) into its role, size, a preview
   and the expression that prints it whole, in `console.log` and in a returned value. The VALUE is untouched.
 
+**What the realms do not cover**: a survey's RESULT. It is a tool result, and reaches the page the way every tool result
+does, through the debug stream relayed through the page's window, in every `debugMode` (measured by the
+`demo/ml-current-e2e` demo). The realms keep the snapshot from being evaluated in the page; closing that channel is the
+site-access work's.
+
 The worker realm is not wired yet: `tryReadonly` in `sw-run-host.ts` is where it goes, and that is the site-access
 work's slice 2, which will also give the worker's `ml` a `dereference`. Until then a survey naming `@tool:` defers to
 the page exactly as before. Tests: `tests/readonly-current.test.mjs`.

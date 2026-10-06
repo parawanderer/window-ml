@@ -151,7 +151,7 @@ that writes `@tool:abc.length` gets a length, where against a promise it would g
 "which is exactly the plausible-wrong-answer shape this codebase keeps designing out". `ml.current.messages.length`
 on a promise is that same silent `undefined`.
 
-**Where it is read: in the WORKER, never on the page.** The first draft resolved the snapshot up front and shipped it
+**Where it is read: in the WORKER, never evaluated on the page.** The first draft resolved the snapshot up front and shipped it
 to the page, where a delegated `exec` ran, and scanned the source per member so as not to put the context on the wire
 for nothing. The site-access work showed why that was wrong rather than merely costly: the page is the realm a
 hostile site controls, and a read-only survey auto-approves, so a prompt-injected one would carry the run's whole
@@ -163,6 +163,15 @@ page is retried there. The two realms have disjoint capabilities (`docs/dev/read
 - the page has the DOM and no run context: `ml.current` is a refusal there (not `undefined`, which would make a mixed
   survey evaluate to a plausible wrong answer);
 - so a survey that needs both is refused on both sides and reaches the human, whatever order it touches them in.
+
+**What that does NOT do, measured (2026-10-06, `demo/ml-current-e2e`).** It keeps the snapshot from being EVALUATED in
+the page, and the page is never asked to run a survey that reads the run. It does not keep a survey's RESULT off the
+page: what a survey returns is a tool result, and goes where every tool result goes, which today includes the debug
+stream relayed through the page's own window (`__mlDebug:agent-step`, carrying the panel's copy, not just the model's
+500 characters) in every `debugMode`, and the run's response to a page that started the run. A prompt-injected survey
+returning `ml.current.messages.map(m => m.content).join()` is a plain string, so the print boundary does not touch it.
+The same channel carries every other tool result already, so it is not new here; closing it is the site-access work's,
+and until it is closed this realm is a necessary half, not the whole protection.
 
 **What the snapshot carries** is the real messages, bodies included, because that is the point (decision 3), as a
 COPY made when the survey runs, so nothing a script does reaches the loop's own array. The copy is made only for a
@@ -336,7 +345,8 @@ credentials. Outside a run it throws, because there is no run to be the subject 
 That argument is only half of it, and the first draft stopped there. From the PAGE's side the context IS new
 information: a run that read a banking site and then works on another one carries the first one's content, and the
 page it is on now is not entitled to it. That is why it is read in the worker and refused on the page (above), and it
-is the same rule the site-access work applies to `@tool:` reads.
+is the same rule the site-access work applies to `@tool:` reads. It is also why the debug channel matters (above):
+evaluating in the worker protects the snapshot, and only closing that channel protects what a survey returns.
 
 ## What can be added later, and what cannot
 
