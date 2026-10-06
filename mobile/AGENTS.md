@@ -86,6 +86,13 @@ API from memory.** `expo-file-system` in particular is the `File` / `Directory` 
   phone may import only packages `mobile/package.json` declares**; state a browser re-renders from goes in a sibling
   the phone never imports (`src/pairing/pairing-state.ts` is the one that split off). The second test in
   `tests/mobile-imports.test.mjs` walks the graph the app actually reaches and names the file and the package.
+- **Two CI jobs, and they answer different questions.** `mobile-bundle` runs the release Metro pass alone (about a
+  minute; no JDK, no Android SDK, no gradle, no `expo prebuild`) and is what catches a JS or resolution break, so it
+  runs on every change the bundle is built from. `mobile-android` is sixteen minutes of gradle answering "does it
+  still PACKAGE", so it runs only when a NATIVE input changed — the dependency set, `app.json`, the plugins — and on
+  main, where the APK published has to come from the commit that landed. The split exists because the expensive job
+  could not see the cheap failure: `assembleDebug` never invokes Metro, so for a JS-only change the APK it builds is
+  identical to the last one, and sixteen minutes bought nothing the bundle does not say in one.
 - **Anything the app sends rides one sealed hub command, at most 1 MiB** (`src/hub/seal.ts`), base64 and JSON included.
   A phone photo alone is several times that: images are shrunk to `image-budget.ts`'s budget before they are attached.
 - **React Native's `Image` draws no SVG**, and says nothing: the viewer opened on a black screen for the demo's SVG

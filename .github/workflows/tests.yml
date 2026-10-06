@@ -53,6 +53,7 @@ jobs:
       code: ${{ steps.filter.outputs.code }}
       hub: ${{ steps.filter.outputs.hub }}
       phone: ${{ steps.filter.outputs.phone }}
+      native: ${{ steps.filter.outputs.native }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -72,6 +73,7 @@ jobs:
             echo "code=true" >> "$GITHUB_OUTPUT"
             echo "hub=true" >> "$GITHUB_OUTPUT"
             echo "phone=true" >> "$GITHUB_OUTPUT"
+            echo "native=true" >> "$GITHUB_OUTPUT"
             echo "Ran everything: no comparable base for \`${{ github.event_name }}\`." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -87,17 +89,30 @@ jobs:
             echo "hub=false" >> "$GITHUB_OUTPUT"
             echo "Nothing the hub suite could notice changed, so \`hub\` was skipped." >> "$GITHUB_STEP_SUMMARY"
           fi
-          # THE ANDROID BUILD IS THE LONG POLE: about ten minutes, where everything else finishes in four, so it alone
-          # decides what a PR costs to wait for. It builds an APK from `mobile/` plus the folders Metro watches
-          # (mobile/metro.config.js: src/native, src/pairing, src/chat) — a change outside those cannot alter the
-          # bundle. Generous in the same direction as the filters above, and never skipped on main, where the APK it
-          # publishes has to come from every commit that lands.
+          # WHAT THE PHONE'S JS BUNDLE IS BUILT FROM: `mobile/` plus the folders Metro watches (mobile/metro.config.js:
+          # src/native, src/pairing, src/chat) — a change outside those cannot alter the bundle. This drives
+          # `mobile-bundle`, which is about a minute, so it is generous in the same direction as the filters above.
           if [ "${{ github.ref }}" = "refs/heads/main" ] \
              || echo "$files" | grep -qE '^(mobile/|src/(native|pairing|chat)/|package(-lock)?\.json|build-web\.mjs|\.github/workflows/tests\.yml)'; then
             echo "phone=true" >> "$GITHUB_OUTPUT"
           else
             echo "phone=false" >> "$GITHUB_OUTPUT"
-            echo "Nothing the phone's bundle is built from changed, so \`mobile-android\` was skipped." >> "$GITHUB_STEP_SUMMARY"
+            echo "Nothing the phone's bundle is built from changed, so the phone jobs were skipped." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # THE ANDROID BUILD IS THE LONG POLE: sixteen minutes of gradle, where everything else finishes in four, so
+          # it alone decides what a PR costs to wait for. It answers "does the app still PACKAGE", and the inputs to
+          # that are the native ones — the dependency set, the Expo config the project is generated from, the plugins.
+          # A change to TypeScript the app merely bundles cannot alter it: the debug APK does not bundle JS at all
+          # (it expects Metro to serve it), so for a JS-only change the APK it builds is the same one as last time.
+          # That is what `mobile-bundle` is for, and it catches the JS break this filter deliberately stops paying
+          # sixteen minutes to miss. Never skipped on main, where the APK published has to come from the commit that
+          # landed — so a JS-only change is still packaged for real before the rolling release moves.
+          if [ "${{ github.ref }}" = "refs/heads/main" ] \
+             || echo "$files" | grep -qE '^(mobile/(package(-lock)?\.json|app\.json|metro\.config\.js|tsconfig\.json|index\.ts|App\.tsx|plugins/|scripts/)|package(-lock)?\.json|\.github/workflows/tests\.yml)'; then
+            echo "native=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "native=false" >> "$GITHUB_OUTPUT"
+            echo "No native input changed, so \`mobile-android\` was skipped; \`mobile-bundle\` covers the JS." >> "$GITHUB_STEP_SUMMARY"
           fi
           # Prose, plus the OpenWebUI tool sources. Everything else — including any .json under
           # docs/ — counts as code. See the note above this job for why each entry is safe.
@@ -447,9 +462,41 @@ jobs:
   # This is a BUILD check, not a test: it answers "does the app still package", which is the failure that would
   # otherwise be found at release time. What the app DOES is checked where it can be — the page's own suites, the
   # bridge's unit tests, and the Maestro flows in tests/mobile/ against a device someone has.
-  mobile-android:
+  # THE PHONE'S JS, BUNDLED THE WAY A RELEASE BUNDLES IT — about a minute, against sixteen for the native build.
+  #
+  # It exists because the expensive job could not see the failure it was being paid for. `assembleDebug` never runs
+  # Metro (a debug APK expects Metro to serve the JS), so the only step that bundles is `assembleRelease`, which runs
+  # on main alone. An `import { signal } from "@preact/signals"` in `src/pairing/api.ts` — shared with the phone,
+  # which has no Preact — therefore broke the release bundle for two days while every PR stayed green.
+  #
+  # This runs the same Metro pass standalone. It needs no JDK, no Android SDK, no gradle and no `expo prebuild`
+  # (checked: it bundles with `mobile/android` absent), so it is cheap enough to run on every change the bundle is
+  # built from, and cheap enough to be a required check in a way the native build never was.
+  mobile-bundle:
     needs: changes
     if: needs.changes.outputs.phone == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm ci
+        working-directory: mobile
+      # The page the WebView loads: `sync-embed` writes it into a generated module the app imports, so without it the
+      # bundle is of a different app than the one that ships.
+      - run: node scripts/build-web.mjs
+      - run: node mobile/scripts/sync-embed.mjs
+      - name: Bundle the JS the release build would
+        run: npx expo export:embed --platform android --dev false --entry-file index.ts
+             --bundle-output "$RUNNER_TEMP/android.bundle" --assets-dest "$RUNNER_TEMP/android-assets"
+        working-directory: mobile
+
+  mobile-android:
+    needs: [changes, mobile-bundle]
+    if: needs.changes.outputs.native == 'true' && needs.mobile-bundle.result == 'success'
     runs-on: ubuntu-24.04
     # To re-point the rolling `android-latest` release at the APK this job just built. Every other job here reads.
     permissions:
