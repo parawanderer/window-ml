@@ -3011,10 +3011,33 @@ test("the signer refreshes its pairing from the inbox: one press to the code, sa
 
 // --- a status line only where nothing else shows liveness ---
 
+/** The watched run's one tool call RETURNS: from here the model is thinking about it, and nothing on screen says so. */
+const toolReturned = (page) => page.evaluate((k) => {
+    const hash = k.split(":").pop();
+    globalThis.__chatFake.emit(k, {
+        kind: "agent-step", id: `${hash}-1r`, ts: Date.now(), save: false, session: { hash, turn: 1 },
+        step: 1, seq: 1, tool: "python_exec", arguments: {}, result: "ok", toolMs: 1200,
+    });
+}, WATCHED);
+
+test("a tool in flight is shown by its own step, so the reading view drops the status line until it returns", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(WATCHED)}`, ORDINARY_FOLD);
+    const note = page.locator(".pending-note");
+    // The run's python_exec is still running and its step pulses: a "Running Python…" line under it says it twice.
+    await expect(page.locator(".astep.tool.pending")).toBeVisible();
+    await expect(note).toBeHidden();
+    // It returns: now the model is thinking about the result, and the footer is the only thing that says so.
+    await toolReturned(page);
+    await expect(note).toBeVisible();
+    await expect(note).toContainText("Thinking about the Python output");
+    expect(errors, "no page errors").toEqual([]);
+});
+
 test("while the model streams, the reading view drops the status line and the pulse — the words ARE the signal", async () => {
     const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(WATCHED)}`, ORDINARY_FOLD);
     const note = page.locator(".pending-note");
     // A running run with nothing arriving: the footer is the only thing saying so, and it says it.
+    await toolReturned(page);
     await expect(note).toBeVisible();
 
     // Now the model starts streaming. `LiveStream` draws the reply a line above, so the footer's phrase would
@@ -3039,6 +3062,7 @@ test("while the model streams, the reading view drops the status line and the pu
 
 test("a streamed THOUGHT also silences the status line, which would otherwise count the same tokens twice", async () => {
     const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(WATCHED)}`, ORDINARY_FOLD);
+    await toolReturned(page);
     await expect(page.locator(".pending-note")).toBeVisible();
     await page.evaluate((k) => globalThis.__chatFake.emit(k, {
         kind: "agent-stream", id: k.split(":").pop(), ts: Date.now(), save: false,
