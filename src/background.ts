@@ -28,6 +28,9 @@ import { moveTabKey } from "./tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw-debug";   // the DevTools panel's copy of the page debug stream
 import { startBackgroundRun, delegateStreams, hostRun } from "./sw-run-host";
 import { adoptOnTab, startUserRun, userRunAction, steerRun } from "./sw-run-start";
+import { PAGE_STARTED_TYPES } from "./page-relay";
+import { originOf, type SiteEdit } from "./site-access";
+import { editSiteAccess, pageRefusal, readSiteLists, siteDecision } from "./sw-site-access";
 import { pythonPrewarm, pythonExec, relayPyStdout } from "./sw-python";
 import { focusLineFor } from "./sw-focus";
 
@@ -84,6 +87,12 @@ startValueSweeps();
     bgRuns.set(runId, { p: { runId } as unknown as StartRunPayload, tabId, messages: [] });
 };
 
+// TEST-ONLY: mark a tab as hosting a live run, so a unit test can check what a page's tools may send while a run is
+// on it (sw-site-access.ts) without driving a run to a standstill.
+(globalThis as unknown as { __mlSeedActiveRunForTest?: unknown }).__mlSeedActiveRunForTest = (tabId: number, runId: string): void => {
+    const s = activeRuns.get(tabId) ?? new Set<string>();
+    s.add(runId); activeRuns.set(tabId, s);
+};
 // TEST-ONLY (SW realm only, like the two above): keep a session past the worker's life, as a run the user started with
 // `persistUiRuns` on is kept, without starting one through a surface.
 (globalThis as unknown as { __mlKeepSessionForTest?: unknown }).__mlKeepSessionForTest = (hash: string): void => keepSession(hash);
@@ -155,8 +164,23 @@ function dropPrintDoc(key: string): void {
 }
 
 
+// THE ORIGIN GATE (docs/spec/SITE_ACCESS.md). Every message a PAGE can start (page-relay.ts) is checked against the
+// sender's origin before any handler runs: the browser sets `sender`, a page cannot. A refused request is answered
+// with the refusal; a fire-and-forget one is simply dropped. Everything else goes straight to the router.
 chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     housekeeping.beat();   // a message is the worker being alive: the heartbeat an eviction is inferred from (throttled)
+    if (!PAGE_STARTED_TYPES.has(message?.type) || isExtensionSender(sender) || sender.tab == null) return route(message, sender, sendResponse);
+    void pageRefusal(message.type, sender).then((refusal) => {
+        if (refusal) { sendResponse({ error: refusal }); return; }
+        // An async handler keeps the channel itself; a fire-and-forget one never answers, so close it here (a second
+        // sendResponse after a handler's own is ignored by the browser).
+        if (route(message, sender, sendResponse) !== true) sendResponse(undefined);
+    });
+    return true;
+});
+
+/** The message router: every handler, behind the origin gate above. */
+function route(message: any, sender: chrome.runtime.MessageSender, sendResponse: (response?: any) => void): boolean | undefined {
     // The content-script shell forwards each __mlDebug event here so a DevTools panel
     // (which can't see page window-messages) can mirror the overlay's stream. Fire-and-
     // forget — no response. RESET clears a tab's buffer on navigation (fresh page).
@@ -323,6 +347,13 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         }
         return;
     }
+    // The page's own cancel of a run it built (ml-agent-handle's cancel), relayed under its own type so the gate above
+    // applies to it; the shell's Stop is CANCEL_RUN. A worker-built run is the person's: a page cannot stop it.
+    if (message.type === "PAGE_CANCEL_RUN") {
+        const runId = (message.payload as CancelRunPayload)?.runId;
+        if (!isWorkerRun(runId)) cancelBackgroundRun(runId);
+        return;
+    }
     if (message.type === "CANCEL_RUN") {
         // The HUD's "Cancel agent run" (relayed by the trusted content-script shell). Abort the run's
         // controller → the loop stops at the next boundary and resolves { cancelled: true }; the model
@@ -402,6 +433,18 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     // A run the USER started from the HUD Commander or right-click menu, sent by the content-script shell on behalf of
     // the extension's own frame (the card or overlay app). Assembled here, never by the page (sw-run-start.ts). The
     // page cannot send this: the content script's page relay forwards only its HANDLE_MAP types.
+    // The approved and denied sites, for DevTools Settings and the toolbar popup. Extension pages only: a page could
+    // otherwise approve itself. `edit` changes the lists; `origin` asks what they say about one origin.
+    if (message.type === "SITE_ACCESS") {
+        if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
+        const p = (message.payload || {}) as { edit?: SiteEdit; origin?: string };
+        (async () => {
+            const lists = p.edit ? await editSiteAccess(p.edit) : await readSiteLists();
+            const origin = originOf(p.origin);
+            sendResponse({ data: { lists, ...(origin ? { origin, decision: await siteDecision(origin) } : {}) } });
+        })().catch((e) => sendResponse({ error: (e as Error)?.message || String(e) }));
+        return true;
+    }
     if (message.type === "USER_START_RUN") {
         const tabId = sender.tab?.id;
         if (tabId == null) { sendResponse({ error: "USER_START_RUN must come from a tab." }); return; }
@@ -451,6 +494,10 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         return true;
     }
     if (message.type === "DEREF_TOKEN") {
+        // Only the tab the run is on may read its pointers. It used to be anyone who knew the run id, which every run
+        // sends into its page in its own debug events (attack 14). Narrowed here; slice 2 removes the page's read.
+        const onItsTab = sender.tab?.id != null && !!activeRuns.get(sender.tab.id)?.has(String(message.runId || ""));
+        if (sender.tab != null && !onItsTab && !isExtensionSender(sender)) { sendResponse({ error: "No run on this page holds those pointers." }); return true; }
         const fn = derefByRun.get(String(message.runId || ""));
         if (!fn) { sendResponse({ error: `No active background run "${message.runId}" to read pointers from.` }); return true; }
         // `pipe` is EITHER the dialect string or an ARRAY of stages — keep the array intact. `String(array)`
@@ -1020,7 +1067,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             .catch(err => sendResponse({ error: err.message }));
         return true;
     }
-});
+}
 
 // Streaming uses a Port instead of the one-shot sendMessage/sendResponse, so
 // tokens can arrive as many messages. The content script opens the port and
@@ -1035,7 +1082,10 @@ chrome.runtime.onConnect.addListener((port) => {
     const ctl = new AbortController();
     let closed = false;
     port.onDisconnect.addListener(() => { closed = true; ctl.abort(); });
-    port.onMessage.addListener((message: any) => {
+    port.onMessage.addListener(async (message: any) => {
+        // The same origin gate as a one-shot request: a page's stream is a model call like any other.
+        const refusal = port.sender ? await pageRefusal("FETCH_LLM", port.sender) : null;
+        if (refusal) { if (!closed) port.postMessage({ type: "error", error: refusal }); return; }
         streamLLM(message.payload, (delta) => { if (!closed) port.postMessage({ type: "chunk", delta }); }, ctl.signal)
             .then(({ content, sources, model, reasoning, usage }) => { if (!closed) port.postMessage({ type: "done", content, sources, model, reasoning, usage }); })
             .catch((err) => { if (!closed) port.postMessage({ type: "error", error: err.message }); });

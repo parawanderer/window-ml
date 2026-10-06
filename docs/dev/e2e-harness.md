@@ -333,7 +333,10 @@ behaviour (navigation, SW lifecycle, content-script re-injection) can be exercis
 thing. The parts:
 
 - **`harness.mjs`** — `launchExtension()` (persistent context + `--load-extension=dist`),
-  `configureExtension(sw, cfg)` (writes `chrome.storage.sync` via the SW), `waitForMl(page)`.
+  `configureExtension(sw, cfg)` (writes `chrome.storage.sync` via the SW), `waitForMl(page)` (which also APPROVES the
+  page's origin, since every page-started message is refused for an unapproved one, docs/dev/site-access.md;
+  `{ approve: false }` leaves it unapproved), `approveOrigin(sw, origin)`. The node:vm harness does the same for a test
+  sender unless `loadBackground({ siteGate: true })`.
   **HEADLESS by default**, via `channel: "chromium"`. The old note here said an MV3 service worker does
   not register under headless Chromium — true, but narrower than it read: plain `headless: true` runs the
   headless SHELL, a stripped binary with no extension support at all. `channel: "chromium"` runs the FULL

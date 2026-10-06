@@ -116,7 +116,7 @@ function streamResponse(lines, { status = 200 } = {}) {
 // `commandShortcut` is what chrome.commands reports as CURRENTLY bound for the HUD
 // (null = the API is unavailable, "" = the user cleared the binding); `manifestPermissions`
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
-function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true }) {
+function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false }) {
     const calls = [];
     const captures = [];        // captureVisibleTab arg lists, for screenshot tests
     const tabMessages = [];     // chrome.tabs.sendMessage arg lists, for reverse-channel tests
@@ -133,6 +133,19 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const stored = { ...config };
     const syncListeners = [];
     const localStore = { ...local };   // seed chrome.storage.local (e.g. ml_bgrun_* snapshots for durable-resume tests)
+    /** Put a page sender's origin on the approved list, as a person allowing the site would (see `send` below). */
+    const approveSender = (sender) => {
+        if (!sender?.tab) return;
+        // The browser always says where a content script's message came from; a test sender built as `{ tab: { id } }`
+        // does not. Give it a page of its own, at an origin no test fetches, so no same-page check is satisfied by it.
+        if (!sender.url && !sender.origin && !sender.tab.url) sender.url = "https://page.test/";
+        const url = sender.origin || sender.url || sender.tab.url;
+        let o;
+        try { o = new URL(url).origin; } catch { return; }
+        if (!/^https?:/.test(o)) return;
+        const list = localStore.ml_site_always || (localStore.ml_site_always = []);
+        if (!list.includes(o)) list.push(o);
+    };
     const sessionStore = { ...session };   // seed chrome.storage.session (e.g. a housekeeping heartbeat left by an "earlier" worker)
     let offscreenDoc = false;
 
@@ -311,14 +324,23 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         sessionStore,   // chrome.storage.session contents — the housekeeping log lives here
         context,      // the vm sandbox — reach test-only globalThis hooks (e.g. __mlSeedBgRunForTest)
         // Simulates chrome.runtime.sendMessage hitting the listener.
-        send: (message, sender = {}) =>
-            new Promise((resolve) => listeners[0](message, sender, resolve)),
+        // A page sender's origin is APPROVED first unless the test asked for the real gate (`siteGate: true`): the
+        // tests here predate the origin gate (docs/spec/SITE_ACCESS.md) and are about what a handler does for a page
+        // that may use it. tests/site-access-gate.test.mjs is where the gate itself is tested.
+        send: (message, sender = {}) => {
+            if (!siteGate) approveSender(sender);
+            return new Promise((resolve) => {
+                // The gate answers asynchronously, and a fire-and-forget handler answers `undefined`; both resolve here.
+                listeners[0](message, sender, resolve);
+            });
+        },
         /** Simulates the user closing a tab (chrome.tabs.onRemoved). */
         closeTab: (tabId) => { for (const fn of tabRemovedListeners) fn(tabId, {}); },
         // Simulates the content script opening a streaming Port. Returns a client
         // handle: send(msg) posts to the background port; onMessage(fn) receives
         // background pushes; messages[] collects them.
         connect: (name = "LLM_STREAM", sender = undefined) => {
+            if (!siteGate && sender) approveSender(sender);
             const messages = [];
             const clientHandlers = [];
             const backgroundHandlers = [];

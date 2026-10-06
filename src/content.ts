@@ -2,6 +2,7 @@
 // and relays messages between it and the background worker (window.postMessage ⇄
 // chrome.runtime), bridging CORS. Streaming rides a long-lived Port instead.
 import type { PageRequestType, BackgroundMessageType } from "./contract-messages";
+import { HANDLE_MAP } from "./page-relay";
 
 // 1. Inject injected.js into the main world.
 // If the page's Content-Security-Policy refuses the main-world script — e.g. raw.githubusercontent.com serves
@@ -26,47 +27,6 @@ s.src = chrome.runtime.getURL("injected.js");
 s.onload = () => s.remove();
 s.onerror = () => { injectedBlocked = true; s.remove(); };
 (document.head || document.documentElement).appendChild(s);
-
-interface RelayEntry { type: BackgroundMessageType; responseType: string; }
-
-// Page request type → background message type + the response type to post back.
-const HANDLE_MAP: Partial<Record<PageRequestType, RelayEntry>> = {
-    LLM_REQUEST: { type: "FETCH_LLM", responseType: "LLM_RESPONSE" },
-    B64_REQUEST: { type: "FETCH_IMAGE_B64", responseType: "B64_RESPONSE" },
-    LIST_MODELS_REQUEST: { type: "LIST_MODELS", responseType: "LIST_MODELS_RESPONSE" },
-    GET_MODEL_REQUEST: { type: "GET_MODEL", responseType: "GET_MODEL_RESPONSE" },
-    SET_MODEL_REQUEST: { type: "SET_MODEL", responseType: "SET_MODEL_RESPONSE" },
-    CAPS_REQUEST: { type: "MODEL_CAPS", responseType: "CAPS_RESPONSE" },
-    EMBED_REQUEST: { type: "EMBED", responseType: "EMBED_RESPONSE" },
-    LIST_SERVER_TOOLS_REQUEST: { type: "LIST_SERVER_TOOLS", responseType: "LIST_SERVER_TOOLS_RESPONSE" },
-    INFO_REQUEST: { type: "OLLAMA_INFO", responseType: "INFO_RESPONSE" },
-    USER_FOCUS_REQUEST: { type: "USER_FOCUS", responseType: "USER_FOCUS_RESPONSE" },
-    CONFIG_REQUEST: { type: "GET_CONFIG", responseType: "CONFIG_RESPONSE" },
-    INVOCATION_REQUEST: { type: "GET_INVOCATION", responseType: "INVOCATION_RESPONSE" },
-    PS_REQUEST: { type: "OLLAMA_PS", responseType: "PS_RESPONSE" },
-    // ml.__events() — the debug dump (see the background's DUMP_EVENTS).
-    DUMP_EVENTS_REQUEST: { type: "DUMP_EVENTS", responseType: "DUMP_EVENTS_RESPONSE" },
-    // ml.__loads() — the per-load records kept for tuning the VRAM predictor (see the background's DUMP_LOADS).
-    DUMP_LOADS_REQUEST: { type: "DUMP_LOADS", responseType: "DUMP_LOADS_RESPONSE" },
-    // ml.__housekeeping() and page-side reports into it (see the background's DUMP_HOUSEKEEPING/HOUSEKEEPING_REPORT).
-    DUMP_HOUSEKEEPING_REQUEST: { type: "DUMP_HOUSEKEEPING", responseType: "DUMP_HOUSEKEEPING_RESPONSE" },
-    HOUSEKEEPING_REPORT_REQUEST: { type: "HOUSEKEEPING_REPORT", responseType: "HOUSEKEEPING_REPORT_RESPONSE" },
-    PYTHON_PREWARM_REQUEST: { type: "PYTHON_PREWARM", responseType: "PYTHON_PREWARM_RESPONSE" },
-    UNLOAD_REQUEST: { type: "OLLAMA_UNLOAD", responseType: "UNLOAD_RESPONSE" },
-    CAPTURE_TAB_REQUEST: { type: "CAPTURE_TAB", responseType: "CAPTURE_TAB_RESPONSE" },
-    SAVE_SESSION_REQUEST: { type: "SAVE_SESSION", responseType: "SAVE_SESSION_RESPONSE" },
-    GET_SESSION_REQUEST: { type: "GET_SESSION", responseType: "GET_SESSION_RESPONSE" },
-    PYTHON_EXEC_REQUEST: { type: "PYTHON_EXEC", responseType: "PYTHON_EXEC_RESPONSE" },
-    SERVER_TOOL_REQUEST: { type: "SERVER_TOOL_EXEC", responseType: "SERVER_TOOL_RESPONSE" },
-    FETCH_SHEET_REQUEST: { type: "FETCH_SHEET", responseType: "FETCH_SHEET_RESPONSE" },
-    FETCH_URL_REQUEST: { type: "FETCH_URL", responseType: "FETCH_URL_RESPONSE" },
-    CDP_SHADOW_RESOLVE_REQUEST: { type: "CDP_SHADOW_RESOLVE", responseType: "CDP_SHADOW_RESOLVE_RESPONSE" },
-    // Design A: kick off a background-hosted ml.agent loop. The single response carries the final
-    // AgentResult (the run's debug events stream separately via ML_DEBUG_TO_PAGE, below).
-    START_RUN_REQUEST: { type: "START_RUN", responseType: "START_RUN_RESPONSE" },
-    RESUME_RUN_REQUEST: { type: "RESUME_RUN", responseType: "RESUME_RUN_RESPONSE" },
-    INJECT_MESSAGE_REQUEST: { type: "INJECT_MESSAGE", responseType: "INJECT_MESSAGE_RESPONSE" },
-};
 
 interface BgResponse { data?: unknown; sources?: unknown; model?: unknown; reasoning?: unknown; usage?: unknown; messages?: unknown; stepCount?: unknown; seqCount?: unknown; error?: string; }
 
@@ -236,7 +196,9 @@ window.addEventListener("message", (event: MessageEvent) => {
         // loop), so the SW loop would keep stepping and emit a stale approval AFTER the "cancelled" bubble.
         // Relay CANCEL_RUN so the background aborts the run's OWN controller. Fire-and-forget; a forged
         // cancel only aborts that page's own run (the background comment notes this) — harmless.
-        chrome.runtime.sendMessage({ type: "CANCEL_RUN", payload: data.payload });
+        // Its own type, not CANCEL_RUN: the shell's Stop sends CANCEL_RUN from this same world, and the background
+        // has to be able to gate the PAGE's cancel by the page's origin without gating the person's Stop.
+        chrome.runtime.sendMessage({ type: "PAGE_CANCEL_RUN", payload: data.payload });
         return;
     }
     if (data.type === "PAGE_ADOPT_HELLO") {
