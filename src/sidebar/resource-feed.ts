@@ -488,6 +488,10 @@ export function connectResourceStream(): () => void {
     return release;
 }
 
+/** When a reading of what is RESIDENT last arrived (`/api/ps` or the event stream), by the local clock; null until one
+ *  has. A failed read leaves it alone, so "how old is what we know" never mistakes an error for news. */
+export const loadedAt = signal<number | null>(null);
+
 /** One reading of what is resident, from WHEREVER it came from — a poll, or a `sample` frame off the event
  *  stream. Both transports hand over the same `LoadedModel[]` (the frame embeds the `/api/ps` body verbatim
  *  and it goes through the same parser), so this is the single place a reading becomes panel state. Two
@@ -550,6 +554,7 @@ export function applyLoaded(raw: LoadedModel[], at: number = Date.now()): void {
     // Remember each resident model's window (overwrite → tracks a mid-run reload).
     for (const m of loaded) if (typeof m.contextLength === "number") seenContext.set(normModel(m.model), m.contextLength);
     loadedModels.value = loaded;
+    loadedAt.value = Date.now();
     // One sample per reading, carrying the capacity in force at the time — a sample read back from history
     // must know the ceiling it was drawn against, not today's.
     // `loading` rides the reading because it is a fact ABOUT that instant, and the bands are derived from the
@@ -591,6 +596,16 @@ export function applyLoaded(raw: LoadedModel[], at: number = Date.now()): void {
 export function pollPs(): void {
     if (!sidebarOpen.value) return;
     if (!vramOpen.value && view.value.name !== "detail") return;
+    readPs();
+}
+
+/**
+ * Read `/api/ps` once and fold it in, with no question about which panel is open: the read itself, under the
+ * sidebar's guards in {@link pollPs}. The chat page calls it directly, because those guards are the SIDEBAR's —
+ * `sidebarOpen` is set only by the overlay's shell, so under them the chat page's resource panel never read `ps`
+ * at all and showed nothing resident on any server without the event stream.
+ */
+export function readPs(): void {
     // The stream, when one is carrying, IS the reading — polling on top of it would double every sample and
     // draw a history at twice the true density.
     if (streamLive.value) return;

@@ -24,11 +24,13 @@ import { installPageTheme } from "./chat/page-theme";
 import { pickFolder, regrantCount, regrantFolder } from "./archive-folder";
 import { VRAM_POLL_MS } from "./sidebar/panel-state";
 import { VramPanel } from "./sidebar/vram";
-import { BACKEND_HEALTH_MS, connectResourceStream, fetchModels, pollBackendHealth, pollPs } from "./sidebar/resource-feed";
+import { BACKEND_HEALTH_MS, connectResourceStream, fetchModels, loadedAt, pollBackendHealth, readPs } from "./sidebar/resource-feed";
 import { PythonBench } from "./sidebar/vram-bench";
 import type { RuntimeId } from "./session-host";
 import { Settings } from "./sidebar/settings";
-import { config } from "./sidebar/store";
+import { config, psError } from "./sidebar/store";
+import { residentNow } from "./sidebar/panel-facts";
+import { residentReader } from "./sidebar/resident-reader";
 import { DEFAULT_CONFIG, type MlConfig } from "./contract";
 
 /**
@@ -52,10 +54,12 @@ function BoxPanel() {
     useEffect(() => {
         fetchModels();
         pollBackendHealth();
-        pollPs();
+        // `readPs`, not the sidebar's `pollPs`: that one is gated on the overlay's shell being slid open, which this
+        // page never is, so under it this panel read nothing and showed an empty box on any server without the stream.
+        readPs();
         connectResourceStream();
         const health = setInterval(pollBackendHealth, BACKEND_HEALTH_MS);
-        const ps = setInterval(pollPs, VRAM_POLL_MS);
+        const ps = setInterval(readPs, VRAM_POLL_MS);
         return () => { clearInterval(health); clearInterval(ps); };
     }, []);
     return <VramPanel />;
@@ -67,6 +71,15 @@ function BoxPanel() {
  * this browser's VRAM would draw someone else's machine under its name.
  */
 const localRuntimes = new Set<RuntimeId>();
+
+/** Is a model resident on one of THIS browser's runtimes, from a fresh reading (resident-reader.ts says why). */
+const residentHere = residentReader({
+    mine: (id) => localRuntimes.has(id),
+    read: readPs,
+    readAt: () => loadedAt.value,
+    failed: () => !!psError.value,
+    resident: residentNow,
+});
 
 /**
  * The extension's own settings view, in the page's main pane. It reads and writes `chrome.storage.sync` itself
@@ -129,7 +142,7 @@ host.runtimes((list) => {
     for (const r of list) localRuntimes.add(r.id);
 });
 
-installServices(hostServices(store, extensionPlatform));
+installServices(hostServices(store, extensionPlatform, { modelResident: residentHere }));
 initThemeStyle();
 applyCodePrefs();
 // This page reads its OWN view preference rather than the panel's `focusMode`: the two surfaces share an origin,
