@@ -173,10 +173,16 @@ jobs:
       - run: npm test
 
   test:
-    # Skipped only when `changes` PROVED nothing but prose changed: no test reads a markdown file from the repo
-    # (checked when this gate was added), and `tools` still runs the format and index checks over it.
+    # Its work is skipped only when `changes` PROVED nothing but prose changed: no test reads a markdown file from
+    # the repo (checked when this gate was added), and `tools` still runs the format and index checks over it.
+    #
+    # THE STEPS ARE GATED, NOT THE JOB. The required checks name each leg (`test (22)`, `test (24)`,
+    # `test (26)`), and a matrix job skipped by a job-level `if` reports once, as plain `test`, so the three
+    # required names never arrive and the PR stays blocked. Gating every step keeps the three legs: each starts,
+    # does nothing for a prose-only change, and reports success under its own name.
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    env:
+      CODE: ${{ needs.changes.outputs.code }}
     runs-on: ubuntu-24.04
     strategy:
       # `fail-fast: false` for the same reason the e2e shards have it, and with a sharper edge here: a
@@ -191,44 +197,52 @@ jobs:
         # ESM-only css-null test stub can't intercept (Node 22+ keeps it on the ESM loader).
         node: [22, 24, 26]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - if: env.CODE != 'true'
+        run: echo "Only prose changed, so this leg runs nothing."
+      - if: env.CODE == 'true'
+        uses: actions/checkout@v7
+      - if: env.CODE == 'true'
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
           cache: npm
       # Install devDeps (esbuild/typescript/jsdom). `npm test` runs `pretest`
       # (npm run build) first, so tests exercise the built dist/. TS type errors
       # are caught separately by `typecheck`. Live tests self-skip without keys.
-      - run: npm ci
-      - run: npm run typecheck
+      - if: env.CODE == 'true'
+        run: npm ci
+      - if: env.CODE == 'true'
+        run: npm run typecheck
       # Fetch the python_exec wheels (numpy/pandas/… from the Pyodide CDN) so the real-CPython
       # tests in tests/python.test.js run instead of self-skipping. Cached by pyodide version +
       # package set, so the CDN is hit only when those change.
-      - name: Cache pyodide wheels
+      - if: env.CODE == 'true'
+        name: Cache pyodide wheels
         id: pyocache
         uses: actions/cache@v6
         with:
           path: pyodide-wheels
           key: pyodide-wheels-${{ hashFiles('package-lock.json', 'src/python-env.ts') }}
-      - if: steps.pyocache.outputs.cache-hit != 'true'
+      - if: (steps.pyocache.outputs.cache-hit != 'true') && env.CODE == 'true'
         run: npm run fetch-pyodide
-      - run: npm test
+      - if: env.CODE == 'true'
+        run: npm test
       # The legend word-clipping "visual test" notebook — regenerate and upload it even when the run
       # FAILED (if: always()), so a red clip-case can be reviewed by eye: download the artifact, open the
       # HTML, and the failing cell shows the words, the crop box, and expected-vs-actual. Named per matrix
       # leg (upload-artifact requires unique names).
       - name: Legend visual-test notebook
-        if: always()
+        if: (always()) && env.CODE == 'true'
         run: node tools/preview-legend.mjs
       - uses: actions/upload-artifact@v7
-        if: always()
+        if: (always()) && env.CODE == 'true'
         with:
           name: legend-notebook-node${{ matrix.node }}
           path: tools/legend-notebook.html
       # On failure, surface the notebook on the run's SUMMARY page (markdown, hard to miss) — otherwise the
       # artifact is just listed at the bottom with nothing telling you it's the way to debug a red clip-case.
       - name: Point to the notebook on failure
-        if: failure()
+        if: (failure()) && env.CODE == 'true'
         run: |
           {
             echo "### ❌ Tests failed on Node ${{ matrix.node }}"
