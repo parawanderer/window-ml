@@ -149,7 +149,7 @@ export const STALL_MS = 4000;
 /** Compose the orb's live status. Priority: (1) STREAMING reply prose the model is typing right now → stream
  *  it live; else (2) the tool/thinking phase from activityFor, decorated with a live token count when
  *  streaming, or an elapsed heartbeat once it's gone quiet. `now` is injected so the heartbeat is testable. */
-export function orbStatus(run: Session, now: number = Date.now(), modelResident?: boolean): OrbStatus {
+export function orbStatus(run: Session, now: number = Date.now(), modelResident?: boolean, opts: { narration?: boolean } = {}): OrbStatus {
     const tokens = liveTokensFor(run);
     const tokSuffix = tokens != null ? ` (${fmtTokens(tokens.n, tokens.exact)})` : "";
 
@@ -159,7 +159,9 @@ export function orbStatus(run: Session, now: number = Date.now(), modelResident?
     if (liveContent) return { icon: "💬", label: oneLine(liveContent), suffix: tokSuffix || undefined, caption: true };
 
     // (2) Tool or thinking phase. A narrated `thought` (if any) rides as the caption over the phase label.
-    const prose = liveProseFor(run);
+    // `narration: false` for a surface that draws the transcript: the narrated thought is printed there already, so
+    // as the label it is the step's own words a second time, where the phase label is not.
+    const prose = opts.narration === false ? null : liveProseFor(run);
     const a = activityFor(run, modelResident);
     const label = prose || a.label;
     let caption = !!prose || !!tokSuffix;                                // narrating or streaming → expand to show it
@@ -169,4 +171,16 @@ export function orbStatus(run: Session, now: number = Date.now(), modelResident?
         caption = true;                                                  // a stall IS the case we most want visible
     }
     return { icon: a.icon, label, suffix, caption };
+}
+
+/**
+ * Is the run's liveness ALREADY on screen in a surface that draws its transcript, so a status line there would only
+ * repeat it? True while reply text or reasoning streams (the words appearing are the signal) and while a tool runs
+ * (its step is drawn in flight, and the live tail of a run is never folded away). What is left is the wait nothing
+ * else shows: the model loading or not yet answering, thinking about a tool's result, writing a tool call's arguments.
+ * The HUD has no transcript and never asks this.
+ */
+export function liveShownByTranscript(run: Session): boolean {
+    if (run.liveStream?.content || run.liveStream?.reasoning) return true;
+    return currentTurnSteps(run).some((s) => s.pending && s.tool && !s.awaitingApproval);
 }

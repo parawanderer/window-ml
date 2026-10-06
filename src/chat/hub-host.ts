@@ -23,7 +23,7 @@
 import type { ChannelKey } from "../hub/seal";
 import type { Bytes } from "../hub/hpke";
 import { StreamReader } from "../hub/seal";
-import { accountRevoker } from "../pairing/api";
+import { accountRevoker } from "../pairing/pairing-state";
 import { Role } from "../hub/wire";
 import type {
     Command, CommandResult, HostStatus, Principal, RuntimeCapabilities, RuntimeId, RuntimeInfo, SessionHost, SessionId,

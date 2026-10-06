@@ -24,7 +24,7 @@ import type { PairingApi } from "../pairing/api";
 import type { CertState } from "./attention";
 import { certReminders } from "./reminders";
 import { renewSelf } from "./renew";
-import { accountRevoker, certChanged } from "../pairing/api";
+import { accountRevoker, certChanged } from "../pairing/pairing-state";
 import { startAutoRenew } from "./auto-renew";
 import { installServices, services } from "../sidebar/services";
 import { installTooltipLayer } from "../sidebar/tooltip-layer";
