@@ -44,8 +44,9 @@ scheme, and any frame that is not the top frame. A cross-origin iframe never inh
 - Keyed by ORIGIN (scheme, host, port), not by host: `http://example.com` and `https://example.com` are different
   decisions, as they are for the camera.
 - Two scopes, like the browser's own permission prompts: **this session** (`chrome.storage.session`, gone on browser
-  restart) and **always** (`chrome.storage.local`, not `sync`: a decision about this browser's backend should not
-  follow the account to a machine with a different one).
+  restart) and **always** (`chrome.storage.local`). Not `sync`: whether `sync` reaches other machines depends on
+  the browser's own account sync, which differs between Chrome and its forks, and a decision about this browser's
+  backend has no business following anyone to a machine with a different one.
 - A DENIED list beside it, same keying, always persistent. [Requesting access](#requesting-access) reads it.
 - Edited in two places, per the repo's settings rule: **DevTools Settings** (the full list, with revoke and
   un-deny) and the **toolbar popup** (the current tab's origin only: allow for session, allow always, deny,
@@ -102,14 +103,14 @@ The rules, all enforced in the background (the stub only posts the request):
 6. **It cannot flood the list.** Requests are throttled by registrable domain (eTLD+1), not origin, so rotating
    subdomains of one site counts as one requester: at most one pending entry per registrable domain, at most 5
    pending entries in all. Past either cap, the request is `refused` and nothing is created. A pending entry
-   nobody answers expires after 7 days, and the origin may then ask once more. That is the only way to ask twice.
+   nobody answers expires after 7 days (decided), and the origin may then ask once more. That is the only way to ask twice.
 7. **What the user sees is the origin, verbatim, and the reason as plain text.** Never a title or favicon the page
    supplied. The reason is escaped, truncated, and labelled as the site's own words.
 
 `granted` takes effect without a reload: the content script swaps the stub for the full API on the state change.
 
 The stub means an unapproved page can still tell the extension is installed. That is the cost of letting pages
-ask, and it is a setting: **"Let sites ask for access"** (default on). Off, unapproved pages get nothing at all,
+ask, and it is a setting: **"Let sites ask for access"** (default on, decided). Off, unapproved pages get nothing at all,
 and approval happens from the popup only.
 
 ### Detection, honestly
@@ -127,16 +128,10 @@ only partly met.
 
 ## Upgrading an existing install
 
-Today every page has the full API, so this change silently breaks every existing userscript and every page someone
-calls `window.ml` from. Following the repo's rule, the upgrade is its own behaviour, with its own test:
-
-- On first start after the update, the approved list is seeded with every host in `pageApprovalDomains` (as
-  `https://` origins, "always").
-- The popup shows a one-time notice: "window.ml now asks before a site can use it", with a link to the settings.
-- No "every site, as before" switch. It would be the old hole with a checkbox in front of it, and the request flow
-  covers the userscript case in one click.
-- Fixture test: a `chrome.storage` snapshot from the current version, read by the new code, asserting the seeded
-  list, the notice, and that an unlisted origin is refused.
+Out of scope for now: the only install is the author's. The one step kept is seeding the approved list from
+`pageApprovalDomains` on first start, because it is three lines and those sites are already trusted for more than
+this. If the extension ever has other users, the upgrade (what breaks for an existing userscript, and the notice
+that explains it) needs its own design and a fixture test, per the repo's rule on testing upgrades.
 
 ## Tests
 
@@ -153,7 +148,6 @@ The tests are part of the design. Every claim above has a test that tries to bre
   `chrome.tabs.onReplaced` moved the run to a new tab id. All are dropped, and none produces a model call.
 - The request state machine, as a pure module: one entry per origin, denial is final, the registrable-domain and
   global caps, expiry and the single re-ask, revoke without reload.
-- The upgrade fixture above.
 
 ### The hostile site (new e2e suite, `tests/e2e/site-access.spec.mjs`, genre `security`)
 
@@ -189,7 +183,7 @@ wait is on a run finishing or a state change, never a timer.
 ## Slices
 
 1. The background check and the approved/denied lists, with the settings UI. Unapproved pages still get the full
-   `injected.js` but every call is refused. Red-team enumeration tests and the upgrade fixture.
+   `injected.js` but every call is refused. Red-team enumeration tests.
 2. Delegation tokens, and the vision tools' model calls moved to the background. Tests 9 to 11.
 3. The stub and `requestAccess`, with the badge and popup entry. Tests 3 to 7.
 4. Not injecting the full API on unapproved pages, and `use_dynamic_url`.
@@ -202,8 +196,6 @@ API.
 - **`shadow-patch.js`.** Keep it on every page (detectable, and the agent sees closed shadow roots anywhere a run
   goes), or only on approved origins plus a best-effort inject on run navigation (less detectable, and closed roots
   on a run-visited page are sometimes missed)? Leaning towards keeping it: capability matters more than detection.
-- **The approved list and `sync`.** `local` is chosen above because a decision is about this browser's backend. A
-  user with one backend and three laptops might want it to follow them.
 - **Page-hosted runs.** A run on a `pageApprovalDomains` site runs its loop in the page today, which makes its model
   calls page messages. That is fine under this spec, since the site is approved, but it means that path never gets
   the delegation protection. It stays as is.
