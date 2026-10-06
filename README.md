@@ -81,6 +81,11 @@ nothing is written up in them: notes and findings land here, in `docs/`.
 
 ## If you run it
 
+These are experimental research scripts, not a reviewed product. Nobody has reviewed the security either, including
+the parts meant to keep a hostile page away from your API key, so run it in a browser profile you would not mind
+losing. If you want to review it or contribute, you are welcome to; I am not going to run it as a project for other
+developers.
+
 `window.ml` lives in the page's main world, so any page the extension is active on can call it, and a hostile page
 can subvert it. Keep its site access on "On click". See [the trust model](docs/API.md#security--trust-model).
 
