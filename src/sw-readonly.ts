@@ -18,7 +18,7 @@
 // owns and wires in its slice 2.
 
 import { evalReadonly, NeedsPage, NotInDialect, Denied } from "./readonly-exec";
-import { expandPointers } from "./pointer-macro";
+import { expandPointers, execCodeIn } from "./pointer-macro";
 import { formatReadonlyExec } from "./approval";
 import { descriptorFor } from "./render-descriptor";
 import { outputCapEscalated } from "./contract-pointers";
@@ -37,7 +37,8 @@ export interface WorkerReadonlyDeps {
      *  host gives it one: pointer reads in the worker are the site-access slice 2's, and until then a survey naming
      *  `@tool:` goes to the page exactly as it did before. */
     ml?: Record<string, unknown>;
-    /** The run's `exec` tool, for the code view of the step's In. Absent: the panel shows the raw arguments. */
+    /** The run's `exec` tool, whose `render` draws the step's In. Absent: the same code view the page's `exec` draws
+     *  (`execCodeIn`), so a step answered here looks like one answered there. */
     tool?: MlTool;
 }
 
@@ -51,6 +52,7 @@ export type WorkerReadonlyOutcome =
 /** Evaluate one `exec` call's script in the worker. */
 export async function evalReadonlyInWorker(args: Record<string, unknown>, deps: WorkerReadonlyDeps): Promise<WorkerReadonlyOutcome> {
     if (typeof args.js !== "string") return { kind: "refused" };
+    const codeIn = execCodeIn(args.js);
     // A raised output cap is a request the human has to grant, wherever the script would run.
     if (outputCapEscalated("exec", args)) return { kind: "refused" };
     // `@tool:` is not JavaScript, so the macro expands it to `ml.dereference(…)` before the tokenizer sees it. Without a
@@ -63,7 +65,7 @@ export async function evalReadonlyInWorker(args: Record<string, unknown>, deps: 
     try {
         const ro = await evalReadonly(code, null, deps.ml ?? {}, undefined, { realm: "worker", current });
         const { result, render } = formatReadonlyExec(ro.value, ro.logs);
-        const { in: renderIn, out: renderOut } = descriptorFor(deps.tool, { result, render }, args);
+        const { in: renderIn, out: renderOut } = descriptorFor(deps.tool, { result, render, ...(deps.tool ? {} : { renderIn: codeIn }) }, args);
         return { kind: "answered", result, renderIn, renderOut };
     } catch (e) {
         if (e instanceof NeedsPage) return { kind: "needs-page" };
@@ -71,7 +73,7 @@ export async function evalReadonlyInWorker(args: Record<string, unknown>, deps: 
         // A runtime error in the script is the model's to fix, reported with its line, exactly as the page path does.
         const at = (e as { mlLine?: number })?.mlLine ?? null;
         const error = `${errText(e)}${at ? ` (line ${at})` : ""}`;
-        const { in: renderIn } = descriptorFor(deps.tool, { result: `Error: ${error}` }, args);
+        const { in: renderIn } = descriptorFor(deps.tool, { result: `Error: ${error}`, ...(deps.tool ? {} : { renderIn: codeIn }) }, args);
         return { kind: "answered", result: `Error: ${error}`, renderIn, renderOut: { type: "exec-out", error: errText(e), ...(at ? { errorLine: at } : {}) } };
     }
 }

@@ -256,6 +256,9 @@ test("evalReadonlyInWorker answers, defers, refuses, and reports a script's own 
     const deps = { current: () => { snaps++; return sampleSnapshot(); }, ml: workerMl };
     const a = await evalReadonlyInWorker({ js: "return ml.current.meta.length" }, deps);
     assert.equal(a.kind, "answered"); assert.equal(a.result, "4");
+    // The step's In is the same code view the page's `exec` draws, so a survey answered here looks like one answered there.
+    const { execCodeIn } = await import("../src/pointer-macro.ts");
+    assert.deepEqual(a.renderIn, execCodeIn("return ml.current.meta.length"));
     assert.equal((await evalReadonlyInWorker({ js: "document.title" }, deps)).kind, "needs-page");
     assert.equal((await evalReadonlyInWorker({ js: "window.location" }, deps)).kind, "refused");
     assert.equal((await evalReadonlyInWorker({ js: "return 1", maxChars: 6000 }, deps)).kind, "refused", "a raised cap is the human's to grant");
