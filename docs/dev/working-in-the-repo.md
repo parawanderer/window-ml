@@ -122,6 +122,18 @@ can notice anything) is counted, because as a list of forty-two it buries the ha
 change. It over-reports on purpose — a suite too many costs a minute. It is not coverage: "is this LINE covered" is
 `npm run coverage`. Playbook: `.claude/skills/test-cover/SKILL.md`.
 
+## Docs that point at files
+
+**`node scripts/check-doc-links.mjs`** checks that what a Markdown doc points at exists. A LINK (`[x](../src/y.ts)`) is
+resolved against the doc's own directory and fails anywhere in the repo, since there were 79 with one broken when the
+check was written (a spec still linking `../../background.ts` from before sources moved into `src/`). A BACKTICKED path
+is how these docs mostly name a file, about 400 of them, and some are deliberately historical ("it replaced
+`components.mjs`") or name a file in the window-ml-hub repo: those are a ratchet, failing only on lines a change adds,
+and a plain run lists the old ones. A doc under `mobile/` resolves `src/` from `mobile/` as well. Fenced code and inline
+code are not links. It runs on EVERY commit rather than only one that stages a doc, because renaming a source file is
+what breaks a link and that commit stages no Markdown. `move-files` rewrites both kinds of reference when it moves a
+file, so a move made with it never trips this.
+
 ## JSDoc that contradicts the code
 
 **RULE — JSDoc that CONTRADICTS the code is a defect; JSDoc that is INCOMPLETE is not.** In a `.ts` file the
@@ -289,7 +301,7 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   (the agent tools) are tested against a real DOM via `loadDomWorld(html)`, which
   boots `injected.js` over a `jsdom` document. Live tests (`tests/live.test.js`)
   are opt-in via `.env` (see `.env.example`). **Real-CPython tests**
-  (`tests/python.test.js`) load Pyodide-in-Node against the shared
+  (`tests/python.test.mjs`) load Pyodide-in-Node against the shared
   `python-runtime.ts` (built to `dist/python-runtime.js`) — the actual PRELUDE +
   `wrapUserCode` the offscreen sandbox runs, so the tables→df/auto-cast/`tables`
   dict/read_html/return-capture/RESET-isolation behaviour is checked against real

@@ -318,6 +318,13 @@ jobs:
           base=$(git merge-base HEAD "origin/${GITHUB_BASE_REF:-main}" 2>/dev/null || echo "")
           if [ -z "$base" ]; then echo "no merge base — skipping"; exit 0; fi
           node scripts/check-jsdoc.mjs --new "$base"
+      # Every Markdown link resolves, and every backticked path this PR ADDS names a real file. The old dead paths
+      # are listed by a plain run and never fail it: some are historical, some name the hub repo.
+      - name: The docs point at files that exist
+        run: |
+          base=$(git merge-base HEAD "origin/${GITHUB_BASE_REF:-main}" 2>/dev/null || echo "")
+          if [ -z "$base" ]; then echo "no merge base — skipping"; exit 0; fi
+          node scripts/check-doc-links.mjs --new "$base"
       - name: Everything this PR adds is documented
         run: |
           # No extra fetch: `fetch-depth: 0` above already has every ref, and a `--depth=1` fetch here would

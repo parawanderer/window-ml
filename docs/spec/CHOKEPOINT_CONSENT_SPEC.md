@@ -15,7 +15,7 @@ through the content-script relay, and their consent gate lives only in the
 world, is trivially bypassable (write your own loop, or just post the raw
 message). The handlers enforce nothing per-call.
 
-1. **`FETCH_SHEET`** ([background.ts](../../background.ts)) is `credentials:"include"`
+1. **`FETCH_SHEET`** ([background.ts](../../src/background.ts)) is `credentials:"include"`
    (the user's Google cookies) and host-locked to `SHEET_URL_OK`
    (`docs.google.com/spreadsheets/d/<id>/export?…`). The host-lock stops a
    *general* SSRF/"read any URL credentialed", but the `<id>` is **page-controlled**
