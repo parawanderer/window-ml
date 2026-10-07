@@ -441,7 +441,10 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         (async () => {
             const lists = p.edit ? await editSiteAccess(p.edit) : await readSiteLists();
             const origin = originOf(p.origin);
-            sendResponse({ data: { lists, ...(origin ? { origin, decision: await siteDecision(origin) } : {}) } });
+            const decision = origin ? await siteDecision(origin) : undefined;
+            // An approval no list holds comes from the self-approval whitelist: revoking it here would change nothing.
+            const implied = !!origin && decision === "always" && !lists.always.includes(origin);
+            sendResponse({ data: { lists, ...(origin ? { origin, decision, ...(implied ? { implied: true } : {}) } : {}) } });
         })().catch((e) => sendResponse({ error: (e as Error)?.message || String(e) }));
         return true;
     }
@@ -465,6 +468,9 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         return true;   // async: sendResponse fires when the whole run finishes
     }
     if (message.type === "PYTHON_PREWARM") { pythonPrewarm(message, sendResponse); return true; }
+    // The HUD Commander's prewarm, from the shell rather than the page (shell.ts), so it is not behind the origin gate. It
+    // only starts Pyodide early, which a page could already cause by being where a person opens the Commander.
+    if (message.type === "USER_PYTHON_PREWARM") { pythonPrewarm(message, sendResponse); return true; }
     if (message.type === "PYTHON_EXEC") { pythonExec(message, sender, sendResponse); return true; }   // async
     // A page-side tool of a background-hosted run calling `ml.dereference`. Answered only for a run WE are
     // hosting, from that run's own pointer store — the resolver the loop handed us at start (tokenSink).

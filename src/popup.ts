@@ -427,10 +427,12 @@ const SITE_STATE: Record<SiteDecision, string> = {
 };
 let siteOrigin: string | null = null;
 let siteNow: SiteDecision | null = null;   // what the lists said last, which decides what "Revoke" undoes
+let siteImplied = false;   // allowed by the self-approval whitelist, not by a list this block edits
 function siteAccess(payload: { origin?: string; edit?: SiteEdit }): Promise<SiteDecision | null> {
     return new Promise((resolve) => {
-        chrome.runtime.sendMessage({ type: "SITE_ACCESS", payload }, (res: { data?: { decision?: SiteDecision } } | undefined) => {
+        chrome.runtime.sendMessage({ type: "SITE_ACCESS", payload }, (res: { data?: { decision?: SiteDecision; implied?: boolean } } | undefined) => {
             void chrome.runtime.lastError;
+            siteImplied = !!res?.data?.implied;
             resolve(res?.data?.decision ?? null);
         });
     });
@@ -440,12 +442,15 @@ function renderSite(decision: SiteDecision | null) {
     if (!siteOrigin || !decision) { $("siteAccess").hidden = true; return; }
     $("siteAccess").hidden = false;
     $("siteOrigin").textContent = siteOrigin;   // the origin as the browser reports it, never a title the page set
-    $("siteState").textContent = SITE_STATE[decision];
+    $("siteState").textContent = siteImplied
+        ? "is allowed: it is on the self-approval whitelist (DevTools Settings → Permissions)."
+        : SITE_STATE[decision];
     const allowed = decision === "always" || decision === "session";
     $("siteAllowSession").hidden = decision === "session";
     $("siteAllowAlways").hidden = decision === "always";
     $("siteDeny").hidden = decision === "denied";
-    $("siteRevoke").hidden = !allowed && decision !== "denied";
+    // Revoking a whitelist approval here would remove nothing and change nothing: the whitelist is edited in Settings.
+    $("siteRevoke").hidden = siteImplied || (!allowed && decision !== "denied");
     $("siteRevoke").textContent = decision === "denied" ? "Stop denying" : "Revoke";
 }
 async function loadSite() {
