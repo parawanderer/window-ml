@@ -43,7 +43,7 @@ Five decisions make it survive the write half. Each is the non-obvious choice.
 ### 1. `ml.current`, not `self.current`
 
 `self` is on the dialect's DENIED identifier list, beside `window`, `globalThis`, `parent` and `top`
-(`readonly-exec.ts`), because `self === window`: it is a realm escape in every other JavaScript context. Giving that
+(`DENIED_PROPS`, `readonly-exec/policy.ts`), because `self === window`: it is a realm escape in every other JavaScript context. Giving that
 one name a second, safe meaning inside the dialect is a trap for everyone who reads or extends it afterwards, and it
 would mean the deny list no longer reads as "these are the ways out".
 
@@ -266,7 +266,7 @@ first said: `ml.pipe` was not in the read-only dialect at all, so the claim that
 (#375, under bounds of its own), and nothing about the log had to change for it:
 
 - `Array.isArray` is true, and the dialect decides kinds STRUCTURALLY rather than by constructor
-  (`readonly-exec.ts`), so it is an ordinary Array there: `filter`/`slice`/`map` are allowed, it is a writable
+  (`kindOf`, `readonly-exec/policy.ts`), so it is an ordinary Array there: `filter`/`slice`/`map` are allowed, it is a writable
   target, and no new kind has to be registered in a `kindOf` that defaults to deny. That is what keeps this a data
   shape rather than a dialect extension owing its own adversarial tests.
 - `mlPipe` already unwraps an object carrying a `.text` string — that is what "or a fetch result" means in its
