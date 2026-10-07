@@ -1,9 +1,24 @@
 # The read-only `exec` dialect
 
 How `exec` runs a script with no approval prompt, what that promises, and what it is for. Keep this file current: any
-change to `pointer-macro.ts` or `readonly-exec.ts` that changes what a script can do changes a section here. The
-original design spec is [`docs/spec/READONLY_EXEC_SPEC.md`](../spec/READONLY_EXEC_SPEC.md); it describes v1 and is
-out of date on most of the grammar.
+change to `pointer-macro.ts`, `readonly-exec.ts` or `readonly-exec/` that changes what a script can do changes a
+section here. The original design spec is [`docs/spec/READONLY_EXEC_SPEC.md`](../spec/READONLY_EXEC_SPEC.md); it
+describes v1 and is out of date on most of the grammar.
+
+## Where things live
+
+`src/readonly-exec.ts` is the entry every caller imports: `evalReadonly`, plus a re-export of every public name
+below, so nothing outside the folder imports `readonly-exec/` directly. The pieces:
+
+| File | Holds |
+| --- | --- |
+| `readonly-exec.ts` | `evalReadonly`: builds the root scope, parses, runs the evaluator, restores on failure, attaches the failing line |
+| `readonly-exec/limits.ts` | the refusals (`NotInDialect`, `Denied`, `NeedsPage`), the halting rationale and bounds (`STEP_BUDGET`, `MAX_COLLECTION`, `MAX_STORED_CELLS`, `MAX_STRING`, `MAX_CALL_DEPTH`, `PIPE_CHARS_PER_STEP`), `riskyRegex` |
+| `readonly-exec/tokenizer.ts` | `tokenize`, regex-vs-division, template literals, the punctuators and `COMPOUND` |
+| `readonly-exec/parser.ts` | the `Parser` (Pratt, the `BP` table) and the AST `Node` type |
+| `readonly-exec/policy.ts` | what may be read, called, built and written: `DENIED_PROPS`, the method gate (`BY_KIND`, `kindOf`, `methodAllowed`, the Set/Map brand checks), `CALLABLE_ROOTS`, `isWritableTarget`, `SAFE_CONSTRUCTORS`, `MUTATING_METHODS`, `ANSWER_METHODS`, `ML_READONLY_METHODS`, and `mlFacade`, the `ml` object the dialect sees |
+| `readonly-exec/print.ts` | the print boundary's helpers: `abridgeRow` (`ABRIDGE_OVER`), `PrintSwap`, `describeSwaps` and the JSONPath that names a substitution |
+| `readonly-exec/evaluator.ts` | the `Evaluator` (scope, reads, calls, writes, ownership, iteration guard, `printable`) and its two drivers, `runAsync` and `runSync` |
 
 ## What it is for
 
@@ -78,8 +93,9 @@ passed.
 
 ### 2. Tokenizer and parser
 
-`tokenize` and the `Parser` class in `readonly-exec.ts`. The grammar is the first whitelist: a shape the parser does
-not know throws `NotInDialect`, so the parser can be deliberately incomplete and stay safe.
+`tokenize` (`readonly-exec/tokenizer.ts`) and the `Parser` class (`readonly-exec/parser.ts`). The grammar is the
+first whitelist: a shape the parser does not know throws `NotInDialect`, so the parser can be deliberately incomplete
+and stay safe.
 
 - Tokens: numbers (no exponent or hex), strings, template literals (each `${…}` is re-tokenized and parsed as an
   expression and must consume fully), regex literals (told from division by the previous token), identifiers,
@@ -130,7 +146,8 @@ inert `METHOD_REF` sentinel however many names it passes through.
 
 ### 3. The evaluator
 
-The `Evaluator` class walks the AST. It is where every read and call is mediated, and where ownership and halting
+The `Evaluator` class (`readonly-exec/evaluator.ts`) walks the AST, consulting the tables in
+`readonly-exec/policy.ts`. It is where every read and call is mediated, and where ownership and halting
 are enforced.
 
 **Scope.** The root scope holds `document`, `Array`, `Object`, `JSON`, `Math`, `String`, `Number`, `Boolean`,
@@ -229,7 +246,8 @@ can never swallow one, so wrapping a refused operation in `try` does not make it
 
 ## Halting
 
-Two properties, kept apart on purpose.
+Two properties, kept apart on purpose. The bounds below, and the comment stating both properties, are in
+`readonly-exec/limits.ts`.
 
 **A. Every script halts, by construction.** This is a property of the language: no script can express an infinite
 loop.

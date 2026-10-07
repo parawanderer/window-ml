@@ -231,7 +231,7 @@ every run because it's only true when the flag is set, matching the `SELF_CLAUSE
 - **`answer` revamp:** the `answer` tool becomes a curated set (`add`/`remove`/`clear`) over items
   (token | element | text); `AgentResult.answer?` (resolved markdown) + existing `elements`/
   `answerMedia`. Add `ml.answer(...)` to the API and **bless it into the read-only-exec facade**
-  (`readonly-exec.ts` `mlFacade` / `ML_READONLY_METHODS`) so it runs free in `exec` — a documented
+  (`readonly-exec/policy.ts` `mlFacade` / `ML_READONLY_METHODS`) so it runs free in `exec` — a documented
   exception to "facade is read-only" (mutates only the run's own answer surface, spends nothing).
 - **LaTeX mode:** a `latex` `RenderDescriptor` (or a render-mode field) the surfaces map to a math
   renderer (KaTeX-class), reachable via `@tool:id:out | latex`.
