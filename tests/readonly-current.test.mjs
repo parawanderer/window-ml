@@ -12,7 +12,7 @@ import { JSDOM } from "jsdom";
 import { Worker } from "node:worker_threads";
 import { runAgentLoop } from "../src/agent-loop.ts";
 import { snapshotCurrent, logText, messageId, UNRECORDED } from "../src/current-context.ts";
-import { evalReadonly, NotInDialect, Denied, NeedsPage, ABRIDGE_OVER } from "../src/readonly-exec.ts";
+import { evalReadonly, NotInDialect, Denied, NeedsPage, ABRIDGE_OVER, describeSwaps } from "../src/readonly-exec.ts";
 import { evalReadonlyInWorker } from "../src/sw-readonly.ts";
 import { mlPipe } from "../src/text-pipe.ts";
 import { toolToken } from "../src/util.ts";
@@ -220,24 +220,59 @@ test("THE PRINT BOUNDARY: a large message prints as a summary naming how to prin
 });
 
 test("THE PRINT BOUNDARY SAYS WHAT IT CHANGED: a note in JSONPath, after the clip, for every substitution", async () => {
-    const { logs, notes } = await inWorkerRealm(`console.log(ml.current.messages)`);
+    const { logs, prints } = await inWorkerRealm(`console.log(ml.current.messages)`);
     assert.ok(logs.length === 1);
     // Rows 0 (the system prompt) and 3 (the long tool result) were summarised the same way: one note, one union.
-    assert.deepEqual(notes.console, ["[console.log printed a VIEW: $[0,3].content REPLACED by virtual $[0,3]['chars','preview','abridged']; the value is unchanged, so print a path to see it]"]);
+    assert.deepEqual(describeSwaps(prints.console), ["[console.log printed a VIEW: $[0,3].content REPLACED by virtual $[0,3]['chars','preview','abridged']; the value is unchanged, so print a path to see it]"]);
     // A field that keeps its name and changes TYPE says so (a tool-calling turn's arguments become a count).
     const big = sampleSnapshot();
     big.messages[2].tool_calls[0].arguments = { js: "x".repeat(800) };
     const r = await inWorkerRealm(`return ml.current.messages[2]`, big);
-    assert.deepEqual(r.notes.value, ["[the returned value printed a VIEW: $.content and $.tool_calls (an array in the value, a number here) REPLACED by virtual $['chars','preview','abridged']; the value is unchanged, so print a path to see it]"]);
+    assert.deepEqual(describeSwaps(r.prints.value), ["[the returned value printed a VIEW: $.content and $.tool_calls (an array in the value, a number here) REPLACED by virtual $['chars','preview','abridged']; the value is unchanged, so print a path to see it]"]);
     // Places that are not direct siblings still get ONE correct path: a union at the index that differs.
-    assert.deepEqual((await inWorkerRealm(`console.log(ml.current.messages.map(m => ({ m })))`)).notes.console,
+    assert.deepEqual(describeSwaps((await inWorkerRealm(`console.log(ml.current.messages.map(m => ({ m })))`)).prints.console),
         ["[console.log printed a VIEW: $[0,3].m.content REPLACED by virtual $[0,3].m['chars','preview','abridged']; the value is unchanged, so print a path to see it]"]);
     // The formatter puts the notes AFTER the clip, so the cut cannot remove them.
     const { formatReadonlyExec } = await import("../src/approval.ts");
-    const shown = formatReadonlyExec(undefined, ["z".repeat(2000)], { console: ["[NOTE]"] }).result;
-    assert.match(shown, /… \[first \d+ of 2000 chars\]\n\[NOTE\]/);
+    const all = await inWorkerRealm(`console.log(ml.current.messages)`);
+    const shown = formatReadonlyExec(undefined, all.logs, all.prints).result;
+    assert.match(shown, /… \[first \d+ of \d+ chars\]\n\[console\.log printed a VIEW: /);
     // Nothing substituted, nothing said.
-    assert.deepEqual((await inWorkerRealm(`console.log(ml.current.messages[1])`)).notes.console, []);
+    assert.deepEqual((await inWorkerRealm(`console.log(ml.current.messages[1])`)).prints.console, []);
+});
+
+test("A NOTE IS ABOUT WHAT ITS READER RECEIVED: the model is told only of substitutions before its cut, the panel of more", async () => {
+    // Row 0 is large and prints as a summary inside the model's 500 characters; eleven small rows follow, so the second
+    // large one (row 12) STARTS past the cut. A row the model saw the start of counts as seen: it read part of a view.
+    const snap = snapshotCurrent({
+        run: { id: "r", model: null, step: 1, maxSteps: 5, startedTs: 0 },
+        messages: Array.from({ length: 13 }, (_, i) => ({ role: "user", content: i === 0 || i === 12 ? "x".repeat(400) : "small" })),
+        recorded: [], now: 1,
+    });
+    const { formatReadonlyExec } = await import("../src/approval.ts");
+    const all = await inWorkerRealm(`console.log(ml.current.messages)`, snap);
+    assert.ok(all.logs[0].indexOf('"abridged":"print ml.current.messages[12]') > 500, "the setup: row 12 is past the model's cut");
+    const out = formatReadonlyExec(undefined, all.logs, all.prints);
+    const modelNotes = out.result.split("\n").filter((l) => l.startsWith("[console.log printed a VIEW"));
+    assert.equal(modelNotes.length, 1);
+    assert.match(modelNotes[0], /VIEW: \$\[0\]\.content/, "the model hears about row 0, which it saw");
+    assert.doesNotMatch(modelNotes[0], /12/, "and nothing about row 12, which it was never sent");
+    // The panel shows the whole print, so its notes name both.
+    assert.match(out.render.stdoutNotes.join("\n"), /\$\[0,12\]\.content/);
+});
+
+test("A NOTE STAYS SHORT: runs become slices, and a long list names its first places and says how many there were", async () => {
+    const many = (n, big) => snapshotCurrent({
+        run: { id: "r", model: null, step: 1, maxSteps: 5, startedTs: 0 },
+        messages: Array.from({ length: n }, (_, i) => ({ role: "user", content: big(i) ? "x".repeat(400) : "small" })),
+        recorded: [], now: 1,
+    });
+    const note = async (snap) => describeSwaps((await inWorkerRealm(`console.log(ml.current.messages)`, snap)).prints.console)[0];
+    assert.match(await note(many(40, () => true)), /VIEW: \$\[0:40\]\.content/, "a run is a slice");
+    assert.match(await note(many(40, (i) => i % 2 === 0)), /VIEW: \$\[0:39:2\]\.content/, "a regular stride is a stepped slice");
+    const scattered = await note(many(200, (i) => [3, 7, 20, 41, 55, 89, 101, 140, 166, 199].includes(i)));
+    assert.match(scattered, /\$\[3,7,20,41,55,89,101,140\] \(10 places; the first of them named\)/, "capped, and it says so");
+    assert.ok(scattered.length < 400, `one line, not a flood (${scattered.length} chars)`);
 });
 
 test("EVERY SUBSTITUTION DOCUMENTS ITSELF: a print that differs from the value has a note whose paths find exactly what changed", async () => {
@@ -255,7 +290,8 @@ test("EVERY SUBSTITUTION DOCUMENTS ITSELF: a print that differs from the value h
         "ml.current.messages", "ml.current.messages.slice(2)", "ml.current.messages.map(m => ({ m }))",
         "[ml.current.messages[3], 5, ml.current.messages[0]]", "({ first: ml.current.messages[0], rest: { last: ml.current.messages[3] } })",
     ]) {
-        const { logs, notes } = await inWorkerRealm(`console.log(${expr})`);
+        const { logs, prints } = await inWorkerRealm(`console.log(${expr})`);
+        const notes = { console: describeSwaps(prints.console) };
         const printed = JSON.parse(logs[0]);
         const swapped = [];   // every object in the print that is a summary, found by walking it
         const walk = (v) => { if (v && typeof v === "object") { if ("abridged" in v) swapped.push(v); else Object.values(v).forEach(walk); } };

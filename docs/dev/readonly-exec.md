@@ -407,9 +407,14 @@ promise.
   the value, and it records each substitution as a DIFF of the printed object against the original (fields removed,
   added, retyped). `describeSwaps` turns those into notes in JSONPath, relative to what was printed, with sibling
   places as one union: `[console.log printed a VIEW: $[0,3].content REPLACED by virtual $[0,3]['chars','preview','abridged']; …]`.
-  The formatter appends them AFTER the clip, where the cut cannot remove them, and the panel draws them under the
-  output. A new kind of substitution is therefore described the day it exists, and a test fails if a print differs
-  from its value without a note whose paths select exactly the substituted objects.
+  The evaluator returns the substitutions STRUCTURED (`prints`), each with its compact JSON, and the FORMATTER writes
+  the notes, because only it knows where each part is cut: the model is told of a substitution only if it starts
+  inside the part the model was sent, and the panel of those inside its longer copy. The notes go AFTER the clip,
+  where the cut cannot remove them, and the panel draws them inside the section they describe, in a cell of their
+  own after the output. They stay short however many places there are: a run of indices is a slice (`$[0:40]`, a
+  stride `$[0:39:2]`), and past eight places a note names the first and says how many there were. A new kind of
+  substitution is described the day it exists, and a test fails if a print differs from its value without a note
+  whose paths select exactly the substituted objects.
 
 **What the realms do not cover**: a survey's RESULT. It is a tool result, and reaches the page the way every tool result
 does, through the debug stream relayed through the page's window, in every `debugMode` (measured by the

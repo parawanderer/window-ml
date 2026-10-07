@@ -1244,7 +1244,13 @@
                 "stdoutLabel": {
                   "type": "string"
                 },
-                "notes": {
+                "stdoutNotes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "valueNotes": {
                   "type": "array",
                   "items": {
                     "type": "string"
@@ -1804,7 +1810,13 @@
                 "stdoutLabel": {
                   "type": "string"
                 },
-                "notes": {
+                "stdoutNotes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "valueNotes": {
                   "type": "array",
                   "items": {
                     "type": "string"

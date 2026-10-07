@@ -185,6 +185,28 @@ test("tool output: the console's copy button copies all of it, across the not-se
     assert.equal(section.open, true, "pressing copy does not fold the section it copies");
 });
 
+// A print that showed a VIEW of a value (an ml.current message summarised) carries notes saying what was replaced. They
+// are drawn INSIDE the part they describe, after its output, in a cell of their own: the model reads them right after
+// its cut, and a long output scrolling in its own cell must not carry them out of sight.
+test("tool output: the print notes sit inside the console and the value, after the output, outside its scrolling cell", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("pnotes", "run it"));
+    await w.dispatch(agentStep("pnotes", 1, {
+        seq: 1, tool: "exec", arguments: { js: "…" }, result: "console:\n[…]",
+        renderOut: { type: "exec-out", stdout: "SEENUNSEEN", seen: 4, value: "{}", stdoutNotes: ["[console.log printed a VIEW: $[0].content REPLACED by …]"], valueNotes: ["[the returned value printed a VIEW: $.content REPLACED by …]"] },
+    }));
+    await w.dispatch(agentResult("pnotes", "done", 1));
+    await openRun(w);
+    w.shadow.querySelector(".astep.tool .astep-head").click(); await w.tick();
+    const inConsole = w.shadow.querySelector(".r-py-stdout .r-print-notes");
+    assert.ok(inConsole, "the console's notes are inside the console section");
+    assert.match(inConsole.textContent, /console\.log printed a VIEW: \$\[0\]\.content/);
+    assert.equal(inConsole.closest(".r-unseen"), null, "not inside the part the model was not sent");
+    const cells = [...w.shadow.querySelectorAll(".r-py-stdout .r-outcell")];
+    assert.ok(cells.indexOf(inConsole.querySelector(".r-outcell")) > 0, "a cell of their own, after the output's cell");
+    assert.match(w.shadow.querySelector(".r-py-val .r-print-notes").textContent, /the returned value printed a VIEW/);
+});
+
 // While a step is STILL RUNNING we already know where the model's cut will fall, so the doomed tail is greyed
 // as it streams (with a "?" explainer) rather than springing the truncation on you at the end. The boundary
 // comes from the call's own args, so a model-requested (approved) larger cap is respected live.

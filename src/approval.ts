@@ -7,7 +7,7 @@ import type { ApprovalRequest, ApprovalDecision } from "./contract-agent";
 import type { RenderDescriptor } from "./contract-render";
 import { UI_OUT_CAP } from "./contract-chat";
 import { OUTPUT_CAP } from "./contract-pointers";
-import { NotInDialect, Denied } from "./readonly-exec";
+import { NotInDialect, Denied, describeSwaps, type PrintSwap } from "./readonly-exec";
 import { clipOut, clipValue, elPath } from "./dom";
 import { suspiciousArgsWarning } from "./security";
 
@@ -118,24 +118,39 @@ export function readonlyRefused(e: unknown): boolean {
  *  An ELEMENT result keeps no descriptor here: the caller's `descriptorFor` draws it as the hoverable
  *  element list, which is more use than its path as text. */
 export function formatReadonlyExec(result: unknown, logs: string[],
-    /** What the evaluator's print boundary changed (`evalReadonly`'s `notes`). Placed AFTER the clip of each part, so
-     *  the cut can never remove the sentence saying the part is a view. */
-    notes?: { console?: string[]; value?: string[] }): { result: string; elements?: Node[]; render?: RenderDescriptor } {
+    /** What the evaluator's print boundary changed (`evalReadonly`'s `prints`). Described HERE, because this is where
+     *  each part is cut: a reader is told only about substitutions in the part it received, and the note goes AFTER the
+     *  cut, so the cut can never remove the sentence saying the part is a view. */
+    prints?: { console?: readonly PrintSwap[]; value?: readonly PrintSwap[] }): { result: string; elements?: Node[]; render?: RenderDescriptor } {
     const after = (lines?: string[]) => lines?.length ? `\n${lines.join("\n")}` : "";
+    /** The notes for the substitutions that START inside the first `cut` characters of `text`: each is found by its own
+     *  JSON, in print order, so the same view printed twice is two places, not one. */
+    const notesWithin = (text: string, swaps: readonly PrintSwap[] | undefined, cut: number): string[] => {
+        if (!swaps?.length) return [];
+        let from = 0;
+        return describeSwaps(swaps.filter((sw) => {
+            const at = text.indexOf(sw.json, from);
+            if (at < 0) return false;
+            from = at + 1;
+            return at < cut;
+        }));
+    };
     // The SAME default the approved path reads through `resolveOutputCap`: this was its own literal 500, so a change
     // to the table would have moved approved runs and left every read-only survey (the common path) where it was.
     const MODEL_CAP = OUTPUT_CAP.exec.default;
     const joined = logs.join("\n");
-    const logged = logs.length ? `console:\n${clipOut(joined, MODEL_CAP)}${after(notes?.console)}` : "";
+    const logged = logs.length ? `console:\n${clipOut(joined, MODEL_CAP)}${after(notesWithin(joined, prints?.console, MODEL_CAP))}` : "";
     const withLogs = (value: string) => logged ? `${logged}\n\nvalue: ${value}` : value;
-    const allNotes = [...(notes?.console ?? []), ...(notes?.value ?? [])];
+    // The PANEL's notes cover what the panel shows, which is more than the model was sent.
+    const consoleNotes = notesWithin(joined, prints?.console, UI_OUT_CAP);
     // The panel keeps more of the value than the model's 500 characters, and marks where the model's copy ended.
-    const render = (v: { ui: string; seen?: number }): RenderDescriptor => ({
+    const render = (v: { ui: string; seen?: number; notes: string[] }): RenderDescriptor => ({
         type: "exec-out",
         ...(logs.length ? { stdout: clipOut(joined, UI_OUT_CAP), seen: Math.min(joined.length, MODEL_CAP) } : {}),
         value: v.ui,
         ...(v.seen != null ? { valueSeen: v.seen } : {}),
-        ...(allNotes.length ? { notes: allNotes } : {}),
+        ...(consoleNotes.length ? { stdoutNotes: consoleNotes } : {}),
+        ...(v.notes.length ? { valueNotes: v.notes } : {}),
     });
     if (typeof Element !== "undefined" && result instanceof Element) {
         return { result: withLogs(elPath(result)), elements: [result] };
@@ -154,5 +169,5 @@ export function formatReadonlyExec(result: unknown, logs: string[],
     else if (typeof result === "object") { try { full = JSON.stringify(result); } catch { full = String(result); } }
     else full = String(result);
     const v = clipValue(full, MODEL_CAP, UI_OUT_CAP);
-    return { result: withLogs(v.model + after(notes?.value)), render: render(v) };
+    return { result: withLogs(v.model + after(notesWithin(full, prints?.value, MODEL_CAP))), render: render({ ...v, notes: notesWithin(full, prints?.value, UI_OUT_CAP) }) };
 }

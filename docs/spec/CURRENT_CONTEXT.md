@@ -322,7 +322,10 @@ none of them change the value underneath.
 **A view must say it is one.** Every print that differs from the value carries a note saying exactly what was
 replaced, in JSONPath relative to what was printed (`$[0,3].content REPLACED by virtual $[0,3]['chars','preview',
 'abridged']`), placed after any clip so the cut cannot remove it. The note is generated from a diff of the printed
-object against the value, never written by hand, so a later substitution cannot ship without one.
+object against the value, never written by hand, so a later substitution cannot ship without one. A reader is told
+only about the part it received (a note about a row past the model's cut would describe something it never saw), and
+a note stays one line however many places it covers (runs become RFC 9535 slices; past eight places it names the
+first and gives the count).
 
 It also generalises where a cap on `messages` would not. The rendering is keyed to SIZE, so a screenshot-bearing
 tool result or a fetched page abridges the same way the system prompt does — and a rule keyed to "is this the

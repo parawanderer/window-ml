@@ -172,9 +172,10 @@ export type RenderDescriptor = (
     // `errorLine` is the line of the MODEL'S source that threw (exec-trace.ts) — absent when it cannot be
     // known, never guessed. The python twin reads its line out of the traceback text; JS has no traceback
     // worth rendering (an evaluated script's stack is mostly the wrapper), so it carries the number.
-    // `notes` (exec-out): what the read-only evaluator's print boundary changed, as the model was told it (a large
-    // `ml.current` message printed as a summary, with the JSONPaths of what was replaced). Drawn under the output.
-    | { type: "exec-out"; stdout?: string; seen?: number; value?: string; valueSeen?: number; error?: string; errorLine?: number; token?: string; stdoutLabel?: string; notes?: string[] }
+    // `stdoutNotes` / `valueNotes` (exec-out): what the read-only evaluator's print boundary changed in that part (a large
+    // `ml.current` message printed as a summary, with the JSONPaths of what was replaced), for what the PANEL shows of
+    // it. Drawn inside the part's own section, after its output, the way the model reads them after its cut.
+    | { type: "exec-out"; stdout?: string; seen?: number; value?: string; valueSeen?: number; error?: string; errorLine?: number; token?: string; stdoutLabel?: string; stdoutNotes?: string[]; valueNotes?: string[] }
     // A DELEGATED `look`'s Out slot: the exact image the vision reader saw, WHICH model read it, and
     // its text output — so a sub-call look reads like `locate`'s substeps (the native look just shows
     // the screenshot, since the agent itself is the viewer).
