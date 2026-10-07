@@ -23,6 +23,16 @@ script's promise settles. The streaming port (`LLM_STREAM`) checks the same gate
 2. Otherwise the sender must be grantable (`grantableOrigin`: top frame, http(s), not opaque) and its origin approved
    (`decide`), or, over https only, its host on `pageApprovalDomains`.
 
+**The shell is not the page, but the browser cannot tell them apart.** The content-script shell's messages arrive with
+the page's tab and origin, so anything it sends under a page-startable type is refused on an unapproved site. It sends
+its own types instead (`USER_START_RUN`, `USER_RUN_ACTION`, `USER_PYTHON_PREWARM`, `CANCEL_RUN`), and
+`tests/redteam.test.js` scans `sidebar/shell.ts` for any page-startable type it sends.
+
+**A page-built run whose page may not drive it is handed to the worker.** A person's follow-up or Continue for a run
+a PAGE built goes to the page while that page's site may use window.ml. Once the tab is on a site that may not (the
+run navigated off its builder's origin), `userRunAction` hands the run to the worker (`makeWorkerRun`) instead of
+leaving it to a refused `RESUME_RUN`.
+
 ## The lists
 
 `site-access.ts` is pure: `originOf`, `grantableOrigin`, `decide` (a denial beats an approval), `applyEdit`,
@@ -32,7 +42,9 @@ next call with no reload.
 
 Edits arrive as `SITE_ACCESS` messages, answered for extension pages only (`isExtensionSender`). Two editors:
 DevTools Settings → Permissions → "Sites that may use window.ml" (`SiteApprovals`, the full list) and the toolbar
-popup's "This site" block (the current tab's origin, read from `chrome.tabs`, never a title the page set).
+popup's "This site" block (the current tab's origin, read from `chrome.tabs`, never a title the page set). An approval
+that only the self-approval whitelist implies is reported `implied`, and the popup offers no Revoke for it: the
+whitelist is edited in Settings.
 
 ## The page's cancel
 

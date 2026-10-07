@@ -332,6 +332,10 @@ Recorded as each slice lands, with the reason.
   removes the page-initiated read altogether (the values an approved script names are sent with the call).
 - **Slice 1: the page's forwarded debug and session events are gated too** (`ML_DEBUG_EVENT`, `ML_SESSION_EVENT`).
   They are page-started, and an unapproved page could otherwise write sessions into the index the chat page reads.
+- **Slice 1, found in review: a run a page built is handed to the worker once its tab is on a site that may not drive
+  it.** The page that built it is gone, and its follow-up and Continue would otherwise be refused (they are run
+  control). The Commander's Pyodide prewarm moved to its own message type for the same reason: the shell shares the
+  page's sender.
 - **Not fixed, noticed:** `GET_CONFIG` never sent `labelMatch`, so a page-built run always used the default metric.
   `publicConfig` keeps that behaviour; the worker path inherits it.
 

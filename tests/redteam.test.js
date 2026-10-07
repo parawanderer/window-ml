@@ -225,3 +225,29 @@ test("GAIN blocked — a page's cancel is its own message type, so the gate can 
     assert.deepEqual(relayed, ["PAGE_CANCEL_RUN"]);
     assert.ok(RUN_CONTROL_TYPES.has("PAGE_CANCEL_RUN"), "and it is run control: never allowed from an unapproved page");
 });
+
+test("the extension's own shell sends nothing the origin gate refuses (it shares the page's sender)", async () => {
+    // The browser reports the content-script shell's messages as coming from the page, so a type it sends that is also
+    // page-startable is refused on every unapproved site: the Commander's Pyodide prewarm was. Only the page's own debug
+    // and session events are forwarded under a gated type, on purpose (an unapproved page has none worth keeping).
+    const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "../src/sidebar/shell.ts"), "utf8");
+    const sent = [...src.matchAll(/sendMessage\(\{\s*type:\s*"([A-Z_]+)"/g)].map((m) => m[1]);
+    assert.ok(sent.length >= 5, `found ${sent.length} sends: the scan is reading the file`);
+    const gated = sent.filter((t) => PAGE_STARTED_TYPES.has(t) && t !== "ML_DEBUG_EVENT" && t !== "ML_SESSION_EVENT");
+    assert.deepEqual([...new Set(gated)], [], "a shell message would be refused on an unapproved site");
+    // And the prewarm it does send gets through from an unapproved tab.
+    const bg = loadBackground({ config: baseConfig(), siteGate: true });
+    const res = await bg.send({ type: "USER_PYTHON_PREWARM", payload: { trigger: "commander" } }, hostilePage());
+    assert.doesNotMatch(res?.error || "", /Refused/);
+});
+
+test("an approval that comes from the self-approval whitelist says so, so the popup does not offer a Revoke that does nothing", async () => {
+    const bg = loadBackground({ config: baseConfig({ pageApprovalDomains: ["trusted.example"] }), siteGate: true });
+    const surface = { url: "chrome-extension://test/popup.html" };
+    const implied = await bg.send({ type: "SITE_ACCESS", payload: { origin: "https://trusted.example" } }, surface);
+    assert.equal(implied.data.decision, "always");
+    assert.equal(implied.data.implied, true);
+    await bg.send({ type: "SITE_ACCESS", payload: { edit: { op: "allow", origin: "https://listed.example", scope: "always" } } }, surface);
+    const listed = await bg.send({ type: "SITE_ACCESS", payload: { origin: "https://listed.example" } }, surface);
+    assert.equal(listed.data.implied, undefined, "an approval on the list is the list's to revoke");
+});
