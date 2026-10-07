@@ -11,6 +11,7 @@
 //                   agent.start), by stopping the extension's `__mlStartAgent` message and reposting an edited copy
 //   ?cancel=1       cancel whatever run is driving this page, using the run id its own debug events carry
 //   ?spend=1        once a run is driving this page, spend the user's model with a request of the page's own
+// and always: `window.__seen` (every window message, from before the extension loads) and `window.__forge(events)`.
 
 (() => {
     const params = new URLSearchParams(location.search);
@@ -41,6 +42,13 @@
         window.addEventListener("message", on);
         window.postMessage({ type, requestId, payload }, "*");
     });
+
+    /**
+     * Post events into this page's window dressed as the extension's own background stream (`__mlFromBg`), which is
+     * how the content-script shell receives a run's steps for the corner card. Whether the card draws them is attack 15.
+     * @param {object[]} events session events (`agent`, `agent-step`, `agent-result`, …)
+     */
+    window.__forge = (events) => { for (const ev of events) window.postMessage({ __mlDebug: ev, __mlFromBg: true }, "*"); };
 
     const hijack = params.get("hijack");
     if (hijack) {
