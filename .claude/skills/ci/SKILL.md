@@ -247,3 +247,16 @@ ignored, and never "fixed" by re-running until it passes.
 - **The workflow cancels superseded runs per branch** (`concurrency`), so pushing a fix supersedes the
   previous run rather than queueing behind it. `main` is exempt: every commit there keeps its result.
 - **Before asking for a merge**, `gh pr checks` must be green (or the only red is documented above).
+- **Immediately before merging, read what arrived on the PR**, even with a go-ahead to merge: green CI does not
+  mean nobody has commented. Reviews from another session, a person, or a bot all count. Three places, because
+  no single command shows all of them:
+
+  ```bash
+  gh pr view "$PR" --json reviews,comments -q '.reviews[] , .comments[] | "\(.author.login): \(.body[0:200])"'
+  gh api "repos/parawanderer/window-ml/pulls/$PR/comments" -q '.[] | "\(.user.login) \(.path):\(.line): \(.body[0:200])"'   # inline review comments
+  ```
+
+  Anything there is answered before the merge: fixed on the branch, or replied to with why not. A bot's comment
+  is read too, and dismissed in a reply when it is noise, so the record shows it was seen. This is not
+  hypothetical: on 2026-09-18 #154 was merged on a go-ahead eleven minutes after a review with four real findings
+  had been posted, and all four became a follow-up PR.

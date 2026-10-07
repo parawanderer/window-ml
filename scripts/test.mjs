@@ -46,6 +46,13 @@ const GENRES = {
         about: "the session archive: its SQL under two SQLite builds, the phone's bridge to it, and the folder section",
         files: ["archive-db.test.mjs", "archive-portable.test.mjs", "archive-bridge.test.mjs", "archive-section.test.mjs"],
     },
+    // The read-only exec dialect: the parser and mediated evaluator, and each member a survey may call for free
+    // (`ml.pipe`, `ml.jsonPath`, `ml.current`). Four files, so a change to the dialect has its own suite; its rule
+    // (adversarial + halting + failure tests on every extension) is in AGENTS.md.
+    readonly: {
+        about: "the read-only exec dialect (src/readonly-exec.ts) and the free members a survey calls",
+        files: ["readonly-exec.test.mjs", "readonly-pipe.test.mjs", "readonly-jsonpath.test.mjs", "readonly-current.test.mjs"],
+    },
     ext: {
         about: "the extension's own worlds — background, relay, CDP, the page loop",
         files: ["background.test.js", "relay.test.js", "agent.test.js", "cdp-stream.test.mjs",
