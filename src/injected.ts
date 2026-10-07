@@ -8,6 +8,7 @@ import type { AnswerMedia } from "./contract-render";
 import type { RebuildConfig } from "./contract-messages";
 import { htmlToMarkdown } from "./html-to-md";
 import { mlPipe } from "./text-pipe";
+import { mlJsonPath } from "./json-path";
 import { truncate, elPath, describeSkeleton, queryAll, selectorError, viewportRect, jsonShape, joinShapes, jsonValue, shadowHostReport, clickSelector, elLine, isCurrentPage, typeFromExtension } from "./dom";
 import { tableFromDelimited, tableShape, asTable } from "./table-data";
 import { isTable } from "./table-brand";
@@ -316,6 +317,7 @@ import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } fro
          */
         range: mlRange,
         pipe: mlPipe,
+        jsonPath: mlJsonPath,
         embed: embed,
         /**
          * GET a URL's content via the background worker — bypasses CORS (host permissions), and by DEFAULT sends

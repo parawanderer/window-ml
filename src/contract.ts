@@ -35,6 +35,7 @@ import { LoadedModel, ServerTool, ServerToolResult, OllamaInfo } from "./contrac
 
 // Type-only: the unit-vector wrapper `ml.embed` resolves to. embedding.ts imports nothing, so no cycle.
 import type { Embedding } from "./embedding";
+import type { JsonPathNode } from "./json-path";
 
 /* ------------------------------- config ------------------------------- */
 
@@ -216,6 +217,21 @@ export interface MlApi {
      *  `["grep -E error|warn", "head 5"]`). Synchronous and pure — no network, no tokens. Throws an actionable
      *  Error naming the supported verbs if a stage is wrong. */
     pipe(source: string | FetchResult, pipe?: string | string[] | null): string;
+    /**
+     * Run an RFC 9535 JSONPath query over a JSON value.
+     *
+     * ```js
+     *   ml.jsonPath(data, "$.store.book[?@.price < 10].title")   // ["Sayings of the Century", "Moby Dick"]
+     *   ml.jsonPath(data, "$..author", { paths: true })           // [{ path: "$['store']['book'][0]['author']", value: "…" }, …]
+     *   ml.jsonPath('{"items":[{"id":1}]}', "$.items[*].id")     // a JSON STRING is parsed first: [1]
+     * ```
+     *
+     * `source` is JSON data, or a JSON string, which is parsed. An object is always data, never unwrapped: `{ text: "…" }`
+     * is valid JSON to query, so guessing that its `text` was meant would be wrong half the time. Data that is not JSON (a
+     * DOM node, a Map, a getter) is refused, not walked. Synchronous and pure; no `eval`. Free in a read-only survey
+     * unless a `match()`/`search()` pattern could backtrack.
+     */
+    jsonPath(source: unknown, expr: string, opts?: { paths?: boolean } | null): unknown[] | JsonPathNode[];
     /** Embed text with the configured embedding model, for comparing MEANING rather than spelling. Returns
      *  an {@link Embedding} (or one per input), a unit vector whose `.dot(other)` IS cosine similarity —
      *  normalised on construction, so a model that returns non-unit vectors cannot silently mis-rank. Pass

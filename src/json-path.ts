@@ -356,7 +356,16 @@ function singular(q: Query): boolean {
 
 // ------------------------------------------------------------------------------------------------------ evaluation ---
 
-type Node = { value: unknown; path: Key[] };
+/** Where a node is, as a link to its parent rather than a copied array: copying a path per child is quadratic in depth,
+ *  which over 100,000-deep JSON was billions of copies for a walk charged a hundred thousand nodes. */
+type Path = { up: Path; key: Key } | null;
+type Node = { value: unknown; path: Path };
+/** A path's keys from the root down. Costs its depth, so a caller materialising many is charged for it. */
+function keysOf(p: Path): Key[] {
+    const out: Key[] = [];
+    for (; p; p = p.up) out.push(p.key);
+    return out.reverse();
+}
 const NOTHING = Symbol("nothing");
 
 /** Is this JSON? Plain objects and arrays, strings, finite numbers, booleans, null. Anything else (a DOM node, a Map, a
@@ -372,18 +381,26 @@ function checkJson(v: unknown): void {
     throw new JsonPathError(`not JSON data: ${v === undefined ? "undefined" : typeof v === "object" ? "an object that is not plain data" : `a ${typeof v}`}`);
 }
 
-/** An object's own members, read as DATA: a getter is never run (on a live object it would be someone else's code). */
+/** One own member or array element, read as DATA: a getter is never run (on a live object it would be someone else's
+ *  code), and that includes an array index, which `v[i]` or `v.map` would read through one. */
+function own(o: object, k: Key): unknown {
+    const d = Object.getOwnPropertyDescriptor(o, k);
+    if (!d) throw new JsonPathError(`not JSON data: the array has a hole at ${k}`);
+    if (!("value" in d)) throw new JsonPathError(`not JSON data: member ${JSON.stringify(k)} is a getter`);
+    return d.value;
+}
+/** An object's own members, read as DATA (see `own`). */
 function members(o: Record<string, unknown>): [string, unknown][] {
-    return Object.keys(o).map((k) => {
-        const d = Object.getOwnPropertyDescriptor(o, k)!;
-        if (!("value" in d)) throw new JsonPathError(`not JSON data: member ${JSON.stringify(k)} is a getter`);
-        return [k, d.value];
-    });
+    return Object.keys(o).map((k) => [k, own(o, k)]);
 }
 function children(n: Node): Node[] {
     const v = n.value;
-    if (Array.isArray(v)) return v.map((x, i) => ({ value: x, path: [...n.path, i] }));
-    if (v !== null && typeof v === "object") return members(v as Record<string, unknown>).map(([k, x]) => ({ value: x, path: [...n.path, k] }));
+    if (Array.isArray(v)) {
+        const out: Node[] = [];
+        for (let i = 0; i < v.length; i++) out.push({ value: own(v, i), path: { up: n.path, key: i } });
+        return out;
+    }
+    if (v !== null && typeof v === "object") return members(v as Record<string, unknown>).map(([k, x]) => ({ value: x, path: { up: n.path, key: k } }));
     return [];
 }
 
@@ -392,7 +409,7 @@ class Evaluator {
     constructor(private readonly root: unknown, private readonly limits: JsonPathLimits) {}
 
     run(q: Query, current: Node): Node[] {
-        let nodes: Node[] = [q.root === "$" ? { value: this.root, path: [] } : current];
+        let nodes: Node[] = [q.root === "$" ? { value: this.root, path: null } : current];
         for (const seg of q.segments) nodes = this.segment(nodes, seg);
         return nodes;
     }
@@ -438,18 +455,18 @@ class Evaluator {
                 const d = Object.getOwnPropertyDescriptor(v, sel.name)!;
                 if (!("value" in d)) throw new JsonPathError(`not JSON data: member ${JSON.stringify(sel.name)} is a getter`);
                 this.limits.charge?.(1);
-                return [{ value: d.value, path: [...n.path, sel.name] }];
+                return [{ value: d.value, path: { up: n.path, key: sel.name } }];
             }
             case "wild": { const kids = children(n); this.limits.charge?.(kids.length); return kids; }
             case "index": {
                 if (!Array.isArray(v)) return [];
                 const i = sel.i < 0 ? v.length + sel.i : sel.i;
-                return i >= 0 && i < v.length ? [{ value: v[i], path: [...n.path, i] }] : [];
+                return i >= 0 && i < v.length ? [{ value: own(v, i), path: { up: n.path, key: i } }] : [];
             }
             case "slice": {
                 if (!Array.isArray(v)) return [];
                 const out: Node[] = [];
-                for (const i of sliceIndices(v.length, sel.start, sel.end, sel.step)) out.push({ value: v[i], path: [...n.path, i] });
+                for (const i of sliceIndices(v.length, sel.start, sel.end, sel.step)) out.push({ value: own(v, i), path: { up: n.path, key: i } });
                 this.limits.charge?.(out.length);
                 return out;
             }
@@ -557,7 +574,8 @@ function lessString(a: string, b: string): boolean {
     return x.length < y.length;
 }
 
-/** Deep equality of two JSON values, ITERATIVELY, so nesting depth cannot overflow the stack. */
+/** Deep equality of two JSON values, ITERATIVELY, so nesting depth cannot overflow the stack. Members are read as DATA
+ *  (`own`): a compared subtree is one the walk never visited, so it is the one place a getter could otherwise run. */
 function equal(a: unknown, b: unknown, limits: JsonPathLimits): boolean {
     const stack: [unknown, unknown][] = [[a, b]];
     while (stack.length) {
@@ -570,14 +588,14 @@ function equal(a: unknown, b: unknown, limits: JsonPathLimits): boolean {
         if (Array.isArray(x)) {
             const yy = y as unknown[];
             if (x.length !== yy.length) return false;
-            for (let i = 0; i < x.length; i++) stack.push([x[i], yy[i]]);
+            for (let i = 0; i < x.length; i++) stack.push([own(x, i), own(yy, i)]);
             continue;
         }
         const kx = Object.keys(x), ky = Object.keys(y);
         if (kx.length !== ky.length) return false;
         for (const k of kx) {
             if (!Object.prototype.hasOwnProperty.call(y, k)) return false;
-            stack.push([(x as Record<string, unknown>)[k], (y as Record<string, unknown>)[k]]);
+            stack.push([own(x, k), own(y, k)]);
         }
     }
     return true;
@@ -679,6 +697,11 @@ export function mlJsonPath(source: unknown, expr: string, opts?: { paths?: boole
         catch { throw new JsonPathError("ml.jsonPath needs JSON: this string is not JSON. Pass the parsed value, or the JSON text."); }
     }
     checkJson(root);
-    const nodes = new Evaluator(root, limits).run(query, { value: root, path: [] });
-    return opts?.paths ? nodes.map((n) => ({ path: normalizedPath(n.path), value: n.value })) : nodes.map((n) => n.value);
+    const nodes = new Evaluator(root, limits).run(query, { value: root, path: null });
+    if (!opts?.paths) return nodes.map((n) => n.value);
+    return nodes.map((n) => {
+        const keys = keysOf(n.path);
+        limits.charge?.(keys.length);
+        return { path: normalizedPath(keys), value: n.value };
+    });
 }
