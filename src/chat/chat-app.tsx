@@ -41,6 +41,7 @@ import type { ChatExtras } from "./extras";
 import { lightboxSrc, type ClientPlatform } from "./platform";
 import { PageChip } from "./page-chip";
 import { useMovedSince, SessionList } from "./session-list";
+import { useNarrow } from "./narrow";
 
 /** How long after a gesture a scroll still counts as the reader's own. Covers a phone's momentum coasting. */
 const USER_SCROLL_MS = 1200;
@@ -49,23 +50,6 @@ const USER_SCROLL_MS = 1200;
  *  to cover a reload (the summary arrives before the transcript's events) and short enough that a gate genuinely
  *  further back than the transcript draws is still announced at once. */
 const GATE_WAIT_FRAMES = 30;
-
-/** Below this width the page shows one pane at a time. */
-export const NARROW_PX = 760;
-
-/** Is the viewport narrow? Follows resizes and rotation. */
-function useNarrow(): boolean {
-    const query = `(max-width: ${NARROW_PX}px)`;
-    const [narrow, setNarrow] = useState(() => typeof matchMedia === "function" && matchMedia(query).matches);
-    useEffect(() => {
-        if (typeof matchMedia !== "function") return;
-        const mq = matchMedia(query);
-        const on = () => setNarrow(mq.matches);
-        mq.addEventListener("change", on);
-        return () => mq.removeEventListener("change", on);
-    }, []);
-    return narrow;
-}
 
 /** Whether this page pushed the history entry the open session sits on. Back then pops it (so the phone's own back
  *  gesture and the button agree); a session opened from a link has no entry of ours beneath it to go back to. */

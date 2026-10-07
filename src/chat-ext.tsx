@@ -4,6 +4,7 @@
 // It lives OUT here rather than in `src/chat/` because it is the one file of the chat page that knows about
 // `chrome`: everything under `src/chat/` must build for a phone, and `scripts/build-web.mjs` fails on a `chrome.*`
 // reference to keep it that way. The same reason `sidebar/services-ext.ts` sits beside the seam it fills.
+import { useNarrow } from "./chat/narrow";
 import { HousekeepingView } from "./sidebar/housekeeping-log";
 import { RunLogView } from "./sidebar/run-log-view";
 import { render } from "preact";
@@ -87,7 +88,9 @@ const residentHere = residentReader({
  * The config it edits is loaded at the page's start and followed from then on (below).
  */
 function SettingsPane() {
-    return <Settings />;
+    // The page has its own pill tabs above this view, so the inner groups take the page's style: pills on a wide screen,
+    // and on a phone no inner tabs at all (settings.tsx, `SettingsLayout`). The DevTools panel keeps its tabs.
+    return <Settings layout={useNarrow() ? "one-page" : "pills"} />;
 }
 
 /** The permissions an attention code asks for, where a click here can grant it. */

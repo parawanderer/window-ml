@@ -1305,7 +1305,11 @@ button.chat-page-go:hover { color: var(--fg); }
    column. A setting is a row: what it is and what it touches on the left, the choice on the right. */
 .chat-settings-body { padding: 0 12px; }
 .chat-set-group { margin-bottom: 36px; }
-.chat-set-tabs { margin: 0 12px 24px; }
+.chat-set-tabs { margin: 0 12px 24px; max-width: calc(100% - 24px); overflow-x: auto; scrollbar-width: none; }
+/* Five tabs do not fit a phone: the row scrolls sideways rather than wrapping a label onto two lines or clipping the
+   last tab at the edge. */
+.chat-set-tabs::-webkit-scrollbar { display: none; }
+.chat-set-tabs .chat-seg-opt { flex: 0 0 auto; white-space: nowrap; }
 .chat-set-lede { margin: 0 0 16px; padding: 0 12px; color: var(--fg-faint); font-size: .92em; }
 .chat-set-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 10px 12px; }
 /* A row whose VALUE is a list rather than a word: the label on its own line, the value under it across the full
@@ -1329,6 +1333,9 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-seg-opt:hover { color: var(--fg); }
 .chat-seg-opt.on { background: var(--panel-2); color: var(--fg); }
 .chat-seg-opt:focus-visible { outline: 2px solid var(--fg-dim); outline-offset: 1px; }
+/* The extension's Settings groups (Connection, Models, …) as a SECONDARY pill row, under the page's own Settings tabs
+   (settings.tsx `layout="pills"`), so the page does not show an underline tab bar stacked under its pills. */
+.set-pills { align-self: flex-start; flex-wrap: wrap; margin: 2px 0 10px; }
 
 /* ===================== THE START PAGE (start-page.tsx) =====================
    What the page is with nothing open: one pill to start the next session in, a little above the middle, and nothing
