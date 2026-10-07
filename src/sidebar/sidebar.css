@@ -3073,6 +3073,9 @@ html[data-focus] .action-verb { font-weight: 500; }
 /* A caption above a rendered block saying it is not literally what the caller wrote — `exec` uses it for
    expanded pointer macros. Quiet: it explains the render, it is not part of it. */
 .rp-note { font-size: .85em; color: var(--fg-dim); margin: 0 0 4px; font-style: italic; }
+/* The print boundary's notes, after a part of an exec's output: each names, in JSONPath, what the print showed as a
+   view rather than as the value. A cell of their own just under the output, so they read as part of it. */
+.r-print-notes { margin-top: 4px; }
 /* A hint REPORTING a failure rather than explaining a control. */
 .hint.err { color: var(--err, #ef4444); }
 

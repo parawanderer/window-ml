@@ -17,6 +17,7 @@
 // result to acorn and refuse to run something we mangled, which is a check the un-expanded source could
 // never have had.
 import { TOKEN_HEX_SRC, TOOL_NAME_SRC } from "./token-id";
+import type { RenderDescriptor } from "./contract-render";
 
 /** One substitution, so a UI can mark it and say what it came from. */
 export interface PointerExpansion {
@@ -157,4 +158,19 @@ export function expandPointers(src: string): ExpandResult {
         out += c; i++;
     }
     return { code: out, expansions };
+}
+
+/** An `exec` step's In, as the panel draws it: what actually RAN, not what was typed, since `@tool:…` is not
+ *  JavaScript and a highlighter either mangles the line or gives up on it. The model's original is one click away in
+ *  the raw args, and the note says why the two differ. One function for both places an `exec` is evaluated, the
+ *  page's `exec` tool and the worker's read-only evaluator, so a survey renders the same wherever it ran. */
+export function execCodeIn(src: string): RenderDescriptor {
+    const { code, expansions } = expandPointers(src);
+    return {
+        type: "code", text: code, lang: "javascript", format: true,
+        ...(expansions.length ? {
+            note: `${expansions.length} pointer macro${expansions.length > 1 ? "s" : ""} expanded`,
+            marks: expansions,
+        } : {}),
+    };
 }

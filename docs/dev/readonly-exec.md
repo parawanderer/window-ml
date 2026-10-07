@@ -374,6 +374,58 @@ own sections, `seen` at the model's cut — so an auto-approved survey renders l
 one raw blob. A script error already had one. An element result is the exception: it keeps the hoverable
 element list. The read-only console carries no produced-at marks, so its output has no timestamp gutter.
 
+## Two realms: the page, and the worker
+
+A delegated survey used to be evaluated only in the page's main world, so anything it read about the RUN (another
+origin's content, the system prompt, a `@tool:` value) landed in a realm a hostile page controls, and a read-only
+survey AUTO-APPROVES, so a prompt-injected one would hand it over with no human asked. `evalReadonly` now takes a
+`realm`, and the two have DISJOINT capabilities:
+
+| realm | has | has not |
+| --- | --- | --- |
+| `page` (default) | `document`, `getComputedStyle`, `ml.queryAll`/`a11y`/`fetch` (cached)/`answer` | the run's context: `ml.current` is a REFUSAL, not `undefined` |
+| `worker` (`sw-readonly.ts`) | `ml.current`, and whatever read-only `ml` the host hands in | the page: every route to it raises `NeedsPage` |
+
+The host tries the worker first and delegates to the page on `NeedsPage`. A survey needing both trips in the worker
+and is refused on the page, so it reaches the human in either order. Nothing lexical decides it: an alias
+(`const m = ml; m.current`) cannot add a capability a realm does not have, which a scan for member names could not
+promise.
+
+- **The worker's `ml` is an ALLOW list.** Built by leaving out what reads the page, and reaching ANY member it does
+  not carry (by a read, a call or a destructuring) raises `NeedsPage`, so a page-reading member added later costs an
+  extra hop and never a hole. The page roots `document` and `getComputedStyle` are getters that raise it.
+- **`NeedsPage` subclasses `NotInDialect`**, so it inherits every refusal guarantee for free: `try/catch` re-raises it,
+  the evaluator rolls back on it, and a caller that does not know the class reads it as a refusal and asks the human.
+- **On the page, `ml.current` refuses rather than reading `undefined`.** An absent member has always read as
+  `undefined` there, which is right for an existence guard and wrong here: `document.title + ml.current.messages.length`
+  would auto-approve with the answer `"titleundefined"`. The name is reserved.
+- **`ml.current.messages` is protected**: a write, a mutator or a nested write throws a `TypeError` the model reads,
+  never a refusal, because the human gate would then run the script on the page where there is no `ml.current`. `run`,
+  `meta` and `log` are copies the script owns.
+- **The print boundary** abridges a large message row (over `ABRIDGE_OVER` characters) into its role, size, a preview
+  and the expression that prints it whole, in `console.log` and in a returned value. The VALUE is untouched.
+- **Every substitution says so, and the sentence is generated.** `printable` is the one place a print may differ from
+  the value, and it records each substitution as a DIFF of the printed object against the original (fields removed,
+  added, retyped). `describeSwaps` turns those into notes in JSONPath, relative to what was printed, with sibling
+  places as one union: `[console.log printed a VIEW: $[0,3].content REPLACED by virtual $[0,3]['chars','preview','abridged']; …]`.
+  The evaluator returns the substitutions STRUCTURED (`prints`), each with its compact JSON, and the FORMATTER writes
+  the notes, because only it knows where each part is cut: the model is told of a substitution only if it starts
+  inside the part the model was sent, and the panel of those inside its longer copy. The notes go AFTER the clip,
+  where the cut cannot remove them, and the panel draws them inside the section they describe, in a cell of their
+  own after the output. They stay short however many places there are: a run of indices is a slice (`$[0:40]`, a
+  stride `$[0:39:2]`), and past eight places a note names the first and says how many there were. A new kind of
+  substitution is described the day it exists, and a test fails if a print differs from its value without a note
+  whose paths select exactly the substituted objects.
+
+**What the realms do not cover**: a survey's RESULT. It is a tool result, and reaches the page the way every tool result
+does, through the debug stream relayed through the page's window, in every `debugMode` (measured by the
+`demo/ml-current-e2e` demo). The realms keep the snapshot from being evaluated in the page; closing that channel is the
+site-access work's.
+
+The worker realm is not wired yet: `tryReadonly` in `sw-run-host.ts` is where it goes, and that is the site-access
+work's slice 2, which will also give the worker's `ml` a `dereference`. Until then a survey naming `@tool:` defers to
+the page exactly as before. Tests: `tests/readonly-current.test.mjs`.
+
 ## Extending the dialect
 
 The rule is in AGENTS.md. Every new construct, method or facade member needs, in the same change:

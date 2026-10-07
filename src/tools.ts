@@ -17,7 +17,7 @@ export type CaptureAnswer = (els: Element[], note?: string, show?: "inline" | "h
 // domTools stay ml-free. Used by describeElement to reveal content a page selector can't enter.
 export type ShadowResolve = (selector: string) => Promise<{ line: string }[] | null>;
 import { truncate, clipOut, clipValue, errText, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError, isCspEvalBlocked, firstHopSealed, isSealedHost } from "./dom";
-import { expandPointers } from "./pointer-macro";   // `@tool:` fantasy syntax → a real dereference call
+import { expandPointers, execCodeIn } from "./pointer-macro";   // `@tool:` fantasy syntax → a real dereference call
 import { execErrorLine } from "./exec-trace";       // a stack frame → the model's own line number
 import { runPipe, pipeHint, PIPE_SYNTAX, PIPE_REF } from "./text-pipe";
 import { outputCapParams, retryParams } from "./tool-params";
@@ -560,19 +560,8 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
             // Debug view: show the JS that ran as a highlighted code block (raw
             // toggle still reveals the underlying args/result).
             render: (_input, args) => {
-                // Show what actually RAN, not what was typed: `@tool:…` is not JavaScript, so a highlighter
-                // either mangles the line or gives up on it — a worse render of a less accurate text. The
-                // model's original is still one click away in the raw args (and side by side in an export),
-                // so the note is what stops the two reading as a contradiction.
-                const src = String((args as { js?: string }).js || "");
-                const { code, expansions } = expandPointers(src);
-                return {
-                    type: "code", text: code, lang: "javascript", format: true,
-                    ...(expansions.length ? {
-                        note: `${expansions.length} pointer macro${expansions.length > 1 ? "s" : ""} expanded`,
-                        marks: expansions,
-                    } : {}),
-                };
+                // What actually RAN, with the pointer macros marked: the one definition, shared with the worker.
+                return execCodeIn(String((args as { js?: string }).js || ""));
             },
             parameters: {
                 type: "object",
