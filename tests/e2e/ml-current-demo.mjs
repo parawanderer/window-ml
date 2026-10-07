@@ -179,7 +179,7 @@ try {
     console.log(`\n--- the model was sent ${calls.length} turn(s); the self-survey's result, as the model read it ---`);
     console.log(toolResult(calls[calls.length - 1] || {}, 2).split("\n").map((l) => "  " + l).join("\n"));
     console.log("\n--- the print survey's result ---");
-    console.log("  " + toolResult(calls[calls.length - 1] || {}, 3).slice(0, 900));
+    console.log("  " + toolResult(calls[calls.length - 1] || {}, 3).slice(0, 1600));
     console.log("\n--- the schema survey's result ---");
     console.log("  " + toolResult(calls[calls.length - 1] || {}, 4).slice(0, 900));
     console.log(`\nscreenshots in ${ART}`);
