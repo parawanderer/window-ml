@@ -216,7 +216,8 @@ to refactor use `--cost` (lines x decayed commits), not `--all`. AGENTS.md itsel
 files. `.claude/skills/file-size/SKILL.md`.
 
 **Refactoring tools.** `node scripts/imports.mjs` (edges, which names cross, `--cycles`) before planning a split;
-`node scripts/extract-function.mjs` to cut up a body; **RULE — move code between files with `node
+`node scripts/extract-function.mjs` to cut up a body; `node scripts/move-files.mjs --to <dir> <files>` to
+relocate whole files with every path to them rewritten; **RULE — move code between files with `node
 scripts/move-symbols.mjs`, never by copy and paste** (`--dry-run --diff` first). Each has a skill.
 
 **Vitals.** `node scripts/vitals.mjs` about once a month, commit the result; keep `feat:`/`fix:` subject prefixes,

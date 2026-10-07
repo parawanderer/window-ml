@@ -196,6 +196,14 @@ parameters, what has to come back), this picks module scope, gives the result yo
 another file — the extracted function is a top-level declaration, which is exactly what that takes. Skill:
 `.claude/skills/extract-function/SKILL.md`.
 
+**To relocate whole files, use `node scripts/move-files.mjs --to <dir> <files>`** (`--dry-run --diff` first).
+move-symbols moves declarations between files and leaves a file's location alone; a folder move is the other
+operation, and doing it with `git mv` leaves every import, every test's `await import("../src/…")` and build.mjs's
+entry points to be found by error. A move changes no code, only paths, so it is path arithmetic over every tracked
+file rather than a compiler refactor: that is what reaches the strings TypeScript's own rename never sees. It reports
+the one form it cannot rewrite (a path assembled from pieces), blocks on a path that would dangle, and fails on a new
+type error. Skill: `.claude/skills/move-files/SKILL.md`.
+
 **RULE — move code between files with `node scripts/move-symbols.mjs`, never by copy and paste.**
 `--from <file> --symbols a,b --to <file> --dry-run --diff` plans the move; drop `--dry-run` to write it. The
 compiler resolves what the code depends on, pulls along helpers only it uses, rewrites every import, re-export
