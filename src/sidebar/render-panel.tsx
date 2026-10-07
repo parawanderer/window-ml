@@ -1672,8 +1672,9 @@ function ExecOutRender({ d, marks, live, ranMs, ranSince, lineMap, remoteMs }: {
                 in PythonOutRender. */}
             {d.stdout ? <PyOutSection label={d.stdoutLabel ?? "console"} cls="r-py-stdout" foldInFocus={!live}
                 // The WHOLE console as the panel holds it, both sides of the "not sent to the model" split: the split
-                // draws two blocks, and selecting across them by hand drags the marker's text along.
-                actions={<CopyBtn text={d.stdout} tip={d.seen != null && d.seen < d.stdout.length ? "copy the whole console output, including the part the model was not sent" : "copy the console output"} />}>
+                // draws two blocks, and selecting across them by hand drags the marker's text along. The print notes
+                // come with it: they say what a printed line stands in for, and a copy without them reads as the data.
+                actions={<CopyBtn text={d.stdoutNotes?.length ? `${d.stdout}\n${d.stdoutNotes.join("\n")}` : d.stdout} tip={d.seen != null && d.seen < d.stdout.length ? "copy the whole console output, including the part the model was not sent" : "copy the console output"} />}>
                 <OutputCell text><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell>
                 {d.stdoutNotes?.length ? <PrintNotes notes={d.stdoutNotes} /> : null}
                 <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} />

@@ -205,6 +205,10 @@ test("tool output: the print notes sit inside the console and the value, after t
     const cells = [...w.shadow.querySelectorAll(".r-py-stdout .r-outcell")];
     assert.ok(cells.indexOf(inConsole.querySelector(".r-outcell")) > 0, "a cell of their own, after the output's cell");
     assert.match(w.shadow.querySelector(".r-py-val .r-print-notes").textContent, /the returned value printed a VIEW/);
+    const copied = [];
+    Object.defineProperty(w.window.navigator, "clipboard", { value: { writeText: async (t) => { copied.push(t); } }, configurable: true });
+    w.shadow.querySelector(".r-py-stdout > .r-py-actions button").click(); await w.tick();
+    assert.deepEqual(copied, ["SEENUNSEEN\n[console.log printed a VIEW: $[0].content REPLACED by …]"], "the console's copy carries its notes");
 });
 
 // While a step is STILL RUNNING we already know where the model's cut will fall, so the doomed tail is greyed
