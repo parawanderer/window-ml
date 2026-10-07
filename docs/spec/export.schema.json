@@ -1243,6 +1243,12 @@
                 },
                 "stdoutLabel": {
                   "type": "string"
+                },
+                "notes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "required": [
@@ -1797,6 +1803,12 @@
                 },
                 "stdoutLabel": {
                   "type": "string"
+                },
+                "notes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "required": [

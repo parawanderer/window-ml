@@ -117,19 +117,25 @@ export function readonlyRefused(e: unknown): boolean {
  *
  *  An ELEMENT result keeps no descriptor here: the caller's `descriptorFor` draws it as the hoverable
  *  element list, which is more use than its path as text. */
-export function formatReadonlyExec(result: unknown, logs: string[]): { result: string; elements?: Node[]; render?: RenderDescriptor } {
+export function formatReadonlyExec(result: unknown, logs: string[],
+    /** What the evaluator's print boundary changed (`evalReadonly`'s `notes`). Placed AFTER the clip of each part, so
+     *  the cut can never remove the sentence saying the part is a view. */
+    notes?: { console?: string[]; value?: string[] }): { result: string; elements?: Node[]; render?: RenderDescriptor } {
+    const after = (lines?: string[]) => lines?.length ? `\n${lines.join("\n")}` : "";
     // The SAME default the approved path reads through `resolveOutputCap`: this was its own literal 500, so a change
     // to the table would have moved approved runs and left every read-only survey (the common path) where it was.
     const MODEL_CAP = OUTPUT_CAP.exec.default;
     const joined = logs.join("\n");
-    const logged = logs.length ? `console:\n${clipOut(joined, MODEL_CAP)}` : "";
+    const logged = logs.length ? `console:\n${clipOut(joined, MODEL_CAP)}${after(notes?.console)}` : "";
     const withLogs = (value: string) => logged ? `${logged}\n\nvalue: ${value}` : value;
+    const allNotes = [...(notes?.console ?? []), ...(notes?.value ?? [])];
     // The panel keeps more of the value than the model's 500 characters, and marks where the model's copy ended.
     const render = (v: { ui: string; seen?: number }): RenderDescriptor => ({
         type: "exec-out",
         ...(logs.length ? { stdout: clipOut(joined, UI_OUT_CAP), seen: Math.min(joined.length, MODEL_CAP) } : {}),
         value: v.ui,
         ...(v.seen != null ? { valueSeen: v.seen } : {}),
+        ...(allNotes.length ? { notes: allNotes } : {}),
     });
     if (typeof Element !== "undefined" && result instanceof Element) {
         return { result: withLogs(elPath(result)), elements: [result] };
@@ -148,5 +154,5 @@ export function formatReadonlyExec(result: unknown, logs: string[]): { result: s
     else if (typeof result === "object") { try { full = JSON.stringify(result); } catch { full = String(result); } }
     else full = String(result);
     const v = clipValue(full, MODEL_CAP, UI_OUT_CAP);
-    return { result: withLogs(v.model), render: render(v) };
+    return { result: withLogs(v.model + after(notes?.value)), render: render(v) };
 }

@@ -219,6 +219,55 @@ test("THE PRINT BOUNDARY: a large message prints as a summary naming how to prin
     assert.ok(ABRIDGE_OVER < 900);
 });
 
+test("THE PRINT BOUNDARY SAYS WHAT IT CHANGED: a note in JSONPath, after the clip, for every substitution", async () => {
+    const { logs, notes } = await inWorkerRealm(`console.log(ml.current.messages)`);
+    assert.ok(logs.length === 1);
+    // Rows 0 (the system prompt) and 3 (the long tool result) were summarised the same way: one note, one union.
+    assert.deepEqual(notes.console, ["[console.log printed a VIEW: $[0,3].content REPLACED by virtual $[0,3]['chars','preview','abridged']; the value is unchanged, so print a path to see it]"]);
+    // A field that keeps its name and changes TYPE says so (a tool-calling turn's arguments become a count).
+    const big = sampleSnapshot();
+    big.messages[2].tool_calls[0].arguments = { js: "x".repeat(800) };
+    const r = await inWorkerRealm(`return ml.current.messages[2]`, big);
+    assert.deepEqual(r.notes.value, ["[the returned value printed a VIEW: $.content and $.tool_calls (a array in the value, a number here) REPLACED by virtual $['chars','preview','abridged']; the value is unchanged, so print a path to see it]"]);
+    // Places that are not direct siblings still get ONE correct path: a union at the index that differs.
+    assert.deepEqual((await inWorkerRealm(`console.log(ml.current.messages.map(m => ({ m })))`)).notes.console,
+        ["[console.log printed a VIEW: $[0,3].m.content REPLACED by virtual $[0,3].m['chars','preview','abridged']; the value is unchanged, so print a path to see it]"]);
+    // The formatter puts the notes AFTER the clip, so the cut cannot remove them.
+    const { formatReadonlyExec } = await import("../src/approval.ts");
+    const shown = formatReadonlyExec(undefined, ["z".repeat(2000)], { console: ["[NOTE]"] }).result;
+    assert.match(shown, /… \[first \d+ of 2000 chars\]\n\[NOTE\]/);
+    // Nothing substituted, nothing said.
+    assert.deepEqual((await inWorkerRealm(`console.log(ml.current.messages[1])`)).notes.console, []);
+});
+
+test("EVERY SUBSTITUTION DOCUMENTS ITSELF: a print that differs from the value has a note whose paths find exactly what changed", async () => {
+    // A tiny resolver for the JSONPath the notes use: `$`, `[n]`, `[n,m]`, `.key`, `['a','b']`. Returns every node a
+    // path selects, so a union selects several.
+    const resolve = (root, path) => {
+        let nodes = [root];
+        for (const step of path.slice(1).match(/\.[A-Za-z_$][\w$]*|\[[^\]]*\]/g) ?? []) {
+            const keys = step.startsWith(".") ? [step.slice(1)] : step.slice(1, -1).split(",").map((k) => k.trim().replace(/^'|'$/g, ""));
+            nodes = nodes.flatMap((n) => keys.map((k) => n?.[/^\d+$/.test(k) ? Number(k) : k]));
+        }
+        return nodes;
+    };
+    for (const expr of [
+        "ml.current.messages", "ml.current.messages.slice(2)", "ml.current.messages.map(m => ({ m }))",
+        "[ml.current.messages[3], 5, ml.current.messages[0]]", "({ first: ml.current.messages[0], rest: { last: ml.current.messages[3] } })",
+    ]) {
+        const { logs, notes } = await inWorkerRealm(`console.log(${expr})`);
+        const printed = JSON.parse(logs[0]);
+        const swapped = [];   // every object in the print that is a summary, found by walking it
+        const walk = (v) => { if (v && typeof v === "object") { if ("abridged" in v) swapped.push(v); else Object.values(v).forEach(walk); } };
+        walk(printed);
+        assert.equal(notes.console.length > 0, swapped.length > 0, `${expr}: a substitution without a note, or a note without one`);
+        // Read the targets off the note's own JSONPath: each `virtual <path>['…']` names fields of the summary objects,
+        // so its parent path must select exactly those objects, union or list alike.
+        const located = notes.console.flatMap((n) => [...n.matchAll(/(\$[^ ;]*?)\['chars','preview','abridged'\]/g)].flatMap((m) => resolve(printed, m[1])));
+        assert.deepEqual(new Set(located), new Set(swapped), `${expr}: the note's paths must select exactly the summarised objects`);
+    }
+});
+
 test("the log: an ordinary Array for filtering, and `.text` for ml.pipe", async () => {
     assert.deepEqual((await inWorkerRealm(`ml.current.log.filter(r => r.kind === "reloaded").map(r => r.reason)`)).value, ["gone"]);
     assert.equal((await inWorkerRealm(`ml.pipe(ml.current.log, "grep reloaded")`)).value, "1970-01-01T00:16:25Z page reloaded gone {\"tab\":7}");

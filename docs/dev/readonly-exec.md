@@ -403,6 +403,13 @@ promise.
   `meta` and `log` are copies the script owns.
 - **The print boundary** abridges a large message row (over `ABRIDGE_OVER` characters) into its role, size, a preview
   and the expression that prints it whole, in `console.log` and in a returned value. The VALUE is untouched.
+- **Every substitution says so, and the sentence is generated.** `printable` is the one place a print may differ from
+  the value, and it records each substitution as a DIFF of the printed object against the original (fields removed,
+  added, retyped). `describeSwaps` turns those into notes in JSONPath, relative to what was printed, with sibling
+  places as one union: `[console.log printed a VIEW: $[0,3].content REPLACED by virtual $[0,3]['chars','preview','abridged']; …]`.
+  The formatter appends them AFTER the clip, where the cut cannot remove them, and the panel draws them under the
+  output. A new kind of substitution is therefore described the day it exists, and a test fails if a print differs
+  from its value without a note whose paths select exactly the substituted objects.
 
 **What the realms do not cover**: a survey's RESULT. It is a tool result, and reaches the page the way every tool result
 does, through the debug stream relayed through the page's window, in every `debugMode` (measured by the

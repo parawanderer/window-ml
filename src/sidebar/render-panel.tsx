@@ -1672,6 +1672,9 @@ function ExecOutRender({ d, marks, live, ranMs, ranSince, lineMap, remoteMs }: {
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
             {d.error ? <PyOutSection label="error" cls="r-py-err"><OutputCell text><ExecError text={d.error} line={d.errorLine} map={lineMap} /></OutputCell></PyOutSection> : null}
             {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><ValueOut text={d.value} seen={d.valueSeen} /></PyOutSection> : null}
+            {/* What the print showed is a VIEW of the value (a large `ml.current` message summarised), said exactly as the
+                model was told it, with the JSONPaths of what was replaced. */}
+            {d.notes?.length ? <div class="rp-note r-print-notes">{d.notes.map((n, i) => <div key={i}>{n}</div>)}</div> : null}
             {!d.stdout ? <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} /> : null}
         </div>
     );

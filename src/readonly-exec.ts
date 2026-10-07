@@ -1024,6 +1024,66 @@ function abridgeRow(m: Record<string, unknown>, index: number): unknown {
     };
 }
 
+/** One substitution the print boundary made: WHERE (a JSONPath into what was printed) and HOW the printed object
+ *  differs from the value. Derived, never written: see `Evaluator.printable`. */
+export interface PrintSwap { path: string; removed: string[]; added: string[]; retyped: { key: string; was: string; now: string }[] }
+
+/** A JSONPath member step for a key: `.name` when it is an identifier, else bracket notation (RFC 9535). */
+function jsonPathKey(k: string): string {
+    return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k) ? `.${k}` : `[${JSON.stringify(k).replace(/^"|"$/g, "'")}]`;
+}
+/** Several keys at one place, as a JSONPath: one is a member step, more are a bracketed union. */
+function jsonPathKeys(keys: string[]): string {
+    return keys.length === 1 ? jsonPathKey(keys[0]) : `[${keys.map((k) => `'${k.replace(/'/g, "\\'")}'`).join(",")}]`;
+}
+const kindName = (x: unknown): string => x === null ? "null" : Array.isArray(x) ? "array" : typeof x;
+
+/** How a printed view differs from the value it stands for, field by field. */
+function diffSwap(path: string, before: Record<string, unknown>, after: Record<string, unknown>): PrintSwap {
+    const removed = Object.keys(before).filter((k) => !(k in after));
+    const added = Object.keys(after).filter((k) => !(k in before));
+    const retyped = Object.keys(before).filter((k) => k in after && kindName(before[k]) !== kindName(after[k]))
+        .map((k) => ({ key: k, was: kindName(before[k]), now: kindName(after[k]) }));
+    return { path, removed, added, retyped };
+}
+
+/** The notes a reader gets for a print's substitutions: one line per KIND of change, its places as one JSONPath
+ *  (`$[0,3]` when they are siblings, else listed), so the model can tell exactly which parts of what it was shown are
+ *  a view and not the value. `where` says what was printed (`console.log` or the returned value). */
+export function describeSwaps(swaps: readonly PrintSwap[], where: string): string[] {
+    const groups = new Map<string, { swap: PrintSwap; paths: string[] }>();
+    for (const sw of swaps) {
+        const sig = JSON.stringify([sw.removed, sw.added, sw.retyped]);
+        const g = groups.get(sig);
+        if (g) g.paths.push(sw.path); else groups.set(sig, { swap: sw, paths: [sw.path] });
+    }
+    return [...groups.values()].map(({ swap, paths }) => {
+        // One path when the places are siblings at ONE index (`$[0,3]`, `$[0,3].m`), else each place in full: a key
+        // appended to a LIST of paths would attach to the last one only, and the others would be wrong JSONPath.
+        const union = unionPath(paths);
+        const at = (suffix: string) => union ? `${union}${suffix}` : paths.map((p) => `${p}${suffix}`).join(", ");
+        const replaced = [
+            ...(swap.removed.length ? [at(jsonPathKeys(swap.removed))] : []),
+            ...swap.retyped.map((r) => `${at(jsonPathKey(r.key))} (a ${r.was} in the value, a ${r.now} here)`),
+        ];
+        const virtual = swap.added.length ? `virtual ${at(jsonPathKeys(swap.added))}` : "";
+        return `[${where} printed a VIEW: ${replaced.join(" and ") || at("")} REPLACED by ${virtual || "a summary"}; the value is unchanged, so print a path to see it]`;
+    });
+}
+
+/** Paths that are the same except for ONE array index, as one JSONPath with a union there (`$[0].m` and `$[3].m` →
+ *  `$[0,3].m`). Null when they differ in any other way. */
+function unionPath(paths: readonly string[]): string | null {
+    const segs = paths.map((p) => p.match(/^\$|\[\d+\]|\.[A-Za-z_$][\w$]*|\['(?:[^'\\]|\\.)*'\]/g) ?? []);
+    if (paths.length === 1) return paths[0];
+    if (segs.some((s) => s.join("") !== paths[segs.indexOf(s)] || s.length !== segs[0].length)) return null;
+    const differ = segs[0].map((_, i) => segs.some((s) => s[i] !== segs[0][i]));
+    if (differ.filter(Boolean).length !== 1) return null;
+    const at = differ.indexOf(true);
+    if (!segs.every((s) => /^\[\d+\]$/.test(s[at]))) return null;
+    return [...segs[0].slice(0, at), `[${segs.map((s) => s[at].slice(1, -1)).join(",")}]`, ...segs[0].slice(at + 1)].join("");
+}
+
 const RETURN = Symbol("return");   // sentinel wrapper for a `return` value
 // Sentinel: an optional chain (`a?.b.c()`) short-circuited. It propagates through the rest of the chain
 // (evalChain/readMember/evalCall) and is unwrapped to `undefined` the moment the chain result is CONSUMED
@@ -1178,14 +1238,21 @@ class Evaluator {
      *  names the expression printing it whole; the VALUE is untouched. Keyed to size, not role, so a large tool result
      *  abridges like the system prompt. Walks plain arrays and objects only, so anything else (an element a survey
      *  returns) passes through by reference. */
-    printable(v: unknown, depth = 0, budget = { n: 20_000 }): unknown {
+    printable(v: unknown, swaps: PrintSwap[] = [], path = "$", depth = 0, budget = { n: 20_000 }): unknown {
         if (!this.rows.size || v === null || typeof v !== "object" || depth > 6 || --budget.n < 0) return v;
         const at = this.rows.get(v);
-        if (at !== undefined) return abridgeRow(v as Record<string, unknown>, at);
-        if (Array.isArray(v)) return v.map((x) => this.printable(x, depth + 1, budget));
+        if (at !== undefined) {
+            // EVERY SUBSTITUTION IS RECORDED HERE, by diffing what is printed against the value. The note a reader
+            // gets is generated from that diff (`describeSwaps`), so a new kind of substitution is described the
+            // day it is added, with no sentence of its own to write or keep true.
+            const view = abridgeRow(v as Record<string, unknown>, at);
+            if (view !== v) swaps.push(diffSwap(path, v as Record<string, unknown>, view as Record<string, unknown>));
+            return view;
+        }
+        if (Array.isArray(v)) return v.map((x, i) => this.printable(x, swaps, `${path}[${i}]`, depth + 1, budget));
         if (!isWritableTarget(v)) return v;
         const out: Record<string, unknown> = {};
-        for (const [k, x] of Object.entries(v)) out[k] = this.printable(x, depth + 1, budget);
+        for (const [k, x] of Object.entries(v)) out[k] = this.printable(x, swaps, `${path}${jsonPathKey(k)}`, depth + 1, budget);
         return out;
     }
 
@@ -1721,14 +1788,25 @@ function runSync(gen: Ev): unknown {
  *   does not cost seconds per case.
  */
 export async function evalReadonly(code: string, doc: Document | null, ml?: unknown, answerFacade?: unknown,
-    opts: { checkpoint?: () => () => void; stepBudget?: number; realm?: ReadonlyRealm; current?: CurrentSnapshot } = {}): Promise<{ value: unknown; logs: string[]; reused: string[] }> {
+    opts: { checkpoint?: () => () => void; stepBudget?: number; realm?: ReadonlyRealm; current?: CurrentSnapshot } = {}): Promise<{ value: unknown; logs: string[]; reused: string[]; notes: { console: string[]; value: string[] } }> {
     const realm: ReadonlyRealm = opts.realm ?? "page";
     const logs: string[] = [];
     // Printed through the evaluator's print boundary once it exists (it abridges `ml.current.messages` rows).
-    let printable: (v: unknown) => unknown = (v) => v;
+    let printable: (v: unknown, swaps?: PrintSwap[]) => unknown = (v) => v;
+    // What the print boundary changed, as notes the caller puts AFTER its clip of the output (a note at the end of a
+    // long line would be the first thing the clip removes).
+    const notes: { console: string[]; value: string[] } = { console: [], value: [] };
     // A statement, not an expression: it returned `logs.push`'s count, so a survey ending in `console.log(…)` had the
     // VALUE 1 (seen in the ml.current demo) where JavaScript gives `undefined`.
-    const rec = (...a: unknown[]): void => { logs.push(a.map(x => typeof x === "string" ? x : safeStr(printable(x))).join(" ")); };
+    const rec = (...a: unknown[]): void => {
+        logs.push(a.map((x, i) => {
+            if (typeof x === "string") return x;
+            const swaps: PrintSwap[] = [];
+            const out = safeStr(printable(x, swaps));
+            notes.console.push(...describeSwaps(swaps, a.length > 1 ? `console.log argument ${i + 1}` : "console.log"));
+            return out;
+        }).join(" "));
+    };
     const reused: string[] = [];   // ml.fetch cache hits — URLs this survey re-read from a prior approval
     // The pipe charges the step budget, which lives on the evaluator built below: the meter forwards to it once it exists.
     let charge: (steps: number) => void = () => {};
@@ -1768,10 +1846,13 @@ export async function evalReadonly(code: string, doc: Document | null, ml?: unkn
     const ev = new Evaluator(facade, opts.stepBudget, realm);
     charge = (n) => ev.spend(n);
     if (opts.current && facade) facade.current = ev.adoptCurrent(opts.current);
-    printable = (v) => ev.printable(v);
+    printable = (v, swaps) => ev.printable(v, swaps);
     try {
         const value = await runAsync(ev.eval(ast, top));
-        return { value: ev.printable(value), logs, reused };
+        const swaps: PrintSwap[] = [];
+        const shown = ev.printable(value, swaps);
+        notes.value.push(...describeSwaps(swaps, "the returned value"));
+        return { value: shown, logs, reused, notes };
     } catch (e) {
         restore?.();
         // WHERE it threw, for a RUNTIME error. A refusal is about the script's shape and needs no line; a

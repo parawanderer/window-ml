@@ -319,6 +319,11 @@ media type, far short of flooding the context" of a base64 image, and the output
 `resolveOutputCap`) bound what a tool result carries. All of them cut at the boundary where text reaches the model,
 none of them change the value underneath.
 
+**A view must say it is one.** Every print that differs from the value carries a note saying exactly what was
+replaced, in JSONPath relative to what was printed (`$[0,3].content REPLACED by virtual $[0,3]['chars','preview',
+'abridged']`), placed after any clip so the cut cannot remove it. The note is generated from a diff of the printed
+object against the value, never written by hand, so a later substitution cannot ship without one.
+
 It also generalises where a cap on `messages` would not. The rendering is keyed to SIZE, so a screenshot-bearing
 tool result or a fetched page abridges the same way the system prompt does — and a rule keyed to "is this the
 system prompt" is a special case the next large thing walks straight past.
