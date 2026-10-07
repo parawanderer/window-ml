@@ -46,6 +46,7 @@ return ml.current.messages.map((m, i) =>
   (meta[i].surface ? ", typed in " + meta[i].surface : "")
 ).join("\\n")`;
 const PRINT_SURVEY = `console.log(ml.current.messages)`;
+const SCHEMA_SURVEY = `return ml.schema(ml.current.messages)`;
 const MIXED_SURVEY = `return document.title + " has " + ml.current.messages.length + " messages behind it"`;
 
 /** The text of the tool result for the Nth exec call, from the conversation the model is sent. */
@@ -87,6 +88,7 @@ try {
         { tool: "wait", args: { selector: "#never-appears", timeout: 4000 } },
         { tool: "exec", args: { js: SELF_SURVEY } },
         { tool: "exec", args: { js: PRINT_SURVEY } },
+        { tool: "exec", args: { js: SCHEMA_SURVEY } },
         { tool: "exec", args: { js: MIXED_SURVEY } },
         (body) => {
             const rows = toolResult(body, 2).split("\n").filter((l) => /^[0-9a-f]{7} /.test(l));
@@ -125,6 +127,10 @@ try {
     await narrate(page, "3 · The print boundary", { sub: "the model sees 500 characters of a result. A large message prints as a summary that names the exact expression for printing it whole; the value itself is untouched" });
     await open(3);
     await sleep(BEAT + 1200); await shot("3-print-boundary");
+
+    await narrate(page, "3b · The SHAPE of it", { sub: "`ml.schema(ml.current.messages)`: the type of every message, joined — the real NeutralMessage shape, since the print view never touches the value. Pure, so the worker answers it too" });
+    await open(4);
+    await sleep(BEAT + 1200); await shot("3b-schema");
 
     await narrate(page, "4 · A survey that needs BOTH", { sub: "`document.title` and `ml.current` together. The worker has no page and the page has no run context, so it is refused on both sides — and you are asked" });
     await sb.locator(".appr-btn.no").first().scrollIntoViewIfNeeded().catch(() => {});
@@ -173,7 +179,9 @@ try {
     console.log(`\n--- the model was sent ${calls.length} turn(s); the self-survey's result, as the model read it ---`);
     console.log(toolResult(calls[calls.length - 1] || {}, 2).split("\n").map((l) => "  " + l).join("\n"));
     console.log("\n--- the print survey's result ---");
-    console.log("  " + toolResult(calls[calls.length - 1] || {}, 3).slice(0, 600));
+    console.log("  " + toolResult(calls[calls.length - 1] || {}, 3).slice(0, 900));
+    console.log("\n--- the schema survey's result ---");
+    console.log("  " + toolResult(calls[calls.length - 1] || {}, 4).slice(0, 900));
     console.log(`\nscreenshots in ${ART}`);
 
     await narrateDone(page);

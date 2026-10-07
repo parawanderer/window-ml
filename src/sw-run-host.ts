@@ -9,6 +9,7 @@ import { runBackgroundAgent } from "./agent-host";
 import { evalReadonlyInWorker } from "./sw-readonly";
 import { mlPipe } from "./text-pipe";
 import { mlRange } from "./util";
+import { mlSchema } from "./ml-schema";
 import { eventsForRun, RUN_LOG_KEY, type RunLogEvent } from "./run-log";
 import type { CurrentSnapshot } from "./current-context";
 import { watchWhileWaiting, PageUnreachable } from "./page-reachable";
@@ -642,7 +643,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     const snap = snapshotCurrent;
                     const wantsLog = typeof args.js === "string" && /\bcurrent\b/.test(args.js);
                     const log = wantsLog ? eventsForRun(((await chrome.storage.session.get(RUN_LOG_KEY))[RUN_LOG_KEY] ?? []) as RunLogEvent[], runId) : [];
-                    const w = await evalReadonlyInWorker(args, { current: () => snap({ model: modelNow(), log }), ml: { pipe: mlPipe, range: mlRange } });
+                    const w = await evalReadonlyInWorker(args, { current: () => snap({ model: modelNow(), log }), ml: { pipe: mlPipe, range: mlRange, schema: mlSchema } });
                     if (w.kind === "answered") return { result: w.result, renderIn: w.renderIn, renderOut: w.renderOut };
                     if (w.kind === "refused") return null;
                 }

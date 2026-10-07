@@ -9,8 +9,8 @@ import type { RebuildConfig } from "./contract-messages";
 import { htmlToMarkdown } from "./html-to-md";
 import { mlPipe } from "./text-pipe";
 import { mlJsonPath } from "./json-path";
-import { truncate, elPath, describeSkeleton, queryAll, selectorError, viewportRect, jsonShape, joinShapes, jsonValue, shadowHostReport, clickSelector, elLine, isCurrentPage, typeFromExtension } from "./dom";
-import { tableFromDelimited, tableShape, asTable } from "./table-data";
+import { truncate, elPath, describeSkeleton, queryAll, selectorError, viewportRect, shadowHostReport, clickSelector, elLine, isCurrentPage, typeFromExtension } from "./dom";
+import { tableFromDelimited, asTable } from "./table-data";
 import { isTable } from "./table-brand";
 import { makeAnswerFacade } from "./answer-set";
 import { accessibleName, roleOf, ariaState } from "./a11y";
@@ -37,6 +37,7 @@ import { pythonExec, _loadTable, _resolveTable } from "./ml-python";
 import { createChat, resumeChat, chat, step } from "./ml-chat";
 import { agent } from "./ml-agent-run";
 import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } from "./ml-agent-handle";
+import { mlSchema } from "./ml-schema";
 
 // Every family that used to live in the window.ml literal now has a module above; what is left here is the
 // object that binds them together, the small `_`-prefixed introspection helpers, and the page's own window
@@ -701,25 +702,3 @@ import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } fro
 
     console.log("🟢 window.ml is ready.");
 })();
-
-/** `ml.schema`: the TypeScript-like type of some JSON, or the JOINED type of several, and a table as a frame. Pure,
- *  so the worker can offer it to a read-only survey as well as the page. */
-export async function mlSchema(...values: unknown[]): Promise<string> {
-    const vs = await Promise.all(values);
-    if (!vs.length) throw new Error("ml.schema needs at least one value — pass a JSON value, a JSON string, a fetch result, or a pointer read.");
-    const label = (i: number) => vs.length === 1 ? "the argument" : `argument ${i + 1}`;
-    // A TABLE has a structure, but not a JSON one: its rows are a matrix, so a JSON shape of them
-    // says `(string | number)[][]` — true, and useless. Describe it as a FRAME instead (the same
-    // answer `fetch_url`'s `schema: true` and a pointer's `.schema()` give), so asking a CSV for its
-    // schema returns its columns and dtypes rather than the type of its text.
-    const asTable = (v: unknown): import("./contract").TableLike | undefined =>
-        (v && typeof v === "object" ? (v as { table?: import("./contract").TableLike }).table : undefined);
-    if (vs.some(asTable)) {
-        return vs.map((v, i) => {
-            const t = asTable(v);
-            const prefix = vs.length === 1 ? "" : `${label(i)}: `;
-            return prefix + (t ? tableShape(t) : jsonShape(jsonValue(v, label(i))));
-        }).join("\n\n");
-    }
-    return joinShapes(vs.map((v, i) => jsonValue(v, label(i))));
-}
