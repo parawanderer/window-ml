@@ -89,6 +89,12 @@ const GENRES = {
         files: ["bench-descriptor.test.mjs", "bench-metrics.test.mjs", "bench-serve.test.mjs",
             "bench-specs.test.mjs", "bench-viewer.test.mjs"],
     },
+    // The read-only exec dialect: the interpreter itself, and what it was taught since (the pipe, JSONPath, the run's own
+    // context). Four files on one subject, which is when a subject gets its own genre.
+    readonly: {
+        about: "the read-only exec dialect (readonly-exec.ts): the interpreter, ml.pipe, ml.jsonPath, ml.current",
+        files: ["readonly-exec.test.mjs", "readonly-pipe.test.mjs", "readonly-jsonpath.test.mjs", "readonly-current.test.mjs"],
+    },
     python: { about: "real CPython in Pyodide (self-skips without dist/pyodide)", files: ["python.test.mjs"] },
     live: { about: "opt-in, hits the backend in .env", files: ["live.test.js"] },
 };
