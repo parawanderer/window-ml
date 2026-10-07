@@ -60,8 +60,33 @@ export async function configureExtension(/** @type {any} */ sw, /** @type {Recor
     await sw.evaluate((/** @type {any} */ cfg) => new Promise((r) => chrome.storage.sync.set(cfg, () => r(undefined))), config);
 }
 
-/** Resolve when `window.ml` is live in the page's MAIN world (injected.js has fired ml:ready). */
-export async function waitForMl(/** @type {any} */ page) {
+/**
+ * Put an origin on the extension's approved list ("always"), as a person allowing the site from the toolbar would.
+ * Every page-started message is refused for an origin that is not on it (docs/spec/SITE_ACCESS.md).
+ * @param {any} sw the extension's service worker
+ * @param {string} origin e.g. `http://127.0.0.1:43210`
+ */
+export async function approveOrigin(sw, origin) {
+    await sw.evaluate(async (/** @type {string} */ o) => {
+        const got = await chrome.storage.local.get("ml_site_always");
+        const list = Array.isArray(got.ml_site_always) ? /** @type {string[]} */ (got.ml_site_always) : [];
+        if (!list.includes(o)) await chrome.storage.local.set({ ml_site_always: [...list, o] });
+    }, origin);
+}
+
+/**
+ * Resolve when `window.ml` is live in the page's MAIN world (injected.js has fired ml:ready). By default it also
+ * APPROVES the page's origin first, because a spec that calls `window.ml` from its page is testing what happens once
+ * a person has allowed that site. `{ approve: false }` leaves the page unapproved, for a spec about the gate itself.
+ * @param {any} page the page
+ * @param {{ approve?: boolean }} [opts]
+ */
+export async function waitForMl(page, { approve = true } = {}) {
+    if (approve) {
+        const sw = page.context().serviceWorkers()[0];
+        const origin = new URL(page.url()).origin;
+        if (sw && /^https?:/.test(origin)) await approveOrigin(sw, origin);
+    }
     // Cast, because this function is SERIALIZED and evaluated in the page: `window.ml` is installed there
     // by injected.js at runtime, and no ambient declaration in this project covers it (the extension's own
     // types describe the API's shape, not its presence on a page's window). A type here would be a claim

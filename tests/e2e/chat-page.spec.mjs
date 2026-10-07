@@ -601,7 +601,7 @@ test("the extension's settings on the chat page: pills on a wide screen, one pag
             } else {
                 expect(await page.locator(".set-pills [role=tab]").allTextContents()).toEqual(["Connection", "Models", "Appearance", "Advanced", "Permissions"]);
                 await page.locator(".set-pills [role=tab]", { hasText: "Permissions" }).click();
-                await expect(page.getByText("Self-approval whitelist")).toBeVisible();
+                await expect(page.getByText("Self-approval whitelist", { exact: true })).toBeVisible();   // exact: the Site access note also names it
             }
             // "has done nothing" is in a help text on the Appearance group, not in any label.
             await page.locator(".settings .set-search").fill("has done nothing");

@@ -276,3 +276,27 @@ test("a message sent while the page is asked for the turn's answer reads as busy
     release();
     assert.equal(during?.data, "busy");
 });
+
+test("a run a page built, followed up from a tab now on an unapproved site, is driven by the worker", T, async () => {
+    // The page that built it is gone and the site the tab is on may not drive a run, so the page route would be refused.
+    // The worker takes the run over instead of leaving the person's Continue or follow-up nowhere to go.
+    const A = "https://builder.example/", B = "https://elsewhere.example/";
+    const bg = loadBackground({
+        config, siteGate: true, local: { ml_site_always: ["https://builder.example"] },
+        openTabs: [{ id: 7, url: B, title: "Elsewhere" }],
+        onFetch: (call) => call.url.includes("/chat/completions") ? jsonResponse({ choices: [{ message: { content: "ok" } }] }) : jsonResponse({}),
+        onTabMessage: async (_t, msg) => (msg.type === "ADOPT_RUN_NOW" ? { pageInfo: "" } : msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish ? { result: "" } : undefined),
+    });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "pagebuilt1", task: "first", systemPrompt: "S", tools: [], model: "m", think: null, maxSteps: 2,
+        autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+        rebuild: { toolNames: [], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true },
+    } }, { tab: { id: 7, url: A }, url: A });
+    await flush(20);
+    const r = await bg.send({ type: "USER_RUN_ACTION", payload: { hash: "pagebuilt1", action: "send", text: "and then this" } }, { tab: { id: 7, url: B }, url: B });
+    assert.equal(r.data, "turn");
+    await flush(20);
+    const chats = bg.calls.filter((c) => c.url.includes("/chat/completions"));
+    assert.equal(chats.length, 2);
+    assert.deepEqual(chats[1].body.messages.filter((m) => m.role === "user").map((m) => m.content), ["first", "and then this"]);
+});

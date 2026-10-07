@@ -19,7 +19,9 @@ import { getConfig } from "./sw-llm";
 import { dropLocalTools, registerLocalTools } from "./sw-local-tools";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { delegateSend, hostRun } from "./sw-run-host";
-import { bgRuns, bufferReplay, isWorkerRun, runControllers, runInboxes, workerRunsStarting } from "./sw-runs";
+import { bgRuns, bufferReplay, isWorkerRun, makeWorkerRun, runControllers, runInboxes, workerRunsStarting } from "./sw-runs";
+import { originOf } from "./site-access";
+import { siteDecision } from "./sw-site-access";
 import { ingestSessionEvent, keepSession } from "./sw-sessions";
 import { workerMl } from "./worker-ml";
 
@@ -153,7 +155,16 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
     const stored = bgRuns.get(hash);
     const live = runInboxes.get(hash);
     const tabId = stored?.tabId ?? live?.tabId;
-    if (tabId == null || !isWorkerRun(hash) || (fromTabId != null && fromTabId !== tabId)) return null;
+    if (tabId == null || (fromTabId != null && fromTabId !== tabId)) return null;
+    // A run a PAGE built is the page's to drive while that page may: its handle keeps the history in step. Once the
+    // tab is on a site that may not use window.ml (the run navigated off its builder's origin), the page's RESUME_RUN
+    // would be refused, and nothing page-side owns the run any more: it is handed to the worker.
+    if (!isWorkerRun(hash)) {
+        const here = originOf(await chrome.tabs.get(tabId).then((t) => t.url, () => undefined));
+        const decision = here ? await siteDecision(here) : "unknown";
+        if (decision === "always" || decision === "session") return null;
+        makeWorkerRun(hash);
+    }
     const surface = promptSurfaceOf(body.surface);
     const origin: PromptOrigin | undefined = surface ? { surface } : undefined;
     const ec = body.elementContext;

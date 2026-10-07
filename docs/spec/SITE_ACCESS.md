@@ -1,7 +1,7 @@
 # Spec: sites get `window.ml` only when someone said yes
 
-**Status: building.** Hostile-site suite landed first (#373, every attack shown working against the old build); slice 0
-in progress. Written 2026-10-06. Supersedes the idea recorded on 2026-07-29 (a consent prompt only
+**Status: building.** Hostile-site suite first (#373, every attack shown working against the old build); slice 0
+(#374) and slice 1 (origin gate, lists, settings) built; slices 2 to 4 not started. Written 2026-10-06. Supersedes the idea recorded on 2026-07-29 (a consent prompt only
 when the extension holds "on all sites"): this gates every site, whatever the browser's site-access setting is.
 
 ## The problem
@@ -174,6 +174,37 @@ The stub means an unapproved page can still tell the extension is installed. Tha
 ask, and it is a setting: **"Let sites ask for access"** (default on, decided). Off, unapproved pages get nothing at all,
 and approval happens from the popup only.
 
+### The self-approval whitelist (slice 3; DRAFT, wording for the owner to approve)
+
+Agreed with the owner on 2026-10-06, after slice 1: the whitelist (`pageApprovalDomains`, "sites trusted to supply their
+own approval gate") gets the same treatment as the approved list, and an approved site may ask for it.
+
+**What it grants, which is why it is separate.** Plain approval lets a page spend the person's models. Self-approval lets
+the page's own `approve()` stand in for the extension's approval card: it can approve its own `exec`, clicks and typing,
+`python_exec` in full mode, and fetches made with the person's cookies. Those are the gains `tests/redteam.test.js`
+lists. It is a decision to let a site act as the person with nothing in between.
+
+**Keyed by ORIGIN.** Today it is keyed by host, so a host on it is trusted over plain `http://` too, where anyone who can
+tamper with the connection can be that host. It moves to origins. Upgrade: each existing host becomes its `https://`
+origin only, and `http://` has to be added explicitly. A fixture test reads a stored host list written by the old code
+and asserts what a person sees after the upgrade.
+
+**Asking for it.** `ml.requestAccess({ level: "self-approve", reason? })`, with every rule of plain requesting above, and:
+
+- Only from an origin that is ALREADY approved. An unapproved site asks for plain access first, so a site can never jump
+  straight to the stronger grant.
+- Always (no "this session"): it is a standing trust decision, and a session-scoped version would mostly teach people to
+  click through it.
+- Never one click from the badge: the popup entry opens a confirmation that names the grant in words. Draft:
+
+  > **evil.example wants to approve its own actions.**
+  > If you allow this, the site can run code, click and type on your behalf, and fetch pages using your logins, without
+  > asking you each time. Only allow this for a site you control or fully trust.
+  > The site says: "reason, as plain text"
+  > [Deny] [Allow]
+
+- A denial is final, as for plain access.
+
 ### Detection, honestly
 
 Removing `window.ml` is not invisibility. Two other signals exist today, and this spec does not remove them:
@@ -241,6 +272,9 @@ The attacks, each its own test:
     intercepts the extension's start message and changes the task. Added after the spec was written: a user-started
     run was assembled in the page's own world, so the page could rewrite its task, toolset and system prompt.
 13. **Cancel a run the page is on**, using the run id that the run's own debug events carry into the page.
+14. **Read a run's pointers.** `DEREF_TOKEN` answered anyone who named a run id, and the run id reaches the page in the
+    run's own debug events, so a page a run visited could read every value the run captured, including other
+    origins' content and credentialed fetches. Found while building slice 0.
 
 The suite was written before any slice landed, against a build that every attack beats. While a slice is open its
 tests assert that the attack SUCCEEDS; the slice that closes it flips that, and the same tests then assert the secure
@@ -256,7 +290,8 @@ wait is on a run finishing or a state change, never a timer.
 1. The background check and the approved/denied lists, with the settings UI. Unapproved pages still get the full
    `injected.js` but every call is refused. Red-team enumeration tests.
 2. Delegation tokens, and the vision tools' model calls moved to the background. Tests 9 to 11.
-3. The stub and `requestAccess`, with the badge and popup entry. Tests 3 to 7.
+3. The stub and `requestAccess`, with the badge and popup entry. Tests 3 to 7. The self-approval whitelist moves to
+   origins, and an approved site may ask for it ([above](#the-self-approval-whitelist-slice-3-draft-wording-for-the-owner-to-approve)).
 4. Not injecting the full API on unapproved pages, and `use_dynamic_url`.
 
 The README's security paragraph changes after slice 2, not before: until then a run on a page still lends it the
@@ -278,6 +313,29 @@ Recorded as each slice lands, with the reason.
   which session a UI-started run became; the worker now mints that id itself. Any page could post the old message.
 - **A step budget a person picks is capped at `MAX_CONTINUE_STEPS` (200) for a start too**, through one validator
   (`stepBudget`); before, only a Continue was capped.
+- **Slice 1: a tab hosting a run may send its tools' traffic, whatever its origin.** The spec's slice 1 says every call
+  from an unapproved page is refused; built literally, a run on an unapproved page breaks the moment a delegated tool
+  makes its own request (a vision tool's model call, a screenshot, `fetch_url`, `python_exec`). Until slice 2's tokens,
+  a tab in `activeRuns` may send every page-started type except RUN CONTROL (start, resume, steer, cancel). The red-team
+  test asserts both halves. Attack 9 stays open until then. It also keeps a run working on a local `file:` page,
+  which is never grantable.
+- **Slice 1: `pageApprovalDomains` IMPLIES approval, live, and over https only.** The spec said "seed the approved list
+  from it on first start". Reading it at decision time is the same for the one install and stays true when a domain is
+  added later. It implies approval for the host's `https://` origin only: the whitelist is keyed by HOST, and implying
+  `http://` too would extend a trust that lets a site approve its own tool calls to whoever can tamper with a plain-http
+  connection to that host. That http hole exists in the whitelist itself today; slice 3 moves the whitelist to origins
+  (below, "The self-approval whitelist").
+- **Slice 1: a page's cancel has its own message type (`PAGE_CANCEL_RUN`).** The shell's Stop and the page's cancel
+  both arrived as `CANCEL_RUN` from the same content-script world, so the gate could not refuse one without the other.
+  This closes attack 13 in slice 1, not slice 2.
+- **Slice 1: `DEREF_TOKEN` now answers only the run's own tab.** That narrows attack 14 to the page a run is on; slice 2
+  removes the page-initiated read altogether (the values an approved script names are sent with the call).
+- **Slice 1: the page's forwarded debug and session events are gated too** (`ML_DEBUG_EVENT`, `ML_SESSION_EVENT`).
+  They are page-started, and an unapproved page could otherwise write sessions into the index the chat page reads.
+- **Slice 1, found in review: a run a page built is handed to the worker once its tab is on a site that may not drive
+  it.** The page that built it is gone, and its follow-up and Continue would otherwise be refused (they are run
+  control). The Commander's Pyodide prewarm moved to its own message type for the same reason: the shell shares the
+  page's sender.
 - **Not fixed, noticed:** `GET_CONFIG` never sent `labelMatch`, so a page-built run always used the default metric.
   `publicConfig` keeps that behaviour; the worker path inherits it.
 

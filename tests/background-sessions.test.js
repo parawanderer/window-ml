@@ -54,16 +54,16 @@ test("only an extension page may open the sessions port; a content script is ref
 test("a page's forwarded events land in the index under its own tab, and another tab cannot write into them", T, async () => {
     const bg = loadBackground({ config });
     const { port, rows } = openPage(bg);
-    void bg.send({ type: "ML_SESSION_EVENT", event: start("aaaa0001") }, tab(7));
-    void bg.send({ type: "ML_DEBUG_EVENT", event: ev("cccc0003", "chat", { request: { model: "m", messages: [{ role: "user", content: "hi" }] }, config: {} }) }, tab(7));
+    await bg.send({ type: "ML_SESSION_EVENT", event: start("aaaa0001") }, tab(7));
+    await bg.send({ type: "ML_DEBUG_EVENT", event: ev("cccc0003", "chat", { request: { model: "m", messages: [{ role: "user", content: "hi" }] }, config: {} }) }, tab(7));
     const row = rows().get("aaaa0001");
     assert.equal(row.status, "running");
     assert.deepEqual(row.page, { url: "https://site7.example/", title: "Site 7", tabId: 7 }, "the page is the browser's report of the tab, not the event's claim");
     assert.equal(rows().get("cccc0003").task, "hi", "the DevTools forward feeds the index too");
 
     port.send({ type: "events", sub: 1, hash: "aaaa0001" });
-    void bg.send({ type: "ML_SESSION_EVENT", event: ev("aaaa0001", "agent-result", { summary: "forged", steps: 1, hitCap: false }) }, tab(8));
-    void bg.send({ type: "ML_SESSION_EVENT", event: ev("aaaa0001", "agent-result", { summary: "real", steps: 1, hitCap: false }) }, tab(7));
+    await bg.send({ type: "ML_SESSION_EVENT", event: ev("aaaa0001", "agent-result", { summary: "forged", steps: 1, hitCap: false }) }, tab(8));
+    await bg.send({ type: "ML_SESSION_EVENT", event: ev("aaaa0001", "agent-result", { summary: "real", steps: 1, hitCap: false }) }, tab(7));
     const results = port.messages.filter((m) => m.type === "stream" && m.message.type === "event" && m.message.event.kind === "agent-result");
     assert.deepEqual(results.map((m) => m.message.event.summary), ["real"]);
     assert.equal(rows().get("aaaa0001").status, "done");
@@ -99,8 +99,8 @@ test("a background run's own events reach the index, and the page's copy of its 
 test("a closed tab or a new document interrupts the page-hosted runs it held", T, async () => {
     const bg = loadBackground({ config });
     const { rows } = openPage(bg);
-    void bg.send({ type: "ML_SESSION_EVENT", event: start("aaaa0001") }, tab(7));
-    void bg.send({ type: "ML_SESSION_EVENT", event: start("bbbb0002") }, tab(8));
+    await bg.send({ type: "ML_SESSION_EVENT", event: start("aaaa0001") }, tab(7));
+    await bg.send({ type: "ML_SESSION_EVENT", event: start("bbbb0002") }, tab(8));
     void bg.send({ type: "ML_DEBUG_RESET" }, tab(7));
     assert.equal(rows().get("aaaa0001").status, "interrupted");
     assert.equal(rows().get("bbbb0002").status, "running");

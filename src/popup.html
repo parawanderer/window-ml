@@ -149,6 +149,21 @@
         <div id="status"></div>
     </details>
 
+    <!-- THIS SITE: may the page in the current tab use window.ml (docs/spec/SITE_ACCESS.md)? The current tab's
+         origin only; DevTools Settings holds the full list. Hidden on a page that can never be granted (a browser page,
+         a local file). -->
+    <div id="siteAccess" hidden>
+        <label>This site</label>
+        <div class="hint"><code id="siteOrigin"></code> <span id="siteState"></span></div>
+        <div class="row" id="siteButtons">
+            <button id="siteAllowSession" title="Allowed until the browser restarts">Allow this session</button>
+            <button id="siteAllowAlways">Always allow</button>
+            <button id="siteDeny" title="Refuse it, and stop it asking">Deny</button>
+            <button id="siteRevoke">Revoke</button>
+        </div>
+        <div class="perm-sep"></div>
+    </div>
+
     <!-- Optional host-permission grants, right under Connection. One-click for python_exec's Google
          Sheets (`sheet`) loader: the background fetch needs docs.google.com host access, which "On
          click" site-access withholds; the export can redirect across Google domains, so we request

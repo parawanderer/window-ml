@@ -10,6 +10,9 @@
 //   (c) the user's saved API KEY / repointing the LLM backend (MITM + exfil every prompt),
 //   (d) the DEBUGGER (trusted input, cross-origin-iframe clicks, strict-page eval),
 //   (e) SELF-APPROVING a gated privileged tool, so any of the above runs without the human.
+//   (f) THE USER'S BACKEND AT ALL, from a site the user never approved: spending their models (local GPU time, or
+//       money where a model routes to a paid API) and reading what the backend has. Not a "mere DoS" any more:
+//       docs/spec/SITE_ACCESS.md makes every page-started message conditional on the page's origin being approved.
 // Every attack below must be BLOCKED OUTRIGHT or APPROVAL-GATED. node:vm/jsdom — the trust boundary IS the
 // message contract, exercised precisely.
 //
@@ -19,6 +22,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
 const { jsonResponse, loadBackground, loadPageWorld } = require("./helpers");
+const { PAGE_STARTED_TYPES, RUN_CONTROL_TYPES } = require("../src/page-relay.ts");
 
 const baseConfig = (o = {}) => ({ chatUrl: "http://host/api/chat/completions", apiKey: "sk-SECRET-KEY", model: "default-model", apiFormat: "openai", ocrModel: "", ...o });
 const hostilePage = (id = 9, url = "https://evil.example/attack") => ({ tab: { id, url }, url });   // sender.tab set + web origin
@@ -120,3 +124,130 @@ test("GAIN blocked — read a private sheet AS THE USER: an unapproved page gets
 // (b) SSRF probe of the internal network       → background.test.js "SECURITY (FETCH_IMAGE_B64): must refuse internal/loopback/metadata"
 // (b/d) networked, CORS-bypassing python fetch → background.test.js "SECURITY (PYTHON_EXEC): ... must NOT get FULL (unhardened) mode"
 // (e) a page-provided approve()/confirm can't self-approve (page loop) → agent.test.js "[HOLE→design-A] a hostile CALLER's approve:()=>true can NOT self-approve"
+
+// ── (f) THE BACKEND FROM AN UNAPPROVED SITE (docs/spec/SITE_ACCESS.md) ──────────────────────────────────────
+// ENUMERATED, not sampled: every type a page can make the background receive is read from page-relay.ts, so a type
+// added there tomorrow is covered here without anyone editing this file. `siteGate: true` runs the real gate (the
+// harness otherwise approves a test page's origin, because the older tests here are about what a handler does).
+
+/** Send `type` from `sender` with a minimal payload, and report what reached the outside world as a result. */
+async function attempt(bg, type, sender) {
+    const before = { fetches: bg.calls.length, tabMessages: bg.tabMessages.length, captures: bg.captures.length };
+    const res = await bg.send({ type, payload: { messages: [{ role: "user", content: "hi" }], url: "https://example.com/", runId: "run-x" }, requestId: "r1", event: { kind: "chat", id: "x", ts: 1, session: { hash: "x", turn: 0 } } }, sender);
+    await tick();
+    return { res, fetched: bg.calls.length - before.fetches, toTabs: bg.tabMessages.length - before.tabMessages, captured: bg.captures.length - before.captures };
+}
+
+test("GAIN blocked — EVERY page-started message type is refused from an unapproved origin, before any handler runs", async () => {
+    assert.ok(PAGE_STARTED_TYPES.size >= 30, `enumerated ${PAGE_STARTED_TYPES.size} types — the relay list was not read`);
+    for (const type of PAGE_STARTED_TYPES) {
+        const bg = loadBackground({ config: baseConfig(), siteGate: true, onFetch: () => jsonResponse({ choices: [{ message: { content: "spent" } }] }) });
+        const { res, fetched, toTabs, captured } = await attempt(bg, type, hostilePage());
+        assert.match(res?.error || "", /Refused: https:\/\/evil\.example is not approved/, `${type}: answered with the refusal`);
+        assert.deepEqual({ fetched, toTabs, captured }, { fetched: 0, toTabs: 0, captured: 0 }, `${type}: nothing reached the backend, a tab or the screen`);
+    }
+});
+
+test("GAIN blocked — run control is refused from an unapproved page even while a run is on its tab; tool traffic is not (until slice 2)", async () => {
+    for (const type of PAGE_STARTED_TYPES) {
+        const bg = loadBackground({ config: baseConfig(), siteGate: true, onFetch: () => jsonResponse({ choices: [{ message: { content: "ok" } }] }) });
+        bg.context.__mlSeedActiveRunForTest(9, "run-on-tab");
+        const { res } = await attempt(bg, type, hostilePage());
+        const refused = /^Refused: https:\/\/evil\.example/.test(res?.error || "");
+        // The interim allowance is a recorded deviation (SITE_ACCESS.md): a run's own tools on that page still send
+        // these. RUN_CONTROL_TYPES never pass, so the page cannot start, resume, steer or stop anything.
+        assert.equal(refused, RUN_CONTROL_TYPES.has(type), `${type}: ${refused ? "refused" : "allowed"} on a tab hosting a run`);
+    }
+});
+
+test("GAIN blocked — a sender that can never be granted is refused even when its host IS approved", async () => {
+    const approved = { ml_site_always: ["https://ok.example"] };
+    const cases = [
+        ["an opaque origin (sandboxed frame)", { tab: { id: 4, url: "https://ok.example/" }, url: "https://ok.example/", origin: "null" }, /opaque origin/],
+        ["a sub-frame", { tab: { id: 4, url: "https://ok.example/" }, url: "https://ok.example/f", origin: "https://ok.example", frameId: 3 }, /top frame/],
+        ["a file: page", { tab: { id: 4, url: "file:///tmp/x.html" }, url: "file:///tmp/x.html" }, /http or https/],
+        ["the same host over http", { tab: { id: 4, url: "http://ok.example/" }, url: "http://ok.example/" }, /http:\/\/ok\.example is not approved/],
+    ];
+    for (const [what, sender, why] of cases) {
+        const bg = loadBackground({ config: baseConfig(), siteGate: true, local: approved, onFetch: () => jsonResponse({ choices: [{ message: { content: "spent" } }] }) });
+        const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] } }, sender);
+        assert.match(res?.error || "", why, what);
+        assert.equal(bg.calls.length, 0, `${what}: no model call`);
+    }
+    // The approved origin itself, top frame: through.
+    const bg = loadBackground({ config: baseConfig(), siteGate: true, local: approved, onFetch: () => jsonResponse({ choices: [{ message: { content: "ok" } }] }) });
+    const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] } }, { tab: { id: 4, url: "https://ok.example/a" }, url: "https://ok.example/a", origin: "https://ok.example", frameId: 0 });
+    assert.equal(res.data, "ok");
+});
+
+test("GAIN blocked — a revoke takes effect on the NEXT message, with no reload; a denial beats an approval", async () => {
+    const bg = loadBackground({ config: baseConfig(), siteGate: true, local: { ml_site_always: ["https://evil.example"] }, onFetch: () => jsonResponse({ choices: [{ message: { content: "ok" } }] }) });
+    const chat = () => bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] } }, hostilePage());
+    assert.equal((await chat()).data, "ok", "approved: through");
+    bg.localStore.ml_site_denied = ["https://evil.example"];
+    assert.match((await chat()).error, /not allowed to use window\.ml/, "denied while still on the approved list: refused");
+    bg.localStore.ml_site_denied = [];
+    bg.localStore.ml_site_always = [];
+    assert.match((await chat()).error, /not approved/, "revoked: the very next message is refused");
+});
+
+test("GAIN blocked — a page cannot approve ITSELF: SITE_ACCESS answers extension pages only", async () => {
+    const bg = loadBackground({ config: baseConfig(), siteGate: true });
+    const res = await bg.send({ type: "SITE_ACCESS", payload: { edit: { op: "allow", origin: "https://evil.example", scope: "always" } } }, hostilePage());
+    assert.equal(res.error, "refused");
+    assert.equal(bg.localStore.ml_site_always, undefined, "nothing was written");
+    // And the content script would not relay it anyway: it is not a page request type.
+    assert.deepEqual(await pageRelays({ type: "SITE_ACCESS_REQUEST", requestId: "a", payload: {} }, { type: "SITE_ACCESS", requestId: "b", payload: {} }), []);
+    // The extension's own settings page can.
+    const ok = await bg.send({ type: "SITE_ACCESS", payload: { edit: { op: "allow", origin: "https://ok.example", scope: "session" } } }, { url: "chrome-extension://test/sidebar.html" });
+    assert.deepEqual(ok.data.lists.session, ["https://ok.example"]);
+});
+
+test("GAIN blocked — a site trusted to self-gate (pageApprovalDomains) is approved over https, never over plain http", async () => {
+    const bg = loadBackground({ config: baseConfig({ pageApprovalDomains: ["trusted.example"] }), siteGate: true, onFetch: () => jsonResponse({ choices: [{ message: { content: "ok" } }] }) });
+    const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] } }, { tab: { id: 2, url: "https://trusted.example/" }, url: "https://trusted.example/" });
+    assert.equal(res.data, "ok");
+    const http = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] } }, { tab: { id: 2, url: "http://trusted.example/" }, url: "http://trusted.example/" });
+    assert.match(http.error, /not approved/, "the whitelist is keyed by host; over http it would trust whoever is on the wire");
+});
+
+test("GAIN blocked — the streaming port is the same model call: refused from an unapproved origin", async () => {
+    const bg = loadBackground({ config: baseConfig(), siteGate: true, onFetch: () => jsonResponse({ choices: [{ message: { content: "spent" } }] }) });
+    const port = bg.connect("LLM_STREAM", hostilePage());
+    port.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await tick();
+    assert.match(port.messages.find((m) => m.type === "error")?.error || "", /not approved/);
+    assert.equal(bg.calls.length, 0);
+});
+
+test("GAIN blocked — a page's cancel is its own message type, so the gate can refuse it without refusing the person's Stop", async () => {
+    const relayed = await pageRelays({ type: "CANCEL_RUN_REQUEST", payload: { runId: "r" } });
+    assert.deepEqual(relayed, ["PAGE_CANCEL_RUN"]);
+    assert.ok(RUN_CONTROL_TYPES.has("PAGE_CANCEL_RUN"), "and it is run control: never allowed from an unapproved page");
+});
+
+test("the extension's own shell sends nothing the origin gate refuses (it shares the page's sender)", async () => {
+    // The browser reports the content-script shell's messages as coming from the page, so a type it sends that is also
+    // page-startable is refused on every unapproved site: the Commander's Pyodide prewarm was. Only the page's own debug
+    // and session events are forwarded under a gated type, on purpose (an unapproved page has none worth keeping).
+    const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "../src/sidebar/shell.ts"), "utf8");
+    const sent = [...src.matchAll(/sendMessage\(\{\s*type:\s*"([A-Z_]+)"/g)].map((m) => m[1]);
+    assert.ok(sent.length >= 5, `found ${sent.length} sends: the scan is reading the file`);
+    const gated = sent.filter((t) => PAGE_STARTED_TYPES.has(t) && t !== "ML_DEBUG_EVENT" && t !== "ML_SESSION_EVENT");
+    assert.deepEqual([...new Set(gated)], [], "a shell message would be refused on an unapproved site");
+    // And the prewarm it does send gets through from an unapproved tab.
+    const bg = loadBackground({ config: baseConfig(), siteGate: true });
+    const res = await bg.send({ type: "USER_PYTHON_PREWARM", payload: { trigger: "commander" } }, hostilePage());
+    assert.doesNotMatch(res?.error || "", /Refused/);
+});
+
+test("an approval that comes from the self-approval whitelist says so, so the popup does not offer a Revoke that does nothing", async () => {
+    const bg = loadBackground({ config: baseConfig({ pageApprovalDomains: ["trusted.example"] }), siteGate: true });
+    const surface = { url: "chrome-extension://test/popup.html" };
+    const implied = await bg.send({ type: "SITE_ACCESS", payload: { origin: "https://trusted.example" } }, surface);
+    assert.equal(implied.data.decision, "always");
+    assert.equal(implied.data.implied, true);
+    await bg.send({ type: "SITE_ACCESS", payload: { edit: { op: "allow", origin: "https://listed.example", scope: "always" } } }, surface);
+    const listed = await bg.send({ type: "SITE_ACCESS", payload: { origin: "https://listed.example" } }, surface);
+    assert.equal(listed.data.implied, undefined, "an approval on the list is the list's to revoke");
+});

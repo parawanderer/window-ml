@@ -1242,8 +1242,9 @@ let addToRunPending: ElementContext | null | undefined = undefined;   // "Add to
 function openComposer(ctx: ElementContext | null = null): void {
     if (!hudActive()) return;
     // A Commander run always has python_exec, so start Pyodide while the person is still typing (see the
-    // background's PYTHON_PREWARM).
-    try { chrome.runtime.sendMessage({ type: "PYTHON_PREWARM", payload: { trigger: "commander" } }).catch(() => { /* no worker */ }); } catch { /* context gone */ }
+    // background's PYTHON_PREWARM). Its own type: PYTHON_PREWARM is what a PAGE sends, which the origin gate refuses on an
+    // unapproved site, and the background cannot tell this shell from the page it is in.
+    try { chrome.runtime.sendMessage({ type: "USER_PYTHON_PREWARM", payload: { trigger: "commander" } }).catch(() => { /* no worker */ }); } catch { /* context gone */ }
     if (!cardHost) mountCard();
     if (cardReady && frame) {
         frame.contentWindow?.postMessage({ __mlSidebarComposer: "open" }, "*");

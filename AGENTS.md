@@ -53,11 +53,13 @@ To add a new one, touch three files:
 
 1. **injected.js** — call `makeBackgroundTaskPromise(REQUEST_TYPE, RESPONSE_TYPE, payload)`.
    It posts to the content script and resolves with the matching response.
-2. **content.js** — add a `HANDLE_MAP` entry mapping `REQUEST_TYPE` →
-   `{ type: BACKGROUND_MSG, responseType: RESPONSE_TYPE }`.
+2. **page-relay.ts** — add a `HANDLE_MAP` entry mapping `REQUEST_TYPE` →
+   `{ type: BACKGROUND_MSG, responseType: RESPONSE_TYPE }`. The content script relays what is listed there, and the
+   background's ORIGIN GATE applies to every type listed there: a new primitive is refused from an unapproved site
+   with no extra work, and `tests/redteam.test.js` enumerates it without being edited.
 3. **background.js** — add an `if (message.type === BACKGROUND_MSG)` branch in
-   the `chrome.runtime.onMessage` listener; do the work; `sendResponse({ data })`
-   or `sendResponse({ error })`; `return true` to keep the channel open.
+   `route()`; do the work; `sendResponse({ data })` or `sendResponse({ error })`; `return true` to keep the channel
+   open.
 
 Existing message types: `FETCH_LLM`, `LIST_MODELS`, `GET_MODEL`, `GET_CONFIG`,
 `SET_MODEL`, `MODEL_CAPS`, `LIST_SERVER_TOOLS`, `OLLAMA_PS`, `OLLAMA_UNLOAD`, `FETCH_IMAGE_B64`,
@@ -126,6 +128,7 @@ learned by shipping the wrong version first.
 | the chat page (`src/chat/`): the client store, hosts, stream rules, the web build | `docs/dev/chat-page.md` (+ `docs/spec/CHAT_PAGE.md`, `docs/spec/SESSION_CONTRACT.md`) |
 | the session archive (SQLite over OPFS, the offscreen worker, move-instead-of-delete) | `docs/dev/archive.md` |
 | the hub client (`src/hub/`): HPKE over WebCrypto, certificates, sealed commands, encrypted streams | `docs/dev/hub-client.md` |
+| which sites may use `window.ml`: the origin gate, the approved/denied lists, their settings | `docs/dev/site-access.md` (+ `docs/spec/SITE_ACCESS.md`) |
 | notifications: what reaches someone with the app closed, on which surface, and what a real push would still add | `docs/spec/NOTIFICATIONS.md` |
 | the patched Ollama/OpenWebUI features and how the client reads them | `docs/FORKED-BACKENDS.md` |
 | the e2e harness, observe, the bench, live probes, demos | `docs/dev/e2e-harness.md` (+ each tool's skill in `.claude/skills/`) |
@@ -310,6 +313,10 @@ reported". **Read `docs/FORKED-BACKENDS.md` before assuming a resource-panel fie
 (`hint`) go through `wireHint` (contract-run.ts); **an absent `use` means unknown, never guess one.**
 
 ## Security invariants (don't regress these)
+
+- **A page uses `window.ml` only once its ORIGIN is approved**: the router refuses every page-started type
+  (`page-relay.ts`) from an unapproved origin, reading `sender`, never anything the page says; a run the USER starts is
+  built by the worker and works on any page. → site-access.md
 
 - **Config overrides (URL/key) are accepted only from the popup.** Page-relayed
   messages have `sender.tab` set; `background.js` strips overrides when it's set,

@@ -6,7 +6,8 @@ import type { LoadedModel } from "./contract-server";
 import { formatBytes } from "./resource-model";
 import { DEFAULT_CONFIG, fmtCtx } from "./contract-config";
 import { generatesText } from "./contract-server";
-import { browserInfo, extensionDetailsUrl } from "./util";   // browser-correct internal scheme + details-page URL
+import { browserInfo, extensionDetailsUrl } from "./util";
+import { originOf, type SiteDecision, type SiteEdit } from "./site-access";   // browser-correct internal scheme + details-page URL
 
 // The popup is a QUICK LAUNCHER: connection (the bare minimum to work) + the two
 // always-handy toggles (theme, debug panel). Everything else — OCR/utility/grounding/
@@ -415,6 +416,59 @@ $("permDomain").addEventListener("keydown", (e) => { if ((e as KeyboardEvent).ke
 $("hostAdd").addEventListener("click", addHost);
 $("hostDomain").addEventListener("keydown", (e) => { if ((e as KeyboardEvent).key === "Enter") { e.preventDefault(); addHost(); } });
 
+// --- this site: may the current tab's page use window.ml? (docs/spec/SITE_ACCESS.md) --------------------------
+// The current tab's origin only; the full list is in DevTools Settings. Edits go through the worker (SITE_ACCESS), which
+// is what the router's gate reads on every message, so a change applies to the page's next call with no reload.
+const SITE_STATE: Record<SiteDecision, string> = {
+    always: "is allowed to use window.ml.",
+    session: "is allowed to use window.ml until the browser restarts.",
+    denied: "is denied: its calls are refused.",
+    unknown: "is not allowed to use window.ml. Its calls are refused.",
+};
+let siteOrigin: string | null = null;
+let siteNow: SiteDecision | null = null;   // what the lists said last, which decides what "Revoke" undoes
+let siteImplied = false;   // allowed by the self-approval whitelist, not by a list this block edits
+function siteAccess(payload: { origin?: string; edit?: SiteEdit }): Promise<SiteDecision | null> {
+    return new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: "SITE_ACCESS", payload }, (res: { data?: { decision?: SiteDecision; implied?: boolean } } | undefined) => {
+            void chrome.runtime.lastError;
+            siteImplied = !!res?.data?.implied;
+            resolve(res?.data?.decision ?? null);
+        });
+    });
+}
+function renderSite(decision: SiteDecision | null) {
+    siteNow = decision;
+    if (!siteOrigin || !decision) { $("siteAccess").hidden = true; return; }
+    $("siteAccess").hidden = false;
+    $("siteOrigin").textContent = siteOrigin;   // the origin as the browser reports it, never a title the page set
+    $("siteState").textContent = siteImplied
+        ? "is allowed: it is on the self-approval whitelist (DevTools Settings → Permissions)."
+        : SITE_STATE[decision];
+    const allowed = decision === "always" || decision === "session";
+    $("siteAllowSession").hidden = decision === "session";
+    $("siteAllowAlways").hidden = decision === "always";
+    $("siteDeny").hidden = decision === "denied";
+    // Revoking a whitelist approval here would remove nothing and change nothing: the whitelist is edited in Settings.
+    $("siteRevoke").hidden = siteImplied || (!allowed && decision !== "denied");
+    $("siteRevoke").textContent = decision === "denied" ? "Stop denying" : "Revoke";
+}
+async function loadSite() {
+    try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        siteOrigin = originOf(tab?.url);
+    } catch { siteOrigin = null; }
+    renderSite(siteOrigin ? await siteAccess({ origin: siteOrigin }) : null);
+}
+async function editSite(edit: (origin: string) => SiteEdit) {
+    if (!siteOrigin) return;
+    renderSite(await siteAccess({ origin: siteOrigin, edit: edit(siteOrigin) }));
+}
+$("siteAllowSession").addEventListener("click", () => editSite((origin) => ({ op: "allow", origin, scope: "session" })));
+$("siteAllowAlways").addEventListener("click", () => editSite((origin) => ({ op: "allow", origin, scope: "always" })));
+$("siteDeny").addEventListener("click", () => editSite((origin) => ({ op: "deny", origin })));
+$("siteRevoke").addEventListener("click", () => editSite((origin) => siteNow === "denied" ? { op: "undeny", origin } : { op: "revoke", origin }));
+
 // Populate the form, then auto-fetch the model list (no Load button — the
 // datalist just fills in). refreshVram in parallel.
 loadForm().then(loadModels);
@@ -423,3 +477,4 @@ refreshSheetsAccess();
 refreshIncognitoAccess();
 refreshHostAccess();
 loadPerms();
+loadSite();

@@ -3,6 +3,7 @@
 // this runs in the extension-origin iframe, not the page DOM — so edits sync live
 // with the popup. Text fields persist on change (blur) to avoid chatty writes; the
 // signal updates on input for a responsive UI + the utility-field enable gating.
+import { SITE_ACCESS_KEYS, originFromInput, type SiteEdit, type SiteLists } from "../site-access";
 import { StorageBody } from "./storage-section";
 import { LocalArchiveFolder } from "./archive-section";
 import { signal } from "@preact/signals";
@@ -743,6 +744,74 @@ function hostPatternFrom(input: string): string | null {
 function hostLabelOf(origin: string): string {
     return origin.replace(/^https?:\/\//, "").replace(/\/\*?$/, "");
 }
+/**
+ * Which sites may use `window.ml` at all (docs/spec/SITE_ACCESS.md): the approved origins, for this session or always,
+ * and the denied ones, each revocable here. The full list; the toolbar popup edits only the current tab's site. Edits
+ * go through the worker (`SITE_ACCESS`), which is what the router's gate reads on every message.
+ */
+function SiteApprovals() {
+    const [lists, setLists] = useState<SiteLists | null>(null);
+    const [query, setQuery] = useState("");   // one box, as in HostAccess: filters the lists, and adds a full origin
+    const ask = (payload: { edit?: SiteEdit }): Promise<SiteLists | null> => new Promise((resolve) => {
+        try {
+            chrome.runtime.sendMessage({ type: "SITE_ACCESS", payload }, (res: { data?: { lists?: SiteLists } } | undefined) => {
+                void chrome.runtime.lastError;
+                resolve(res?.data?.lists ?? null);
+            });
+        } catch { resolve(null); }
+    });
+    useEffect(() => {
+        void ask({}).then(setLists);
+        // An approval made from the popup should show up here without reopening Settings.
+        const onChange = (changes: Record<string, unknown>) => {
+            if (Object.values(SITE_ACCESS_KEYS).some((k) => k in changes)) void ask({}).then(setLists);
+        };
+        try { chrome.storage.onChanged.addListener(onChange); } catch { /* not an extension page */ }
+        return () => { try { chrome.storage.onChanged.removeListener(onChange); } catch { /* ignore */ } };
+    }, []);
+    if (!lists) return null;
+    const edit = (e: SiteEdit): void => { void ask({ edit: e }).then((l) => { if (l) setLists(l); }); };
+    const origin = originFromInput(query);
+    const q = query.trim().toLowerCase();
+    const match = (o: string): boolean => !q || o.includes(q);
+    const approved = [...lists.always.map((o) => ({ o, session: false })), ...lists.session.map((o) => ({ o, session: true }))].filter((x) => match(x.o));
+    const denied = lists.denied.filter(match);
+    return (
+        <Section id="siteapprovals" title="Sites that may use window.ml">
+            <div class="set-note">A page can use <code>window.ml</code> (and so your models) only once its site is allowed here or from the toolbar button. Every other site is refused, whatever the browser's site-access setting. A run you start yourself still works on any page: it is built by the extension, not by the page. Each scheme and port is its own site: <code>http://</code> and <code>https://</code> are separate decisions. A site on the self-approval whitelist below is allowed too.</div>
+            <div class="perm-add">
+                <input class="perm-input" type="text" placeholder="Filter sites, or type one to allow (example.com)…" value={query}
+                    onInput={(e: any) => setQuery(e.target.value)}
+                    onKeyDown={(e: any) => { if (e.key === "Enter" && origin) { e.preventDefault(); edit({ op: "allow", origin, scope: "always" }); setQuery(""); } }} />
+                <button class="test-btn" disabled={!origin} onClick={() => { if (origin) { edit({ op: "allow", origin, scope: "always" }); setQuery(""); } }}>Allow</button>
+            </div>
+            {approved.length
+                ? <div class="perm-list">
+                    {approved.map(({ o, session }) => (
+                        <span class="perm-chip" key={o}>
+                            <span class="perm-host">{o}{session ? " (this session)" : ""}</span>
+                            <button class="perm-x" aria-label={`Revoke ${o}`} title={`Revoke ${o}`} onClick={() => edit({ op: "revoke", origin: o })}>✕</button>
+                        </span>
+                    ))}
+                  </div>
+                : <div class="set-hint">{q ? `No allowed site matches “${query}”.` : "No site is allowed: every page's calls to window.ml are refused."}</div>}
+            {denied.length
+                ? <>
+                    <div class="set-hint">Denied: refused even while on the list above. Allowing one lifts its denial.</div>
+                    <div class="perm-list">
+                        {denied.map((o) => (
+                            <span class="perm-chip" key={o}>
+                                <span class="perm-host">{o}</span>
+                                <button class="perm-x" aria-label={`Stop denying ${o}`} title={`Stop denying ${o}`} onClick={() => edit({ op: "undeny", origin: o })}>✕</button>
+                            </span>
+                        ))}
+                    </div>
+                  </>
+                : null}
+        </Section>
+    );
+}
+
 function HostAccess() {
     const [origins, setOrigins] = useState<string[] | null>(null);
     const [query, setQuery] = useState("");   // ONE box: filters the list as you type, and adds when it's a full hostname
@@ -847,6 +916,7 @@ function PermissionsView() {
     const shown = q ? domains.filter(d => d.includes(q)) : domains;
     return (
         <>
+            <SiteApprovals />
             <Section id="whitelist" title="Self-approval whitelist">
                 <div class="set-note">Sites here are trusted to supply their <b>own</b> <code>ml.agent</code> approval gate (the page's <code>approve()</code> / <code>confirm</code>). <b>Every other site</b> routes a privileged tool call (click, type, exec, python_exec) through the extension's own approval — the corner card — so a page can never silently approve itself. Add a domain only if you fully trust the code on it.</div>
                 <div class="perm-add">
