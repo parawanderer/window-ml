@@ -95,6 +95,14 @@ Starvation is real here and arrives in windows: on 2026-10-05 between 19:48 and 
 runs and one PR sat queued 25-54 minutes and were cancelled without ever getting a runner. Nothing was
 broken. If several unrelated runs go red at once, check the queue times before the code.
 
+**A STACKED PR DIES WITH ITS BASE BRANCH: retarget it to `main` BEFORE merging the one under it.** `gh pr merge
+--delete-branch` deletes the base of every PR stacked on that branch, and GitHub then CLOSES those PRs rather than
+retargeting them. A closed PR cannot be retargeted, and it cannot be reopened either once its head has been
+force-pushed (which the rebase onto `main` that follows always does): #377 was lost this way on 2026-10-07 and replaced
+by #380. So, for a stack: `gh pr edit <upper> --base main` first, then merge the lower one, then rebase the upper one
+with `git rebase --onto origin/main <lower's last commit> <upper branch>` (a squash merge puts the lower PR on `main`
+as ONE new commit, so its original commits must be dropped, not replayed).
+
 **MAKING A CHECK REQUIRED BLOCKS EVERY PR WHOSE BRANCH PREDATES THE JOB.** A required context that never
 reports is not a failure, it is an indefinite wait, and a branch forked before the job existed has no such
 job to run. So the order is: merge the workflow first, then add the context, and update any branch already
