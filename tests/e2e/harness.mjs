@@ -95,6 +95,39 @@ export async function waitForMl(page, { approve = true } = {}) {
 }
 
 /**
+ * WATCH A TAB'S RUN EVENTS from outside the page, the way the DevTools panel does: an extension page holds the
+ * `ml-devtools` port for `page`'s tab and hands every event to `onEvent`, in Node, in the order it was fanned.
+ *
+ * The worker's events for a run never reach the page's window (docs/spec/SITE_ACCESS.md, attack 15), so a spec that
+ * listened there for a background run's steps listens here instead. The worker fans a run's events to this port
+ * whatever the debug mode. The page's OWN events (a run or chat the page hosts) still go to its window, and come here
+ * too only in `debugMode: "devtools"`.
+ * @param {any} ext the launched extension (`launchExtension`'s result)
+ * @param {any} page the page whose tab to watch; resolved to its tab by URL, so call it once the page has loaded
+ * @param {(ev: any) => void} onEvent called once per event: the tab's buffered events first, then each new one
+ * @returns {Promise<{ close: () => Promise<void> }>}
+ */
+export async function watchRunEvents(ext, page, onEvent) {
+    const url = page.url();
+    const tabId = await ext.sw.evaluate(async (/** @type {string} */ u) => (await chrome.tabs.query({})).find((t) => t.url === u)?.id ?? null, url);
+    if (tabId == null) throw new Error(`no tab is on ${url}`);
+    const watcher = await ext.context.newPage();
+    await watcher.exposeFunction("__onRunEvent", (/** @type {any} */ ev) => onEvent(ev));
+    await watcher.goto(`chrome-extension://${ext.extensionId}/popup.html`);
+    await watcher.evaluate((/** @type {number} */ id) => new Promise((resolve) => {
+        const w = /** @type {any} */ (window);
+        const port = chrome.runtime.connect({ name: "ml-devtools" });
+        port.onMessage.addListener((/** @type {any} */ m) => {
+            if (Array.isArray(m.replay)) { for (const ev of m.replay) w.__onRunEvent(ev); resolve(undefined); }
+            else if (m.__mlDebug) w.__onRunEvent(m.__mlDebug);
+        });
+        port.postMessage({ type: "ml-devtools-init", tabId: id });
+    }), tabId);
+    await page.bringToFront();   // the run's tab stays the active one, as it was before the watcher opened
+    return { close: () => watcher.close() };
+}
+
+/**
  * OPEN THE SIDEBAR AND THE RUN INSIDE IT, and return the sidebar frame.
  *
  * The panel opens on the SESSIONS LIST, not on the run — so a demo or probe that slides the sidebar open and
@@ -119,7 +152,7 @@ export async function openRunInSidebar(page, { width, task, timeout = 20000 } = 
         const panel = root.getElementById("ml-sb-host");
         panel.style.width = `${w || Math.round(window.innerWidth * 0.55)}px`;
         panel.classList.add("open");
-        root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+        (root.getElementById("ml-sb-host").classList.remove("open"), root.getElementById("ml-sb-tab").click());
     }, width);
     const frame = await (async () => {
         for (let i = 0; i < Math.ceil(timeout / 100); i++) {

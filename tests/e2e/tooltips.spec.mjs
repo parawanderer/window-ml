@@ -48,7 +48,7 @@ test("tooltips: always fully on screen, never clipped, never under the cursor", 
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = "380px";
             panel.classList.add("open");
-            root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+            (root.getElementById("ml-sb-host").classList.remove("open"), root.getElementById("ml-sb-tab").click());
         });
         const frame = await (async () => {
             for (let i = 0; i < 80; i++) {
@@ -186,7 +186,7 @@ test("cursor tooltips: one at a time, never under the pointer, never clipped", a
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = "380px";     // narrow, hard against the right edge
             panel.classList.add("open");
-            root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+            (root.getElementById("ml-sb-host").classList.remove("open"), root.getElementById("ml-sb-tab").click());
         });
         const frame = await (async () => {
             for (let i = 0; i < 80; i++) {
@@ -287,7 +287,7 @@ for (const width of [360, 900]) {
                 const panel = root.getElementById("ml-sb-host");
                 panel.style.width = `${w}px`;
                 panel.classList.add("open");
-                root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+                (root.getElementById("ml-sb-host").classList.remove("open"), root.getElementById("ml-sb-tab").click());
             }, width);
             const frame = await (async () => {
                 for (let i = 0; i < 80; i++) {
@@ -398,7 +398,7 @@ test("tooltips: dividers separate sections, names stay whole, and nothing is cli
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = "560px";
             panel.classList.add("open");
-            root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+            (root.getElementById("ml-sb-host").classList.remove("open"), root.getElementById("ml-sb-tab").click());
         });
         const frame = await (async () => {
             for (let i = 0; i < 80; i++) {
@@ -577,7 +577,7 @@ test("tooltips: a dashed event rule answers alone, not under the plot's own read
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = "560px";
             panel.classList.add("open");
-            root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+            (root.getElementById("ml-sb-host").classList.remove("open"), root.getElementById("ml-sb-tab").click());
         });
         const frame = await (async () => {
             for (let i = 0; i < 80; i++) {
@@ -644,7 +644,7 @@ test("tooltips: a tip whose trigger disappears under a still pointer disappears 
             const host = root.getElementById("ml-sb-host");
             host.style.width = "560px";
             host.classList.add("open");
-            root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+            (root.getElementById("ml-sb-host").classList.remove("open"), root.getElementById("ml-sb-tab").click());
         });
         let frame = null;
         for (let i = 0; i < 80 && !frame; i++) {

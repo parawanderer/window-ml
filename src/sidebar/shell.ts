@@ -19,6 +19,7 @@ import { stepBudget } from "../agent/step-budget";
 import { resolveContextContainer, domToContext } from "../dom/dom";   // right-click "ask about this" (content script sees the page DOM)
 import type { ElementContext } from "../contract/contract-run";
 import type { DebugMode } from "../contract/contract-config";
+import { eventSession, pageMayWrite, type WorkerClaim } from "../event-admission";
 
 const WIDTH_KEY = "ml_debug_width";
 const CARD_W_KEY = "ml_card_width";   // the corner card's dragged width
@@ -263,6 +264,30 @@ let shellHost: HTMLElement | null = null;   // shadow host in the page's light D
 let shadowRoot: ShadowRoot | null = null;
 let panel: HTMLElement | null = null;       // the sliding container, inside the shadow root
 let frame: HTMLIFrameElement | null = null;
+/** The private line to the app in `frame` (parent-channel.ts is the other end). Null until the app has said hello. */
+let hostPort: MessagePort | null = null;
+
+/** Send `msg` to the app in `frame`. Dropped while there is no port yet, as a post to a frame still loading was. */
+function toApp(msg: unknown): void { hostPort?.postMessage(msg); }
+
+/**
+ * Answer the app's hello with a port. The app sent its nonce through chrome.tabs.sendMessage, which reaches this tab's
+ * content scripts and not the page; the port goes back to `frame` alone, with the nonce, by a window post that only
+ * that frame receives. The page can neither learn the nonce nor read what crosses the port.
+ * @param nonce the app's secret
+ * @param sender who sent the hello: the extension's own sidebar page, or it is ignored
+ */
+function openHostPort(nonce: string, sender: chrome.runtime.MessageSender): void {
+    if (!frame?.contentWindow || sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL("sidebar.html"))) return;
+    closeHostPort();
+    const ch = new MessageChannel();
+    hostPort = ch.port1;
+    hostPort.onmessage = (m) => fromApp(m.data);
+    frame.contentWindow.postMessage({ __mlHostPort: nonce }, new URL(chrome.runtime.getURL("")).origin, [ch.port2]);
+}
+
+/** Drop the port, when its frame goes. */
+function closeHostPort(): void { try { hostPort?.close(); } catch { /* already closed */ } hostPort = null; }
 /** The keys the frame's chart would use right now — non-empty only while the pointer is over one of its plots
  *  (the app says so, `__mlSidebarApp: "chartKeys"`). What `relayChartKey` takes from the page. */
 let chartKeys: string[] = [];
@@ -305,7 +330,7 @@ function finalizeCardDrag(): void {
     window.removeEventListener("pointermove", onWinDragMove, true);
     window.removeEventListener("pointerup", onWinDragEnd, true);
     window.removeEventListener("pointercancel", onWinDragEnd, true);
-    frame?.contentWindow?.postMessage({ __mlSidebarCardEndDrag: true }, "*");
+    toApp({ __mlSidebarCardEndDrag: true });
     if (!cardDrag || !cardWrap) { cardDrag = null; dragCursor = null; dragFrac = null; return; }
     const w = cardWrap.offsetWidth, h = cardWrap.offsetHeight;
     const cx = cardDrag.left + w / 2, cy = cardDrag.top + h / 2;   // nearest corner by the card's centre
@@ -346,7 +371,7 @@ const hudActive = (): boolean => mode === "off" || (mode === "devtools" && agent
  *  HUD. The DevTools panel stamps its own, in panel.ts, because its composer is not in this document at all. */
 const promptSurface = (): import("../contract/contract-run").PromptSurface => (mode === "overlay" ? "overlay" : "hud");
 // Background-run events buffered while the card iframe loads (off mode feeds the card ONLY from the
-// background stream, tagged __mlFromBg — the page's bus stays dormant — so no cross-source ordering).
+// worker's stream, which arrives over chrome.runtime — the page's bus stays dormant — so no cross-source ordering).
 const CARD_RING_MAX = 200;
 const bgRing: MessageEvent["data"][] = [];
 // Buffer a background-stream event into bgRing, dropping the oldest past the cap — but NEVER dropping a run's
@@ -355,7 +380,7 @@ const bgRing: MessageEvent["data"][] = [];
 // ORPHANS and the corner card renders EMPTY. This bit a cross-page nav after a LONG session: the destination's
 // replay burst (up to the background's REPLAY_CAP=400) overflowed this smaller ring and shifted the start out
 // before the iframe readied. Mirrors contract.ts's pushReplay (the background-ring twin); the wrapper shape
-// here is `{ __mlDebug: { kind }, __mlFromBg }`, so pin on d.__mlDebug.kind. Re-pin any dropped start at the head.
+// here is `{ __mlDebug: { kind } }`, so pin on d.__mlDebug.kind. Re-pin any dropped start at the head.
 function pushBg(d: MessageEvent["data"]): void {
     bgRing.push(d);
     if (bgRing.length <= CARD_RING_MAX) return;
@@ -549,7 +574,7 @@ function showCornerMenu(px: number, py: number, hash?: string, live?: boolean): 
         // Steer a LIVE run from the orb: opens an inline steer box on the card (the app reveals + focuses it).
         // This is the compact HUD's twin of the full panel's always-there composer — the one surface that,
         // mid-run, otherwise has no way to add a message (it's just the wobbling orb).
-        if (live) menu.append(item("Steer this run…", () => frame?.contentWindow?.postMessage({ __mlSteerRun: { hash } }, "*")));
+        if (live) menu.append(item("Steer this run…", () => toApp({ __mlSteerRun: { hash } })));
         menu.append(item("Copy run id", () => copyText(hash)));
         if (live) menu.append(item("Cancel agent run", () => {
             try { void chrome.runtime.sendMessage({ type: "CANCEL_RUN", payload: { runId: hash } }).catch(() => {}); } catch { /* context gone */ }
@@ -653,7 +678,7 @@ function drawHighlight(left: number, top: number, width: number, height: number,
     lab.textContent = label;
     highlightEl.replaceChildren(lab);
     // Tell the card where on the page the approval target sits (the card is the frame in off mode).
-    if (hlKind === "approve" && frame) frame.contentWindow?.postMessage({ __mlHighlightPos: posLabel(left + width / 2, top + height / 2) }, "*");
+    if (hlKind === "approve" && frame) toApp({ __mlHighlightPos: posLabel(left + width / 2, top + height / 2) });
 }
 function hideHighlight(): void { hlSeq++; hlKind = ""; lastHlRef = null; if (highlightEl) { highlightEl.remove(); highlightEl = null; } }
 // Reposition on scroll/resize: the box/@pt marker is computed from getBoundingClientRect (viewport coords)
@@ -745,11 +770,6 @@ function onWindowMessage(e: MessageEvent): void {
         }
         return;
     }
-    // The iframe app asks to open an image full-window (ClickableImg).
-    if (typeof d.__mlLightbox === "string" && frame && e.source === frame.contentWindow) { showLightbox(d.__mlLightbox); return; }
-    // The iframe app asks to highlight a page element on hover (a rendered element ref). Draw the
-    // overlay box; null clears it. Origin-checked (only the real iframe), like the lightbox.
-    if ("__mlHighlight" in d && frame && e.source === frame.contentWindow) { showHighlight(d.__mlHighlight); return; }
     // injected resolved an @pt/@box token to viewport coords → draw a point marker / box outline (unless
     // a newer hover superseded it, or the token was stale and didn't resolve).
     if (d.type === "ML_HL_AT" && e.source === window) {
@@ -759,57 +779,92 @@ function onWindowMessage(e: MessageEvent): void {
         else hideHighlight();
         return;
     }
-    // injected.js (page main world) → the active surface ONLY (the debugMode surfaces are
-    // exclusive): `overlay` relays into the iframe app (frame is null in devtools mode →
-    // no-op); `devtools` forwards to the background so the panel receives it (a panel can't
-    // read these window-messages). Fire-and-forget; harmless when no panel is open.
-    if (d.__mlDebug && e.source === window) {
-        const ev = d.__mlDebug;
-        // Feed the corner HUD card, when it's active: OFF mode always, DEVTOOLS when the coexist toggle
-        // (agentHudInDevtools) is on. The card mounts lazily on a run START (`kind: "agent"`), then
-        // buffers until its iframe app handshakes — flushed in order (see the app-ready branch). In off
-        // mode the page's bus is dormant so only background-tagged events arrive; in devtools BOTH the
-        // page's own injected events (agent start/result) AND the background steps flow.
-        // In off mode the card is fed only by the background stream: with `listPageSessions` the page's own events
-        // flow too, and a card that mounted for a console `ml.chat` would be a new thing on every page.
-        if (hudActive() && (mode !== "off" || d.__mlFromBg)) {
-            // Mount on ANY agent-family event, not just the `agent` start — a re-adopted run's card is fed
-            // by the background replay, and if its start event were ever dropped (a burst landing before this
-            // listener, an on-click late injection) mounting only on `agent` would leave the card permanently
-            // absent while live steps arrive. Mounting on the first event we DO see recovers it.
-            if (!cardHost && (ev.kind === "agent" || ev.kind === "agent-step" || ev.kind === "agent-result" || ev.kind === "agent-stream")) mountCard();
-            if (cardHost) {
-                // A genuine new run event (step / result / start) is what discards a transient size
-                // override (a user drag, or a "Show work" expand) so the card SNAPS to fit the new
-                // content — NOT the noisy ResizeObserver height stream, which mustn't undo a drag.
-                if (ev.kind === "agent-step" || ev.kind === "agent-result" || ev.kind === "agent") cardManualH = null;
-                if (cardReady) frame?.contentWindow?.postMessage(d, "*");
-                else pushBg(d);
-            }
-        }
-        // DEVTOOLS: forward to the panel — but NOT background-origin events (they already reached the
-        // panel via relayDebugEvent), else a duplicate. OVERLAY: relay into the in-page iframe app.
-        if (mode === "devtools" && !d.__mlFromBg) {
-            try { void chrome.runtime.sendMessage({ type: "ML_DEBUG_EVENT", event: ev }).catch(() => {}); } catch { /* context gone */ }
-        } else if (!d.__mlFromBg && busLive()) {
-            // Every other surface: the page's own events go to the background's session index too, which the chat page
-            // reads (background-origin events are already there). ML_DEBUG_EVENT would also feed a DevTools buffer.
-            try { void chrome.runtime.sendMessage({ type: "ML_SESSION_EVENT", event: ev }).catch(() => {}); } catch { /* context gone */ }
-        }
-        if (mode === "overlay") {
-            // Buffer until the iframe app handshakes (overlayReady) — a fresh page after a nav gets the run's
-            // REPLAYED history, which can arrive before the app is listening; posting to a not-ready app drops
-            // it (the "Sessions (0)" on a re-adopted run). Flushed in order on the app's `ready` (below).
-            if (overlayReady) frame?.contentWindow?.postMessage(d, "*");
+    // The page's own session events (injected.js's bus: a run or chat the page hosts). A window message is the PAGE's
+    // whatever it says about itself: a `__mlFromBg` tag on one is ignored, since the worker's events never come this way
+    // any more (they arrive over chrome.runtime, below). Before attack 15 they did, and the page could both read and
+    // forge them.
+    if (d.__mlDebug && e.source === window) { feedDebug(d.__mlDebug, false); return; }
+}
+
+/** Sessions the worker has spoken for on this tab, from its own stream: a start (`started`) means it emits the whole
+ *  lifecycle itself; any event (`spoken`) that it hosts the run. What the page may add to each is `pageMayWrite`'s. */
+const workerSessions = { started: new Set<string>(), spoken: new Set<string>() };
+
+/** What this shell knows about the worker's part in `ev`'s session. */
+function workerClaim(ev: unknown): WorkerClaim {
+    const h = eventSession(ev);
+    if (!h) return "none";
+    return workerSessions.started.has(h) ? "owns" : workerSessions.spoken.has(h) ? "hosts" : "none";
+}
+
+/**
+ * One session event into the active surface. `fromWorker` is decided by the ROUTE it came by, never by the event: the
+ * worker's arrive over chrome.runtime (ML_DEBUG_TO_PAGE), the page's over its window.
+ * @param ev the event
+ * @param fromWorker whether it came from the worker
+ */
+function feedDebug(ev: any, fromWorker: boolean): void {
+    if (!ev || typeof ev !== "object") return;
+    if (fromWorker) {
+        const h = eventSession(ev);
+        if (h) { workerSessions.spoken.add(h); if (ev.kind === "agent") workerSessions.started.add(h); }
+    } else if (!pageMayWrite(ev.kind, workerClaim(ev))) return;
+    const d = { __mlDebug: ev };
+    // Feed the corner HUD card, when it's active: OFF mode always, DEVTOOLS when the coexist toggle
+    // (agentHudInDevtools) is on. The card mounts lazily on a run START (`kind: "agent"`), then
+    // buffers until its iframe app handshakes — flushed in order (see the app-ready branch). In off
+    // mode the page's bus is dormant so only the worker's events arrive; in devtools BOTH the
+    // page's own injected events (agent start/result) AND the background steps flow.
+    // In off mode the card is fed only by the background stream: with `listPageSessions` the page's own events
+    // flow too, and a card that mounted for a console `ml.chat` would be a new thing on every page.
+    if (hudActive() && (mode !== "off" || fromWorker)) {
+        // Mount on ANY agent-family event, not just the `agent` start — a re-adopted run's card is fed
+        // by the background replay, and if its start event were ever dropped (a burst landing before this
+        // listener, an on-click late injection) mounting only on `agent` would leave the card permanently
+        // absent while live steps arrive. Mounting on the first event we DO see recovers it.
+        if (!cardHost && (ev.kind === "agent" || ev.kind === "agent-step" || ev.kind === "agent-result" || ev.kind === "agent-stream")) mountCard();
+        if (cardHost) {
+            // A genuine new run event (step / result / start) is what discards a transient size
+            // override (a user drag, or a "Show work" expand) so the card SNAPS to fit the new
+            // content — NOT the noisy ResizeObserver height stream, which mustn't undo a drag.
+            if (ev.kind === "agent-step" || ev.kind === "agent-result" || ev.kind === "agent") cardManualH = null;
+            if (cardReady) toApp(d);
             else pushBg(d);
         }
-        return;
     }
+    // DEVTOOLS: forward to the panel — but NOT background-origin events (they already reached the
+    // panel via relayDebugEvent), else a duplicate. OVERLAY: relay into the in-page iframe app.
+    if (mode === "devtools" && !fromWorker) {
+        try { void chrome.runtime.sendMessage({ type: "ML_DEBUG_EVENT", event: ev }).catch(() => {}); } catch { /* context gone */ }
+    } else if (!fromWorker && busLive()) {
+        // Every other surface: the page's own events go to the background's session index too, which the chat page
+        // reads (background-origin events are already there). ML_DEBUG_EVENT would also feed a DevTools buffer.
+        try { void chrome.runtime.sendMessage({ type: "ML_SESSION_EVENT", event: ev }).catch(() => {}); } catch { /* context gone */ }
+    }
+    if (mode === "overlay") {
+        // Buffer until the iframe app handshakes (overlayReady) — a fresh page after a nav gets the run's
+        // REPLAYED history, which can arrive before the app is listening; posting to a not-ready app drops
+        // it (the "Sessions (0)" on a re-adopted run). Flushed in order on the app's `ready` (below).
+        if (overlayReady) toApp(d);
+        else pushBg(d);
+    }
+}
+
+/** A message from the sidebar app, over the private port only (`openHostPort`). On a web page the app's parent window
+ *  is the page, so a window message that claims to come from the app proves nothing (docs/spec/SITE_ACCESS.md, attack
+ *  16), and none of these is read from the window any more. */
+function fromApp(d: any): void {
+    if (!d) return;
+    // The iframe app asks to open an image full-window (ClickableImg).
+    if (typeof d.__mlLightbox === "string" && frame) { showLightbox(d.__mlLightbox); return; }
+    // The iframe app asks to highlight a page element on hover (a rendered element ref). Draw the
+    // overlay box; null clears it. Origin-checked (only the real iframe), like the lightbox.
+    if ("__mlHighlight" in d && frame) { showHighlight(d.__mlHighlight); return; }
     // Design A: the iframe app's approve/deny for a background-hosted run's pending gate. We forward it
-    // to the background as SET_APPROVAL — but ONLY because we can prove it came from the real extension
-    // iframe (e.source === frame.contentWindow), which the page cannot forge. THIS is what makes the
-    // approval unforgeable: a page-set window.confirm or a spoofed window-message can't reach here.
-    if (d.__mlSidebarApp === "approval" && frame && e.source === frame.contentWindow
+    // to the background as SET_APPROVAL — but ONLY because it came over the app's private port, which the page
+    // cannot reach (`openHostPort`). THIS is what makes the approval unforgeable: a page-set window.confirm or a
+    // spoofed window-message can't reach here.
+    if (d.__mlSidebarApp === "approval" && frame
         && typeof d.hash === "string" && typeof d.seq === "number") {
         try {
             void chrome.runtime.sendMessage({ type: "SET_APPROVAL", payload: { runId: d.hash, seq: d.seq, decision: !!d.decision, persist: !!d.persist } }).catch(() => {});
@@ -823,7 +878,7 @@ function onWindowMessage(e: MessageEvent): void {
     // The composer's "start this task": the WORKER assembles and hosts the run (sw-run-start.ts,
     // docs/spec/SITE_ACCESS.md slice 0). It used to be relayed to the page, which built the run in its own world and
     // so decided what a run the PERSON asked for contained. Origin-checked: only the real extension frame starts one.
-    if (d.__mlSidebarApp === "startRun" && frame && e.source === frame.contentWindow && typeof d.task === "string" && d.task.trim()) {
+    if (d.__mlSidebarApp === "startRun" && frame && typeof d.task === "string" && d.task.trim()) {
         // `hud` is the verbosity hint (quiet → stay silent mid-run; progress → one short line between steps), `model`
         // the composer's per-call pick, `vision:true` its per-call native-vision override.
         const payload = {
@@ -849,7 +904,7 @@ function onWindowMessage(e: MessageEvent): void {
     // from the handle's live state whether to STEER (say) or start a new turn (run), or cancels the run.
     // Origin-checked (real iframe); reaches only this page's own handle registry — nothing cross-origin.
     // Allow an IMAGE-ONLY send (a pasted screenshot with no text) — not just non-empty text.
-    if (d.__mlSidebarApp === "sessionSend" && frame && e.source === frame.contentWindow && typeof d.hash === "string" && typeof d.text === "string") {
+    if (d.__mlSidebarApp === "sessionSend" && frame && typeof d.hash === "string" && typeof d.text === "string") {
         // An `elementContext` (from the right-click "Add to current run") lets an image-less/text-less send
         // through — the element reference IS the payload; the page folds it into the appended message.
         const elementContext = (d.elementContext && typeof d.elementContext.selector === "string") ? d.elementContext : undefined;
@@ -860,7 +915,7 @@ function onWindowMessage(e: MessageEvent): void {
         }
         return;
     }
-    if (d.__mlSidebarApp === "continueRun" && frame && e.source === frame.contentWindow && typeof d.hash === "string") {
+    if (d.__mlSidebarApp === "continueRun" && frame && typeof d.hash === "string") {
         // "Continue (+N steps)" on a step-capped run — resume it (fresh budget) with no follow-up text. A budget
         // the person picked rides along; anything that is not a number is simply not forwarded, as with startRun.
         const steps = stepBudget(d.maxSteps);
@@ -868,7 +923,7 @@ function onWindowMessage(e: MessageEvent): void {
         workerFirst({ ...body, action: "continue" }, () => window.postMessage({ __mlContinueRun: body }, "*"));
         return;
     }
-    if (d.__mlSidebarApp === "sessionCancel" && frame && e.source === frame.contentWindow && typeof d.hash === "string") {
+    if (d.__mlSidebarApp === "sessionCancel" && frame && typeof d.hash === "string") {
         // Belt-and-suspenders: a background-hosted run is the SW's — abort its controller DIRECTLY from this
         // content script (chrome.runtime), so Stop works even if the page-side agentRegistry round-trip
         // (__mlCancelSession → injected) can't resolve the hash (a re-adopt that didn't re-register it). Harmless
@@ -881,7 +936,7 @@ function onWindowMessage(e: MessageEvent): void {
     // iframe where matchMedia is reliable). The acrylic wrap is drawn here, page-side, and our own
     // matchMedia is unreliable on some hosts (GitHub reports light in the content-script world) — which
     // painted a white acrylic behind the transparent card. Trust the app's value. Origin-checked.
-    if ((d.__mlSidebarCardTheme === "dark" || d.__mlSidebarCardTheme === "light") && frame && e.source === frame.contentWindow) {
+    if ((d.__mlSidebarCardTheme === "dark" || d.__mlSidebarCardTheme === "light") && frame) {
         appThemeOverride = d.__mlSidebarCardTheme;
         applyCardTheme();
         return;
@@ -889,7 +944,7 @@ function onWindowMessage(e: MessageEvent): void {
     // The off-mode card app tells us its desired visual state (hidden / toast / expanded) — it alone
     // knows whether there's a pending approval or a final answer worth showing. We drive the container's
     // size + reveal (a CSS transition). Origin-checked: only the real card iframe.
-    if (typeof d.__mlSidebarCard === "string" && frame && e.source === frame.contentWindow) {
+    if (typeof d.__mlSidebarCard === "string" && frame) {
         if (cardWrap) {
             // Frost the acrylic IN on a hidden→visible reveal (the card popping up from nothing). Re-trigger
             // the one-shot animation cleanly: remove the class, force a reflow, re-add it, then clear it after.
@@ -908,14 +963,14 @@ function onWindowMessage(e: MessageEvent): void {
     // to it, capped. This just tracks the content size; it does NOT touch a manual override (drag /
     // Show-work expand) — that's discarded only on a genuine NEW EVENT (see the card-feed path above) so
     // the noisy ResizeObserver stream can't snap-back-glitch a drag.
-    if (typeof d.__mlSidebarCardH === "number" && frame && e.source === frame.contentWindow) {
+    if (typeof d.__mlSidebarCardH === "number" && frame) {
         cardAutoH = d.__mlSidebarCardH; layoutCard();
         return;
     }
     // The caption pill (orbprose) reports its natural text width so the shell can fit the pill to it (cardW
     // clamps to the max). Only re-layout when we're actually in that state — a stale measurement from a
     // just-finished caption must not resize the expanded/toast card.
-    if (typeof d.__mlSidebarCardW === "number" && frame && e.source === frame.contentWindow) {
+    if (typeof d.__mlSidebarCardW === "number" && frame) {
         cardProseW = d.__mlSidebarCardW;
         if ((cardWrap?.dataset.state || "") === "orbprose") layoutCard();
         return;
@@ -923,7 +978,7 @@ function onWindowMessage(e: MessageEvent): void {
     // "Show work" toggled: release any manual drag override and re-fit to the new content (capped) — the
     // trace appearing/disappearing changes the reported content height, so it slides to exactly fit (a
     // short trace stops at its content, a long one caps + scrolls). No forced max → no empty space.
-    if (typeof d.__mlSidebarCardExpand === "boolean" && frame && e.source === frame.contentWindow) {
+    if (typeof d.__mlSidebarCardExpand === "boolean" && frame) {
         cardManualH = null;
         layoutCard();
         return;
@@ -931,7 +986,7 @@ function onWindowMessage(e: MessageEvent): void {
     // Grab-drag the HUD: the app pointer-captures the pill/head (works for mouse AND touch) and streams
     // movement DELTAS (frame-independent — the moving iframe can't shift them under itself). We move the
     // container 1:1 (no-anim), then on drop snap to the NEAREST corner (animated) and persist it.
-    if (d.__mlSidebarCardGrab && cardWrap && frame && e.source === frame.contentWindow) {
+    if (d.__mlSidebarCardGrab && cardWrap && frame) {
         const r = cardWrap.getBoundingClientRect();
         cardDrag = { left: r.left, top: r.top };
         // The grab landed at (gx,gy) within the card (iframe-local ≈ card-local). Remember the cursor's
@@ -949,7 +1004,7 @@ function onWindowMessage(e: MessageEvent): void {
         window.addEventListener("pointercancel", onWinDragEnd, true);
         return;
     }
-    if (d.__mlSidebarCardMove && cardDrag && dragCursor && dragFrac && cardWrap && frame && e.source === frame.contentWindow) {
+    if (d.__mlSidebarCardMove && cardDrag && dragCursor && dragFrac && cardWrap && frame) {
         const w = cardWrap.offsetWidth, h = cardWrap.offsetHeight;
         // Track the true cursor by the deltas, then place the card so the grabbed FRACTION of the CURRENT
         // size sits under it. When the pill has collapsed to the orb, fx·(orb width) is tiny, so the orb
@@ -961,14 +1016,14 @@ function onWindowMessage(e: MessageEvent): void {
         layoutCard();
         return;
     }
-    if (d.__mlSidebarCardDrop && frame && e.source === frame.contentWindow) {
+    if (d.__mlSidebarCardDrop && frame) {
         finalizeCardDrag();   // snap to the nearest corner (shared with the window-level safety net)
         return;
     }
     // The card app asks us to focus its iframe (an approval appeared) so Enter/Esc work without a click.
     // Moving focus is harmless — the page still can't inject a trusted keypress into this cross-origin
     // extension frame — so the keyboard gate stays unforgeable.
-    if (d.__mlSidebarCardFocus && frame && e.source === frame.contentWindow) {
+    if (d.__mlSidebarCardFocus && frame) {
         // REMEMBER the page element that had focus before we borrow it for the approval, so the approval
         // handler can hand it back. Skip the card's own elements (don't "restore" focus to the card) and the
         // bare body/root (nothing worth restoring). Only capture the first grab of an approval cycle.
@@ -982,7 +1037,7 @@ function onWindowMessage(e: MessageEvent): void {
     }
     // Right-clicked the card/pill → draw the "move to corner" menu here (the iframe would clip it). The
     // coords are iframe-local; offset by the frame's page position.
-    if (d.__mlSidebarCornerMenu && frame && e.source === frame.contentWindow) {
+    if (d.__mlSidebarCornerMenu && frame) {
         const r = cardWrap?.getBoundingClientRect();
         const m = d.__mlSidebarCornerMenu;
         showCornerMenu((r?.left || 0) + (m.x || 0), (r?.top || 0) + (m.y || 0), typeof m.hash === "string" ? m.hash : "", !!m.live);
@@ -991,7 +1046,7 @@ function onWindowMessage(e: MessageEvent): void {
     // The card was clicked while the menu is open (a click INSIDE the iframe can't reach the shell's own
     // outside-click handler, and the page window was already blurred by the opening right-click — so the
     // card signals the dismissal itself). Origin-checked: only the real card iframe.
-    if (d.__mlSidebarCornerMenuDismiss && frame && e.source === frame.contentWindow) {
+    if (d.__mlSidebarCornerMenuDismiss && frame) {
         hideCornerMenu();
         return;
     }
@@ -999,37 +1054,37 @@ function onWindowMessage(e: MessageEvent): void {
     // tell it it's the card surface and flush the events buffered while its iframe loaded — do NOT
     // re-handshake injected here (in off mode its bus is fed by the background stream; in devtools it was
     // already handshaked by attach(true)). OVERLAY: handshake injected.js + hand it the open state.
-    if (d.__mlSidebarApp === "chartKeys" && frame && e.source === frame.contentWindow) {
+    if (d.__mlSidebarApp === "chartKeys" && frame) {
         chartKeys = Array.isArray(d.keys) ? d.keys.filter((k: unknown) => typeof k === "string") : [];
         return;
     }
-    if (d.__mlSidebarApp === "ready" && frame && e.source === frame.contentWindow) {
+    if (d.__mlSidebarApp === "ready" && frame) {
         // Either surface can hold the chart, and this shell relays its keys in both — say so, so the chart's
         // key hints can promise them without a click.
-        frame.contentWindow?.postMessage({ __mlSidebarKeyRelay: true }, "*");
+        toApp({ __mlSidebarKeyRelay: true });
         if (hudActive()) {
             cardReady = true;
-            frame.contentWindow?.postMessage({ __mlSidebarSurface: "card" }, "*");
-            for (const ev of bgRing) frame.contentWindow?.postMessage(ev, "*");
+            toApp({ __mlSidebarSurface: "card" });
+            for (const ev of bgRing) toApp(ev);
             bgRing.length = 0;
-            if (composerPendingOpen) { composerPendingOpen = false; frame.contentWindow?.postMessage({ __mlSidebarComposer: "open" }, "*"); if (composerPendingCtx) { frame.contentWindow?.postMessage({ __mlComposerElement: composerPendingCtx }, "*"); composerPendingCtx = null; } try { frame.focus(); } catch { /* ignore */ } }
-            if (addToRunPending !== undefined) { frame.contentWindow?.postMessage({ __mlAddToCurrentRun: { ctx: addToRunPending } }, "*"); addToRunPending = undefined; try { frame.focus(); } catch { /* ignore */ } }
+            if (composerPendingOpen) { composerPendingOpen = false; toApp({ __mlSidebarComposer: "open" }); if (composerPendingCtx) { toApp({ __mlComposerElement: composerPendingCtx }); composerPendingCtx = null; } try { frame.focus(); } catch { /* ignore */ } }
+            if (addToRunPending !== undefined) { toApp({ __mlAddToCurrentRun: { ctx: addToRunPending } }); addToRunPending = undefined; try { frame.focus(); } catch { /* ignore */ } }
             return;
         }
         window.postMessage({ __mlSidebar: "ready" }, "*");
         overlayReady = true;
         // Flush debug events buffered while the overlay iframe loaded (the replayed history of a re-adopted
         // run) — in order, so the fresh sidebar rebuilds the whole session, not an empty list.
-        for (const ev of bgRing) frame.contentWindow?.postMessage(ev, "*");
+        for (const ev of bgRing) toApp(ev);
         bgRing.length = 0;
-        frame.contentWindow?.postMessage({ __mlSidebarOpen: panel?.classList.contains("open") ?? false }, "*");
+        toApp({ __mlSidebarOpen: panel?.classList.contains("open") ?? false });
     }
 }
 
 // Tell the iframe app when the panel slides open/closed (it gates polling on this).
 function toggleOpen(): void {
     const open = panel?.classList.toggle("open") ?? false;
-    frame?.contentWindow?.postMessage({ __mlSidebarOpen: open }, "*");
+    toApp({ __mlSidebarOpen: open });
 }
 
 const setWidth = (w: number): void => { if (panel) panel.style.width = `${Math.round(w)}px`; };
@@ -1078,7 +1133,7 @@ function relayChartKey(e: KeyboardEvent): void {
     if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName ?? ""))) return;
     e.preventDefault();
     e.stopImmediatePropagation();
-    frame.contentWindow?.postMessage({ __mlSidebarChartKey: e.key }, "*");
+    toApp({ __mlSidebarChartKey: e.key });
 }
 
 /** The pointer is on the PAGE, so it is not on the panel: events over the panel's iframe go to the iframe. Relayed so a
@@ -1091,7 +1146,7 @@ function relayPointerOut(): void {
     const now = Date.now();
     if (now - lastPointerRelay < 500) return;
     lastPointerRelay = now;
-    frame.contentWindow?.postMessage({ __mlSidebarPointerOut: true }, "*");
+    toApp({ __mlSidebarPointerOut: true });
 }
 
 // Start listening on the page window. `handshakeInjected` is true for the overlay/devtools surfaces
@@ -1143,6 +1198,7 @@ function mountOverlay(): void {
     resize.classList.add("ml-tt");
     resize.append(tip("Drag to resize"));
     resize.addEventListener("pointerdown", startResize);
+    closeHostPort();
     frame = document.createElement("iframe");
     frame.id = SB_FRAME;
     frame.allow = "clipboard-write";   // delegate the Clipboard API into the extension iframe
@@ -1175,6 +1231,7 @@ function mountCard(): void {
     cardWrap.dataset.state = "hidden";
     applyCardTheme();    // acrylic follows the app's resolved theme, not the OS
     applyCardCorner();   // anchor to the configured corner
+    closeHostPort();
     frame = document.createElement("iframe");
     frame.id = `${SB_CARD}-frame`;
     frame.allow = "clipboard-write";
@@ -1204,6 +1261,7 @@ function unmountCard(): void {
     if (!cardHost) return;
     hideCornerMenu();
     cardHost.remove();
+    closeHostPort();
     cardHost = cardWrap = frame = null;   // `frame` is the card iframe in off mode
     cardRoot = null;
     cardReady = false;
@@ -1247,8 +1305,8 @@ function openComposer(ctx: ElementContext | null = null): void {
     try { chrome.runtime.sendMessage({ type: "USER_PYTHON_PREWARM", payload: { trigger: "commander" } }).catch(() => { /* no worker */ }); } catch { /* context gone */ }
     if (!cardHost) mountCard();
     if (cardReady && frame) {
-        frame.contentWindow?.postMessage({ __mlSidebarComposer: "open" }, "*");
-        if (ctx) frame.contentWindow?.postMessage({ __mlComposerElement: ctx }, "*");
+        toApp({ __mlSidebarComposer: "open" });
+        if (ctx) toApp({ __mlComposerElement: ctx });
         try { frame.focus(); } catch { /* ignore */ }
     } else { composerPendingOpen = true; composerPendingCtx = ctx; }   // flushed on the app's `ready`
 }
@@ -1259,7 +1317,7 @@ function teardown(): void {
     hideLightbox();
     hideHighlight();
     if (hlHost) { hlHost.remove(); hlHost = hlRoot = null; }   // the devtools-mode highlight-only host
-    if (shellHost) { shellHost.remove(); shellHost = panel = frame = shadowRoot = null; }
+    if (shellHost) { shellHost.remove(); shellHost = panel = frame = shadowRoot = null; closeHostPort(); }
     unmountCard();
     window.removeEventListener("message", onWindowMessage);
     window.removeEventListener("keydown", relayChartKey, true);
@@ -1316,6 +1374,8 @@ window.addEventListener("resize", () => { if (cardWrap) layoutCard(); });
 // replayed event idempotent; no message can arrive mid-callback, so nothing is double-handled.
 let startupQueue: MessageEvent[] | null = [];
 const captureStartup = (e: MessageEvent): void => { if (startupQueue) startupQueue.push(e); };
+/** The worker's events that arrived over chrome.runtime before the mode was known, replayed after the window's. */
+const workerStartup: unknown[] = [];
 window.addEventListener("message", captureStartup);
 chrome.storage.sync.get({ debugMode: "off", theme: "auto", cardCorner: "bottom-right", agentHud: "progress", agentHudInDevtools: false, listPageSessions: false, persistUiRuns: true }, (cfg) => {
     listPageSessions = !!cfg.listPageSessions;
@@ -1328,6 +1388,7 @@ chrome.storage.sync.get({ debugMode: "off", theme: "auto", cardCorner: "bottom-r
     window.removeEventListener("message", captureStartup);
     const queued = startupQueue; startupQueue = null;
     if (queued) for (const e of queued) onWindowMessage(e);   // replay anything that arrived before we were ready
+    for (const ev of workerStartup.splice(0)) feedDebug(ev, true);
 });
 chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "sync") return;
@@ -1362,7 +1423,12 @@ chrome.storage.onChanged.addListener((changes, area) => {
 // draw the box in this content script (which DOES share the page DOM). Only in devtools mode —
 // the overlay gets highlights straight from its own iframe via window-message. Read-only (a
 // pointer-events:none box, no page mutation), so even a spurious relay is harmless.
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    // A run's event from the worker, for the card or the overlay. It comes this way, and never over the page's window,
+    // so the page neither reads it nor can pass one off as the worker's (docs/spec/SITE_ACCESS.md, attack 15).
+    if (msg?.type === "ML_DEBUG_TO_PAGE") { if (startupQueue) workerStartup.push(msg.event); else feedDebug(msg.event, true); return; }
+    // The sidebar app's hello: it wants its private port (parent-channel.ts).
+    if (msg?.type === "ML_HOST_HELLO" && typeof msg.nonce === "string") { openHostPort(msg.nonce, sender); return; }
     // `anyMode`: the chat page highlights on the tab a session runs on, whatever this tab's debug surface is.
     if (msg?.type === "ML_HL_REMOTE" && (mode === "devtools" || msg.anyMode === true)) showHighlight(msg.ref || null);
     // The Spotlight shortcut (background `commands` → this tab). Open the HUD composer; no-op unless the
@@ -1387,7 +1453,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
         if (!hudActive()) return;
         if (!cardHost) mountCard();
-        if (cardReady && frame) { frame.contentWindow?.postMessage({ __mlAddToCurrentRun: { ctx } }, "*"); try { frame.focus(); } catch { /* ignore */ } }
+        if (cardReady && frame) { toApp({ __mlAddToCurrentRun: { ctx } }); try { frame.focus(); } catch { /* ignore */ } }
         else { addToRunPending = ctx; }   // flushed on the app's ready
     }
     // A session command from the worker that has to end at THIS page, and the page's answer to it — both in

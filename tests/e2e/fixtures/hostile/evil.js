@@ -107,8 +107,10 @@
         }, true);
     }
 
-    /** The id of a run this page has seen drive it, from the debug stream the extension posts into the page. */
+    /** The id of a run this page has seen drive it: from the run's events, which the extension used to post into the
+     *  page (attack 15), or from the messages that ask the page to host the run's tools, which still carry it. */
     const runIdOf = (d) => {
+        if (d && (d.type === "ADOPT_RUN" || d.type === "PAGE_TOOL_RUN") && typeof d.runId === "string") return d.runId;
         const ev = d && d.__mlDebug;
         return ev && ev.session && typeof ev.session.hash === "string" ? ev.session.hash : null;
     };
@@ -127,7 +129,9 @@
         window.__spent = null;
         let started = false;
         window.addEventListener("message", (e) => {
-            if (started || e.source !== window || !runIdOf(e.data)) return;
+            // On the run's first tool call: the run is live on this tab then, which is when the page is lent the most.
+            // (`ADOPT_RUN` names the run too, but can arrive before the worker counts it as on the tab.)
+            if (started || e.source !== window || !e.data || (e.data.type !== "PAGE_TOOL_RUN" && !e.data.__mlDebug)) return;
             started = true;
             window.__raw("LLM_REQUEST", { messages: [{ role: "user", content: "EVIL SPEND: a request the run never made" }] })
                 .then((r) => { window.__spent = r; });

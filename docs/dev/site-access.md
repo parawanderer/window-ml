@@ -52,9 +52,29 @@ The content script relays a page's `CANCEL_RUN_REQUEST` as `PAGE_CANCEL_RUN`, no
 sends `CANCEL_RUN` from the same content-script world, so without its own type the gate could not refuse a page's
 cancel without refusing the person's Stop. A run the worker built cannot be cancelled by a page at all.
 
+## The run's events, and the extension's own iframe
+
+A run's events go from the worker to the tab's SHELL over `chrome.runtime` (`ML_DEBUG_TO_PAGE`); `content.ts` no
+longer re-posts them on the page's window, and the shell treats every window message as the page's, whatever it
+claims (`__mlFromBg` means nothing now). The sidebar app in the card or overlay talks to the shell over a private
+`MessagePort` (`src/sidebar/parent-channel.ts`, `openHostPort` in the shell): the app sends a nonce with
+`chrome.tabs.sendMessage`, which reaches the tab's content scripts and never the page, and accepts only a port posted
+back with that nonce. Attacks 15 and 16 in the spec are what each closes.
+
+A page still sends its own session events (a run or chat it hosts). What it may add to a session the worker speaks for
+is `pageMayWrite(kind, claim)` (`src/event-admission.ts`): nothing for a run the worker built (`owns`), only `agent`,
+`agent-say` and `agent-result` for a run the page built that the worker hosts (`hosts`), anything for a session the
+worker has no part in. The shell answers `claim` from the worker's events it has seen on the tab; the worker, before
+the index or a DevTools panel (`workerClaimOf` in background.ts), from `isWorkerRun`, `bgRuns` and the index. A
+background session whose run the worker no longer holds counts as `owns`. `DUMP_EVENTS` (`ml.__events()`) gives a page
+only the buffered events of sessions it is not shut out of.
+
 ## Tests
 
 - `tests/site-access.test.mjs`: the pure rules.
+- `tests/event-admission.test.mjs`: `pageMayWrite` over every event kind the contract defines, for each claim.
+- `tests/run-start.test.mjs`, section "what a page may add to a run the worker built": the worker's half, against the
+  bundle.
 - `tests/redteam.test.js`, section "(f)": every page-started type refused from an unapproved origin with nothing
   reaching the backend, a tab or the screen; run control refused on a tab hosting a run while the rest is allowed; a
   sender that can never be granted refused even when its host is approved; revoke and deny without reload; a page

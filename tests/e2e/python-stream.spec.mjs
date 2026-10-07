@@ -7,7 +7,7 @@ import { test, expect } from "@playwright/test";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, watchRunEvents } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 
@@ -38,23 +38,13 @@ test("python_exec streams print() output live (worker → page ctx.stream → st
         const page = await ext.context.newPage();
         await page.goto(site.url + "/");
         await waitForMl(page);
-        // Collect every agent-step debug event carrying a live streamOutput (posted on the page window).
-        await page.evaluate(() => {
-            window.__deltas = [];
-            window.addEventListener("message", (e) => {
-                const d = e.data && e.data.__mlDebug;
-                if (d && d.kind === "agent-step" && d.streamOutput != null) window.__deltas.push(d.streamOutput);
-            });
-        });
+        // Collect every agent-step debug event carrying a live streamOutput, from the worker (they never reach the page).
+        const seen = [];
+        await watchRunEvents(ext, page, (d) => { if (d && d.kind === "agent-step" && d.streamOutput != null) seen.push(d.streamOutput); });
         await page.evaluate(() => window.ml.agent("run the code", { stream: true, extraTools: [window.ml.pythonTool()] }));
 
         // Poll until a delta carries the printed text (the whole chain worked), bounded well past the ~1s run.
-        let seen = [];
-        for (let i = 0; i < 150; i++) {
-            seen = await page.evaluate(() => window.__deltas || []);
-            if (seen.some((d) => /LIVE-ALPHA/.test(d))) break;
-            await new Promise((r) => setTimeout(r, 100));
-        }
+        await expect.poll(() => seen.some((d) => /LIVE-ALPHA/.test(d)), { timeout: 15000 }).toBe(true);
         expect(seen.some((d) => /LIVE-ALPHA/.test(d)), `a stream delta should carry the printed output; saw: ${JSON.stringify(seen).slice(0, 300)}`).toBe(true);
     } finally {
         await ext.close();

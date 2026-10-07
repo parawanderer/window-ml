@@ -102,6 +102,14 @@ A future page-input channel would follow the pattern.
 
 ## Traps
 
+- **The app talks to its host only through `parent-channel.ts`** (`toHost`, `onHostMessage`), never
+  `window.parent.postMessage` or a `message` listener of its own. On a web page the overlay's and the card's parent
+  window IS the page, and the shell's shadow roots are open, so a page can reach the iframe, read what it posts to its
+  parent and post into it (docs/spec/SITE_ACCESS.md, attack 16). There the app and the shell share a `MessagePort`,
+  set up by a nonce the app sends through `chrome.tabs.sendMessage`; the DevTools panel, an extension page, keeps plain
+  window messages. A run's events reach the shell over `chrome.runtime` (`ML_DEBUG_TO_PAGE`), never the page's window,
+  and a page's events are admitted by `pageMayWrite` (`src/event-admission.ts`). A test opens the sidebar by clicking
+  its tab and watches a background run with `watchRunEvents` (e2e harness), not by posting into the frame.
 - **Sidebar.** One app, two surfaces: a new app→parent message must also be handled in `panel.ts`, and anything
   that acts back on the page needs the reverse channel (panel → background → content shell). The shared session
   views call `services()` (`services.ts`), never `chrome.*` or the parent frame, because the chat page and a phone app

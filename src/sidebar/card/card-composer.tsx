@@ -13,6 +13,7 @@ import {
 } from "./card-state";
 import { isCloudModel } from "../model";
 import { STEP_BUDGETS } from "../../agent/step-budget";
+import { toHost } from "../parent-channel";
 
 // The composer's model control: a chip showing the run's model (the per-call pick, else the default) that
 // opens a dropdown of the allowed models. Picking a row overrides the model FOR THIS RUN; the ★ persists it
@@ -131,7 +132,7 @@ export function ComposerCard() {
         // (say) or starts a follow-up turn (run), and folds any element context into the message. No model
         // pre-flight (the run already resolved one). Optimistically flip it to working so the card morphs now.
         if (target.mode === "append") {
-            window.parent.postMessage({ __mlSidebarApp: "sessionSend", hash: target.hash, text: t, images: att.imgs, elementContext: el || undefined }, "*");
+            toHost({ __mlSidebarApp: "sessionSend", hash: target.hash, text: t, images: att.imgs, elementContext: el || undefined });
             const s = sessionMap.get(target.hash);
             if (s) { s.status = "pending"; s.ended = false; s.lastTs = Date.now(); rev.value++; }
             close();
@@ -158,7 +159,7 @@ export function ComposerCard() {
         const t0 = Date.now();
         composerStarting.value = t0;
         setTimeout(() => { if (composerStarting.value === t0) composerStarting.value = 0; }, 10000);
-        window.parent.postMessage({ __mlSidebarApp: "startRun", task: t, maxSteps: composerMaxSteps.value, model: model || undefined, vision, stream: composerStream.value || undefined, images: att.imgs, elementContext: el || undefined }, "*");
+        toHost({ __mlSidebarApp: "startRun", task: t, maxSteps: composerMaxSteps.value, model: model || undefined, vision, stream: composerStream.value || undefined, images: att.imgs, elementContext: el || undefined });
         close();
     };
     return (

@@ -42,6 +42,7 @@ import { probeCaps } from "./model-status";
 import { layoutKey, dragging, dragStale, measureFloor, easeVramH, cancelEase, noteDrag } from "./panel-size";
 import { TrackEditor } from "./track-editor";
 import { RowTip, sparkAt, SparkTip, ModelRow, GhostRow } from "./model-rows";
+import { toHost } from "../parent-channel";
 
 /** A machine-level banner for GPUs the server can see and cannot use.
  *
@@ -307,7 +308,7 @@ export function VramPanel() {
             const sig = keys.join(",");
             if (sig === lastKeysSent) return;
             lastKeysSent = sig;
-            try { window.parent.postMessage({ __mlSidebarApp: "chartKeys", keys }, "*"); } catch { /* no parent */ }
+            try { toHost({ __mlSidebarApp: "chartKeys", keys }); } catch { /* no parent */ }
         });
         return () => {
             document.removeEventListener("keydown", onKey);
@@ -316,7 +317,7 @@ export function VramPanel() {
             stop();
             pointerOnChart.value = false;
             lastKeysSent = "";
-            try { window.parent.postMessage({ __mlSidebarApp: "chartKeys", keys: [] }, "*"); } catch { /* no parent */ }
+            try { toHost({ __mlSidebarApp: "chartKeys", keys: [] }); } catch { /* no parent */ }
         };
     }, []);
     // The panel already ticks once a second (the TTL countdowns); that is also what notices a drag whose

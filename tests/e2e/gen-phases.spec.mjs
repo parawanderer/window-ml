@@ -8,12 +8,13 @@
 // after emitting tool-call fragments must produce four phases in order, because bucketing by kind would
 // collapse the re-entry and draw a block that never happened.
 import { test, expect } from "@playwright/test";
-import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, watchRunEvents } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 
-/** Attach a node-side collector for the extension's own `__mlDebug` stream — the same bridge the observer
- *  uses, so these assert on the events the product actually emits rather than on a test-only hook. */
+/** Attach a node-side collector for the PAGE's own `__mlDebug` stream (a run the page hosts). The worker's events never
+ *  reach the page, so each test also watches them with `watchRunEvents` once the page has loaded: together, the events
+ *  the product actually emits rather than a test-only hook. */
 async function collectDebug(page, events) {
     await page.exposeFunction("__phEvent", (ev) => events.push(ev));
     await page.addInitScript(() => {
@@ -49,6 +50,7 @@ test("a streamed turn is split by channel, and an INTERLEAVED one keeps its orde
         await collectDebug(page, events);
         await page.goto(site.url + "/");
         await waitForMl(page);
+        await watchRunEvents(ext, page, (ev) => events.push(ev));   // the worker's events, which never reach the page
 
         const res = await page.evaluate(() => window.ml.agent("settle the page", { stream: true, maxSteps: 4 }));
         expect(res.summary).toContain("Done");
@@ -103,6 +105,7 @@ test("a NON-streamed turn reports no phases — the boundary is not observable, 
         await collectDebug(page, events);
         await page.goto(site.url + "/");
         await waitForMl(page);
+        await watchRunEvents(ext, page, (ev) => events.push(ev));   // the worker's events, which never reach the page
         await page.evaluate(() => window.ml.agent("answer", { maxSteps: 2 }));
 
         const withUsage = events.filter((e) => e.kind === "agent-step" && e.usage);
@@ -133,6 +136,7 @@ test("a model call is visible WHILE it generates, not only once it has finished"
         await collectDebug(page, events);
         await page.goto(site.url + "/");
         await waitForMl(page);
+        await watchRunEvents(ext, page, (ev) => events.push(ev));   // the worker's events, which never reach the page
         const started = Date.now();
         await page.evaluate(() => { window.__run = window.ml.agent("think out loud", { stream: true, maxSteps: 2 }); });
 
@@ -191,6 +195,7 @@ test("ollama-native + streaming: the split works on the other wire shape too", a
         await collectDebug(page, events);
         await page.goto(site.url + "/");
         await waitForMl(page);
+        await watchRunEvents(ext, page, (ev) => events.push(ev));   // the worker's events, which never reach the page
         await page.evaluate(() => window.ml.agent("settle the page", { stream: true, maxSteps: 4 }));
 
         const [withPhases] = events.filter((e) => e.kind === "agent-step" && e.usage?.genPhases?.length);
@@ -220,6 +225,7 @@ test("ollama-native without streaming: real timings, and still no invented split
         await collectDebug(page, events);
         await page.goto(site.url + "/");
         await waitForMl(page);
+        await watchRunEvents(ext, page, (ev) => events.push(ev));   // the worker's events, which never reach the page
         await page.evaluate(() => window.ml.agent("answer", { maxSteps: 2 }));
 
         const [u] = events.filter((e) => e.kind === "agent-step" && e.usage).map((e) => e.usage);
@@ -251,6 +257,7 @@ test("the OpenAI route reports no model timings at all — and reports that, rat
         await collectDebug(page, events);
         await page.goto(site.url + "/");
         await waitForMl(page);
+        await watchRunEvents(ext, page, (ev) => events.push(ev));   // the worker's events, which never reach the page
         await page.evaluate(() => window.ml.agent("answer", { maxSteps: 2 }));
 
         const [u] = events.filter((e) => e.kind === "agent-step" && e.usage).map((e) => e.usage);

@@ -27,6 +27,7 @@ import { CODE_THEME_PRESETS, DEFAULT_CODE_THEME, VSCODE_THEME_ID, convertVscodeT
 import { convertStored } from "../code/code-theme-css";
 import { IconCheck } from "../icons";
 import { Disclosure } from "../ui-kit";
+import { toHost } from "../parent-channel";
 
 /** The chart-window lengths the picker offers by name. The scrub strip can set others by drag, which is
  *  why the select needs to know which values it already has an option for. */
@@ -523,7 +524,7 @@ function ModelTests() {
                     <div class="test-err" key={key}>
                         {st.image ? <img class="test-thumb zoomable" src={st.image} alt={`${label} test image`}
                             title="Click to view full size — decide for yourself if it really failed"
-                            onClick={() => window.parent.postMessage({ __mlLightbox: st.image }, "*")} /> : null}
+                            onClick={() => toHost({ __mlLightbox: st.image })} /> : null}
                         <span><b>{label}:</b> {truncate(st.error!, 160)}</span>
                     </div>
                 );

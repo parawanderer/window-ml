@@ -431,6 +431,13 @@ thing. The parts:
   here has done at least once. The helper slides the panel open, waits for the iframe, CLICKS the session row
   (optionally matched by task text) and waits for the detail view. It does not wait for the run to finish, so
   it is right for the live demos too.
+- **A background run's events are not on the page's window: watch them with `watchRunEvents(ext, page, fn)`**
+  (harness.mjs), which holds the DevTools panel's `ml-devtools` port for the page's tab from an extension page and
+  hands each event to Node. Since attack 15 (docs/spec/SITE_ACCESS.md) the worker sends a run's events to the shell
+  over `chrome.runtime` only; a `message` listener on the page now sees just the page's OWN events (a run the page
+  hosts), so a spec keeps that listener for those and adds the watcher for the rest. Open the sidebar by CLICKING its
+  tab (`#ml-sb-tab` in the `#ml-sb-root` shadow root), never by posting `__mlSidebarOpen` into its iframe: the app
+  ignores window messages on a web page, because the page could send them too.
 - **Real model:** point the extension at a real backend with `E2E_BACKEND=<chatUrl>
   E2E_MODEL=<id> E2E_KEY=<bearer>` (the observer also accepts `USE_ENV=1` to read
   `OPENWEBUI_URL/KEY/MODEL` + `OPENWEBUI_UTILITY_MODEL`/`OPENWEBUI_VISION_MODEL` from `.env`).

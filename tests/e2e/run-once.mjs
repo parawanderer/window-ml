@@ -27,7 +27,7 @@ const MANIFEST_VERSION = await import("node:fs/promises")
     .then((fs) => fs.readFile(new URL("../../manifest.json", import.meta.url), "utf8"))
     .then((t) => JSON.parse(t).version).catch(() => undefined);
 
-import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, watchRunEvents } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 import { renderMarkdownPage } from "./viewer.mjs";
@@ -271,7 +271,7 @@ export async function openSidebarAndFocus(page, artDir, log = () => {}) {
         const panel = root.getElementById("ml-sb-host");
         panel.style.width = `${Math.round(window.innerWidth / 2)}px`;
         panel.classList.add("open");
-        root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+        (root.getElementById("ml-sb-host").classList.remove("open"), root.getElementById("ml-sb-tab").click());
     });
     const frame = await (async () => {
         for (let i = 0; i < 40 && !page.isClosed(); i++) {
@@ -426,7 +426,7 @@ export async function runOnce(cfg = {}) {
         page.on("console", (m) => { transcript.push({ kind: "console", type: m.type(), text: m.text() }); if (m.type() === "error") log(`  [page console.error] ${m.text().slice(0, 300)}`); });
         page.on("pageerror", (e) => { transcript.push({ kind: "pageerror", text: String(e) }); log(`  [pageerror] ${String(e).slice(0, 300)}`); });
 
-        // Collect the extension's debug event stream NODE-side, via a bridge re-attached on EVERY document
+        // Collect the PAGE's debug event stream NODE-side, via a bridge re-attached on EVERY document
         // (addInitScript) so it survives a cross-page navigation — a page-context array would be wiped each
         // reload, losing every event after the first nav. Dump on EVERY event so a hung/interrupted run still
         // leaves a readable partial transcript.
@@ -460,6 +460,9 @@ export async function runOnce(cfg = {}) {
         };
         await page.goto(startUrl);
         await waitForMl(page);
+        // The worker's events (a background-hosted run's steps) never reach the page's window, so they come from the
+        // DevTools port; the page's own still arrive through the bridge above. Overlay mode sends neither twice.
+        await watchRunEvents(ext, page, (ev) => { events.push(ev); onEvent?.(ev); dump(events); });
 
         // Watch for + resolve approval gates the whole time the run is in flight (a gate can appear at any step).
         const approvalTask = (async () => {

@@ -1,7 +1,8 @@
 # Spec: sites get `window.ml` only when someone said yes
 
 **Status: building.** Hostile-site suite first (#373, every attack shown working against the old build); slice 0
-(#374) and slice 1 (origin gate, lists, settings) built; slices 2 to 4 not started. Written 2026-10-06. Supersedes the idea recorded on 2026-07-29 (a consent prompt only
+(#374) and slice 1 (#378, origin gate, lists, settings) merged; slice 2's first part (attacks 15 and 16: the run's
+events and the extension's own iframe) built; the rest of slice 2, and slices 3 and 4, not started. Written 2026-10-06. Supersedes the idea recorded on 2026-07-29 (a consent prompt only
 when the extension holds "on all sites"): this gates every site, whatever the browser's site-access setting is.
 
 ## The problem
@@ -275,6 +276,15 @@ The attacks, each its own test:
 14. **Read a run's pointers.** `DEREF_TOKEN` answered anyone who named a run id, and the run id reaches the page in the
     run's own debug events, so a page a run visited could read every value the run captured, including other
     origins' content and credentialed fetches. Found while building slice 0.
+15. **Read and forge the run's event stream.** The worker sent a run's steps and result to its tab, and the content
+    script re-posted each onto the PAGE's window for the shell to pick up: a page a run arrived on read every earlier
+    step's result (15a), and a page could post its own events tagged as the worker's, drawing a fake run in the card
+    (15b) or rewriting the call a real approval prompt shows while the person decides (15c). Found by the session
+    building `ml.current`.
+16. **Talk to the extension's own iframe.** The shell's shadow roots are open, so a page reaches the card's iframe;
+    the app inside talked to its parent window, which on a web page IS the page. The page heard what the person typed
+    into the card (16a) and could post events straight into it (16b). Separately, the session index let a page write
+    into a background run's session on its own tab, since that run's owner is the tab (16c). Found while closing 15.
 
 The suite was written before any slice landed, against a build that every attack beats. While a slice is open its
 tests assert that the attack SUCCEEDS; the slice that closes it flips that, and the same tests then assert the secure
@@ -289,7 +299,8 @@ wait is on a run finishing or a state change, never a timer.
    Attack 12.
 1. The background check and the approved/denied lists, with the settings UI. Unapproved pages still get the full
    `injected.js` but every call is refused. Red-team enumeration tests.
-2. Delegation tokens, and the vision tools' model calls moved to the background. Tests 9 to 11.
+2. The run's events and the extension's own iframe out of the page's reach (built first: attacks 15 and 16).
+   Delegation tokens, and the vision tools' model calls moved to the background. Tests 9 to 11.
 3. The stub and `requestAccess`, with the badge and popup entry. Tests 3 to 7. The self-approval whitelist moves to
    origins, and an approved site may ask for it ([above](#the-self-approval-whitelist-slice-3-draft-wording-for-the-owner-to-approve)).
 4. Not injecting the full API on unapproved pages, and `use_dynamic_url`.
@@ -336,6 +347,16 @@ Recorded as each slice lands, with the reason.
   it.** The page that built it is gone, and its follow-up and Continue would otherwise be refused (they are run
   control). The Commander's Pyodide prewarm moved to its own message type for the same reason: the shell shares the
   page's sender.
+- **Slice 2 grew a first part, attacks 15 and 16.** The run's events now reach the shell over `chrome.runtime` and are
+  never posted on the page's window; a window message claiming to be the worker's is the page's. The sidebar app talks
+  to the shell over a `MessagePort` the shell hands only to a frame that showed it a secret through
+  `chrome.tabs.sendMessage`, which the page never sees (`src/sidebar/parent-channel.ts`); under the DevTools panel,
+  whose parent is an extension page, plain window messages stay. What a page may add to a session the worker speaks
+  for is one rule, `pageMayWrite` (`src/event-admission.ts`), applied by the shell before the card or sidebar and by
+  the worker before the index or a DevTools panel: nothing for a run the worker built, only its own start, follow-up
+  and result for a run it built that the worker hosts. `ml.__events()` from a page leaves out the events of runs the
+  worker built. Tests that watched a background run on the page's window now watch the DevTools port
+  (`watchRunEvents` in the e2e harness), and the ones that opened the sidebar by posting into its iframe click its tab.
 - **Not fixed, noticed:** `GET_CONFIG` never sent `labelMatch`, so a page-built run always used the default metric.
   `publicConfig` keeps that behaviour; the worker path inherits it.
 
