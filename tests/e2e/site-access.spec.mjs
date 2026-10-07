@@ -325,4 +325,33 @@ test.describe("@security attack 15: the run's event stream and the page", () => 
             expect(await cardText()).not.toContain("FORGED");
         } finally { await close(); }
     });
+
+    test("15c: a page cannot redress a real approval prompt while the person is deciding", async () => {
+        // 15b forges a whole fake run onto a page with no run. This one attacks a REAL gate: the run's step arrives
+        // with `awaitingApproval`, the card opens for the person's decision, and while it waits the page re-posts that
+        // same step (same run, same seq — the reducer patches the row it matches) with arguments the run will never
+        // execute. The hole is the card asking for approval of one call while the gate holds another.
+        const { fake, site, ext, close } = await setup();
+        try {
+            const page = await open(ext, site.url("evil.test", "/?redress=1"));
+            const idx = await sessions(ext);
+            fake.setScript([{ tool: "click", args: { selector: "#next" } }, { content: "done" }]);
+            const hash = await userStartsRun(ext, idx, page, "click the Next link");
+            await expect.poll(() => idx.status(hash), { timeout: 15000 }).toBe("waiting");   // the run holds the real gate
+            await expect.poll(() => page.evaluate(() => window.__redressed), { timeout: 15000 }).toBeGreaterThan(0);   // the attack was attempted
+            const cardText = async () => {
+                const card = page.frames().find((f) => f.url().includes("sidebar.html"));
+                return card ? await card.locator("body").innerText().catch(() => "") : "";
+            };
+            if (holeOpen("slice2", "a page can re-post a real pending step with rewritten arguments")) {
+                await expect.poll(cardText, { timeout: 15000 }).toContain("#totally-harmless");
+                return;
+            }
+            // Secure: the card still asks about the call the gate holds — the real element, named by the page's own
+            // descriptor ("the link “Next”"; the consent card renders the resolved label, never the raw selector) — and
+            // the page's rewrite changed nothing on it.
+            await expect.poll(cardText, { timeout: 15000 }).toContain("click the link");
+            expect(await cardText(), "the page's rewritten step changed the card").not.toContain("#totally-harmless");
+        } finally { await close(); }   // abandons the still-gated run (nothing is pending server-side)
+    });
 });
