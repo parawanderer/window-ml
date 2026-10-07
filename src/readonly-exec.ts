@@ -967,6 +967,26 @@ function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown, meter?
             });
         };
     }
+    // `ml.jsonPath(value, expr, { paths })` — RFC 9535 JSONPath over JSON data (json-path.ts): no eval, its own parser.
+    // Free here under the same three bounds as the pipe, and for the same reason (one host call, work the step count
+    // cannot otherwise see, over an expression the model wrote): every node it visits is CHARGED to the step budget
+    // (`$..[?@..x]` is quadratic), every `match()`/`search()` pattern passes `riskyRegex` before it is compiled, and only
+    // a sanitized `{ paths }` is forwarded, never the script's own object. It reads members as DATA, so a getter on a
+    // page object is refused, not run, and a cycle is an error, not a hang.
+    const hostJsonPath = (ml as Record<string, unknown>)["jsonPath"];
+    if (typeof hostJsonPath === "function") {
+        out.jsonPath = (source: unknown, expr: unknown, opts?: unknown): unknown => {
+            if (typeof expr !== "string") throw new Error('ml.jsonPath takes an expression string as its second argument, such as "$..id"');
+            const paths = !!(opts && typeof opts === "object" && Object.getOwnPropertyDescriptor(opts, "paths")?.value === true);
+            return (hostJsonPath as (...a: unknown[]) => unknown).call(ml, source, expr, { paths }, {
+                charge: (n: number) => meter?.charge(n),
+                onPattern: (src: string) => {
+                    const why = riskyRegex(src);
+                    if (why) throw new Denied(`ml.jsonPath: the pattern ${JSON.stringify(src)} has ${why}, which can run for hours on one value — it needs approval`);
+                },
+            });
+        };
+    }
     // `ml.answer` — the run's curated answer set (a curate-only facade: add/remove/clear/dump/length, built by
     // the CALLER via makeAnswerFacade so this interpreter stays dependency-free + DOM-free). Mutating your OWN
     // user-facing answer is a safe terminating operation (the dialect already builds + mutates script-local
