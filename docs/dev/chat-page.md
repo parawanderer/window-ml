@@ -887,3 +887,28 @@ resume and reset already are the reconciliation.
   that grows until the phone is full. Anything left under the old cache path is simply not found and refetched once.
   Joining or leaving an account clears it (`native-embed-app.tsx`), so a device never replays the last account's
   sessions.
+
+## Traps
+
+- **One design language across the surfaces.** The phone app and the chat page's CALM view are the same product on two
+  screens: same palette, same glyphs, same order, unless a device fact (a thumb, a sheet, a back gesture) makes one
+  wrong. A change to the page's colours or icons is a change to `mobile/` in the same breath. The rule and how the two
+  drifted the first time: `mobile/AGENTS.md`.
+- **Notifications.** The certificate's deadlines are handed to the OS **in advance** (one pure plan, `src/chat/reminders.ts`),
+  which is why they reach a closed app and a push could not; an approval is posted only while this device is already
+  running, and only while nobody is looking at it. Only the DURABLE half of a certificate may reach a reminder
+  (`notAfterMs`, `mayRevoke`, `renewable`) — `issuerOnline` and `canRenew` are readings of now, and a sentence
+  scheduled for next month must still be true when it arrives. Nothing about a session, a task or a page ever goes on
+  a lock screen. `expo-notifications` is installed but deliberately NOT in `app.json`'s plugins: its iOS plugin writes
+  a push entitlement a free signing certificate cannot grant.
+- **Chat page.** `src/chat/` never reaches `chrome`: the web build fails on a `chrome.*` reference. Events reach
+  `sessionMap` only through `SessionFeed` and `onDebug`, never written by hand, and a transcript changes only when the
+  runtime says so (no optimistic updates). The background's session index (`session-index.ts`) is fed where the DevTools
+  panel is fed, never at a second point: a background run's start and result are emitted page-side on some surfaces and
+  background-side on others, and feeding both records a run twice. A page's forwarded event is untrusted and bound to
+  its tab. The ONE session with no such pair is a chat the worker hosts itself (`chat.start`, `sw-chat.ts`): it has no
+  tab, so no panel can be attached to it, and its events reach the index and nothing else. A run started from an
+  extension page (`agent.start`) goes through the target tab's OWN start path, because the page builds the toolset
+  and the system prompt; the worker has no second way to start one. The extension-only views (the resource panel,
+  the Python bench) reach the chat page through `ChatExtras`, asked PER RUNTIME: the runtime says the capability
+  exists and the device says it can draw it, and a page that answers only one of the two shows nothing.

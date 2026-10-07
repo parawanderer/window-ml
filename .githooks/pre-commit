@@ -156,3 +156,9 @@ base=$(git merge-base HEAD origin/main 2>/dev/null || echo "")
 if [ -n "$base" ]; then
     node scripts/check-file-size.mjs "$base" --staged || true
 fi
+
+# AGENTS.md's size, when it is being changed: a reminder, never a failure. It is loaded into every session, and it
+# reached 94.8k characters one reasonable paragraph at a time before it was cut back (docs/dev/working-in-the-repo.md).
+if echo "$staged" | grep -qx 'AGENTS.md'; then
+    node scripts/check-agents-size.mjs --staged || true
+fi

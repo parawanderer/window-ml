@@ -322,3 +322,131 @@ as in AGENTS.md — they are all under `src/`.
   `.bench-code .cm-content` in a real browser, where `inputValue()`/`toHaveValue()` no longer apply: read
   the document as `.cm-line`s joined by `\n`, since `toHaveText` normalises exactly the whitespace a
   reflow test is about.
+
+## The harness, the suite and its rules
+
+## End-to-end & real-model testing (the Playwright harness)
+
+`tests/e2e/` loads the **built `dist/`** extension in a real Chromium so browser-only
+behaviour (navigation, SW lifecycle, content-script re-injection) can be exercised. It is
+**opt-in and slow** — reach for it only when jsdom/`node:vm` genuinely can't represent the
+thing. The parts:
+
+- **`harness.mjs`** — `launchExtension()` (persistent context + `--load-extension=dist`),
+  `configureExtension(sw, cfg)` (writes `chrome.storage.sync` via the SW), `waitForMl(page)`.
+  **HEADLESS by default**, via `channel: "chromium"`. The old note here said an MV3 service worker does
+  not register under headless Chromium — true, but narrower than it read: plain `headless: true` runs the
+  headless SHELL, a stripped binary with no extension support at all. `channel: "chromium"` runs the FULL
+  browser in `--headless=new`, where the worker registers in ~0.5s and the whole suite passes. This
+  matters beyond tidiness: a headful window grabs focus and the mouse on every launch, and the suite
+  launches one per spec. Pass `headful: true` (the narrated demos do) or set `E2E_HEADFUL=1` for a look.
+  **`E2E_DIST=<dir>`** runs specs against a bundle built elsewhere (`node build.mjs --outdir <dir>`) — use it
+  whenever `dist/` is loaded in a window someone is using, rather than rebuilding underneath them. **A run is started exactly like a console call:** `page.evaluate(() =>
+  window.ml.agent(task, opts))` — Playwright's `page.evaluate` runs in the page **main world**,
+  where `injected.js` defines `window.ml`, so no test-only hooks; the same front door a human
+  uses. The result structured-clones back to Node.
+- **`fake-llm.mjs`** — a scriptable OpenAI-shaped backend (`startFakeLlm()` → `setScript([...])`)
+  so the REAL pipeline (background loop → tool delegation → page) runs **deterministically with
+  no Ollama**. A script step is `{ content }`, `{ tool, args }`, or `(reqBody) => step` (reactive
+  — the final answer can echo a value a real DOM tool read off the page). This is the CI gate.
+- **The suite is `fullyParallel`** (3 workers in CI, half the cores locally). Each test gets its own browser and
+  its own servers on port 0, so tests share nothing. A spec that DOES share state across its tests (one browser
+  from a `beforeAll`) must pin itself with `test.describe.configure({ mode: "default" })`, or its tests land on
+  different workers, each running its own `beforeAll`.
+- **RULE — a wait loop breaks on something that is on screen while a step is COLLAPSED.** Steps start collapsed,
+  so anything inside a step body (`.r-py-in`, `.code.tb`, `.r-df-table`) is not in the DOM until the step is
+  opened, and a `for (…; i < 60; …) { …; if (bodyThing) break; sleep(400) }` quietly runs to its cap and then
+  passes anyway, because the test opens the step next. Eleven tests did that for 24–30 s each. Wait for the RUN
+  TO FINISH instead (`fake.calls().length` has reached the script's length and no `.astep.tool.pending` is
+  left) — not merely for one step to land, or the test opens a step while the next is still arriving and the
+  sidebar re-renders under it, which only shows once CPU is contended. A test whose time is the same on a
+  laptop and on CI is waiting on a timer.
+- **`cross-page.spec.mjs`** — a `smoke` (extension loads + one-shot agent) + a `sanity` (agent
+  reads a page value via a DOM tool and answers it) that run under BOTH the fake and a real
+  backend, plus the skipped cross-page acceptance test (see `tmp/cross-page-agent.md`). Those two
+  are tagged **`@real-ok`**, and a `beforeEach` SKIPS every other test in the file when
+  `E2E_BACKEND` is set: the rest script an exact turn sequence and read `fake.calls()` back, so
+  they cannot mean anything against a real model — and without the skip they dereferenced a null
+  `fake` and failed, which reads as a product bug in the nightly real-model job. Tag a new test
+  `@real-ok` only if it guards its fake usage (`if (fake) …`) and asserts on the run's own result.
+- **The self-tools** (details and gotchas: `docs/dev/e2e-harness.md`; each has a skill in `.claude/skills/`):
+  `observe.mjs` drives ONE agent run and writes `run.md`/`run.json`/screenshots — how a model debugs the
+  extension. `run-once.mjs` is the core observe and the bench share (seeded histories included). `bench/` is a
+  typed matrix over `runOnce` with spread, not point estimates, and its own CI job. Debug probes against LIVE
+  backends (never in CI): `server-tool-live.mjs`, `md-ladder-live.mjs`, `proto-stream-live.mjs`,
+  `capture-frames.mjs` (records real event-stream fixtures). The chat page's web build has its own: `chat-shots.mjs`
+  (phone + desktop screenshots against the fake host, `SERVE=1` to just serve it) and `window.__chatFake` to script it
+  (skill: `chat-web`). `dist-app/` is that client made INSTALLABLE — a manifest, icons and a service worker holding its
+  own files (`src/chat/pwa/`, stamped in by `installable()` in build-web.mjs) — and CI publishes it to GitHub Pages
+  from main, which is how a device with no packaged app (an iPad) gets one. Pairing with a REAL hub before the screens exist: `scripts/hub-root.mjs` (the account's
+  root device on the command line) and the extension's `dev-hub-pair.html` (offers this browser, shows the
+  connection's history for an idle test) (skill: `hub-pairing`). The phone app on an emulator or a plugged-in phone,
+  OPTIONAL tooling: `scripts/android.mjs` and `scripts/ios.mjs`, same commands (boot, install, launch, screenshot,
+  Maestro flows in `tests/mobile/`; the app is `mobile/`, and CI publishes its APK as the `android-latest`
+  release) (skill: `phone`);
+  phone-layout Playwright tests are tagged `@mobile` (`npm run test:mobile`). A nearly full disk:
+  `scripts/check-disk.mjs` (the pre-commit hook warns under 20 GB free, with what to clear; never deletes) (skill:
+  `disk-space`). One look at a page (a URL or a built file, phone or desktop, touch, dark, WebKit; an expression
+  evaluated, errors and a screenshot printed): `scripts/probe.mjs` (skill: `probe`), instead of a throwaway spec.
+  Narrated demos (watched, never asserting):
+  `approval-demo`, `resource-demo` (`BOX=`), `line-map-demo`, `cursor-demo`, `panel-news-demo`, `whole-box-demo`,
+  `stream-demo`, `bench-editor-demo`, `bench-completion-demo`, `pairing-demo` (the named grants and their switches,
+  the one device that refreshes its pairing rather than renewing, and an account with nobody left to sign a removal;
+  serves `dist-web/`, so it needs no extension),
+  `run-log-demo` (the EXECUTION LOG panel, with the measured failure staged: a run whose delegated call is
+  outstanding when its tab is discarded, then reloaded in place and retried — and a trap, measured: a real
+  `chrome.tabs.discard` DESTROYS the target and takes Playwright's connection to the WHOLE browser with it, so a
+  spec cannot stage one and this demo patches Chrome's own `discarded` flag once instead),
+  `touch-tips-demo` (reading a tooltip with no pointer, on a PHONE context — and a trap for the next demo author:
+  a synthetic hover cannot be held in a HEADFUL window, because the real cursor is elsewhere and Chromium corrects
+  the pointer straight back out; it holds fine headless, which is why a spec can assert one and a watched demo
+  cannot),
+  `streak-demo` (the reading view folding runs of the same tool, appended ONE STEP AT A TIME — every rule
+  here is about the turns AROUND a step, so a finished transcript cannot show you why a stretch folded and the
+  one under it did not; part two is the ⋮ menu's "group all tool calls"; drives the fake host rather than a model,
+  serves `dist-web/`, so it needs no extension),
+  `table-demo` (fetching CSV/Parquet, then
+  scanning, surveying and analysing them through pipe / readonly exec / full exec / python_exec; part two is the
+  Arrow + cross-runtime pointer TARGET, captioned with what actually happened). Acceptance specs for unbuilt
+  slices (`pointer-values.spec.mjs`) mark each test `pending(…)`; run `SHOW_PENDING=1` to read why each fails.
+- **RULE — a demo says what it is doing, on screen: `narrate(page, "…", { sub: "…" })`** (harness.mjs). A
+  demo is WATCHED, and a watcher who cannot tell which beat is running infers it from what moved — which is
+  exactly backwards when the point of a beat is that something did NOT move. It draws a banner in the PAGE
+  (top-left, its own element, very high z-index), deliberately not inside the extension's shadow hosts, so it
+  can never be mistaken for part of the product and a demo about the sidebar cannot have its narration hidden
+  by the sidebar. `narrate(page, null)` clears it for a screenshot that should show the product alone. Call it
+  at every beat, not once at the start.
+
+  The banner also says WHOSE WINDOW IT IS. A headful demo takes the pointer and the keyboard, and a watcher
+  who cannot tell a finished demo from a paused one either waits for nothing or clicks into the middle of a
+  beat — so every `narrate` marks the run as still driving, and **`narrateDone(page)` flips it** to "the
+  browser is yours". Call `narrateDone` immediately before holding the browser open (or before exiting),
+  never after a later `narrate`, which sets the status back to running.
+- **RULE — a demo about what happens INSIDE a run must call `openRunInSidebar(page)`** (harness.mjs). The
+  panel opens on the SESSIONS LIST, not on the run, so a demo that only slides the sidebar open queries an
+  empty transcript, reads zero of everything, and reports that the feature does not work — which every demo
+  here has done at least once. The helper slides the panel open, waits for the iframe, CLICKS the session row
+  (optionally matched by task text) and waits for the detail view. It does not wait for the run to finish, so
+  it is right for the live demos too.
+- **Real model:** point the extension at a real backend with `E2E_BACKEND=<chatUrl>
+  E2E_MODEL=<id> E2E_KEY=<bearer>` (the observer also accepts `USE_ENV=1` to read
+  `OPENWEBUI_URL/KEY/MODEL` + `OPENWEBUI_UTILITY_MODEL`/`OPENWEBUI_VISION_MODEL` from `.env`).
+  Warm-up fires a 1-token completion before the timed window so the ~20GB cold load doesn't
+  pollute timings (Ollama's keep-alive TTL keeps it warm between runs — only the first pays it).
+
+**CI (`.github/workflows/tests.yml`):** two Playwright jobs. `e2e` is the **deterministic gate**
+(fake-LLM, every push/PR, under `xvfb`). `e2e-real-model` is a **non-blocking** sanity check
+(`continue-on-error`, `workflow_dispatch` + nightly) that runs **only the `@real-ok` tests** (everything
+else scripts the model, so it skips or tests something a real model has no bearing on) against a free
+hosted OpenAI-shaped model —
+default **Groq**, enabled by the repo secret `GROQ_API_KEY_FREE`, overridable via repo variables
+`E2E_REAL_BACKEND`/`E2E_REAL_MODEL`; it self-skips without the secret. Hard-won findings: a real model on this job produced a Groq
+`tool_use_failed` 400 — `attempted to call tool 'orient' which was not in request.tools` — having invented
+a tool from the system prompt's own numbered method ("1. ORIENT — get your bearings"). Groq validates tool
+calls server-side, so a hallucinated name is a hard 400 rather than a recoverable step, which is one more
+reason this job is non-blocking. **GitHub Models is retired** (its API 410s a "retirement brownout" — don't use it); **`llama-3.3-70b` on
+Groq emits malformed `<function=…>` tool calls** — use an `openai/gpt-oss-*` model, which complies;
+the Groq **free tier is 8000 TPM**, so a multi-turn agent (the ~3.2k-token system prompt re-sends
+each turn) trips it — hence the rate-limit backoff (`docs/dev/architecture.md`). GPU-less CI runners can't run a real model
+usefully (tiny CPU models botch tool-calling), so a free hosted API is the only real-model option in
+CI; do real iteration on a local GPU box instead.

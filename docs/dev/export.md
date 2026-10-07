@@ -143,3 +143,38 @@ tooltip now subtracts it and shows both. The OpenAI route reports none of the th
 rate includes the network; that whole matrix (openai/ollama x streamed/not) is pinned in
 `tests/e2e/gen-phases.spec.mjs`, and the fake backend serves BOTH wire shapes — it grew an
 `/ollama/api/chat` NDJSON route because only the OpenAI one had ever been exercised end to end.
+
+## What the model saw, and which artifact to reach for
+
+**RULE — the log/export ALWAYS carries what the MODEL actually saw.** The exports (Markdown +
+PDF) and the DevTools/debug log exist for DEBUGGABILITY: there must ALWAYS be a view of the raw
+model-facing INPUT *and* OUTPUT of every step — the exact args the model sent and the exact tool
+result it received — even if collapsed behind a `<details>`. The default human-facing view may be
+pretty and omit spam (a rendered table instead of raw HTML; a clean result instead of the
+plumbing/token lines the model was fed), but the raw view must NEVER be *unavailable*. The
+precedent is the tool call's raw-JSON-args disclosure that sits beside its rendered In (a static
+export shows both since it can't toggle). **So whenever a rendered/pretty view DIFFERS from what
+the model actually saw, add the raw view too** — in the sidebar (a rendered⇄raw toggle or a
+disclosure) AND both exports. E.g. when a tool result carries an appended `@tool:<id>` token line,
+that model-facing result — token line included — must be recoverable in the log, not silently
+dropped for the clean render.
+
+**WHICH ARTIFACT TO REACH FOR.** A run can be got out four ways and they are not interchangeable. Picking
+the wrong one costs a whole read-through, so:
+
+| You want to | Reach for | Because |
+| --- | --- | --- |
+| READ a run — what the model did, in order, with the images | **`run.md`** (+ `images/`) | It is the canonical human narrative. Screenshots are real PNG sidecars, so a coding assistant can open them; base64 in a text file is unreadable to everyone. |
+| Read it in a browser, folded | **`run.md.html`** | The same markdown rendered, every `h2` collapsible, and a failed run's status links AT the step that broke. Relative asset paths, so it works off the disk and under a server. |
+| DIFF two runs | **`run.json`** | A markdown diff is mostly layout. Strip `VOLATILE_FIELDS` and run `canonicalizeText()` first, or every pointer id and timestamp shows as a change. |
+| Parse a run from Python/Go, or build a tool on it | **`run.json`** + `docs/spec/export.schema.json` | The schema is normative and checked in; generate models from it. Fields tagged `@unstable` will grow. |
+| Hand a run to a person who is not you | **the PDF** | Self-contained, light-themed, images inlined, prints with sane page breaks. Nothing to unzip and no sidecars to lose. |
+| Collect data for tuning the server's VRAM predictor | **`ml.__loads()`** | One record per load: the prediction, the load's own figures and the measured trace (peak, settled, every sample). Collected only with the panel's "load predictions" toggle on. |
+| Debug the resource panel / the event lane | **`ml.__events()`** | Not an export at all: the raw INPUTS the timeline is derived from (the debug stream, the server's frames, ps/info). Use it when the drawn events look wrong, because the drawing is what is in question. |
+
+The one that surprises people: **`run.json` carries `session.events`**, the whole timeline the resource panel
+draws — spans, phases, model loads, sub-call lineage. That is the "event spam", and it is the point: it is
+derived by the same `eventsFrom` the panel uses, so a consumer never redoes arithmetic that is wrong in the
+same three places every time (spans run BACKWARDS from a finish stamp; a tool step is ONE event with
+`phases`, not three; a model load is its own event). If you are asking "where did the time go", that is the
+file. If you are asking "what did it say", it is `run.md`.

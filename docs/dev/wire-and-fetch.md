@@ -203,3 +203,41 @@ stream `done`, and `content.js` relay, and `injected.js` puts it on the
 the reply. Modern models return thinking in this separate field, not inline
 `<think>` (verified against the live server) — so there's no `<think>`-stripping
 or `cleanup` option anymore; the reply `content` is stored verbatim.
+
+## Traps
+
+- **Tables.** One representation (`TableLike`, contract-fetch.ts) and one set of parsers (`table-data.ts`) for every
+  producer — a fetched CSV/TSV/Parquet, a DOM table, the Sheets export, a pointer read. Never hand-split a
+  delimited body: the separator is DISCOVERED, and assuming a comma is the bug this replaced. `shape` is the
+  SOURCE's row count even when `rows` is a prefix, so pass `rowCount` to `tableOf` whenever you cap. Delimited
+  text parses page-side (the text already crossed the wire); Parquet and Arrow IPC parse in the worker and their decoders
+  are dynamically imported so they never reach the page bundle. A code EXTENSION beats a guessed delimiter — source
+  full of semicolons parses as a clean two-column table otherwise. A caller gets the `Table` FACADE, which is
+  read-only and throws on unknown keys: finish editing the plain `TableLike` BEFORE `asTable`, and never probe
+  a value's shape in the dialect without checking `isTable` first. A STORED table's facade (`isStoredTable`) reads the
+  value store, so its `col`/`select`/`records` return promises and its size is `shape`, never `rows.length`.
+- **Wire formats.** The protobuf path is chosen from the RESPONSE's content type, never sniffed; no `TextDecoder`
+  anywhere near binary — a fetched body is checked with `binaryKind` on its BYTES first, and a binary one is
+  described, never decoded; the protobuf `Accept` carries `events=1` (OpenWebUI's own route serves it only then, and its `Event` frame is what carries `sources`). A strict backend refusing an optional request key is
+  retried once without it — a wire nicety must never cost an answer.
+
+## The current page and local files
+
+- **The page you are ON is free in every fetch mode; a local file is never read** (`isCurrentPage`, dom.ts).
+  - Every `fetch_url` mode aimed at the current page (fragment ignored, query not) auto-approves, AS-YOU
+    INCLUDED, on both loop paths: the page already holds it and can `fetch(location.href, {credentials:
+    "include"})` itself. The credentials rule is about the REST of the origin. At the choke point, an as-you GET
+    passes without a grant only when it is the SENDER's own frame URL — the loop's check only skips a prompt.
+  - **`rendered + credentials` of the current page is its LIVE DOM** (`live: true`), read rather than loaded a
+    second time in a session tab (which re-runs the page's scripts and their side effects). It is the ONLY mode
+    answered that way: a plain or `format: "html"` fetch promises the server's or file's BYTES, and a
+    sessionless `rendered` load is a fresh page — handing either the live DOM would be a different document
+    under the name of the one asked for. Overlays are not stripped (that works by deleting nodes, which on the
+    live page would edit the user's page).
+  - `ml.fetch` holds the rule, so `fetch_url` (which calls it) and `ml.fetch` in `exec` cannot disagree. The
+    read-only dialect hands `_fetchCached` the MODE (a sanitized copy) instead of dropping it, and serves a
+    non-default mode only as a live read — it had been answering `rendered`/`format: "html"` from the
+    default-mode cache.
+  - The background refuses every non-http(s) URL: a `file:` read could be any file on the machine (`~/.ssh`, a
+    `.env` holding the API key), a hostile page reaches that handler directly, and Chrome's fetch has no file
+    scheme anyway. On a `file://` page the refusal names `rendered + credentials` as the one mode that works.

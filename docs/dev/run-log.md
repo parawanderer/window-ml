@@ -169,3 +169,20 @@ or the API gets shaped around a speculative reader. Two hazards, in order:
    run and applies the withholding. A page-side check is not the boundary.
 
 `DUMP_RUN_LOG` is extension pages only until that exists: the ring holds every run's records.
+
+## The trap this log exists for
+
+- **The execution log is the OTHER half of that trap, and it is NOT the housekeeping log.** What the machinery did
+  under a run — the discarded tab reloaded, the CDP attach refused, the tab re-filed under a new id — goes to
+  `run-log.ts`, whose scope is per-RUN mechanics. **It exists because a `console.log` in a service worker is one
+  nobody will ever see, so write what the worker did HERE**: `recordRunLog(runId, { subsystem, kind, reason?,
+  detail? })` where the run is in scope, or `noteRunMechanic(tabId, …)` (sw-runs.ts) where only the tab is, which
+  is the usual case — the machinery is addressed to tabs and the log is read per run. Both are fire-and-forget
+  and neither can throw. Driving the browser yourself? `globalThis.__mlRunLog.echo()` in the WORKER mirrors every
+  record to its console as it happens, and `.all()` reads the ring without a message; off for everyone else, for
+  the reason above. It is NOT the housekeeping log, whose spec excludes "anything a user or model action caused
+  directly" — a CDP attach is caused by a tool call — but it REUSES that log's record shape plus a `run` and its
+  sanitizer, so one renderer draws both. Two things bite: `sanitizeRunReport` SILENTLY DROPS a record whose
+  `subsystem`/`kind` is not a lowercase slug (right in production, invisible in development — a tool name is
+  never a `reason`, it goes in `detail.tool`), and `detail.tab` is which tab a record is ABOUT, while the event's
+  own `tab` means who REPORTED it. Never a line per probe: the transcript already shows what a step cost.
