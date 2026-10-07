@@ -99,3 +99,63 @@ forwards it to the background as `ML_HL_REMOTE {tabId, ref}`, which `chrome.tabs
 to the tab's `shell.ts`, which draws the box (in devtools mode it lazily mounts a
 highlight-only shadow host, since no overlay is present). `SET_APPROVAL` is the same shape.
 A future page-input channel would follow the pattern.
+
+## Traps
+
+- **Sidebar.** One app, two surfaces: a new app→parent message must also be handled in `panel.ts`, and anything
+  that acts back on the page needs the reverse channel (panel → background → content shell). The shared session
+  views call `services()` (`services.ts`), never `chrome.*` or the parent frame, because the chat page and a phone app
+  reuse them; an entry point installs the implementation before rendering. Gate an affordance on the seam's questions
+  (`sideCalls(session)`, `bench`), never on this browser's `config`. A session's key is `Session.hash`, which is
+  `runtime:hash` in a multi-runtime client: split keys on the LAST `:`.
+- **Transcript.** A long session is WINDOWED: only the newest `WINDOW` items are in the DOM (`transcript-window.tsx`;
+  a 1000-turn chat drew 34k nodes and 1.9 MB before it). Anything that JUMPS to a step goes through `reveal`, which
+  grows the window, pages the session back and reports `gone` — a citation that silently does nothing is the failure
+  being prevented. The window is a plain Map bumped through `rev`, NEVER a signal read during render: a component that
+  reads a signal is converted to re-render from it and stops re-rendering from the parent's `rev` cascade, which made
+  live turns stop appearing while every window assertion still passed.
+
+## Tooltips: the panel's, not the browser's `title`
+
+**RULE — use the PANEL'S tooltip, not the browser's `title`.** `cursorTipOn(text)` (ui-kit.tsx) is the
+default for anything explanatory; a native `title` needs an argument for itself. Three reasons, all of them
+things a reader hits rather than notices: the native one waits about a second, which on something you are
+hovering to decide whether to CLICK is long enough to have given up; it renders as an OS artefact rather than
+as part of the panel, and cannot show a pointer as code or wrap a sentence sensibly; and on a wide target —
+a code line, a table cell, a whole row — it appears wherever the pointer is while an anchored tip can sit
+half a panel away from what summoned it. `cursorTipOn` follows the cursor and is read into the one shared
+floating layer (`CursorTipLayer`), which is also what makes its prose unselectable, so copying a code block
+never picks up the explanation of it.
+
+  **TWO RENDER MODES, told apart by TYPE.** `cursorTipOn` takes a `string` OR a node. A STRING is markdown
+  TEXT — escaped, then rendered inline (`code`, *emphasis*, math) — because a string is where content from
+  OUTSIDE arrives: a JSON Schema's `description`, a tool result, a model's prose. Treating one as markup
+  would be an injection. Anything else is authored JSX, passed as children rather than an HTML string, so
+  there is no way to hand it something unescaped by accident. `TipText` (ui-kit) does the same for the
+  ANCHORED `.tt-pop` tooltips whose prose comes from data — the JSON tree's key descriptions are our own
+  parameter docs, which are full of backticked identifiers, and printing the backticks reads as a renderer
+  that gave up.
+
+  **What inline markdown will NOT do, deliberately**: no images (unbounded pixels in a gutter or a tooltip,
+  and a tool result could put them there) and no links out of a model's prose — a one-click egress in chrome
+  the reader trusts, whose text and destination markdown lets disagree. A pointer link stays text there too:
+  navigating needs the run's `seq`, which this renderer has none of, and a link that goes nowhere is worse
+  than plain text. Pointer links live in the ANSWER renderer, which has that context. Both refusals have a
+  test, because both are currently true by accident of how the inline pass works.
+
+  **A FINGER CAN READ ONE TOO.** A touch raises `pointerover` and then, a moment later, the synthetic
+  `pointerout` that ends it, so every anchored tip used to flash and vanish on a phone and its prose was simply
+  unreachable. A TAP now holds one open and the next tap anywhere dismisses it (`tooltip-layer.ts`) — but only on
+  a trigger that is NOT itself a control. The split is the same one below: a control's tip is its NAME, which
+  `aria-label` already carries, and raising a popup on every icon button a finger lands on turns ordinary use into
+  a flicker. The tap is never stolen — whatever it was pressing still happens.
+
+  **The exception is an accessible NAME.** A `title` on an icon-only control is what a screen reader and a
+  keyboard user get, and `cursorTip` is pointer-only — so those keep a name (prefer `aria-label`) and gain
+  the custom tip for the pointer. The split is: naming a control → `aria-label` (+ a tip); explaining
+  anything → the custom tip. When the prose must also be readable with no pointer at all, put a `.tt-pop`
+  child in the DOM beside it, the way a marked code line does.
+
+  Not yet swept: `settings.tsx`, `hud-card.tsx`, `card-composer.tsx`, `resource-scrub.tsx` and
+  `resource-device-view.tsx` still hold native `title`s. New code follows the rule; those are a follow-up, not a
+  licence.

@@ -410,3 +410,25 @@ fails in seconds instead of hanging the runner.
 
 What this dialect adds is using membership as the approval decision: in the dialect, it runs without a prompt; one
 construct outside it, and a person is asked.
+
+## The rule for extending the dialect
+
+**RULE — extending the dialect requires adversarial tests.** Any time you add a construct to the
+read-only dialect (a new statement/operator/pattern, a new allowed method, a new facade member),
+you MUST — without being asked — add ADVERSARIAL tests that try to abuse the NEW pattern to reach
+something it shouldn't (extract/invoke an effectful method, walk to `window`/`constructor`/a realm,
+mutate, spend tokens, loop unbounded) and assert each is REJECTED (`NotInDialect`/`Denied`) or
+rendered inert (the `METHOD_REF` sentinel). A new binding form (e.g. destructuring) must be probed
+for whether it can bind a live method or reach a denied prop; a new allowed method for whether its
+return leaks the realm. The invariant is unchanged: gaps degrade to "asks the human," never to "runs
+unsafely" — new tests prove the new surface keeps that.
+
+  **The escape tests are not enough on their own: re-check the whole CONTRACT, not just the new surface.** An
+  extension can break an argument made for an EARLIER one, and nothing notices: `for…of` was argued terminating
+  because nothing could grow an iterable, and the next day's owned `Set`/`Map` mutators made
+  `for (const x of a) a.push(x)` run forever. So every extension also gets, in the same change: HALTING tests (can it
+  loop without a trip count fixed at the start, change a collection something is iterating, recurse by a route
+  `MAX_CALL_DEPTH` does not see, or do work proportional to an argument inside one host call with no budget or size
+  check in front of it?), FAILURE tests (a script that uses it and then falls out of dialect leaves nothing behind),
+  and an update to `docs/dev/readonly-exec.md`. Anything that could loop is tested in a worker with a timeout, so a
+  regression fails instead of hanging the runner.

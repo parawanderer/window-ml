@@ -399,3 +399,15 @@ queue longer than what remains is clamped.
 
 A patched Ollama behind a STOCK OpenWebUI is fine — the `/ollama/*` passthrough is generic, so the
 OpenWebUI fork is not needed for the capacity work.
+
+## Request hints, in brief
+
+**Request hints** (`hint` on every generation request) tell the patched Ollama WHO WAITS for each output
+(`use`), which run or conversation it belongs to (`session`, `wml-<hash>`) and what the session waited on
+(`after`), so placement and keep-alive can later be learned from real use; today they are only recorded on
+`gen.end`. `wireHint` (contract-run.ts) is the one place limits and defaults apply. **An absent `use` means unknown:
+never guess one for a caller that did not say.** A tool's own model calls inherit the running run's session
+(`currentRunSession`, bound while the tool runs), and the observe/bench harnesses mark their traffic
+`synthetic` (`SYNTHETIC=0` for a run a person drives). Each request also carries our own `request` id, back on
+the call's usage and echoed on `gen.end`, so `joinGens` matches the server's record of a generation to our call
+exactly instead of by model and end time. The full mapping is in `docs/FORKED-BACKENDS.md`.

@@ -387,3 +387,35 @@ a run no page can read, which today is none, and a headless agent would be.
 The page-hosted loop asks the worker with `USER_FOCUS_REQUEST` → `USER_FOCUS`, answered relative to `sender.tab`,
 always coarse; the background-hosted loop calls `focusLineFor` directly. Both reach the one formatter,
 `formatChatMeta` (agent-loop.ts), through `ChatMeta.userFocus`.
+
+## Traps: delegated tools and where a run starts
+
+- **A delegated tool has a THIRD outcome, and it is the one that hurts.** `chrome.tabs.sendMessage` to a tab the
+  browser has put to sleep in the background neither answers nor rejects — the content script is registered, the
+  renderer is simply not running it — so the send sits. A measured run spent 13m57s inside one `pageInfo` and was
+  released by the person opening the tab. Every send goes through `delegateSend` (sw-run-host.ts), which watches
+  the tab while it waits (`page-reachable.ts`): a `discarded` tab is reloaded in place and retried once (it has no
+  document, so a reload costs nothing already lost), and a frozen one, which the browser labels as nothing unusual,
+  is bounded by a deliberately generous cap. A tab hosting a run is also pinned (`autoDiscardable: false`) and
+  released when it ends. And a tab can come back under a NEW id: `chrome.tabs.onReplaced` is the only notice, since
+  no navigation commits and nothing is removed, so everything keyed by tab is re-filed there or the run is orphaned
+  under an id nothing will send again.
+- **A run never starts on a page WE own.** A run that asked for an empty tab has to open some real http(s) page, and
+  the three obvious candidates are all wrong: Chrome refuses an extension on `chrome://newtab` and on a top-level
+  `about:blank` (an opaque origin, refused even with `<all_urls>` — both checked against the real browser), and the
+  extension's OWN page is a PRIVILEGED origin, where the model's `exec` reaches `chrome.storage` and the API key with
+  it. So the floor is `AGENT_START_PAGE` (contract-config.ts), an ordinary web page published from `dist-app/`, where
+  `window.ml` loads and `chrome.*` is undefined. `MlConfig.agentStartPage` overrides it and a client's own URL beats
+  both. The page is exempt from the PWA worker's navigate-to-shell fallback (`src/chat/pwa/sw.js`), or an installed
+  copy would answer it with the chat client — a failure only people who had opened the app would ever see.
+- **Whether a new tab can be opened is the RUNTIME's answer, not the client's guess** (`capabilities.blankStart`,
+  `src/chat/blank-start.ts`). A browser with limited site access will not run the extension on that page, and the
+  coarse `site-access` attention code cannot tell you: it asks whether `<all_urls>` is held, so it fires for a
+  runtime on "specific sites" whether or not the one page that matters is among them. The capability carries the URL,
+  whether it is permitted, and — only while it is NOT — the origins that runtime already holds. That list exists for
+  the REMOTE reader, which is why `remoteDescription` (hub-runtime.ts) must never strip it: no client can grant a
+  permission on another machine, so the sites it already holds, and its own browser's name for wording the fix, are
+  the only actionable things left. ABSENT IS NOT BLOCKED — an older runtime reports nothing here, and refusing to
+  start on one that never claimed a problem breaks every run on it. The block applies only where the run would use
+  the runtime's DEFAULT page: once a URL is named by the client the question has been answered, and going on blocking
+  it makes the way out unreachable.

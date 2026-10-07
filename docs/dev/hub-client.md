@@ -352,3 +352,21 @@ storage on Android, "this device only, after first unlock"). A keystore holds by
 - **The app serves the three names and nothing else**, answers before the page's `ready` (the page needs its keys to
   get there), and only to its own `file://` page.
 
+## Traps
+
+- **Hub client.** A hub is trusted with nothing, including who sent something: what a runtime acts on is the signature
+  inside the seal, never `Envelope.sender`. The checks in `seal.ts` are in a deliberate order and the nonce is last, so
+  only an authenticated command inside its clock window can fill the replay window. Bytes reaching WebCrypto are
+  `Uint8Array<ArrayBuffer>` (`bytes()` at every protobuf boundary), and the two implementations are kept honest by
+  vectors in both directions, not by reading the spec twice.
+- **WHO THE ROOT IS: a phone in a pocket, not a server and not a script.** An account's root key lives on the device
+  people pair others FROM, which is a CLIENT — the phone app, or the hosted client on an iPad. `client-pairing.ts` is
+  the only implementation with `createAccount`; `extension-pairing.ts` refuses it outright and reports `canCreate:
+  false`, because **no runtime ever holds the root** (window-ml-hub end-to-end-crypto decision 4). The root is also
+  deliberately COLD: it is not the revocation signer, which is why a runtime holds a never-delegable `may_revoke` and
+  a revocation is signed with the root nowhere near (window-ml-hub `docs/design/revocation.md`). What still needs it
+  is pairing a device, granting `may_revoke`, and renewing the certificate of whichever device holds that.
+  **`scripts/hub-root.mjs` is NOT how this works** — it is a test tool from before the pairing screens existed, it
+  keeps every key as extractable JWK in one file (so the file IS the account), and its own header says an account made
+  with it is one to throw away. Reading it as the design is the mistake: it cost a session an afternoon of reasoning
+  about a root in a drawer when the real one is a device you own and can open.

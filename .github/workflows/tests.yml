@@ -334,6 +334,10 @@ jobs:
           base=$(git merge-base HEAD "origin/${GITHUB_BASE_REF:-main}" 2>/dev/null || echo "")
           if [ -z "$base" ]; then echo "no merge base — skipping the file-size reminder"; exit 0; fi
           node scripts/check-file-size.mjs "$base"
+      # The same kind of reminder for AGENTS.md, which every agent session loads whatever it is working on: it speaks
+      # past 35k characters, under Claude Code's own 40k warning, while a paragraph can still just be moved out.
+      - name: AGENTS.md size (reminder only)
+        run: node scripts/check-agents-size.mjs
 
   build:
     # Never skipped on main: `pages` publishes from its artifact.
