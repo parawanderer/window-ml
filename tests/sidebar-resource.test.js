@@ -1170,8 +1170,17 @@ test("resource panel: a remembered height is applied on open", async () => {
 // asserts the flex chain that makes it so — a fixed-height plot inside a resizable panel is the bug.
 test("resource panel: the chart flexes into the dragged height", async () => {
     const css = sidebarCss();
-    for (const sel of [".rc", ".rc-track", ".rc-plot"]) {
+    for (const sel of [".rc", ".rc-plot"]) {
         assert.match(cssRule(sel), /flex:\s*1 1/, `${sel} must grow with the panel`);
+    }
+    // A track takes its rows from the line it sits on (a subgrid of header, strip, plot, legend), and the PLOT row is
+    // the one that grows. Tracks sizing themselves gave the plots on one line different heights and tops whenever one
+    // card's legend wrapped (a long model name) or one card had a phase strip and its neighbour did not.
+    assert.match(cssRule(".rc"), /grid-auto-rows:\s*auto auto 1fr auto/, "the plot row takes the extra height");
+    assert.match(cssRule(".rc-track"), /grid-template-rows:\s*subgrid/, "tracks on one line share their rows");
+    assert.match(cssRule(".rc-track"), /grid-row:\s*span 4/);
+    for (const [sel, row] of [[".rc-head", 1], [".rc-strip", 2], [".rc-plot", 3], [".rc-legend", 4]]) {
+        assert.match(css, new RegExp(`\\.rc-track > \\${sel} \\{[^}]*grid-row: ${row};`), `${sel} sits in row ${row} even when the strip is absent`);
     }
     // …but they must NOT be allowed to shrink below their content: `min-height: 0` let the chart be squeezed
     // past what fits, and a flex item smaller than its content overflows and renders ON TOP of the rows below.

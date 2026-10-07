@@ -176,11 +176,16 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    readable column — a 1400px-wide, 44px-tall sparkline is a worse chart than two 700px ones, and dragging the
    sidebar out to a full page is exactly when you are looking closely. auto-fit does the deciding, so there is
    no breakpoint to keep in sync with the panel's real width. */
+/* Tracks on one line SHARE THEIR ROWS: each track is a subgrid of four (header, phase strip, plot, legend), so a
+   legend that wraps to two lines on one card (a long model name) grows that row for the whole line instead of
+   squeezing that card's plot, and a strip on one card pushes every plot beside it down by the same amount. With
+   one `1fr` row per track the plots on a line came out different heights and started at different tops. The
+   plot row is the one that takes a dragged panel's extra height. */
 .rc { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--rc-col, 300px), 1fr));
-      grid-auto-rows: 1fr; gap: 8px; margin: 0 0 2px; flex: 1 1 auto; }
+      grid-auto-rows: auto auto 1fr auto; gap: 8px; margin: 0 0 2px; flex: 1 1 auto; }
 /* One rule, not two: a second `.rc-track {` later in the file made the first look like it carried the flex
    sizing when it didn't. `position: relative` so a tip escaping the plot is still contained by something sane. */
-.rc-track { position: relative; display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; }
+.rc-track { position: relative; display: grid; grid-template-rows: subgrid; grid-row: span 4; row-gap: 2px; }
 .rc-head { display: flex; align-items: baseline; gap: 6px; font-size: 0.8em; }
 .rc-name { color: var(--fg-dim); }
 .rc-total { color: var(--fg); font-variant-numeric: tabular-nums; cursor: help; }
@@ -196,6 +201,12 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
            overflow: hidden; }
 /* Once a height is chosen, `height` becomes the FLOOR the flex box grows from rather than a fixed size. */
 .vram[style*="height"] .rc-plot { height: auto; }
+/* Each part of a track in its own row of the line's subgrid (see .rc), placed by name so a track with no strip
+   leaves that row empty instead of moving its plot up into it. */
+.rc-track > .rc-head { grid-row: 1; }
+.rc-track > .rc-strip { grid-row: 2; }
+.rc-track > .rc-plot { grid-row: 3; }
+.rc-track > .rc-legend { grid-row: 4; align-self: start; }
 /* The chart is taken OUT of the flow (absolute inside a relative segment) so it contributes no intrinsic
    height. An SVG with a viewBox has an aspect-ratio height, and as a flex item's content that became the
    automatic minimum of every ancestor — pinning the panel's floor ~50px above what it needs while .rc-plot's
@@ -3640,7 +3651,7 @@ button.ui-step-now:hover { background: var(--panel-2); color: var(--fg); }
    what stops a drilled-in tip from covering the very trace it describes. The tracks flex, so the space the
    collapsed ones release goes straight to the ones still drawing something. Its header stays, so the row
    still says which card it is and that the model is not on it. */
-.rc-track.away .rc-plot { opacity: .35; flex: 0 0 auto; height: 16px; min-height: 16px; }
+.rc-track.away .rc-plot { opacity: .35; flex: 0 0 auto; height: 16px; min-height: 16px; align-self: start; }
 .rc-track.away .rc-legend { display: none; }
 /* DROP A TRACK, from the track itself — which pools you want on screen is a decision made WHILE reading, and
    it lived only behind the gear. Quiet until the track is hovered, but it always HOLDS ITS SPACE: the header
