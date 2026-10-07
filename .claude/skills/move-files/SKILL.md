@@ -26,15 +26,20 @@ move DECLARATIONS between files (a split), use `move-symbols` instead; to cut up
 A file move changes no code, only paths, so this is path arithmetic over every tracked file, not a refactor:
 
 1. **Every string literal that resolves to a moved file is rewritten** to its new place, in the style it was
-   written: `./sw-llm` → `./sw/sw-llm`, `../src/sw-llm.ts` → `../src/sw/sw-llm.ts`, `import("./sw-llm").T` too.
+   written: `./zz-llm` → `./zz/zz-llm`, `../src/zz-llm.ts` → `../src/zz/zz-llm.ts`, `import("./zz-llm").T` too.
    That covers what TypeScript's own rename never sees: tests loading a module by `await import()`, a script's
    `readFileSync("src/x.ts")`, build.mjs's entry points, `<script src>`.
 2. **A moved file's own relative paths are rewritten for its new directory** (`./dom` → `../dom`); one pointing at
    a file moving with it stays as it was.
-3. **A doc's exact old path is rewritten** (`src/sw-focus.ts` → `src/sw/sw-focus.ts`). A bare name (`sw-focus.ts`)
+3. **A doc's exact old path is rewritten** (`src/zz-focus.ts` → `src/zz/zz-focus.ts`). A bare name (`zz-focus.ts`)
    stays true and is left alone.
-4. **REPORTS what it cannot rewrite**: a path assembled from pieces (`join(ROOT, "src", f)` over a list of
-   basenames). Read each report line and fix it by hand.
+4. **REPORTS what it cannot rewrite, and what it rewrote on a guess.** A path assembled from pieces (`join(ROOT,
+   "src", f)` over a list of basenames) is `pieces`: fix it by hand. A ROOT-relative string equal to a moved path
+   (`"src/x.ts"`) is rewritten and listed as `rooted`, because it is usually a path (build.mjs, a `readFileSync`)
+   but can be DATA (a sample path in a test): read each one.
+
+   Examples in docs and fixtures that describe moves should use names no real file has (`zz-*`), or a real move
+   rewrites them too. That is how this skill's own examples got rewritten the first time it ran.
 5. **Blocks on a dangling path**: a relative specifier that resolves after the move to nothing, where it resolved
    before. Then `git mv`s the files, writes the rewrites, and runs `tsc --noEmit` before and after, failing on any
    NEW error (`--no-typecheck` skips that). Undo is `git reset --hard HEAD`.

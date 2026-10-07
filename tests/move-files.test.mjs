@@ -16,20 +16,20 @@ function plan(tree, moves) {
 
 test("an extensionless import, a .ts import from a test and an inline type query all follow the file", () => {
     const p = plan({
-        "src/background.ts": `import { a } from "./sw-llm";\nlet x: import("./sw-llm").T;\n`,
-        "tests/llm.test.mjs": `const { a } = await import("../src/sw-llm.ts");\n`,
-        "src/sw-llm.ts": `export const a = 1; export type T = 1;\n`,
-    }, { "src/sw-llm.ts": "src/sw/sw-llm.ts" });
-    assert.strictEqual(p.rewritten.get("src/background.ts"), `import { a } from "./sw/sw-llm";\nlet x: import("./sw/sw-llm").T;\n`);
-    assert.strictEqual(p.rewritten.get("tests/llm.test.mjs"), `const { a } = await import("../src/sw/sw-llm.ts");\n`);
+        "src/background.ts": `import { a } from "./zz-llm";\nlet x: import("./zz-llm").T;\n`,
+        "tests/llm.test.mjs": `const { a } = await import("../src/zz-llm.ts");\n`,
+        "src/zz-llm.ts": `export const a = 1; export type T = 1;\n`,
+    }, { "src/zz-llm.ts": "src/zz/zz-llm.ts" });
+    assert.strictEqual(p.rewritten.get("src/background.ts"), `import { a } from "./zz/zz-llm";\nlet x: import("./zz/zz-llm").T;\n`);
+    assert.strictEqual(p.rewritten.get("tests/llm.test.mjs"), `const { a } = await import("../src/zz/zz-llm.ts");\n`);
 });
 
 test("a root-relative path (build.mjs's entry points) is rewritten exactly, and only when it names a moved file", () => {
     const p = plan({
-        "build.mjs": `const e = { worker: "src/python-worker.ts", popup: "src/popup.ts" };\n`,
-        "src/python-worker.ts": "", "src/popup.ts": "",
-    }, { "src/python-worker.ts": "src/python/python-worker.ts" });
-    assert.strictEqual(p.rewritten.get("build.mjs"), `const e = { worker: "src/python/python-worker.ts", popup: "src/popup.ts" };\n`);
+        "build.mjs": `const e = { worker: "src/zz-worker.ts", popup: "src/popup.ts" };\n`,
+        "src/zz-worker.ts": "", "src/popup.ts": "",
+    }, { "src/zz-worker.ts": "src/zz/zz-worker.ts" });
+    assert.strictEqual(p.rewritten.get("build.mjs"), `const e = { worker: "src/zz/zz-worker.ts", popup: "src/popup.ts" };\n`);
 });
 
 test("a file that names nothing moved is left alone", () => {
@@ -41,34 +41,42 @@ test("a file that names nothing moved is left alone", () => {
 
 test("a moved file's own imports are rewritten for its new directory, including one to a file moving with it", () => {
     const p = plan({
-        "src/sw-a.ts": `import { b } from "./sw-b";\nimport { d } from "./dom";\nimport type { C } from "./contract";\n`,
-        "src/sw-b.ts": "", "src/dom.ts": "", "src/contract.ts": "",
-    }, { "src/sw-a.ts": "src/sw/sw-a.ts", "src/sw-b.ts": "src/sw/sw-b.ts" });
-    assert.strictEqual(p.rewritten.get("src/sw/sw-a.ts"), `import { b } from "./sw-b";\nimport { d } from "../dom";\nimport type { C } from "../contract";\n`);
+        "src/zz-a.ts": `import { b } from "./zz-b";\nimport { d } from "./dom";\nimport type { C } from "./contract";\n`,
+        "src/zz-b.ts": "", "src/dom.ts": "", "src/contract.ts": "",
+    }, { "src/zz-a.ts": "src/zz/zz-a.ts", "src/zz-b.ts": "src/zz/zz-b.ts" });
+    assert.strictEqual(p.rewritten.get("src/zz/zz-a.ts"), `import { b } from "./zz-b";\nimport { d } from "../dom";\nimport type { C } from "../contract";\n`);
 });
 
 test("a moved file with no paths in it is still carried, under its new path", () => {
-    const p = plan({ "src/sw-a.ts": "export const a = 1;\n" }, { "src/sw-a.ts": "src/sw/sw-a.ts" });
-    assert.strictEqual(p.rewritten.get("src/sw/sw-a.ts"), "export const a = 1;\n");
+    const p = plan({ "src/zz-a.ts": "export const a = 1;\n" }, { "src/zz-a.ts": "src/zz/zz-a.ts" });
+    assert.strictEqual(p.rewritten.get("src/zz/zz-a.ts"), "export const a = 1;\n");
 });
 
 // --- docs and the paths it can only report ---
 
 test("a doc's exact old path is rewritten; a bare name, which stays true, is not", () => {
     const p = plan({
-        "docs/dev/x.md": "The index lives in `src/sw-sessions.ts`; `sw-sessions.ts` serves the port.\n",
-        "src/sw-sessions.ts": "",
-    }, { "src/sw-sessions.ts": "src/sw/sw-sessions.ts" });
-    assert.strictEqual(p.rewritten.get("docs/dev/x.md"), "The index lives in `src/sw/sw-sessions.ts`; `sw-sessions.ts` serves the port.\n");
+        "docs/dev/x.md": "The index lives in `src/zz-sessions.ts`; `zz-sessions.ts` serves the port.\n",
+        "src/zz-sessions.ts": "",
+    }, { "src/zz-sessions.ts": "src/zz/zz-sessions.ts" });
+    assert.strictEqual(p.rewritten.get("docs/dev/x.md"), "The index lives in `src/zz/zz-sessions.ts`; `zz-sessions.ts` serves the port.\n");
 });
 
 test("a path assembled from pieces is REPORTED once per line, never rewritten", () => {
     const p = plan({
-        "tests/t.test.mjs": `for (const f of ["sw-a.ts", "sw-b.ts"]) read(join(ROOT, "src", f));\n`,
-        "src/sw-a.ts": "", "src/sw-b.ts": "",
-    }, { "src/sw-a.ts": "src/sw/sw-a.ts", "src/sw-b.ts": "src/sw/sw-b.ts" });
+        "tests/t.test.mjs": `for (const f of ["zz-a.ts", "zz-b.ts"]) read(join(ROOT, "src", f));\n`,
+        "src/zz-a.ts": "", "src/zz-b.ts": "",
+    }, { "src/zz-a.ts": "src/zz/zz-a.ts", "src/zz-b.ts": "src/zz/zz-b.ts" });
     assert.deepStrictEqual(p.reports.map((r) => [r.file, r.line, r.kind]), [["tests/t.test.mjs", 1, "pieces"]]);
     assert.ok(!p.rewritten.has("tests/t.test.mjs"));
+});
+
+test("a rewritten ROOT-relative string is listed as `rooted`, since it may be data that only looks like a path", () => {
+    const p = plan({
+        "tests/kinds.test.mjs": `assert.equal(pathKind("src/zz-llm.ts"), "code");\n`,
+        "src/zz-llm.ts": "",
+    }, { "src/zz-llm.ts": "src/zz/zz-llm.ts" });
+    assert.deepStrictEqual(p.reports.map((r) => [r.file, r.line, r.kind, r.text]), [["tests/kinds.test.mjs", 1, "rooted", "src/zz-llm.ts"]]);
 });
 
 // --- the dangling check, which is what blocks a bad move ---
@@ -81,10 +89,10 @@ test("dangling() names a relative specifier that resolves to nothing, and accept
 
 test("after a planned move, nothing that resolved before dangles", () => {
     const tree = {
-        "src/background.ts": `import "./sw-a";\n`,
-        "src/sw-a.ts": `import "./dom";\n`, "src/dom.ts": "",
+        "src/background.ts": `import "./zz-a";\n`,
+        "src/zz-a.ts": `import "./dom";\n`, "src/dom.ts": "",
     };
-    const p = plan(tree, { "src/sw-a.ts": "src/sw/sw-a.ts" });
+    const p = plan(tree, { "src/zz-a.ts": "src/zz/zz-a.ts" });
     const read = (r) => p.rewritten.get(r) ?? tree[r] ?? null;
     assert.deepStrictEqual(dangling(p.after, read), []);
 });
@@ -92,7 +100,7 @@ test("after a planned move, nothing that resolved before dangles", () => {
 // --- arguments ---
 
 test("parseArgs takes a destination and the files, and refuses neither", () => {
-    assert.deepStrictEqual(parseArgs(["--to", "src/sw", "src/sw-a.ts", "src/sw-b.ts", "--dry-run"]).files, ["src/sw-a.ts", "src/sw-b.ts"]);
-    assert.throws(() => parseArgs(["src/sw-a.ts"]), /--to/);
+    assert.deepStrictEqual(parseArgs(["--to", "src/sw", "src/zz-a.ts", "src/zz-b.ts", "--dry-run"]).files, ["src/zz-a.ts", "src/zz-b.ts"]);
+    assert.throws(() => parseArgs(["src/zz-a.ts"]), /--to/);
     assert.throws(() => parseArgs(["--to", "x", "--bogus"]), /unknown/);
 });

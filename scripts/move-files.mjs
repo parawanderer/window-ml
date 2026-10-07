@@ -114,7 +114,12 @@ export function planMove({ files, read, moves }) {
                 return q + specFor(newDir, target, hit.ext) + q;
             }
             // A ROOT-relative path (`"src/x.ts"` in build.mjs, a script's readFileSync) names one file exactly.
-            if (moves.has(spec)) return q + moves.get(spec) + q;
+            if (moves.has(spec)) {
+                // Usually a path; occasionally DATA that happens to equal one (a sample path in a test). Rewritten,
+                // and listed, so a person reads each.
+                reports.push({ file: rel, line: text.slice(0, text.indexOf(whole)).split("\n").length, kind: "rooted", text: spec });
+                return q + moves.get(spec) + q;
+            }
             return whole;
         });
         if (out !== text || newDir !== oldDir) rewritten.set(newPath(rel), out);
