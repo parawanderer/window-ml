@@ -6,10 +6,13 @@
 // So they are registered here at start and every send of one of them is answered here, through the same
 // `executeTool` and envelope the page's delegation uses (run-delegation.ts).
 
-import type { MlTool, PageToolEnvelope } from "./contract";
+import type { MlApi, MlTool, PageToolEnvelope, StartRunPayload } from "./contract";
+import { buildServerTools } from "./builtin-tools";
 import { descriptorFor } from "./render-descriptor";
 import { envelopeFrom } from "./run-delegation";
 import { executeTool, toolContext } from "./tool-exec";
+import { listServerTools } from "./sw-llm";
+import { workerMl } from "./worker-ml";
 
 /** What a run's local tools need to run: the tools by name, and the vision facts their ToolContext carries. */
 interface LocalToolset { byName: Record<string, MlTool>; model: string | null; driverSees: boolean; visionModel: string | null; }
@@ -30,6 +33,28 @@ export function registerLocalTools(runId: string, tools: MlTool[], facts: { mode
 
 /** Forget a run's local tools, when the run is deleted. */
 export function dropLocalTools(runId: string): void { localToolsets.delete(runId); }
+
+/** Forget every run's local tools: what an eviction does to this memory (the eviction test hook). */
+export function dropAllLocalTools(): void { localToolsets.clear(); }
+
+/**
+ * Make sure a worker-built run's remote tools are registered here, rebuilding them if this worker never had them: a
+ * run rehydrated after an eviction, or a saved session resumed, carries their DESCRIPTORS in its payload (what the
+ * model is shown) but not the tools. Rebuilt from the server's current bundles by the same `buildServerTools`, and
+ * kept to exactly the names the run already offers, so a bundle that grew a function since does not widen the run.
+ * @param runId the run
+ * @param p its payload
+ * @param tabUrl its tab's URL, for the worker's `ml`
+ */
+export async function ensureLocalTools(runId: string, p: StartRunPayload, tabUrl: string): Promise<void> {
+    if (localToolsets.has(runId)) return;
+    const offered = new Set(p.tools.filter((t) => t.remote).map((t) => t.name));
+    if (!offered.size) return;
+    const bundleIds = [...new Set(p.tools.flatMap((t) => (t.remote ? [t.remote.toolId] : [])))];
+    const bundles = await listServerTools().catch(() => []);
+    const tools = buildServerTools(workerMl(tabUrl) as unknown as MlApi, bundles, bundleIds, []).filter((t) => offered.has(t.name));
+    registerLocalTools(runId, tools, { model: p.model, driverSees: !!p.rebuild?.driverSees, visionModel: p.rebuild?.visionModel ?? null });
+}
 
 /** One tool send, as `RUN_TOOL_IN_PAGE` carries it. */
 interface ToolSend { runId: string; name?: string; args?: Record<string, unknown>; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; stream?: boolean; }

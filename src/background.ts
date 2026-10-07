@@ -2,6 +2,7 @@
 // extracts replies, and makes the privileged (host-permissioned) fetches. All
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
+import { dropAllLocalTools } from "./sw-local-tools";
 import { LOAD_RECORDS_KEY } from "./load-records";
 import type { ApprovalDecision } from "./contract-agent";
 import type { StartRunPayload, SetApprovalPayload, CancelRunPayload, InjectMessagePayload } from "./contract-messages";
@@ -22,10 +23,10 @@ import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, senderO
 import { handleRunLogDump } from "./sw-run-log";
 import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, pendingGrants, takeCredFetch, isExtensionSender } from "./sw-consent";
-import { isWorkerRun, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw-runs";
+import { isWorkerRun, makeWorkerRun, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw-runs";
 import { moveTabKey } from "./tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw-debug";   // the DevTools panel's copy of the page debug stream
-import { startBackgroundRun, delegateStreams } from "./sw-run-host";
+import { startBackgroundRun, delegateStreams, hostRun } from "./sw-run-host";
 import { adoptOnTab, startUserRun, userRunAction, steerRun } from "./sw-run-start";
 import { pythonPrewarm, pythonExec, relayPyStdout } from "./sw-python";
 import { focusLineFor } from "./sw-focus";
@@ -74,6 +75,7 @@ startValueSweeps();
 (globalThis as unknown as { __mlEvictForTest?: unknown }).__mlEvictForTest = async (): Promise<void> => {
     runControllers.clear(); runInboxes.clear(); bgRuns.clear(); activeRuns.clear();
     runRebuilds.clear(); runReplayBuffer.clear(); pendingApprovals.clear(); hydratedRuns.clear(); resurrectedRuns.clear(); readoptPageInfo.clear();
+    dropAllLocalTools();
     await hydratePersistedRuns();
 };
 // TEST-ONLY: seed a minimal resumable bgRun for a tab, so a unit test can exercise the "don't wipe a tab that
@@ -257,15 +259,21 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // runs storage restored, or it would miss the re-adopt + auto-resume.
         void hydrationDone.then(() => {
             const ids = tabId != null ? activeRuns.get(tabId) : undefined;
-            // `resume` marks an INTERRUPTED (evicted) run — the fresh page auto-continues it (durable resume).
-            const adopt: { runId: string; rebuild: import("./contract").RebuildConfig; resume?: boolean }[] = [];
+            // An INTERRUPTED (evicted) run is continued by the WORKER once the page has re-registered its tools, never by
+            // the page. It always meets a fresh document, so nothing page-side is left to own it: it becomes the worker's.
+            const adopt: { runId: string; rebuild: import("./contract").RebuildConfig }[] = [];
+            const resumeIds: string[] = [];
             const seen = new Set<string>();
             const addAdopt = (runId: string, rebuild: import("./contract").RebuildConfig): void => {
                 if (seen.has(runId)) return;
                 seen.add(runId);
                 const resume = hydratedRuns.has(runId) && !runControllers.has(runId);   // evicted & not running → re-drive
-                if (resume) { hydratedRuns.delete(runId); resurrectedRuns.add(runId); }   // auto-resume ONCE; RESUME_RUN re-emits its `agent` start
-                adopt.push({ runId, rebuild, resume: resume || undefined });
+                if (resume) {
+                    hydratedRuns.delete(runId); resurrectedRuns.add(runId);   // auto-resume ONCE; RESUME_RUN re-emits its `agent` start
+                    makeWorkerRun(runId);
+                    resumeIds.push(runId);
+                }
+                adopt.push({ runId, rebuild: resume ? { ...rebuild, builtBy: "worker" } : rebuild });
             };
             if (ids) for (const runId of ids) { const rebuild = runRebuilds.get(runId); if (rebuild) addAdopt(runId, rebuild); }
             // ALSO re-adopt recently-COMPLETED-but-resumable runs on this tab (bgRuns): a HUD run that navigated
@@ -277,6 +285,12 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 if (snap.tabId === tabId && snap.p.rebuild) addAdopt(runId, snap.p.rebuild);
             }
             sendResponse({ adopt });
+            // Durable resume, driven from here. The barrier holds the run's first tool call until the page answers the
+            // adopt (RUN_READOPTED), so the call cannot reach a page whose toolset is not registered yet.
+            if (tabId != null && resumeIds.length) {
+                navBarrier.noteNavigating(tabId);
+                for (const runId of resumeIds) hostRun({ type: "RESUME_RUN", payload: { runId, task: "" } }, tabId, () => { /* reported through its events */ });
+            }
             // Overlay/off HUD replay-across-nav: stream the run's buffered history so the fresh card/overlay
             // rebuilds MID-run (start + every step so far), not just post-nav events. The shell buffers these
             // __mlFromBg events while its iframe mounts, absorbing an ordering race against the handshake.

@@ -2747,11 +2747,15 @@ test("fix C: a RESURRECTED resume re-emits its agent start (visible + stoppable)
         onTabMessage: (_t, msg) => { if (msg?.type === "ML_DEBUG_TO_PAGE") events.push(msg.event); },
         local: { ml_bgrun_res1: bgSnap("res1", 7) },
     });
-    // Page loads → CONTENT_READY offers the interrupted run for auto-resume.
+    // Page loads → CONTENT_READY offers the interrupted run for re-adoption. The WORKER resumes it, never the page,
+    // once the page has re-registered its tools: it meets a fresh document, so nothing page-side is left to own it.
     const ready = await bg.send({ type: "CONTENT_READY", payload: {} }, { tab: { id: 7 } });
-    assert.ok((ready.adopt || []).some(a => a.runId === "res1" && a.resume), "the interrupted run is offered with resume:true");
-    // The page then RESUME_RUNs it with an EMPTY follow-up (what _adoptRun does on an auto-resume).
-    await bg.send({ type: "RESUME_RUN", payload: { runId: "res1", task: "" } }, { tab: { id: 7 } });
+    const offer = (ready.adopt || []).find(a => a.runId === "res1");
+    assert.ok(offer, "the interrupted run is offered for re-adoption");
+    assert.equal(offer.resume, undefined, "and the page is not asked to drive it");
+    assert.equal(offer.rebuild.builtBy, "worker", "it is the worker's from now on: no page-side resume handle");
+    void bg.send({ type: "RUN_READOPTED", payload: { runId: "res1" } }, { tab: { id: 7 } });   // fire-and-forget: never answers
+    for (let i = 0; i < 20 && !events.some(e => e?.kind === "agent-result"); i++) await new Promise((r) => setTimeout(r, 0));
     // Before fix C this resume was INVISIBLE (no agent start) — a ghost with no Stop button. Now it re-announces.
     const start = events.find(e => e?.kind === "agent" && e.id === "res1");
     assert.ok(start, "the resurrected resume RE-EMITS an agent start (materialises a row + Stop button)");

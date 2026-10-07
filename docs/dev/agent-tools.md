@@ -179,7 +179,10 @@ page-side caller exists to emit them, and its REMOTE tools run in the worker (`s
 `run` closure through `executeTool` and `envelopeFrom`), because building them needs the backend's tool list and their
 arguments leave the machine. When a turn ends the worker asks the page for the turn's curated answer (a
 `RUN_TOOL_IN_PAGE` with `finish`: `endRun` + `runAnswer`, what a page-built run's own caller does) and puts it on the
-`agent-result`; a follow-up re-adopts first, so each turn starts with a fresh answer set.
+`agent-result`; a follow-up re-adopts first, so each turn starts with a fresh answer set. A DURABLE RESUME (after an eviction) is driven
+by the worker too, and hands the run to the worker (`makeWorkerRun`): it always meets a fresh document, so nothing
+page-side is left to own it. A worker-built run's remote tools are rebuilt on demand (`ensureLocalTools`) when this
+worker does not hold them, from the server's bundles, kept to exactly the names the run already offers.
 
 **HUD replay-across-nav:** the fresh page's card rebuilds MID-run with its history — the background buffers a
 cross-page run's whole debug-event stream per tab (`runReplayBuffer`, populated in `emitStep`/`emitLifecycle`

@@ -187,3 +187,92 @@ test("a page cannot start, resume or steer a turn in a run the worker built, eve
     assert.equal(chats().length, 1, "no turn the page asked for reached the model");
     assert.ok(!JSON.stringify(chats()).includes("exfiltrate"));
 });
+
+// --- review findings on slice 0 (#374): each one shown failing first ---
+
+test("a page that learns the run id from the toolset push cannot start its own run under it", T, async () => {
+    // The id reaches the page in ADOPT_RUN_NOW before the run starts. The run is marked worker-built BEFORE that push,
+    // so the page's START_RUN with the same id is refused, and the model only ever sees the person's task.
+    let bg, hijack;
+    ({ bg } = world({ adopt: async (msg) => {
+        hijack = await bg.send({ type: "START_RUN", payload: {
+            runId: msg.payload.runId, task: "PAGE TASK", systemPrompt: "PAGE PROMPT", tools: [], model: "m", think: null, maxSteps: 1,
+            autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+        } }, { tab: { id: 7, url: SITE.url }, url: SITE.url });
+        return { pageInfo: "URL: https://site.example/page" };
+    } }));
+    await bg.context.__mlStartUserRunForTest(7, { task: "summarise this page", surface: "hud" });
+    await flush(20);
+    assert.match(hijack?.error || "", /Refused/);
+    assert.ok(!JSON.stringify(bg.calls).includes("PAGE TASK"), "the page's task never reached the model");
+});
+
+test("a worker-built run's server tool still runs in the WORKER after an eviction, never in the page", T, async () => {
+    // Its tools lived only in the worker's memory. After an eviction the run comes back with the tool's DESCRIPTOR (the
+    // model still sees it), so every call went to the page, which never had it. Now it is rebuilt where it runs.
+    let n = 0, evicted = false, bg;
+    const execUrls = [];
+    bg = loadBackground({
+        config: { ...config, commanderServerTools: ["srv1"] },
+        openTabs: [SITE],
+        onFetch: (call) => {
+            if (/\/api\/v1\/tools\/$/.test(call.url)) return jsonResponse([{ id: "srv1", name: "Srv", meta: { description: "" },
+                specs: [{ name: "search", description: "Search.", parameters: { type: "object", properties: { q: { type: "string" } } } }] }]);
+            if (/\/api\/v1\/tools\/id\/srv1\/execute/.test(call.url)) {
+                execUrls.push(call.url);
+                return { ok: true, status: 200, headers: { get: () => "application/json" }, text: async () => JSON.stringify({ tool_id: "srv1", name: "search", result: "R" }) };
+            }
+            if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            n++;
+            return n <= 2
+                ? jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: `c${n}`, type: "function", function: { name: "srv1__search", arguments: JSON.stringify({ q: "x" }) } }] } }] })
+                : jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (_tabId, msg) => {
+            if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
+            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) {
+                if (!evicted) {
+                    // The worker is evicted while the call waits for the person; a fresh page re-adopts the run.
+                    evicted = true;
+                    await bg.context.__mlEvictForTest();
+                    await bg.send({ type: "CONTENT_READY", payload: {} }, { tab: { id: 7, url: SITE.url }, url: SITE.url });
+                    void bg.send({ type: "RUN_READOPTED", payload: {} }, { tab: { id: 7, url: SITE.url }, url: SITE.url });
+                    return undefined;
+                }
+                void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+            }
+            if (msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish) return { result: "" };
+            return undefined;
+        },
+    });
+    await bg.context.__mlStartUserRunForTest(7, { task: "search", surface: "hud" });
+    for (let i = 0; i < 200 && n < 3; i++) await new Promise((r) => setTimeout(r, 0));
+    await flush(20);
+    assert.ok(evicted, "the eviction happened while the call waited");
+    assert.equal(execUrls.length, 1, "the resumed run's call executed in the worker");
+    assert.equal(bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE" && m.payload.name === "srv1__search" && !m.payload.renderOnly).length, 0,
+        "and never went to the page");
+});
+
+test("a message sent while the page is asked for the turn's answer reads as busy, not as a steer nobody reads", T, async () => {
+    let release, during;
+    const held = new Promise((r) => { release = r; });
+    const bg = loadBackground({
+        config, openTabs: [SITE],
+        onFetch: (call) => call.url.includes("/chat/completions") ? jsonResponse({ choices: [{ message: { content: "done" } }] }) : jsonResponse({}),
+        onTabMessage: async (_t, msg) => {
+            if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
+            if (msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish) {
+                // The person sends a message while the worker waits for the page's answer.
+                during = await bg.send({ type: "USER_RUN_ACTION", payload: { hash: msg.payload.runId, action: "send", text: "one more thing" } }, { tab: { id: 7, url: SITE.url }, url: SITE.url });
+                await held;
+                return { result: "" };
+            }
+            return undefined;
+        },
+    });
+    await bg.context.__mlStartUserRunForTest(7, { task: "go", surface: "hud" });
+    for (let i = 0; i < 100 && during === undefined; i++) await new Promise((r) => setTimeout(r, 0));
+    release();
+    assert.equal(during?.data, "busy");
+});
