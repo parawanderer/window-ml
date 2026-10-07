@@ -842,10 +842,10 @@ test("exec evaluates expressions, serializes objects, and catches errors", async
     assert.match(nodelist, /NodeList\/HTMLCollection, not an Array/);
     // A non-DOM "not a function" must NOT get the NodeList hint (false-positive guard).
     assert.doesNotMatch(await execText(ml, { js: "(42).map(x => x)" }), /NodeList/);
-    // A runaway result is capped so it can't flood context — with a "[+N chars truncated]"
+    // A runaway result is capped so it can't flood context — with a "[first N of M chars]"
     // count (the model knows it's a prefix). 600 'x' → 500 kept + 100 dropped.
     const big = await execText(ml, { js: "'x'.repeat(600)" });
-    assert.match(big, /^x{500}… \[\+100 chars truncated\]$/);
+    assert.match(big, /^x{500}… \[first 500 of 600 chars\]$/);
 });
 
 test("exec: `maxChars` raises the per-call output cap (post-approval), clamped to the ceiling", async () => {
@@ -854,10 +854,10 @@ test("exec: `maxChars` raises the per-call output cap (post-approval), clamped t
     assert.match(await execText(ml, { js: "'x'.repeat(600)", maxChars: 4000, maxCharsReason: "need it all" }), /^x{600}$/);
     // A value past the 8000 ceiling is clamped, and the clamp is disclosed to the model.
     const clamped = await execText(ml, { js: "'x'.repeat(9000)", maxChars: 100000, maxCharsReason: "y" });
-    assert.match(clamped, /x{8000}… \[\+1000 chars truncated\]/);
+    assert.match(clamped, /x{8000}… \[first 8000 of 9000 chars\]/);
     assert.match(clamped, /clamped to 8000 chars/i, "the model is told its raise was clamped");
     // A SMALLER cap is honored too (no gate needed for that).
-    assert.match(await execText(ml, { js: "'x'.repeat(600)", maxChars: 100 }), /^x{100}… \[\+500 chars truncated\]$/);
+    assert.match(await execText(ml, { js: "'x'.repeat(600)", maxChars: 100 }), /^x{100}… \[first 100 of 600 chars\]$/);
 });
 
 test("exec: `state` persists across calls (the page-kernel scratchpad) + ml.state is the same object", async () => {
@@ -2290,7 +2290,7 @@ for (const [name, js, cfg] of [
         assert.ok(out.value.length > seen + 100, `the panel kept more than the model got (${out.value.length} vs ${seen})`);
         // The model-facing string is exactly what it was: the first `seen` characters, then the clip note.
         const modelValue = step.result.replace(/^[\s\S]*?(?=\[)/, "");
-        assert.ok(modelValue.startsWith(out.value.slice(0, seen) + "… [+"), "the model's copy is the panel's first `seen` characters, clipped");
+        assert.ok(modelValue.startsWith(out.value.slice(0, seen) + `… [first ${seen} of `), "the model's copy is the panel's first `seen` characters, and its note says so");
     });
 }
 
@@ -3155,10 +3155,10 @@ test("python_exec tool: `maxChars` raises the stdout/value cap (post-approval), 
     const { ml } = loadDomWorld();
     ml.pythonExec = async () => ({ ok: true, value: "x".repeat(30000), stdout: "" });
     // Default 2000 clips.
-    assert.match((await ml.pythonTool().run({ code: "x" })).content, /x{2000}… \[\+28000 chars truncated\]/);
+    assert.match((await ml.pythonTool().run({ code: "x" })).content, /x{2000}… \[first 2000 of 30000 chars\]/);
     // Raised (+ reason) → up to the 20000 ceiling, with a clamp note (30000 requested > 20000 ceiling).
     const raised = await ml.pythonTool().run({ code: "x", maxChars: 100000, maxCharsReason: "dumping a full frame" });
-    assert.match(raised.content, /x{20000}… \[\+10000 chars truncated\]/);
+    assert.match(raised.content, /x{20000}… \[first 20000 of 30000 chars\]/);
     assert.match(raised.content, /clamped to 20000 chars/i);
 });
 
@@ -3833,10 +3833,22 @@ test("exec Out: the UI keeps MORE than the model got, and records where the mode
     const { ml } = loadDomWorld();
     const exec = ml.domTools.find(t => t.name === "exec");
     const out = await exec.run({ js: "for (let i=0;i<60;i++) console.log('x'.repeat(19)); 1" }, {});
-    assert.match(out.content, /truncated/, "the MODEL's copy is clipped at its output cap");
+    assert.match(out.content, /… \[first 500 of 1199 chars\]/, "the MODEL's copy is clipped at its output cap, and says how much of how much it is");
     assert.equal(out.render.seen, 500, "the render records exactly how many chars the model received");
     assert.ok(out.render.stdout.length > 500, "while the UI keeps far more than the model got");
-    assert.doesNotMatch(out.render.stdout, /truncated/, "the UI copy isn't clipped at the model's cap");
+    assert.doesNotMatch(out.render.stdout, /… \[first \d+ of \d+ chars\]/, "the UI copy isn't clipped at the model's cap");
+});
+
+test("exec's description tells the model the cap the code applies, read from the one table", async () => {
+    // It said "~500", typed by hand beside a table that also said 500 — true until the table changes.
+    const { OUTPUT_CAP } = await import("../src/contract-pointers.ts");
+    const { ml } = loadDomWorld();
+    const exec = ml.domTools.find(t => t.name === "exec");
+    const { default: d, ceiling: c } = OUTPUT_CAP.exec;
+    assert.match(exec.description, new RegExp(`truncated to ${d} chars`));
+    assert.match(exec.description, new RegExp(`up to ${c}\\)`));
+    assert.match(exec.parameters.properties.js.description, new RegExp(`truncated to ${d} chars`));
+    assert.doesNotMatch(exec.description, /~\d/, "no approximate figure: the note at the cut is exact, so the instruction is too");
 });
 
 // Custom cutoffs: a model may ask the human for a LARGER per-call output cap (maxChars + maxCharsReason,

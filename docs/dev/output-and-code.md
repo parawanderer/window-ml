@@ -55,7 +55,7 @@ covered by `tests/e2e/code-block-find.spec.mjs`.
 *A returned VALUE can be drawn as a tree (`ValueOut`, render-panel.tsx).* exec's and python_exec's value section
 shows the JSON text the model got, with a corner "tree" button whenever that text is an object or array. The
 interesting values are the big ones, and those are exactly the ones clipped for the UI (`clipOut`'s
-`… [+N chars truncated]`), which `JSON.parse` refuses. `parseLooseJson` (src/json-repair.ts) strips the note, keeps
+`… [first K of M chars]`; the older `[+N chars truncated]` still parses), which `JSON.parse` refuses. `parseLooseJson` (src/json-repair.ts) strips the note, keeps
 every value that arrived WHOLE, drops a string, number, key or literal cut in half, and closes the brackets that
 were open at that point. It never invents a value, and text that is not JSON (a Python repr, `NaN`) gets no button
 rather than a half-drawn tree. The tree marks the cut: a `JT_CUT` sentinel is appended to the innermost container

@@ -1617,7 +1617,7 @@ function markSeen(value: object, seenText: string): WeakMap<object, number> | un
 
 /** A tool's returned VALUE (exec, python_exec): the JSON text exactly as the model got it, plus a corner button that
  *  draws it as a collapsible JSON TREE whenever it is an object or array. A value clipped for the UI (the
- *  `… [+N chars truncated]` note) still gets its tree: the part that arrived whole, closed at the cut, with a row
+ *  `… [first K of M chars]` note) still gets its tree: the part that arrived whole, closed at the cut, with a row
  *  saying where the cut was. Text stays the default, since it is what the model read and what Ctrl+F searches. */
 export function ValueOut({ text, fill, seen }: { text: string; fill?: boolean; /** chars the model received; absent → all */ seen?: number }) {
     const partial = seen != null && seen < text.length;

@@ -6,6 +6,7 @@
 import type { ApprovalRequest, ApprovalDecision } from "./contract-agent";
 import type { RenderDescriptor } from "./contract-render";
 import { UI_OUT_CAP } from "./contract-chat";
+import { OUTPUT_CAP } from "./contract-pointers";
 import { NotInDialect, Denied } from "./readonly-exec";
 import { clipOut, clipValue, elPath } from "./dom";
 import { suspiciousArgsWarning } from "./security";
@@ -117,7 +118,9 @@ export function readonlyRefused(e: unknown): boolean {
  *  An ELEMENT result keeps no descriptor here: the caller's `descriptorFor` draws it as the hoverable
  *  element list, which is more use than its path as text. */
 export function formatReadonlyExec(result: unknown, logs: string[]): { result: string; elements?: Node[]; render?: RenderDescriptor } {
-    const MODEL_CAP = 500;
+    // The SAME default the approved path reads through `resolveOutputCap`: this was its own literal 500, so a change
+    // to the table would have moved approved runs and left every read-only survey (the common path) where it was.
+    const MODEL_CAP = OUTPUT_CAP.exec.default;
     const joined = logs.join("\n");
     const logged = logs.length ? `console:\n${clipOut(joined, MODEL_CAP)}` : "";
     const withLogs = (value: string) => logged ? `${logged}\n\nvalue: ${value}` : value;

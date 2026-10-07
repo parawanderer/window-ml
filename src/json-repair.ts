@@ -1,10 +1,11 @@
 // Reading a JSON value whose TEXT was cut short. A tool's value is clipped for the UI (`clipOut` appends
-// `… [+N chars truncated]`), so the most interesting outputs are exactly the ones `JSON.parse` refuses. This keeps
+// `… [first K of M chars]`), so the most interesting outputs are exactly the ones `JSON.parse` refuses. This keeps
 // every value that arrived WHOLE and closes whatever was still open at the cut, so the sidebar can draw a tree of
 // the part that exists. Pure, so it is tested directly.
 
-/** The note `clipOut` (dom.ts) appends to a clipped string. */
-const CLIP_NOTE = /… \[\+(\d+) chars truncated\]$/;
+/** The note `clipOut` (dom.ts) appends to a clipped string, in BOTH its forms: `[first K of M chars]` now, and
+ *  `[+N chars truncated]` before 2026-10-06, which saved sessions and exports still hold. */
+const CLIP_NOTE = /… \[(?:\+(\d+) chars truncated|first (\d+) of (\d+) chars)\]$/;
 
 /** A parsed (possibly repaired) JSON container. */
 export interface LooseJson {
@@ -36,7 +37,7 @@ type Frame = { close: "}" | "]"; at: string | number | null; lastKey: string | n
 export function parseLooseJson(text: string): LooseJson | null {
     const note = CLIP_NOTE.exec(text);
     const body = note ? text.slice(0, note.index) : text;
-    const droppedChars = note ? Number(note[1]) : null;
+    const droppedChars = !note ? null : note[1] != null ? Number(note[1]) : Number(note[3]) - Number(note[2]);
     const start = body.search(/\S/);
     if (start < 0 || (body[start] !== "{" && body[start] !== "[")) return null;
     try {

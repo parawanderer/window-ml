@@ -120,7 +120,7 @@ URL in readonly), the tool **appends a redirect hint** ("use `df`/`img` directly
 fallback, catching any hallucinated load pattern on the failure. The tool
 description frames the sandbox as "appending a cell to a live Jupyter notebook" (img/img_np/df
 are pre-loaded) with a df/img snippet. Output (stdout/value/error) is capped by `clipOut`
-(dom.ts, shared with `exec`) with a `[+N chars truncated]` count so a runaway result can't
+(dom.ts, shared with `exec`) with a `[first K of M chars]` note so a runaway result can't
 flood context. The code runs in a **sandboxed namespace** (no DOM/fs) under
 `contextlib.redirect_stdout` (byte-exact stdout, newlines intact) with its own try/except
 (traceback captured, partial stdout preserved). A per-run namespace reset wipes non-`_`

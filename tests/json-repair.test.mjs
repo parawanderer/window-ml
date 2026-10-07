@@ -13,6 +13,24 @@ test("the clip note is stripped and its count reported", () => {
     assert.deepEqual(r, { value: [1, 2, 3], droppedChars: 120, repaired: false, cutPath: null });
 });
 
+test("the clip note says what was SEEN of how much, and the old note a saved session holds still parses", () => {
+    // The note now states both numbers (models misjudged how much they had read when it gave only the dropped count).
+    assert.deepEqual(parseLooseJson(`[1,2,3]… [first 7 of 127 chars]`), { value: [1, 2, 3], droppedChars: 120, repaired: false, cutPath: null });
+    // The UPGRADE: every session and export written before the change carries the old form, and the panel still has to
+    // draw its tree. Same value, same dropped count, from either note.
+    assert.deepEqual(parseLooseJson(`[1,2,3]… [+120 chars truncated]`), parseLooseJson(`[1,2,3]… [first 7 of 127 chars]`));
+});
+
+test("whatever clipOut writes, parseLooseJson reads: the producer and the parser cannot drift apart", async () => {
+    const { clipOut } = await import("../src/dom.ts");
+    const whole = JSON.stringify(Array.from({ length: 50 }, (_, i) => ({ id: i, name: `row ${i}` })));
+    const r = parseLooseJson(clipOut(whole, 200));
+    assert.ok(r, "the clipped value still parses");
+    assert.equal(r.droppedChars, whole.length - 200);
+    assert.equal(r.repaired, true);
+    assert.equal(r.value[0].id, 0);
+});
+
 test("a cut value is dropped whole and the open containers are closed", () => {
     const cases = [
         [`{"a":1,"b":"hal`, { a: 1 }, []],                       // mid-string value
