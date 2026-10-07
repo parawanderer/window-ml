@@ -1499,6 +1499,10 @@ details.io[open] > summary .io-preview { display: none; }
 .r-py-modeval { color: var(--fg); font-weight: 600; cursor: help; border-bottom: 1px dotted var(--fg-faint); }
 .r-py-img img, .r-py-out .r-image img { max-height: 240px; }
 .r-py-lbl { color: var(--fg-faint); font-size: 0.8em; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
+.r-py-sec { position: relative; }   /* the anchor .r-py-actions is lifted onto the header line against */
+/* Controls on an output section's header line (the console's copy), at its right edge. They are NOT inside the
+   <summary> (their tooltip text would join the header's), so they are lifted onto its line from the open section. */
+.r-py-actions { position: absolute; top: -2px; right: 0; text-transform: none; letter-spacing: normal; }
 /* A python-out section (stdout/value/error/token) folds on its own — same disclosure idea as the
    In:/Out: blocks. The summary IS the label; a small triangle marks it clickable. */
 .r-py-sec { margin-bottom: 6px; }
