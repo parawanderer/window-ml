@@ -195,7 +195,7 @@ the approval path.
 - Sidebar Settings checkbox: **"Experimental: auto-approve read-only exec
   calls"** (under a suitable group), wired like `autoTitles`.
 
-## Testing (`tests/readonly-exec.test.js`)
+## Testing (`tests/readonly-exec.test.mjs`)
 
 - **Runs the two canonical surveys** end-to-end against a jsdom DOM, asserting
   the returned summary objects.

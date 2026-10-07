@@ -62,6 +62,23 @@ test("a doc's exact old path is rewritten; a bare name, which stays true, is not
     assert.strictEqual(p.rewritten.get("docs/dev/x.md"), "The index lives in `src/zz/zz-sessions.ts`; `zz-sessions.ts` serves the port.\n");
 });
 
+test("a doc's relative Markdown link follows a moved file and keeps its anchor; inside a code fence only an exact path follows", () => {
+    const p = plan({
+        "docs/spec/X.md": "See [the worker](../../src/zz-llm.ts#L10) and [api](../API.md).\n```\n[not a link](../../src/zz-llm)\nnode src/zz-llm.ts\n```\n",
+        "docs/API.md": "", "src/zz-llm.ts": "",
+    }, { "src/zz-llm.ts": "src/zz/zz-llm.ts" });
+    assert.strictEqual(p.rewritten.get("docs/spec/X.md"),
+        "See [the worker](../../src/zz/zz-llm.ts#L10) and [api](../API.md).\n```\n[not a link](../../src/zz-llm)\nnode src/zz/zz-llm.ts\n```\n");
+});
+
+test("a doc that itself moves has every relative link rebased for its new directory", () => {
+    const p = plan({
+        "docs/X.md": "[api](API.md) and [src](../src/zz-a.ts) and [web](https://example.com).\n",
+        "docs/API.md": "", "src/zz-a.ts": "",
+    }, { "docs/X.md": "docs/zz/X.md" });
+    assert.strictEqual(p.rewritten.get("docs/zz/X.md"), "[api](../API.md) and [src](../../src/zz-a.ts) and [web](https://example.com).\n");
+});
+
 test("a path assembled from pieces is REPORTED once per line, never rewritten", () => {
     const p = plan({
         "tests/t.test.mjs": `for (const f of ["zz-a.ts", "zz-b.ts"]) read(join(ROOT, "src", f));\n`,

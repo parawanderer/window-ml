@@ -207,6 +207,10 @@ is FOR (`--new` ratchet), a new file opens with `// <name>.ts — <what it is fo
 **Before choosing WHICH suite to run: `node scripts/test-cover.mjs <file>` (or `--changed`).** It names the tests
 that can notice the change and prints the command. `.claude/skills/test-cover/SKILL.md`.
 
+**RULE — a doc points only at files that exist.** `node scripts/check-doc-links.mjs` (pre-commit, every commit, and
+CI) fails on any broken Markdown link, and on a backticked path (`` `src/<name>.ts` ``) a change ADDS that names nothing;
+old dead paths are listed, not failed. An EXAMPLE path uses a `<placeholder>`, which is never checked. Move files with `move-files`, which rewrites both.
+
 **RULE — JSDoc that CONTRADICTS the code is a defect; JSDoc that is INCOMPLETE is not.** The contract's JSDoc is
 what the MODEL reads. `node scripts/check-jsdoc.mjs`, ratcheted. A stranded block is folded back, not deleted.
 

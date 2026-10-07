@@ -31,14 +31,17 @@ A file move changes no code, only paths, so this is path arithmetic over every t
    `readFileSync("src/x.ts")`, build.mjs's entry points, `<script src>`.
 2. **A moved file's own relative paths are rewritten for its new directory** (`./dom` → `../dom`); one pointing at
    a file moving with it stays as it was.
-3. **A doc's exact old path is rewritten** (`src/zz-focus.ts` → `src/zz/zz-focus.ts`). A bare name (`zz-focus.ts`)
-   stays true and is left alone.
+3. **A doc follows too.** Its exact old path is rewritten (`src/<name>.ts` → `src/<dir>/<name>.ts`), everywhere
+   including code fences, since a fenced command names a real file. Its relative Markdown LINKS are retargeted
+   (`[x](../../src/<name>.ts#L3)` keeps its anchor), and a doc that itself moves has every relative link rebased.
+   A bare name (`<name>.ts`) stays true and is left alone. `scripts/check-doc-links.mjs` is the check that catches
+   a link broken any other way.
 4. **REPORTS what it cannot rewrite, and what it rewrote on a guess.** A path assembled from pieces (`join(ROOT,
    "src", f)` over a list of basenames) is `pieces`: fix it by hand. A ROOT-relative string equal to a moved path
    (`"src/x.ts"`) is rewritten and listed as `rooted`, because it is usually a path (build.mjs, a `readFileSync`)
    but can be DATA (a sample path in a test): read each one.
 
-   Examples in docs and fixtures that describe moves should use names no real file has (`zz-*`), or a real move
+   Examples in docs and fixtures that describe moves should use a placeholder (`<name>`) or a name no real file has (`zz-*`), or a real move
    rewrites them too. That is how this skill's own examples got rewritten the first time it ran.
 5. **Blocks on a dangling path**: a relative specifier that resolves after the move to nothing, where it resolved
    before. Then `git mv`s the files, writes the rewrites, and runs `tsc --noEmit` before and after, failing on any

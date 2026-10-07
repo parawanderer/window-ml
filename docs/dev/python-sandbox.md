@@ -158,7 +158,7 @@ no DOM), only network. `"full"` leaves the bridges intact (outbound network) and
 requires manual approval. Restored in
 `finally`; PY_RUN is serialized so the global swap can't race. `harden`/`unharden` live in
 `python-runtime.ts` (chrome-free) and are **escape-tested against real Pyodide**
-(`tests/python.test.js`): a hardened run can't `import js`/`pyodide_js` or reach
+(`tests/python.test.mjs`): a hardened run can't `import js`/`pyodide_js` or reach
 `pyodide.code.run_js`, a `full` run's cached `import js` is still purged, and `full` mode
 genuinely leaves the bridge open (why it needs approval). Config `autoApprovePython`
 (ON by default, Advanced settings) auto-approves **readonly-mode** calls (badge provenance

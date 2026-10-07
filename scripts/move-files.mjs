@@ -7,7 +7,8 @@
 //
 // A file move changes no code, only paths, so this is PATH ARITHMETIC rather than a refactor: every string literal
 // in a tracked source, test, script or page that resolves to a moved file is rewritten to the file's new place, and
-// every relative path INSIDE a moved file is rewritten for its new directory, and a doc's exact old path follows. That covers what TypeScript's own
+// every relative path INSIDE a moved file is rewritten for its new directory, and a doc follows too: its exact old
+// paths, and its relative Markdown links (`[x](../src/y.ts)`), including every link of a doc that itself moved. That covers what TypeScript's own
 // rename does not see, which in this repo is most of it: tests' `await import("../src/x.ts")`, a `readFileSync`
 // of "src/x.ts", build.mjs's entry points, a `<script src>`. What it cannot rewrite it REPORTS: a path assembled
 // from pieces (`join(ROOT, "src", "x.ts")`, a list of basenames), for a person to read.
@@ -101,7 +102,25 @@ export function planMove({ files, read, moves }) {
             // (`sw-llm.ts`) stays true after a move that keeps names, so it is left alone.
             let out = text;
             for (const [from, to] of moves) out = out.split(from).join(to);
-            if (out !== text) rewritten.set(rel, out);
+            // A Markdown LINK resolves against the doc's own directory: retarget one whose file moved, and rebase
+            // every link of a doc that itself moved. Fenced code is not a link.
+            let fenced = false;
+            out = out.split("\n").map((line) => {
+                if (/^\s*(```|~~~)/.test(line)) { fenced = !fenced; return line; }
+                if (fenced) return line;
+                return line.replace(/\]\(([^)\s#:]+)(#[^)\s]*)?\)/g, (whole, target, anchor = "") => {
+                    if (target.startsWith("/")) return whole;
+                    const hit = resolveSpec(before, oldDir, target);
+                    const file = hit?.file ?? posix(path.normalize(path.join(oldDir, target)));
+                    const dest = newPath(file);
+                    if (dest === file && newDir === oldDir) return whole;
+                    if (!hit && !before.has(file) && ![...before].some((f) => f.startsWith(file + "/"))) return whole;
+                    let spec = posix(path.relative(newDir, dest)) || ".";
+                    if (hit?.ext) spec = spec.slice(0, spec.length - hit.ext.length);
+                    return `](${spec}${anchor})`;
+                });
+            }).join("\n");
+            if (out !== text || newDir !== oldDir) rewritten.set(newPath(rel), out);
             continue;
         }
         const out = text.replace(LITERAL, (whole, q, spec) => {
