@@ -208,6 +208,132 @@ test("panels dock to an edge, share one as tabs, resize from their edge, and zoo
     } finally { await ext.context.close(); await fake.stop(); }
 });
 
+// A docked panel MOVES BY ITS TAB, with a real mouse: a translucent block shows where it would land before anything
+// moves (the whole group for a tab, the half for a split, a strip for an empty edge), Escape abandons the drag, and the
+// drop splits the region. The ⋮ menu does the same moves in two steps, and a split across a split is not offered at
+// the depth this build allows.
+test("a panel's tab drags to a split or an empty edge, showing where it lands, and the menu makes the same moves", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    fake.setCapacity(BOX);
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off" });
+        const { page: chat, errors } = await openChatPage(ext);
+        await chat.setViewportSize({ width: 1400, height: 900 });
+        await expect(chat.locator(".chat-rt", { hasText: "This browser" })).toBeVisible();
+        const gear = chat.locator(".chat-gear-btn");
+        const openPanel = async (name) => {
+            await gear.click();
+            await chat.getByRole("menuitem", { name: "Panels" }).click();
+            await chat.getByRole("menuitemcheckbox", { name }).click();
+        };
+        await openPanel(/Models and memory/);
+        await openPanel(/Python bench/);
+        const top = chat.locator(".chat-dock.chat-dock-top"), bottom = chat.locator(".chat-dock.chat-dock-bottom");
+        await expect(bottom.getByRole("tab", { name: "Python bench" })).toBeVisible();
+        const ghost = chat.locator(".dock-ghost");
+        const rect = async (loc) => { const b = await loc.boundingBox(); return { x: b.x, y: b.y, w: b.width, h: b.height }; };
+        const near = (a, b, what) => {
+            for (const k of ["x", "y", "w", "h"]) expect(Math.abs(a[k] - b[k]), `${what}: ${k} ${a[k]} vs ${b[k]}`).toBeLessThan(3);
+        };
+        // The ghost eases between targets (80ms); wait for it to settle before measuring.
+        const settled = async () => { await chat.waitForTimeout(150); return rect(ghost); };
+        const tab = bottom.getByRole("tab", { name: "Python bench" });
+        const t = await rect(tab);
+        await chat.mouse.move(t.x + t.w / 2, t.y + t.h / 2);
+        await chat.mouse.down();
+        // A press that has not moved far is still a click: no block yet.
+        await chat.mouse.move(t.x + t.w / 2 + 2, t.y + t.h / 2, { steps: 2 });
+        await expect(ghost).toHaveCount(0);
+
+        // Over the right quarter of the top group's body: the block is that group's RIGHT HALF.
+        const grp = await rect(top.locator(".dock-group"));
+        await chat.mouse.move(grp.x + grp.w * 0.92, grp.y + grp.h * 0.6, { steps: 8 });
+        await expect(ghost).toBeVisible();
+        near(await settled(), { x: grp.x + grp.w / 2, y: grp.y, w: grp.w / 2, h: grp.h }, "split right");
+        await expect(bottom.locator(".dock-tabwrap.dragging"), "the dragged tab is dimmed while it travels").toHaveCount(1);
+        // Over the group's middle: the WHOLE group, because it would join as a tab.
+        await chat.mouse.move(grp.x + grp.w / 2, grp.y + grp.h * 0.6, { steps: 4 });
+        near(await settled(), grp, "as a tab");
+        // Over the top group's own tab bar: a tab as well.
+        const bar = await rect(top.locator(".dock-bar"));
+        await chat.mouse.move(bar.x + bar.w * 0.6, bar.y + bar.h / 2, { steps: 4 });
+        near(await settled(), grp, "on the bar");
+        // Near the EMPTY left edge of the column: a strip as wide as a left region would be.
+        const work = await rect(chat.locator(".chat-work"));
+        const main = await rect(chat.locator(".chat-work-mid > .chat-main"));
+        await chat.mouse.move(work.x + 10, main.y + main.h / 2, { steps: 6 });
+        near(await settled(), { x: work.x, y: work.y, w: Math.min(380, work.w * 0.4), h: work.h }, "a new left region");
+        // Escape abandons it: no block, and nothing moved.
+        await chat.keyboard.press("Escape");
+        await expect(ghost).toHaveCount(0);
+        await chat.mouse.up();
+        await expect(bottom.getByRole("tab", { name: "Python bench" })).toBeVisible();
+        await expect(chat.locator(".dock-split")).toHaveCount(0);
+
+        // Again, and released over the right quarter: the top region is now two groups side by side.
+        const t2 = await rect(tab);
+        await chat.mouse.move(t2.x + t2.w / 2, t2.y + t2.h / 2);
+        await chat.mouse.down();
+        await chat.mouse.move(grp.x + grp.w * 0.92, grp.y + grp.h * 0.6, { steps: 10 });
+        await expect(ghost).toBeVisible();
+        await chat.mouse.up();
+        await expect(ghost).toHaveCount(0);
+        await expect(bottom).toHaveCount(0);
+        await expect(top.locator(".dock-split.dock-row > .dock-cell > .dock-group")).toHaveCount(2);
+        const [left, right] = [await rect(top.locator(".dock-group").nth(0)), await rect(top.locator(".dock-group").nth(1))];
+        await expect(top.locator(".dock-group").nth(1).getByRole("tab", { name: "Python bench" })).toBeVisible();
+        expect(right.x).toBeGreaterThan(left.x + left.w - 2);
+        expect(Math.abs(left.w - right.w)).toBeLessThan(3);
+        await expect(top.locator(".bench")).toBeVisible();
+        await expect(top.locator(".vram")).toBeVisible();
+
+        // The divider shares the room, and the layout survives a reload.
+        const div = await rect(top.locator(".dock-divider"));
+        await chat.mouse.move(div.x + div.w / 2, div.y + div.h / 2);
+        await chat.mouse.down();
+        await chat.mouse.move(div.x + div.w / 2 - 120, div.y + div.h / 2, { steps: 5 });
+        await chat.mouse.up();
+        const shrunk = await rect(top.locator(".dock-group").nth(0));
+        expect(Math.round(left.w - shrunk.w)).toBeGreaterThan(110);
+        // The page does not keep the bench open across a reload, so this is also the CLOSE-AND-REOPEN case: it comes
+        // back beside the same panel, on the same side, at the share it was dragged to.
+        await chat.reload();
+        await expect(chat.locator(".chat-dock-top .vram")).toBeVisible();
+        if (!(await chat.locator(".chat-dock .bench").count())) await openPanel(/Python bench/);
+        await expect(chat.locator(".chat-dock-top .dock-split.dock-row > .dock-cell > .dock-group")).toHaveCount(2);
+        expect(Math.abs((await rect(chat.locator(".chat-dock-top .dock-group").nth(0))).w - shrunk.w)).toBeLessThan(3);
+
+        // THE MENU, in two steps: "Move next to…", then a row per group with what it allows.
+        await chat.getByRole("button", { name: "Python bench options" }).click();
+        await chat.getByRole("menuitem", { name: "Move next to…" }).click();
+        await chat.getByRole("menuitem", { name: "As a tab beside Resources" }).click();
+        await expect(chat.locator(".chat-dock-top .dock-split")).toHaveCount(0);
+        await expect(chat.locator(".chat-dock-top").getByRole("tab")).toHaveCount(2);
+        // …split out of its own group, below…
+        await chat.getByRole("button", { name: "Python bench options" }).click();
+        await chat.getByRole("menuitem", { name: "Move next to…" }).click();
+        await chat.getByRole("menuitem", { name: "Split to the bottom of Resources · Python bench" }).click();
+        await expect(chat.locator(".chat-dock-top .dock-split.dock-col > .dock-cell > .dock-group")).toHaveCount(2);
+        // …and a split ACROSS that column is one level too deep: shown, and refused.
+        await chat.getByRole("button", { name: "Python bench options" }).click();
+        await chat.getByRole("menuitem", { name: "Move next to…" }).click();
+        const across = chat.getByRole("menuitem", { name: "Split to the left of Resources" });
+        await expect(across).toHaveAttribute("aria-disabled", "true");
+        await chat.keyboard.press("Escape");
+        // Dragging toward a group's side where that split is refused shows the TAB block instead of a half.
+        const res = await rect(chat.locator(".chat-dock-top .dock-group").nth(0));
+        const bt = await rect(chat.locator(".chat-dock-top").getByRole("tab", { name: "Python bench" }));
+        await chat.mouse.move(bt.x + bt.w / 2, bt.y + bt.h / 2);
+        await chat.mouse.down();
+        await chat.mouse.move(res.x + res.w * 0.05, res.y + res.h * 0.6, { steps: 8 });
+        near(await settled(), res, "a refused split falls back to a tab");
+        await chat.keyboard.press("Escape");
+        await chat.mouse.up();
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
 test("the box's panel and the Python bench are on this page, because THIS browser is the runtime", async () => {
     const fake = await startFakeLlm({ model: "fake-model" });
     const ext = await launchExtension();
@@ -392,7 +518,6 @@ test("the start page holds through a worker restart, and its tab list is fresh a
         await cdp.send("ServiceWorker.enable");
         await cdp.send("ServiceWorker.stopAllWorkers");
         await expect.poll(() => chat.evaluate(() => document.querySelector(".chat-start-wait") == null), { timeout: 10_000 }).toBe(true);
-        await chat.waitForTimeout(500);
         expect(await chat.evaluate(() => window.__gone)).toBe(0);
         await expect(box).toHaveValue("half a thought");
 
