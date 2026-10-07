@@ -12,7 +12,8 @@
 //   ?cancel=1       cancel whatever run is driving this page, using the run id its own debug events carry
 //   ?spend=1        once a run is driving this page, spend the user's model with a request of the page's own
 //   ?redress=1      re-post a real step that waits for approval with harmless-looking arguments
-// and always: `window.__seen` (every window message, from before the extension loads) and `window.__forge(events)`.
+// and always: `window.__seen` (every window message, from before the extension loads), `window.__heard` (every
+// message from another window), `window.__forge(events)` and `window.__intoApp(events)`.
 
 (() => {
     const params = new URLSearchParams(location.search);
@@ -50,6 +51,27 @@
      * @param {object[]} events session events (`agent`, `agent-step`, `agent-result`, …)
      */
     window.__forge = (events) => { for (const ev of events) window.postMessage({ __mlDebug: ev, __mlFromBg: true }, "*"); };
+
+    /** Every message this window received from ANOTHER window: the extension's own iframes talk to their parent, and on
+     *  a web page the parent is this page. Attack 16. */
+    const heard = [];
+    window.__heard = heard;
+    window.addEventListener("message", (e) => { if (e.source !== window) heard.push(e.data); }, true);
+
+    /** The extension's iframes on this page, found the way any script can: through the open shadow roots of the
+     *  elements the shell adds. */
+    const extensionFrames = () => [...document.querySelectorAll("*")].flatMap((el) => el.shadowRoot ? [...el.shadowRoot.querySelectorAll("iframe")] : []);
+
+    /**
+     * Post events STRAIGHT into the extension's iframes, skipping the shell, as their parent window. Attack 16.
+     * @param {object[]} events session events
+     * @returns {number} how many iframes were posted to
+     */
+    window.__intoApp = (events) => {
+        const frames = extensionFrames();
+        for (const f of frames) for (const ev of events) f.contentWindow?.postMessage({ __mlDebug: ev }, "*");
+        return frames.length;
+    };
 
     // ?redress=1: when a REAL run's step on this page waits for the person's approval, re-post that same step (same run,
     // same seq) with harmless-looking arguments, so the card would ask the person to approve something other than what
