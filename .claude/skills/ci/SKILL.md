@@ -16,16 +16,16 @@ it does not run the e2e suite, three Node versions, or the real-CPython tests.
 git switch -c ui/event-lane-zoom          # a branch per piece of work, named for it
 # …work, commit…
 git push -u origin HEAD
-gh pr create --fill --label exec,api     # title/body from the commits; AREA labels, see below
+gh pr create --fill --label @exec,@api   # title/body from the commits; TOPIC labels, see below
 gh pr checks --watch                      # blocks until every check settles
 ```
 
 `gh pr checks --watch` is the one to use: it exits non-zero when anything failed, so it doubles as the
 gate. For a long e2e run, `--interval 30` keeps the polling quiet.
 
-**Label the PR by area** (AGENTS.md's rule): every one of `gh label list`'s area labels that applies, and
-`hub-compat` / `model-backend-compat` whenever the change needs a matching one in window-ml-hub or the forked
-Ollama/OpenWebUI. Forgot? `gh pr edit <n> --add-label ui,chat-page`.
+**Label the PR by topic** (AGENTS.md's rule): every `@` label in `gh label list` that applies, and
+`@hub-compat` / `@model-backend-compat` whenever the change needs a matching one in window-ml-hub or the forked
+Ollama/OpenWebUI. Forgot? `gh pr edit <n> --add-label @ui,@chat-page`.
 
 **Wait a beat before watching.** Run immediately after `gh pr create` (or a push), it can print
 `no checks reported on the 'branch'` and exit 0 — it raced the run's registration, and that exit code
