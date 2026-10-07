@@ -1243,6 +1243,18 @@
                 },
                 "stdoutLabel": {
                   "type": "string"
+                },
+                "stdoutNotes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "valueNotes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "required": [
@@ -1797,6 +1809,18 @@
                 },
                 "stdoutLabel": {
                   "type": "string"
+                },
+                "stdoutNotes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "valueNotes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "required": [

@@ -22,10 +22,17 @@
 // invokes (`.map`/`.filter` call their callback synchronously, so an `await` in there
 // can't be honoured and throws NotInDialect → the whole survey falls back to approval).
 import { isTable, isStoredTable } from "./table-brand";   // the ONE import: a table facade is recognised by BRAND, and the brand module is itself dependency-free
+import type { CurrentSnapshot } from "./current-context";   // a TYPE: erased, so it adds nothing at runtime
 
 
 export class NotInDialect extends Error {}
 export class Denied extends Error {}
+/** The survey reached for the PAGE while being evaluated in the worker, which has none. Not a refusal of the script:
+ *  the caller retries it on the page, where it has a DOM and no run context. A subclass of {@link NotInDialect} on
+ *  purpose, so it inherits every guarantee a refusal has: a script's `try/catch` cannot swallow it, the evaluator
+ *  rolls back on it, and a caller that does not know this class treats it as a refusal and asks the human, which is
+ *  the safe reading. */
+export class NeedsPage extends NotInDialect {}
 
 // ------------------------------------------------------------------ halting ---
 // Two properties, deliberately kept apart (docs/dev/readonly-exec.md, "Halting"):
@@ -888,14 +895,25 @@ const ANSWER_METHODS = new Set(["add", "remove", "clear", "dump"]);
 // this grants `ml.schema(…)` and nothing else, where allowing the NAME would grant `.schema()` on every
 // object the dialect can reach. Pure — it reads data and returns a type string, spending nothing.
 export const ML_READONLY_METHODS = ["getModel", "config", "models", "capabilities", "ps", "serverTools", "queryAll", "range", "a11y", "dereference", "info", "schema"] as const;
+/** The read-only members that read the PAGE, so a worker-side evaluation has none of them and defers to the page. */
+const PAGE_ML_METHODS: ReadonlySet<string> = new Set(["queryAll", "a11y"]);
+/** Where a survey is evaluated. `page`: the page's main world, with its DOM. `worker`: the service worker, with no
+ *  DOM, where the run's own context can be read without it ever entering the page (docs/spec/CURRENT_CONTEXT.md). */
+export type ReadonlyRealm = "page" | "worker";
 
 /** Build the `ml` object the dialect sees: ONLY {@link ML_READONLY_METHODS}, bound to the real API.
  *  A purpose-built facade rather than `window.ml` itself, so the free set is enforced by what exists,
  *  not only by a name check. Returns null when there's no ml (→ `ml` isn't in scope at all). */
-function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown, meter?: { charge(steps: number): void }): Record<string, unknown> | null {
+function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown, meter?: { charge(steps: number): void }, realm: ReadonlyRealm = "page"): Record<string, unknown> | null {
     if (!ml || typeof ml !== "object") return null;
     const out: Record<string, unknown> = Object.create(null);
+    // IN THE WORKER the facade is an ALLOW list of what is safe there, built by leaving out what reads the page,
+    // rather than a deny list of what does not: a member nobody listed is ABSENT, and reaching an absent member in
+    // the worker defers the survey to the page (NeedsPage) instead of failing. So a page-reading member added later
+    // costs one extra hop, never a hole. Left out here: the DOM reads, the page's fetch cache, the answer set.
+    const worker = realm === "worker";
     for (const name of ML_READONLY_METHODS) {
+        if (worker && PAGE_ML_METHODS.has(name)) continue;
         const fn = (ml as Record<string, unknown>)[name];
         if (typeof fn === "function") out[name] = (fn as (...a: unknown[]) => unknown).bind(ml);
     }
@@ -905,7 +923,9 @@ function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown, meter?
     // so a survey that re-reads an approved URL auto-approves (the python_exec+Sheet parallel). Kept OUT of
     // ML_READONLY_METHODS (which drives the "always free" docs) because it's free only for cached URLs.
     const cachedFetch = (ml as Record<string, unknown>)["_fetchCached"];
-    if (typeof cachedFetch === "function") {
+    // The cache is the PAGE's (`ml.fetch`'s, in the main world). In the worker a miss would be the WORKER fetching:
+    // `<all_urls>` and none of the page's cookies, a different capability. So it is not offered there.
+    if (typeof cachedFetch === "function" && !worker) {
         out.fetch = (url: unknown, opts?: unknown): unknown => {
             // The MODE is part of the question, so it is handed to the host rather than dropped: the cache holds
             // only default-mode results, and a `rendered` or `format: "html"` read answered from it would be a
@@ -992,8 +1012,130 @@ function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown, meter?
     // user-facing answer is a safe terminating operation (the dialect already builds + mutates script-local
     // arrays/Sets), so it's free here — the FIRST mutating facade member. It grants nothing: the facade exposes
     // no nodes/media, and the page can already call ml.answer from its own console.
-    if (answerFacade && typeof answerFacade === "object") out.answer = answerFacade;
+    // The answer set holds the PAGE's elements, so it is a page member.
+    if (answerFacade && typeof answerFacade === "object" && !worker) out.answer = answerFacade;
     return Object.keys(out).length ? out : null;
+}
+
+/** Characters of text above which a message row prints as a summary (see `Evaluator.printable`). */
+export const ABRIDGE_OVER = 300;
+/** Characters of a large message's content shown in its summary. */
+const ABRIDGE_PREVIEW = 120;
+/** How a large message row PRINTS: what it is, how big, the start of it, and the exact expression that prints it all.
+ *  Fields in the order a reader scans them; nothing padded, since a model reads it. */
+function abridgeRow(m: Record<string, unknown>, index: number): unknown {
+    const content = typeof m.content === "string" ? m.content : "";
+    const calls = Array.isArray(m.tool_calls) ? m.tool_calls : null;
+    const callsText = calls ? JSON.stringify(calls) : "";
+    const chars = content.length + callsText.length;
+    if (chars <= ABRIDGE_OVER) return m;
+    const images = Array.isArray(m.images) ? m.images.length : 0;
+    // Point at the part that is LARGE. A tool-calling assistant turn often has empty content and long arguments, and
+    // "print .content for all 0 chars" (what this said first, caught by the demo) sends the reader to nothing.
+    const [part, text] = content.length >= callsText.length ? ["content", content] : ["tool_calls", callsText];
+    return {
+        role: m.role,
+        ...(typeof m.tool_call_id === "string" ? { tool_call_id: m.tool_call_id } : {}),
+        ...(calls ? { tool_calls: calls.length } : {}),
+        ...(images ? { images } : {}),
+        chars,
+        preview: text.length > ABRIDGE_PREVIEW ? `${text.slice(0, ABRIDGE_PREVIEW)}…` : text,
+        abridged: `print ml.current.messages[${index}].${part} for all ${text.length} chars`,
+    };
+}
+
+/** One substitution the print boundary made: WHERE (a JSONPath into what was printed) and HOW the printed object
+ *  differs from the value. Derived, never written: see `Evaluator.printable`. */
+export interface PrintSwap {
+    path: string; removed: string[]; added: string[]; retyped: { key: string; was: string; now: string }[];
+    /** What was printed: `console.log` (with its argument number when there were several) or the returned value. */
+    where: string;
+    /** The view's compact JSON, exactly as it appears in the printed text, so a caller that CUTS the text can tell
+     *  whether the reader saw this substitution at all, and say nothing about one it did not. */
+    json: string;
+}
+
+/** A JSONPath member step for a key: `.name` when it is an identifier, else bracket notation (RFC 9535). */
+function jsonPathKey(k: string): string {
+    return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k) ? `.${k}` : `[${JSON.stringify(k).replace(/^"|"$/g, "'")}]`;
+}
+/** Several keys at one place, as a JSONPath: one is a member step, more are a bracketed union. */
+function jsonPathKeys(keys: string[]): string {
+    return keys.length === 1 ? jsonPathKey(keys[0]) : `[${keys.map((k) => `'${k.replace(/'/g, "\\'")}'`).join(",")}]`;
+}
+const kindName = (x: unknown): string => x === null ? "null" : Array.isArray(x) ? "array" : typeof x;
+/** "an array", "a number": the notes are read by a model, and "a array" reads as a slip. */
+const article = (kind: string): string => `${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind}`;
+
+/** How a printed view differs from the value it stands for, field by field. */
+function diffSwap(path: string, before: Record<string, unknown>, after: Record<string, unknown>, where: string): PrintSwap {
+    const removed = Object.keys(before).filter((k) => !(k in after));
+    const added = Object.keys(after).filter((k) => !(k in before));
+    const retyped = Object.keys(before).filter((k) => k in after && kindName(before[k]) !== kindName(after[k]))
+        .map((k) => ({ key: k, was: kindName(before[k]), now: kindName(after[k]) }));
+    return { path, removed, added, retyped, where, json: safeStr(after) };
+}
+
+/** The notes a reader gets for a print's substitutions: one line per KIND of change, its places as one JSONPath
+ *  (`$[0,3]` when they are siblings, else listed), so the model can tell exactly which parts of what it was shown are
+ *  a view and not the value. `where` says what was printed (`console.log` or the returned value). */
+export function describeSwaps(swaps: readonly PrintSwap[]): string[] {
+    const groups = new Map<string, { swap: PrintSwap; paths: string[] }>();
+    for (const sw of swaps) {
+        const sig = JSON.stringify([sw.where, sw.removed, sw.added, sw.retyped]);
+        const g = groups.get(sig);
+        if (g) g.paths.push(sw.path); else groups.set(sig, { swap: sw, paths: [sw.path] });
+    }
+    return [...groups.values()].map(({ swap, paths }) => {
+        // One path when the places are siblings at ONE index (`$[0,3]`, `$[0,3].m`), else each place in full: a key
+        // appended to a LIST of paths would attach to the last one only, and the others would be wrong JSONPath.
+        const union = unionPath(paths);
+        // Listed places are capped like a union's indices are (see indexSelector): the notes sit AFTER the clip, so
+        // an uncapped list would flood exactly the output the clip protects.
+        const listed = paths.length > MAX_NOTE_PLACES ? paths.slice(0, MAX_NOTE_PLACES) : paths;
+        const more = union ? "" : paths.length > listed.length ? ` (${paths.length} places; the first ${listed.length} named)` : "";
+        const at = (suffix: string) => union ? `${union}${suffix}` : listed.map((p) => `${p}${suffix}`).join(", ") + more;
+        const replaced = [
+            ...(swap.removed.length ? [at(jsonPathKeys(swap.removed))] : []),
+            ...swap.retyped.map((r) => `${at(jsonPathKey(r.key))} (${article(r.was)} in the value, ${article(r.now)} here)`),
+        ];
+        const virtual = swap.added.length ? `virtual ${at(jsonPathKeys(swap.added))}` : "";
+        return `[${swap.where} printed a VIEW: ${replaced.join(" and ") || at("")} REPLACED by ${virtual || "a summary"}; the value is unchanged, so print a path to see it]`;
+    });
+}
+
+/** Paths that are the same except for ONE array index, as one JSONPath with a union there (`$[0].m` and `$[3].m` →
+ *  `$[0,3].m`). Null when they differ in any other way. */
+function unionPath(paths: readonly string[]): string | null {
+    const segs = paths.map((p) => p.match(/^\$|\[\d+\]|\.[A-Za-z_$][\w$]*|\['(?:[^'\\]|\\.)*'\]/g) ?? []);
+    if (paths.length === 1) return paths[0];
+    if (segs.some((s) => s.join("") !== paths[segs.indexOf(s)] || s.length !== segs[0].length)) return null;
+    const differ = segs[0].map((_, i) => segs.some((s) => s[i] !== segs[0][i]));
+    if (differ.filter(Boolean).length !== 1) return null;
+    const at = differ.indexOf(true);
+    if (!segs.every((s) => /^\[\d+\]$/.test(s[at]))) return null;
+    return [...segs[0].slice(0, at), indexSelector(segs.map((s) => Number(s[at].slice(1, -1)))), ...segs[0].slice(at + 1)].join("");
+}
+
+/** Places a note will name, at most, before it says how many it left out. */
+const MAX_NOTE_PLACES = 8;
+
+/** Array indices as ONE bracketed JSONPath selection (RFC 9535), as short as it can be said exactly: a run of three or
+ *  more at a constant step is a slice (`0:40`, `0:200:2`), the rest are listed. If that still has more than
+ *  MAX_NOTE_PLACES parts, the first ones are named and the count says how many there were, so a context of 200 summarised
+ *  messages cannot turn a one-line note into a flood. */
+function indexSelector(nums: number[]): string {
+    const xs = [...new Set(nums)].sort((a, b) => a - b);
+    const parts: string[] = [];
+    for (let i = 0; i < xs.length;) {
+        let j = i + 1;
+        const step = xs[i + 1] - xs[i];
+        while (j < xs.length && xs[j] - xs[j - 1] === step) j++;
+        if (j - i >= 3) { parts.push(step === 1 ? `${xs[i]}:${xs[j - 1] + 1}` : `${xs[i]}:${xs[j - 1] + 1}:${step}`); i = j; }
+        else { parts.push(String(xs[i])); i++; }
+    }
+    if (parts.length <= MAX_NOTE_PLACES) return `[${parts.join(",")}]`;
+    return `[${parts.slice(0, MAX_NOTE_PLACES).join(",")}] (${xs.length} places; the first of them named)`;
 }
 
 const RETURN = Symbol("return");   // sentinel wrapper for a `return` value
@@ -1100,7 +1242,78 @@ class Evaluator {
     // all build new ones), so marking method results owned can't launder a live page container.
     private owned = new WeakSet<object>();
     private own<T>(v: T): T { if (v !== null && typeof v === "object" && isWritableTarget(v)) this.owned.add(v as object); return v; }
-    constructor(private ml: Record<string, unknown> | null, private budget: number = STEP_BUDGET) { this.fuel = budget; }
+    /** Containers that are READ-ONLY with a message saying so: `ml.current.messages`, its rows, and everything inside
+     *  them. A write there is not a refusal (the human gate would then run the script on the page, where there is no
+     *  `ml.current`) but a TypeError the model reads. The write half will one day make these writes MEAN something
+     *  (docs/spec/AGENT_COMPACTION.md), so the error is loud now rather than a copy that silently discards them. */
+    private readOnly = new WeakSet<object>();
+    /** Each message row, to its index: the print boundary abridges a large one and names how to print it whole. */
+    private rows = new Map<object, number>();
+    constructor(private ml: Record<string, unknown> | null, private budget: number = STEP_BUDGET, private realm: ReadonlyRealm = "page") { this.fuel = budget; }
+
+    /** Reaching a member the facade does not carry, by a READ or a destructuring. In the worker every one defers the
+     *  survey to the page. On the page a read of an absent member has always been `undefined` (an existence guard
+     *  reads that way), EXCEPT for the run's context: `ml.current` there would make a survey that needs both the page
+     *  and the run evaluate to a plausible wrong answer (`title + undefined`) with no one asked. So that name refuses. */
+    private absentRead(key: string): void {
+        if (this.realm === "worker") this.absentMl(key);
+        if (key === "current") throw new NotInDialect("ml.current is the run's context, which a survey on the page does not have");
+    }
+    /** A member the facade does not carry. In the worker that defers the survey to the page; on the page it is a
+     *  refusal, as it always was. */
+    private absentMl(key: string): never {
+        if (this.realm === "worker") throw new NeedsPage(`ml.${key} is not available in the worker`);
+        throw new NotInDialect(`method '${key}' not allowed`);
+    }
+
+    /** Build what `ml.current` reads from a snapshot. `messages` is the snapshot's own copy, protected; `run`, `meta`
+     *  and `log` are copies the script OWNS, since they will never be writable and annotating a working copy of the
+     *  metadata is how a compaction is planned. Flat records, so one level of ownership covers all of them. */
+    adoptCurrent(snap: CurrentSnapshot): Record<string, unknown> {
+        const protect = (v: unknown, depth: number): void => {
+            if (v === null || typeof v !== "object" || depth > 8 || this.readOnly.has(v)) return;
+            this.readOnly.add(v);
+            for (const x of Object.values(v)) protect(x, depth + 1);
+        };
+        protect(snap.messages, 0);
+        snap.messages.forEach((m, i) => this.rows.set(m as object, i));
+        const log = this.own(snap.log.map((r) => this.own({ ...r })));
+        return Object.assign(Object.create(null), {
+            run: this.own({ ...snap.run }),
+            messages: snap.messages,
+            meta: this.own(snap.meta.map((r) => this.own({ ...r }))),
+            log: Object.assign(log, { text: snap.log.text }),
+        });
+    }
+
+    /** The PRINT boundary for `ml.current.messages`. Holding the context costs nothing; printing it is what spends
+     *  tokens, and a model sees 500 characters of a result, so `console.log(ml.current.messages)` would show half a
+     *  system prompt and nothing else. A row whose text is larger than {@link ABRIDGE_OVER} prints as a summary that
+     *  names the expression printing it whole; the VALUE is untouched. Keyed to size, not role, so a large tool result
+     *  abridges like the system prompt. Walks plain arrays and objects only, so anything else (an element a survey
+     *  returns) passes through by reference. */
+    printable(v: unknown, swaps: PrintSwap[] = [], where = "the returned value", path = "$", depth = 0, budget = { n: 20_000 }): unknown {
+        if (!this.rows.size || v === null || typeof v !== "object" || depth > 6 || --budget.n < 0) return v;
+        const at = this.rows.get(v);
+        if (at !== undefined) {
+            // EVERY SUBSTITUTION IS RECORDED HERE, by diffing what is printed against the value. The note a reader
+            // gets is generated from that diff (`describeSwaps`), so a new kind of substitution is described the
+            // day it is added, with no sentence of its own to write or keep true.
+            const view = abridgeRow(v as Record<string, unknown>, at);
+            if (view !== v) swaps.push(diffSwap(path, v as Record<string, unknown>, view as Record<string, unknown>, where));
+            return view;
+        }
+        if (Array.isArray(v)) return v.map((x, i) => this.printable(x, swaps, where, `${path}[${i}]`, depth + 1, budget));
+        if (!isWritableTarget(v)) return v;
+        const out: Record<string, unknown> = {};
+        for (const [k, x] of Object.entries(v)) out[k] = this.printable(x, swaps, where, `${path}${jsonPathKey(k)}`, depth + 1, budget);
+        return out;
+    }
+
+    private refuseWrite(obj: unknown): void {
+        if (obj !== null && typeof obj === "object" && this.readOnly.has(obj))
+            throw new TypeError("ml.current.messages is read-only: it is the context the next model call gets. To work on the messages as data, build what you need (msgs.map(m => ({ role: m.role, content: m.content }))).");
+    }
 
     private guardKey(key: unknown): string {
         const k = String(key);
@@ -1113,6 +1326,7 @@ class Evaluator {
     // a DOM collection becomes a real Array. Used by object destructuring.
     private prop(obj: unknown, key: string): unknown {
         this.guardKey(key);
+        if (this.ml !== null && obj === this.ml && !Object.prototype.hasOwnProperty.call(this.ml, key)) this.absentRead(key);
         const v = (obj as any)?.[key];
         if (typeof v === "function") return METHOD_REF;
         return isDomCollection(v) ? Array.from(v as ArrayLike<unknown>) : v;
@@ -1139,6 +1353,7 @@ class Evaluator {
         if (obj === SHORT) return SHORT;                       // an earlier `?.` short-circuited → keep skipping
         if (node.optional && obj == null) return SHORT;        // this `?.` short-circuits the rest of the chain
         const key = node.computed ? this.guardKey(yield* this.eval(node.prop, scope)) : this.guardKey(node.prop);
+        if (this.ml !== null && obj === this.ml && !Object.prototype.hasOwnProperty.call(this.ml, key)) this.absentRead(key);
         const v = (obj as any)?.[key];
         if (typeof v === "function") return METHOD_REF;
         // Uniformly with querySelectorAll (evalCall), a collection PROPERTY (.children/.rows/.cells/…)
@@ -1362,6 +1577,7 @@ class Evaluator {
                     throw new NotInDialect("assignment is allowed only to a name you declared, or to a property of an object/array you built (o[k] = v)");
                 const obj: any = yield* this.eval(node.target.obj, scope);
                 const key = node.target.computed ? this.guardKey(yield* this.eval(node.target.prop, scope)) : this.guardKey(node.target.prop);
+                this.refuseWrite(obj);
                 // owned AND a plain object/array: a script-created Set/Map is owned (so its mutator METHODS
                 // work) but is NOT a valid `o[k]=v` target — mutate it through .add/.set, not property writes.
                 if (!this.owned.has(obj) || !isWritableTarget(obj))
@@ -1385,6 +1601,7 @@ class Evaluator {
                 if (node.arg.type !== "Member") throw new NotInDialect("++ and -- apply to a name you declared or to a property of an object you built");
                 const obj: any = yield* this.eval(node.arg.obj, scope);
                 const key = node.arg.computed ? this.guardKey(yield* this.eval(node.arg.prop, scope)) : this.guardKey(node.arg.prop);
+                this.refuseWrite(obj);
                 if (!this.owned.has(obj) || !isWritableTarget(obj))
                     throw new Denied("can only assign to an object or array you built — never a DOM node, a page object, or the environment");
                 this.notIterating(obj, "assign into");
@@ -1493,7 +1710,7 @@ class Evaluator {
             // `setModel`/`chat`/`pythonExec`, so a missing name here means "the dialect withheld it", which
             // is precisely the thing a human may want to approve. Escalate, never explain it away.
             if (onMl) {
-                if (!Object.prototype.hasOwnProperty.call(this.ml, key)) throw new NotInDialect(`method '${key}' not allowed`);
+                if (!Object.prototype.hasOwnProperty.call(this.ml, key)) this.absentMl(key);
             } else if (onAnswer) {
                 if (!ANSWER_METHODS.has(key)) throw new NotInDialect(`method '${key}' not allowed`);
             } else if (!methodAllowed(obj, key)) {
@@ -1519,6 +1736,7 @@ class Evaluator {
             // array reached off a page value. So `pageState.items.push(x)` / `.sort()` can't mutate page data.
             // The answer facade is EXEMPT: curating your own answer is the point, and its methods touch only the
             // run's answer set (no nodes/media/realm reachable through them).
+            if (MUTATING_METHODS.has(key)) this.refuseWrite(obj);
             if (MUTATING_METHODS.has(key) && !this.owned.has(obj) && !onAnswer)
                 throw new Denied(`'${key}' can only mutate an array you created, not one reached from the page`);
             if (MUTATING_METHODS.has(key) && !onAnswer) this.notIterating(obj, "change");
@@ -1623,25 +1841,48 @@ function runSync(gen: Ev): unknown {
  * @param opts.stepBudget Overrides {@link STEP_BUDGET} — for tests, which exercise the same mechanism at a size that
  *   does not cost seconds per case.
  */
-export async function evalReadonly(code: string, doc: Document, ml?: unknown, answerFacade?: unknown,
-    opts: { checkpoint?: () => () => void; stepBudget?: number } = {}): Promise<{ value: unknown; logs: string[]; reused: string[] }> {
+export async function evalReadonly(code: string, doc: Document | null, ml?: unknown, answerFacade?: unknown,
+    opts: { checkpoint?: () => () => void; stepBudget?: number; realm?: ReadonlyRealm; current?: CurrentSnapshot } = {}): Promise<{ value: unknown; logs: string[]; reused: string[]; prints: { console: PrintSwap[]; value: PrintSwap[] } }> {
+    const realm: ReadonlyRealm = opts.realm ?? "page";
     const logs: string[] = [];
-    const rec = (...a: unknown[]) => logs.push(a.map(x => typeof x === "string" ? x : safeStr(x)).join(" "));
+    // Printed through the evaluator's print boundary once it exists (it abridges `ml.current.messages` rows).
+    let printable: (v: unknown, swaps: PrintSwap[], where: string) => unknown = (v) => v;
+    // What the print boundary changed, STRUCTURED. The caller writes the notes (`describeSwaps`), because only it knows
+    // where it will cut the output: a note about a part the reader never received is noise.
+    const prints: { console: PrintSwap[]; value: PrintSwap[] } = { console: [], value: [] };
+    // A statement, not an expression: it returned `logs.push`'s count, so a survey ending in `console.log(…)` had the
+    // VALUE 1 (seen in the ml.current demo) where JavaScript gives `undefined`.
+    const rec = (...a: unknown[]): void => {
+        logs.push(a.map((x, i) => {
+            if (typeof x === "string") return x;
+            return safeStr(printable(x, prints.console, a.length > 1 ? `console.log argument ${i + 1}` : "console.log"));
+        }).join(" "));
+    };
     const reused: string[] = [];   // ml.fetch cache hits — URLs this survey re-read from a prior approval
     // The pipe charges the step budget, which lives on the evaluator built below: the meter forwards to it once it exists.
     let charge: (steps: number) => void = () => {};
-    const facade = mlFacade(ml, reused, answerFacade, { charge: (n) => charge(n) });
+    let facade = mlFacade(ml, reused, answerFacade, { charge: (n) => charge(n) }, realm);
+    if (!facade && opts.current) facade = Object.create(null);
     const root: Record<string, unknown> = Object.create(null);
     Object.assign(root, {
-        document: doc, Array, Object, JSON, Math, String, Number, Boolean, Promise,
+        Array, Object, JSON, Math, String, Number, Boolean, Promise,
         parseInt, parseFloat, isNaN, isFinite, undefined, NaN, Infinity,
         console: { log: rec, info: rec, warn: rec, error: rec, debug: rec },
     });
     if (facade) root.ml = facade;
-    // getComputedStyle bound to the view (never exposed itself, so calling it can't hand back `window`).
-    // Its CSSStyleDeclaration reads are mediated like any other object; the walk-back to window is denied.
-    const view = doc.defaultView;
-    if (view && typeof view.getComputedStyle === "function") root.getComputedStyle = view.getComputedStyle.bind(view);
+    if (realm === "worker") {
+        // THE PAGE'S ROOTS ARE TRIPWIRES in the worker: the name exists, so `in` finds it, and READING it defers the
+        // survey to the page. The worker has no DOM, and the page has no run context, so a survey that needs both
+        // trips here and is refused there: it reaches the human whatever order it touches them in.
+        for (const name of ["document", "getComputedStyle"])
+            Object.defineProperty(root, name, { enumerable: true, get() { throw new NeedsPage(`'${name}' is the page's`); } });
+    } else {
+        root.document = doc;
+        // getComputedStyle bound to the view (never exposed itself, so calling it can't hand back `window`).
+        // Its CSSStyleDeclaration reads are mediated like any other object; the walk-back to window is denied.
+        const view = doc?.defaultView;
+        if (view && typeof view.getComputedStyle === "function") root.getComputedStyle = view.getComputedStyle.bind(view);
+    }
     const ast = new Parser(tokenize(code)).parseProgram();
     // THE SCRIPT GETS ITS OWN FRAME over the host's. `root` is where `document`, `ml` and `Math` live and it has a
     // null prototype, which is what marks a name as the environment's rather than the script's — so the script
@@ -1653,11 +1894,13 @@ export async function evalReadonly(code: string, doc: Document, ml?: unknown, an
     // is the one thing a survey can change: an add before a fall-back would outlive it, and the human would then be
     // asked to approve a script whose first half had already run. The caller's checkpoint restores it.
     const restore = opts.checkpoint?.();
-    const ev = new Evaluator(facade, opts.stepBudget);
+    const ev = new Evaluator(facade, opts.stepBudget, realm);
     charge = (n) => ev.spend(n);
+    if (opts.current && facade) facade.current = ev.adoptCurrent(opts.current);
+    printable = (v, swaps, where) => ev.printable(v, swaps, where);
     try {
         const value = await runAsync(ev.eval(ast, top));
-        return { value, logs, reused };
+        return { value: ev.printable(value, prints.value, "the returned value"), logs, reused, prints };
     } catch (e) {
         restore?.();
         // WHERE it threw, for a RUNTIME error. A refusal is about the script's shape and needs no line; a

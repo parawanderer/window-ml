@@ -1,7 +1,11 @@
 # Spec: the model reads its own context (`ml.current`)
 
-**Status: agreed in shape, unbuilt** (written 2026-10-05). The READ half. Decided in conversation; the field list and
-the open questions at the end are not.
+**Status: the READ half is built, not yet reachable** (written 2026-10-05; built 2026-10-06). The snapshot
+(`current-context.ts`), the loop recording each message (`agent-loop.ts`, `contextSink`), the dialect reading it in
+a WORKER realm (`readonly-exec.ts`) and the worker-side evaluator (`sw-readonly.ts`) exist and are tested
+(`tests/readonly-current.test.mjs`). What makes it reachable is the host calling that evaluator first, in
+`sw-run-host.ts`'s `tryReadonly`, which is the site-access work's slice 2. Until then no contract type is added (see
+below). Where the build departed from the first draft of this document, the section says so and why.
 
 This is the first step of [`AGENT_COMPACTION.md`](AGENT_COMPACTION.md) — the model deciding what in its own history
 it no longer needs — and it is deliberately only the step that cannot break anything. Everything here is read-only.
@@ -147,18 +151,32 @@ that writes `@tool:abc.length` gets a length, where against a promise it would g
 "which is exactly the plausible-wrong-answer shape this codebase keeps designing out". `ml.current.messages.length`
 on a promise is that same silent `undefined`.
 
-**How it is afforded: the same lexical trick.** The source is scanned before evaluation for which members it
-names — `messages`/`meta`, `log`, `run` — and only those are fetched, in the same up-front resolve as the pointer
-handles. A script
-that never says `ml.current` costs nothing — which matters, because on a background-hosted run the context lives in
-the worker while `exec` runs on the page, so an unconditional pre-fetch would put the context on the wire for every
-delegated tool call whether or not anything read it.
+**Where it is read: in the WORKER, never evaluated on the page.** The first draft resolved the snapshot up front and shipped it
+to the page, where a delegated `exec` ran, and scanned the source per member so as not to put the context on the wire
+for nothing. The site-access work showed why that was wrong rather than merely costly: the page is the realm a
+hostile site controls, and a read-only survey auto-approves, so a prompt-injected one would carry the run's whole
+context (other origins' content, the system prompt) into it with no human asked. So a survey is evaluated in the
+service worker FIRST, where the context is local and nothing crosses at all, and only a survey that reaches for the
+page is retried there. The two realms have disjoint capabilities (`docs/dev/readonly-exec.md`, "Two realms"):
 
-**What the snapshot carries** is the real messages, bodies included, because that is the point (decision 3). The
-cost is a structured clone of the context across the extension's own bridge — in-process, not a network hop, of
-data already in memory, and bounded by the context window itself. It is paid only by a script that NAMES
-`ml.current.messages`, which is what makes the lexical scan worth having rather than a micro-optimisation. The
-remote case is the one where this is not obviously affordable, and it is listed under Open.
+- the worker has the run's context and no page: any route to the page raises `NeedsPage`, and the host retries there;
+- the page has the DOM and no run context: `ml.current` is a refusal there (not `undefined`, which would make a mixed
+  survey evaluate to a plausible wrong answer);
+- so a survey that needs both is refused on both sides and reaches the human, whatever order it touches them in.
+
+**What that does NOT do, measured (2026-10-06, `demo/ml-current-e2e`).** It keeps the snapshot from being EVALUATED in
+the page, and the page is never asked to run a survey that reads the run. It does not keep a survey's RESULT off the
+page: what a survey returns is a tool result, and goes where every tool result goes, which today includes the debug
+stream relayed through the page's own window (`__mlDebug:agent-step`, carrying the panel's copy, not just the model's
+500 characters) in every `debugMode`, and the run's response to a page that started the run. A prompt-injected survey
+returning `ml.current.messages.map(m => m.content).join()` is a plain string, so the print boundary does not touch it.
+The same channel carries every other tool result already, so it is not new here; closing it is the site-access work's,
+and until it is closed this realm is a necessary half, not the whole protection.
+
+**What the snapshot carries** is the real messages, bodies included, because that is the point (decision 3), as a
+COPY made when the survey runs, so nothing a script does reaches the loop's own array. The copy is made only for a
+script whose source says `current`. That is a cost decision and nothing more: a script that reaches the member by a
+computed key finds it absent, which in the worker defers to the page, where it is refused, so it reaches the human.
 
 Combining the two is then the obvious code, and works inside a callback because everything is sync — the dialect
 allows a sync read inside a `.map`/`.filter` and refuses an async one (`tests/readonly-exec.test.mjs`), so this
@@ -168,8 +186,8 @@ distinction is what decides whether the natural join runs or escalates to a huma
 const meta = ml.current.meta;
 const stale = ml.current.messages
     .map((m, i) => ({ m, meta: meta[i] }))            // zip by index: same length, same order
-    .filter(x => x.meta.tokens > 500 && x.meta.sinceMs > 10 * 60_000)
-    .map(x => `${x.meta.id} ${x.m.role} ${x.meta.tokens}t ${Math.round(x.meta.sinceMs / 60_000)}m ago`);
+    .filter(x => x.meta.tokens > 500 && x.meta.ageMs > 10 * 60_000)
+    .map(x => `${x.meta.id} ${x.m.role} ${x.meta.tokens}t ${Math.round(x.meta.ageMs / 60_000)}m ago`);
 ```
 
 Resolving up front also makes the facade a SNAPSHOT for free: every row and every record describes the same
@@ -191,9 +209,10 @@ First set, in rough order of how much a model can do with it. All of it is deriv
 | field | why it is there |
 | --- | --- |
 | `id` | the STABLE handle (decision 2), minted like a `@tool:` id with a check character. It lives here rather than on the message because the message is the wire shape and nothing derived belongs on it; within a snapshot the index already addresses a row, and this is what carries identity across a filter, a later read, or a mutation |
-| `ts`, `sinceMs` | wall clock, and the GAP to the previous message, pre-computed — a model doing arithmetic on two stamps pays tokens to get it slightly wrong |
+| `ts`, `ageMs`, `gapMs` | wall clock; how long ago that was, at the snapshot's instant; and the GAP since the previous message (a long one is someone going away between turns). Pre-computed, since a model doing arithmetic on two stamps pays tokens to get it slightly wrong. The first draft had one `sinceMs` that its table defined as the gap and its own example used as the age; these are both, under names that cannot be confused. Null for history carried in from an earlier turn, whose moment of arrival is gone |
 | `surface` | where a user message was typed (`PromptSurface`, contract-run.ts) and what that implies: whether anyone can see the page. Already recorded per message |
-| `tokens`, `tokensBasis` | the size of THIS message — what compaction would actually reclaim — and WHICH KIND of number it is: `counted` where the engine reported it (an assistant message IS one generation, so its completion count is real), `estimated` where nothing did and it falls back to ~chars/4. The precedent is `RunStats.genBasis`, which carries the same distinction for timing "so a surface can be honest about what the rate measures"; a bare number here would be read as counted, and usually is not |
+| `tokens`, `tokensBasis` | the size of THIS message — what compaction would actually reclaim — and WHICH KIND of number it is: `counted` where the engine's count measures it, `estimated` where nothing did and it falls back to ~chars/4. The precedent is `RunStats.genBasis`, which carries the same distinction for timing "so a surface can be honest about what the rate measures"; a bare number here would be read as counted, and usually is not. **Counted only when the turn produced no reasoning**: the completion count is the whole generation, reasoning included, and reasoning is not re-sent in history, so for a thinking model it would overstate what compacting the message reclaims. A model whose reasoning is hidden entirely cannot be told apart and is counted |
+| `images` | how many images the message carries, which `tokens` does NOT include: an image's cost depends on the model, and estimating a data URL by its characters would be wrong by orders of magnitude. Added in the build |
 | `step`, `seq` | which step produced it, so a message joins up with the transcript, the exports and a `@tool:` pointer |
 | `tool` | the tool a tool-result message came from |
 | `truncated` | whether the tool output in this message was ALREADY cut before the model ever saw it (`resolveOutputCap`), so it does not reason about an ellipsis as though it were data. Nothing in `ml.current` cuts anything — this records a cut that happened upstream |
@@ -210,9 +229,11 @@ for scanning PER MEMBER rather than for the facade as a whole: a script that wan
 log, and one that wants the log has no use for the message table. Both are capped — `PER_RUN_CAP` records, N small
 message records — so either is cheap to ship and neither should be shipped to a script that never names it.
 
-**It is an array of RECORDS, not rendered text.** Each is the shape the log already stores — `ts`, `subsystem`,
-`kind`, optional `reason`, optional `detail` — so filtering is ordinary dialect code and needs no query language
-and no new methods:
+**It is an array of RECORDS, not rendered text.** Each is the log's own record, narrowed to what a model can act on
+— `ts` (the log's `t`, renamed so a time is spelled one way across `ml.current`), `subsystem`, `kind`, `reason`,
+`detail`, with null for an absent one — and never `key`, which the housekeeping log withholds from a page that did not
+report the event, nor `tab`/`origin`, which say who REPORTED it. Filtering is ordinary dialect code and needs no
+query language and no new methods:
 
 ```js
 const log = ml.current.log;                        // plain data, like the rest of the facade
@@ -240,7 +261,9 @@ ml.current.log.filter(r => r.kind === "discarded")      // records, for deciding
 ml.pipe(ml.current.log, "grep discarded | tail -20")    // text, for scanning
 ```
 
-Both of those work today with no change to anything, which is the point — measured, not assumed:
+Both of those work, measured rather than assumed. The second needed one change, and it was not where this document
+first said: `ml.pipe` was not in the read-only dialect at all, so the claim that it "works today" was wrong. It is now
+(#375, under bounds of its own), and nothing about the log had to change for it:
 
 - `Array.isArray` is true, and the dialect decides kinds STRUCTURALLY rather than by constructor
   (`readonly-exec.ts`), so it is an ordinary Array there: `filter`/`slice`/`map` are allowed, it is a writable
@@ -296,6 +319,14 @@ media type, far short of flooding the context" of a base64 image, and the output
 `resolveOutputCap`) bound what a tool result carries. All of them cut at the boundary where text reaches the model,
 none of them change the value underneath.
 
+**A view must say it is one.** Every print that differs from the value carries a note saying exactly what was
+replaced, in JSONPath relative to what was printed (`$[0,3].content REPLACED by virtual $[0,3]['chars','preview',
+'abridged']`), placed after any clip so the cut cannot remove it. The note is generated from a diff of the printed
+object against the value, never written by hand, so a later substitution cannot ship without one. A reader is told
+only about the part it received (a note about a row past the model's cut would describe something it never saw), and
+a note stays one line however many places it covers (runs become RFC 9535 slices; past eight places it names the
+first and gives the count).
+
 It also generalises where a cap on `messages` would not. The rendering is keyed to SIZE, so a screenshot-bearing
 tool result or a fetched page abridges the same way the system prompt does — and a rule keyed to "is this the
 system prompt" is a special case the next large thing walks straight past.
@@ -314,10 +345,16 @@ structurally a string in the same way, which is the line between the two.
 
 ## What it must never expose
 
-Reading messages the model already has adds no information, which is what makes this safe — so the invariant is
-exactly that: **nothing here may return anything the running model was not already given.** No other session's
-messages, no configuration the page cannot read (`MlConfig`'s omissions are a security boundary), no credentials.
-Outside a run it throws, because there is no run to be the subject of "current".
+Reading messages the model already has adds no information to the MODEL, which is what makes this safe on that side
+— so the invariant is exactly that: **nothing here may return anything the running model was not already given.** No
+other session's messages, no configuration the page cannot read (`MlConfig`'s omissions are a security boundary), no
+credentials. Outside a run it throws, because there is no run to be the subject of "current".
+
+That argument is only half of it, and the first draft stopped there. From the PAGE's side the context IS new
+information: a run that read a banking site and then works on another one carries the first one's content, and the
+page it is on now is not entitled to it. That is why it is read in the worker and refused on the page (above), and it
+is the same rule the site-access work applies to `@tool:` reads. It is also why the debug channel matters (above):
+evaluating in the worker protects the snapshot, and only closing that channel protects what a survey returns.
 
 ## What can be added later, and what cannot
 
@@ -373,6 +410,8 @@ later rather than now:
   exact, and the `estimated` ones — every user and tool message, so most of the context — are ~chars/4 with
   no tokenizer. An estimate is probably right for deciding WHAT to drop and wrong for deciding WHETHER to.
   `tokensBasis` is what makes that measurable at all rather than one number nobody can audit.
+- **The wiring.** The host calling `evalReadonlyInWorker` first, and handing the worker's `ml` a `dereference`, is the
+  site-access work's slice 2. The contract type, and with it `agent_api_docs`, lands with that, not before.
 - Nothing is specified about a message arriving over the hub from a REMOTE runtime, where the context lives on
   another machine. The snapshot would have to cross a seal, and `LIVE_PREVIEW_CHARS` exists because that path
   already caps text once.

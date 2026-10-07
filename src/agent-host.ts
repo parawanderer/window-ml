@@ -69,6 +69,9 @@ export interface RunAgentHostDeps {
     /** Receives this run's pointer resolver at start, so the host can answer a page-side `ml.dereference`
      *  (the loop, and the store, live here; the tool runs in the page). See background's derefByRun. */
     tokenSink?(resolve: (ref: string, pipe?: string | string[]) => DerefRead): void;
+    /** Receives the run's context snapshot function (agent-loop.ts `contextSink`), for `ml.current` in a read-only
+     *  survey evaluated in the worker (sw-readonly.ts). */
+    contextSink?(snapshot: (extra?: { model?: string | null; log?: readonly import("./run-log").RunLogEvent[] }) => import("./current-context").CurrentSnapshot): void;
     /** Hold a stored value for this run's session (the value store; see AgentLoopOptions.claimValue). */
     claimValue?(key: string): void;
     // Pre-run In render for a PENDING step (streaming runs) — the page computes the tool's In descriptor
@@ -211,6 +214,6 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         chatMeta: deps.chatMeta,   // resolve model/caps/window SW-side (background provides the caches)
         subcallTokens: deps.subcallTokens,   // this turn's delegated vision sub-call tally (background-accumulated)
     };
-    return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal, unattended: cfg.unattended, toolTokens: cfg.toolTokens, runHash: cfg.runId, seqBase: cfg.seqBase, after: cfg.after, stream: cfg.stream, tokenStore: cfg.tokenStore, labelMatch: cfg.labelMatch, tokenSink: deps.tokenSink, claimValue: deps.claimValue }, loopDeps)
+    return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal, unattended: cfg.unattended, toolTokens: cfg.toolTokens, runHash: cfg.runId, seqBase: cfg.seqBase, after: cfg.after, stream: cfg.stream, tokenStore: cfg.tokenStore, labelMatch: cfg.labelMatch, tokenSink: deps.tokenSink, contextSink: deps.contextSink, claimValue: deps.claimValue }, loopDeps)
         .then(result => ({ result, messages: built }));
 }

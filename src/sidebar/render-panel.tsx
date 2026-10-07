@@ -1655,6 +1655,14 @@ export function ValueOut({ text, fill, seen }: { text: string; fill?: boolean; /
     );
 }
 
+/** The print boundary's notes for one part of an exec's output: what the print showed as a VIEW of the value (a large
+ *  `ml.current` message summarised), with the JSONPaths of what was replaced. Drawn after the part's output in a cell of
+ *  its own, styled like the output the model read, because the model reads them right after its cut: OUTSIDE the
+ *  scrolling cell, so a long output can never scroll them out of sight. */
+function PrintNotes({ notes }: { notes: string[] }) {
+    return <div class="r-print-notes"><OutputCell text><Code text={notes.join("\n")} lang="text" /></OutputCell></div>;
+}
+
 function ExecOutRender({ d, marks, live, ranMs, ranSince, lineMap, remoteMs }: { d: Extract<RenderDescriptor, { type: "exec-out" }>; marks?: [number, number][]; live?: boolean; ranMs?: number; ranSince?: number; lineMap?: number[] | null; remoteMs?: { durationMs: number; bootMs?: number } | null }) {
     return (
         <div class="r-python r-py-out">
@@ -1664,14 +1672,17 @@ function ExecOutRender({ d, marks, live, ranMs, ranSince, lineMap, remoteMs }: {
                 in PythonOutRender. */}
             {d.stdout ? <PyOutSection label={d.stdoutLabel ?? "console"} cls="r-py-stdout" foldInFocus={!live}
                 // The WHOLE console as the panel holds it, both sides of the "not sent to the model" split: the split
-                // draws two blocks, and selecting across them by hand drags the marker's text along.
-                actions={<CopyBtn text={d.stdout} tip={d.seen != null && d.seen < d.stdout.length ? "copy the whole console output, including the part the model was not sent" : "copy the console output"} />}>
+                // draws two blocks, and selecting across them by hand drags the marker's text along. The print notes
+                // come with it: they say what a printed line stands in for, and a copy without them reads as the data.
+                actions={<CopyBtn text={d.stdoutNotes?.length ? `${d.stdout}\n${d.stdoutNotes.join("\n")}` : d.stdout} tip={d.seen != null && d.seen < d.stdout.length ? "copy the whole console output, including the part the model was not sent" : "copy the console output"} />}>
                 <OutputCell text><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell>
+                {d.stdoutNotes?.length ? <PrintNotes notes={d.stdoutNotes} /> : null}
                 <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} />
             </PyOutSection> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
             {d.error ? <PyOutSection label="error" cls="r-py-err"><OutputCell text><ExecError text={d.error} line={d.errorLine} map={lineMap} /></OutputCell></PyOutSection> : null}
-            {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><ValueOut text={d.value} seen={d.valueSeen} /></PyOutSection> : null}
+            {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><ValueOut text={d.value} seen={d.valueSeen} />
+                {d.valueNotes?.length ? <PrintNotes notes={d.valueNotes} /> : null}</PyOutSection> : null}
             {!d.stdout ? <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} /> : null}
         </div>
     );
