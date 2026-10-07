@@ -63,7 +63,7 @@ const GENRES = {
     // never reaches `chrome`. Its browser half is Playwright: `npm run test:chat` runs both.
     chat: {
         about: "the chat page (src/chat/): store, hosts, view prefs, and the web bundle's no-chrome check",
-        files: ["chat-core.test.mjs", "chat-web-bundle.test.mjs", "local-host.test.mjs", "drafts.test.mjs", "native-bridge.test.mjs"],
+        files: ["chat-core.test.mjs", "chat-web-bundle.test.mjs", "dock-layout.test.mjs", "local-host.test.mjs", "drafts.test.mjs", "native-bridge.test.mjs"],
     },
     // The hub is its own world — HPKE, certificates, sealed commands, the replay window — and thirteen files of it
     // sat in `core`, where "run the hub tests" meant running a hundred and twenty-three. Named for the same reason

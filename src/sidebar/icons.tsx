@@ -355,6 +355,25 @@ export const IconDock = ({ side }: { side: "top" | "right" | "bottom" | "left" }
     );
 };
 
+/** Split a panel group on one side: a window cut in two with that HALF filled, where `IconDock`'s thin band means
+ *  "to the edge of the page". */
+export const IconSplit = ({ side }: { side: "top" | "right" | "bottom" | "left" }) => {
+    const half = { top: "M4.5 4.5h15v7.5h-15z", bottom: "M4.5 12h15v7.5h-15z", left: "M4.5 4.5h7.5v15h-7.5z", right: "M12 4.5h7.5v15h-7.5z" }[side];
+    const cut = side === "top" || side === "bottom" ? "M4.5 12h15" : "M12 4.5v15";
+    return (
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true">
+            <rect x="4.5" y="4.5" width="15" height="15" rx="2" /><path d={half} fill="currentColor" fill-opacity=".55" stroke="none" /><path d={cut} />
+        </svg>
+    );
+};
+
+/** Join a panel group as one more TAB: a tab shape on a window's top edge. */
+export const IconTab = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4.5 9.5v8a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-8z" /><path d="M4.5 9.5v-3a2 2 0 0 1 2-2h4l1.5 5" />
+    </svg>
+);
+
 /** Unload every model from the box's memory: a chip with the eject glyph in it, because this takes what is loaded
  *  OUT of the card (an arrow up over a bar read as "upload to it", which is the opposite). */
 export const IconEvictAll = () => (

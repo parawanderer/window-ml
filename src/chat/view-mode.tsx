@@ -12,6 +12,7 @@
 // Nothing here removes anything. Every rule it turns on is a CSS hide over a document that still holds all of it, so
 // search, copy, the exports and the toggle itself see one transcript — the standing rule that a run's raw,
 // model-facing view may be quiet but never UNAVAILABLE (AGENTS.md §Showing a run).
+import { DOCK_DEFAULT, readDock, type DockLayout } from "./dock-layout";
 import { signal } from "@preact/signals";
 import { IconBrain, IconMenu } from "../sidebar/icons";
 import { focusMode, groupAllTools } from "../sidebar/store";
@@ -97,45 +98,9 @@ export const PANEL_FS_DEFAULT = 12;
 /** The docked panels' base size on this device, in px. */
 export const panelSize = signal<number>(PANEL_FS_DEFAULT);
 
-/** An edge of the reading column a panel can be docked to. */
-export type DockSide = "top" | "right" | "bottom" | "left";
-/** The panels the page can dock: the box's resource panel, the Python bench, and the open run's execution log. */
-export type DockPanelId = "resource" | "bench" | "runlog";
-/** Where each panel is docked, how big each edge's region is, and which tab each edge is showing. */
-export interface DockLayout {
-    side: Record<DockPanelId, DockSide>;
-    /** px: a height for top and bottom, a width for left and right */
-    size: Record<DockSide, number>;
-    active: Partial<Record<DockSide, DockPanelId>>;
-}
-/** The graphs across the top, because a timeline is wide and short; the bench underneath, where a drawer is; the
- *  execution log to the RIGHT, because it is read line by line beside the steps it explains. */
-export const DOCK_DEFAULT: DockLayout = {
-    side: { resource: "top", bench: "bottom", runlog: "right" },
-    size: { top: 300, bottom: 320, left: 380, right: 420 },
-    active: {},
-};
-/** Every panel there is, from the defaults — so a stored layout is validated against the panels that EXIST
- *  rather than against a list written out a second time, which is how the third panel went unrecognised. */
-const PANEL_IDS = Object.keys(DOCK_DEFAULT.side) as DockPanelId[];
-const SIDES: readonly DockSide[] = ["top", "right", "bottom", "left"];
-/** This device's dock layout. */
+export type { DockSide, DockPanelId, DockLayout } from "./dock-layout";
+/** This device's dock layout (dock-layout.ts says what it holds and how it changes). */
 export const dockLayout = signal<DockLayout>(DOCK_DEFAULT);
-
-/** Read a stored layout, keeping only what is well formed: a stored value from an older build is a hint, not a
- *  contract, and one bad field must not cost the rest. */
-function readDock(v: unknown): DockLayout {
-    const o = (v && typeof v === "object" ? v : {}) as Partial<DockLayout>;
-    const side = { ...DOCK_DEFAULT.side }, size = { ...DOCK_DEFAULT.size }, active: DockLayout["active"] = {};
-    for (const id of PANEL_IDS) if (SIDES.includes(o.side?.[id] as DockSide)) side[id] = o.side![id];
-    for (const sd of SIDES) {
-        const n = o.size?.[sd];
-        if (typeof n === "number" && Number.isFinite(n) && n >= 64) size[sd] = n;
-        const a = o.active?.[sd];
-        if (PANEL_IDS.includes(a as DockPanelId)) active[sd] = a as DockPanelId;
-    }
-    return { side, size, active };
-}
 
 /** Change the dock layout, and keep it. */
 export function setDockLayout(next: DockLayout): void {

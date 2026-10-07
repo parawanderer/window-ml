@@ -794,7 +794,7 @@ column, so the list and its rail keep the page's full height. Panels on one edge
 the visible panel's header: a panel wraps its header row in `PanelHead` (sidebar/panel-head.tsx) and the dock renders
 it into the bar, so there is one bar rather than tabs over a row of controls. Elsewhere (the DevTools panel) there
 is no dock and the row renders in place. Regions resize from their inner edge down to a 64px strip, and the layout
-(edge per panel, size per edge, visible tab per edge) is a device preference (`dockLayout`). A phone draws every
+(the tree per edge, size per edge, where each closed panel goes back to) is a device preference (`dockLayout`). A phone draws every
 open panel as one full-screen region. Two traps: `PanelHead` portals with Preact's own `render`, never
 `preact/compat`, whose global hooks turn `onChange` into `onInput` for every text input in the bundle; and context
 does not cross that portal, so a header row reads signals and props only. Docked panels read at their own base size
@@ -802,6 +802,25 @@ does not cross that portal, so a header row reads signals and props only. Docked
 everything off `--fs` and inherited the page's 15px. In a dock the resource panel's plots drop their 72px height and
 44px floor and fill the region, so a region dragged to a strip shrinks the charts before anything scrolls. Each tab
 has an ✕ that arrives with the pointer.
+
+**A region holds groups, and a tab moves by dragging it** (`dock-layout.ts` for the data, `dock.tsx` for the
+drawing). Each region's content is a tree: a GROUP of tabs, or a SPLIT laying groups side by side (`row`) or stacked
+(`col`) with a draggable divider between each two. Dragging a tab by its title shows a translucent block where it
+would land: the whole group when it would join that group as a tab (its bar, or the middle of its body), the half
+when it would split off on that side (the outer quarter of the body), a strip when it would start a region on an
+empty edge of the column. Escape abandons a drag, and a drop that would change nothing is no target. The group's `⋮`
+makes the same moves in two steps ("Move next to…", then a row per group with "as a tab" and the four sides), so none
+of them needs a pointer. How deep splits nest is one number, `MAX_SPLIT_DEPTH` (1: a region is a row or a column of
+groups); every operation takes the limit as a parameter and the renderer is recursive, so a deeper layout is that
+number and nothing else, which `tests/dock-layout.test.mjs` keeps true by running the operations at 2. A split the
+limit refuses is shown in the menu and refused there, and a drag toward it shows the tab block instead.
+
+The tree holds OPEN panels only (`reconcile`), and `home` keeps where a closed one was: its edge, the panel it sat
+beside, on which side or as a tab, and the share of the split it had. That is not a nicety: the page does not keep
+the bench open across a reload, and the page's first render after one has NO panel open, so without it every split
+holding the bench came undone on every reload. The homes of everything closing in one pass are read before any of
+it leaves, for the same reason. A layout stored in the first format (an edge per panel, a tab per edge) opens as one
+group per edge with the tab it was showing; one saved deeper than the limit folds the too-deep split into one group.
 
 **Code has its own size** on this page, `--code-fs` (12.5px by default, the device's "Code size" setting,
 `codeSize` in view-mode.tsx): transcript code, the Python bench's editor and what it prints. It used to be a fraction

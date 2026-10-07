@@ -610,6 +610,38 @@ button.chat-page-go:hover { color: var(--fg); }
 .dock-sides .hbtn.on { color: var(--fg); background: var(--panel-2); }
 
 /* Under the bar: every panel's body, only the visible tab's shown. */
+/* A region holds ONE node: a group of tabs, or a split of them (dock-layout.ts). Each fills what it is given. */
+.dock-group { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+/* A split: its groups side by side (`.dock-row`) or stacked (`.dock-col`), with a divider between each two. */
+.dock-split { flex: 1 1 auto; display: flex; min-width: 0; min-height: 0; }
+.dock-split.dock-col { flex-direction: column; }
+/* One child of a split, its share of the room set inline as its flex-grow. */
+.dock-cell { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+/* A hairline between two groups, with a wider grip than it looks: an 8px band to catch a pointer on a 1px rule. */
+.dock-divider { flex: 0 0 1px; position: relative; z-index: 2; background: var(--border); touch-action: none; }
+.dock-divider::after { content: ""; position: absolute; inset: 0 -4px; cursor: col-resize; }
+.dock-split.dock-col > .dock-divider::after { inset: -4px 0; cursor: row-resize; }
+.dock-divider:hover, .dock-divider:active { background: color-mix(in srgb, var(--fg) 30%, transparent); }
+/* WHERE A DRAGGED TAB WILL LAND: a translucent block over the group it joins, the half it splits off, or the strip a
+   new region takes. Fixed to the viewport (measured from client rects) and transparent to the pointer, so the hit test
+   under it still sees the groups. */
+.dock-ghost { position: fixed; z-index: 50; pointer-events: none; border-radius: 6px;
+              background: color-mix(in srgb, var(--accent) 18%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
+              transition: left .08s ease, top .08s ease, width .08s ease, height .08s ease; }
+@media (prefers-reduced-motion: reduce) { .dock-ghost { transition: none; } }
+.dock-tabwrap.dragging { opacity: .45; }
+:root[data-dock-drag], :root[data-dock-drag] * { cursor: grabbing !important; user-select: none; }
+/* A tab's tip would ride along with the drag and cover the very groups it is being aimed at. */
+:root[data-dock-drag] .tt-pop { display: none; }
+/* The ⋮'s second step: one row per group, the moves it allows as icons, like the "Dock side" row above it. */
+.dock-popup-move { min-width: 320px; max-width: min(440px, 90vw); }
+/* A row of the ⋮'s "Move next to…" step: a group's name, then the moves it allows. */
+.dock-move .dock-sides-label { overflow: hidden; text-overflow: ellipsis; }
+/* "(its own group)" after the name, when the panel would be split out of the group it is in. */
+.dock-move-own { color: var(--fg-faint); }
+/* Holds the "as a tab" button's place in a row that cannot take one, so the four sides line up across rows. */
+.dock-move-gap { display: inline-block; min-width: 30px; }
+.dock-sides .hbtn.off { opacity: .35; cursor: default; }
 .dock-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .dock-pane { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
 .dock-pane[hidden] { display: none; }
