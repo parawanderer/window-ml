@@ -1037,6 +1037,8 @@ function jsonPathKeys(keys: string[]): string {
     return keys.length === 1 ? jsonPathKey(keys[0]) : `[${keys.map((k) => `'${k.replace(/'/g, "\\'")}'`).join(",")}]`;
 }
 const kindName = (x: unknown): string => x === null ? "null" : Array.isArray(x) ? "array" : typeof x;
+/** "an array", "a number": the notes are read by a model, and "a array" reads as a slip. */
+const article = (kind: string): string => `${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind}`;
 
 /** How a printed view differs from the value it stands for, field by field. */
 function diffSwap(path: string, before: Record<string, unknown>, after: Record<string, unknown>): PrintSwap {
@@ -1064,7 +1066,7 @@ export function describeSwaps(swaps: readonly PrintSwap[], where: string): strin
         const at = (suffix: string) => union ? `${union}${suffix}` : paths.map((p) => `${p}${suffix}`).join(", ");
         const replaced = [
             ...(swap.removed.length ? [at(jsonPathKeys(swap.removed))] : []),
-            ...swap.retyped.map((r) => `${at(jsonPathKey(r.key))} (a ${r.was} in the value, a ${r.now} here)`),
+            ...swap.retyped.map((r) => `${at(jsonPathKey(r.key))} (${article(r.was)} in the value, ${article(r.now)} here)`),
         ];
         const virtual = swap.added.length ? `virtual ${at(jsonPathKeys(swap.added))}` : "";
         return `[${where} printed a VIEW: ${replaced.join(" and ") || at("")} REPLACED by ${virtual || "a summary"}; the value is unchanged, so print a path to see it]`;

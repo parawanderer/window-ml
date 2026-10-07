@@ -228,7 +228,7 @@ test("THE PRINT BOUNDARY SAYS WHAT IT CHANGED: a note in JSONPath, after the cli
     const big = sampleSnapshot();
     big.messages[2].tool_calls[0].arguments = { js: "x".repeat(800) };
     const r = await inWorkerRealm(`return ml.current.messages[2]`, big);
-    assert.deepEqual(r.notes.value, ["[the returned value printed a VIEW: $.content and $.tool_calls (a array in the value, a number here) REPLACED by virtual $['chars','preview','abridged']; the value is unchanged, so print a path to see it]"]);
+    assert.deepEqual(r.notes.value, ["[the returned value printed a VIEW: $.content and $.tool_calls (an array in the value, a number here) REPLACED by virtual $['chars','preview','abridged']; the value is unchanged, so print a path to see it]"]);
     // Places that are not direct siblings still get ONE correct path: a union at the index that differs.
     assert.deepEqual((await inWorkerRealm(`console.log(ml.current.messages.map(m => ({ m })))`)).notes.console,
         ["[console.log printed a VIEW: $[0,3].m.content REPLACED by virtual $[0,3].m['chars','preview','abridged']; the value is unchanged, so print a path to see it]"]);
