@@ -176,6 +176,14 @@ The attacks, each its own test:
 10. The same, with `look` on the hostile page: the vision call happens, from the background, and the page's
     attempt to send its own vision call is refused.
 11. Mid-run navigation from `evil.test` to `evil2.test`: no grant follows to either page.
+12. **Rewrite a run the user started.** The user starts a run on `evil.test` from the HUD or the chat page; the page
+    intercepts the extension's start message and changes the task. Added after the spec was written: a user-started
+    run was assembled in the page's own world, so the page could rewrite its task, toolset and system prompt.
+13. **Cancel a run the page is on**, using the run id that the run's own debug events carry into the page.
+
+The suite was written before any slice landed, against a build that every attack beats. While a slice is open its
+tests assert that the attack SUCCEEDS; the slice that closes it flips that, and the same tests then assert the secure
+outcome. A security test that has never been seen to fail may be testing nothing.
 
 Nothing here needs a real model or network. A test that passes because the browser was slow is a failure: every
 wait is on a run finishing or a state change, never a timer.

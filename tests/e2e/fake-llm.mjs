@@ -197,8 +197,14 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
         res.end();
     };
 
+    // Every request the box received, chat or not, in arrival order: `{ method, path }`. `calls()` holds only chat
+    // bodies, which misses a page reading the model list or the box's state through the extension — a read of what
+    // the backend has is something an unapproved site must not get either (tests/e2e/site-access.spec.mjs).
+    /** @type {{ method: string, path: string }[]} */
+    const requests = [];
     const server = createServer(async (req, res) => {
         const path = (req.url || "/").split("?")[0];
+        requests.push({ method: req.method || "GET", path });
         if (req.method === "GET" && (path === "/api/models" || path === "/v1/models")) {
             return json(res, 200, { data: [{ id: model, name: model, owned_by: "ollama", connection_type: "local" }] });
         }
@@ -377,6 +383,7 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
                  */
                 setServerToolScript: (/** @type {any} */ script) => { serverToolScript = script; },
                 calls: () => calls.slice(),
+                requests: () => requests.slice(),
                 /** Every `/execute` request body, with the `toolId` from the path. */
                 toolCalls: () => toolCalls.slice(),
                 // A held-open NDJSON response keeps the server alive forever, so close() would hang.
