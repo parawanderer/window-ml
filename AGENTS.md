@@ -283,6 +283,11 @@ every demo: `docs/dev/e2e-harness.md`.
 Work goes on a **branch and through a PR**, not straight onto main: several sessions work this repo at once, and the
 PR is what runs CI (e2e, three Node versions, real CPython), which a green local `npm test` is not.
 
+- **RULE — label every PR by AREA when you open it** (`gh pr create --label exec,api`), every label that applies:
+  `core` `api` `agent` `exec` `python` `ui` `chat-page` `mobile` `hub` `hub-compat` `model-backend-compat`
+  `resource-panel` `security` `docs` `agent-skills` `ci`. What each means is its description (`gh label list`). The
+  two `-compat` labels are the ones a reviewer must not miss: the change needs a matching one in window-ml-hub, or
+  in the forked Ollama/OpenWebUI. A missing area gets a new label with a description, not a stretched old one.
 - **A PR that conflicts with its base has NO checks at all.** If `gh run list` shows nothing for a pushed commit,
   suspect this first.
 - **A CANCELLED check prints as `fail`.** Resolve the JOB conclusions before blaming a change; poll a run by ID.
