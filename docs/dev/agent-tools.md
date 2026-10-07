@@ -134,7 +134,7 @@ by `INVOCATION_TIMEOUT_MS` and falls back to generic advice — a docs call must
 The **context-menu** line is gated on the manifest declaring `contextMenus`, so it turns itself on
 when that feature ships rather than advertising an affordance that doesn't exist yet. A
 **HUD-started** run additionally gets `HUD_HINT` via `ml.agent`'s
-`systemAppend` (which APPENDS; `system` would replace the preamble) at the `__mlStartAgent` handler —
+`systemAppend` (which APPENDS; `system` would replace the preamble) in the worker's run recipe (`userRunOptions`) —
 SELF_CLAUSE's "the user can drive you from the console" is true but isn't how *that* user
 actually invoked it. It's a **line scanner, not a real parser**: `typescript@7` is the
 Go port and exports only `version` — no JS compiler API — so TypeDoc/ts-morph would each mean a
@@ -164,6 +164,26 @@ tool. The agent option **`navigate`** (default true) gates the tool + persistenc
 tool) still dies at a nav — persistence needs the background spine (the HUD/off-with-approval/devtools cases).
 The `ml.agent()` PROMISE also dies with the caller's navigated-away context; the run continues in the
 background and its result surfaces in the HUD/debug stream, not as that call's return value.
+**Runs the user starts are assembled in the WORKER (`sw-run-start.ts`).** The HUD Commander's Send, the chat page's
+`agent.start`, and a follow-up or Continue on such a run never pass through the page's own `ml.agent`: a page that
+assembled the run could rewrite the task, the toolset and the system prompt before it started (docs/spec/SITE_ACCESS.md,
+slice 0). The worker calls the SAME `assembleRun` (run-assembly.ts) a console run does, with `workerMl` (worker-ml.ts)
+in place of `window.ml`: its config and capability probes call the worker's functions, and its tool factories are the
+page's own factories, which build a tool without touching the DOM, so the descriptors the model sees come from one
+definition (`tests/run-start.test.mjs` compares them with the page bundle's, field by field). It then PUSHES the
+builtin toolset into the tab, `ADOPT_RUN_NOW` → `ADOPT_RUN` with a `reply` id → `_adoptRun` → `RUN_ADOPTED_NOW`
+carrying `pageContext()`. That is the re-adoption above, sent instead of asked for, answered on its own message type
+so it never releases a navigation barrier or leaves a page context for a `navigate` to read. The run is then hosted
+like any other (`hostRun`), flagged `builtBy: "worker"`: it fans its own lifecycle events on every surface, since no
+page-side caller exists to emit them, and its REMOTE tools run in the worker (`sw-local-tools.ts`, the page's own
+`run` closure through `executeTool` and `envelopeFrom`), because building them needs the backend's tool list and their
+arguments leave the machine. When a turn ends the worker asks the page for the turn's curated answer (a
+`RUN_TOOL_IN_PAGE` with `finish`: `endRun` + `runAnswer`, what a page-built run's own caller does) and puts it on the
+`agent-result`; a follow-up re-adopts first, so each turn starts with a fresh answer set. A DURABLE RESUME (after an eviction) is driven
+by the worker too, and hands the run to the worker (`makeWorkerRun`): it always meets a fresh document, so nothing
+page-side is left to own it. A worker-built run's remote tools are rebuilt on demand (`ensureLocalTools`) when this
+worker does not hold them, from the server's bundles, kept to exactly the names the run already offers.
+
 **HUD replay-across-nav:** the fresh page's card rebuilds MID-run with its history — the background buffers a
 cross-page run's whole debug-event stream per tab (`runReplayBuffer`, populated in `emitStep`/`emitLifecycle`
 so the `agent` start is included even when the page-side caller is what fans it live) and, on the

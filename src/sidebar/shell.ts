@@ -14,7 +14,8 @@
 // can't leave it un-live.
 import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X, SB_HIGHLIGHT, SB_CARD } from "../ids";
 import { cleanImages } from "../contract-run";
-import { keepStartedSession, onSessionDone, relayAdoptSession, relaySessionToPage, relayStartAgent } from "./shell-session-relay";
+import { onSessionDone, relaySessionToPage } from "./shell-session-relay";
+import { stepBudget } from "../step-budget";
 import { resolveContextContainer, domToContext } from "../dom";   // right-click "ask about this" (content script sees the page DOM)
 import type { ElementContext } from "../contract-run";
 import type { DebugMode } from "../contract-config";
@@ -716,8 +717,6 @@ function onWindowMessage(e: MessageEvent): void {
     if (d.__mlSidebar === "hello" && e.source === window) { if (busLive()) handshake(); return; }
     // The page's answer to a session action the chat page asked for (shell-session-relay.ts).
     if (d.__mlSessionDone && e.source === window) { onSessionDone(d.__mlSessionDone); return; }
-    // A run this browser's own UI started, reporting its session so the worker can keep it.
-    if (d.__mlSessionKeep && e.source === window) { keepStartedSession(d.__mlSessionKeep); return; }
     // injected.js asks us to hide the overlay for a screenshot (so the sidebar
     // isn't captured into the agent's `look`). Hide, then ack after two frames so
     // the hidden state has painted before the capture fires.
@@ -821,16 +820,13 @@ function onWindowMessage(e: MessageEvent): void {
         if (cardBorrowedFocus) { const el = cardBorrowedFocus; cardBorrowedFocus = null; try { if (el.isConnected) el.focus(); } catch { /* gone/unfocusable */ } }
         return;
     }
-    // The composer's "start this task": relay it to the PAGE so injected runs a REAL ml.agent() call —
-    // a genuine session (hash, resumable, appendable), routed to the background loop in off/devtools mode.
-    // Origin-checked (real iframe) for consistency, though this grants nothing the page couldn't already
-    // do itself (it has window.ml.agent) — every tool still gates through the unforgeable background gate.
+    // The composer's "start this task": the WORKER assembles and hosts the run (sw-run-start.ts,
+    // docs/spec/SITE_ACCESS.md slice 0). It used to be relayed to the page, which built the run in its own world and
+    // so decided what a run the PERSON asked for contained. Origin-checked: only the real extension frame starts one.
     if (d.__mlSidebarApp === "startRun" && frame && e.source === frame.contentWindow && typeof d.task === "string" && d.task.trim()) {
-        // Pass the HUD verbosity so the page picks the right system-prompt hint: quiet → stay silent mid-run;
-        // progress → keep between-step prose to one short HUD line (it shows live beside the orb). `model` is
-        // the composer's per-call pick (omitted ⇒ the page uses the configured default); `vision:true` is the
-        // per-call native-vision override for a non-Ollama model (omitted ⇒ default routing).
-        window.postMessage({ __mlStartAgent: {
+        // `hud` is the verbosity hint (quiet → stay silent mid-run; progress → one short line between steps), `model`
+        // the composer's per-call pick, `vision:true` its per-call native-vision override.
+        const payload = {
             task: d.task,
             maxSteps: typeof d.maxSteps === "number" ? d.maxSteps : undefined,
             model: typeof d.model === "string" && d.model.trim() ? d.model.trim() : undefined,
@@ -839,11 +835,14 @@ function onWindowMessage(e: MessageEvent): void {
             images: cleanImages(d.images),
             elementContext: (d.elementContext && typeof d.elementContext.selector === "string") ? d.elementContext : undefined,
             hud: agentHud,
-            // A run the person started here is kept unless they turned that off. A run started from CODE is not:
-            // `ml.agent()` stays as long as the page, which is the rule `ml.createChat({ save: true })` follows.
-            keep: persistUiRuns,
             surface: promptSurface(),
-        } }, "*");
+        };
+        // A run the person started here is kept unless they turned that off; a run started from CODE is not.
+        try {
+            void chrome.runtime.sendMessage({ type: "USER_START_RUN", payload, keep: persistUiRuns })
+                .then((r: { error?: string } | undefined) => { if (r?.error) console.warn("window.ml: the run did not start:", r.error); })
+                .catch(() => { /* worker gone */ });
+        } catch { /* extension context gone */ }
         return;
     }
     // The session composer: drive a live createAgent session by hash. Relayed to the PAGE, which decides
@@ -854,15 +853,19 @@ function onWindowMessage(e: MessageEvent): void {
         // An `elementContext` (from the right-click "Add to current run") lets an image-less/text-less send
         // through — the element reference IS the payload; the page folds it into the appended message.
         const elementContext = (d.elementContext && typeof d.elementContext.selector === "string") ? d.elementContext : undefined;
-        if (d.text.trim() || cleanImages(d.images) || elementContext)
-            window.postMessage({ __mlSessionSend: { hash: d.hash, text: d.text, images: cleanImages(d.images), elementContext, surface: promptSurface() } }, "*");
+        if (d.text.trim() || cleanImages(d.images) || elementContext) {
+            const body = { hash: d.hash, text: d.text, images: cleanImages(d.images), elementContext, surface: promptSurface() };
+            // The worker drives a run it built; anything else (a run or chat this page built) is the page's.
+            workerFirst({ ...body, action: "send" }, () => window.postMessage({ __mlSessionSend: body }, "*"));
+        }
         return;
     }
     if (d.__mlSidebarApp === "continueRun" && frame && e.source === frame.contentWindow && typeof d.hash === "string") {
         // "Continue (+N steps)" on a step-capped run — resume it (fresh budget) with no follow-up text. A budget
         // the person picked rides along; anything that is not a number is simply not forwarded, as with startRun.
-        const steps = d.maxSteps;
-        window.postMessage({ __mlContinueRun: { hash: d.hash, ...(typeof steps === "number" && Number.isInteger(steps) && steps > 0 ? { maxSteps: steps } : {}) } }, "*");
+        const steps = stepBudget(d.maxSteps);
+        const body = { hash: d.hash, ...(steps ? { maxSteps: steps } : {}) };
+        workerFirst({ ...body, action: "continue" }, () => window.postMessage({ __mlContinueRun: body }, "*"));
         return;
     }
     if (d.__mlSidebarApp === "sessionCancel" && frame && e.source === frame.contentWindow && typeof d.hash === "string") {
@@ -1219,6 +1222,21 @@ addEventListener("contextmenu", e => { const t = e.target; if (t instanceof Elem
 // the composer, so the user can START a run from the keyboard OR a right-click. Buffered until the iframe
 // handshakes. Only where the HUD lives (off / devtools-coexist) — overlay has its own surface (a follow-up).
 let composerPendingOpen = false;
+/**
+ * Offer a session action (a message, or Continue) to the WORKER first: a run it built is driven from there, so the
+ * page never carries the person's message. Anything it does not own (a run or chat the page built) falls back to the
+ * page, which still drives those. A worker that cannot be reached is treated as "not mine".
+ * @param payload the action, as USER_RUN_ACTION carries it
+ * @param toPage the page route, taken when the worker declines
+ */
+function workerFirst(payload: Record<string, unknown>, toPage: () => void): void {
+    try {
+        void chrome.runtime.sendMessage({ type: "USER_RUN_ACTION", payload })
+            .then((r: { data?: string | null } | undefined) => { if (!r?.data) toPage(); })
+            .catch(toPage);
+    } catch { toPage(); }
+}
+
 let composerPendingCtx: ElementContext | null = null;   // a right-click's resolved context, if any
 let addToRunPending: ElementContext | null | undefined = undefined;   // "Add to current run" ctx awaiting the app's ready
 function openComposer(ctx: ElementContext | null = null): void {
@@ -1374,6 +1392,4 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     // A session command from the worker that has to end at THIS page, and the page's answer to it — both in
     // shell-session-relay.ts, which owns the waiter map that joins the two. `true` keeps the reply channel open.
     else if (msg?.type === "ML_SESSION_TO_PAGE") { if (relaySessionToPage(msg, sendResponse)) return true; }
-    else if (msg?.type === "ML_START_AGENT" && typeof msg.reqId === "string") return relayStartAgent(msg, sendResponse, agentHud);
-    else if (msg?.type === "ML_ADOPT_SESSION" && typeof msg.hash === "string") return relayAdoptSession(msg, sendResponse);
 });

@@ -26,8 +26,10 @@ async function thinkingLabels(fakeOpts) {
         await page.setViewportSize({ width: 1400, height: 900 });
         await page.goto(site.url + "/");
         await waitForMl(page);
-        // EXACTLY what the Commander's Send posts through the overlay shell (shell.ts, `startRun` → `__mlStartAgent`).
-        await page.evaluate(() => window.postMessage({ __mlStartAgent: { task: "where am I?", stream: true, hud: "quiet" } }, "*"));
+        // What the Commander's Send starts: the shell sends `USER_START_RUN` (shell.ts, `startRun`) and the WORKER
+        // assembles the run (sw-run-start.ts). The SW-realm hook is that start, without driving the composer.
+        const tabId = await ext.sw.evaluate(async (u) => (await chrome.tabs.query({})).find((t) => t.url?.startsWith(u))?.id, site.url);
+        await ext.sw.evaluate((id) => globalThis.__mlStartUserRunForTest(id, { task: "where am I?", stream: true, hud: "quiet", surface: "overlay" }), tabId);
         for (let i = 0; i < 100 && fake.calls().length < 2; i++) await sleep(100);
         expect(fake.calls().length, "the run used its whole script").toBeGreaterThanOrEqual(2);
         expect(fake.calls().every((c) => c.stream === true), "the Commander's run streams").toBe(true);

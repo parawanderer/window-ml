@@ -153,6 +153,9 @@ export const _adoptRun = function(this: MlApi, runId: string, rebuild: RebuildCo
     const toolset = this._rebuildToolset(rebuild);
     const model = rebuild.model ?? null, driverSees = !!rebuild.driverSees, visionModel = rebuild.visionModel ?? null;
     registerRun(runId, toolset, model, driverSees, visionModel);
+    // A run the WORKER built is driven from the worker only (sw-run-start.ts), which refuses a turn from a page: a
+    // resume handle here would be a path that can never work.
+    if (rebuild.builtBy === "worker") return;
     // Re-register a RESUME handle so a HUD composer follow-up (a run() turn) can continue this
     // background run BY HASH — the original page's AgentHandle died with the navigation, so without
     // this a follow-up typed on the new page falls through to the chat path and is silently dropped.

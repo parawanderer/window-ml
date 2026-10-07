@@ -11,7 +11,7 @@ import type { HousekeepingReport } from "./housekeeping";
 import type { NeutralMessage, ToolCall, TokenUsage } from "./contract-chat";
 import { UI_OUT_CAP } from "./contract-chat";
 import type { ApprovalDecision } from "./contract-agent";
-import { MAX_CONTINUE_STEPS } from "./step-budget";
+import { stepBudget } from "./step-budget";
 import type { StartRunPayload, ResumeRunPayload } from "./contract-messages";
 import { type RequestHint, hintSession } from "./contract-run";
 import { externalSheetIds, clipOut, isCurrentPage } from "./dom";
@@ -22,6 +22,7 @@ import { grantsFor, serverToolKey, pendingGrants, pendingApprovals, grantCredFet
 import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
 import { noteRunMechanic } from "./sw-runs";
+import { ensureLocalTools, runLocalTool } from "./sw-local-tools";
 import { navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue } from "./sw-values";
@@ -56,7 +57,10 @@ const sendDetail = (tabId: number, msg: unknown): Record<string, string | number
     return { tab: tabId, ...(typeof name === "string" && name ? { tool: name } : {}) };
 };
 
-const delegateSend = async (tabId: number, msg: unknown): Promise<any> => {
+/** Send a message into a run's tab and wait for the page's answer, the way every delegated tool call is sent: held
+ *  while the tab navigates, and watched while it waits, so a discarded tab is rebuilt and a frozen one is bounded
+ *  (see above). Also how the worker pushes a run's toolset into a tab (sw-run-start.ts `adoptOnTab`). */
+export const delegateSend = async (tabId: number, msg: unknown): Promise<any> => {
     // THE RUN'S LOG, not the transcript: a step already shows how long a tool took. What it cannot show is that
     // the wait was the browser rather than the tool — a navigation being committed, a discarded tab rebuilt, a
     // page that stopped answering. Those are the lines someone asking "where did the time go" comes for.
@@ -108,12 +112,19 @@ export const delegateStreams = new Map<string, (chunk: string, ts?: number) => v
  *  follow-up. The loop runs here (extension origin) and delegates every tool back to the page that built the
  *  toolset; `sendResponse` fires once the whole run finishes, so the caller keeps its channel open. */
 export function startBackgroundRun(message: any, sender: chrome.runtime.MessageSender, sendResponse: (r: any) => void): void {
-    // Design A: run an ml.agent loop HERE (extension origin), delegating each tool back to the page
-    // (RUN_TOOL_IN_PAGE) and gating approval through the sidebar. The page built the toolset + system
-    // prompt (it has the DOM/config/factories) and registered the live tools under runId; we hold only
-    // serializable descriptors. sender.tab.id is the delegation + debug-fanout target.
+    // sender.tab.id is the delegation + debug-fanout target.
     const tabId = sender.tab?.id;
     if (tabId == null) { sendResponse({ error: `${message.type} must come from a tab (content script).` }); return; }
+    hostRun(message, tabId, sendResponse);
+}
+
+/** Host a START_RUN / RESUME_RUN on `tabId`: the body of `startBackgroundRun`, callable by the worker itself for a run
+ *  it built (sw-run-start.ts), where there is no sender. `sendResponse` fires once the whole run finishes. */
+export function hostRun(message: any, tabId: number, sendResponse: (r: any) => void): void {
+    // Design A: run an ml.agent loop HERE (extension origin), delegating each tool back to the page
+    // (RUN_TOOL_IN_PAGE) and gating approval through the sidebar. Whoever built the run (the page for a console
+    // ml.agent, the worker for a run the user started) registered the live builtin tools in the page under runId;
+    // we hold only serializable descriptors.
     // RESUME continues a stored run: reuse its original StartRunPayload (deps rebuild from it) + its
     // accumulated history, overriding only the task with the follow-up. Only the owning tab may resume.
     let p: StartRunPayload;
@@ -129,8 +140,7 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
         // A budget the person chose overrides the stored one, and because it goes into `p` it is what gets stored
         // again below: raising a cap STICKS. Bounded the same way the loop is, so a bad number from a page cannot
         // ask the worker for an unbounded run.
-        const asked = rp.maxSteps;
-        const budget = typeof asked === "number" && Number.isInteger(asked) && asked > 0 ? Math.min(asked, MAX_CONTINUE_STEPS) : undefined;
+        const budget = stepBudget(rp.maxSteps);
         p = { ...stored.p, task: rp.task, ...(budget ? { maxSteps: budget } : {}) };
         capRaised = budget != null && budget !== stored.p.maxSteps;
         resumeOriginalTask = stored.p.task;
@@ -183,6 +193,18 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
         ...subTally,
         ...(subByModel.size ? { byModel: [...subByModel.entries()].map(([model, u]) => ({ model, ...u })) } : {}),
     });
+    // Every tool send that names a tool goes through here. A run the worker built (sw-run-start.ts) runs its REMOTE tools
+    // itself (sw-local-tools.ts); everything else, and every run a page built, goes to the page as before.
+    const sendTool = async (payload: { runId: string; name: string; args: Record<string, unknown>; stream?: boolean; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean }, onStream?: (chunk: string, ts?: number) => void): Promise<unknown> => {
+        // A worker-built run's REMOTE tool never goes to the page, which has no such tool. If this worker does not hold
+        // it (rehydrated after an eviction, or a resumed session), it is rebuilt first.
+        if (p.builtBy === "worker" && p.tools.some((t) => t.name === payload.name && t.remote)) {
+            await ensureLocalTools(runId, p, tabPageUrl.get(tabId) || p.pageUrl || "").catch(() => { /* answered below */ });
+            return (await runLocalTool(payload, onStream))
+                ?? { result: `Error: the server tool "${payload.name}" is not available any more (the server no longer lists it).` };
+        }
+        return (await runLocalTool(payload, onStream)) ?? delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload });
+    };
     const abortCtl = new AbortController();   // CANCEL_RUN aborts this → the loop resolves { cancelled }
     // Set once this run's page navigates: the page-side caller that normally emits the lifecycle
     // agent/agent-result (overlay/devtools) is then GONE (its context died with the old document), so the
@@ -296,7 +318,8 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
         // forwarder) — EXCEPT once the run has navigated, when that caller's context is gone, so the
         // background fans to the destination page instead. UNLIKE per-step events (background-only source),
         // lifecycle is ALSO emitted page-side here, so relaying it below early would DOUBLE in the panel.
-        if (p.surface !== "off" && !hasNavigated) return;
+        // A run the WORKER built has no page-side caller at all, on any surface, so it fans its own from the start.
+        if (p.surface !== "off" && !hasNavigated && p.builtBy !== "worker") return;
         chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
         // We're the SOLE fanner in this branch (off, or overlay/devtools post-nav), so feed a connected panel
         // too — regardless of surface. Gating on `devtools` left an off/card run's answer never reaching a
@@ -410,7 +433,7 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
                     const CHANNEL_GONE = /message channel closed|Receiving end does not exist|No tab with id/i;
                     let env: Partial<import("./contract").PageToolEnvelope>;
                     try {
-                        env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args, stream: !!onStream } }) as Partial<import("./contract").PageToolEnvelope>;
+                        env = await sendTool({ runId, name, args, stream: !!onStream }, onStream) as Partial<import("./contract").PageToolEnvelope>;
                     } catch (e) {
                         const emsg = (e as Error)?.message || String(e);
                         if (!CHANNEL_GONE.test(emsg)) {
@@ -589,7 +612,7 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
             // In descriptor without running it, so a step you watch stream shows exec's beautified JS /
             // python's code cell from the start instead of raw JSON args. Best-effort — raw args on failure.
             renderFor: async (name, args) => {
-                const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args, renderOnly: true } })
+                const env = await sendTool({ runId, name, args, renderOnly: true })
                     .catch(() => null) as { renderIn?: import("./contract").RenderDescriptor } | null;
                 return env?.renderIn;
             },
@@ -603,7 +626,7 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
             claimValue: (key) => claimValue(key, runId),
             tryReadonly: p.autoApproveReadonly ? async (name, args) => {
                 if (name !== "exec") return null;
-                const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args, readonlyTry: true } })
+                const env = await sendTool({ runId, name, args, readonlyTry: true })
                     .catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
                 return env && env.readonly ? { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut, reused: env.reused } : null;
             } : undefined,
@@ -612,7 +635,7 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
             // that HAVE a precheck (avoids a useless round-trip on every gated call).
             precheck: async (name, args) => {
                 if (!p.tools.some((t) => t.name === name && t.precheck)) return null;
-                const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args, precheck: true } })
+                const env = await sendTool({ runId, name, args, precheck: true })
                     .catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
                 return env && env.precheckFailed ? (env.result || "") : null;
             },
@@ -622,7 +645,7 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
                 // raw args. Best-effort: raw args on any failure. (Out has nothing to render pre-run.)
                 let renderIn: unknown;
                 try {
-                    const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name: tool, args, renderOnly: true } }) as { renderIn?: unknown };
+                    const env = await sendTool({ runId, name: tool, args, renderOnly: true }) as { renderIn?: unknown };
                     renderIn = env?.renderIn;
                 } catch { /* page gone → no preview, fall back to raw args */ }
                 // Key by the OFFSET seq — the same value the app sees on the emitted step (emitStep
@@ -752,7 +775,7 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
             },
         },
     )
-        .then(({ result: res, messages }) => {
+        .then(async ({ result: res, messages }) => {
             // Keep the run resumable: stash its full history + payload (deps rebuild from it) so a later
             // RESUME_RUN can continue it. Overwrites the prior turn's snapshot (same runId). SW-eviction
             // may drop this — resume then reports an actionable error (see bgRuns). `sub` carries the
@@ -769,9 +792,19 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
             // AFTER this one's steps rather than colliding with them.
             saveRunHistory(runId, { messages, payload: resumeP, sub: snapSub() });
             const answerMedia = runAnswerMedia.length ? runAnswerMedia : undefined;
+            // A run the WORKER built has no page-side caller to assemble the turn's curated answer from the page's
+            // answer set, so it is asked for here. Page data, exactly as a tool result is; absent if the page is gone.
+            // Close the inbox FIRST: a message sent while the page is asked for the answer must not be reported as a
+            // steer into an inbox nothing reads any more (it reads as "busy", and the person sends it again).
+            runInboxes.delete(runId);
+            const fin = p.builtBy === "worker"
+                ? await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, finish: true, summary: res.summary } }).catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null
+                : null;
+            const answer = typeof fin?.answer === "string" && fin.answer ? fin.answer : undefined;
             emitLifecycle({
                 kind: "agent-result", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: res.steps },
                 summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled, answerMedia,
+                ...(answer ? { answer } : {}),
             });
             // Sync the run's final history back so a createAgent handle's control.messages stays live,
             // + this run's step/seq extents so the page advances its bases for the NEXT turn's offset. The

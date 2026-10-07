@@ -2,7 +2,7 @@
 // WASM), the choke point that decides whether a caller may run `full` mode, and the live stdout relay back to
 // whoever is awaiting the run. Created lazily on first use and reused after.
 
-import { senderTrust, pendingGrants } from "./sw-consent";
+import { senderTrust, pendingGrants, isExtensionSender } from "./sw-consent";
 import { recordHousekeeping } from "./sw-housekeeping";
 import { ensureOffscreen, forgetOffscreen } from "./sw-offscreen";
 import { activeRuns, pageValueSession } from "./sw-runs";
@@ -46,7 +46,7 @@ export function pythonExec(message: any, sender: chrome.runtime.MessageSender, s
     // whitelisted domain, or with a per-call grant for THIS code. An untrusted page without one is
     // REJECTED (a clear error, not a silent readonly downgrade).
     (async () => {
-        const ownSurface = (sender.url || "").startsWith(chrome.runtime.getURL(""));
+        const ownSurface = isExtensionSender(sender);
         // A COMPLETION is the bench EDITOR's, and only ours. It never runs the code, but it does load a
         // package and read the interpreter, so a page gains nothing by reaching it and is refused rather
         // than handed a new kind of request to the single sandbox. Always HARDENED, whatever it asked for.
@@ -105,7 +105,7 @@ export function pythonExec(message: any, sender: chrome.runtime.MessageSender, s
         // forge it.
         const streamId: string | undefined = message.payload?.stream ? message.requestId : undefined;
         if (streamId) {
-            const fromSurface = (sender.url || "").startsWith(chrome.runtime.getURL(""));
+            const fromSurface = isExtensionSender(sender);
             if (fromSurface) pyStreamTabs.set(streamId, null);
             else if (sender.tab?.id != null) pyStreamTabs.set(streamId, sender.tab.id);
         }
@@ -115,7 +115,7 @@ export function pythonExec(message: any, sender: chrome.runtime.MessageSender, s
         // run that never ends holds the single Pyodide instance against every later call, with nobody
         // watching it; in the bench a person chose it, is sitting in front of it, and can close the panel.
         const noTimeout = !!message.payload?.noTimeout
-            && (sender.url || "").startsWith(chrome.runtime.getURL(""));
+            && isExtensionSender(sender);
         // A run whose returned frame may become a pointer carries the store's budget; the bench's and a completion's never do.
         const valueBudget = persist || complete ? 0 : await valueBudgetBytes().catch(() => 0);
         const payload = { type: "PY_RUN", ...(valueBudget ? { valueBudget } : {}), code: message.payload?.code, image: message.payload?.image ?? null, hardened: complete ? true : message.payload?.hardened !== false, tables: message.payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(message.payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}) };

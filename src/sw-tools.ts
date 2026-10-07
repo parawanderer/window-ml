@@ -90,3 +90,16 @@ export async function executeServerTool({ toolId, name, args, onFrame, signal }:
     }
     return stream.end();
 }
+
+/**
+ * What a caller of `ml.execServerTool` gets for a finished stream: the result, or the transport failure, beside the
+ * output and marks the tool produced on the way. One mapping for both routes to it, the page's SERVER_TOOL_EXEC
+ * message and a remote tool the worker runs itself for a run it built (worker-ml.ts).
+ * @param end the stream's end, from `executeServerTool`
+ * @returns the `ServerToolResult` shape
+ */
+export function serverToolResult(end: ToolStreamEnd): import("./contract").ServerToolResult {
+    return (end.ok
+        ? { ok: true, result: end.result, output: end.state.output, marks: end.state.marks, events: end.state.events }
+        : { ok: false, transportError: end.transportError, output: end.state.output, marks: end.state.marks, events: end.state.events }) as import("./contract").ServerToolResult;
+}

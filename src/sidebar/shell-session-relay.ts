@@ -1,8 +1,8 @@
 // shell-session-relay.ts — a session command from the worker reaches THIS page, and this page answers it.
 //
 // One mechanism that was spread across two of shell.ts's listeners. The background sends a command that has to
-// end at a page (`ML_SESSION_TO_PAGE` for steer/cancel/continue, `ML_START_AGENT` for a run started from an
-// extension page); the shell relays it into the page as a window message; the page answers with
+// end at a page (`ML_SESSION_TO_PAGE`: a message, cancel or continue for a run or chat the PAGE built); the shell
+// relays it into the page as a window message; the page answers with
 // `__mlSessionDone` carrying the request id it was given. The waiter map is what joins the two halves, and it
 // is private to this module for that reason — nothing outside has any business resolving a request.
 //
@@ -18,28 +18,6 @@ import { cleanImages } from "../contract";
 const sessionDoneWaiters = new Map<string, (outcome: string, hash?: string) => void>();
 /** How long a page gets to answer before the action is reported as unanswered. */
 const SESSION_DONE_MS = 3000;
-/** Starting a run gets longer: the page answers only once the loop has minted the hash, which is after its own
- *  setup (the config read, the toolset, a capability probe), and none of that is waiting on this shell. */
-const START_DONE_MS = 10_000;
-
-/**
- * A run started from this browser's own UI says which session it became, so the worker can KEEP it
- * (`config.persistUiRuns`). A `__mlSessionKeep` window message, carrying only the hash.
- *
- * It is a second signal rather than part of the acknowledgement above because the two answer different questions:
- * `__mlSessionDone` tells a waiting COMMAND what happened, and a HUD run has no command waiting on it. Taking the
- * hash here is also why a run's events do not carry a `save` flag of their own — that would be fourteen emit sites
- * to keep right instead of one message, and the worker is what holds the saved sessions either way.
- *
- * @returns whether this was such a message.
- */
-export function keepStartedSession(data: unknown): boolean {
-    const hash = (data as { hash?: unknown } | null)?.hash;
-    if (typeof hash !== "string") return false;
-    try { void chrome.runtime.sendMessage({ type: "ML_KEEP_SESSION", hash }).catch(() => { /* worker asleep */ }); }
-    catch { /* extension context gone */ }
-    return true;
-}
 
 /** Relay the page's answer to one session action back to the background, or `no-answer` when the page never replies (a
  *  page whose `window.ml` has not loaded, or one that swallowed the message). What the page reports is its own claim
@@ -96,49 +74,4 @@ export function relaySessionToPage(msg: Record<string, unknown>, sendResponse: (
     else return false;
     if (reqId) { awaitSessionDone(reqId, sendResponse); return true; }   // async: the page answers by window message
     return false;
-}
-
-/**
- * The chat page's `session.resume`: hand a SAVED run to this page, which rebuilds its builtin toolset from the
- * carried {@link RebuildConfig} and registers it by hash — the same `_adoptRun` a cross-page navigation uses, for
- * the same reason. It starts nothing: the person's next message is the turn.
- *
- * @param msg The `ML_ADOPT_SESSION` message, carrying the hash and the rebuild config.
- * @param sendResponse The background's reply channel.
- * @returns `true` always: the reply is asynchronous.
- */
-export function relayAdoptSession(msg: Record<string, unknown>, sendResponse: (r: unknown) => void): boolean {
-    const reqId = Math.random().toString(36).slice(2, 12);
-    window.postMessage({ __mlAdoptSession: { hash: msg.hash, rebuild: msg.rebuild, reqId } }, "*");
-    awaitSessionDone(reqId, sendResponse);
-    return true;
-}
-
-/**
- * The chat page's `agent.start`: run it through the SAME page path the HUD composer uses, so a run started
- * from an extension page is a genuine session of this tab (hash, resumable, appendable) built by the page's
- * own toolset, rather than a second way of starting a run that would drift from it.
- *
- * @param msg The `ML_START_AGENT` message; its `reqId` is already known to be a string.
- * @param sendResponse The background's reply channel.
- * @param hud The shell's current `agentHud` setting, passed in rather than read here — this module relays
- *   commands and owns none of the shell's configuration.
- * @returns `true` always: the reply is asynchronous.
- */
-export function relayStartAgent(msg: Record<string, unknown>, sendResponse: (r: unknown) => void, hud: string): boolean {
-    window.postMessage({ __mlStartAgent: {
-        task: msg.task,
-        reqId: msg.reqId,
-        maxSteps: typeof msg.maxSteps === "number" ? msg.maxSteps : undefined,
-        model: typeof msg.model === "string" && msg.model.trim() ? msg.model.trim() : undefined,
-        vision: msg.vision === true ? true : undefined,
-        stream: msg.stream === true ? true : undefined,
-        images: cleanImages(msg.images as string[] | undefined),
-        hud,
-        // This entry point IS the chat app's `agent.start` command — it reached here over the sessions port and
-        // through the background, so the surface is known from the route and needs no field from the sender.
-        surface: "chat",
-    } }, "*");
-    awaitSessionDone(msg.reqId as string, sendResponse, START_DONE_MS);
-    return true;
 }

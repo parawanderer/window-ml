@@ -2,17 +2,18 @@
 // extracts replies, and makes the privileged (host-permissioned) fetches. All
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
+import { dropAllLocalTools } from "./sw-local-tools";
 import { LOAD_RECORDS_KEY } from "./load-records";
 import type { ApprovalDecision } from "./contract-agent";
 import type { StartRunPayload, SetApprovalPayload, CancelRunPayload, InjectMessagePayload } from "./contract-messages";
-import { modelFilterAllows } from "./contract-config";
+import { modelFilterAllows, publicConfig } from "./contract-config";
 import { googleSheetId, isCurrentPage } from "./dom";
 import { isSelfSourceUrl } from "./self-source";   // trusted-side enforcement of the self-source auto-approve (uncredentialed own-repo reads)
 import { BUILD_INFO } from "./build-info.gen";
 import { browserInfo } from "./util";   // the fork's settings scheme (page-context Browser line)
 import { ensureDebuggerAttached, releaseDebugger, cdpClick, cdpScreenshot, cdpShadowResolve } from "./sw-cdp";   // CDP/debugger layer (strict-CSP exec, trusted click/type, host-grant-free screenshot)
 import { fetchUrlContent, fetchRenderedContent, fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw-fetch";   // outbound fetch layer (ml.fetch, rendered fetch, credentialed Google Sheets CSV)
-import { executeServerTool } from "./sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
+import { executeServerTool, serverToolResult } from "./sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw-events";
 import { configureSessionCommands, ingestSessionEvent, keepSession, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw-sessions";   // the cross-tab session index the chat page reads
@@ -21,11 +22,12 @@ import { ensureHubRuntime, hubDevices, hubLog, hubState, revokeHubDevice, stopHu
 import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, senderOrigin } from "./sw-housekeeping";
 import { handleRunLogDump } from "./sw-run-log";
 import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
-import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, pendingGrants, takeCredFetch } from "./sw-consent";
-import { runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw-runs";
+import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, pendingGrants, takeCredFetch, isExtensionSender } from "./sw-consent";
+import { isWorkerRun, makeWorkerRun, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw-runs";
 import { moveTabKey } from "./tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw-debug";   // the DevTools panel's copy of the page debug stream
-import { startBackgroundRun, delegateStreams } from "./sw-run-host";
+import { startBackgroundRun, delegateStreams, hostRun } from "./sw-run-host";
+import { adoptOnTab, startUserRun, userRunAction, steerRun } from "./sw-run-start";
 import { pythonPrewarm, pythonExec, relayPyStdout } from "./sw-python";
 import { focusLineFor } from "./sw-focus";
 
@@ -73,6 +75,7 @@ startValueSweeps();
 (globalThis as unknown as { __mlEvictForTest?: unknown }).__mlEvictForTest = async (): Promise<void> => {
     runControllers.clear(); runInboxes.clear(); bgRuns.clear(); activeRuns.clear();
     runRebuilds.clear(); runReplayBuffer.clear(); pendingApprovals.clear(); hydratedRuns.clear(); resurrectedRuns.clear(); readoptPageInfo.clear();
+    dropAllLocalTools();
     await hydratePersistedRuns();
 };
 // TEST-ONLY: seed a minimal resumable bgRun for a tab, so a unit test can exercise the "don't wipe a tab that
@@ -80,6 +83,14 @@ startValueSweeps();
 (globalThis as unknown as { __mlSeedBgRunForTest?: unknown }).__mlSeedBgRunForTest = (tabId: number, runId: string): void => {
     bgRuns.set(runId, { p: { runId } as unknown as StartRunPayload, tabId, messages: [] });
 };
+
+// TEST-ONLY (SW realm only, like the two above): keep a session past the worker's life, as a run the user started with
+// `persistUiRuns` on is kept, without starting one through a surface.
+(globalThis as unknown as { __mlKeepSessionForTest?: unknown }).__mlKeepSessionForTest = (hash: string): void => keepSession(hash);
+// TEST-ONLY (SW realm only): start a run as the HUD Commander's Send does (sw-run-start.ts). The real route is the
+// extension's own frame through the content-script shell, which a spec cannot click without driving the whole
+// composer; a page cannot reach this, so it is no way in for one.
+(globalThis as unknown as { __mlStartUserRunForTest?: unknown }).__mlStartUserRunForTest = (tabId: number, req: import("./run-assembly").UserRunRequest, opts?: { keep?: boolean }) => startUserRun(tabId, req, opts);
 
 // captureVisibleTab quota backoff: retry a rate-limited screenshot (~2/sec cap) rather than failing the step.
 const CAPTURE_RETRIES = 5;       // ~5 tries…
@@ -163,14 +174,6 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         if (sender.tab?.id != null) ingestSessionEvent(message.event, { tabId: sender.tab.id, trusted: false, page: senderPage(sender.tab) });
         return;
     }
-    // A run this browser's own UI started, reporting its session so the worker keeps it past its own life
-    // (`config.persistUiRuns`). The worker decides what it keeps; the page only says which session it made, and a
-    // hash nobody holds is ignored. A page could claim any hash, which costs it a session row already bounded by
-    // the store's budget — the same standing a page's own `{ save: true }` chat has had all along.
-    if (message.type === "ML_KEEP_SESSION") {
-        if (typeof message.hash === "string") keepSession(message.hash);
-        return;
-    }
     // Await the startup rehydrate before deciding whether to wipe: right after an SW respawn (e.g. a site-access
     // grant cycled the worker), a fresh page's ML_DEBUG_RESET can RACE hydratePersistedRuns — if it wins,
     // activeRuns/bgRuns are still empty and it wipes an interrupted run's session before it's re-tracked.
@@ -199,7 +202,16 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // NAMED fields, not a spread: this forwards a message from an extension page to a content script, and
         // copying the whole thing would carry anything the panel happened to put on it. The cost is that a new
         // field must be added HERE too — a step budget added everywhere else still arrived undefined until it was.
-        try { void chrome.tabs.sendMessage(message.tabId, { type: "ML_SESSION_TO_PAGE", action: message.action, hash: message.hash, text: message.text, images: message.images, ...(message.surface ? { surface: message.surface } : {}), ...(typeof message.maxSteps === "number" ? { maxSteps: message.maxSteps } : {}) }).catch(() => {}); } catch { /* tab gone */ }
+        const toPage = (): void => {
+            try { void chrome.tabs.sendMessage(message.tabId, { type: "ML_SESSION_TO_PAGE", action: message.action, hash: message.hash, text: message.text, images: message.images, ...(message.surface ? { surface: message.surface } : {}), ...(typeof message.maxSteps === "number" ? { maxSteps: message.maxSteps } : {}) }).catch(() => {}); } catch { /* tab gone */ }
+        };
+        // A run the worker built is driven from here: the page never carries the person's message (sw-run-start.ts).
+        if ((message.action === "send" || message.action === "continue") && typeof message.hash === "string") {
+            void userRunAction(message.hash, message.action, { text: message.text, images: message.images, surface: message.surface, maxSteps: message.maxSteps }, message.tabId)
+                .then((mine) => { if (!mine) toPage(); }, toPage);
+            return;
+        }
+        toPage();
         return;
     }
     // PDF export prints from a REAL browser tab, not the sidebar app's own frame: window.print() is
@@ -247,15 +259,21 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // runs storage restored, or it would miss the re-adopt + auto-resume.
         void hydrationDone.then(() => {
             const ids = tabId != null ? activeRuns.get(tabId) : undefined;
-            // `resume` marks an INTERRUPTED (evicted) run — the fresh page auto-continues it (durable resume).
-            const adopt: { runId: string; rebuild: import("./contract").RebuildConfig; resume?: boolean }[] = [];
+            // An INTERRUPTED (evicted) run is continued by the WORKER once the page has re-registered its tools, never by
+            // the page. It always meets a fresh document, so nothing page-side is left to own it: it becomes the worker's.
+            const adopt: { runId: string; rebuild: import("./contract").RebuildConfig }[] = [];
+            const resumeIds: string[] = [];
             const seen = new Set<string>();
             const addAdopt = (runId: string, rebuild: import("./contract").RebuildConfig): void => {
                 if (seen.has(runId)) return;
                 seen.add(runId);
                 const resume = hydratedRuns.has(runId) && !runControllers.has(runId);   // evicted & not running → re-drive
-                if (resume) { hydratedRuns.delete(runId); resurrectedRuns.add(runId); }   // auto-resume ONCE; RESUME_RUN re-emits its `agent` start
-                adopt.push({ runId, rebuild, resume: resume || undefined });
+                if (resume) {
+                    hydratedRuns.delete(runId); resurrectedRuns.add(runId);   // auto-resume ONCE; RESUME_RUN re-emits its `agent` start
+                    makeWorkerRun(runId);
+                    resumeIds.push(runId);
+                }
+                adopt.push({ runId, rebuild: resume ? { ...rebuild, builtBy: "worker" } : rebuild });
             };
             if (ids) for (const runId of ids) { const rebuild = runRebuilds.get(runId); if (rebuild) addAdopt(runId, rebuild); }
             // ALSO re-adopt recently-COMPLETED-but-resumable runs on this tab (bgRuns): a HUD run that navigated
@@ -267,6 +285,12 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 if (snap.tabId === tabId && snap.p.rebuild) addAdopt(runId, snap.p.rebuild);
             }
             sendResponse({ adopt });
+            // Durable resume, driven from here. The barrier holds the run's first tool call until the page answers the
+            // adopt (RUN_READOPTED), so the call cannot reach a page whose toolset is not registered yet.
+            if (tabId != null && resumeIds.length) {
+                navBarrier.noteNavigating(tabId);
+                for (const runId of resumeIds) hostRun({ type: "RESUME_RUN", payload: { runId, task: "" } }, tabId, () => { /* reported through its events */ });
+            }
             // Overlay/off HUD replay-across-nav: stream the run's buffered history so the fresh card/overlay
             // rebuilds MID-run (start + every step so far), not just post-nav events. The shell buffers these
             // __mlFromBg events while its iframe mounts, absorbing an ordering race against the handshake.
@@ -356,6 +380,14 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         })();
         return true;   // async
     }
+    // A run the WORKER built is the person's, and only the worker drives it: a page may not start a turn in it, resume
+    // it or steer it, or it would decide what that run does (docs/spec/SITE_ACCESS.md, slice 0). Its id reaches the
+    // page in the run's own debug events, so knowing it proves nothing. An extension page is not a page here.
+    if ((message.type === "INJECT_MESSAGE" || message.type === "START_RUN" || message.type === "RESUME_RUN")
+        && isWorkerRun((message.payload as { runId?: unknown } | undefined)?.runId) && !isExtensionSender(sender)) {
+        sendResponse(message.type === "INJECT_MESSAGE" ? { data: false } : { error: "Refused: this run was started from the extension, and only the extension can drive it." });
+        return;
+    }
     if (message.type === "INJECT_MESSAGE") {
         // a.say() steering a RUNNING background run: push the text into that run's inbox → the loop drains it
         // at the next step boundary. Only the OWNING tab may steer; an unknown/finished run is a no-op (the
@@ -365,6 +397,24 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         const injected = !!(inbox && inbox.tabId === sender.tab?.id && typeof p.text === "string");
         if (injected) inbox!.queue.push({ id: p.sayId, text: p.text, ...(p.origin ? { origin: p.origin } : {}) });
         sendResponse({ data: injected });
+        return true;
+    }
+    // A run the USER started from the HUD Commander or right-click menu, sent by the content-script shell on behalf of
+    // the extension's own frame (the card or overlay app). Assembled here, never by the page (sw-run-start.ts). The
+    // page cannot send this: the content script's page relay forwards only its HANDLE_MAP types.
+    if (message.type === "USER_START_RUN") {
+        const tabId = sender.tab?.id;
+        if (tabId == null) { sendResponse({ error: "USER_START_RUN must come from a tab." }); return; }
+        startUserRun(tabId, message.payload || {}, { keep: !!message.keep })
+            .then(({ hash }) => sendResponse({ data: { hash } }), (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
+        return true;
+    }
+    // The same composer's follow-up or Continue: driven from here when the run is the worker's, else `{ data: null }`
+    // and the shell hands it to the page, which still owns the runs and chats it built.
+    if (message.type === "USER_RUN_ACTION") {
+        const p = (message.payload || {}) as { hash?: unknown; action?: unknown };
+        if (sender.tab?.id == null || typeof p.hash !== "string" || (p.action !== "send" && p.action !== "continue")) { sendResponse({ data: null }); return; }
+        userRunAction(p.hash, p.action, message.payload, sender.tab.id).then((outcome) => sendResponse({ data: outcome }), () => sendResponse({ data: null }));
         return true;
     }
     if (message.type === "START_RUN" || message.type === "RESUME_RUN") {
@@ -455,9 +505,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 });
                 // The ok/not-ok split is carried through verbatim rather than flattened: a tool that THREW is
                 // a step outcome the model reads, and a stream that never completed is not.
-                sendResponse(end.ok
-                    ? { data: { ok: true, result: end.result, output: end.state.output, marks: end.state.marks, events: end.state.events } }
-                    : { data: { ok: false, transportError: end.transportError, output: end.state.output, marks: end.state.marks, events: end.state.events } });
+                sendResponse({ data: serverToolResult(end) });
             } catch (e) {
                 sendResponse({ error: String((e as Error)?.message || e) });
             } finally {
@@ -605,7 +653,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // Settings/popup "Incognito rendering" button. EXTENSION-ORIGIN ONLY (a page can't reach
         // chrome.runtime.onMessage, but guard anyway): the URL is derived here (browser-correct scheme +
         // chrome.runtime.id), never taken from the sender, so this can't be turned into an "open any URL".
-        if (!(sender.url || "").startsWith(chrome.runtime.getURL(""))) { sendResponse({ error: "refused" }); return true; }
+        if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return true; }
         let scheme = "chrome"; try { scheme = browserInfo().scheme; } catch { /* default */ }
         chrome.tabs.create({ url: `${scheme}://extensions/?id=${chrome.runtime.id}` })
             .then(() => sendResponse({ data: true }))
@@ -620,7 +668,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // page tab (sender.tab is SET, sender.url is our origin). The old `sender.tab != null` guard wrongly
         // refused that embedded card, so the HUD showed the generic "Google Sheet" instead of the real title.
         // A web page can't reach chrome.runtime.onMessage at all; a content script's sender.url is the page url.
-        if (!(sender.url || "").startsWith(chrome.runtime.getURL(""))) { sendResponse({ data: null }); return true; }
+        if (!isExtensionSender(sender)) { sendResponse({ data: null }); return true; }
         const id = String(message.payload?.id || "").trim();
         const url = `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=0`;
         if (!/^[A-Za-z0-9_-]+$/.test(id) || !SHEET_URL_OK.test(url)) { sendResponse({ data: null }); return true; }
@@ -747,29 +795,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // Non-secret config the page may read (model/OCR model/format). The URL
         // and API key are deliberately withheld — see the security invariants.
         getConfig()
-            .then(config => {
-                // Compute whether THIS page's origin is on the user's page-approval whitelist. The origin
-                // comes from the trusted `sender` (the content script's tab URL), NOT anything the page
-                // sends — so a page can't claim to be whitelisted. Only the boolean crosses to the page;
-                // the domain list never does.
-                let pageApprovalAllowed = false;
-                try {
-                    const url = sender.tab?.url || sender.url || "";
-                    const host = url ? new URL(url).hostname : "";
-                    pageApprovalAllowed = !!host && (config.pageApprovalDomains || []).includes(host);
-                } catch { /* opaque/blank origin → not allowed */ }
-                sendResponse({ data: {
-                    model: config.model, ocrModel: config.ocrModel, ocrNumCtx: config.ocrNumCtx, apiFormat: config.apiFormat,
-                    defaultModelVision: config.defaultModelVision,
-                    utilityModel: config.utilityModel, utilityNumCtx: config.utilityNumCtx, utilityForceCpu: config.utilityForceCpu,
-                    autoApproveReadonly: config.autoApproveReadonly, autoApprovePython: config.autoApprovePython,
-                    serverToolsOff: config.serverToolsOff || [], commanderServerTools: config.commanderServerTools || [],
-                    autoApproveSameOriginAuth: config.autoApproveSameOriginAuth, autoApproveSelfSource: config.autoApproveSelfSource,
-                    pierceClosedShadow: config.pierceClosedShadow, cdp: config.cdp,
-                    groundingEnabled: config.groundingEnabled, groundingModel: config.groundingModel,
-                    groundingRange: config.groundingRange, debugMode: config.debugMode, pageApprovalAllowed,
-                } });
-            })
+            // Whether THIS page's origin is on the page-approval whitelist is computed from the trusted `sender` (the
+            // content script's tab URL), NOT anything the page sends, and only that boolean crosses to the page.
+            .then(config => sendResponse({ data: publicConfig(config, sender.tab?.url || sender.url || "") }))
             .catch(err => sendResponse({ error: err.message }));
         return true;
 
@@ -1044,22 +1072,13 @@ function cancelBackgroundRun(runId: string): boolean {
 }
 
 // The chat page's commands reach the runs through these; everything else they need is the browser's (sw-sessions.ts).
-let chatSteerSeq = 0;
 configureSessionCommands({
     // A steer from the chat page goes into the running loop's inbox, the same one a handle's say() reaches through
     // INJECT_MESSAGE, and is shown the way say() shows it: an `agent-say` bubble the loop marks seen when it drains.
-    steer: (hash, text) => {
-        const inbox = runInboxes.get(hash);
-        if (!inbox) return false;
-        const sayId = `sc_${Date.now().toString(36)}_${++chatSteerSeq}`;
-        inbox.queue.push({ id: sayId, text });
-        const event = { kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text, sayId };
-        chrome.tabs.sendMessage(inbox.tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => { /* tab gone */ });
-        relayDebugEvent(inbox.tabId, event);
-        ingestSessionEvent(event, { tabId: inbox.tabId, trusted: true });
-        bufferReplay(inbox.tabId, event);
-        return true;
-    },
+    steer: (hash, text) => steerRun(hash, text),
+    startUserRun: (tabId, req) => startUserRun(tabId, req),
+    userRunAction: (hash, action, body, fromTabId) => userRunAction(hash, action, body, fromTabId),
+    adoptOnTab,
     cancelRun: cancelBackgroundRun,
     // Only a run whose loop THIS worker hosts: a live one (its controller) or a resumable one (its snapshot).
     setRunModel: (hash, model) => {

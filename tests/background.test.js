@@ -1772,7 +1772,7 @@ test("ML_HL_REMOTE: the panel's hover-highlight is relayed to the inspected tab'
     assert.equal(bg.tabMessages.length, 2, "no tabId → not relayed");
 });
 
-test("ML_SESSION_REMOTE: the panel's composer Send/Stop is relayed to the inspected tab (parity with the overlay)", () => {
+test("ML_SESSION_REMOTE: the panel's composer Send/Stop is relayed to the inspected tab (parity with the overlay)", async () => {
     // Panel parity for the composer. The overlay app posts sessionSend/sessionCancel to its shell parent,
     // which reaches __mlSessionSend/__mlCancelSession directly. The DevTools panel can't touch the inspected
     // page, so panel.ts posts ML_SESSION_REMOTE{tabId, action} to the background, which forwards
@@ -1780,6 +1780,9 @@ test("ML_SESSION_REMOTE: the panel's composer Send/Stop is relayed to the inspec
     // Different backend mechanism, same behaviour. Fire-and-forget (no sendResponse) → don't await.
     const bg = loadBackground({ config: baseConfig() });
     bg.send({ type: "ML_SESSION_REMOTE", tabId: 5, action: "send", hash: "abc", text: "steer left", images: [] });
+    // A Send is offered to the worker first (a run it built is driven from there, sw-run-start.ts); "abc" is not one,
+    // so it reaches the page a turn later.
+    await new Promise((r) => setTimeout(r, 0));
     assert.equal(bg.tabMessages.length, 1, "one relay to the tab");
     assert.equal(bg.tabMessages[0][0], 5, "addressed to the inspected tab");
     assert.deepEqual(bg.tabMessages[0][1], { type: "ML_SESSION_TO_PAGE", action: "send", hash: "abc", text: "steer left", images: [] }, "Send is forwarded verbatim");
@@ -2744,11 +2747,15 @@ test("fix C: a RESURRECTED resume re-emits its agent start (visible + stoppable)
         onTabMessage: (_t, msg) => { if (msg?.type === "ML_DEBUG_TO_PAGE") events.push(msg.event); },
         local: { ml_bgrun_res1: bgSnap("res1", 7) },
     });
-    // Page loads → CONTENT_READY offers the interrupted run for auto-resume.
+    // Page loads → CONTENT_READY offers the interrupted run for re-adoption. The WORKER resumes it, never the page,
+    // once the page has re-registered its tools: it meets a fresh document, so nothing page-side is left to own it.
     const ready = await bg.send({ type: "CONTENT_READY", payload: {} }, { tab: { id: 7 } });
-    assert.ok((ready.adopt || []).some(a => a.runId === "res1" && a.resume), "the interrupted run is offered with resume:true");
-    // The page then RESUME_RUNs it with an EMPTY follow-up (what _adoptRun does on an auto-resume).
-    await bg.send({ type: "RESUME_RUN", payload: { runId: "res1", task: "" } }, { tab: { id: 7 } });
+    const offer = (ready.adopt || []).find(a => a.runId === "res1");
+    assert.ok(offer, "the interrupted run is offered for re-adoption");
+    assert.equal(offer.resume, undefined, "and the page is not asked to drive it");
+    assert.equal(offer.rebuild.builtBy, "worker", "it is the worker's from now on: no page-side resume handle");
+    void bg.send({ type: "RUN_READOPTED", payload: { runId: "res1" } }, { tab: { id: 7 } });   // fire-and-forget: never answers
+    for (let i = 0; i < 20 && !events.some(e => e?.kind === "agent-result"); i++) await new Promise((r) => setTimeout(r, 0));
     // Before fix C this resume was INVISIBLE (no agent start) — a ghost with no Stop button. Now it re-announces.
     const start = events.find(e => e?.kind === "agent" && e.id === "res1");
     assert.ok(start, "the resurrected resume RE-EMITS an agent start (materialises a row + Stop button)");

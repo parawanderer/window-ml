@@ -163,6 +163,10 @@ export interface StartRunPayload {
      *  sends it back on re-adopt; the new page's `_adoptRun` reconstructs + re-registers the toolset. Only
      *  builtin tools cross a nav (custom function tools don't serialize), so this is names + vision facts. */
     rebuild?: RebuildConfig;
+    /** "worker": the SERVICE WORKER assembled this run (a run the user started from an extension surface,
+     *  sw-run-start.ts), so no page-side caller exists to emit its lifecycle events, and its remote tools run in the
+     *  worker. Absent: a page built it (a console `ml.agent()`), as before. */
+    builtBy?: "worker";
 }
 
 /** The serializable state a fresh document needs to rebuild a background-hosted run's BUILTIN toolset after
@@ -186,6 +190,9 @@ export interface RebuildConfig {
     cdp: boolean;
     /** may the rebuilt `navigate` tool cross origins? (carried so cross-site nav keeps working after a nav) */
     crossOrigin: boolean;
+    /** "worker": the worker built this run and drives it (sw-run-start.ts), so the page registers its tools and
+     *  nothing else: no page-side resume handle, since a page may not start a turn in it */
+    builtBy?: "worker";
 }
 
 /** SET_APPROVAL payload — the sidebar app's decision for a pending background-run approval, keyed by
@@ -261,6 +268,8 @@ export interface RunToolInPagePayload {
  *  {@link AgentResult}.elements there. */
 export interface PageToolEnvelope {
     result: string;
+    /** the turn's curated answer (the `answer` tool's set, finalized), sent only for a `finish` (sw-run-host.ts) */
+    answer?: string;
     /** real nodes stay page-side; the background only learns how many */
     elementCount?: number;
     /** answer's serialized element visuals (data URLs) — cross the bus to the background → the HUD card */

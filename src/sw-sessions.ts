@@ -17,19 +17,15 @@ import { STORE_MAX_SESSIONS, SessionStore, indexedDbBackend, type SessionHistory
 import { AGENT_START_PAGE, DEFAULT_CONFIG, modelFilterAllows } from "./contract-config";
 import type { NeutralMessage } from "./contract-chat";
 import { cleanTitle, titleMessages } from "./session-title";
-import { bgRuns, trackRun, untrackRun } from "./sw-runs";
+import { bgRuns, makeWorkerRun, trackRun, untrackRun } from "./sw-runs";
+import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
+import { isExtensionSender } from "./sw-consent";
 import { fetchLLM, getConfig, listAvailableModels, modelCapabilitiesBatch } from "./sw-llm";
 import { pythonBundlePresent } from "./sw-python";
 import { recordHousekeeping } from "./sw-housekeeping";
 import { archiveCall, lastFolderReport, onFolderChange, scheduleFolderSync } from "./sw-archive";
 import { attentionCodes, recomputeAttention, refreshBackendAttention, watchAttention } from "./sw-attention";
 import { appendSnapshot, measureEvents, summarizeStore, type StorageReport, type StorageSnapshot, type StoreBytes } from "./session-storage-stats";
-
-/** Chrome's own words for "that tab has nothing listening", which is not an error about the message. */
-const NO_RECEIVER = /Receiving end does not exist|Could not establish connection/i;
-
-/** How long to wait for a re-injected content script to bring `window.ml` back, and how often to look. */
-const REINJECT_READY_MS = 4000, REINJECT_POLL_MS = 100;
 
 /**
  * Ask a tab's page something, PUTTING THE CONTENT SCRIPT BACK if it is not there.
@@ -45,12 +41,7 @@ const REINJECT_READY_MS = 4000, REINJECT_POLL_MS = 100;
  * scripts back, asks once more, and on any further failure answers `undefined`, which every caller already turns
  * into "the page did not answer; it may still be loading, or the extension cannot run there".
  *
- * The files come from the MANIFEST rather than a list here, so a content script added later is injected too.
- *
- * WHAT RE-INJECTION CANNOT GIVE BACK: `shadow-patch.js` runs at `document_start` in the main world to record shadow
- * roots as the page makes them. Injected after the page has loaded it only sees roots attached from then on, so a
- * closed root created before this point stays unreachable until the tab is reloaded. Better than refusing to run,
- * and worth knowing when a DOM tool on a re-adopted tab cannot find something it should.
+ * The re-injection itself is `restoreContentScripts` (sw-page-restore.ts), shared with the worker's run start.
  */
 async function askPage(tabId: number, message: object): Promise<unknown> {
     try {
@@ -59,26 +50,7 @@ async function askPage(tabId: number, message: object): Promise<unknown> {
         if (!NO_RECEIVER.test(String((err as Error)?.message || err))) throw err;
     }
     try {
-        // `world` is in the manifest and not yet in the typings, so the entry is read through its own shape.
-        type ContentScript = { js?: string[]; all_frames?: boolean; world?: "MAIN" | "ISOLATED" };
-        for (const cs of (chrome.runtime.getManifest().content_scripts ?? []) as ContentScript[]) {
-            if (!cs.js?.length) continue;
-            await chrome.scripting.executeScript({
-                target: { tabId, allFrames: !!cs.all_frames },
-                files: cs.js,
-                ...(cs.world === "MAIN" ? { world: "MAIN" as const } : {}),
-            });
-        }
-        // Wait for the MAIN world, not for the content script: the content script registers its listener before
-        // `injected.js` has run, so a message sent on that signal reaches a page whose own handler is not there yet.
-        // This is the same thing `openTab` waits for, for the same reason.
-        const until = Date.now() + REINJECT_READY_MS;
-        for (;;) {
-            const [probe] = await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", func: () => !!(window as { ml?: unknown }).ml });
-            if (probe?.result === true) break;
-            if (Date.now() > until) return undefined;
-            await new Promise((r) => setTimeout(r, REINJECT_POLL_MS));
-        }
+        if (!await restoreContentScripts(tabId)) return undefined;
         return await chrome.tabs.sendMessage(tabId, message);
     } catch {
         // The extension may not script this tab at all (a restricted page, or site access withheld), or the page went
@@ -226,6 +198,12 @@ function archiveToggled(): void {
 export type RunDeps = Pick<CommandDeps, "steer" | "cancelRun" | "resolveApproval" | "setRunModel"> & {
     /** drop a finished run's resumable snapshot and pointer store */
     forgetRun(hash: string): void;
+    /** start a run the user asked for, assembled in the worker (sw-run-start.ts) */
+    startUserRun(tabId: number, req: import("./run-assembly").UserRunRequest): Promise<{ hash: string }>;
+    /** a message or Continue for a run the worker built; null when the run is not the worker's (sw-run-start.ts) */
+    userRunAction(hash: string, action: "send" | "continue", body: Record<string, unknown>, fromTabId?: number): Promise<PageOutcome | null>;
+    /** register a run's builtin toolset in a tab's page and hear its context (the ADOPT_RUN_NOW push) */
+    adoptOnTab(tabId: number, runId: string, rebuild: import("./contract").RebuildConfig): Promise<{ pageInfo?: string; error?: string; unanswered?: true }>;
 };
 
 let handler: ((command: Command) => Promise<CommandResult<CommandType>>) | null = null;
@@ -326,6 +304,11 @@ export function configureSessionCommands(run: RunDeps): void {
             } catch { return false; }   // closed between the check and the focus
         },
         toPage: async (tabId, action, body) => {
+            // A run the worker built is driven from the worker: the page never carries the person's message.
+            if (action === "send" || action === "continue") {
+                const mine = await run.userRunAction(String((body as { hash?: unknown }).hash ?? ""), action, body as Record<string, unknown>, tabId);
+                if (mine) return mine;
+            }
             const reqId = Math.random().toString(36).slice(2, 12);
             const reply = await askPage(tabId, { type: "ML_SESSION_TO_PAGE", action, ...body, reqId }) as { outcome?: PageOutcome } | undefined;
             return reply?.outcome ?? "no-answer";
@@ -367,10 +350,12 @@ export function configureSessionCommands(run: RunDeps): void {
             return cfg.modelFilter.trim() ? { models, filtered: { hidden: ids.length - allowed.length } } : models;
         },
         startChat: (opts) => startBackgroundChat(opts),
+        // Assembled in the worker, never by the page it acts on (docs/spec/SITE_ACCESS.md, slice 0).
         startAgent: async (tabId, opts) => {
-            const reqId = Math.random().toString(36).slice(2, 12);
-            const reply = await askPage(tabId, { type: "ML_START_AGENT", reqId, ...opts }) as { outcome?: PageOutcome | "started"; hash?: string } | undefined;
-            return { outcome: reply?.outcome ?? "no-answer", ...(reply?.hash ? { hash: reply.hash } : {}) };
+            try {
+                const { hash } = await run.startUserRun(tabId, { ...opts, surface: "chat" });
+                return { outcome: "started", hash };
+            } catch (e) { return { outcome: "none", error: (e as Error)?.message || String(e) }; }
         },
         history: async (hash) => (sessionStore ? await sessionStore.history(hash) : null),
         ...(sessionStore ? { storedEvents: (hash: string) => sessionStore.read(hash) } : {}),
@@ -380,9 +365,13 @@ export function configureSessionCommands(run: RunDeps): void {
             // worker MEMORY: a run that settled yesterday is not in it, which is the whole reason a saved session
             // keeps its own copy. Hydrating here means the resume path itself needs no second source.
             bgRuns.set(hash, { p: history.payload, tabId, messages: history.messages, ...(history.sub ? { sub: history.sub } : {}) });
-            trackRun(tabId, hash, history.payload.rebuild);
-            const reply = await askPage(tabId, { type: "ML_ADOPT_SESSION", hash, rebuild: history.payload.rebuild }) as { outcome?: PageOutcome | "adopted" } | undefined;
-            const outcome = reply?.outcome ?? "no-answer";
+            // From here on the WORKER drives it: its next turn is started from here, never by the page it sits on.
+            bgRuns.set(hash, { p: history.payload, tabId, messages: history.messages, ...(history.sub ? { sub: history.sub } : {}) });
+            makeWorkerRun(hash);
+            const rebuild = bgRuns.get(hash)!.p.rebuild;
+            trackRun(tabId, hash, rebuild);
+            const reply = rebuild ? await run.adoptOnTab(tabId, hash, rebuild) : { error: "no toolset to rebuild" };
+            const outcome: PageOutcome | "adopted" = !reply.error ? "adopted" : "unanswered" in reply && reply.unanswered ? "no-answer" : "none";
             // A page that did not take it must not leave a run hydrated against a tab that is not holding it: the
             // next thing to read `bgRuns` would believe that tab owns this session.
             if (outcome !== "adopted") { bgRuns.delete(hash); untrackRun(tabId, hash); }
@@ -410,7 +399,7 @@ export function configureSessionCommands(run: RunDeps): void {
             try {
                 // Wait for `window.ml` to EXIST in the new page, not for the tab to report "complete" and not for the
                 // content script to answer. The content script registers its listener before `injected.js` runs, so a
-                // start relayed on that signal reaches a page whose `__mlStartAgent` listener is not there yet, and the
+                // toolset pushed on that signal reaches a page whose `ADOPT_RUN` listener is not there yet, and the
                 // run is lost to a timeout. What the run needs is the main world, so that is what this asks.
                 const until = Date.now() + TAB_READY_MS;
                 for (;;) {
@@ -826,7 +815,7 @@ export function senderPage(tab: chrome.tabs.Tab | undefined): IngestSource["page
  *  refuses every page: the index spans every tab, and a page's main world is hostile. */
 export function serveSessionsPort(port: chrome.runtime.Port): void {
     if (port.name !== SESSIONS_PORT) return;
-    if (!(port.sender?.url || "").startsWith(chrome.runtime.getURL(""))) {
+    if (!isExtensionSender(port.sender)) {
         try { port.disconnect(); } catch { /* already gone */ }
         return;
     }

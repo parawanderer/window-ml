@@ -15,6 +15,7 @@
 // token-store LRU drops it. Dropping the pointers in the turn's finally emptied them between turns, which is the
 // exact failure the session-scoped store was introduced to fix.
 
+import { dropLocalTools } from "./sw-local-tools";
 import { bgRunResumable, pushReplay } from "./contract-run";
 import { moveTabKey } from "./tab-replaced";
 import { recordRunLog } from "./sw-run-log";
@@ -36,6 +37,35 @@ export const runControllers = new Map<string, AbortController>();
 // MV3 service-worker eviction (~30s idle) — resume works while the SW is warm (the common
 // finish-then-follow-up flow); an evicted run reports an actionable error and the caller starts fresh.
 export const bgRuns = new Map<string, { p: StartRunPayload; tabId: number; messages: NeutralMessage[]; sub?: import("./contract").SubcallUsage }>();
+
+/** Runs the WORKER assembled (sw-run-start.ts) whose first turn has not settled yet: `bgRuns` holds a run only once a
+ *  turn has, and a page must not be able to drive one in that window either. */
+export const workerRunsStarting = new Set<string>();
+
+/**
+ * Hand a stored run to the WORKER: from now on it is driven from the worker only, fans its own lifecycle events, asks
+ * the page for its curated answer when a turn ends, and its page registers tools without a page-side resume handle.
+ * For a run whose builder page is gone (a durable resume after an eviction always meets a fresh document; a saved
+ * session adopted onto a tab), where nothing page-side is left to own it.
+ * @param runId the run
+ */
+export function makeWorkerRun(runId: string): void {
+    const stored = bgRuns.get(runId);
+    if (stored) stored.p = { ...stored.p, builtBy: "worker", ...(stored.p.rebuild ? { rebuild: { ...stored.p.rebuild, builtBy: "worker" } } : {}) };
+    const rb = runRebuilds.get(runId);
+    if (rb) runRebuilds.set(runId, { ...rb, builtBy: "worker" });
+}
+
+/**
+ * Whether the worker assembled this run (a run the user started from a surface, or a saved session adopted onto a
+ * tab). Such a run is driven only from the worker: a PAGE may not start a turn in it, continue it or steer it, since
+ * that would let the page decide what the person's run does (docs/spec/SITE_ACCESS.md, slice 0).
+ * @param runId the run
+ * @returns true for a worker-built run
+ */
+export function isWorkerRun(runId: unknown): boolean {
+    return typeof runId === "string" && (workerRunsStarting.has(runId) || bgRuns.get(runId)?.p.builtBy === "worker");
+}
 
 // ---- Durable resume ----
 // A LIVE run's resumable snapshot is also mirrored to chrome.storage.local, so a re-spawned SW (MV3 evicts
@@ -318,7 +348,7 @@ export const sessionTokens = (runId: string): TokenStore => {
 /** Release a SESSION's pointers — only when the session itself is gone (its bgRuns entry dropped, or its store pushed
  *  out by newer sessions), never at the end of a turn. Paired with every `bgRuns.delete` so the two lifetimes cannot
  *  drift apart again. The stored values those pointers named go with them: nothing can address them any more. */
-export function releaseSessionTokens(runId: string): void { tokensByRun.delete(runId); releaseSessionValues(runId); }
+export function releaseSessionTokens(runId: string): void { tokensByRun.delete(runId); releaseSessionValues(runId); dropLocalTools(runId); }
 
 // The navigation SENSOR: a committed MAIN-frame navigation on a tab that hosts a live run means its document
 // (and registered toolset) is going away → engage the barrier so the next delegated tool waits for re-adopt.

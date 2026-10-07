@@ -28,34 +28,6 @@ test("_truncate tolerates null/undefined", () => {
     assert.equal(ml._truncate(undefined, 5), "");
 });
 
-test("__mlStartAgent (HUD composer relay) runs a REAL createAgent().run() in the page", async () => {
-    // The Spotlight composer → shell → page: injected must start a genuine session via createAgent().run()
-    // (so it registers a HANDLE the composer can then steer), not a bare ml.agent(). Stub createAgent.
-    const { ml, window } = loadDomWorld();
-    let createdOpts = null, ranWith = null;
-    ml.createAgent = (opts) => { createdOpts = opts; return { run: (task) => { ranWith = task; return Promise.resolve({ summary: "" }); } }; };
-    window.dispatchEvent(new window.MessageEvent("message", { data: { __mlStartAgent: { task: "do a thing", maxSteps: 20 } }, source: window }));
-    // The handler reads the config first (for bundles marked always-present), so the run starts a microtask
-    // later — the message is an extension round-trip, not a network one.
-    await new Promise((r) => setTimeout(r, 0));
-    assert.equal(ranWith, "do a thing", "the page ran createAgent().run() with the composer's task");
-    assert.equal(createdOpts?.maxSteps, 20, "the composer's step budget threads through");
-    // A UI-started run gets a capable default kit (click/type/python) via extraTools — the model tried to
-    // use `click` and got "no tool named click" when it was missing.
-    const toolNames = (createdOpts?.extraTools || []).map(t => t.name);
-    assert.ok(["click", "type", "python_exec", "chat_metadata"].every(n => toolNames.includes(n)), `composer run wires click/type/python/chat_metadata (got ${toolNames.join(",")})`);
-    // Invocation provenance: SELF_CLAUSE tells the model the user CAN drive it from the console, which
-    // would be the wrong answer to "how did you start?" for a HUD run. `systemAppend` APPENDS (system would
-    // replace the whole preamble), so the method survives.
-    assert.match(createdOpts?.systemAppend || "", /HUD/, "a UI-started run tells the model it came from the HUD");
-    assert.equal(createdOpts?.system, undefined, "the HUD must not REPLACE the built-in system prompt");
-
-    // A blank task is ignored (no empty run).
-    ranWith = null;
-    window.dispatchEvent(new window.MessageEvent("message", { data: { __mlStartAgent: { task: "   " } }, source: window }));
-    assert.equal(ranWith, null, "a blank task starts nothing");
-});
-
 // ---- elPath ----
 
 test("_elPath builds a root→leaf path with id and classes (stops at <html>)", () => {

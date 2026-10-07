@@ -231,27 +231,40 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
         // assembles AgentResult.elements/answer from that set (see `runAnswer`).
         if (env.elements && env.elements.length && tool.capabilities && tool.capabilities.includes("answer") && !env.answerManaged)
             answerSetFor(run.byName).add({ kind: "element", nodes: env.elements, preview: `${env.elements.length} element(s)` });
-        // Compute the debug-render slots HERE (page-side) — the tool's render() method + its live nodes
-        // live here, so the background emits the same rendered In/Out the page loop would.
-        const { in: renderIn, out: renderOut } = descriptorFor(tool, env, args);
-        return {
-            result: env.result,
-            elementCount: env.elements ? env.elements.length : undefined,
-            answerMedia: env.answerMedia,   // serialized answer-element visuals (data URLs) → cross to the background → HUD card
-            image: env.image, imageLabel: env.imageLabel, images: env.images,
-            renderIn, renderOut,
-            feedback: env.feedback,   // what locate fed into the model's context → surfaced in the debug render + export
-            cdpClick: env.cdpClick,   // reserved-surface click → the BACKGROUND does the CDP click (trusted)
-            cdpExec: env.cdpExec,     // strict-page exec → the BACKGROUND re-runs the source via CDP eval (CSP-exempt)
-            cdpShadowClick: env.cdpShadowClick,   // sealed-shadow `>>>` click → the BACKGROUND CDP-resolves + clicks it
-            cdpType: env.cdpType,   // trusted-keyboard type (canvas / remote desktop / sealed field) → BACKGROUND types via CDP
-            // THE EXECUTOR'S OWN CLOCK — a sandbox's cold start and script time, a remote tool's evaluate and
-            // queue. It was dropped here, so on the background path (which is EVERY run with a debug surface
-            // open) the timeline had only our wall clock: a first python_exec read as a slow script rather
-            // than as a runtime being downloaded, and a remote tool's net/queue split never drew at all.
-            remoteMs: env.remoteMs,
-        };
+        return envelopeFrom(tool, args, env);
     });
+}
+
+/**
+ * The serializable envelope the background reads for one executed tool call: the result, the debug-render slots,
+ * and whatever the background has to act on (a CDP click, an inline image, the executor's own timings). The render
+ * slots are computed HERE, where the tool's render() method and any live nodes are, so a background-hosted run
+ * shows the same In/Out the page loop would. Also used by the service worker for a tool it runs itself (a remote
+ * tool of a run it built, sw-local-tools.ts), which is why it takes the executed envelope rather than running it.
+ * @param tool the tool that ran
+ * @param args the arguments it ran with
+ * @param env what `executeTool` returned
+ * @returns the envelope that crosses to the background
+ */
+export function envelopeFrom(tool: MlTool, args: Record<string, unknown>, env: Awaited<ReturnType<typeof executeTool>>): PageToolEnvelope {
+    const { in: renderIn, out: renderOut } = descriptorFor(tool, env, args);
+    return {
+        result: env.result,
+        elementCount: env.elements ? env.elements.length : undefined,
+        answerMedia: env.answerMedia,   // serialized answer-element visuals (data URLs) → cross to the background → HUD card
+        image: env.image, imageLabel: env.imageLabel, images: env.images,
+        renderIn, renderOut,
+        feedback: env.feedback,   // what locate fed into the model's context → surfaced in the debug render + export
+        cdpClick: env.cdpClick,   // reserved-surface click → the BACKGROUND does the CDP click (trusted)
+        cdpExec: env.cdpExec,     // strict-page exec → the BACKGROUND re-runs the source via CDP eval (CSP-exempt)
+        cdpShadowClick: env.cdpShadowClick,   // sealed-shadow `>>>` click → the BACKGROUND CDP-resolves + clicks it
+        cdpType: env.cdpType,   // trusted-keyboard type (canvas / remote desktop / sealed field) → BACKGROUND types via CDP
+        // THE EXECUTOR'S OWN CLOCK — a sandbox's cold start and script time, a remote tool's evaluate and
+        // queue. It was dropped here, so on the background path (which is EVERY run with a debug surface
+        // open) the timeline had only our wall clock: a first python_exec read as a slow script rather
+        // than as a runtime being downloaded, and a remote tool's net/queue split never drew at all.
+        remoteMs: env.remoteMs,
+    };
 }
 
 /** Install the window-message bridge (once, at injection): content.ts relays the background's
@@ -260,7 +273,15 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
 export function installToolDelegation(): void {
     window.addEventListener("message", async (event: MessageEvent) => {
         if (event.source !== window || !event.data || event.data.type !== "PAGE_TOOL_RUN") return;
-        const { callId, runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, stream } = event.data as { callId: string; runId: string; name: string; args: Record<string, unknown>; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean };
+        const { callId, runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, stream, finish, summary } = event.data as { callId: string; runId: string; name: string; args: Record<string, unknown>; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean; summary?: string };
+        // The END of a turn of a run the WORKER built (sw-run-host.ts): no page-side caller exists to assemble its
+        // answer, so the worker asks for it. Ends the run's registration here, as the page path's caller does.
+        if (finish) {
+            const run = endRun(runId);
+            const a = run ? runAnswer(run, typeof summary === "string" ? summary : "") : null;
+            window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope: { result: "", ...(a?.answer ? { answer: a.answer } : {}), ...(a?.media.length ? { answerMedia: a.media } : {}) } }, "*");
+            return;
+        }
         // LIVE tool output: when the background asked for streaming, hand the tool a ctx.stream that posts each
         // chunk straight back up the delegation chain (→ content → background → the loop's fan). Keyed by runId,
         // which is all the background needs (one delegated call is in flight per run).
