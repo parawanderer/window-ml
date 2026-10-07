@@ -161,6 +161,30 @@ test("tool output: the part the model never received renders marked, not as plai
     assert.match(w.shadow.querySelector(".r-unseen-lbl").textContent, /NOT sent to the model/i, "labelled explicitly");
 });
 
+// The split draws the console as TWO blocks with a label between them, so selecting the whole output by hand drags the
+// "not sent to the model" label along. The copy control on the section's own header line copies the console whole.
+test("tool output: the console's copy button copies all of it, across the not-sent split, without folding the section", async () => {
+    const w = await loadSidebarWorld();
+    const copied = [];
+    Object.defineProperty(w.window.navigator, "clipboard", { value: { writeText: async (t) => { copied.push(t); } }, configurable: true });
+    await w.dispatch(agentStart("copyall", "run it"));
+    await w.dispatch(agentStep("copyall", 1, {
+        seq: 1, tool: "exec", arguments: { js: "…" }, result: "console:\nSEEN… [first 4 of 10 chars]",
+        renderOut: { type: "exec-out", stdout: "SEENUNSEEN", seen: 4, value: "1" },
+    }));
+    await w.dispatch(agentResult("copyall", "done", 1));
+    await openRun(w);
+    w.shadow.querySelector(".astep.tool .astep-head").click(); await w.tick();
+    const section = w.shadow.querySelector(".r-py-stdout");
+    const btn = section.querySelector(":scope > .r-py-actions button");
+    assert.ok(btn, "the copy control belongs to the console section, on its header line");
+    assert.equal(section.querySelector("summary").textContent, "console", "and is not part of the header's text");
+    assert.match(btn.getAttribute("aria-label"), /whole console output, including the part the model was not sent/);
+    btn.click(); await w.tick();
+    assert.deepEqual(copied, ["SEENUNSEEN"], "both sides of the split, and nothing of the label between them");
+    assert.equal(section.open, true, "pressing copy does not fold the section it copies");
+});
+
 // While a step is STILL RUNNING we already know where the model's cut will fall, so the doomed tail is greyed
 // as it streams (with a "?" explainer) rather than springing the truncation on you at the end. The boundary
 // comes from the call's own args, so a model-requested (approved) larger cap is respected live.

@@ -1314,7 +1314,8 @@ function useFocusFold(fold: boolean | undefined): [boolean, (v: boolean) => void
     return [open, setOpen];
 }
 
-function PyOutSection({ label, cls, children, cite, open = true, foldInFocus }: { label: string; cls: string; children: ComponentChildren; cite?: "in" | "out"; open?: boolean; foldInFocus?: boolean }) {
+function PyOutSection({ label, cls, children, cite, open = true, foldInFocus, actions }: { label: string; cls: string; children: ComponentChildren; cite?: "in" | "out"; open?: boolean; foldInFocus?: boolean;
+    /** Controls on the section's own header line, at its right edge (a copy button). */ actions?: ComponentChildren }) {
     // `foldInFocus` is a CLASS, not a different `open`: focus mode is a CSS-only hide everywhere else (see
     // the FOCUS MODE block), so the section keeps one real open/closed state and turning the mode off
     // restores exactly what you left. A `details` whose openness depended on the mode would forget it.
@@ -1322,7 +1323,11 @@ function PyOutSection({ label, cls, children, cite, open = true, foldInFocus }: 
     const isOpen = foldInFocus ? shown : open;
     return <details class={`r-py-sec ${cls}${foldInFocus ? " focus-fold" : ""}`} open={isOpen}
         onToggle={(e: any) => foldInFocus && setShown(!!e.currentTarget.open)}
-        {...(cite ? { "data-cite": cite } : {})}><summary class="r-py-lbl">{label}</summary>{children}</details>;
+        {...(cite ? { "data-cite": cite } : {})}><summary class="r-py-lbl">{label}</summary>
+        {/* OUTSIDE the <summary>, placed onto its line by CSS: inside it, the control's tooltip text became part of the
+            header's text (a screen reader announced "console copy the whole console output…") and a click on it
+            folded the section. Out here it is part of the open section, so it shows while there is output to copy. */}
+        {actions ? <span class="r-py-actions">{actions}</span> : null}{children}</details>;
 }
 /** WHICH SECTIONS a python result actually has, in the order the log stacks them, with the labels the log
  *  uses. Single-sourced because two surfaces compose them differently — the LOG stacks them as disclosures
@@ -1657,7 +1662,10 @@ function ExecOutRender({ d, marks, live, ranMs, ranSince, lineMap, remoteMs }: {
                 same shape (progress produced as it worked) and only the word differs. */}
             {/* Inside the console when there IS one, after the last section when there is not — see the note
                 in PythonOutRender. */}
-            {d.stdout ? <PyOutSection label={d.stdoutLabel ?? "console"} cls="r-py-stdout" foldInFocus={!live}>
+            {d.stdout ? <PyOutSection label={d.stdoutLabel ?? "console"} cls="r-py-stdout" foldInFocus={!live}
+                // The WHOLE console as the panel holds it, both sides of the "not sent to the model" split: the split
+                // draws two blocks, and selecting across them by hand drags the marker's text along.
+                actions={<CopyBtn text={d.stdout} tip={d.seen != null && d.seen < d.stdout.length ? "copy the whole console output, including the part the model was not sent" : "copy the console output"} />}>
                 <OutputCell text><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell>
                 <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} />
             </PyOutSection> : null}
