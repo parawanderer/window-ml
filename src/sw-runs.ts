@@ -43,6 +43,20 @@ export const bgRuns = new Map<string, { p: StartRunPayload; tabId: number; messa
 export const workerRunsStarting = new Set<string>();
 
 /**
+ * Hand a stored run to the WORKER: from now on it is driven from the worker only, fans its own lifecycle events, asks
+ * the page for its curated answer when a turn ends, and its page registers tools without a page-side resume handle.
+ * For a run whose builder page is gone (a durable resume after an eviction always meets a fresh document; a saved
+ * session adopted onto a tab), where nothing page-side is left to own it.
+ * @param runId the run
+ */
+export function makeWorkerRun(runId: string): void {
+    const stored = bgRuns.get(runId);
+    if (stored) stored.p = { ...stored.p, builtBy: "worker", ...(stored.p.rebuild ? { rebuild: { ...stored.p.rebuild, builtBy: "worker" } } : {}) };
+    const rb = runRebuilds.get(runId);
+    if (rb) runRebuilds.set(runId, { ...rb, builtBy: "worker" });
+}
+
+/**
  * Whether the worker assembled this run (a run the user started from a surface, or a saved session adopted onto a
  * tab). Such a run is driven only from the worker: a PAGE may not start a turn in it, continue it or steer it, since
  * that would let the page decide what the person's run does (docs/spec/SITE_ACCESS.md, slice 0).

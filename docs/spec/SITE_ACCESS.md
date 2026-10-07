@@ -271,6 +271,9 @@ Recorded as each slice lands, with the reason.
   even knowing its id. Found while building slice 0: the id reaches the page in the run's own debug events, so without
   this the page could put a turn of its choosing into the person's run, with that run's tools, after slice 0 had
   stopped it rewriting the first one.
+- **Slice 0: a durable resume is driven by the worker, and the run becomes the worker's.** It used to be the fresh
+  page re-driving the run through its resume handle, which is a page driving a run, and which a worker-built run (no
+  page-side handle) could not use at all. Found in review.
 - **Removed, not gated: `ML_KEEP_SESSION` and the page's `__mlSessionKeep`.** They existed so the page could report
   which session a UI-started run became; the worker now mints that id itself. Any page could post the old message.
 - **A step budget a person picks is capped at `MAX_CONTINUE_STEPS` (200) for a start too**, through one validator

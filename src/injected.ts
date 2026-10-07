@@ -565,7 +565,7 @@ import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } fro
     // async <script> injection.
     window.addEventListener("message", (e: MessageEvent) => {
         if (e.source !== window || !e.data || e.data.type !== "ADOPT_RUN") return;
-        const { runId, rebuild, resume, reply } = e.data as { runId?: string; rebuild?: RebuildConfig; resume?: boolean; reply?: string };
+        const { runId, rebuild, reply } = e.data as { runId?: string; rebuild?: RebuildConfig; reply?: string };
         if (!runId || !rebuild) return;
         try { (window.ml as unknown as MlApi)._adoptRun(runId, rebuild); }
         catch { /* rebuild failed → the barrier times out and the loop gets a clear "no active run" error */ }
@@ -576,12 +576,6 @@ import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } fro
         // it is not a navigation, so it must not release a barrier or leave a page context for a `navigate` to read.
         if (reply) { window.postMessage({ type: "RUN_ADOPTED_NOW", reply, pageInfo }, "*"); return; }
         window.postMessage({ type: "RUN_READOPTED", runId, pageInfo }, "*");
-        // Durable resume: an INTERRUPTED (SW-evicted) run auto-CONTINUES from its checkpointed history — the
-        // resume handle _adoptRun just re-registered drives a RESUME_RUN (empty follow-up = "carry on").
-        if (resume) {
-            try { const bg = agentRegistry.get(runId); if (bg) void bg.resume(""); }
-            catch { /* resume unavailable → the run stays paused, no worse than before */ }
-        }
     });
     window.postMessage({ type: "PAGE_ADOPT_HELLO" }, "*");
 

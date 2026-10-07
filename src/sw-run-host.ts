@@ -22,7 +22,7 @@ import { grantsFor, serverToolKey, pendingGrants, pendingApprovals, grantCredFet
 import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
 import { noteRunMechanic } from "./sw-runs";
-import { runLocalTool } from "./sw-local-tools";
+import { ensureLocalTools, runLocalTool } from "./sw-local-tools";
 import { navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue } from "./sw-values";
@@ -195,8 +195,16 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     });
     // Every tool send that names a tool goes through here. A run the worker built (sw-run-start.ts) runs its REMOTE tools
     // itself (sw-local-tools.ts); everything else, and every run a page built, goes to the page as before.
-    const sendTool = async (payload: { runId: string; name: string; args: Record<string, unknown>; stream?: boolean; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean }, onStream?: (chunk: string, ts?: number) => void): Promise<unknown> =>
-        (await runLocalTool(payload, onStream)) ?? delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload });
+    const sendTool = async (payload: { runId: string; name: string; args: Record<string, unknown>; stream?: boolean; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean }, onStream?: (chunk: string, ts?: number) => void): Promise<unknown> => {
+        // A worker-built run's REMOTE tool never goes to the page, which has no such tool. If this worker does not hold
+        // it (rehydrated after an eviction, or a resumed session), it is rebuilt first.
+        if (p.builtBy === "worker" && p.tools.some((t) => t.name === payload.name && t.remote)) {
+            await ensureLocalTools(runId, p, tabPageUrl.get(tabId) || p.pageUrl || "").catch(() => { /* answered below */ });
+            return (await runLocalTool(payload, onStream))
+                ?? { result: `Error: the server tool "${payload.name}" is not available any more (the server no longer lists it).` };
+        }
+        return (await runLocalTool(payload, onStream)) ?? delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload });
+    };
     const abortCtl = new AbortController();   // CANCEL_RUN aborts this → the loop resolves { cancelled }
     // Set once this run's page navigates: the page-side caller that normally emits the lifecycle
     // agent/agent-result (overlay/devtools) is then GONE (its context died with the old document), so the
@@ -786,6 +794,9 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             const answerMedia = runAnswerMedia.length ? runAnswerMedia : undefined;
             // A run the WORKER built has no page-side caller to assemble the turn's curated answer from the page's
             // answer set, so it is asked for here. Page data, exactly as a tool result is; absent if the page is gone.
+            // Close the inbox FIRST: a message sent while the page is asked for the answer must not be reported as a
+            // steer into an inbox nothing reads any more (it reads as "busy", and the person sends it again).
+            runInboxes.delete(runId);
             const fin = p.builtBy === "worker"
                 ? await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, finish: true, summary: res.summary } }).catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null
                 : null;

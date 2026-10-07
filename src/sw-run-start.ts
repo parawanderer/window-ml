@@ -74,12 +74,21 @@ export async function startUserRun(tabId: number, req: UserRunRequest, opts: { k
     const rebuild = rebuildFor(asm, true, "worker");
     // Remote tools run HERE (sw-local-tools.ts); everything else is registered in the page by the adopt below.
     registerLocalTools(runId, asm.toolset.filter((t) => !!t.remote), { model: asm.runModel, driverSees: asm.driverSees, visionModel: asm.runVisionModel });
-    const adopted = await adoptOnTab(tabId, runId, rebuild);
-    if (adopted.error) {
+    // Marked worker-built BEFORE its id reaches the page (the push below carries it): from then on a page's own
+    // START_RUN, RESUME_RUN or INJECT_MESSAGE naming it is refused, so the page cannot host its own run under the hash
+    // the person's UI is about to be given.
+    workerRunsStarting.add(runId);
+    let cfg: Awaited<ReturnType<typeof getConfig>>;
+    let adopted: Awaited<ReturnType<typeof adoptOnTab>>;
+    try {
+        adopted = await adoptOnTab(tabId, runId, rebuild);
+        if (adopted.error) throw new Error(`The run could not start on this page: ${adopted.error}.`);
+        cfg = await getConfig();
+    } catch (e) {
+        workerRunsStarting.delete(runId);
         dropLocalTools(runId);
-        throw new Error(`The run could not start on this page: ${adopted.error}.`);
+        throw e;
     }
-    const cfg = await getConfig();
     const surface: StartRunPayload["surface"] = cfg.debugMode === "overlay" || cfg.debugMode === "devtools" ? cfg.debugMode : "off";
     const payload: StartRunPayload = {
         ...startPayload(asm, {
@@ -93,7 +102,6 @@ export async function startUserRun(tabId: number, req: UserRunRequest, opts: { k
     if (opts.keep) keepSession(runId);
     // The run's result reaches every surface through its own lifecycle events (`builtBy: "worker"`), so nobody
     // waits on this reply.
-    workerRunsStarting.add(runId);
     hostRun({ type: "START_RUN", payload }, tabId, () => { workerRunsStarting.delete(runId); });
     return { hash: runId };
 }

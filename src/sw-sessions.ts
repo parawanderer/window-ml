@@ -17,7 +17,7 @@ import { STORE_MAX_SESSIONS, SessionStore, indexedDbBackend, type SessionHistory
 import { AGENT_START_PAGE, DEFAULT_CONFIG, modelFilterAllows } from "./contract-config";
 import type { NeutralMessage } from "./contract-chat";
 import { cleanTitle, titleMessages } from "./session-title";
-import { bgRuns, trackRun, untrackRun } from "./sw-runs";
+import { bgRuns, makeWorkerRun, trackRun, untrackRun } from "./sw-runs";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { isExtensionSender } from "./sw-consent";
 import { fetchLLM, getConfig, listAvailableModels, modelCapabilitiesBatch } from "./sw-llm";
@@ -366,8 +366,9 @@ export function configureSessionCommands(run: RunDeps): void {
             // keeps its own copy. Hydrating here means the resume path itself needs no second source.
             bgRuns.set(hash, { p: history.payload, tabId, messages: history.messages, ...(history.sub ? { sub: history.sub } : {}) });
             // From here on the WORKER drives it: its next turn is started from here, never by the page it sits on.
-            const rebuild = history.payload.rebuild ? { ...history.payload.rebuild, builtBy: "worker" as const } : undefined;
-            bgRuns.set(hash, { p: { ...history.payload, builtBy: "worker", ...(rebuild ? { rebuild } : {}) }, tabId, messages: history.messages, ...(history.sub ? { sub: history.sub } : {}) });
+            bgRuns.set(hash, { p: history.payload, tabId, messages: history.messages, ...(history.sub ? { sub: history.sub } : {}) });
+            makeWorkerRun(hash);
+            const rebuild = bgRuns.get(hash)!.p.rebuild;
             trackRun(tabId, hash, rebuild);
             const reply = rebuild ? await run.adoptOnTab(tabId, hash, rebuild) : { error: "no toolset to rebuild" };
             const outcome: PageOutcome | "adopted" = !reply.error ? "adopted" : "unanswered" in reply && reply.unanswered ? "no-answer" : "none";
