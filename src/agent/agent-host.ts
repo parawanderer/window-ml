@@ -71,7 +71,7 @@ export interface RunAgentHostDeps {
     tokenSink?(resolve: (ref: string, pipe?: string | string[]) => DerefRead): void;
     /** Receives the run's context snapshot function (agent-loop.ts `contextSink`), for `ml.current` in a read-only
      *  survey evaluated in the worker (sw-readonly.ts). */
-    contextSink?(snapshot: (extra?: { model?: string | null; log?: readonly import("../run-log").RunLogEvent[] }) => import("./current-context").CurrentSnapshot): void;
+    contextSink?(snapshot: (extra?: { model?: string | null; log?: readonly import("../log/run-log").RunLogEvent[] }) => import("./current-context").CurrentSnapshot): void;
     /** Hold a stored value for this run's session (the value store; see AgentLoopOptions.claimValue). */
     claimValue?(key: string): void;
     // Pre-run In render for a PENDING step (streaming runs) — the page computes the tool's In descriptor

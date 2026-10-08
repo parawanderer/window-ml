@@ -8,7 +8,7 @@
 
 import type { NeutralMessage } from "../contract/contract-chat";
 import type { PromptSurface } from "../contract/contract-run";
-import type { RunLogEvent } from "../run-log";
+import type { RunLogEvent } from "../log/run-log";
 import { toolToken } from "../util";
 
 /** What the loop records about a message at the moment it appends it. Every field is null when not known, which

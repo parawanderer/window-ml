@@ -2,7 +2,7 @@
 // outlives the worker, with eviction inferred from a heartbeat and page reports kept from crowding it out.
 import { test } from "node:test";
 import assert from "node:assert";
-import { HousekeepingLog, sanitizeReport, trimRing, eventsForReader, LOG_KEY, SEEN_KEY, LOG_CAP, PAGE_CAP, IDLE_EVICT_MS } from "../src/housekeeping.ts";
+import { HousekeepingLog, sanitizeReport, trimRing, eventsForReader, LOG_KEY, SEEN_KEY, LOG_CAP, PAGE_CAP, IDLE_EVICT_MS } from "../src/log/housekeeping.ts";
 
 function area(seed = {}) {
     const store = { ...seed };

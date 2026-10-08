@@ -7,7 +7,7 @@ import { runBackgroundAgent } from "../agent/agent-host";
 import { watchWhileWaiting, PageUnreachable } from "./page-reachable";
 import type { TabState } from "./page-reachable";
 import type { ToolMeta } from "../agent/agent-loop";
-import type { HousekeepingReport } from "../housekeeping";
+import type { HousekeepingReport } from "../log/housekeeping";
 import type { NeutralMessage, ToolCall, TokenUsage } from "../contract/contract-chat";
 import { UI_OUT_CAP } from "../contract/contract-chat";
 import type { ApprovalDecision } from "../contract/contract-agent";

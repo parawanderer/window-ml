@@ -7,7 +7,7 @@ import { OutputCell, TimedOutput } from "./transcript/render-panel";
 import { downloadBlob } from "./export/download";
 import { formatBytes } from "../resource/resource-model";
 import { fmtDelta } from "./timestamps";
-import { LOG_CAP, LOG_KEY, type HousekeepingEvent } from "../housekeeping";
+import { LOG_CAP, LOG_KEY, type HousekeepingEvent } from "../log/housekeeping";
 
 /** A log rendered as text: the lines, the produced-at marks the timestamp gutter is drawn from, and — for a
  *  surface that wants it — which GROUP each line belongs to and how wide that column is. The last two are extra,

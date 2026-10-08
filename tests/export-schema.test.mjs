@@ -182,7 +182,7 @@ test("the log's open registries stay open: a new subsystem or kind must not fail
 });
 
 test("a real execution-log export validates", async () => {
-    const { runLogDocument } = await import("../src/run-log.ts");
+    const { runLogDocument } = await import("../src/log/run-log.ts");
     const doc = runLogDocument([
         { t: 1_700_000_000_000, run: "abc123", subsystem: "tab", kind: "pinned", reason: "hosting", origin: "worker", detail: { tab: 7 } },
         { t: 1_700_000_004_000, run: "abc123", subsystem: "page", kind: "discarded", ms: 4000, origin: "worker", detail: { tab: 7, tool: "wait" } },

@@ -11,7 +11,7 @@ import type { RuntimeInfo, SessionId, SessionKey, SessionSummary } from "../sess
 import { parseSessionKey } from "../session/session-host";
 import { DetailView } from "../sidebar/transcript/session-detail";
 import { Composer } from "../sidebar/transcript/composer";
-import { RUN_LOG_ABOUT } from "../run-log";
+import { RUN_LOG_ABOUT } from "../log/run-log";
 import { useDismissAt } from "../sidebar/use-dismiss";
 import { IconBack, IconBench, IconBrain, IconCopy, IconCamera, IconClose, IconExport, IconLog, IconMore, IconSave, IconVram } from "../sidebar/icons";
 import { ContextMenu, CursorTipLayer, Hash } from "../sidebar/ui-kit";

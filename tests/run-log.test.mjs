@@ -2,7 +2,7 @@
 // watching a sleeping tab cannot push every other run's mechanics out of the ring.
 import { test } from "node:test";
 import assert from "node:assert";
-import { RunLog, sanitizeRunReport, trimRunRing, eventsForRun, runsInLog, runLogDocument, RUN_LOG_KEY, RUN_LOG_CAP, PER_RUN_CAP, RUN_LOG_SCHEMA_VERSION } from "../src/run-log.ts";
+import { RunLog, sanitizeRunReport, trimRunRing, eventsForRun, runsInLog, runLogDocument, RUN_LOG_KEY, RUN_LOG_CAP, PER_RUN_CAP, RUN_LOG_SCHEMA_VERSION } from "../src/log/run-log.ts";
 
 function area(seed = {}) {
     const store = { ...seed };
@@ -168,7 +168,7 @@ test("every name the emitters pass survives the sanitizer — a bad slug would d
 
 test("the kinds and reasons the module's own map documents are the ones the emitters emit", async () => {
     const { readFile } = await import("node:fs/promises");
-    const doc = await readFile(new URL("../src/run-log.ts", import.meta.url), "utf8");
+    const doc = await readFile(new URL("../src/log/run-log.ts", import.meta.url), "utf8");
     // The map is the three `//   <subsystem>  <kind> (reason: a|b) · <kind> …` lines in the header's convention
     // note. Parsed rather than grepped, so the prose around it cannot be mistaken for an entry.
     const lines = doc.split("\n").filter((l) => /^\/\/ {3}(page|cdp|tab) /.test(l));

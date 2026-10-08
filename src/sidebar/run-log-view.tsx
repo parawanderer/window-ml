@@ -23,7 +23,7 @@ import { Stepper } from "./ui-kit";
 import { IconFilter, IconGear } from "./icons";
 import { downloadBlob } from "./export/download";
 import { exportSessionJson } from "./export/export";
-import { RUN_LOG_KEY, runLogDocument, type RunLogEvent } from "../run-log";
+import { RUN_LOG_KEY, runLogDocument, type RunLogEvent } from "../log/run-log";
 import type { RunLogDump } from "../sw/sw-run-log";
 
 // THIS PANEL'S OWN TWO PREFERENCES. Kept in `chrome.storage.local` beside the panel's neighbours (`outMaxH` and

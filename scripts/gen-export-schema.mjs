@@ -398,7 +398,7 @@ export const SCHEMAS = [
         // `subsystem` and `kind` are OPEN STRINGS with the known values as examples, never a closed enum — a new
         // mechanism adds its own, and a consumer generated from a closed enum would break the day one does.
         key: "run-log",
-        source: "src/run-log.ts",
+        source: "src/log/run-log.ts",
         root: "RunLogDocument",
         out: "docs/spec/run-log.schema.json",
         title: "window.ml execution log export",

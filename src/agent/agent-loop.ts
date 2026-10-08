@@ -25,7 +25,7 @@ import { type Capacity } from "../resource/resource-capacity";
 import { UNATTENDED_REFUSAL } from "./prompts";
 import { toolToken } from "../util";
 import { recordAppended, snapshotCurrent, type CurrentSnapshot, type RecordedMeta } from "./current-context";
-import type { RunLogEvent } from "../run-log";
+import type { RunLogEvent } from "../log/run-log";
 import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, shortType, isAliasRef, parseLabel, DEREF_TOOL, type TokenKind, type TokenValue, type DerefRead } from "../pointers/token-pipe";
 
 export type Approval = "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled";
