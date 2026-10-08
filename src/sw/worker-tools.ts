@@ -175,7 +175,8 @@ async function workerPython(ctx: RunCtx, code: string, opts: { mode?: "readonly"
     const specs: [string, unknown][] = t == null ? [] : typeof t === "string" || isTableValue(t) ? [["df", t]] : Object.entries(t as Record<string, unknown>);
     const loaded = [];
     for (const [name, src] of specs) loaded.push(await workerTable(ctx, name, src, !!opts.tableRaw));
-    const requestId = `wpy-${ctx.runId}-${Date.now().toString(36)}`;
+    // Not derived from anything the page knows (the run id reaches it): a stream id it cannot name.
+    const requestId = `wpy-${crypto.randomUUID()}`;
     const r = await runPython({
         code, image: null, hardened: opts.mode !== "full", stream: !!opts.onStdout,
         tables: loaded.map((l, i) => ({ name: l.name, data: l.data, alias: typeof specs[i][1] === "string" ? specs[i][1] : null })),

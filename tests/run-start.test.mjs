@@ -844,11 +844,12 @@ async function streamClaimRun() {
     return { bg, runs, pageResolved };
 }
 
-test("OPEN — a worker python_exec's live stdout reaches only the run, even when a page call uses the same request id", { ...T, todo: "sw-python.ts keys live stdout by the requestId alone (sw-python.ts:118-119): the run's id is wpy-<runId>-<Date.now() base36> (worker-tools.ts:178) and the run id reaches the page, so a page PYTHON_EXEC with that requestId overwrites the run's sink — the run's stdout chunks are then relayed to the page as PYTHON_STREAM, and the page's call finishing deletes the run's entry" }, async () => {
+test("a worker python_exec's live stdout reaches only the run, even when a page call uses the same request id", T, async () => {
     const { bg, runs, pageResolved } = await streamClaimRun();
-    assert.equal(runs.length, 2, "positive control: the worker ran the run's call and the page's call both reached the sandbox");
+    assert.ok(runs.length >= 1, "positive control: the worker ran the run's call");
     assert.ok(String(runs[0].streamId).startsWith("wpy-"), `positive control: the run's call streamed under a wpy id: ${JSON.stringify(runs[0]).slice(0, 160)}`);
-    assert.equal(runs[1].code, "print('mine')", "positive control: the collision happened — the page's call was accepted under the run's stream id");
+    // The page's call under the run's stream id is either refused outright, or (were it accepted) must not take the stream.
+    if (runs.length < 2) assert.match(pageResolved?.error || "", /already streaming/, `the colliding call was refused: ${JSON.stringify(pageResolved).slice(0, 120)}`);
     assert.ok(pageResolved !== undefined, "positive control: the page's call was answered");
     // The run's own stdout still lands in its step (it travels in the call's response): the run itself is not broken.
     assert.ok(JSON.stringify(bg.tabMessages.filter(([, m]) => m.type === "ML_DEBUG_TO_PAGE" && m.event)).includes("SECRET ROW"),

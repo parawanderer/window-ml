@@ -116,6 +116,9 @@ export async function runPython(payload: any, requestId: string | undefined, cal
     }
     // LIVE stdout streaming (opt-in): record where this run's chunks go.
     const streamId: string | undefined = payload?.stream ? requestId : undefined;
+    // One stream per id: a second caller naming an id that is already streaming would take its output (the id is the
+    // caller's to pick), so it is refused before anything is set.
+    if (streamId && pyStreamTabs.has(streamId)) return { error: "Refused: that request id is already streaming." };
     if (streamId && caller.stream !== undefined) pyStreamTabs.set(streamId, caller.stream);
     // NO WATCHDOG is a WORKBENCH-ONLY favour: only one of OUR OWN surfaces can ask. A page-invoked tool keeps the 15s
     // cap whatever it sends — a run that never ends holds the single Pyodide instance against every later call.
