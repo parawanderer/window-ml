@@ -4210,6 +4210,61 @@ test("resource panel: a partial NVLink mesh is drawn as partial, never as one gr
     } finally { await ext.close(); await fake.stop(); }
 });
 
+// A SHORT ROW FOLDS ITS BADGES into a "+N" chip, lowest priority first, and never what the runner is doing or its
+// deadline. The chip opens a popover that stays open, where each folded badge keeps its own tooltip; a wide panel
+// folds nothing. Measured in a real layout, since the fold IS a measurement (fold-badges.tsx).
+test("resource panel: a narrow row folds its badges into +N, whose popover keeps each badge's tooltip", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        const name = "qwen3.8-flash-next-instruct:vision";
+        fake.setResident([{ ...resident(name, 18 * GiB, 0), expires_at: new Date(Date.now() + 4 * 60_000).toISOString(),
+            details: { quantization_level: "Q4_K_M", parameter_size: "31.3B", family: "qwen3" } }]);
+        const { page, frame } = await openPanel(fake, ext);
+        const row = frame.locator(".vram-row", { hasText: name });
+        const chip = row.locator(".fold-chip");
+        await expect(chip, "460px is too narrow for every badge beside this name").toBeVisible({ timeout: 25000 });
+        // The build folded first; the deadline never folds.
+        await expect(row.locator(".fold-pop .vram-quant")).toHaveCount(1);
+        await expect(row.locator(".fold-pop .vram-ttl")).toHaveCount(0);
+        await expect(row.locator(".vram-ttl")).toBeVisible();
+        await expect(row.locator(".vram-quant"), "a folded badge is not drawn until asked for").toBeHidden();
+        const n = Number((await chip.textContent()).replace("+", ""));
+        expect(n).toBe(await row.locator(".fold-pop .fold-item").count());
+        // Nothing overflows the row: what is shown fits beside the name.
+        const fits = await row.evaluate((r) => { const b = r.querySelector(".fold-badges"); return b.scrollWidth <= b.clientWidth + 1; });
+        expect(fits).toBe(true);
+
+        // A CLICK opens it, and it stays open while the pointer goes to a badge inside it.
+        await chip.click();
+        const pop = row.locator(".fold-pop.open");
+        await expect(pop).toBeVisible();
+        await expect(row.locator(".vram-quant")).toBeVisible();
+        await row.locator(".vram-quant").hover();
+        await expect(frame.locator(".tt-layer:not([hidden])")).toContainText("Q4_K_M", { timeout: 5000 });
+        await expect(pop, "hovering inside the popover does not close it").toBeVisible();
+        await expect(frame.locator(".vram-rowtip"), "and the row's own tip stands aside over it").toHaveCount(0);
+        // Escape closes it, and a press outside does too.
+        await page.keyboard.press("Escape");
+        await expect(pop).toHaveCount(0);
+        await chip.click();
+        await expect(row.locator(".fold-pop.open")).toBeVisible();
+        await frame.locator(".vram-head").first().click({ position: { x: 2, y: 2 } });
+        await expect(row.locator(".fold-pop.open")).toHaveCount(0);
+
+        // WIDE, nothing folds: the row is exactly what it was before folding existed.
+        await page.evaluate(() => { document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-host").style.width = "1240px"; });
+        await expect(chip).toHaveCount(0, { timeout: 5000 });
+        await expect(row.locator(".vram-quant")).toBeVisible();
+        await row.screenshot({ path: "test-results/fold-row-wide.png" });
+    } finally { await ext.close(); await fake.stop(); }
+});
+
 // ONE CHIP HEIGHT ON A MODEL ROW. The kind badges (embed / chat / the quantization) set smaller type, and with the
 // box sized from it they stood shorter than the context, cache and TTL chips beside them; the quantization badge
 // also took the brighter shade reserved for `embed`. Measured, since a class name cannot show either.
