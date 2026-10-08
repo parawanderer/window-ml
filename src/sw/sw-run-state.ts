@@ -4,9 +4,11 @@
 // and a page could otherwise read another tab's run.
 
 import { readState, readableMembers, withPageState, type StateEntry, type StateMember } from "../state-registry";
-import { hydrationDone, stateKeyFor } from "./sw-runs";
+import { contextByRun, hydrationDone, stateKeyFor } from "./sw-runs";
 import { senderOrigin } from "./sw-housekeeping";
-import { evalWatch, stateTree, watchList, type WatchResult } from "../state-watch";
+import { evalWatch, stateTree, watchList, type WatchJs, type WatchResult } from "../state-watch";
+import { evalReadonly, NeedsPage } from "../readonly-exec";
+import { runLog } from "./sw-run-log";
 import { sessionServer } from "./sw-sessions";
 
 /** A declared member, whether or not it holds anything for this run, so the pane can show an empty one as empty. */
@@ -57,9 +59,26 @@ export async function handleRunStateDump(payload: unknown, sender: chrome.runtim
     // Evaluated HERE, over exactly what the panel is about to draw: the person's whole snapshot, since the panel is theirs.
     // A watch shared with the model will be evaluated over the model's members only (spec, "Watches").
     const watches = watchList(p.watches);
-    const tree = watches.length ? stateTree(snap.members, snap.entries) : null;
-    return { data: { ts: Date.now(), ...snap, ...(tree ? { watches: watches.map((w) => evalWatch(tree, w)) } : {}) } };
+    if (!watches.length) return { data: { ts: Date.now(), ...snap } };
+    // `ml.current` in a watch is the LIVE snapshot, the object the model reads, made once for every watch of this read.
+    const live = run ? contextByRun.get(run) : undefined;
+    const current = live ? live({ log: await runLog.forRun(run) }) : undefined;
+    const tree = stateTree(snap.members, snap.entries, current === undefined ? undefined : JSON.parse(JSON.stringify(current)));
+    const js: WatchJs = async (code, inspector) => {
+        try {
+            return (await evalReadonly(code, null, {}, undefined, { realm: "worker", current, globals: { inspector }, stepBudget: WATCH_STEPS })).value;
+        } catch (e) {
+            if (e instanceof NeedsPage) throw new Error("a watch reads the run's state, not the page");
+            throw e;
+        }
+    };
+    const results: WatchResult[] = [];
+    for (const w of watches) results.push(await evalWatch(tree, w, js));   // one at a time: each has its own step budget
+    return { data: { ts: Date.now(), ...snap, watches: results } };
 }
+
+/** Steps one JS watch may take: a fraction of a survey's, since a panel re-reads every watch every two seconds. */
+export const WATCH_STEPS = 20_000;
 
 /** One run's members and what they hold: the worker's, and the page's when the run has a tab that answers. */
 async function snapshot(run: string): Promise<{ members: StateMember[]; entries: StateEntry[]; pageError?: string }> {

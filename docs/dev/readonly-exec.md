@@ -393,6 +393,13 @@ Tests: the `stored table` block in `tests/readonly-exec.test.mjs`.
   worker answers never sends its script to the page.
 - **After approval**: the real `exec` tool (`tools.ts`) expands pointers, resolves them, and runs the code with
   `eval`, or through CDP on a page whose CSP forbids `eval`.
+- **The Run state panel's watches** (`sw-run-state.ts`, `state-watch.ts`): a watch that is not JSONPath is a dialect
+  expression, evaluated in the worker realm with `ml.current` the live snapshot and one more root, `inspector`, bound
+  through `evalReadonly`'s `globals` (the panel's tree of the run's other state). `globals` is plain data, COPIED;
+  a name the environment already has (`document`, `ml`, `Math`…) or a denied one is not bound, and a function cannot be
+  (the copy refuses it). The dialect already refuses a write to anything the script did not build, so the copy is a
+  second wall. A watch runs on a smaller budget (`WATCH_STEPS`), since the panel re-reads every watch every two seconds.
+  Its adversarial, halting and failure tests are `tests/readonly-globals.test.mjs`.
 
 Both read-only callers format through ONE function, `formatReadonlyExec` (approval.ts), which returns the model's
 string (`console:` then `value:`, clipped at 500) AND the UI's `exec-out` descriptor — console and value as their

@@ -30,7 +30,7 @@ import type { CurrentSnapshot } from "./agent/current-context";   // a TYPE: era
 import { NotInDialect, Denied, NeedsPage } from "./readonly-exec/limits";
 import { tokenize } from "./readonly-exec/tokenizer";
 import { Parser } from "./readonly-exec/parser";
-import { ReadonlyRealm, mlFacade } from "./readonly-exec/policy";
+import { DENIED_PROPS, ReadonlyRealm, mlFacade } from "./readonly-exec/policy";
 import { PrintSwap, safeStr } from "./readonly-exec/print";
 import { Evaluator, runAsync } from "./readonly-exec/evaluator";
 
@@ -53,12 +53,15 @@ export type { PrintSwap } from "./readonly-exec/print";
  *   through `answerFacade`. Called when the survey fails, so a fall-back to approval starts from where it began.
  * @param opts.stepBudget Overrides {@link STEP_BUDGET} — for tests, which exercise the same mechanism at a size that
  *   does not cost seconds per case.
+ * @param opts.globals Plain data bound as root names (a watch's `inspector`). Copied, so the script's assignments stay
+ *   in its copy; a name the environment already has (`document`, `ml`, `Math`…) or a denied one is skipped.
  * @param opts.onLog Called with each console line as it is printed, the SAME string that goes into `logs` (abridged by
  *   the print boundary), so a live view shows what the model will be given. A survey that is then refused has
  *   streamed lines from a run that did not happen: the caller must discard them (agent-loop.ts, `LiveOutput`).
  */
 export async function evalReadonly(code: string, doc: Document | null, ml?: unknown, answerFacade?: unknown,
-    opts: { checkpoint?: () => () => void; stepBudget?: number; realm?: ReadonlyRealm; current?: CurrentSnapshot; onLog?: (line: string) => void } = {}): Promise<{ value: unknown; logs: string[]; dropped: number; reused: string[]; prints: { console: PrintSwap[]; value: PrintSwap[] } }> {
+    opts: { checkpoint?: () => () => void; stepBudget?: number; realm?: ReadonlyRealm; current?: CurrentSnapshot; onLog?: (line: string) => void;
+        globals?: Record<string, unknown> } = {}): Promise<{ value: unknown; logs: string[]; dropped: number; reused: string[]; prints: { console: PrintSwap[]; value: PrintSwap[] } }> {
     const realm: ReadonlyRealm = opts.realm ?? "page";
     // Bounded (output-clip.ts): past OUTPUT_CEILING a line is counted, not kept. The step budget bounds the WORK, and a
     // string may be 10 million characters, so without this 200 prints of one were 1.8 GB held and then an
@@ -105,6 +108,11 @@ export async function evalReadonly(code: string, doc: Document | null, ml?: unkn
         const view = doc?.defaultView;
         if (view && typeof view.getComputedStyle === "function") root.getComputedStyle = view.getComputedStyle.bind(view);
     }
+    // CALLER-BOUND DATA (a watch's `inspector`): plain data under a name of its own, COPIED, so a script that assigns into
+    // it changes its copy and never the caller's, nor the next script's. A name the environment already has is not the
+    // caller's to replace, and one that is not an identifier could not be written anyway: both are skipped.
+    for (const [name, v] of Object.entries(opts.globals ?? {}))
+        if (/^[A-Za-z_$][\w$]*$/.test(name) && !(name in root) && !DENIED_PROPS.has(name)) root[name] = structuredClone(v);
     const ast = new Parser(tokenize(code)).parseProgram();
     // THE SCRIPT GETS ITS OWN FRAME over the host's. `root` is where `document`, `ml` and `Math` live and it has a
     // null prototype, which is what marks a name as the environment's rather than the script's — so the script

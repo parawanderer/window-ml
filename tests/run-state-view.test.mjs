@@ -232,3 +232,23 @@ test("\"Watch this\" on any row of a member watches that row's path", async () =
     assert.deepEqual(V.watches.value, ["inspector.run.init"]);
     ui.ctxMenu.value = null;
 });
+
+test("a JS watch is drawn by its value: a plain path's rows offer \"Watch this\", a computed value's rows only copy", async () => {
+    V.watches.value = ["inspector.run.init", "inspector.run.init.tools.length", "inspector.gone"];
+    withWatches({ members: [], entries: [] }, {
+        "inspector.run.init": { expr: "inspector.run.init", value: { task: "count" }, at: "inspector.run.init" },
+        "inspector.run.init.tools.length": { expr: "inspector.run.init.tools.length", value: 2 },
+        "inspector.gone": { expr: "inspector.gone", value: undefined },
+    });
+    const host = await show({ members: [], entries: [] });
+    assert.match(watchRow(host, "inspector.run.init.tools.length").textContent, /:2/);
+    assert.match(watchRow(host, "inspector.gone").textContent, /undefined/);
+    const menuOf = (expr) => {
+        watchRow(host, expr).querySelector(".jt-row").dispatchEvent(new win.MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+        const items = ui.ctxMenu.value?.items.map((i) => i.label) ?? null;
+        ui.ctxMenu.value = null;
+        return items;
+    };
+    assert.deepEqual(menuOf("inspector.run.init"), ["Copy value", "Copy path", "Watch this"]);
+    assert.equal(menuOf("inspector.run.init.tools.length"), null, "no path to name, so no path menu");
+});
