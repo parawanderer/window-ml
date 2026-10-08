@@ -16,10 +16,12 @@ script's promise settles. The streaming port (`LLM_STREAM`) checks the same gate
 
 `pageRefusal` reads only `sender` (`origin`, `url`, `frameId`, `tab`), which the browser sets:
 
-1. A tab hosting a live background run (`activeRuns`) may send anything but RUN CONTROL (`RUN_CONTROL_TYPES`: start,
-   resume, steer, the page's cancel), from its top frame, whatever its origin. This is the INTERIM allowance for that
-   run's delegated tools, which still make page messages (a vision tool's model call, a screenshot, `fetch_url`). Slice
-   2 replaces it with one-time call tokens. It is also why a run on a local `file:` page keeps working.
+1. A tab hosting a live background run (`activeRuns`) may send `RUN_TAB_TYPES` (page-relay.ts) from its top frame,
+   whatever its origin: what that run's delegated tools send while they still run in the page (a vision tool's model
+   call and screenshot, `fetch_url`, `python_exec`, a sheet, a server tool, a shadow resolve, the config reads of
+   `agent_api_docs`). Never run control, a model change, an unload, a session, an embedding or a dump. The list
+   shrinks as slice 2 moves tools to the worker, and goes with the last one. It is also why a run on a local `file:`
+   page keeps working.
 2. Otherwise the sender must be grantable (`grantableOrigin`: top frame, http(s), not opaque) and its origin approved
    (`decide`), or, over https only, its host on `pageApprovalDomains`.
 
@@ -109,7 +111,7 @@ called".
 - `tests/run-start.test.mjs`, section "where a read-only survey of a worker-built run is evaluated": the routing and
   its log, against the bundle.
 - `tests/redteam.test.js`, section "(f)": every page-started type refused from an unapproved origin with nothing
-  reaching the backend, a tab or the screen; run control refused on a tab hosting a run while the rest is allowed; a
+  reaching the backend, a tab or the screen; on a tab hosting a run, only `RUN_TAB_TYPES` allowed, every other type enumerated; a
   sender that can never be granted refused even when its host is approved; revoke and deny without reload; a page
   cannot edit the lists; the stream port.
 - `tests/e2e/site-access.spec.mjs`: the hostile site, against a real browser.
