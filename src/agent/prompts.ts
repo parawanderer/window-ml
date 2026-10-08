@@ -94,7 +94,7 @@ export const CALL_TITLE_CLAUSE =
     "\n\nEvery tool takes an optional `title`: a few words on what THAT call is for, for a human reading the run " +
     "back later. Write one when the reason is not obvious from the arguments; omit it when it is. It is a label, " +
     "not a sentence, and never an explanation of the tool itself.";
-import { PIPE_CMDS, PIPE_SYNTAX } from "../pointers/text-pipe";
+import { PIPE_SYNTAX } from "../pointers/text-pipe";
 
 export const TOOLTOKENS_CLAUSE =
     "\n\nTOOL OUTPUT TOKENS. An `@tool:<id>` is a HANDLE to one tool result, and it has TWO uses: showing that " +
@@ -149,13 +149,11 @@ export const DEREF_CLAUSE =
     "pointer by its name even if you misremember the id. Label anything you might come back to. " +
     "\n\nREADING AN OUTPUT AGAIN. `@tool:<id>` is also a POINTER you can read with `dereference` — use it " +
     "instead of re-running a tool to recover something you already produced, and instead of retyping a value. " +
-    "It is free and changes nothing. `dereference` takes the id plus an optional `pipe` that reduces the value " +
-    "before you read it, so you can inspect something far larger than you want in context: `schema` (its shape), " +
-    "`keys` (an object's keys, or a table's COLUMNS) and `count` (elements/rows/keys, or lines of text). " +
-    // Derived from the dialect itself (PIPE_CMDS) so the prompt can never advertise a verb that doesn't exist.
-    `The full set: ${PIPE_CMDS.join(", ")}, plus a path like \`.items[0].name\`. ` +
-    "Chain them with `|`, e.g. `.rows | count`. Start with " +
-    "`schema` or `keys` on anything big. NOTE a pointer is a SNAPSHOT of when that tool ran: the reply says " +
+    // Its `pipe` is the dialect PIPE_CLAUSE spells out, which this run always has (dereference takes a `pipe`), so
+    // only what is particular to reading a big VALUE is said here.
+    "It is free and changes nothing, and its `pipe` lets you inspect something far larger than you want in context: " +
+    "start with `schema` (its shape) or `keys` (an object's keys, or a table's COLUMNS) on anything big, then a path " +
+    "like `.rows | head 5`. NOTE a pointer is a SNAPSHOT of when that tool ran: the reply says " +
     "when it was captured, so re-read the page instead if it has changed since.";
 
 /** The DOM tools that pierce shadow roots, in the order the shadow clause names them. */

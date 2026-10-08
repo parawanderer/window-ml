@@ -228,13 +228,15 @@ test("count is the structure-aware size (wc -l counts LINES, which a path makes 
 // is now DERIVED from PIPE_CMDS, so this asserts the two really are one source rather than two that agree today.
 test("DRIFT GUARD: every verb the dialect exports exists, and the prompt names exactly those", async () => {
     const { PIPE_CMDS } = await import("../src/pointers/text-pipe.ts");
-    const { DEREF_CLAUSE } = await import("../src/agent/prompts.ts");
+    const { DEREF_CLAUSE, PIPE_CLAUSE } = await import("../src/agent/prompts.ts");
     for (const v of PIPE_CMDS) {
         // Every exported verb must PARSE (a usage error is fine; "not supported" is not).
         const src = v === "grep" ? "grep x" : v === "head" || v === "tail" ? `${v} 2` : v;
         try { runPipe('{"a":[1,2,3]}', src); }
         catch (e) { assert.doesNotMatch(e.message, /isn't a supported text command/, `exported but missing: ${v}`); }
-        assert.ok(DEREF_CLAUSE.includes(v), `the prompt doesn't mention the \`${v}\` verb`);
+        // Named ONCE, in the dialect clause every run with a `pipe` tool gets (dereference takes one); the
+        // dereference paragraph listed them a second time until a model-panel review (2026-10-08).
+        assert.ok(PIPE_CLAUSE.includes(v), `the prompt doesn't mention the \`${v}\` verb`);
     }
     // And nothing the prompt promises is absent from the dialect (the failure that actually happened).
     for (const gone of ["len", "slice"]) {

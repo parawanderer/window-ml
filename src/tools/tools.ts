@@ -970,7 +970,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     selector: { type: "string", description: "Wait until an element matching this appears (up to `timeout`)." },
                     ms: { type: "integer", description: "Fixed pause in milliseconds (used when no selector; default 500)." },
                     timeout: { type: "integer", description: "Max wait for a selector, in ms (default 5000)." },
-                    verify: { type: "boolean", description: "Set true if you'd call look() right after — it returns a screenshot of the settled VIEWPORT in THIS call, so you skip the separate look and see the updated page immediately." }
+                    verify: { type: "boolean", description: "Return a screenshot of the settled VIEWPORT in THIS call, instead of a separate look()." }
                 }
             },
             run: async ({ selector, ms, timeout = 5000, verify = false }: { selector?: string; ms?: number; timeout?: number; verify?: boolean } = {}, ctx?: ToolContext): Promise<string | ToolResult> => {
