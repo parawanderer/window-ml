@@ -227,3 +227,102 @@ export function removeEmptyDestructuring(project, files) {
         if (changes.length) project.apply([{ fileName: sf.fileName, textChanges: changes, isNewFile: false }]);
     }
 }
+
+/**
+ * Every relative module specifier in `sf` that is a path from the file's own directory and that no import
+ * declaration holds: `import("…")` type queries, `import("…")` and `require("…")` calls, and `import("…")` inside a
+ * JSDoc block. `member` is the first name read off the module (`import("./a").X.Y` → `X`), or null.
+ * @param {ts.SourceFile} sf
+ * @returns {{ start: number, end: number, quote: string, spec: string, member: string | null, typeQuery: boolean }[]}
+ */
+export function inlineSpecifiers(sf) {
+    const out = [];
+    const add = (lit, member, typeQuery) => {
+        if (!lit.text.startsWith(".")) return;
+        out.push({ start: lit.getStart(sf), end: lit.getEnd(), quote: sf.text[lit.getStart(sf)], spec: lit.text, member, typeQuery });
+    };
+    const visit = (n) => {
+        for (const doc of /** @type {any} */ (n).jsDoc ?? []) {
+            const re = /\bimport\(\s*(["'])(\.[^"'\n]*)\1\s*\)(?:\.([A-Za-z_$][\w$]*))?/g;
+            const text = sf.text.slice(doc.pos, doc.end);
+            for (let m; (m = re.exec(text));) {
+                const start = doc.pos + m.index + m[0].indexOf(m[1]);
+                out.push({ start, end: start + m[2].length + 2, quote: m[1], spec: m[2], member: m[3] ?? null, typeQuery: true });
+            }
+        }
+        if (ts.isImportTypeNode(n) && ts.isLiteralTypeNode(n.argument) && ts.isStringLiteral(n.argument.literal)) {
+            let q = n.qualifier;
+            while (q && ts.isQualifiedName(q)) q = q.left;
+            add(n.argument.literal, q ? q.text : null, true);
+        } else if (ts.isCallExpression(n) && n.arguments.length && ts.isStringLiteral(n.arguments[0])
+            && (n.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(n.expression) && n.expression.text === "require"))) {
+            add(n.arguments[0], null, false);
+        }
+        ts.forEachChild(n, visit);
+    };
+    visit(sf);
+    return out;
+}
+
+/** The file a specifier written in `importer` resolves to, seeing the project's in-memory edits, or null.
+ *  @param {import("./project.mjs").Project} project @param {string} importer @param {string} spec */
+export function resolveSpecifier(project, importer, spec) {
+    const host = { fileExists: (f) => project.read(f) != null, readFile: (f) => project.read(f) ?? undefined };
+    const r = ts.resolveModuleName(spec, importer, project.options, host).resolvedModule?.resolvedFileName;
+    return r ? path.resolve(r) : null;
+}
+
+/**
+ * The text of `[start, end)` of `fromAbs` as it must read in `toAbs`: every relative inline specifier in it rebased
+ * to the new directory. The new path names the same FILE the old one did, so a query through a barrel
+ * (`import("./contract")`) keeps going through the barrel and the extension stays as written. The exception is a
+ * query of the source itself for a name that moves along: that one now names the target.
+ * @param {import("./project.mjs").Project} project
+ * @param {ts.SourceFile} sf the source, as it was before the move
+ * @param {string} toAbs @param {Set<string>} moved
+ * @param {number} start @param {number} end
+ * @returns {{ text: string, rebased: { from: string, to: string }[] }}
+ */
+export function rebaseSpecifiers(project, sf, toAbs, moved, start, end) {
+    const fromAbs = path.resolve(sf.fileName);
+    const rebased = [];
+    let text = sf.text.slice(start, end);
+    const specs = inlineSpecifiers(sf).filter((s) => s.start >= start && s.end <= end).sort((a, b) => b.start - a.start);
+    for (const s of specs) {
+        let spec;
+        if (s.member && moved.has(s.member) && resolveSpecifier(project, fromAbs, s.spec) === fromAbs) spec = specifierFor(toAbs, toAbs, s.spec);
+        else {
+            spec = path.relative(path.dirname(toAbs), path.resolve(path.dirname(fromAbs), s.spec)).split(path.sep).join("/");
+            if (!spec.startsWith(".")) spec = `./${spec}`;
+        }
+        if (spec === s.spec) continue;
+        text = `${text.slice(0, s.start - start)}${s.quote}${spec}${s.quote}${text.slice(s.end - start)}`;
+        rebased.unshift({ from: s.spec, to: spec });
+    }
+    return { text, rebased };
+}
+
+/**
+ * Point `import("<from>").Moved` type queries, in code and in JSDoc, at `toAbs` in every file of the project. The
+ * calls (`await import("<from>")`) are `rewriteDynamicImports`'s, since what they need depends on how the module
+ * is used.
+ * @param {import("./project.mjs").Project} project
+ * @param {string} fromAbs @param {string} toAbs @param {Set<string>} moved
+ * @returns {{ file: string, line: number }[]}
+ */
+export function rewriteTypeQueries(project, fromAbs, toAbs, moved) {
+    const out = [];
+    for (const sf of project.program().getSourceFiles()) {
+        const file = path.resolve(sf.fileName);
+        if (!file.startsWith(project.root + path.sep) || file.includes(`${path.sep}node_modules${path.sep}`)) continue;
+        /** @type {ts.TextChange[]} */
+        const changes = [];
+        for (const s of inlineSpecifiers(sf)) {
+            if (!s.typeQuery || !s.member || !moved.has(s.member) || resolveSpecifier(project, file, s.spec) !== fromAbs) continue;
+            changes.push({ span: { start: s.start, length: s.end - s.start }, newText: `${s.quote}${specifierFor(file, toAbs, s.spec)}${s.quote}` });
+            out.push({ file: project.rel(file), line: lineOf(sf, s.start) });
+        }
+        if (changes.length) project.apply([{ fileName: file, textChanges: changes, isNewFile: false }]);
+    }
+    return out;
+}
