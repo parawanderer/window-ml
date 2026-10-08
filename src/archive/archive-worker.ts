@@ -9,7 +9,7 @@
 //
 // chrome-free, like python-worker.ts: the wasm is found next to this script's own URL.
 import sqlite3InitModule, { type Database, type Sqlite3Static } from "@sqlite.org/sqlite-wasm";
-import { archiveStats, dirtyMonths, exportMonth, importBytes, listArchived, markAllDirty, markClean, metaGet, metaSet, migrate, prepareSession, readArchived, removeArchived, wasmDb, writeSession, type ArchiveDb, type ArchiveInput } from "./archive/db";
+import { archiveStats, dirtyMonths, exportMonth, importBytes, listArchived, markAllDirty, markClean, metaGet, metaSet, migrate, prepareSession, readArchived, removeArchived, wasmDb, writeSession, type ArchiveDb, type ArchiveInput } from "./db";
 import { folderState, monthFiles, writableFolder, writeMonthFile, type FolderState } from "./archive-folder";
 
 /** The operations this worker answers, and what each takes. */

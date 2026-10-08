@@ -22,7 +22,7 @@ import { applyCodePrefs, initThemeStyle } from "./sidebar/prefs";
 import { installTooltipLayer } from "./sidebar/tooltip-layer";
 import { installViewPrefs } from "./chat/view-mode";
 import { installPageTheme } from "./chat/page-theme";
-import { pickFolder, regrantCount, regrantFolder } from "./archive-folder";
+import { pickFolder, regrantCount, regrantFolder } from "./archive/archive-folder";
 import { VRAM_POLL_MS } from "./sidebar/panel-state";
 import { VramPanel } from "./sidebar/vram";
 import { BACKEND_HEALTH_MS, connectResourceStream, fetchModels, loadedAt, pollBackendHealth, readPs } from "./sidebar/resource-feed";

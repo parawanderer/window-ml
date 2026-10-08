@@ -30,7 +30,7 @@ const ENTRIES = {
     "python-worker": "src/python-worker.ts",
     // The session archive's SQLite (sqlite-wasm over OPFS), a dedicated worker the same offscreen document starts.
     // Its sqlite3.wasm is copied next to it (copySqlite), found through `locateFile`, since this is a classic bundle.
-    "archive-worker": "src/archive-worker.ts",
+    "archive-worker": "src/archive/archive-worker.ts",
     // Content-script shell (hosts the iframe) + the Preact app that runs inside
     // the sidebar.html iframe.
     "sidebar-shell": "src/sidebar/shell.ts",

@@ -10,7 +10,7 @@ import type { JsonSchema } from "../contract";
 import type { ElementContext } from "../contract/contract-run";
 import type { NeutralMessage, TokenUsage } from "../contract/contract-chat";
 import type { MlDebugEvent } from "../contract/contract-debug";
-import type { FolderState } from "../archive-folder";
+import type { FolderState } from "../archive/archive-folder";
 
 /* ------------------------------ versioning ------------------------------ */
 
@@ -718,7 +718,7 @@ export interface TabGroupInfo {
 }
 
 export type { StorageReport, StorageSnapshot } from "./session-storage-stats";
-export type { FolderState } from "../archive-folder";
+export type { FolderState } from "../archive/archive-folder";
 import type { StorageReport } from "./session-storage-stats";
 
 /** A session as a paged list or a search shows it: its index row, marked when it is in the long-term archive. */

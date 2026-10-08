@@ -7,8 +7,8 @@
 // third: a folder picked with "Allow this time" is not writable after a restart. Nothing is lost while it is not
 // (months wait, marked pending), and one click with "Allow on every visit" chosen makes it stay connected.
 import { useEffect, useState } from "preact/hooks";
-import type { FolderReport } from "../archive-worker";
-import { canPickFolder, pickFolder, regrantCount, regrantFolder, saveFolder } from "../archive-folder";
+import type { FolderReport } from "../archive/archive-worker";
+import { canPickFolder, pickFolder, regrantCount, regrantFolder, saveFolder } from "../archive/archive-folder";
 
 /** The browser-specific way to turn folder access on, when there is one. */
 export const BRAVE_FLAG = "brave://flags/#file-system-access-api";
