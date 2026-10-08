@@ -209,9 +209,10 @@ export const LIVE_PREVIEW_MS = 500;
  * reducer still REPLACES what a preview carries, the index still coalesces by superseding, and a client that misses
  * one simply gets the next.
  *
- * It is the LEADING edge and keeps no timer. A trailing flush would need one per session in a service worker that can
- * be evicted between the schedule and the fire, and it would have to be ordered against the step that follows it, to
- * buy the last 500 ms of a preview that `agent-step` supersedes in the same breath.
+ * A model preview is the LEADING edge and keeps no timer: a trailing flush would buy the last 500 ms of a preview that
+ * `agent-step` supersedes in the same breath. Live TOOL output keeps one timer per session, because a tool can go
+ * quiet for minutes after a line, and is ordered against what follows it in `forWire`. An eviction between schedule
+ * and fire loses only that preview: the step's result carries the whole output regardless.
  *
  * A cursor it drops leaves a HOLE, which the contract allows: positions are "strictly increasing within one epoch,
  * not necessarily contiguous" (session-host.ts). Its state is one timestamp per session, for the life of one hub
@@ -222,23 +223,85 @@ export class LivePreview {
     private readonly chars: number;
     private readonly everyMs: number;
     private readonly now: () => number;
+    private readonly flush?: (hash: string, m: SessionStreamMessage) => void;
+    /** Live tool output, per session: when one last went out, and the newest one held back since. */
+    private readonly out = new Map<string, { at: number; held: SessionStreamMessage | null; timer: ReturnType<typeof setTimeout> | null }>();
 
-    constructor(opts: { chars?: number; everyMs?: number; now?: () => number } = {}) {
+    /** `flush` sends a held tool-output delta once its window is over (see {@link forWire}); without it, a delta inside
+     *  the window is dropped, as a model preview is. */
+    constructor(opts: { chars?: number; everyMs?: number; now?: () => number; flush?: (hash: string, m: SessionStreamMessage) => void } = {}) {
         this.chars = opts.chars ?? LIVE_PREVIEW_CHARS;
         this.everyMs = opts.everyMs ?? LIVE_PREVIEW_MS;
         this.now = opts.now ?? Date.now;
+        this.flush = opts.flush;
     }
 
     /** One message as it should go out, or null when this preview is paced away. Anything that is not a live preview
      *  is returned untouched: a step, a say, a result and the whole subscription protocol are what a reader needs
-     *  WHOLE, and they are a handful per turn. */
+     *  WHOLE, and they are a handful per turn.
+     *
+     *  Live TOOL output (an `agent-step` carrying `streamOutput` and no `tool`) is paced the same way, but with a
+     *  TRAILING send as well: a tool can print a line and then wait a minute, and a reply's next token is never that
+     *  far off. Its text is already bounded where it is made (the loop's fan, `UI_OUT_CAP`), so it is not cut here.
+     *  Held output goes out before any other message of its session, in order, unless that message replaces it: the
+     *  step's own result, or a DISCARD (the empty output a refused read-only try sends), which is never paced, since a
+     *  dropped one would leave a remote reader showing lines from a run that did not happen. */
     forWire(hash: string, m: SessionStreamMessage): SessionStreamMessage | null {
+        if (m.type === "event" && isToolOutput(m.event)) return this.toolOutput(hash, m);
+        this.settle(hash, m);
         if (m.type !== "event" || m.event?.kind !== "agent-stream") return m;
         const last = this.sent.get(hash);
         if (last != null && this.now() - last < this.everyMs) return null;
         this.sent.set(hash, this.now());
         return { ...m, event: tail(m.event as import("../../contract/contract-debug").DebugAgentStream, this.chars) };
     }
+
+    /** Drop every held tool output and its timer: the connection they were for is gone. */
+    close(): void {
+        for (const st of this.out.values()) this.drop(st);
+        this.out.clear();
+    }
+
+    private toolOutput(hash: string, m: SessionStreamMessage): SessionStreamMessage | null {
+        const ev = (m as { event: { streamOutput: string; seq?: number } }).event;
+        const st = this.out.get(hash) ?? { at: -Infinity, held: null, timer: null };
+        this.out.set(hash, st);
+        if (ev.streamOutput === "") { this.drop(st); st.at = -Infinity; return m; }   // a discard: never paced, and the next output goes at once
+        if (this.now() - st.at >= this.everyMs) { this.drop(st); st.at = this.now(); return m; }
+        st.held = m;
+        if (this.flush && !st.timer) st.timer = setTimeout(() => {
+            st.timer = null;
+            const held = st.held;
+            st.held = null;
+            if (held) { st.at = this.now(); this.flush!(hash, held); }
+        }, Math.max(0, st.at + this.everyMs - this.now()));
+        return null;
+    }
+
+    /** Before another message of `hash` goes out: send its held tool output first, or drop it if `m` replaces it. */
+    private settle(hash: string, m: SessionStreamMessage): void {
+        const st = this.out.get(hash);
+        if (!st?.held) return;
+        const held = st.held;
+        const ev = m.type === "event" ? (m.event as { kind?: string; seq?: number; pending?: boolean } | undefined) : undefined;
+        const heldSeq = (held as { event?: { seq?: number } }).event?.seq;
+        const replaces = ev?.kind === "agent-step" && ev.seq === heldSeq && !ev.pending;
+        this.drop(st);
+        if (replaces) { this.out.delete(hash); return; }   // the step's result: the next step's first line goes at once
+        st.at = this.now();
+        this.flush?.(hash, held);
+    }
+
+    private drop(st: { held: SessionStreamMessage | null; timer: ReturnType<typeof setTimeout> | null }): void {
+        if (st.timer) { clearTimeout(st.timer); st.timer = null; }
+        st.held = null;
+    }
+}
+
+/** A live tool-output delta: an `agent-step` with `streamOutput` and no `tool` (the loop's fan, agent-loop.ts). */
+function isToolOutput(ev: unknown): boolean {
+    const e = ev as { kind?: string; streamOutput?: unknown; tool?: unknown } | undefined;
+    return e?.kind === "agent-step" && e.streamOutput != null && e.tool == null;
 }
 
 /**
