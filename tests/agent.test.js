@@ -3822,6 +3822,8 @@ test("exec Out: past the panel's cap the UI keeps the model's part AND the lates
     assert.match(stdout, /^line 0000 /, "the start the model read is there");
     assert.match(stdout, /line 0399 x+$/, "and so is the newest line");
     assert.match(stdout, /\n… \[\d+ chars dropped here\] …\nline \d{4} /, "the gap is counted, and the tail opens on a whole line");
+    assert.match(out.render.capture, /^line 0000 [\s\S]*… \[first 12000 of \d+ chars\]$/, "and a pointer gets the start in ONE piece");
+    assert.doesNotMatch(out.render.capture, /dropped here/);
 });
 
 test("python_exec Out: past the panel's cap the stdout keeps the latest prints", async () => {
@@ -3832,6 +3834,7 @@ test("python_exec Out: past the panel's cap the stdout keeps the latest prints",
     assert.match(out.render.stdout, /^print 0000 /);
     assert.match(out.render.stdout, /print 0399 y+$/, "the newest print is kept");
     assert.match(out.render.stdout, /chars dropped here/);
+    assert.equal(out.render.capture, printed.slice(0, 12000) + `… [first 12000 of ${printed.length} chars]`, "a pointer gets the start in ONE piece");
 });
 
 test("exec's description tells the model the cap the code applies, read from the one table", async () => {

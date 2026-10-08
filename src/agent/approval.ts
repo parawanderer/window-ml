@@ -148,6 +148,7 @@ export function formatReadonlyExec(result: unknown, logs: string[],
     const render = (v: { ui: string; seen?: number; notes: string[] }): RenderDescriptor => ({
         type: "exec-out",
         ...(logs.length ? { stdout: clipHeadTail(joined, UI_OUT_CAP, panelHead(MODEL_CAP)), seen: Math.min(joined.length, MODEL_CAP) } : {}),
+        ...(joined.length > UI_OUT_CAP ? { capture: clipOut(joined, UI_OUT_CAP) } : {}),   // what a pointer reads, in one piece
         value: v.ui,
         ...(v.seen != null ? { valueSeen: v.seen } : {}),
         ...(consoleNotes.length ? { stdoutNotes: consoleNotes } : {}),

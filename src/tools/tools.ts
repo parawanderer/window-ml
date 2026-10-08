@@ -745,6 +745,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                         // The UI keeps far more than the model's budget, and records where the model's view
                         // ENDED (`seen`) so the surplus renders marked instead of silently passing as "what it read".
                         ...(logs.length ? { stdout: clipHeadTail(joined, UI_OUT_CAP, panelHead(cap)), seen: Math.min(joined.length, cap) } : {}),
+                        ...(joined.length > UI_OUT_CAP ? { capture: clipOut(joined, UI_OUT_CAP) } : {}),   // what a pointer reads, in one piece
                         ...(error != null ? { error } : {}),
                         ...(errorLine != null ? { errorLine } : {}),
                         ...(value != null ? { value } : {}),

@@ -158,6 +158,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             // step lands; `seen` marks where the model-facing view ended (the surplus renders marked).
             const stdoutFull = r.stdout || "";
             const stdout = stdoutFull ? clipHeadTail(stdoutFull, UI_OUT_CAP, panelHead(PY_OUT_MAX)) : undefined;   // the start the model read, and the LATEST
+            const capture = stdoutFull.length > UI_OUT_CAP ? clipOut(stdoutFull, UI_OUT_CAP) : undefined;   // what a pointer reads, in one piece
             const seen = stdoutFull ? Math.min(stdoutFull.length, PY_OUT_MAX) : undefined;
             // The SANDBOX'S OWN CLOCK, kept apart from our wall time around the dispatch: `durationMs` is the
             // script, `bootMs` the cold start it had to pay for first (absent on every warm call). Without
@@ -166,7 +167,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 ? { durationMs: r.runMs, ...(r.bootMs != null ? { bootMs: r.bootMs } : {}) }
                 : undefined;
             const done = (content: string, out: Omit<Extract<RenderDescriptor, { type: "python-out" }>, "type" | "stdout">): ToolResult =>
-                ({ content, renderIn, render: { type: "python-out", stdout, seen, ...out }, ...(remoteMs ? { remoteMs } : {}) });
+                ({ content, renderIn, render: { type: "python-out", stdout, ...(capture ? { capture } : {}), seen, ...out }, ...(remoteMs ? { remoteMs } : {}) });
 
             if (!r.ok) {
                 const err = clipOut(r.error || "", PY_OUT_MAX);

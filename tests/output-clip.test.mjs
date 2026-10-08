@@ -126,4 +126,5 @@ test("a read-only survey's settled console keeps the latest lines too", async ()
     const { render } = formatReadonlyExec(1, all);
     assert.equal(render.stdout, clipHeadTail(all.join("\n"), UI_OUT_CAP, 500));
     assert.ok(render.stdout.endsWith(all.at(-1)));
+    assert.ok(render.capture.startsWith(all.join("\n").slice(0, UI_OUT_CAP)), "a pointer gets the start in ONE piece");
 });

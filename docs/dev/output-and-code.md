@@ -42,7 +42,9 @@ the rest of the cap is the latest output, from a line start. One module does thi
 `clipHeadTail` for every finished view (`exec`, the read-only survey, `python_exec`, CDP exec), and the stream fan
 (`makeStreamFan`, agent-loop.ts) builds the same text a chunk at a time, keeping a fixed head and a sliding window,
 so the output keeps its shape when the step lands. Line stamps are remapped across the gap: a dropped line's stamp
-moves to the tail's first line, which began in the gap. It used to keep only the start, so a long-running loop's live
+moves to the tail's first line, which began in the gap. An `@tool:` pointer does NOT read that copy: a JSON dump with
+its middle cut out cannot be repaired, so when `stdout` dropped a middle part the descriptor also carries `capture`, the
+first `UI_OUT_CAP` characters in one piece, and the pointer holds that (agent-loop.ts, `fuller`). It used to keep only the start, so a long-running loop's live
 view froze on its first lines while a "[+N chars]" count ticked up beside it.
 
 *The output cell.* `python_exec` and `exec` render their Out through ONE shared **`OutputCell`**

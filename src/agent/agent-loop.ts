@@ -978,7 +978,8 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 // model's context budget, so a pointer holding only that would hand back exactly what the model
                 // already has — useless. The render descriptor kept far more (UI_OUT_CAP), and reaching THAT is
                 // the main reason to dereference at all.
-                const fuller = (r?.type === "python-out" || r?.type === "exec-out") ? r.stdout : undefined;
+                // `capture` when the panel's copy dropped a middle part: the pointer keeps one contiguous piece (contract-render.ts).
+                const fuller = (r?.type === "python-out" || r?.type === "exec-out") ? (r.capture ?? r.stdout) : undefined;
                 const full = fuller && fuller.length > result.length ? fuller : undefined;
                 // Carry the typed PAYLOADS too, not just the kind — an image pointer with no image is what
                 // `look` would resolve to, and a `latex` cast needs the symbolic string.

@@ -49,6 +49,24 @@ test("dereference: the reply says WHAT the value is and HOW STALE, then the pipe
     assert.match(out, /row 297: v297/, "then the piped value — a line the model never saw");
 });
 
+// The panel's copy of a long output keeps its start and its LATEST lines with a gap between (output-clip.ts). A pointer
+// must not read that: a JSON dump with its middle cut out cannot be repaired, so the descriptor carries the start in ONE
+// piece (`capture`) and the pointer holds that.
+test("dereference: past the panel's cap a pointer reads the contiguous capture, never the panel's start-and-latest copy", async () => {
+    const rows = Array.from({ length: 2000 }, (_, i) => ({ id: i, name: `row ${i}` }));
+    const dump = JSON.stringify(rows);
+    const capture = dump.slice(0, 12000) + `… [first 12000 of ${dump.length} chars]`;
+    const gapped = dump.slice(0, 500) + "\n… [9000 chars dropped here] …\n" + dump.slice(-11500);
+    const { results } = await drive(
+        [call("exec", { js: "x", token: true }), call("dereference", { token: "@tool:exec" })],
+        (name) => name === "exec"
+            ? { result: dump.slice(0, 500) + "…", renderOut: { type: "exec-out", stdout: gapped, capture, seen: 500 } }
+            : { result: "" });
+    const out = derefResult({ results });
+    assert.doesNotMatch(out, /chars dropped here/, "the panel's gap never reaches a pointer read");
+    assert.match(out, /\{"id":300,"name":"row 300"\},\{"id":301,/, "a row past the model's 500, in the one contiguous piece");
+});
+
 test("dereference: a hallucinated pointer returns a MemoryFault naming the real ones", async () => {
     const { results } = await drive(
         [call("exec", { js: "x", token: true }), call("dereference", { token: "@tool:deadbe1" })],

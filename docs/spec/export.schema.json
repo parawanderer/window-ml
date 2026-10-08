@@ -1144,6 +1144,9 @@
                 "stdout": {
                   "type": "string"
                 },
+                "capture": {
+                  "type": "string"
+                },
                 "seen": {
                   "type": "number"
                 },
@@ -1221,6 +1224,9 @@
                   "const": "exec-out"
                 },
                 "stdout": {
+                  "type": "string"
+                },
+                "capture": {
                   "type": "string"
                 },
                 "seen": {
@@ -1710,6 +1716,9 @@
                 "stdout": {
                   "type": "string"
                 },
+                "capture": {
+                  "type": "string"
+                },
                 "seen": {
                   "type": "number"
                 },
@@ -1787,6 +1796,9 @@
                   "const": "exec-out"
                 },
                 "stdout": {
+                  "type": "string"
+                },
+                "capture": {
                   "type": "string"
                 },
                 "seen": {

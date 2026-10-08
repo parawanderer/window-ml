@@ -166,7 +166,10 @@ export type RenderDescriptor = (
     // the raw/JSON value, or a Python traceback.
     // `valueSeen` (python-out, exec-out): how many characters of `value` the model received; absent → all of it. The
     // panel keeps more of a value than the tool's output cap, and marks the rest as never sent.
-    | { type: "python-out"; stdout?: string; seen?: number; image?: string; token?: string; value?: string; valueSeen?: number; error?: string; latex?: boolean; df?: { columns: string[]; rows: (string | number | null)[][]; rowCount?: number; value?: string } }
+    // `capture` (python-out, exec-out): the first UI_OUT_CAP characters of stdout in ONE piece, present only when `stdout`
+    // dropped a middle part (output-clip.ts). Not drawn. It is what an `@tool:` pointer reads: a gap in the middle would
+    // break a JSON dump that a pointer read repairs and parses.
+    | { type: "python-out"; stdout?: string; capture?: string; seen?: number; image?: string; token?: string; value?: string; valueSeen?: number; error?: string; latex?: boolean; df?: { columns: string[]; rows: (string | number | null)[][]; rowCount?: number; value?: string } }
     // `exec`'s Out, the JS twin of python-out: the SAME data its raw result string carries, split into
     // sections (console / value / error) so a JS run reads like a notebook cell too instead of one blob.
     // `errorLine` is the line of the MODEL'S source that threw (exec-trace.ts) — absent when it cannot be
@@ -175,7 +178,7 @@ export type RenderDescriptor = (
     // `stdoutNotes` / `valueNotes` (exec-out): what the read-only evaluator's print boundary changed in that part (a large
     // `ml.current` message printed as a summary, with the JSONPaths of what was replaced), for what the PANEL shows of
     // it. Drawn inside the part's own section, after its output, the way the model reads them after its cut.
-    | { type: "exec-out"; stdout?: string; seen?: number; value?: string; valueSeen?: number; error?: string; errorLine?: number; token?: string; stdoutLabel?: string; stdoutNotes?: string[]; valueNotes?: string[] }
+    | { type: "exec-out"; stdout?: string; capture?: string; seen?: number; value?: string; valueSeen?: number; error?: string; errorLine?: number; token?: string; stdoutLabel?: string; stdoutNotes?: string[]; valueNotes?: string[] }
     // A DELEGATED `look`'s Out slot: the exact image the vision reader saw, WHICH model read it, and
     // its text output — so a sub-call look reads like `locate`'s substeps (the native look just shows
     // the screenshot, since the agent itself is the viewer).
