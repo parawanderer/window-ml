@@ -1,11 +1,11 @@
 // This runs in the "Main World" (same as the page JS)
 
 import type { MlApi } from "./contract";
-import type { DerefValue } from "./contract-pointers";
-import type { MlHistory } from "./contract-chat";
-import type { MlTool, MlAnswer } from "./contract-agent";
-import type { AnswerMedia } from "./contract-render";
-import type { RebuildConfig } from "./contract-messages";
+import type { DerefValue } from "./contract/contract-pointers";
+import type { MlHistory } from "./contract/contract-chat";
+import type { MlTool, MlAnswer } from "./contract/contract-agent";
+import type { AnswerMedia } from "./contract/contract-render";
+import type { RebuildConfig } from "./contract/contract-messages";
 import { htmlToMarkdown } from "./html-to-md";
 import { mlPipe } from "./text-pipe";
 import { mlJsonPath } from "./json-path";

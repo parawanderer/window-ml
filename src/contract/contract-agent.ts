@@ -7,9 +7,9 @@
 // The security shape to keep in mind while editing: an approval is a decision made at the choke point about
 // a request, so ApprovalRequest describes what is being ASKED, never what was allowed. A grant is the separate
 // record of a human having answered. Merging the two would make a tool's own claim look like consent.
-import type { AnswerSet } from "./answer-set";
+import type { AnswerSet } from "../answer-set";
 // Type-only, so the cycle with contract.ts (which re-exports this file) erases at build entirely.
-import type { JsonSchema } from "./contract";
+import type { JsonSchema } from "../contract";
 import type { RequestHint } from "./contract-run";
 import type { DerefRead } from "./contract-pointers";
 import type { NeutralMessage } from "./contract-chat";

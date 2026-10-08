@@ -10,7 +10,7 @@
 
 import { suspiciousChars } from "./security";
 import { externalSheetIds } from "./dom";
-import { outputCapEscalated } from "./contract-pointers";
+import { outputCapEscalated } from "./contract/contract-pointers";
 
 export interface AutoApproveConfig { autoApprovePython?: boolean }
 

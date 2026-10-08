@@ -12,7 +12,7 @@
 // a shared description written for one caller is how the wording gets vague enough to fit both and useful to
 // neither.
 import type { JsonSchema } from "./contract";
-import { OUTPUT_CAP, type OutputCapTool } from "./contract-pointers";
+import { OUTPUT_CAP, type OutputCapTool } from "./contract/contract-pointers";
 
 /** The output-truncation pair for a tool in {@link OUTPUT_CAP}. Takes the TOOL, not the numbers: they were passed in
  *  as literals (`outputCapParams(500, 8000, …)`), a second copy of the table that nothing kept in step, so changing

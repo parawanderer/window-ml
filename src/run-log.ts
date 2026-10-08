@@ -13,7 +13,7 @@
 // It REUSES that log's record shape (plus a `run`) and its sanitizer, so one renderer draws both, and the
 // ring itself (storage-ring.ts), so there is one serialized write rather than two.
 import { sanitizeReport, type HousekeepingEvent, type HousekeepingReport } from "./housekeeping";
-import { HASH_RE } from "./contract-run";
+import { HASH_RE } from "./contract/contract-run";
 import { StorageRing, type SessionArea } from "./storage-ring";
 
 /** One thing the machinery did on a run's behalf. A housekeeping event plus WHOSE run it was, since the whole

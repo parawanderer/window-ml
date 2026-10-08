@@ -5,10 +5,10 @@
 // domTools; opt in via extraTools, gated by the approval flow.
 
 import type { MlApi, JsonSchema } from "./contract";
-import type { MlTool, ToolResult, ToolContext } from "./contract-agent";
-import type { LocateSubstep, RenderDescriptor, VisionMemory } from "./contract-render";
-import type { ServerTool } from "./contract-server";
-import { DEFAULT_GROUNDING_RANGE } from "./contract-render";
+import type { MlTool, ToolResult, ToolContext } from "./contract/contract-agent";
+import type { LocateSubstep, RenderDescriptor, VisionMemory } from "./contract/contract-render";
+import type { ServerTool } from "./contract/contract-server";
+import { DEFAULT_GROUNDING_RANGE } from "./contract/contract-render";
 import { truncate, errText, elLine, queryAll, selectorError, capturedClosedRoot, isElement, viewportRect, boxIntersectsText, firstHopSealed, clickSelector } from "./dom";
 import { accessibleName } from "./a11y";
 import { regionLegend, formatLegend, type Box as LegendBox } from "./legend";

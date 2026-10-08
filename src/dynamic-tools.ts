@@ -14,7 +14,7 @@
 // THE SCHEMA IS ON THE CALLABLE, and it is the same object the call validates against. A second copy for
 // humans to read would drift from the one that checks the arguments, and the drift would be invisible.
 import type { MlApi, JsonSchema } from "./contract";
-import type { ServerTool, ServerToolFunction, ServerToolResult } from "./contract-server";
+import type { ServerTool, ServerToolFunction, ServerToolResult } from "./contract/contract-server";
 import { validateArgs } from "./validate";
 
 /** One function of a bundle, callable, with its own contract hanging off it. */

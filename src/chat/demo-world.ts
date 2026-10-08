@@ -4,7 +4,7 @@
 // nothing to choose between and draws no device picker at all), and a runtime that is offline. The web build opens on
 // it until `HubHost` exists, the
 // e2e specs drive it, and it is the live mockup of both layouts.
-import type { MlDebugEvent } from "../contract-debug";
+import type { MlDebugEvent } from "../contract/contract-debug";
 import { SESSION_CONTRACT_VERSION, type Grant, type RuntimeInfo, type SessionSummary } from "../session-host";
 import { FakeHost } from "./fake-host";
 

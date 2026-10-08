@@ -1,11 +1,11 @@
 // Settings popup: reads/writes the extension config (chrome.storage.sync), the
 // model picker, Save & Test, VRAM readout, and the theme. Talks to background.ts
 // via chrome.runtime for privileged work.
-import type { MlConfig, Theme } from "./contract-config";
-import type { LoadedModel } from "./contract-server";
+import type { MlConfig, Theme } from "./contract/contract-config";
+import type { LoadedModel } from "./contract/contract-server";
 import { formatBytes } from "./resource-model";
-import { DEFAULT_CONFIG, fmtCtx } from "./contract-config";
-import { generatesText } from "./contract-server";
+import { DEFAULT_CONFIG, fmtCtx } from "./contract/contract-config";
+import { generatesText } from "./contract/contract-server";
 import { browserInfo, extensionDetailsUrl } from "./util";
 import { originOf, type SiteDecision, type SiteEdit } from "./site-access";   // browser-correct internal scheme + details-page URL
 

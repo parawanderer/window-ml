@@ -10,7 +10,7 @@ import { ValueStore, ValueTooLarge } from "./value-store";
 import { storedColumns } from "./table-data";
 import type { FetchedBody } from "./sw-fetch";
 import { recordHousekeeping } from "./sw-housekeeping";
-import { DEFAULT_CONFIG } from "./contract-config";
+import { DEFAULT_CONFIG } from "./contract/contract-config";
 
 /** At most this share of the browser's quota for this origin, whatever the setting says. */
 const QUOTA_SHARE = 0.5;

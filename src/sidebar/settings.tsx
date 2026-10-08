@@ -10,12 +10,12 @@ import { signal } from "@preact/signals";
 import { useState, useEffect, useLayoutEffect, useRef } from "preact/hooks";
 import { filterSettings } from "./settings-search";
 import type { ComponentChildren } from "preact";
-import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, LexicalMetric, ProtoMode } from "../contract-config";
-import type { VisionSupport } from "../contract-render";
-import type { LoadedModel, ServerTool } from "../contract-server";
-import { DEFAULT_CONFIG, modelFilterAllows, protoMode } from "../contract-config";
-import { DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX } from "../contract-render";
-import { detectGroundingModel, generatesText, producesEmbeddings } from "../contract-server";
+import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, LexicalMetric, ProtoMode } from "../contract/contract-config";
+import type { VisionSupport } from "../contract/contract-render";
+import type { LoadedModel, ServerTool } from "../contract/contract-server";
+import { DEFAULT_CONFIG, modelFilterAllows, protoMode } from "../contract/contract-config";
+import { DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX } from "../contract/contract-render";
+import { detectGroundingModel, generatesText, producesEmbeddings } from "../contract/contract-server";
 import { PY_PACKAGES } from "../python-env";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes,

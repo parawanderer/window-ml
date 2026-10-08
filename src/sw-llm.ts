@@ -5,13 +5,13 @@
 // background.ts verbatim; it depends only on the shared contract (types + DEFAULT_CONFIG/modelFilterAllows)
 // and chrome/fetch. All server JSON is genuinely opaque, so it's typed `any`; our own data uses the contract.
 import type { JsonSchema } from "./contract";
-import type { MlConfig, ApiFormat, ProtoMode } from "./contract-config";
-import type { NeutralMessage, ToolCall, LlmResult, TokenUsage, GenPhase } from "./contract-chat";
-import type { LoadedModel, ServerTool } from "./contract-server";
-import type { FetchLlmPayload } from "./contract-messages";
-import { wireHint } from "./contract-run";
-import { DEFAULT_CONFIG, modelFilterAllows, protoMode } from "./contract-config";
-import { generatesText, producesEmbeddings } from "./contract-server";
+import type { MlConfig, ApiFormat, ProtoMode } from "./contract/contract-config";
+import type { NeutralMessage, ToolCall, LlmResult, TokenUsage, GenPhase } from "./contract/contract-chat";
+import type { LoadedModel, ServerTool } from "./contract/contract-server";
+import type { FetchLlmPayload } from "./contract/contract-messages";
+import { wireHint } from "./contract/contract-run";
+import { DEFAULT_CONFIG, modelFilterAllows, protoMode } from "./contract/contract-config";
+import { generatesText, producesEmbeddings } from "./contract/contract-server";
 import { loadedFrom } from "./resource-events";
 import { createFrameReader } from "./protostream";
 import { Frame } from "./proto/chat.gen";

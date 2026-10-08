@@ -3,9 +3,9 @@
 // ring, the in-agent-run depth counter (so a tool's internal ml.chat doesn't spawn
 // orphan sessions), and the same-tab session registry.
 
-import type { MlHistory } from "./contract-chat";
-import type { AgentResult, MlAgentHandle } from "./contract-agent";
-import type { MlDebugEvent } from "./contract-debug";
+import type { MlHistory } from "./contract/contract-chat";
+import type { AgentResult, MlAgentHandle } from "./contract/contract-agent";
+import type { MlDebugEvent } from "./contract/contract-debug";
 
 // ---- Debug sidebar event stream (see sidebar app) ----
 // The opt-in sidebar lives in the isolated content-script world; it can't read

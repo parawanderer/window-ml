@@ -130,7 +130,7 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
     /** WHERE THIS PROMPT WAS TYPED (contract-run.ts), for `chat_metadata` and the run's provenance clause.
      *  The extension's own surfaces stamp it from the channel the message arrived on; a direct call from a
      *  console or a userscript leaves it unset, which reads as `console`. */
-    origin?: import("./contract-run").PromptOrigin | null;
+    origin?: import("./contract/contract-run").PromptOrigin | null;
     toolTokens?: boolean;   // surface `@tool:<id>` on rich tool results so the model can cite exact outputs. Default false; HUD auto-on.
     images?: (string | HTMLImageElement)[];   // attachments for THIS turn (composer paste/upload)
     _control?: AgentControl | null;   // internal: a handle's persistent session state (ml.createAgent). Absent → a throwaway per-call one.

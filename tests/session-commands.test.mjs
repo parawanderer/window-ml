@@ -552,7 +552,7 @@ test("agent.start on a blank tab opens one, at the command's url or the browser'
 
     // With no start page set and no url, the PUBLISHED empty page. This used to be refused ("a blank target needs a
     // url"), which is a dead end reached by choosing the obvious option — and the UI offering it had no way to know.
-    const { AGENT_START_PAGE } = await import("../src/contract-config.ts");
+    const { AGENT_START_PAGE } = await import("../src/contract/contract-config.ts");
     const bare = world({ startPage: () => "" });
     assert.equal(code(await bare.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "blank" } })), "ok");
     assert.equal(bare.named("openTab")[0][1], AGENT_START_PAGE);
@@ -827,7 +827,7 @@ test("the published empty page is an ordinary https page, not an extension or br
     // THE WHOLE POINT of it being hosted. Chrome refuses an extension on `chrome://newtab` and on a top-level
     // `about:blank`, and an extension's OWN page is privileged — `exec` there would reach `chrome.storage` and the
     // API key with it. Only a plain web origin is both reachable and unprivileged.
-    const { AGENT_START_PAGE } = await import("../src/contract-config.ts");
+    const { AGENT_START_PAGE } = await import("../src/contract/contract-config.ts");
     const u = new URL(AGENT_START_PAGE);
     assert.equal(u.protocol, "https:");
     assert.ok(!/^chrome|^about|^data/.test(AGENT_START_PAGE), "must not be a browser or extension page");

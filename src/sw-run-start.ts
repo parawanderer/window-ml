@@ -8,8 +8,8 @@
 // flags.
 
 import type { ElementContext } from "./contract";
-import type { StartRunPayload, RebuildConfig } from "./contract-messages";
-import { shortHash, type PromptOrigin } from "./contract-run";
+import type { StartRunPayload, RebuildConfig } from "./contract/contract-messages";
+import { shortHash, type PromptOrigin } from "./contract/contract-run";
 import { askAboutTask } from "./prompts";
 import { promptSurfaceOf } from "./prompt-surface";
 import { stepBudget } from "./step-budget";

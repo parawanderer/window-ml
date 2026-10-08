@@ -237,7 +237,7 @@ export class LivePreview {
         const last = this.sent.get(hash);
         if (last != null && this.now() - last < this.everyMs) return null;
         this.sent.set(hash, this.now());
-        return { ...m, event: tail(m.event as import("./contract-debug").DebugAgentStream, this.chars) };
+        return { ...m, event: tail(m.event as import("./contract/contract-debug").DebugAgentStream, this.chars) };
     }
 }
 
@@ -250,7 +250,7 @@ export class LivePreview {
  * knows WHICH channel was cut, where `elided` is a single number for both. What `elided` is for is a reader that
  * wants to say how much, or to tell a tail from a short answer without parsing prose.
  */
-function tail(ev: import("./contract-debug").DebugAgentStream, chars: number): import("./contract-debug").DebugAgentStream {
+function tail(ev: import("./contract/contract-debug").DebugAgentStream, chars: number): import("./contract/contract-debug").DebugAgentStream {
     const over = (s: string | undefined): number => Math.max(0, (s?.length ?? 0) - chars);
     const elided = over(ev.reasoning) + over(ev.content);
     if (!elided) return ev;

@@ -168,7 +168,7 @@ test("the map stays under its cap, dropping the chat idle longest", T, async () 
 // in an archive that outlives every index it was ever in — so its width is a property worth pinning, not an
 // incidental of how it is generated.
 test("a session hash is long enough to stay unique, and short where it is read", async () => {
-    const { shortHash, HASH_SHOWN } = await import("../src/contract-run.ts");
+    const { shortHash, HASH_SHOWN } = await import("../src/contract/contract-run.ts");
     const one = shortHash();
     assert.match(one, /^[0-9a-f]{32}$/, "128 bits of hex");
     // Distinct across a sample that would be a coin flip at the old 32 bits: at 2^32 a collision is about even by

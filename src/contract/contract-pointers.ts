@@ -34,7 +34,7 @@ export interface DerefMeta {
 
 // `readColumns` is attached PAGE-SIDE by the resolver of a background-hosted run when `meta.value` names a stored table;
 // it never crosses a message boundary. It is what turns the pointer's table facade into a stored one (asTable).
-export interface DerefRead { value: string; warning?: string; meta?: DerefMeta; readColumns?: import("./table-data").StoredColumnReader }
+export interface DerefRead { value: string; warning?: string; meta?: DerefMeta; readColumns?: import("../table-data").StoredColumnReader }
 
 /**
  * What `ml.dereference` resolves to: the pointer's text, with what the loop knows about it attached.

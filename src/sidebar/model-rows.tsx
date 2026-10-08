@@ -3,7 +3,7 @@
 // are the chart's legend, so hovering one lights that model on the plot.
 
 import { signal } from "@preact/signals";
-import type { LoadedModel } from "../contract-server";
+import type { LoadedModel } from "../contract/contract-server";
 import { type ResourceSample, formatBytes, placementOf, isSplit } from "../resource-model";
 import { poolHover } from "./chart-interaction";
 import { modelKindLabel } from "./model-status";

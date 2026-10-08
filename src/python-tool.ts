@@ -2,10 +2,10 @@
 // model-facing text and the sidebar's python-in / python-out descriptors. Moved out of builtin-tools.ts; the sandbox
 // itself is `ml.pythonExec` (injected.ts) → the offscreen document → python-worker.ts.
 import { type MlApi } from "./contract";
-import { outputCapPrecheck, resolveOutputCap } from "./contract-pointers";
-import { UI_OUT_CAP } from "./contract-chat";
-import { type MlTool, type ToolResult } from "./contract-agent";
-import { type RenderDescriptor } from "./contract-render";
+import { outputCapPrecheck, resolveOutputCap } from "./contract/contract-pointers";
+import { UI_OUT_CAP } from "./contract/contract-chat";
+import { type MlTool, type ToolResult } from "./contract/contract-agent";
+import { type RenderDescriptor } from "./contract/contract-render";
 import { googleSheetCsvUrl, nonEmptyTables, clipOut, clipValue } from "./dom";
 import type { Box } from "./locate";
 import { pyValueParts } from "./py-render";

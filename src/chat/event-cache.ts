@@ -25,7 +25,7 @@
 // readable with no signal, and in the cache directory the OS could take it at any moment — a fine promise for an
 // optimisation and the wrong one for something a reader relies on.
 
-import type { MlDebugEvent } from "../contract-debug";
+import type { MlDebugEvent } from "../contract/contract-debug";
 import type { SessionKey, SessionSummary } from "../session-host";
 import type { FeedSnapshot } from "./session-feed";
 

@@ -19,7 +19,7 @@ import type { CachedSession, EventCache } from "./event-cache";
 /** How long an open waits for the phone's copy of a session before opening it the ordinary way. */
 const CACHE_LOAD_MS = 1500;
 import { speaksOurContract } from "./grants";
-import type { MlDebugEvent } from "../contract-debug";
+import type { MlDebugEvent } from "../contract/contract-debug";
 
 /** A short message the page shows and then lets go of: a command that failed, a session that was deleted. The text
  *  may carry a runtime's message, so it renders as text. */

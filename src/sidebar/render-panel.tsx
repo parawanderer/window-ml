@@ -8,8 +8,8 @@ import { IconCheck, IconChevron, IconCopy, IconEye, IconEyeOff, IconRows, IconSu
 import { scrollToStepSeq } from "./step-scroll";
 import { useState, useRef, useEffect, useLayoutEffect, useMemo } from "preact/hooks";
 import { signal } from "@preact/signals";
-import type { RenderDescriptor, LocateSubstep, CodeRevision } from "../contract-render";
-import type { TableSource } from "../contract-fetch";
+import type { RenderDescriptor, LocateSubstep, CodeRevision } from "../contract/contract-render";
+import type { TableSource } from "../contract/contract-fetch";
 import { codeDiff, diffStat } from "../diff";
 import { downloadBlob } from "./download";   // a table too large for the clipboard is saved as a file
 import { elementReference } from "../dom";

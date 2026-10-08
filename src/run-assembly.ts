@@ -11,8 +11,8 @@
 import { CITABLE_TOOLS } from "./agent-loop";
 import { buildServerTools } from "./builtin-tools";
 import { type MlApi, type MlTool, type MlPublicConfig, DEFAULT_GROUNDING_RANGE, type VisionMemory, detectGroundingModel, type LexicalMetric, type ElementContext } from "./contract";
-import type { PromptOrigin } from "./contract-run";
-import type { StartRunPayload, RebuildConfig } from "./contract-messages";
+import type { PromptOrigin } from "./contract/contract-run";
+import type { StartRunPayload, RebuildConfig } from "./contract/contract-messages";
 import { promptSurfaceClause, promptSurfaceOf } from "./prompt-surface";
 import { stepBudget } from "./step-budget";
 import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_CLOSED_NOTE, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, askAboutTask } from "./prompts";

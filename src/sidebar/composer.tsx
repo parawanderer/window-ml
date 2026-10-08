@@ -6,7 +6,7 @@ import { useState, useRef, useEffect } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { services } from "./services";
 import { loadDraft, loadDraftImages, onDraftRestored, saveDraft, saveDraftImages, sendHeld } from "./drafts";
-import type { ElementContext } from "../contract-run";
+import type { ElementContext } from "../contract/contract-run";
 import { config, rev } from "./store";
 import type { Session } from "./store";
 import { truncate } from "./format";

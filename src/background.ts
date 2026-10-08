@@ -4,9 +4,9 @@
 // shared contract types.
 import { dropAllLocalTools } from "./sw-local-tools";
 import { LOAD_RECORDS_KEY } from "./load-records";
-import type { ApprovalDecision } from "./contract-agent";
-import type { StartRunPayload, SetApprovalPayload, CancelRunPayload, InjectMessagePayload } from "./contract-messages";
-import { modelFilterAllows, publicConfig } from "./contract-config";
+import type { ApprovalDecision } from "./contract/contract-agent";
+import type { StartRunPayload, SetApprovalPayload, CancelRunPayload, InjectMessagePayload } from "./contract/contract-messages";
+import { modelFilterAllows, publicConfig } from "./contract/contract-config";
 import { googleSheetId, isCurrentPage } from "./dom";
 import { isSelfSourceUrl } from "./self-source";   // trusted-side enforcement of the self-source auto-approve (uncredentialed own-repo reads)
 import { BUILD_INFO } from "./build-info.gen";

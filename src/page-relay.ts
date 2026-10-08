@@ -6,7 +6,7 @@
 // enumerate this module rather than a copy of it, so a type added here is gated and tested without anyone editing
 // either (docs/spec/SITE_ACCESS.md, slice 1).
 
-import type { BackgroundMessageType, PageRequestType } from "./contract-messages";
+import type { BackgroundMessageType, PageRequestType } from "./contract/contract-messages";
 
 interface RelayEntry { type: BackgroundMessageType; responseType: string; }
 

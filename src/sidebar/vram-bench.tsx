@@ -12,7 +12,7 @@
 import { signal } from "@preact/signals";
 import type { ComponentChildren } from "preact";
 import { useState, useEffect, useRef, useMemo } from "preact/hooks";
-import type { RenderDescriptor } from "../contract-render";
+import type { RenderDescriptor } from "../contract/contract-render";
 import { mapLine } from "../diff";
 import { deepestUserLine } from "../py-format";
 import { pyValueParts } from "../py-render";

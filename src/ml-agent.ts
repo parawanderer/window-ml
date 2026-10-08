@@ -4,8 +4,8 @@
 // no `this` rewrite. injected.ts imports `AgentHandle` (used by createAgent/agent), the two same-origin
 // auto-approve predicates (used by the page loop), and the `AgentControl` type.
 import type { MlApi } from "./contract";
-import type { NeutralMessage } from "./contract-chat";
-import type { AgentOptions, MlAgentHandle, AgentResult, AgentTranscriptEntry } from "./contract-agent";
+import type { NeutralMessage } from "./contract/contract-chat";
+import type { AgentOptions, MlAgentHandle, AgentResult, AgentTranscriptEntry } from "./contract/contract-agent";
 import type { TableLike } from "./table-data";
 import { navTarget } from "./dom";
 import { emitDebug } from "./bus";
@@ -18,7 +18,7 @@ import { makeBackgroundTaskPromise } from "./bridge";
 export interface AgentControl {
     hash: string | null;          // the session hash (minted on the first turn, then stable)
     messages: NeutralMessage[];   // the live history — the source of truth; the loop mutates it in place
-    inbox: { id: string; text: string; origin?: import("./contract-run").PromptOrigin }[];   // say()'d messages waiting to be injected at the next step boundary (id = "seen"-indicator key; origin = where it was typed)
+    inbox: { id: string; text: string; origin?: import("./contract/contract-run").PromptOrigin }[];   // say()'d messages waiting to be injected at the next step boundary (id = "seen"-indicator key; origin = where it was typed)
     maxSteps: number;             // the step cap, read live so a handle can raise it mid-run
     running: boolean;             // is a loop in flight?
     seqBase: number;              // monotonic step-seq base so seqs stay session-unique across turns
@@ -55,7 +55,7 @@ export const sameOriginFetch = (url: string): boolean => {
 export class AgentHandle implements MlAgentHandle, AgentControl {
     hash: string | null = null;
     messages: NeutralMessage[] = [];
-    inbox: { id: string; text: string; origin?: import("./contract-run").PromptOrigin }[] = [];
+    inbox: { id: string; text: string; origin?: import("./contract/contract-run").PromptOrigin }[] = [];
     running = false;
     seqBase = 0;
     stepBase = 0;
@@ -100,7 +100,7 @@ export class AgentHandle implements MlAgentHandle, AgentControl {
 
     /** Put a user message into the session. Mid-run → steer (queued for the next step boundary, shown in
      *  the UI immediately); idle → append to history for the next run(), with a console note. Never throws. */
-    say(text: string, origin?: import("./contract-run").PromptOrigin): void {
+    say(text: string, origin?: import("./contract/contract-run").PromptOrigin): void {
         if (this.running) {
             // A stable id ties this steer's bubble to its later "seen" flip (page loop drains → agent-say-seen;
             // a bg loop fans the same event from the SW, keyed by this same id via INJECT_MESSAGE.sayId).

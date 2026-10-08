@@ -21,11 +21,11 @@ import { evalReadonly, NeedsPage, NotInDialect, Denied } from "./readonly-exec";
 import { expandPointers, execCodeIn } from "./pointer-macro";
 import { formatReadonlyExec } from "./approval";
 import { descriptorFor } from "./render-descriptor";
-import { outputCapEscalated } from "./contract-pointers";
+import { outputCapEscalated } from "./contract/contract-pointers";
 import { errText } from "./dom";
 import type { CurrentSnapshot } from "./current-context";
-import type { MlTool } from "./contract-agent";
-import type { RenderDescriptor } from "./contract-render";
+import type { MlTool } from "./contract/contract-agent";
+import type { RenderDescriptor } from "./contract/contract-render";
 
 /** What the worker holds for one run, handed in by the host so this module stays testable without one. */
 export interface WorkerReadonlyDeps {

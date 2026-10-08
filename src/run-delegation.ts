@@ -10,12 +10,12 @@
 // stay page-side, accumulated in the run record so ml.agent can assemble AgentResult.elements once the
 // background reports the run finished. This is the transport half of design A; the loop that drives it
 // is `runAgentLoop` (agent-loop.ts), assembled background-side in a later slice.
-import type { MlTool } from "./contract-agent";
-import type { AnswerMedia } from "./contract-render";
-import type { PageToolEnvelope } from "./contract-messages";
-import type { SubcallUsage } from "./contract-debug";
-import { hintSession } from "./contract-run";
-import { outputCapEscalated } from "./contract-pointers";
+import type { MlTool } from "./contract/contract-agent";
+import type { AnswerMedia } from "./contract/contract-render";
+import type { PageToolEnvelope } from "./contract/contract-messages";
+import type { SubcallUsage } from "./contract/contract-debug";
+import { hintSession } from "./contract/contract-run";
+import { outputCapEscalated } from "./contract/contract-pointers";
 import { executeTool, toolContext, answerSetFor, withRunSession, withRunDeref } from "./tool-exec";
 import { expandPointers } from "./pointer-macro";
 import { derefViaBackground } from "./deref-read";

@@ -9,7 +9,7 @@
 // run's tokens-per-second and its provenance are computed, so the sidebar, the exports and the bench cannot
 // each arrive at a slightly different number for the same run.
 // Type-only, so the cycle with contract.ts (which re-exports this file) erases at build entirely.
-import type { JsonSchema } from "./contract";
+import type { JsonSchema } from "../contract";
 import type { RequestUse } from "./contract-run";
 
 /** Who a message is FROM, in the neutral shape. `tool` is a tool's result being fed back, which the openai

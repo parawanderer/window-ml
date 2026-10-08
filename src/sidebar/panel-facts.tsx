@@ -11,8 +11,8 @@
 
 import { signal } from "@preact/signals";
 import type { RunStats } from "../contract";
-import { fmtCtx } from "../contract-config";
-import type { LoadedModel } from "../contract-server";
+import { fmtCtx } from "../contract/contract-config";
+import type { LoadedModel } from "../contract/contract-server";
 import { quantPlain, formatBytes, normModel } from "../resource-model";
 import { activityFrom, kvOccupancy, fmtOccupancy, expectedDecodeFrom, expectedPhrase } from "../resource-decode";
 import { type Capacity } from "../resource-capacity";

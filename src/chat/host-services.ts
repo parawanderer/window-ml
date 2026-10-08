@@ -4,7 +4,7 @@
 //
 // A session identifier here is always a key, `runtime:hash`, which is how the command finds its runtime.
 import type { JsonSchema } from "../contract";
-import type { NeutralMessage } from "../contract-chat";
+import type { NeutralMessage } from "../contract/contract-chat";
 import type { Command, RuntimeId, SessionKey } from "../session-host";
 import { parseSessionKey } from "../session-host";
 import type { SidebarServices } from "../sidebar/services";

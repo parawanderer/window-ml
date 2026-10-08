@@ -196,7 +196,7 @@ test("parseDecls captures whole declarations, including multi-line type aliases"
     // silently truncate the field list. It lives in contract-config.ts since the contract was split by theme,
     // so parseDecls is asked about the file that DECLARES it — this is the single-file scanner, and the
     // following-imports behaviour is the resolver's job, asserted separately below.
-    const config = parseDecls(readFileSync(new URL("../src/contract-config.ts", import.meta.url), "utf8"));
+    const config = parseDecls(readFileSync(new URL("../src/contract/contract-config.ts", import.meta.url), "utf8"));
     assert.equal(config.get("MlPublicConfig").kind, "type");
     assert.ok(config.get("MlPublicConfig").body.join("\n").includes("apiFormat"));
 });

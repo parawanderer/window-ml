@@ -7,10 +7,10 @@
 
 // Type-only (erased): the curated answer-set class, referenced by ToolContext.answer. answer-set.ts
 // imports AnswerMedia back from here — a type-only cycle, which is fine.
-import { MlAnswer, StepOptions, MlTool, AgentOptions, AgentResult, MlAgentHandle, ApprovalRequest, AgentStepEvent } from "./contract-agent";
-import { ChatOptions, MlHistory, NeutralMessage, ToolCall, TokenUsage } from "./contract-chat";
-import { MlPublicConfig } from "./contract-config";
-import { TablePreview, TableValue, FetchResult, FetchFormat, TableSource } from "./contract-fetch";
+import { MlAnswer, StepOptions, MlTool, AgentOptions, AgentResult, MlAgentHandle, ApprovalRequest, AgentStepEvent } from "./contract/contract-agent";
+import { ChatOptions, MlHistory, NeutralMessage, ToolCall, TokenUsage } from "./contract/contract-chat";
+import { MlPublicConfig } from "./contract/contract-config";
+import { TablePreview, TableValue, FetchResult, FetchFormat, TableSource } from "./contract/contract-fetch";
 
 // THE BARREL. A themed module is where a type LIVES; this file is where every consumer still finds it, and
 // that is not a convenience. Roughly a hundred references across the codebase are written as the inline type
@@ -18,20 +18,20 @@ import { TablePreview, TableValue, FetchResult, FetchFormat, TableSource } from 
 // three generators read this file by path (gen-api-docs, gen-export-schema, and the model-facing API doc the
 // first one builds). Both follow an `export … from` out to the real declaration. Re-exporting is what makes
 // the split invisible to all of them; it is not a deprecation shim.
-export * from "./contract-debug";
-export * from "./contract-messages";
-export * from "./contract-server";
-export * from "./contract-fetch";
-export * from "./contract-render";
-export * from "./contract-agent";
-export * from "./contract-chat";
-export * from "./contract-config";
-export * from "./contract-pointers";
-export * from "./contract-run";
-import { RebuildConfig } from "./contract-messages";
-import { DerefValue } from "./contract-pointers";
-import { VisionMemory, ShotBox } from "./contract-render";
-import { LoadedModel, ServerTool, ServerToolResult, OllamaInfo } from "./contract-server";
+export * from "./contract/contract-debug";
+export * from "./contract/contract-messages";
+export * from "./contract/contract-server";
+export * from "./contract/contract-fetch";
+export * from "./contract/contract-render";
+export * from "./contract/contract-agent";
+export * from "./contract/contract-chat";
+export * from "./contract/contract-config";
+export * from "./contract/contract-pointers";
+export * from "./contract/contract-run";
+import { RebuildConfig } from "./contract/contract-messages";
+import { DerefValue } from "./contract/contract-pointers";
+import { VisionMemory, ShotBox } from "./contract/contract-render";
+import { LoadedModel, ServerTool, ServerToolResult, OllamaInfo } from "./contract/contract-server";
 
 // Type-only: the unit-vector wrapper `ml.embed` resolves to. embedding.ts imports nothing, so no cycle.
 import type { Embedding } from "./embedding";

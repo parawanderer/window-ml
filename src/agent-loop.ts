@@ -12,14 +12,14 @@
 // No chrome, no DOM → builds standalone (dist/agent-loop.js) and is unit-tested against a mocked
 // model / executor / gate in tests/agent-loop.test.js.
 
-import type { ToolCall, TokenUsage, RunStats } from "./contract-chat";
-import type { AgentResult, AgentTranscriptEntry, ApprovalDecision } from "./contract-agent";
-import type { RenderDescriptor, ToolFeedback, TokenRender } from "./contract-render";
-import type { SubcallUsage } from "./contract-debug";
-import type { PromptOrigin } from "./contract-run";
+import type { ToolCall, TokenUsage, RunStats } from "./contract/contract-chat";
+import type { AgentResult, AgentTranscriptEntry, ApprovalDecision } from "./contract/contract-agent";
+import type { RenderDescriptor, ToolFeedback, TokenRender } from "./contract/contract-render";
+import type { SubcallUsage } from "./contract/contract-debug";
+import type { PromptOrigin } from "./contract/contract-run";
 import { promptSurfaceNote } from "./prompt-surface";
 import { tableOf } from "./table-data";
-import { runStats, fmtTokPerSec, UI_OUT_CAP } from "./contract-chat";
+import { runStats, fmtTokPerSec, UI_OUT_CAP } from "./contract/contract-chat";
 import { formatBytes } from "./resource-model";
 import { type Capacity } from "./resource-capacity";
 import { UNATTENDED_REFUSAL } from "./prompts";
@@ -408,7 +408,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     const contextId = opts.runHash ?? `run-${startedTs.toString(36)}`;
     opts.contextSink?.((extra) => snapshotCurrent({
         run: { id: contextId, model: extra?.model ?? null, step: currentStep, maxSteps: maxSteps(), startedTs },
-        messages: messages as import("./contract-chat").NeutralMessage[], recorded, log: extra?.log, now: Date.now(),
+        messages: messages as import("./contract/contract-chat").NeutralMessage[], recorded, log: extra?.log, now: Date.now(),
     }));
     /** Run one of the host's push helpers and record whatever it appended. */
     const pushed = (push: () => void, fact: Partial<RecordedMeta>): void => {

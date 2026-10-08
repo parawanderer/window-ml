@@ -6,7 +6,7 @@ import { SentImages, UserActions, UserText } from "./user-text";
 import { cssDurationMs } from "./use-close";
 import { services, bareHash } from "./services";
 import { useRef, useState } from "preact/hooks";
-import type { ExtendProfile } from "../contract-chat";
+import type { ExtendProfile } from "../contract/contract-chat";
 import { view } from "./store";
 import type { Session, Turn, Status, AgentStep } from "./store";
 import { pretty, truncate, collapsedPreview, markdown } from "./format";

@@ -7,9 +7,9 @@
 // can all import it. Every value arriving through it is UNTRUSTED input to the client: strings render as escaped
 // text, and an unknown kind, command or version is skipped, never guessed at.
 import type { JsonSchema } from "./contract";
-import type { ElementContext } from "./contract-run";
-import type { NeutralMessage, TokenUsage } from "./contract-chat";
-import type { MlDebugEvent } from "./contract-debug";
+import type { ElementContext } from "./contract/contract-run";
+import type { NeutralMessage, TokenUsage } from "./contract/contract-chat";
+import type { MlDebugEvent } from "./contract/contract-debug";
 import type { FolderState } from "./archive-folder";
 
 /* ------------------------------ versioning ------------------------------ */

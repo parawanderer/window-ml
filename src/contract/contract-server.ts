@@ -6,7 +6,7 @@
 // unhappy. The functions live beside the shapes deliberately -- each is the single reading of a field that
 // several surfaces would otherwise each guess at. Re-exported from contract.ts.
 // Type-only, so the cycle with contract.ts (which re-exports this file) erases at build entirely.
-import type { JsonSchema } from "./contract";
+import type { JsonSchema } from "../contract";
 
 /** Does this model generate TEXT? The right test for the chat/utility/vision pickers.
  *

@@ -16,12 +16,12 @@
 // exact failure the session-scoped store was introduced to fix.
 
 import { dropLocalTools } from "./sw-local-tools";
-import { bgRunResumable, pushReplay } from "./contract-run";
+import { bgRunResumable, pushReplay } from "./contract/contract-run";
 import { moveTabKey } from "./tab-replaced";
 import { recordRunLog } from "./sw-run-log";
-import { type DerefRead } from "./contract-pointers";
-import { type NeutralMessage } from "./contract-chat";
-import { type StartRunPayload } from "./contract-messages";
+import { type DerefRead } from "./contract/contract-pointers";
+import { type NeutralMessage } from "./contract/contract-chat";
+import { type StartRunPayload } from "./contract/contract-messages";
 import { createNavBarrier } from "./nav-barrier";
 import { releaseSessionValues } from "./sw-values";
 import { TokenStore } from "./token-pipe";
@@ -191,7 +191,7 @@ export const hydrationDone: Promise<void> = (typeof chrome !== "undefined" && ch
 // Per-run steering inbox (a.say() mid-run): the SW-side twin of the page loop's control.inbox. INJECT_MESSAGE
 // pushes here (only the owning tab may); the run's loop drains it at each step boundary (deps.drainInbox).
 // Present only while a run is live (set at start, deleted in finally).
-export const runInboxes = new Map<string, { tabId: number; queue: { id?: string; text: string; origin?: import("./contract-run").PromptOrigin }[] }>();
+export const runInboxes = new Map<string, { tabId: number; queue: { id?: string; text: string; origin?: import("./contract/contract-run").PromptOrigin }[] }>();
 
 // ---- Cross-page persistence (Variant A; design tmp/cross-page-agent.md) ----
 // A background-hosted run delegates each DOM tool to its tab by tabId. When the page NAVIGATES the old

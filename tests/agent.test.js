@@ -3813,7 +3813,7 @@ test("exec Out: the UI keeps MORE than the model got, and records where the mode
 
 test("exec's description tells the model the cap the code applies, read from the one table", async () => {
     // It said "~500", typed by hand beside a table that also said 500 — true until the table changes.
-    const { OUTPUT_CAP } = await import("../src/contract-pointers.ts");
+    const { OUTPUT_CAP } = await import("../src/contract/contract-pointers.ts");
     const { ml } = loadDomWorld();
     const exec = ml.domTools.find(t => t.name === "exec");
     const { default: d, ceiling: c } = OUTPUT_CAP.exec;

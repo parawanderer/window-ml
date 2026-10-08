@@ -7,7 +7,7 @@
 // into chrome.storage.local and back, which is the same kind of boundary. Types only; erased at build.
 // Re-exported from contract.ts, which stays the address everything imports from.
 // Type-only, so the cycle with contract.ts (which re-exports this file) erases at build entirely.
-import type { JsonSchema } from "./contract";
+import type { JsonSchema } from "../contract";
 import type { PromptOrigin, RequestHint } from "./contract-run";
 import type { LexicalMetric } from "./contract-config";
 import type { NeutralMessage, ExtendProfile } from "./contract-chat";

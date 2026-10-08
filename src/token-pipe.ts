@@ -13,9 +13,9 @@
 // Pure: no DOM, no chrome, no I/O.
 
 import { runPipe, splitStages } from "./text-pipe";
-import type { TokenKind } from "./contract-render";
+import type { TokenKind } from "./contract/contract-render";
 import { type TableLike } from "./table-data";
-export type { DerefRead, DerefMeta } from "./contract-pointers";
+export type { DerefRead, DerefMeta } from "./contract/contract-pointers";
 import { isTokenShape } from "./token-id";
 import { editDistance, lexicalSimilarity, type LexicalMetric } from "./label-match";
 

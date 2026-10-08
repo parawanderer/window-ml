@@ -55,7 +55,7 @@ test("the published agent start page is built, precached, and exempt from the wo
     // which is the worst possible way to meet a bug. Asserted on the BUILT worker, since that is what ships.
     const app = new URL("../dist-app/", import.meta.url);
     if (!existsSync(app)) return;   // built by `npm run build:web`; the test above skips the same way
-    const { AGENT_START_PAGE } = await import("../src/contract-config.ts");
+    const { AGENT_START_PAGE } = await import("../src/contract/contract-config.ts");
     const name = new URL(AGENT_START_PAGE).pathname.split("/").pop();
 
     assert.ok(existsSync(new URL(name, app)), "the page the runtime points runs at must actually be published");

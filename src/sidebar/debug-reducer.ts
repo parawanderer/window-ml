@@ -5,8 +5,8 @@
 // summaries and the run-block segmentation (buildRunBlocks). Pure logic, no JSX — extracted from app.tsx.
 import { sessionMap, rev, config, sidebarOpen, backendError, unreachableIfNothingSaysOtherwise, noteAside } from "./store";
 import type { Session, Status, Turn, AgentStep } from "./store";
-import type { MlDebugEvent } from "../contract-debug";
-import { isBackendUnreachable } from "../contract-server";
+import type { MlDebugEvent } from "../contract/contract-debug";
+import { isBackendUnreachable } from "../contract/contract-server";
 import { services } from "./services";
 import { truncate, lastUser, rollupStatus } from "./format";
 import { cleanTitle, titleMessages } from "../session-title";

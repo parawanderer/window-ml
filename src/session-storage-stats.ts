@@ -4,7 +4,7 @@
 //
 // Pure over events, so it is tested without a database. Sizes are serialized lengths, the same measure the store
 // budgets with (`sizeOf`), so the split adds up to what the budget sees.
-import type { MlDebugEvent } from "./contract-debug";
+import type { MlDebugEvent } from "./contract/contract-debug";
 
 /** Where one session's bytes go. */
 export interface SessionBytes {

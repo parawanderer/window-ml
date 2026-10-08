@@ -6,7 +6,7 @@
 // them. It lived in vram.tsx beside the panel component, which made the component file the data layer too.
 
 import { signal } from "@preact/signals";
-import { type LoadedModel, isBackendUnreachable } from "../contract-server";
+import { type LoadedModel, isBackendUnreachable } from "../contract/contract-server";
 import type { WireFrame } from "../events-wire";
 import { genTimingsFrom, predictedDecodeFrom, genSpan, hintFrom } from "../resource-gens";
 import { addMachineEvent } from "../resource-lane";
