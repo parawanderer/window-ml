@@ -376,6 +376,18 @@ plain data rather than promises; and the snapshot being consistent. Each of thos
 model's code depends on structurally rather than a value it reads, and changing one later breaks scripts that were
 correct when they were written — which is the whole reason this document exists before the implementation.
 
+## How the model learns it is there
+
+Behind the `selfIntrospection` setting (DevTools Settings, default ON; an older stored config without the key reads
+as on). On, a worker-hosted run's surveys get `ml.current` and its system prompt carries one line (`currentClause`,
+`src/agent/prompts.ts`) with `ml.current`'s top-level shape. That shape is GENERATED from `CurrentSnapshot` by
+`scripts/gen-api-docs.mjs` (`CURRENT_SIGNATURE`), so the line cannot drift from the type, and `MlApi.current` puts every
+type it names into `agent_api_docs`. The line is added only where a survey can reach the snapshot (read-only exec
+auto-approved) and is stripped from a page-hosted run's prompt. Off: no snapshot in the worker and no line.
+
+An approved `exec` has no `ml.current`: it runs in the page's main world. Whether it can once `exec` runs isolated
+(SITE_ACCESS.md, part 4) is asked of the site-access work (session-mail, 2026-10-08).
+
 ## What it owes before it ships
 
 Adding a surface to the read-only dialect triggers the rule in AGENTS.md, and the halting half is the one that bites

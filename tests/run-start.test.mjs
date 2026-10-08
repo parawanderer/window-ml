@@ -366,10 +366,10 @@ test("the debug dump a page asks for leaves out the events of a run the worker b
 
 /** A worker-built run whose model calls `exec` once per script in `scripts`, then answers; the page answers a
  *  read-only attempt with `page(js)`. Returns what reached the page and the run's execution log. */
-async function surveyRun(scripts, page = () => ({ readonly: true, result: "value: \"Site\"" })) {
+async function surveyRun(scripts, page = () => ({ readonly: true, result: "value: \"Site\"" }), cfg = {}) {
     let n = 0;
     const bg = loadBackground({
-        config: { ...config, autoApproveReadonly: true }, openTabs: [SITE],
+        config: { ...config, autoApproveReadonly: true, ...cfg }, openTabs: [SITE],
         onFetch: (call) => {
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
             const js = scripts[n++];
@@ -389,9 +389,10 @@ async function surveyRun(scripts, page = () => ({ readonly: true, result: "value
     for (let i = 0; i < 300 && n <= scripts.length; i++) await new Promise((r) => setTimeout(r, 0));
     await flush(30);
     const toPage = bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE" && m.payload.name === "exec").map(([, m]) => m.payload);
-    const results = bg.calls.filter((c) => c.url.includes("/chat/completions")).at(-1).body.messages.filter((m) => m.role === "tool").map((m) => m.content);
+    const chatCalls = bg.calls.filter((c) => c.url.includes("/chat/completions"));
+    const results = chatCalls.at(-1).body.messages.filter((m) => m.role === "tool").map((m) => m.content);
     const log = (await bg.context.__mlRunLog.all()).filter((r) => r.run === hash && r.subsystem === "routing");
-    return { bg, toPage, results, log };
+    return { bg, toPage, results, log, system: chatCalls[0].body.messages[0].content };
 }
 
 test("a survey that reads only the run and the box is answered in the worker, and never enters the page", T, async () => {
@@ -644,4 +645,46 @@ test("OPEN — while an approved exec runs, the page cannot fetch a URL the exec
     assert.match(toolResults[0] ?? "", /SECRET OTHER SITE/, "positive control: the run's own fetch ran");
     assert.ok(stolen !== undefined, "positive control: the page's request was answered");
     assert.ok(!stolen?.data, `the page fetched a URL no one approved while the exec ran: ${JSON.stringify(stolen).slice(0, 160)}`);
+});
+
+// --- the agent reading its own run (`selfIntrospection`, default on) ---
+
+const { CURRENT_SIGNATURE } = await import("../src/api-docs.gen.ts");
+
+test("UPGRADE: a stored config from before the flag reads as ON: the prompt shows ml.current's shape, and a survey reads it", T, async () => {
+    // `config` above has no `selfIntrospection` key, exactly as a config saved by an older build.
+    assert.equal("selfIntrospection" in config, false);
+    const { system, toPage, results, log } = await surveyRun(["ml.current.run.step"]);
+    assert.ok(system.includes(`\`ml.current\` in a read-only \`exec\` is \`${CURRENT_SIGNATURE}\``), "the generated signature, verbatim");
+    assert.match(system, /agent_api_docs` has every type/);
+    assert.deepEqual(toPage, [], "answered in the worker");
+    assert.equal(results[0], "1", JSON.stringify({ results, log }));
+});
+
+test("the flag OFF: no word of ml.current in the prompt, and a survey naming it is not answered from the run's context", T, async () => {
+    const { system, toPage } = await surveyRun(["ml.current.run.step"], () => ({ readonly: false }), { selfIntrospection: false });
+    assert.doesNotMatch(system, /ml\.current/);
+    assert.equal(toPage.length > 0, true, "with no snapshot in the worker the survey went on to the page, which refuses it");
+});
+
+test("read-only exec NOT auto-approved: the prompt does not offer ml.current, which no survey could then reach", T, async () => {
+    const { bg, chats } = (() => {
+        const bg = loadBackground({ config: { ...config, autoApproveReadonly: false }, openTabs: [SITE],
+            onFetch: (call) => jsonResponse(call.url.includes("/chat/completions") ? { choices: [{ message: { content: "done" } }] } : {}),
+            onTabMessage: async (_t, msg) => msg.type === "ADOPT_RUN_NOW" ? { pageInfo: "" } : msg.payload?.finish ? { result: "" } : undefined });
+        return { bg, chats: () => bg.calls.filter((c) => c.url.includes("/chat/completions")) };
+    })();
+    await bg.context.__mlStartUserRunForTest(7, { task: "survey", surface: "hud" });
+    await flush(30);
+    assert.doesNotMatch(chats()[0].body.messages[0].content, /ml\.current/);
+});
+
+test("a run the PAGE hosts is not offered ml.current: the clause is taken out of its prompt, the rest untouched", async () => {
+    const { withoutCurrentClause } = await import("../src/agent/run-assembly.ts");
+    const { currentClause } = await import("../src/agent/prompts.ts");
+    for (const docs of [true, false]) {
+        const tools = [{ name: "exec" }, ...(docs ? [{ name: "agent_api_docs" }] : [])];
+        assert.equal(withoutCurrentClause("BEFORE" + currentClause(docs) + "AFTER", tools), "BEFOREAFTER");
+    }
+    assert.equal(withoutCurrentClause("no clause here", [{ name: "exec" }]), "no clause here");
 });

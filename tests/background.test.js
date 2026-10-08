@@ -668,6 +668,8 @@ test("GET_CONFIG returns the model/ocrModel/apiFormat and withholds the URL and 
         // The server-tool curation: the page needs it before it builds a run's toolset.
         serverToolsOff: [], commanderServerTools: [],
         autoApproveSameOriginAuth: false, autoApproveSelfSource: true,
+        // A run the page assembles decides from it whether its prompt offers `ml.current`. On when never stored.
+        selfIntrospection: true,
         pierceClosedShadow: true, cdp: false,
         groundingEnabled: false, groundingModel: "", groundingRange: 1000, debugMode: "off",
         // Computed per-origin: no sender.tab in this harness call → not on the whitelist → false. The raw

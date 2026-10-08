@@ -183,3 +183,39 @@ export function snapshotCurrent(src: {
     const log = Object.assign(records, { text: logText(records) });
     return { run: { ...src.run }, messages, meta, log };
 }
+
+/** The most of `ml.current` an approved `exec` is SENT, as JSON characters. An approved exec runs in a world of its own
+ *  (docs/spec/SITE_ACCESS.md, part 4), so the snapshot crosses to the tab with the call; a read-only survey reads it
+ *  in place in the worker, with nothing sent, which is where an over-cap context is read instead. */
+export const EXEC_CURRENT_CHARS = 500_000;
+
+/** `ml.current` as it crosses to an approved exec: plain JSON. The log's `text` travels beside the records, since a
+ *  JSON array keeps no property but its items; {@link currentFromExec} puts it back. */
+export interface ExecCurrent {
+    current: Omit<CurrentSnapshot, "log"> & { log: CurrentLogRecord[] };
+    logText: string;
+}
+
+/**
+ * What an approved exec is sent for `ml.current` (the site-access work binds it, frozen, in the exec's own world).
+ * @param snap the run's snapshot, as the worker made it (shared watches included)
+ * @param enabled the run's `selfIntrospection`; off, there is no `ml.current` at all
+ * @returns undefined when there is none to send; `error`, the sentence the script is given, when it is over
+ *   {@link EXEC_CURRENT_CHARS}; otherwise the value
+ */
+export function currentForExec(snap: CurrentSnapshot | undefined, enabled: boolean): { value: ExecCurrent } | { error: string } | undefined {
+    if (!enabled || !snap) return undefined;
+    const value: ExecCurrent = JSON.parse(JSON.stringify({ current: { ...snap, log: [...snap.log] }, logText: snap.log.text }));
+    const chars = JSON.stringify(value).length;
+    if (chars > EXEC_CURRENT_CHARS)
+        return { error: `ml.current is ${chars} characters here, over the ${EXEC_CURRENT_CHARS} an approved exec is sent. Read it in a read-only exec (one that does not touch the page), where it is read in place.` };
+    return { value };
+}
+
+/**
+ * The snapshot back from what {@link currentForExec} sent: `log.text` restored, everything else as it came.
+ * @param x what arrived with the call
+ */
+export function currentFromExec(x: ExecCurrent): CurrentSnapshot {
+    return { ...x.current, log: Object.assign([...x.current.log], { text: x.logText }) };
+}

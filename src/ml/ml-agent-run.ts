@@ -38,7 +38,7 @@ import { registerRun, endRun, runAnswer } from "../agent/run-delegation";
 import { isSelfSourceUrl } from "../agent/self-source";
 import { toolContext, executeTool, withRunDeref } from "../tools/tool-exec";
 import { pageContext } from "../util";
-import { assembleRun, withPageContext, startPayload, type AssemblyMl } from "../agent/run-assembly";
+import { assembleRun, withPageContext, withoutCurrentClause, startPayload, type AssemblyMl } from "../agent/run-assembly";
 import { validateArgs } from "../tools/validate";
 
 /**
@@ -162,6 +162,19 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
     // loop paths: the page loop below and the background's delegated page-side tools call the same dom.ts.
     setPierceClosedShadow(pierceClosed);
     let systemPrompt = asm.systemPrompt;
+    // WHICH LOOP HOSTS THIS RUN, decided before the prompt is announced (below): a run the page hosts has no
+    // `ml.current`, so its prompt must not offer it, and the log must carry the prompt the model actually got.
+    const surface = agentCfg?.debugMode;
+    const hasApprovalTool = toolset.some(t => !!t.requiresApproval);
+    // Off-mode closure: with no debug surface, a privileged run on a NON-whitelisted origin still
+    // routes to the unforgeable background gate — the shell mounts an acrylic corner CARD (shell.ts
+    // + app.tsx CardApp) that renders the pending approval and returns the decision via the same
+    // origin-authed SET_APPROVAL. A WHITELISTED origin (the user trusts this domain to self-gate) or
+    // a run with no privileged tool (nothing to gate) falls through to the in-page loop below.
+    const bgSurface: "overlay" | "devtools" | "off" | null =
+        (surface === "overlay" || surface === "devtools") ? surface
+            : (hasApprovalTool && !agentCfg?.pageApprovalAllowed) ? "off" : null;
+    if (!bgSurface) systemPrompt = withoutCurrentClause(systemPrompt, toolset);
     if (env) systemPrompt = withPageContext(systemPrompt, pageContext(n => toolset.some(t => t.name === n)));
     // The run's curated answer set lives on the ToolContext (built at `toolCtx` below); the loop reads
     // `answerSet.elements()` / `.media()` / `.toMarkdown()` at assembly. (Was two accumulator arrays.)
@@ -217,20 +230,11 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
     // explicitly trusts this domain to self-gate) falls through to the in-page loop below, as does
     // a run with no privileged tool (nothing to gate). Caveats (v1): the caller's
     // `approve`/`onStep`/`logDebug` and rich tool renders don't apply on the background path.
-    const surface = agentCfg?.debugMode;
-    const hasApprovalTool = toolset.some(t => !!t.requiresApproval);
     // A run that can call python_exec starts Pyodide now, in parallel with the model's first turn, so the
     // first call does not pay the multi-second cold start. Both hosting paths pass through here.
     if (toolset.some(t => t.name === "python_exec"))
         makeBackgroundTaskPromise("PYTHON_PREWARM_REQUEST", "PYTHON_PREWARM_RESPONSE", { trigger: "run-start" }).catch(() => { /* a pre-warm is never worth a failure */ });
-    // Off-mode closure: with no debug surface, a privileged run on a NON-whitelisted origin still
-    // routes to the unforgeable background gate — the shell mounts an acrylic corner CARD (shell.ts
-    // + app.tsx CardApp) that renders the pending approval and returns the decision via the same
-    // origin-authed SET_APPROVAL. A WHITELISTED origin (the user trusts this domain to self-gate) or
-    // a run with no privileged tool (nothing to gate) falls through to the in-page loop below.
-    const bgSurface: "overlay" | "devtools" | "off" | null =
-        (surface === "overlay" || surface === "devtools") ? surface
-            : (hasApprovalTool && !agentCfg?.pageApprovalAllowed) ? "off" : null;
+    // `bgSurface` is decided above, with the prompt (the off-mode closure is explained there).
     control.bg = !!bgSurface;   // so a handle's mid-run say() knows to steer via INJECT_MESSAGE, not the page inbox
     // Trusted (CDP) input works ONLY on the background-hosted path (the page can't reach the debugger).
     // Gate the canvas-click trusted-vs-synthetic choice on that, so a page-hosted run keeps its synthetic

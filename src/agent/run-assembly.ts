@@ -15,7 +15,7 @@ import type { PromptOrigin } from "../contract/contract-run";
 import type { StartRunPayload, RebuildConfig } from "../contract/contract-messages";
 import { promptSurfaceClause, promptSurfaceOf } from "./prompt-surface";
 import { stepBudget } from "./step-budget";
-import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_CLOSED_NOTE, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, askAboutTask } from "./prompts";
+import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_CLOSED_NOTE, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, askAboutTask } from "./prompts";
 import { citeParam, withCallTitle } from "../tools/tool-params";
 import { buildDereferenceTool } from "../tools/tools";
 
@@ -64,6 +64,8 @@ export interface AssembledRun {
     autoPy: boolean;
     autoSOA: boolean;
     autoSelfSrc: boolean;
+    /** `selfIntrospection` is on: a hosted run's surveys get `ml.current` (and its prompt says so). */
+    selfIntro: boolean;
     labelMatch: LexicalMetric | undefined;
     pierceClosed: boolean;
     cdpOn: boolean;
@@ -127,6 +129,8 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
     const autoPy = !!(agentCfg && (agentCfg as { autoApprovePython?: boolean }).autoApprovePython);
     const autoSOA = !!(agentCfg && (agentCfg as { autoApproveSameOriginAuth?: boolean }).autoApproveSameOriginAuth);
     const autoSelfSrc = !!(agentCfg && (agentCfg as { autoApproveSelfSource?: boolean }).autoApproveSelfSource);
+    // Absent (an older stored config) is ON, as the default says.
+    const selfIntro = (agentCfg as { selfIntrospection?: boolean } | null)?.selfIntrospection !== false;
     // Which lexical metric ranks a near-miss on a pointer LABEL. Undefined = the built-in default;
     // it is a config value so the benchmark can vary it without a rebuild.
     const labelMatch = (agentCfg as { labelMatch?: import("../contract").LexicalMetric } | null)?.labelMatch;
@@ -294,6 +298,8 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
         // exec (JS) style: functional idioms + ml.range instead of loops/mutation. Independent of the
         // compute clause above (applies even alongside python_exec, since it's about exec JS specifically).
         if (toolset.some(t => t.name === "exec")) systemPrompt += EXEC_RANGE_CLAUSE;
+        // Its own run, as data: only where a survey reaches `ml.current`, which needs the read-only path to auto-run.
+        if (selfIntro && autoRO && toolset.some(t => t.name === "exec")) systemPrompt += currentClause(toolset.some(t => t.name === "agent_api_docs"));
         // Headless run: tell the model upfront it's unattended (read-only only), so it doesn't
         // waste steps attempting clicks/typing/mutations that the gate below will just refuse.
         if (unattended) systemPrompt += UNATTENDED_CLAUSE;
@@ -305,8 +311,18 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
 
     return {
         toolset, byName, toolDefs, systemPrompt, task, pendingImages, turnImages, agentCfg, runModel, driverSees,
-        runVisionModel, runGroundingModel, runGroundingRange, autoRO, autoPy, autoSOA, autoSelfSrc, labelMatch, pierceClosed, cdpOn,
+        runVisionModel, runGroundingModel, runGroundingRange, autoRO, autoPy, autoSOA, autoSelfSrc, selfIntro, labelMatch, pierceClosed, cdpOn,
     };
+}
+
+/**
+ * The system prompt for a run the PAGE hosts: without the self-introspection clause, since a page-hosted survey has no
+ * `ml.current` (it would be the run's context in the page's realm). A prompt without the clause is returned as is.
+ * @param systemPrompt as `assembleRun` built it
+ * @param toolset the run's tools, which decide the clause's exact text
+ */
+export function withoutCurrentClause(systemPrompt: string, toolset: readonly MlTool[]): string {
+    return systemPrompt.replace(currentClause(toolset.some(t => t.name === "agent_api_docs")), "");
 }
 
 /**
@@ -452,7 +468,7 @@ export function startPayload(asm: AssembledRun, h: RunHosting): StartRunPayload 
     return {
         runId: h.runId, task: asm.task, systemPrompt: h.systemPrompt, tools: toolDescriptors(asm.toolset),
         model: asm.runModel, think: h.think, maxSteps: h.maxSteps,
-        autoApprovePython: asm.autoPy, autoApproveReadonly: asm.autoRO, autoApproveSameOriginAuth: asm.autoSOA, autoApproveSelfSource: asm.autoSelfSrc,
+        autoApprovePython: asm.autoPy, autoApproveReadonly: asm.autoRO, autoApproveSameOriginAuth: asm.autoSOA, autoApproveSelfSource: asm.autoSelfSrc, selfIntrospection: asm.selfIntro,
         labelMatch: asm.labelMatch, surface: h.surface,
         stream: h.stream || undefined, toolTokens: h.toolTokens || undefined, origin: h.origin || undefined,
         // native-vision composer attachments for this turn's user message (an OCR fallback is already in `task`)
