@@ -115,6 +115,8 @@ export interface CurrentSnapshot {
  *  failed or its value was too large to hand over. */
 export interface UserWatch {
     expression: string;
+    /** What the person wrote about WHY they shared it ("is this growing?"), when they wrote anything. Their words. */
+    note?: string;
     value?: unknown;
     error?: string;
 }

@@ -5,11 +5,12 @@
 // short interval while open. Every declared member is listed, including one holding nothing for this run: an absent
 // row would read as "this kind of state does not exist", which is the question the panel is for.
 import { signal } from "@preact/signals";
+import { Fragment } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { JsonNode, copyableValue } from "./transcript/json-tree";
 import { PanelHead } from "./panel-head";
 import { TipText, cursorTipOn, useCopy, type CtxItem } from "./ui-kit";
-import { MAX_SHARED_WATCHES, MAX_WATCHES, SHARED_WATCHES_KEY, panelPath, shareable, type WatchResult, type WatchShape } from "../state-watch";
+import { MAX_NOTE_CHARS, MAX_SHARED_WATCHES, MAX_WATCHES, SHARED_WATCHES_KEY, WATCH_NOTES_KEY, panelPath, shareable, watchNotes, type WatchResult, type WatchShape } from "../state-watch";
 import { completeWatch, type WatchCompletion } from "../watch-complete";
 import { IconCheck, IconChevron, IconCopy, IconEye, IconClose } from "./icons";
 import type { RunStateDump, RunStateMember } from "../sw/sw-run-state";
@@ -149,10 +150,40 @@ export function addWatch(expr: string): void {
     setWatches([...watches.value, e]);
 }
 
-/** Stop watching one expression, and stop sharing it. */
+/** Stop watching one expression, and stop sharing it; its note goes with it. */
 function removeWatch(expr: string): void {
     setWatches(watches.value.filter((w) => w !== expr));
     if (shared.value.includes(expr)) setShared(shared.value.filter((w) => w !== expr));
+    if (expr in notes.value) setNote(expr, "");
+}
+
+/** The person's note on each shared watch, by expression: why they shared it, handed to the model with the value. */
+export const notes = signal<Readonly<Record<string, string>>>({});
+
+/** Set or clear (an empty text) one watch's note, and remember it. */
+export function setNote(expr: string, text: string): void {
+    const t = text.trim().slice(0, MAX_NOTE_CHARS);
+    const next = { ...notes.value };
+    if (t) next[expr] = t; else delete next[expr];
+    notes.value = next;
+    try { chrome.storage.local.set({ [WATCH_NOTES_KEY]: next }); } catch { /* no storage: the note lasts until the page closes */ }
+}
+
+/** The line under a SHARED watch where the person says why they shared it. Saved on Enter or when it loses focus. */
+function NoteLine({ expr }: { expr: string }) {
+    const [draft, setDraft] = useState(notes.value[expr] ?? "");
+    const save = () => { if (draft.trim() !== (notes.value[expr] ?? "")) setNote(expr, draft); };
+    return (
+        <div class="jt-row rstate-watch-note" data-note-for={expr}>
+            <span class="tri jt-tri-space" aria-hidden="true"><IconChevron /></span>
+            <input class="rstate-note-input" type="text" spellcheck={true} maxLength={MAX_NOTE_CHARS} value={draft}
+                aria-label={`Note for the model on ${expr}`} placeholder="note for the model: why you shared this (optional)"
+                onInput={(e) => setDraft((e.target as HTMLInputElement).value)}
+                onBlur={save}
+                onKeyDown={(e) => { if (e.key === "Enter") { save(); (e.target as HTMLInputElement).blur(); } if (e.key === "Escape") setDraft(notes.value[expr] ?? ""); }}
+                {...cursorTipOn(paneTip("The model reads this beside the watch's value, in `ml.current.debug.userWatches`."))} />
+        </div>
+    );
 }
 
 /** The watches SHARED with the model (`ml.current.debug.userWatches`), a subset of {@link watches}, kept beside them. */
@@ -267,7 +298,10 @@ function WatchGroup({ results, shape }: { results: WatchResult[] | undefined; sh
                 </span>
             </button>
             {shut ? null : <>
-                {watches.value.map((w) => <WatchRow key={w} expr={w} r={byExpr.get(w)} />)}
+                {watches.value.map((w) => <Fragment key={w}>
+                    <WatchRow expr={w} r={byExpr.get(w)} />
+                    {shared.value.includes(w) ? <NoteLine expr={w} /> : null}
+                </Fragment>)}
                 <div class="jt-row rstate-watch-add">
                     <span class="tri jt-tri-space" aria-hidden="true"><IconChevron /></span>
                     <input ref={input} class="rstate-watch-input" type="text" spellcheck={false} aria-label="Add a watch" value={draft}
@@ -336,13 +370,14 @@ export function RunStateView({ run }: { run: string | null }) {
         if (foldedRead) return;
         foldedRead = true;
         try {
-            chrome.storage.local.get([FOLDED_KEY, WATCHES_KEY, SHARED_WATCHES_KEY], (d: Record<string, unknown>) => {
+            chrome.storage.local.get([FOLDED_KEY, WATCHES_KEY, SHARED_WATCHES_KEY, WATCH_NOTES_KEY], (d: Record<string, unknown>) => {
                 const v = d?.[FOLDED_KEY];
                 if (Array.isArray(v)) folded.value = new Set(v.filter((x): x is string => typeof x === "string"));
                 const w = d?.[WATCHES_KEY];
                 if (Array.isArray(w)) watches.value = w.filter((x): x is string => typeof x === "string").slice(0, MAX_WATCHES);
                 const sh = d?.[SHARED_WATCHES_KEY];
                 if (Array.isArray(sh)) shared.value = sh.filter((x): x is string => typeof x === "string" && watches.value.includes(x)).slice(0, MAX_SHARED_WATCHES);
+                notes.value = watchNotes(d?.[WATCH_NOTES_KEY]);
             });
         } catch { /* no storage here: nothing is folded */ }
     }, []);

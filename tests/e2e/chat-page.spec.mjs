@@ -689,8 +689,9 @@ test("a watch shared from the Run state panel reaches the model: its survey of m
         // What the panel writes when its eye is clicked (tests/run-state-view.test.mjs): the watches, and the shared subset.
         // The inspector watch is in the shared list as a forged storage write would put it, and is still refused.
         await ext.sw.evaluate(() => chrome.storage.local.set({ ml_runstate_watches: ["ml.current.run.step", "inspector.grants.turn"],
-            ml_runstate_shared: ["ml.current.run.step", "inspector.grants.turn"] }));
-        fake.setScript([{ tool: "exec", args: { js: "JSON.stringify(ml.current.debug.userWatches.map(w => [w.expression, w.value ?? w.error]))" } },
+            ml_runstate_shared: ["ml.current.run.step", "inspector.grants.turn"],
+            ml_runstate_watch_notes: { "ml.current.run.step": "is it moving?" } }));
+        fake.setScript([{ tool: "exec", args: { js: "JSON.stringify(ml.current.debug.userWatches.map(w => [w.expression, w.value ?? w.error, w.note ?? null]))" } },
             { content: "done" }]);
         const site1 = await ext.context.newPage();
         await site1.goto(site.url + "/");
@@ -699,7 +700,7 @@ test("a watch shared from the Run state panel reaches the model: its survey of m
         // Answered without a gate (a read-only survey of the run's own context, in the worker), so the second call comes.
         await expect.poll(() => fake.calls().length, { timeout: 15000 }).toBe(2);
         const sent = fake.calls()[1].messages.find((m) => m.role === "tool").content;
-        expect(sent).toContain('["ml.current.run.step",1]');
+        expect(sent).toContain('["ml.current.run.step",1,"is it moving?"]');
         expect(sent).toContain("model does not have");
         expect(sent).not.toMatch(/origins/);
     } finally { await ext.context.close(); await site.stop(); await fake.stop(); }

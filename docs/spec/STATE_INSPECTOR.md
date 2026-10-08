@@ -278,8 +278,10 @@ exactly the model half of the registry and `inspector` the rest.
    storage entry over `inspector.` finds nothing to read; the panel also refuses to share one, and says why. At most
    eight are shared, a value over 4,000 characters is an error rather than a cut, and the dialect hands `debug` to the
    script read-only. It is a registry member (`debug.userWatches`, audience `model`), so the panel lists it at that
-   path. Not yet: a page-hosted run's `ml.current` has no `debug`, and nothing TELLS the model to look; it finds the
-   shares only if it reads `ml.current.debug`.
+   path. A shared watch can carry the person's NOTE (why they shared it, at most 280 characters, a line under the
+   watch), handed to the model as `note`, in their words. There is no `at`: the value is re-evaluated for every read,
+   so it is always now (a real model read `at` as "when it was pinned"). Not yet: a page-hosted run's `ml.current` has
+   no `debug`.
 3. **The read-only console.**
 4. **Python per-run state**: the investigation above, then the design, then the Python group.
 5. **The slots** fill in as the features behind them land: `mailbox` (once its audience is settled for subagent

@@ -3321,6 +3321,11 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .rstate-share.on { color: var(--accent); }
 .rstate-share:disabled { cursor: default; color: var(--fg-faint); }
 .rstate-share svg { width: 12px; height: 12px; }
+/* The NOTE under a shared watch: the person's reason, for the model. Quiet until focused, like the add-a-watch line. */
+.rstate-note-input { flex: 1 1 auto; min-width: 0; font: inherit; font-style: italic; color: var(--fg-dim); background: none; border: 0;
+    border-bottom: 1px dashed transparent; padding: 0; outline: none; }
+.rstate-note-input::placeholder { color: var(--fg-faint); }
+.rstate-note-input:focus { border-bottom-color: var(--border); color: var(--fg); font-style: normal; }
 /* The line that adds a watch, at the end of the group: an input that looks like the next row until it is used. */
 .rstate-watch-input { flex: 1 1 auto; min-width: 0; font: inherit; color: var(--fg); background: none; border: 0;
     border-bottom: 1px dashed transparent; padding: 0; outline: none; }

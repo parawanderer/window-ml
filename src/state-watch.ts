@@ -151,6 +151,25 @@ export async function evalWatch(tree: Record<string, unknown>, expr: string, js?
 /** Where the panel keeps the expressions it shares with the model, a subset of its watches; read by the worker
  *  (sw-shared-watches.ts). Written only by an extension page. */
 export const SHARED_WATCHES_KEY = "ml_runstate_shared";
+/** Where the panel keeps the person's NOTE on a shared watch, `{ [expression]: text }`: why they shared it, for the model. */
+export const WATCH_NOTES_KEY = "ml_runstate_watch_notes";
+/** The longest note: a sentence saying why, not a second prompt. */
+export const MAX_NOTE_CHARS = 280;
+
+/**
+ * Notes as stored, made safe to hand on: string values only, trimmed, cut at {@link MAX_NOTE_CHARS}, empty ones dropped.
+ * @param raw what storage holds under {@link WATCH_NOTES_KEY}
+ */
+export function watchNotes(raw: unknown): Record<string, string> {
+    const out: Record<string, string> = Object.create(null);
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+    for (const [k, v] of Object.entries(raw)) {
+        const t = typeof v === "string" ? v.trim().slice(0, MAX_NOTE_CHARS) : "";
+        if (t) out[k] = t;
+    }
+    return out;
+}
+
 /** How many watches may be shared with the model at once. Each is evaluated for every survey that reads `ml.current`. */
 export const MAX_SHARED_WATCHES = 8;
 /** The largest shared value, as JSON characters. A watch on `ml.current.messages` would otherwise hand the model its
@@ -174,19 +193,23 @@ export function shareable(expr: string): boolean {
  * @param current the snapshot the model reads, without `debug`
  * @param exprs the shared expressions
  * @param js the JS evaluator, binding nothing but `ml.current`
+ * @param notes the person's note on each, by expression ({@link watchNotes})
  */
-export async function evalShared(current: unknown, exprs: readonly string[], js: WatchJs | undefined): Promise<UserWatch[]> {
+export async function evalShared(current: unknown, exprs: readonly string[], js: WatchJs | undefined,
+    notes: Readonly<Record<string, string>> = {}): Promise<UserWatch[]> {
     const tree = JSON.parse(JSON.stringify({ ml: { current } })) as Record<string, unknown>;
     const out: UserWatch[] = [];
     for (const expression of exprs.slice(0, MAX_SHARED_WATCHES)) {
-        if (!shareable(expression)) { out.push({ expression, error: "reads inspector., which the model does not have" }); continue; }
+        const note = Object.hasOwn(notes, expression) ? notes[expression] : undefined;
+        const head = { expression, ...(note ? { note } : {}) };
+        if (!shareable(expression)) { out.push({ ...head, error: "reads inspector., which the model does not have" }); continue; }
         const r = await evalWatch(tree, expression, js);
-        if (r.error) { out.push({ expression, error: r.error }); continue; }
+        if (r.error) { out.push({ ...head, error: r.error }); continue; }
         const value = r.nodes ? r.nodes.map((n) => n.value) : r.value;
         const chars = value === undefined ? 0 : JSON.stringify(value)?.length ?? 0;
         out.push(chars > SHARED_VALUE_CHARS
-            ? { expression, error: `its value is ${chars} characters, over the ${SHARED_VALUE_CHARS} a shared watch may carry` }
-            : { expression, ...(value === undefined ? {} : { value }) });
+            ? { ...head, error: `its value is ${chars} characters, over the ${SHARED_VALUE_CHARS} a shared watch may carry` }
+            : { ...head, ...(value === undefined ? {} : { value }) });
     }
     return out;
 }
