@@ -11,16 +11,16 @@
 // deflated). Extracted from app.tsx.
 import atomOneLight from "highlight.js/styles/atom-one-light.css";
 import { ladderLines } from "./fetch-ladder";
-import { CALL_TITLE } from "../tools/tool-params";
+import { CALL_TITLE } from "../../tools/tool-params";
 import katexCss from "katex/dist/katex.min.css";
-import { sessionMap, turnsRun, config } from "./store";
+import { sessionMap, turnsRun, config } from "../store";
 import { serializeSessionJson } from "./export-json";
-import type { Session, AgentStep } from "./store";
-import { pretty, fullStamp, beautifyJs, escapeHtml, highlight, markdown } from "./format";
-import { splitAnswer, hasTokens, resolveTokenStep } from "../pointers/answer-tokens";
-import { runStats, fmtTokPerSec } from "../contract/contract-chat";
-import { fmtDur, timedText } from "./timestamps";
-import { BUILD_INFO } from "../build-info.gen";
+import type { Session, AgentStep } from "../store";
+import { pretty, fullStamp, beautifyJs, escapeHtml, highlight, markdown } from "../format";
+import { splitAnswer, hasTokens, resolveTokenStep } from "../../pointers/answer-tokens";
+import { runStats, fmtTokPerSec } from "../../contract/contract-chat";
+import { fmtDur, timedText } from "../timestamps";
+import { BUILD_INFO } from "../../build-info.gen";
 
 // A rough token estimate for a string — the ubiquitous ~4-chars/token heuristic (good enough to gauge how much
 // of the context window the system prompt / tool schemas eat; it's labelled ~approx, not exact). Paired with the
@@ -30,7 +30,7 @@ const sizeTag = (s: string): string => `(${s.length.toLocaleString()} chars, ~${
 // The build the run's extension was on. `-dirty` when it was built with uncommitted changes (so a bare short
 // commit in a log is trustworthy only when it's absent) — the same provenance the agent reads via agent_api_docs.
 const buildLabel = (): string => `${BUILD_INFO.shortCommit}${(BUILD_INFO as { dirty?: boolean }).dirty ? "-dirty (uncommitted changes)" : ""} · built ${fullStamp(Date.parse(BUILD_INFO.buildTime))}`;
-import { annotatedConfig, resolveModel, shownModel } from "./model";
+import { annotatedConfig, resolveModel, shownModel } from "../model";
 
 type Sidecar = { name: string; bytes: Uint8Array };
 
@@ -668,7 +668,7 @@ function zipStore(files: Sidecar[]): Blob {
 // Trigger a client-side download (the iframe can't touch the filesystem). It lives in its own module now —
 // see download.ts for why a four-line helper could not stay next to the highlighter stylesheet.
 import { downloadBlob } from "./download";
-import { services } from "./services";
+import { services } from "../services";
 export { downloadBlob };
 
 const baseName = (s: Session): string => `ml-${s.kind === "agent" ? "agent" : "chat"}-${s.hash}`;

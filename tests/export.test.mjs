@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import "./stub-css.mjs";   // export.ts imports a bundled .css (hljs theme) — stub it (both loader paths) BEFORE the import below
-const { serializeSession, sessionToHtml } = await import("../src/sidebar/export.ts");
+const { serializeSession, sessionToHtml } = await import("../src/sidebar/export/export.ts");
 
 const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 

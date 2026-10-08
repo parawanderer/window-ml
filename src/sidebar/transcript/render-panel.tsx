@@ -3,7 +3,7 @@
 // auto-derive image/elements, else the default In:/Out: renders the raw result.
 // Extracted from app.tsx; leans on the shared primitives in ./ui-kit.
 import type { ComponentChildren } from "preact";
-import { GLYPH, RESOLVED_LABEL, rungLabel, rungMeta } from "../fetch-ladder";
+import { GLYPH, RESOLVED_LABEL, rungLabel, rungMeta } from "../export/fetch-ladder";
 import { IconCheck, IconChevron, IconCopy, IconEye, IconEyeOff, IconRows, IconSummary } from "../icons";
 import { scrollToStepSeq } from "./step-scroll";
 import { useState, useRef, useEffect, useLayoutEffect, useMemo } from "preact/hooks";
@@ -11,7 +11,7 @@ import { signal } from "@preact/signals";
 import type { RenderDescriptor, LocateSubstep, CodeRevision } from "../../contract/contract-render";
 import type { TableSource } from "../../contract/contract-fetch";
 import { codeDiff, diffStat } from "../../diff";
-import { downloadBlob } from "../download";   // a table too large for the clipboard is saved as a file
+import { downloadBlob } from "../export/download";   // a table too large for the clipboard is saved as a file
 import { elementReference } from "../../dom/dom";
 import { pyFormat, lineChanged } from "../../python/py-format";
 import { lineMapBetween } from "../../line-map";

@@ -21,8 +21,8 @@ import { PanelHead } from "./panel-head";
 import { useDismiss } from "./use-dismiss";
 import { Stepper } from "./ui-kit";
 import { IconFilter, IconGear } from "./icons";
-import { downloadBlob } from "./download";
-import { exportSessionJson } from "./export";
+import { downloadBlob } from "./export/download";
+import { exportSessionJson } from "./export/export";
 import { RUN_LOG_KEY, runLogDocument, type RunLogEvent } from "../run-log";
 import type { RunLogDump } from "../sw/sw-run-log";
 

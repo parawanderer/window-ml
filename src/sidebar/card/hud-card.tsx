@@ -12,7 +12,7 @@ import type { Session, AgentStep } from "../store";
 import { truncate, markdown } from "../format";
 import { residentNow } from "../resource/panel-facts";
 import { orbStatus } from "../transcript/orb-status";   // the orb's live status projection (humanized tool phase + live token count + stall heartbeat)
-import { exportSession, printSession } from "../export";
+import { exportSession, printSession } from "../export/export";
 import { IconChevron, IconWarn, IconSend, IconPlay } from "../icons";
 import { cursorTipOn, AnswerMediaGallery, ContextMenu, clearHighlight, decideGate, decidedSteps, stepKey } from "../ui-kit";
 import { ContinueRun, ReplyBubble } from "../transcript/reply";

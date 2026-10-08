@@ -30,7 +30,7 @@ import { installServices, services } from "../sidebar/services";
 import { installTooltipLayer } from "../sidebar/tooltip-layer";
 import { applyCodePrefs, applyTheme, initThemeStyle, pageTheme } from "../sidebar/prefs";
 import { rev, sessionMap } from "../sidebar/store";
-import { exportSession, exportSessionJson } from "../sidebar/export";
+import { exportSession, exportSessionJson } from "../sidebar/export/export";
 import { SessionPane } from "./chat-app";
 import { ChatStore } from "./chat-store";
 import { hostServices } from "./host-services";

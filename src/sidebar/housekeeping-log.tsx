@@ -4,7 +4,7 @@
 // a resize grip and tail-follow, and a second list component would have grown half of those, differently.
 import { useEffect, useState } from "preact/hooks";
 import { OutputCell, TimedOutput } from "./transcript/render-panel";
-import { downloadBlob } from "./download";
+import { downloadBlob } from "./export/download";
 import { formatBytes } from "../resource/resource-model";
 import { fmtDelta } from "./timestamps";
 import { LOG_CAP, LOG_KEY, type HousekeepingEvent } from "../housekeeping";

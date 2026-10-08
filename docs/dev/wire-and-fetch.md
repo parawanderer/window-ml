@@ -27,7 +27,7 @@ is how `…/guide` becomes `…/guide/`, which flips the sibling to `index.md`),
 page-controlled, so a cross-origin one is refused rather than followed under this page's grant. `raw` was
 replaced by `format` because it straddled "what do we FETCH" and "what does the model RECEIVE"; `format` is
 the fetch-level half, shared with `ml.fetch`. `FetchResult.negotiation` carries the trace, rendered as a
-resolution TREE in the In slot (`src/sidebar/fetch-ladder.ts` holds the labels once, for the sidebar AND both
+resolution TREE in the In slot (`src/sidebar/export/fetch-ladder.ts` holds the labels once, for the sidebar AND both
 export sinks) — not decoration: a stub twin is a valid 200 Markdown document that is simply the wrong page.
 `pageInfo` reports a declared twin too, so an agent standing on a docs page knows to fetch rather than survey.
 

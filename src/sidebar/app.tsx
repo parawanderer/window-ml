@@ -36,7 +36,7 @@ import {
     composerOpen, composerElement, composerTarget, selectedRun, cardSteerHash, setCardCollapsed,
 } from "./card/card-state";
 import { shownModel, sessionProfile } from "./model";
-import { exportSession, exportSessionJson, printSession } from "./export";
+import { exportSession, exportSessionJson, printSession } from "./export/export";
 import { applyTheme, applyFont, applyCodePrefs, applyFocus, initThemeStyle } from "./prefs";
 import { DEFAULT_CODE_THEME } from "../code-themes";
 import { IconWarn, IconTimer, IconGear, IconExport, IconVram, IconBench, IconTools, IconBrain, IconClose, IconCollapse, IconMore } from "./icons";

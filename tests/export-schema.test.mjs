@@ -14,7 +14,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { buildSchema, SCHEMAS } from "../scripts/gen-export-schema.mjs";
-const { sessionToJson } = await import("../src/sidebar/export-json.ts");
+const { sessionToJson } = await import("../src/sidebar/export/export-json.ts");
 const { schemaUrl } = await import("../src/export-schema.ts");
 import { validate } from "./helpers-validate.mjs";
 

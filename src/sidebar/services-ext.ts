@@ -7,8 +7,8 @@ import { hintSession } from "../contract/contract-run";
 import { config } from "./store";
 import { bareHash, type SidebarServices, type SideCallRequest, type SideCallResult } from "./services";
 import { residentNow } from "./resource/panel-facts";
-import { downloadBlob } from "./download";
-import { printInFrame } from "./print-frame";
+import { downloadBlob } from "./export/download";
+import { printInFrame } from "./export/print-frame";
 
 const toParent = (msg: unknown): void => window.parent.postMessage(msg, "*");
 

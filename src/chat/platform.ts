@@ -4,7 +4,7 @@
 // the extension adapter with the extension page (slice 3), and `nativePlatform` (native-embed.tsx) in the phone app,
 // where each of these crosses the bridge to the shell (docs/spec/NATIVE_SHELL.md).
 import { signal } from "@preact/signals";
-import { printInFrame } from "../sidebar/print-frame";
+import { printInFrame } from "../sidebar/export/print-frame";
 import type { PairingApi } from "../pairing/api";
 
 /** Device-local storage for display preferences. Synchronous reads, so a first render can use them. */
