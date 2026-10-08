@@ -8,10 +8,16 @@
 import { RunLog, eventsForRun, runsInLog, type RunLogEvent } from "../log/run-log";
 import { sessionArea, senderOrigin } from "./sw-housekeeping";
 import type { HousekeepingReport } from "../log/housekeeping";
+import { defineState } from "../state-registry";
 
 /** This worker's one execution log: every run's mechanics in one ring, in storage.session so an evicted worker
  *  does not take a run's history with it (the eviction is itself one of the things worth knowing about). */
 export const runLog = new RunLog(sessionArea());
+defineState({
+    id: "run.log", scope: "run", realm: "worker", audience: "human", lostOn: ["browser-restart"],
+    describe: "What the machinery did under the run: a discarded tab reloaded, a debugger attached, a fetch refused.",
+    read: async ({ runId }) => { const r = runId ? await runLog.forRun(runId) : []; return r.length ? r : undefined; },
+});
 
 /**
  * ECHO EVERY RECORD TO THE CONSOLE as well. OFF for anyone using the extension — this log exists precisely

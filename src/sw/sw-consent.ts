@@ -17,6 +17,7 @@
 
 import type { ApprovalDecision } from "../contract/contract-agent";
 import { getConfig } from "./sw-llm";
+import { defineState } from "../state-registry";
 
 // Design A: pending background-run approvals, keyed by `${runId}:${seq}`, resolved by a SET_APPROVAL
 // message the sidebar app sends (origin-authed by the shell — it only forwards a decision from the real
@@ -33,6 +34,14 @@ interface PendingApproval { resolve: (d: ApprovalDecision) => void; descriptor: 
 
 /** Every background-run gate waiting on a human, keyed `${runId}:${seq}`. The one place a run's approvals live. */
 export const pendingApprovals = new Map<string, PendingApproval>();
+defineState({
+    id: "run.approvals", scope: "run", realm: "worker", audience: "model", lostOn: ["worker-eviction"],
+    describe: "The calls the run is waiting on you to approve: the tool, its arguments, the step, and since when.",
+    read: ({ runId }) => {
+        const open = [...pendingApprovals.values()].map((e) => e.descriptor).filter((d) => d.runId === runId);
+        return open.length ? open.map((d) => ({ tool: d.tool, arguments: d.arguments, step: d.step, seq: d.seq, since: d.ts })) : undefined;
+    },
+});
 
 // Resolve a pending gate by key — the SINGLE path both the origin-authed SET_APPROVAL message and the
 // external `__mlApprovals` channel funnel through, so a decision from either resolves the gate everywhere
@@ -60,12 +69,25 @@ type TabGrants = { sheets: Set<string>; pyCode: Set<string>; fetchOpen?: boolean
 /** What a tab has been allowed for the session, per grant kind — the ledger `grantsFor` reads and a resolved
  *  approval grows. A page never writes it: only a background run's own `resolve` does. */
 export const pendingGrants = new Map<number, TabGrants>();
+defineState({
+    id: "grants.call", scope: "run", realm: "worker", audience: "human", lostOn: ["worker-eviction"],
+    describe: "What the call now running on the run's tab was allowed when it was approved: sheets, Python code, server tools, fetches inside it.",
+    read: ({ tabId }) => {
+        const g = tabId == null ? undefined : pendingGrants.get(tabId);
+        return g && { sheets: [...g.sheets], pythonCode: g.pyCode.size, serverTools: [...g.serverTools], fetchOpen: !!g.fetchOpen };
+    },
+});
 
 // PERSISTENT per-tab consent for `ml.fetch` — the exact URLs the user has approved fetching this session
 // (per-URL, not per-origin: the human sees + approves each). Grown ONLY inside a background run's approval
 // `resolve` (unforgeable — a page can't add to it); read by the FETCH_URL handler to authorise an untrusted
 // page's fetch and by `fetchNeedsConsent` to auto-approve a repeat. Cleared when the tab closes.
 export const fetchConsent = new Map<number, Set<string>>();
+defineState({
+    id: "grants.fetch", scope: "tab", realm: "worker", audience: "human", lostOn: ["worker-eviction"],
+    describe: "URLs approved for fetching from the run's tab, which a repeat fetch does not ask about again until the tab closes.",
+    read: ({ tabId }) => { const s = tabId == null ? undefined : fetchConsent.get(tabId); return s?.size ? [...s] : undefined; },
+});
 
 /** Remember that this tab may fetch this exact URL for the rest of the session (the repeat-fetch auto-approve). */
 export const consentFetch = (tabId: number, url: string): void => {
@@ -79,6 +101,11 @@ export const consentFetch = (tabId: number, url: string): void => {
 // credentialed fetch ALWAYS re-prompts. `execOpen`/`fetchConsent` deliberately do NOT authorize credentialed
 // (it spends the user's cookies — too sensitive for the broad exec grant or a remembered consent).
 export const credFetchGrants = new Map<number, Set<string>>();
+defineState({
+    id: "grants.credentialedFetch", scope: "tab", realm: "worker", audience: "human", lostOn: ["worker-eviction"],
+    describe: "Approved fetches with your cookies, each usable once and not yet used.",
+    read: ({ tabId }) => { const s = tabId == null ? undefined : credFetchGrants.get(tabId); return s?.size ? [...s] : undefined; },
+});
 
 /** Mint the ONE-TIME grant for a credentialed (as-the-user) fetch of this URL, consumed by `takeCredFetch`. */
 export const grantCredFetch = (tabId: number, url: string): void => {

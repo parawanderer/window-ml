@@ -181,8 +181,8 @@ learned by shipping the wrong version first.
   `console.log` is never seen: `recordRunLog`/`noteRunMechanic`. `subsystem`/`kind` must be lowercase slugs or the
   record is SILENTLY dropped. It is not the housekeeping log. → run-log.md
 - **State in worker memory dies with the worker** (an MV3 eviction, ~30 s idle): open gates, in-memory grants and every
-  `@tool:` value (`tokensByRun`) go silently. A new store gets a row in `docs/dev/state.md` saying where it lives and what
-  loses it, and is not a fourth copy of something already there. → state.md
+  `@tool:` value (`tokensByRun`) go silently. A new store is declared with `defineState` or marked `// state: <kind>`
+  (`scripts/check-state.mjs`, ratcheted), and is not a fourth copy of something already there. → state.md
 - **Hub client.** A hub is trusted with nothing: act on the signature inside the seal, never `Envelope.sender`.
   `seal.ts` checks in a deliberate order, nonce last. → hub-client.md
 - **WHO THE ROOT IS:** a phone in a pocket, never a runtime (`extension-pairing.ts` refuses `createAccount`).
