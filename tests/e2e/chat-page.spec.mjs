@@ -545,6 +545,12 @@ test("the run state panel lists every declared member of the open run, what each
         const title = panel.locator('[data-member="session.title"]');
         await expect(title).not.toHaveClass(/empty/);
         await expect(title.locator(".rstate-aud")).toHaveCount(0);
+        // The page's members come from the run's tab. Finished, the run's answer has been handed over, but the page is
+        // still there to say so; closed, the panel says why the page's members are missing instead of dropping them.
+        await expect(panel.locator('[data-member="run.answer"]')).toHaveClass(/empty/);
+        await site1.close();
+        await expect(panel.locator(".hint")).toContainText("the run's tab is closed", { timeout: 10_000 });
+        await expect(panel.locator('[data-member="run.answer"]')).toHaveCount(0);
 
         // It is the OPEN run's: with nothing open there is nothing to describe.
         await chat.evaluate(() => { location.hash = "#/"; });
@@ -584,6 +590,14 @@ test("the run state panel shows the LIVE turn: what it was asked, the gate it wa
         await turn.getByRole("button", { name: /origins:/ }).click();
         await expect(turn).toContainText(new URL(site.url).origin);
         await expect(turn.locator(".rstate-aud")).toHaveText("you only");
+        // THE PAGE'S OWN STATE, asked of the tab the run is on: its answer set is held there while the turn runs (empty
+        // so far, but held), and what the page says is marked as the page's word. Its @pt/@box registries are the
+        // page's, shared by every run in the tab, and listed even with nothing minted.
+        const answer = panel.locator('[data-member="run.answer"]');
+        await expect(answer).not.toHaveClass(/empty/);
+        await expect(answer.locator(".rstate-page")).toHaveText("from the page");
+        await expect(panel.locator('[data-member="page.points"]')).toHaveClass(/empty/);
+        await expect(panel.locator('[data-member="page.boxes"]')).toHaveClass(/empty/);
 
         // Approved out of band: the turn finishes, and what lived only in it goes with it.
         const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
@@ -591,6 +605,7 @@ test("the run state panel shows the LIVE turn: what it was asked, the gate it wa
         await expect(panel.locator('[data-member="run.input"]')).toHaveClass(/empty/, { timeout: 10_000 });
         await expect(panel.locator('[data-member="grants.turn"]')).toHaveClass(/empty/);
         await expect(panel.locator('[data-member="run.approvals"]')).toHaveClass(/empty/);
+        await expect(answer).toHaveClass(/empty/, { timeout: 10_000 });
         expect(errors).toEqual([]);
     } finally { await ext.context.close(); await site.stop(); await fake.stop(); }
 });

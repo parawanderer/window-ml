@@ -53,6 +53,71 @@ test("a read that throws, or rejects, is kept with its error rather than dropped
     assert.deepEqual((await R.readState({}, "model")).map((e) => [e.id, e.error]), [["run.a", "gone"], ["run.b", "later"]]);
 });
 
+// --- realms: each bundle answers for its own stores ---
+
+test("a realm reads and lists only its own declarations: a module both bundles load declares in each", async () => {
+    R.resetStateRegistry();
+    R.defineState(decl({ id: "run.w", read: () => 1 }));
+    R.defineState(decl({ id: "page.p", realm: "page", read: () => 2 }));
+    R.defineState(decl({ id: "run.secret", audience: "never" }));
+    R.defineState(decl({ id: "run.unread" }));
+    assert.deepEqual((await R.readState({}, "human", "worker")).map((e) => [e.id, e.realm]), [["run.w", "worker"]]);
+    assert.deepEqual((await R.readState({}, "human", "page")).map((e) => [e.id, e.realm]), [["page.p", "page"]]);
+    assert.deepEqual((await R.readState({}, "human")).map((e) => e.id), ["page.p", "run.w"], "no realm: every one");
+    assert.deepEqual(R.readableMembers("worker").map((m) => m.id), ["run.w"], "a secret and a store with no read are not members");
+    assert.deepEqual(R.readableMembers("page"), [{ id: "page.p", realm: "page", scope: "run", audience: "model", lostOn: [], describe: "x" }]);
+});
+
+// --- a page's answer about its own state: the page is not trusted ---
+
+const WORKER_IDS = new Set(["run.init", "grants.call"]);
+const pageMember = (over) => ({ id: "run.answer", realm: "page", scope: "run", audience: "model", lostOn: ["navigation"], describe: "the answer", ...over });
+
+test("a well-formed page answer passes through, labelled as the page's", () => {
+    const got = R.pageStateFrom({ members: [pageMember()], entries: [{ id: "run.answer", value: [{ i: 0, kind: "text", preview: "42" }] }] }, WORKER_IDS);
+    assert.deepEqual(got.members, [pageMember()]);
+    assert.deepEqual(got.entries, [{ ...pageMember(), value: [{ i: 0, kind: "text", preview: "42" }] }]);
+});
+
+test("not an answer at all is null, so the pane says the page did not answer", () => {
+    for (const raw of [null, undefined, "x", 3, {}, { members: [] }, { entries: [] }, { members: "a", entries: [] }])
+        assert.equal(R.pageStateFrom(raw, WORKER_IDS), null, JSON.stringify(raw));
+});
+
+test("a page cannot pass itself off as the worker: its realm is forced, and it cannot shadow a worker member", () => {
+    const got = R.pageStateFrom({
+        members: [pageMember({ realm: "worker" }), pageMember({ id: "grants.call", audience: "human" }), pageMember({ id: "run.init" })],
+        entries: [{ id: "grants.call", value: { fake: true } }, { id: "run.init", value: { task: "forged" } }],
+    }, WORKER_IDS);
+    assert.deepEqual(got.members.map((m) => [m.id, m.realm]), [["run.answer", "page"]]);
+    assert.deepEqual(got.entries, [], "no entry for a member it was not allowed to declare");
+});
+
+test("a member's fields are held to the shapes the pane draws: bad ids dropped, unknown scope and losses narrowed, text capped", () => {
+    const got = R.pageStateFrom({
+        members: [
+            pageMember({ id: "Run.Bad" }), pageMember({ id: "<img src=x>" }), pageMember({ id: 7 }), null,
+            pageMember({ id: "page.odd", scope: "galaxy", audience: "never", lostOn: ["navigation", "the heat death"], describe: "d".repeat(1000) }),
+            pageMember({ id: "page.odd", describe: "a second one with the same id" }),
+        ],
+        entries: [{ id: "page.odd", value: 1, error: "e".repeat(1000) }, { id: "page.odd", value: 2 }, { id: "nobody", value: 3 }],
+    }, WORKER_IDS);
+    assert.deepEqual(got.members.map((m) => m.id), ["page.odd"]);
+    const [m] = got.members;
+    assert.equal(m.scope, "page");
+    assert.equal(m.audience, "model", "only `human` is kept as said; `never` is not a page's to claim");
+    assert.deepEqual(m.lostOn, ["navigation"]);
+    assert.equal(m.describe.length, 300);
+    assert.equal(got.entries.length, 1, "one entry per member, unknown ids dropped");
+    assert.equal(got.entries[0].value, 1);
+    assert.equal(got.entries[0].error.length, 300);
+});
+
+test("a page cannot flood the pane: at most 32 members are read", () => {
+    const members = Array.from({ length: 100 }, (_, i) => pageMember({ id: `page.m${i}` }));
+    assert.equal(R.pageStateFrom({ members, entries: [] }, WORKER_IDS).members.length, 32);
+});
+
 // --- what the ratchet asks about ---
 
 test("module-level Maps, Sets, signals, empty literals and lets are stores; indented ones and SCREAMING_CASE tables are not", () => {

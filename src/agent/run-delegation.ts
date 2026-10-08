@@ -29,6 +29,7 @@ import { evalReadonly } from "../readonly-exec";
 import { makeStreamSender } from "./stream-sender";
 import { formatReadonlyExec, readonlyRefused } from "./approval";
 import { subcallUsage } from "../bus";
+import { defineState, readState, readableMembers } from "../state-registry";
 
 /** The delegated vision-sub-call tokens `fn` spent, as a DELTA around the page-side meter (bus.ts). The
  *  background loop can't read the page's accumulator, so each delegated tool call reports its own spend and
@@ -69,6 +70,11 @@ export function runAnswer(run: PageRun, summary = ""): { elements: Node[]; media
 }
 
 const runs = new Map<string, PageRun>();
+defineState({
+    id: "run.answer", scope: "run", realm: "page", audience: "model", lostOn: ["navigation", "turn-end"],
+    describe: "What the run will hand you as its result (`ml.answer`): elements, text and `@tool:` values, in order. Held by the page while a turn runs; handed over when it ends.",
+    read: ({ runId }) => { const r = runId ? runs.get(runId) : undefined; return r ? answerSetFor(r.byName).dump() : undefined; },
+});
 
 /** Register an agent run's live toolset page-side (called by ml.agent's START_RUN shim). `model`/`driverSees`/
  *  `visionModel` feed the ToolContext a delegated tool's run(args, ctx) receives (the page loop builds its own
@@ -297,5 +303,16 @@ export function installToolDelegation(): void {
         const envelope = await runDelegatedTool(runId, name, args || {}, { renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt, verifyViewport: !!verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, onStream });
         sender?.flush();   // the last lines go out BEFORE the result, which supersedes the live view
         window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope }, "*");
+    });
+    // THE STATE INSPECTOR'S READ of this page's realm (sw-run-state.ts): content.ts relays RUN_STATE_IN_PAGE as
+    // PAGE_STATE_READ, and the members this bundle declares answer for the run. Only the page's own: the worker reads
+    // its own registry, and a module both bundles load (util.ts) declares in each.
+    window.addEventListener("message", async (event: MessageEvent) => {
+        if (event.source !== window || !event.data || event.data.type !== "PAGE_STATE_READ") return;
+        const { callId, runId } = event.data as { callId?: string; runId?: string };
+        if (typeof callId !== "string" || typeof runId !== "string") return;
+        const entries = await readState({ runId }, "human", "page");
+        try { window.postMessage({ type: "PAGE_STATE_RESULT", callId, members: readableMembers("page"), entries }, "*"); }
+        catch { window.postMessage({ type: "PAGE_STATE_RESULT", callId, members: readableMembers("page"), entries: [] }, "*"); }
     });
 }

@@ -492,4 +492,8 @@ export const retabRuns = (from: number, to: number): number => {
 };
 
 /** The key a state read for one run needs: the run, and the tab it is on (the grants are filed by tab). */
-export const stateKeyFor = (runId: string): { runId: string; tabId?: number } => ({ runId, tabId: bgRuns.get(runId)?.tabId });
+export const stateKeyFor = (runId: string): { runId: string; tabId?: number } => {
+    // The tab HOSTING it now first: `bgRuns` holds a run only once a turn has settled, so a first turn has no entry yet.
+    for (const [tabId, ids] of activeRuns) if (ids.has(runId)) return { runId, tabId };
+    return { runId, tabId: bgRuns.get(runId)?.tabId };
+};

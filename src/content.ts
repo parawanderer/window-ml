@@ -19,6 +19,8 @@ const INJECTED_ABSENT_GRACE_MS = 4_000;
 // Backstop bound once injected IS alive but a tool doesn't answer: generous — longer than any realistic tool
 // (a long `wait`, a heavy `python_exec`) — so it only ever catches a genuine hang, not a slow-but-live tool.
 const TOOL_RELAY_TIMEOUT_MS = 120_000;
+/** How long the content script waits for the page to answer a state read before answering the worker with nothing. */
+const PAGE_STATE_RELAY_MS = 1200;
 const CSP_BLOCK_MSG = (name: string): string => `Error: this page blocks the extension's page script, so "${name}" can't run here. Its Content-Security-Policy disables injected scripts — raw.githubusercontent.com does this (it serves files with a "sandbox" CSP). Better: don't navigate here at all — if you just need this URL's CONTENT, navigate BACK to a working page and use \`fetch_url\` (or \`ml.fetch(url)\`) to read it directly (a background GET, no injected script needed). Otherwise open a normal page (e.g. the github.com "…/blob/…" view, not the raw host).`;
 /** Why a run cannot start on a page whose CSP keeps the extension's page script from running. */
 const CSP_START_MSG = "this page blocks the extension's page script (its Content-Security-Policy disables injected scripts), so an agent cannot run on it. Open an ordinary page and start the run there.";
@@ -135,6 +137,22 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
             injectedAlive ? TOOL_RELAY_TIMEOUT_MS : INJECTED_ABSENT_GRACE_MS);
         window.addEventListener("message", onAdopted);
         window.postMessage({ type: "ADOPT_RUN", runId, rebuild, reply }, "*");
+        return true;
+    }
+    // The state inspector asking what this page holds for a run (sw-run-state.ts). Short, and never retried: the
+    // worker asks again in two seconds, and a page that cannot answer is reported as such rather than waited on.
+    if (message && message.type === "RUN_STATE_IN_PAGE") {
+        const { runId } = (message.payload || {}) as { runId?: string };
+        if (injectedBlocked || typeof runId !== "string") { sendResponse(null); return true; }
+        const callId = Math.random().toString(36).slice(2);
+        const finish = (r: unknown) => { clearTimeout(timer); window.removeEventListener("message", onState); sendResponse(r); };
+        const onState = (event: MessageEvent) => {
+            if (event.source !== window || !event.data || event.data.type !== "PAGE_STATE_RESULT" || event.data.callId !== callId) return;
+            finish({ members: event.data.members, entries: event.data.entries });
+        };
+        const timer = setTimeout(() => finish(null), PAGE_STATE_RELAY_MS);
+        window.addEventListener("message", onState);
+        window.postMessage({ type: "PAGE_STATE_READ", callId, runId }, "*");
         return true;
     }
     if (!message || message.type !== "RUN_TOOL_IN_PAGE") return undefined;

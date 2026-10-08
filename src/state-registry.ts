@@ -44,6 +44,7 @@ export interface StateDecl {
 /** One member of a snapshot: the declaration's facts and what its read returned. */
 export interface StateEntry {
     id: string;
+    realm: StateRealm;
     scope: StateScope;
     audience: Exclude<StateAudience, "never">;
     lostOn: StateLoss[];
@@ -75,12 +76,15 @@ export const declaredState = (): StateDecl[] => [...registry.values()].sort((a, 
  * for this run); one whose read throws is kept with its error.
  * @param key the run (or tab) to read for
  * @param audience `model` for what the model may see; `human` for everything but secrets
+ * @param realm only the stores this realm holds. A module shared between bundles (util.ts) declares in each, and only
+ *   the realm that actually holds the store has anything to say about it.
  */
-export async function readState(key: StateKey, audience: "model" | "human"): Promise<StateEntry[]> {
+export async function readState(key: StateKey, audience: "model" | "human", realm?: StateRealm): Promise<StateEntry[]> {
     const out: StateEntry[] = [];
     for (const d of declaredState()) {
         if (!d.read || d.audience === "never" || (audience === "model" && d.audience !== "model")) continue;
-        const base = { id: d.id, scope: d.scope, audience: d.audience, lostOn: [...d.lostOn], describe: d.describe };
+        if (realm && d.realm !== realm) continue;
+        const base = { id: d.id, realm: d.realm, scope: d.scope, audience: d.audience, lostOn: [...d.lostOn], describe: d.describe };
         try {
             const value = await d.read(key);
             if (value !== undefined) out.push({ ...base, value: structuredClone(value) });
@@ -91,5 +95,60 @@ export async function readState(key: StateKey, audience: "model" | "human"): Pro
     return out;
 }
 
+/** A declared member a person may see, whether or not it holds anything for a run, so a reader can show an empty one
+ *  as empty rather than leave it out. */
+export interface StateMember {
+    id: string;
+    realm: StateRealm;
+    scope: StateScope;
+    audience: "model" | "human";
+    lostOn: StateLoss[];
+    describe: string;
+}
+
+/** Every readable member one realm declares, in id order. */
+export const readableMembers = (realm: StateRealm): StateMember[] => declaredState()
+    .filter((d) => d.read && d.audience !== "never" && d.realm === realm)
+    .map((d) => ({ id: d.id, realm: d.realm, scope: d.scope, audience: d.audience as "model" | "human", lostOn: [...d.lostOn], describe: d.describe }));
+
 /** Forget every declaration. Tests only: a module's declarations run once per load. */
 export function resetStateRegistry(): void { registry.clear(); }
+
+const MEMBER_ID = /^[a-z][\w.-]{0,63}$/;
+
+const SCOPES: readonly StateScope[] = ["run", "session", "tab", "page", "browser"];
+
+const LOSSES: readonly StateLoss[] = ["worker-eviction", "navigation", "offscreen-close", "browser-restart", "turn-end"];
+
+/**
+ * A page's answer to RUN_STATE_IN_PAGE, made safe to show. THE PAGE IS NOT TRUSTED: a hostile page answers this itself,
+ * so whatever it says is labelled as the page's (realm `page`, forced here), a member id must be a plain dotted name
+ * and may not shadow one of the worker's, and a description is capped. Values pass as they came: they reached the
+ * worker as structured-clone data, and the pane draws them as a JSON tree, never as markup.
+ * @param raw the page's reply
+ * @param taken the worker's own member ids
+ * @returns the page's members and entries, or null when the reply is not one
+ */
+export function pageStateFrom(raw: unknown, taken: ReadonlySet<string>): { members: StateMember[]; entries: StateEntry[] } | null {
+    const r = raw as { members?: unknown; entries?: unknown } | null;
+    if (!r || !Array.isArray(r.members) || !Array.isArray(r.entries)) return null;
+    const members: StateMember[] = [];
+    for (const m of r.members.slice(0, 32) as Partial<StateMember>[]) {
+        if (!m || typeof m.id !== "string" || !MEMBER_ID.test(m.id) || taken.has(m.id) || members.some((x) => x.id === m.id)) continue;
+        members.push({
+            id: m.id, realm: "page",
+            scope: SCOPES.includes(m.scope as StateScope) ? m.scope as StateScope : "page",
+            audience: m.audience === "human" ? "human" : "model",
+            lostOn: Array.isArray(m.lostOn) ? m.lostOn.filter((l): l is StateLoss => LOSSES.includes(l as StateLoss)) : ["navigation"],
+            describe: typeof m.describe === "string" ? m.describe.slice(0, 300) : "",
+        });
+    }
+    const byId = new Map(members.map((m) => [m.id, m]));
+    const entries: StateEntry[] = [];
+    for (const e of r.entries as Partial<StateEntry>[]) {
+        const m = e && typeof e.id === "string" ? byId.get(e.id) : undefined;
+        if (!m || entries.some((x) => x.id === m.id)) continue;
+        entries.push({ ...m, value: e.value, ...(typeof e.error === "string" ? { error: e.error.slice(0, 300) } : {}) });
+    }
+    return { members, entries };
+}
