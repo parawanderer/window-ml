@@ -111,7 +111,7 @@ real `filename` so the frame is identifiable as the user's. The user's frame is 
 anything in `<exec>` is the prelude. Five tests in `tests/python.test.mjs` against real CPython, because an
 off-by-N that is right for one shape of script is not right for the next.
 
-**Python is PRETTY-PRINTED for the human and never for the model (`src/py-format.ts`).** A model writes
+**Python is PRETTY-PRINTED for the human and never for the model (`src/python/py-format.ts`).** A model writes
 dense one-liners on purpose — the right trade for the thing paying per token, the wrong one for the person
 reading the step — so the RENDERED view reflows and the raw view, the export and the model's context all keep
 the original. Two invariants make that safe rather than a second source of truth: **tokens are never

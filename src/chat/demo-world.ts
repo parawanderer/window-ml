@@ -71,7 +71,7 @@ export function demoHost(now = Date.now(), opts: { latencyMs?: number } = {}): F
             thought: "Survey the result cards first, to see what a fare row holds.",
             arguments: { js: EXEC_JS },
             result: "[{\"price\":\"€118\",\"airline\":\"TP\"},{\"price\":\"€96\",\"airline\":\"HV\"},{\"price\":\"€131\",\"airline\":\"KL\"}]",
-            // The render slots the real tools fill (`src/tools.ts`, `src/python-tool.ts`). Without them a step
+            // The render slots the real tools fill (`src/tools.ts`, `src/python/python-tool.ts`). Without them a step
             // falls back to its raw argument tree, which is a JSON string with `\n` in it where a reader expects
             // code — the fallback working exactly as designed, over a fixture that did not match a real run.
             renderIn: { type: "code", text: EXEC_JS, lang: "javascript", format: true },

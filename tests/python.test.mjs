@@ -11,7 +11,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 // Static (not conditional-require) — python-runtime.ts is chrome-free and side-effect-free,
 // so importing it costs nothing when the wheels are absent; `skip` still gates every test.
-import { wrapUserCode, harden, unharden, injectStoredTable, takeIpc } from "../src/python-runtime.ts";
+import { wrapUserCode, harden, unharden, injectStoredTable, takeIpc } from "../src/python/python-runtime.ts";
 // For the sympy→UI INTEGRATION test: the sidebar app (jsdom) to render the real WASM output. CommonJS helper.
 const { loadSidebarWorld, closeSidebarWorlds } = createRequire(import.meta.url)("./helpers");
 after(closeSidebarWorlds);   // close jsdom windows so their timers don't keep the runner alive (the leak gotcha)
@@ -30,7 +30,7 @@ before(async () => {
     // pyarrow too, when its wheel was fetched, and PREPARED before any test runs pandas — the worker's own order.
     const withArrow = fs.readdirSync(PYODIDE_DIR).some((f) => f.startsWith("pyarrow-"));
     await py.loadPackage(["numpy", "pillow", "pandas", "beautifulsoup4", "html5lib", "sympy", ...(withArrow ? ["pyarrow"] : [])]);
-    if (withArrow) py.runPython((await import("../src/python-env.ts")).PY_STARTUP_PREPARE);
+    if (withArrow) py.runPython((await import("../src/python/python-env.ts")).PY_STARTUP_PREPARE);
 }, { timeout: 180000 });
 
 // Mirror offscreen.run(): set the injected globals, (optionally harden), run the wrapped script,
@@ -492,7 +492,7 @@ const hasJedi = hasPyodide && fs.readdirSync(PYODIDE_DIR).some((f) => f.startsWi
 const skipJedi = skip || (hasJedi ? false : "no jedi wheel in dist/pyodide — re-run `npm run fetch-pyodide`");
 let completerLoaded = false;
 async function complete(code, namespace) {
-    const { COMPLETE_HELPER, completeIn } = await import("../src/python-runtime.ts");
+    const { COMPLETE_HELPER, completeIn } = await import("../src/python/python-runtime.ts");
     if (!completerLoaded) { await py.loadPackage(["jedi"]); py.runPython(COMPLETE_HELPER); completerLoaded = true; }
     const lines = code.split("\n");
     if (namespace) return JSON.parse(py.runPython(`_ml_complete(${JSON.stringify(code)}, ${lines.length}, ${lines.at(-1).length}, ${namespace})`));
@@ -528,7 +528,7 @@ test("completion: the sandbox is hardened only for the call, and restored after"
 });
 
 test("completion: a script full of quotes cannot break out of the call", { skip: skipJedi }, async () => {
-    const { completeIn } = await import("../src/python-runtime.ts");
+    const { completeIn } = await import("../src/python/python-runtime.ts");
     await complete("x = 1");   // loads Jedi and the helper if this runs alone
     // A payload that DOES run when the script is spliced into the call's source — its triple quote closes the
     // literal, the call completes, the payload executes, and a fresh literal soaks up the template's closing
@@ -561,7 +561,7 @@ test("completion: a kind Jedi could not resolve is reported as UNKNOWN, never as
 // ── THE BENCH'S KEPT STATE (`wrapUserCode(..., persist = true)`) ─────────────────────────────────────────
 // Driven the way the worker drives it: the shipped wrapper, run with a SEPARATE dict as its globals.
 async function benchRun(code, ns, { hardened = true } = {}) {
-    const { wrapUserCode } = await import("../src/python-runtime.ts");
+    const { wrapUserCode } = await import("../src/python/python-runtime.ts");
     await py.runPythonAsync(wrapUserCode(code, hardened, true), { globals: ns });
     const err = ns.get("_err");
     if (err) return { error: String(err) };
@@ -616,7 +616,7 @@ test("bench: one namespace cannot see another's, and the model's namespace sees 
 test("completion: the prelude's names complete with NOTHING kept — no import, no namespace", { skip: skipJedi }, async () => {
     // Before a bench's first run, after a reset, after a restart: no namespace exists, but the prelude still
     // binds these for the run. Static analysis of the script alone offered none of them.
-    const { completeIn } = await import("../src/python-runtime.ts");
+    const { completeIn } = await import("../src/python/python-runtime.ts");
     await complete("x = 1");   // loads Jedi and the helper if this runs alone
     const at = (code) => completeIn(py, code, 1, code.length).map((c) => c.name);
     assert.ok(at("np.ara").includes("arange"));
@@ -631,7 +631,7 @@ test("completion: the prelude's names complete with NOTHING kept — no import, 
 test("completion: kept state does not cost the prelude's stubs — a call through `pd` is still typed", { skip: skipJedi }, async () => {
     // A live `pd` from the namespace has no stubs for a call's result; the prelude read in front of the script
     // does, so both halves answer: the stubs for `pd.read_csv(...)`, the live object for `grid`.
-    const { completeIn } = await import("../src/python-runtime.ts");
+    const { completeIn } = await import("../src/python/python-runtime.ts");
     await complete("x = 1");
     const ns = freshNs();
     await benchRun("grid = np.arange(24).reshape(4, 6)", ns);
@@ -641,7 +641,7 @@ test("completion: kept state does not cost the prelude's stubs — a call throug
 });
 
 test("bench: completion from a LIVE namespace types what static analysis cannot (grid.)", { skip: skipJedi }, async () => {
-    const { completeIn } = await import("../src/python-runtime.ts");
+    const { completeIn } = await import("../src/python/python-runtime.ts");
     await complete("x = 1");   // loads Jedi and the helper if this runs alone
     const ns = freshNs();
     await benchRun("grid = np.arange(24).reshape(4, 6)", ns);

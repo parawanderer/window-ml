@@ -9,7 +9,7 @@ import { makeBackgroundTaskPromise } from "./bridge";
 import type { TableValue, TableSource, MlApi, TablePreview, ShotBox } from "./contract";
 import { googleSheetCsvUrl, nonEmptyTables, googleSheetId, elPath, queryAll, isElement, extractTable } from "./dom";
 import { mlFetchCache } from "./ml-fetch-cache";
-import { pyVarNameError } from "./python-env";
+import { pyVarNameError } from "./python/python-env";
 import { isTable } from "./table-brand";
 import { tableFromDelimited, castTableColumns } from "./table-data";
 

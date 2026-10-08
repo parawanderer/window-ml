@@ -31,7 +31,7 @@ import { FeedbackBlock, ReusedBlock } from "./answer-render";
 import { foldStreaks, StepStreak } from "./step-streak";
 import { CALL_TITLE } from "../tool-params";
 import { justArrived } from "./just-arrived";
-import { deepestUserLine } from "../py-format";
+import { deepestUserLine } from "../python/py-format";
 import { JsonNode, type JsonSchemaNode } from "./json-tree";
 export { JsonNode, JtKey, jtPreview, type JsonSchemaNode } from "./json-tree";
 import { RenderPanel, OutputCell, SeenSplit, RanFor, RunningFor, inLineMap, type CodeCtx } from "./render-panel";

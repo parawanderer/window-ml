@@ -3,7 +3,7 @@
 // offered to the model.
 import { test } from "node:test";
 import assert from "node:assert";
-import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_PACKAGE_LABELS, PY_STARTUP_PREPARE } from "../src/python-env.ts";
+import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_PACKAGE_LABELS, PY_STARTUP_PREPARE } from "../src/python/python-env.ts";
 
 test("pyarrow loads at start with pandas, is not bench-only tooling, and is offered to the model", () => {
     assert.ok(PY_PACKAGE_LOADS.includes("pyarrow"));

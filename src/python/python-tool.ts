@@ -1,17 +1,17 @@
 // python-tool.ts — the `python_exec` agent tool: its schema and description, and how a run's result becomes the
 // model-facing text and the sidebar's python-in / python-out descriptors. Moved out of builtin-tools.ts; the sandbox
 // itself is `ml.pythonExec` (injected.ts) → the offscreen document → python-worker.ts.
-import { type MlApi } from "./contract";
-import { outputCapPrecheck, resolveOutputCap } from "./contract/contract-pointers";
-import { UI_OUT_CAP } from "./contract/contract-chat";
-import { type MlTool, type ToolResult } from "./contract/contract-agent";
-import { type RenderDescriptor } from "./contract/contract-render";
-import { googleSheetCsvUrl, nonEmptyTables, clipOut, clipValue } from "./dom";
-import type { Box } from "./locate";
+import { type MlApi } from "../contract";
+import { outputCapPrecheck, resolveOutputCap } from "../contract/contract-pointers";
+import { UI_OUT_CAP } from "../contract/contract-chat";
+import { type MlTool, type ToolResult } from "../contract/contract-agent";
+import { type RenderDescriptor } from "../contract/contract-render";
+import { googleSheetCsvUrl, nonEmptyTables, clipOut, clipValue } from "../dom";
+import type { Box } from "../locate";
 import { pyValueParts } from "./py-render";
 import { PY_PACKAGE_LABELS } from "./python-env";
-import { outputCapParams, retryParams } from "./tool-params";
-import { POINT_RE, BOX_RE, projectShotPoint, mintPoint, projectShotBox, mintBox } from "./util";
+import { outputCapParams, retryParams } from "../tool-params";
+import { POINT_RE, BOX_RE, projectShotPoint, mintPoint, projectShotBox, mintBox } from "../util";
 
 // --- python_exec: a sandboxed Python (Pyodide/WASM) tool for pixel/array work ---
 // The value the script returns is interpreted into the SAME coordinate currency as
@@ -106,7 +106,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             const mode = args.cast === "pt" ? "pt" as const : args.cast === "box" ? "box" as const : "script" as const;
             return { type: "python-in", mode, code };
         },
-        run: async ({ code, image, cast, mode, margin, tableRaw, tables, maxChars, maxCharsReason }: { code: string; image?: string; cast?: "pt" | "box"; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Record<string, string>; maxChars?: number; maxCharsReason?: string }, ctx?: import("./contract").ToolContext): Promise<string | ToolResult> => {
+        run: async ({ code, image, cast, mode, margin, tableRaw, tables, maxChars, maxCharsReason }: { code: string; image?: string; cast?: "pt" | "box"; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Record<string, string>; maxChars?: number; maxCharsReason?: string }, ctx?: import("../contract").ToolContext): Promise<string | ToolResult> => {
             // Effective per-slot output cap (default: OUTPUT_CAP.python_exec). A raise past it is only reachable AFTER the human
             // gate (autoApprovePython refuses to sandbox-approve an escalated call), clamped to the ceiling.
             const { cap: PY_OUT_MAX, clamped: capClamped } = resolveOutputCap("python_exec", maxChars, maxCharsReason);

@@ -20,7 +20,7 @@ import type { MlTool, ToolResult } from "./contract/contract-agent";
 import type { VisionMemory, RenderDescriptor } from "./contract/contract-render";
 import { navTarget, errText, clipOut, askReaderNumCtx, jsonShape } from "./dom";
 import { htmlToMarkdown } from "./html-to-md";
-import { buildPythonTool } from "./python-tool";
+import { buildPythonTool } from "./python/python-tool";
 import { tableShape, asTable, tableFromDelimited, tablePreview, RENDER_TABLE_ROWS } from "./table-data";
 import { PIPE_REF, runPipe, pipeHint } from "./text-pipe";
 import { toolNameError } from "./token-id";

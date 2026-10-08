@@ -16,7 +16,7 @@ import type { LoadedModel, ServerTool } from "../contract/contract-server";
 import { DEFAULT_CONFIG, modelFilterAllows, protoMode } from "../contract/contract-config";
 import { DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX } from "../contract/contract-render";
 import { detectGroundingModel, generatesText, producesEmbeddings } from "../contract/contract-server";
-import { PY_PACKAGES } from "../python-env";
+import { PY_PACKAGES } from "../python/python-env";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes,
     MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, CODE_THEME_KEY, CODE_THEME_VSCODE_KEY, CODE_THEME_UI_KEY, codeTheme, codeThemeCustom, codeThemeUi, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, modelKinds, embedDims, view } from "./store";

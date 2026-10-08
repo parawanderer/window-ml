@@ -9,7 +9,7 @@
 // MAP says where each original line went (so a traceback still points somewhere true).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pyFormat, tokenizePy, deepestUserLine, lineChanged } from "../src/py-format.ts";
+import { pyFormat, tokenizePy, deepestUserLine, lineChanged } from "../src/python/py-format.ts";
 
 /** Every token, in order, with all whitespace gone. Two sources with the same signature are the same code. */
 const sig = (src) => (tokenizePy(src) || []).filter((t) => t.kind !== "space" && t.kind !== "nl").map((t) => t.text).join(" ");
