@@ -1622,7 +1622,7 @@ test("a runtime throw reports the LINE it happened on — an interpreter has no 
 // records / head, branded so the dialect recognises it by identity. That is a new receiver kind with four new
 // methods, so it gets the full AGENTS.md treatment: the intended use, the escapes, the halting/cost argument,
 // and what a failed script leaves behind.
-import { asTable, NotATable } from "../src/table-data.ts";
+import { asTable, NotATable } from "../src/table/table-data.ts";
 
 const FACADE_DATA = () => ({
     columns: ["id", "name", "qty"],

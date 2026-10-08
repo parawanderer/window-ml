@@ -1,7 +1,7 @@
 // policy.ts — what a read-only survey may read, call, build and write: the denied properties, the per-kind method
 // allowlist, the callable roots and safe constructors, and the `ml` facade the dialect sees.
 
-import { isTable } from "../table-brand";   // a table facade is recognised by BRAND, and the brand module is itself dependency-free
+import { isTable } from "../table/table-brand";   // a table facade is recognised by BRAND, and the brand module is itself dependency-free
 import { Denied, riskyRegex, PIPE_CHARS_PER_STEP, MAX_STRING, NotInDialect } from "./limits";
 
 // Property names that can walk back to the realm (window/Function/…). Denied on

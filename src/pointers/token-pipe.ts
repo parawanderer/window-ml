@@ -14,7 +14,7 @@
 
 import { runPipe, splitStages } from "./text-pipe";
 import type { TokenKind } from "../contract/contract-render";
-import { type TableLike } from "../table-data";
+import { type TableLike } from "../table/table-data";
 export type { DerefRead, DerefMeta } from "../contract/contract-pointers";
 import { isTokenShape } from "./token-id";
 import { editDistance, lexicalSimilarity, type LexicalMetric } from "./label-match";

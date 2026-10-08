@@ -4154,7 +4154,7 @@ test("debug ring: streamed deltas are coalesced per step, so a long streamed run
 test("FETCH_URL: a table too large for its preview is stored whole and named by valueKey, and a small one stores nothing", async () => {
     const { IDBFactory } = await import("fake-indexeddb");
     const { ValueStore } = await import("../src/pointers/value-store.ts");
-    const { MAX_TABLE_ROWS } = await import("../src/table-data.ts");
+    const { MAX_TABLE_ROWS } = await import("../src/table/table-data.ts");
     const idb = new IDBFactory();
     const big = ["id,v", ...Array.from({ length: MAX_TABLE_ROWS + 1 }, (_, i) => `${i},${i}`)].join("\n");
     const bg = loadBackground({ config: baseConfig(), indexedDB: idb, onFetch: (call) => fetchResponse(call.url.includes("big") ? big : "id,v\n1,2\n", { contentType: "text/csv", url: call.url }) });
@@ -4171,7 +4171,7 @@ test("FETCH_URL: a table too large for its preview is stored whole and named by 
 test("FETCH_URL: a body the redirect guard withholds is never stored", async () => {
     const { IDBFactory } = await import("fake-indexeddb");
     const { ValueStore } = await import("../src/pointers/value-store.ts");
-    const { MAX_TABLE_ROWS } = await import("../src/table-data.ts");
+    const { MAX_TABLE_ROWS } = await import("../src/table/table-data.ts");
     const idb = new IDBFactory();
     const big = ["id", ...Array.from({ length: MAX_TABLE_ROWS + 1 }, (_, i) => String(i))].join("\n");
     const bg = loadBackground({ config: baseConfig(), indexedDB: idb, onFetch: () => fetchResponse(big, { contentType: "text/csv", url: "https://elsewhere.example/big.csv" }) });
@@ -4182,7 +4182,7 @@ test("FETCH_URL: a body the redirect guard withholds is never stored", async () 
 
 test("FETCH_URL: the value store's budget is the setting, and each eviction or refusal is in the housekeeping log", async () => {
     const { IDBFactory } = await import("fake-indexeddb");
-    const { MAX_TABLE_ROWS } = await import("../src/table-data.ts");
+    const { MAX_TABLE_ROWS } = await import("../src/table/table-data.ts");
     // ~1.3 MB per body: two fit a 3 MB budget only by evicting the first; nothing fits 1 MB.
     const body = ["id", ...Array.from({ length: MAX_TABLE_ROWS + 1 }, (_, i) => String(1_000_000 + i))].join("\n");
     const from = { tab: { id: 1, url: "https://api.example/" }, url: "https://api.example/" };

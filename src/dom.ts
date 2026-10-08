@@ -2,7 +2,7 @@
 // jQuery-tolerant query engine, skeleton descriptions, text normalization. No
 // dependency on injected's closure state; only args + browser globals.
 import { roleOf, accessibleName } from "./a11y";   // for the `role=` / `label=` selector engines (a11y has no dom import → no cycle)
-import { looksCsv } from "./table-data";           // the delimiter sniff behind the "csv" classification (table-data has no dom import → no cycle)
+import { looksCsv } from "./table/table-data";           // the delimiter sniff behind the "csv" classification (table-data has no dom import → no cycle)
 import type { ElementContext } from "./contract/contract-run";
 
 /**

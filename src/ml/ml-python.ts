@@ -10,8 +10,8 @@ import type { TableValue, TableSource, MlApi, TablePreview, ShotBox } from "../c
 import { googleSheetCsvUrl, nonEmptyTables, googleSheetId, elPath, queryAll, isElement, extractTable } from "../dom";
 import { mlFetchCache } from "./ml-fetch-cache";
 import { pyVarNameError } from "../python/python-env";
-import { isTable } from "../table-brand";
-import { tableFromDelimited, castTableColumns } from "../table-data";
+import { isTable } from "../table/table-brand";
+import { tableFromDelimited, castTableColumns } from "../table/table-data";
 
 /** Is this a table handed over BY VALUE (see {@link TableValue})? The `Table` facade throws on keys it does not have, so
  *  it is recognised by its brand before anything probes it. */

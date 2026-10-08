@@ -6,7 +6,7 @@
 import type { MlApi } from "../contract";
 import type { NeutralMessage } from "../contract/contract-chat";
 import type { AgentOptions, MlAgentHandle, AgentResult, AgentTranscriptEntry } from "../contract/contract-agent";
-import type { TableLike } from "../table-data";
+import type { TableLike } from "../table/table-data";
 import { navTarget } from "../dom";
 import { emitDebug } from "../bus";
 import { makeBackgroundTaskPromise } from "../bridge";

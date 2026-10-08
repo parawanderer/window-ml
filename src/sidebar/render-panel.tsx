@@ -16,7 +16,7 @@ import { elementReference } from "../dom";
 import { pyFormat, lineChanged } from "../python/py-format";
 import { lineMapBetween } from "../line-map";
 import { services, type StoredTableRead } from "./services";
-import { summarizeColumns, summarizeRows, type ColumnSummary } from "../table-summary";
+import { summarizeColumns, summarizeRows, type ColumnSummary } from "../table/table-summary";
 import { rev, view, sessionMap, outMaxH, showOutTimes, focusMode, lsSet, BENCH_CODE_KEY, surface, codeLineNumbers, openBench, benchTimes } from "./store";
 import { poolColor } from "./palette";
 import { timeForOffset, alignedMarks, elideHour, hhmmss, hhmmssms, fmtDelta, fmtDur, hourNow, armHourTick, dayBreaks } from "./timestamps";

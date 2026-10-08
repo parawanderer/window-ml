@@ -2,7 +2,7 @@
 // run it: `runAsync` awaits each yield, `runSync` serves the callbacks a host method invokes synchronously.
 
 import type { CurrentSnapshot } from "../current-context";
-import { isTable, isStoredTable } from "../table-brand";   // a table facade is recognised by BRAND, and the brand module is itself dependency-free
+import { isTable, isStoredTable } from "../table/table-brand";   // a table facade is recognised by BRAND, and the brand module is itself dependency-free
 import { NotInDialect, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, MAX_STORED_CELLS, STEP_BUDGET, NeedsPage, MAX_CALL_DEPTH } from "./limits";
 import { Node } from "./parser";
 import { isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS } from "./policy";

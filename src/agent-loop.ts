@@ -18,7 +18,7 @@ import type { RenderDescriptor, ToolFeedback, TokenRender } from "./contract/con
 import type { SubcallUsage } from "./contract/contract-debug";
 import type { PromptOrigin } from "./contract/contract-run";
 import { promptSurfaceNote } from "./prompt-surface";
-import { tableOf } from "./table-data";
+import { tableOf } from "./table/table-data";
 import { runStats, fmtTokPerSec, UI_OUT_CAP } from "./contract/contract-chat";
 import { formatBytes } from "./resource/resource-model";
 import { type Capacity } from "./resource/resource-capacity";
