@@ -1898,6 +1898,7 @@ test("START_RUN (stream:true): a read-only try streams live, and a REFUSED one i
     // The background-hosted try: the page evaluates the survey and posts each console line back (PAGE_TOOL_STREAM),
     // which reaches the loop's fan through delegateStreams. Refused part way, its lines are from a run that did not
     // happen: the loop empties the step's output, and a chunk still in flight when the try returns finds no sink.
+    // The script reads the DOM, so the worker defers it to the page (a script out of dialect never leaves the worker).
     let call = 0;
     const bg = loadBackground({
         config: baseConfig(),
@@ -1921,7 +1922,7 @@ test("START_RUN (stream:true): a read-only try streams live, and a REFUSED one i
         onFetch: () => {
             call++;
             if (call === 1) return streamResponse([
-                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"exec","arguments":"{\\"js\\":\\"x\\"}"}}]}}]}\n',
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"exec","arguments":"{\\"js\\":\\"document.title\\"}"}}]}}]}\n',
                 'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n', 'data: [DONE]\n',
             ]);
             return streamResponse(['data: {"choices":[{"delta":{"content":"done"}}]}\n', 'data: [DONE]\n']);

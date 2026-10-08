@@ -361,3 +361,67 @@ test("the debug dump a page asks for leaves out the events of a run the worker b
     assert.ok(Array.isArray(dump.data.debug));
     assert.ok(!JSON.stringify(dump.data.debug).includes("SECRET FROM THE RUN"));
 });
+
+// --- where a read-only survey of a worker-built run is evaluated (slice 2 part 1b) ---
+
+/** A worker-built run whose model calls `exec` once per script in `scripts`, then answers; the page answers a
+ *  read-only attempt with `page(js)`. Returns what reached the page and the run's execution log. */
+async function surveyRun(scripts, page = () => ({ readonly: true, result: "value: \"Site\"" })) {
+    let n = 0;
+    const bg = loadBackground({
+        config: { ...config, autoApproveReadonly: true }, openTabs: [SITE],
+        onFetch: (call) => {
+            if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            const js = scripts[n++];
+            return js === undefined
+                ? jsonResponse({ choices: [{ message: { content: "done" } }] })
+                : jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: `c${n}`, type: "function", function: { name: "exec", arguments: JSON.stringify({ js }) } }] } }] });
+        },
+        onTabMessage: async (_t, msg) => {
+            if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
+            if (msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish) return { result: "" };
+            if (msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.readonlyTry) return page(msg.payload.args.js);
+            if (msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.renderOnly) return {};
+            return undefined;
+        },
+    });
+    const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "survey", surface: "hud" });
+    for (let i = 0; i < 300 && n <= scripts.length; i++) await new Promise((r) => setTimeout(r, 0));
+    await flush(30);
+    const toPage = bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE" && m.payload.name === "exec").map(([, m]) => m.payload);
+    const results = bg.calls.filter((c) => c.url.includes("/chat/completions")).at(-1).body.messages.filter((m) => m.role === "tool").map((m) => m.content);
+    const log = (await bg.context.__mlRunLog.all()).filter((r) => r.run === hash && r.subsystem === "routing");
+    return { bg, toPage, results, log };
+}
+
+test("a survey that reads only the run and the box is answered in the worker, and never enters the page", T, async () => {
+    const { toPage, results, log } = await surveyRun(["(await ml.config()).model", "ml.range(3).map(i => i * 2)"]);
+    assert.deepEqual(toPage, [], "neither script was sent to the page, not even to draw its In");
+    assert.match(results[0], /default-model/);
+    assert.match(results[1], /\[0,2,4\]/);
+    assert.deepEqual(log.map((r) => [r.kind, r.reason]), [["readonly-worker", "no-page-reads"], ["readonly-worker", "no-page-reads"]]);
+});
+
+test("a survey of the DOM goes to the page, and the log says why", T, async () => {
+    const { toPage, results, log } = await surveyRun(["document.title"]);
+    assert.equal(toPage.filter((p) => p.readonlyTry).length, 1);
+    assert.match(results[0], /Site/);
+    assert.deepEqual(log.map((r) => [r.kind, r.reason]), [["readonly-page", "reads-page"]]);
+});
+
+test("a pointer read is answered in the worker from the run's own store; the page is not asked", T, async () => {
+    const { toPage, results, log } = await surveyRun(["document.title", "@tool:exec.length"]);
+    assert.equal(toPage.filter((p) => p.readonlyTry).length, 1, "only the DOM survey reached the page");
+    assert.match(results[1], /^\d+$/, `the pointer was read; got ${results[1]}`);
+    assert.equal(toPage.filter((p) => p.renderOnly).length, 0, "exec's In is drawn in the worker");
+    assert.deepEqual(log.map((r) => r.kind), ["readonly-page", "readonly-worker"]);
+});
+
+test("a survey that needs the page AND the run's pointers reaches the person: the page leg refuses it", T, async () => {
+    // The worker reads the pointer, reaches `document`, defers; the page leg refuses pointer reads (run-delegation.ts),
+    // which the fake page plays by answering `readonly: false`. Either way, nothing is auto-approved.
+    const { toPage, log } = await surveyRun(["document.title", "document.title + @tool:exec"],
+        (js) => (/dereference/.test(js) || /@tool:/.test(js) ? { readonly: false, result: "" } : { readonly: true, result: "value: \"Site\"" }));
+    assert.equal(toPage.filter((p) => p.readonlyTry).length, 2);
+    assert.deepEqual(log.map((r) => [r.kind, r.reason]), [["readonly-page", "reads-page"], ["readonly-page", "refused-in-page"]]);
+});

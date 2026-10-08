@@ -10,7 +10,7 @@ import { JSDOM } from "jsdom";
 import { runAgentLoop } from "../src/agent/agent-loop.ts";
 import { snapshotCurrent, UNRECORDED } from "../src/agent/current-context.ts";
 import { evalReadonly, NotInDialect, Denied } from "../src/readonly-exec.ts";
-import { evalReadonlyInWorker } from "../src/sw/sw-readonly.ts";
+import { evalReadonlyInWorker, WORKER_STREAM_HOLD_MS } from "../src/sw/sw-readonly.ts";
 import { registerRun, runDelegatedTool, endRun } from "../src/agent/run-delegation.ts";
 import { formatReadonlyExec } from "../src/agent/approval.ts";
 import { OUTPUT_CAP } from "../src/contract/contract-pointers.ts";
@@ -158,18 +158,24 @@ test("delegated try: each line streams to onStream as an approved exec's does, s
 });
 
 // The worker realm: its `needs-page` retry on the page would print the same lines again, so it discards first.
-test("FAILURE (worker realm): a survey that streams and then needs the page, or is refused, discards its lines", async () => {
+test("FAILURE (worker realm): a survey that streams and then needs the page, or is refused, takes back what it showed", async () => {
     const live = () => { const l = { pushed: [], discarded: 0, push: (t) => l.pushed.push(t), discard: () => { l.discarded++; } }; return l; };
     const ok = live();
     assert.equal((await evalReadonlyInWorker({ js: `console.log("w"); return 1` }, { live: ok })).kind, "answered");
     assert.deepEqual(ok.pushed, ["w\n"]);
     assert.equal(ok.discarded, 0);
+    // Deferred within the hold: nothing was shown, so nothing flickers (the page prints the same line again).
     const page = live();
     assert.equal((await evalReadonlyInWorker({ js: `console.log("w"); document.title` }, { live: page })).kind, "needs-page");
-    assert.deepEqual([page.pushed, page.discarded], [["w\n"], 1]);
+    assert.deepEqual([page.pushed, page.discarded], [[], 0]);
     const refused = live();
     assert.equal((await evalReadonlyInWorker({ js: `console.log("w"); [].constructor` }, { live: refused })).kind, "refused");
-    assert.equal(refused.discarded, 1);
+    assert.deepEqual([refused.pushed, refused.discarded], [[], 0]);
+    // Waiting past the hold: the line streamed live, and is taken back when the survey then defers.
+    const slow = { ps: () => new Promise((r) => setTimeout(() => r([]), WORKER_STREAM_HOLD_MS + 80)) };
+    const waited = live();
+    assert.equal((await evalReadonlyInWorker({ js: `console.log("w"); await ml.ps(); document.title` }, { live: waited, ml: slow })).kind, "needs-page");
+    assert.deepEqual([waited.pushed, waited.discarded], [["w\n"], 1]);
 });
 
 // --- the character limit: the stream is the panel's, the cut is the model's -----------------------------------------

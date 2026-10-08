@@ -364,6 +364,17 @@ Recorded as each slice lands, with the reason.
   (`PAGE_TOOL_STREAM`). A third was a nuisance: `CONTENT_READY` replayed a run's whole history on every request,
   repeating thoughts in the transcript. Each is now bound to the sender: the browser's committed document, the run's
   tab, and once per document. These are not covered by the slices above; see `docs/dev/site-access.md`.
+- **Slice 2 part 1b: a read-only survey of a run the worker hosts is evaluated in the worker first.** The spec's
+  "delegation tokens" would have given the page a ticket to read the run's pointers; the worker instead reads them
+  itself, and a survey goes to the page only when it reaches for the DOM, where pointer reads are refused. A survey
+  needing both reaches the person. The page is not sent the script of a survey the worker answers, not even to draw
+  its In. Each routing decision is an execution-log record with its reason (owner's request). An approved `exec`
+  still reads pointers through `DEREF_TOKEN` until part 1c; attack 14 stays open until then.
+- **Owner decisions for exec on a page that is not approved (part 4):** run it isolated, through
+  `chrome.userScripts.execute`, else a CDP isolated world, else refuse, with `ml.*` bound to the worker. Where the
+  isolated run is known not to behave as the page's world would, the tool result carries one terse note naming the
+  method, the reason and the difference, and nothing when parity is full. The routing decision and its reason go to
+  the execution log.
 - **Not fixed, noticed:** `GET_CONFIG` never sent `labelMatch`, so a page-built run always used the default metric.
   `publicConfig` keeps that behaviour; the worker path inherits it.
 

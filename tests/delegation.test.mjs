@@ -202,26 +202,32 @@ test("readonlyTry: an in-dialect survey that RAISES maxChars must NOT auto-appro
     } finally { globalThis.document = prevDoc; globalThis.Element = prevEl; }
 });
 
-test("readonlyTry: a pointer read in a survey auto-approves — the macro runs and the run's resolver is bound", async () => {
-    // Two things were missing on this path, and either alone sent every pointer read to the approval gate:
-    // `@tool:` was never expanded (so the tokenizer refused it), and nothing bound the run's resolver (the attempt
-    // runs before any tool call, outside executeTool's binding, and `ml.dereference` reads whatever is bound).
+test("readonlyTry: a pointer read in a survey on the PAGE is refused, so it reaches the gate; the store is never asked", async () => {
+    // The worker answers every survey it can (sw-readonly.ts) and sends one here only because it reads the page. A
+    // pointer read here would put the run's other captures (another site's content) into a realm the page owns, with
+    // no person asked (docs/spec/SITE_ACCESS.md slice 2, attack 14). The macro still expands, so the refusal is the
+    // resolver's, not the tokenizer's; and no dialect catch can swallow it.
     const { currentDeref } = await import("../src/tools/tool-exec.ts");
     const dom = new JSDOM("<p>x</p>");
-    const prev = [globalThis.document, globalThis.Element, globalThis.window];
+    const prev = [globalThis.document, globalThis.Element, globalThis.window, globalThis.chrome];
     globalThis.document = dom.window.document; globalThis.Element = dom.window.Element;
-    let bound = null;
-    // Stands in for window.ml.dereference exactly where it matters: it can only answer through the bound resolver.
-    globalThis.window = { ml: { dereference: async (ref) => { bound = currentDeref(); if (!bound) throw new Error("not in a run"); return `VALUE(${ref})`; } } };
+    let asked = 0, reached = 0;
+    globalThis.chrome = { runtime: { sendMessage: () => { asked++; return Promise.resolve({ data: { value: "SECRET" } }); } } };
+    // Stands in for window.ml.dereference: it can only answer through the bound resolver.
+    globalThis.window = { ml: { dereference: async (ref) => { reached++; const fn = currentDeref(); if (!fn) throw new Error("not in a run"); return (await fn(ref)).value; } } };
     try {
         registerRun("roPtr", [tool({ name: "exec", requiresApproval: true })]);
-        const env = await runDelegatedTool("roPtr", "exec", { js: "@tool:wants.length" }, { readonlyTry: true });
-        assert.ok(bound, "a resolver was bound while the survey ran");
-        assert.equal(env.readonly, true, `auto-approvable; got ${JSON.stringify(env)}`);
-        assert.match(env.result, /\b18\b/, "'VALUE(@tool:wants)'.length");
-        assert.equal(currentDeref(), null, "and unbound again afterwards");
+        for (const js of ["@tool:wants.length", "document.title + @tool:wants", "try { return @tool:wants } catch (e) { return 1 }",
+            "const d = ml.dereference; return d('@tool:wants')", "const { dereference } = ml; return dereference('wants')"]) {
+            const env = await runDelegatedTool("roPtr", "exec", { js }, { readonlyTry: true });
+            assert.equal(env.readonly, false, `${js}: not auto-approved; got ${JSON.stringify(env)}`);
+            assert.ok(!JSON.stringify(env).includes("SECRET"), js);
+        }
+        assert.ok(reached > 0, "the scripts did reach ml.dereference");
+        assert.equal(asked, 0, "the worker's pointer store was never asked");
+        assert.equal(currentDeref(), null, "and nothing is left bound afterwards");
         endRun("roPtr");
-    } finally { [globalThis.document, globalThis.Element, globalThis.window] = prev; }
+    } finally { [globalThis.document, globalThis.Element, globalThis.window, globalThis.chrome] = prev; }
 });
 
 test("an unknown tool name → a clean error envelope (never a throw)", async () => {

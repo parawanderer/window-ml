@@ -14,8 +14,8 @@
 // refused there, so it reaches the human whatever order it touches things in, and no lexical guess about the script
 // decides anything: an alias (`const m = ml; m.current`) cannot add a capability a realm does not have.
 //
-// Not wired in this change: the call site is the host's `tryReadonly` (sw-run-host.ts), which the site-access work
-// owns and wires in its slice 2.
+// The call site is the host's `tryReadonly` (sw-run-host.ts), which hands it the run's `ml.current` and a read-only `ml`
+// with the run's pointers (worker-readonly-ml.ts), and records where each survey went in the execution log.
 
 import { evalReadonly, NeedsPage, NotInDialect, Denied } from "../readonly-exec";
 import { expandPointers, execCodeIn } from "../pointers/pointer-macro";
@@ -34,15 +34,16 @@ export interface WorkerReadonlyDeps {
      *  so a survey that never reads it copies nothing. */
     current?: () => CurrentSnapshot;
     /** The read-only `ml` members the worker can answer (`config`, `models`, `ps`, `info`, `pipe`, …). A member it
-     *  does not carry defers the survey to the page rather than failing it. That includes `dereference` until the
-     *  host gives it one: pointer reads in the worker are the site-access slice 2's, and until then a survey naming
-     *  `@tool:` goes to the page exactly as it did before. */
+     *  does not carry defers the survey to the page rather than failing it. That includes `dereference` when the
+     *  host has no pointer store for the run, and the page leg refuses pointer reads, so such a survey reaches the
+     *  human. */
     ml?: Record<string, unknown>;
     /** The run's `exec` tool, whose `render` draws the step's In. Absent: the same code view the page's `exec` draws
      *  (`execCodeIn`), so a step answered here looks like one answered there. */
     tool?: MlTool;
-    /** The call's live output (the loop's `LiveOutput`): console lines stream into it as they print. On `needs-page`
-     *  and `refused` it is discarded here, so the page's retry, or the approved run, streams from empty. */
+    /** The call's live output (the loop's `LiveOutput`): console lines stream into it as they print, after a short
+     *  hold (`WORKER_STREAM_HOLD_MS`). On `needs-page` and `refused` it is taken back here, so the page's retry, or the
+     *  approved run, streams from empty. */
     live?: LiveOutput;
 }
 
@@ -53,32 +54,67 @@ export type WorkerReadonlyOutcome =
     | { kind: "needs-page" }
     | { kind: "refused" };
 
+/** How long the worker holds a survey's first lines before streaming them. A survey that defers to the page does so at
+ *  its first page reach, almost always within this, and the page then prints the same lines again: shown and taken
+ *  back here, they would flicker. A survey still running after it is waiting on something, and streams from then on. */
+export const WORKER_STREAM_HOLD_MS = 120;
+
+/** The call's live output, held for {@link WORKER_STREAM_HOLD_MS} before it streams: `settle` sends what is held,
+ *  `drop` takes back what was shown (nothing, when nothing was). */
+function heldLive(live: LiveOutput | undefined): { push: (line: string) => void; settle: () => void; drop: () => void } | null {
+    if (!live) return null;
+    let held: [string, number][] | null = [];
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const flush = (): void => {
+        if (timer !== undefined) clearTimeout(timer);
+        timer = undefined;
+        if (!held) return;
+        const lines = held; held = null;
+        for (const [text, ts] of lines) live.push(text, ts);
+    };
+    return {
+        push: (line) => {
+            if (!held) { live.push(line + "\n", Date.now()); return; }
+            held.push([line + "\n", Date.now()]);
+            timer ??= setTimeout(flush, WORKER_STREAM_HOLD_MS);
+        },
+        settle: flush,
+        drop: () => {
+            if (timer !== undefined) clearTimeout(timer);
+            if (held) { held = null; return; }   // nothing was shown, so there is nothing to take back
+            live.discard();
+        },
+    };
+}
+
 /** Evaluate one `exec` call's script in the worker. */
 export async function evalReadonlyInWorker(args: Record<string, unknown>, deps: WorkerReadonlyDeps): Promise<WorkerReadonlyOutcome> {
     if (typeof args.js !== "string") return { kind: "refused" };
     const codeIn = execCodeIn(args.js);
     // A raised output cap is a request the human has to grant, wherever the script would run.
     if (outputCapEscalated("exec", args)) return { kind: "refused" };
-    // `@tool:` is not JavaScript, so the macro expands it to `ml.dereference(…)` before the tokenizer sees it. Without a
-    // `dereference` on the worker's `ml` that read defers to the page, as it did before this module existed.
+    // `@tool:` is not JavaScript, so the macro expands it to `ml.dereference(…)` before the tokenizer sees it.
     const { code } = expandPointers(args.js);
     // The snapshot is a copy of the whole context, so it is made only for a script that says `current`. A cost
     // decision, never a security one: a script that reaches `current` without the word (a computed key) finds no
     // such member, which in the worker defers to the page, where there is none either, so it reaches the human.
     const current = deps.current && /\bcurrent\b/.test(code) ? deps.current() : undefined;
+    const out = heldLive(deps.live);
     try {
         const ro = await evalReadonly(code, null, deps.ml ?? {}, undefined, { realm: "worker", current,
-            onLog: deps.live ? (line) => deps.live!.push(line + "\n") : undefined });
+            onLog: out ? out.push : undefined });
+        out?.settle();
         const { result, render } = formatReadonlyExec(ro.value, ro.logs, ro.prints, ro.dropped);
         const { in: renderIn, out: renderOut } = descriptorFor(deps.tool, { result, render, ...(deps.tool ? {} : { renderIn: codeIn }) }, args);
         return { kind: "answered", result, renderIn, renderOut };
     } catch (e) {
-        if (e instanceof NeedsPage) { deps.live?.discard(); return { kind: "needs-page" }; }
-        if (e instanceof NotInDialect || e instanceof Denied) { deps.live?.discard(); return { kind: "refused" }; }
+        if (e instanceof NeedsPage) { out?.drop(); return { kind: "needs-page" }; }
+        if (e instanceof NotInDialect || e instanceof Denied) { out?.drop(); return { kind: "refused" }; }
+        out?.settle();
         // A runtime error in the script is the model's to fix, reported with its line, exactly as the page path does.
         const at = (e as { mlLine?: number })?.mlLine ?? null;
         const error = `${errText(e)}${at ? ` (line ${at})` : ""}`;
         const { in: renderIn } = descriptorFor(deps.tool, { result: `Error: ${error}`, ...(deps.tool ? {} : { renderIn: codeIn }) }, args);
-        return { kind: "answered", result: `Error: ${error}`, renderIn, renderOut: { type: "exec-out", error: errText(e), ...(at ? { errorLine: at } : {}) } };
+        return { kind: "answered", result: `Error: ${error}`, renderIn, renderOut: { type: "exec-out", error, ...(at ? { errorLine: at } : {}) } };
     }
 }
