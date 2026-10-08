@@ -265,7 +265,9 @@ point the UI offers to pair, the same way every other capability in this codebas
    the failure would read as ours. Changes coming to the hub are additive, so a client pinned to a tag keeps working
    against a later hub; move `HUB_TAG` when a later one is NEEDED, not when one exists.
 
-   **CI runs these, on PRs that touch what they cover** (the `hub` job, scoped by the `changes` filter). Before the
+   **CI runs these, on PRs that touch what they cover** (the `hub` job, scoped by the `changes` filter). The `hub` job
+   runs `npm test` only; the Playwright specs that pair through a hub run in the e2e shards, which fetch the same
+   pinned binary. Before the
    hub published binaries it could not, so these ran on one laptop and skipped everywhere else — which is the failure
    worth remembering, because a skipped test and a passing one look identical on a green page.
 
