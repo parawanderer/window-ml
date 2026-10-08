@@ -192,7 +192,7 @@ A watch is an expression you add, shown with its current value: VS Code's watch 
   the dialect shows its refusal as its value.
 - **Saved on this device** by default.
 - **Shared with the model**, per watch, by a toggle: an eye icon whose tooltip says "share with the model". A shared
-  watch appears in `ml.current.debug.userWatches` as `{ expression, value, at }`. That is a channel from you to the
+  watch appears in `ml.current.debug.userWatches` as `{ expression, value }`. That is a channel from you to the
   model ("look at this"), and it is opt-in for that reason.
 - **A shared watch may read only `model` members.** Its value is computed by the same evaluator over the `model` part
   of the snapshot. A watch over the mailbox can be saved, but its share toggle is off and says why, or sharing it would
@@ -273,7 +273,7 @@ exactly the model half of the registry and `inspector` the rest.
    takes the highlighted row, and Enter takes it only after the arrows were used, so Enter still adds what was typed.
    The console reuses it.
    **Sharing built** (2026-10-08): an eye on each watch shares it, stored as `ml_runstate_shared` beside the watches.
-   A worker-hosted run's `ml.current.debug.userWatches` is `[{ expression, value | error, at }]`, evaluated before each
+   A worker-hosted run's `ml.current.debug.userWatches` is `[{ expression, value | error }]`, evaluated before each
    survey that names `current` (`src/sw/sw-shared-watches.ts`), each over `{ ml: { current } }` ALONE, so even a forged
    storage entry over `inspector.` finds nothing to read; the panel also refuses to share one, and says why. At most
    eight are shared, a value over 4,000 characters is an error rather than a cut, and the dialect hands `debug` to the

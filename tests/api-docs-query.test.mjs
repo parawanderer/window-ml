@@ -268,3 +268,29 @@ test("real parts: every public method splits out as an expandable member", () =>
     }
 });
 
+
+// --- a readonly PROPERTY is a member (`ml.state`, `ml.current`) ---
+
+test("a readonly property is a member: it expands by name, and its doc never rides on to the next method", () => {
+    const fixture = { ...FIXTURE, mlApi: FIXTURE.mlApi.replace("export interface MlApi {", [
+        "export interface MlApi {",
+        "    /** Your own run, as data. */",
+        "    readonly current?: FetchResult;",
+    ].join("\n")) };
+    const out = queryApiDocs(fixture, { members: ["current"] });
+    assert.match(out, /Your own run, as data\./);
+    assert.match(out, /readonly current\?: FetchResult;/);
+    assert.match(out, /### FetchResult/, "and the type it names comes with it");
+    assert.doesNotMatch(queryApiDocs(fixture, { members: ["chat"] }), /Your own run/, "the next member keeps only its own doc");
+});
+
+test("against the real reference: `current` and `state` expand as members, and a search files their docs under their own names", () => {
+    const parts = generateApiParts();
+    const cur = queryApiDocs(parts, { members: ["current"] });
+    assert.doesNotMatch(cur, /not found|unknown member/i);
+    assert.match(cur, /readonly current\?: CurrentSnapshot/);
+    assert.match(cur, /### CurrentSnapshot/);
+    assert.match(queryApiDocs(parts, { members: ["state"] }), /readonly state:/);
+    const deref = queryApiDocs(parts, { members: ["dereference"] });
+    assert.doesNotMatch(deref, /YOUR OWN RUN|persistent JS scratchpad/, "dereference no longer carries state's or current's doc");
+});

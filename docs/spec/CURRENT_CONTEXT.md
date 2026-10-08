@@ -36,7 +36,7 @@ ml.current.run        // { id, model, step, maxSteps, startedTs } — which run 
 ml.current.messages   // `NeutralMessage[]` VERBATIM — the exact array `ml.step()` takes
 ml.current.meta       // a PARALLEL array, same length and order: what we KNOW about each message
 ml.current.log        // this run's execution log: records, carrying `.text` for ml.pipe
-ml.current.debug      // { userWatches: [{ expression, value | error, at }] }: watches the person shared (worker-hosted runs)
+ml.current.debug      // { userWatches: [{ expression, value | error }] }: watches the person shared (worker-hosted runs)
 ```
 
 Five decisions make it survive the write half. Each is the non-obvious choice.

@@ -110,15 +110,13 @@ export interface CurrentSnapshot {
     debug?: { userWatches: UserWatch[] };
 }
 
-/** One watch the person shared with the model from the Run state panel ("look at this"): the expression they wrote, over
- *  this snapshot, and what it gave. A JSONPath gives the list of what it matched. `error` instead of `value` when it
+/** One watch the person shared with the model from the Run state panel ("look at this"): the expression they wrote, and
+ *  what it gives over THIS snapshot, re-evaluated for every read (so it is always now; there is no "when pinned"). A JSONPath gives the list of what it matched. `error` instead of `value` when it
  *  failed or its value was too large to hand over. */
 export interface UserWatch {
     expression: string;
     value?: unknown;
     error?: string;
-    /** When it was evaluated, epoch ms. */
-    at: number;
 }
 
 /** A message's stable id. `toolToken` gives the avalanche and the check character; the `:msg` namespace keeps it

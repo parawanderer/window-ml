@@ -114,8 +114,10 @@ const splitMembers = (mlApi: string): Member[] => {
             doc.push(line);
             continue;
         }
-        // Member at the interface's own level: one tab (the generated doc) OR four spaces (test fixtures).
-        const nameMatch = depth === 1 ? /^(?:\t| {4})([A-Za-z_$][\w$]*)\s*[?(<:]/.exec(line) : null;
+        // Member at the interface's own level: one tab (the generated doc) OR four spaces (test fixtures). A `readonly`
+        // PROPERTY is a member too (`state`, `current`): read past the modifier, or its JSDoc rode on to the next
+        // method and `{ members: ["current"] }` answered "not found".
+        const nameMatch = depth === 1 ? /^(?:\t| {4})(?:readonly\s+)?([A-Za-z_$][\w$]*)\s*[?(<:]/.exec(line) : null;
         if (nameMatch) {
             const start = i;
             depth += depthDelta(line);

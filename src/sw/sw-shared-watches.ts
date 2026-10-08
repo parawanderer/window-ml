@@ -30,7 +30,7 @@ export async function userWatches(current: CurrentSnapshot, exprs: readonly stri
             throw e;
         }
     };
-    return evalShared(current, exprs, js, Date.now());
+    return evalShared(current, exprs, js);
 }
 
 /**
