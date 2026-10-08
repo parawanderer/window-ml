@@ -7,7 +7,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
 const { loadDomWorld, loadPageWorld } = require("./helpers");
-const { AnswerSet } = require("../src/answer-set.ts");
+const { AnswerSet } = require("../src/pointers/answer-set.ts");
 
 // ---- truncate ----
 
@@ -857,7 +857,7 @@ test("selector tools accept end-position :contains/:has-text and explain mid-sel
 test("answer tool curates the answer set (add element/text, remove, clear)", async () => {
     // `answer` needs a ToolContext carrying the run's AnswerSet (the loop provides it). It screenshots each
     // element for the HUD card — best-effort, absent in jsdom, so only content/elements/set are asserted.
-    const { AnswerSet } = require("../src/answer-set.ts");
+    const { AnswerSet } = require("../src/pointers/answer-set.ts");
     const { ml } = loadDomWorld('<div id="banner">Ad</div><p class="x">a</p><p class="x">b</p>');
     const set = new AnswerSet();
     const ctx = { answer: set, hasTool: () => false, tools: [], model: null, capabilities: null, driverSees: false, visionModel: null };

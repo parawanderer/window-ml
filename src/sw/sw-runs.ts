@@ -24,7 +24,7 @@ import { type NeutralMessage } from "../contract/contract-chat";
 import { type StartRunPayload } from "../contract/contract-messages";
 import { createNavBarrier } from "./nav-barrier";
 import { releaseSessionValues } from "./sw-values";
-import { TokenStore } from "../token-pipe";
+import { TokenStore } from "../pointers/token-pipe";
 
 // Design A: the AbortController for each live background run, keyed by runId, so a CANCEL_RUN message
 // (the HUD's "Cancel agent run") stops the loop at the next boundary AND kills a slow in-flight model

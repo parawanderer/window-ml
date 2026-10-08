@@ -17,7 +17,7 @@
 //     `tests/e2e/session-index.spec.mjs` fails if the call disappears.
 
 import { type AgentLoopDeps, shotTurnMessage, runAgentLoop } from "../agent-loop";
-import { resolveOutputs, makeAnswerFacade, finalizeAnswer } from "../answer-set";
+import { resolveOutputs, makeAnswerFacade, finalizeAnswer } from "../pointers/answer-set";
 import { defaultApprove, logStep, normalizeApproval, formatReadonlyExec, readonlyRefused } from "../approval";
 import { autoApprovePython } from "../auto-approve";
 import { makeBackgroundTaskPromise } from "../bridge";
@@ -27,9 +27,9 @@ import { agentRegistry, resetSubcallUsage, handleRegistry, emitDebug, enterAgent
 import { type MlApi, type MlTool, type ApprovalRequest, type ApprovalDecision, type AgentResult, shortHash, type MlAgentHandle, type NeutralMessage, type RenderDescriptor, type ToolFeedback, type TokenUsage, hintSession, type DerefRead, type ToolRenderInput, outputCapEscalated } from "../contract";
 import { setPierceClosedShadow, externalSheetIds, isCurrentPage, elLine, errText } from "../dom";
 import { type AgentControl, sameOriginNav, sameOriginFetch } from "./ml-agent";
-import { TokenStore } from "../token-pipe";
+import { TokenStore } from "../pointers/token-pipe";
 import { columnsViaBackground } from "../deref-read";
-import { expandPointers } from "../pointer-macro";
+import { expandPointers } from "../pointers/pointer-macro";
 import { evalReadonly } from "../readonly-exec";
 import { descriptorFor } from "../render-descriptor";
 import { parseInfo } from "../resource/resource-capacity";

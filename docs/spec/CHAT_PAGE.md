@@ -400,7 +400,7 @@ Four things it has to get right:
 4. **It is told apart from the conversation at a glance.** It is the one place where what is shown can legitimately
    disagree with the transcript above it, so it must never read as more of the conversation.
 
-What exists already, and what does not: `ValueStore.rows()` (`src/value-store.ts`) already returns the whole pointer
+What exists already, and what does not: `ValueStore.rows()` (`src/pointers/value-store.ts`) already returns the whole pointer
 heap, live, in the worker — key, bytes, format, source, holders, last touched — and nothing exposes it to any client,
 so the heap half is a command away rather than a design problem. The housekeeping log records every eviction, which
 gives the heap's HISTORY and not its contents. The message array itself has no reader at all. It has two sources with

@@ -8,7 +8,7 @@
 // The handle is a view, not an authority. It asks the run to do something and the run decides; a transcript
 // still changes only through the session's own events.
 
-import { resolveOutputs } from "../answer-set";
+import { resolveOutputs } from "../pointers/answer-set";
 import { renderArgs } from "../approval";
 import { makeBackgroundTaskPromise } from "../bridge";
 import { setCdpEnabled } from "../builtin-tools";

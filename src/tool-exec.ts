@@ -5,8 +5,8 @@
 // touches the DOM and may return real Nodes); the delegation layer reduces `elements` to a count.
 import type { MlTool, ToolResult, ToolContext, DocsMemory } from "./contract/contract-agent";
 import type { RenderDescriptor, ToolFeedback } from "./contract/contract-render";
-import type { DerefRead } from "./token-pipe";
-import { AnswerSet } from "./answer-set";
+import type { DerefRead } from "./pointers/token-pipe";
+import { AnswerSet } from "./pointers/answer-set";
 import { validateArgs } from "./validate";
 import { takeCallTitle } from "./tool-params";
 import { errText } from "./dom";

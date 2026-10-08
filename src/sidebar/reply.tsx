@@ -15,7 +15,7 @@ import { IconAgent, IconChevron, IconPlay } from "./icons";
 import { cursorTipOn, openCtxMenu, Dot, Stamp, Hash, TagBadge, CopyBtn, CopyModel, Code } from "./ui-kit";
 import { STEP_BUDGETS } from "../step-budget";
 import { aliasOf, AnswerBody, ResultBlock } from "./answer-render";
-import { hasTokens } from "../answer-tokens";
+import { hasTokens } from "../pointers/answer-tokens";
 
 // The session's createChat config (not the per-turn request/messages — full
 // message history is a separate export feature).

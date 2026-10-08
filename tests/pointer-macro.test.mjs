@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 
-const { expandPointers } = await import("../src/pointer-macro.ts");
+const { expandPointers } = await import("../src/pointers/pointer-macro.ts");
 const acorn = await import("acorn");
 
 const x = (src) => expandPointers(src).code;

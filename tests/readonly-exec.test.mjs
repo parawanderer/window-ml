@@ -3,7 +3,7 @@ import { test, after } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
 import { evalReadonly, NotInDialect, Denied, STEP_BUDGET } from "../src/readonly-exec.ts";
-import { expandPointers } from "../src/pointer-macro.ts";
+import { expandPointers } from "../src/pointers/pointer-macro.ts";
 
 function world() {
     const dom = new JSDOM(`<!doctype html><body>
@@ -935,7 +935,7 @@ test("blessed primitive: ml.a11y ADVERSARIAL — object can't reach a realm, fac
 /* ---------------------- ml.answer (the curate-only facade) ---------------------- */
 // The FIRST mutating facade member. Per the repo RULE, extending the dialect requires ADVERSARIAL tests:
 // prove the new surface can only curate the run's own answer and can't be abused to reach a node/the realm.
-import { AnswerSet, makeAnswerFacade } from "../src/answer-set.ts";
+import { AnswerSet, makeAnswerFacade } from "../src/pointers/answer-set.ts";
 const runAns = (js, set = new AnswerSet(), doc = world()) =>
     evalReadonly(js, doc, ML, makeAnswerFacade(set, el => el.id || el.tagName));
 
@@ -1222,7 +1222,7 @@ test("a pointer read stays in-dialect once the macro is expanded", async () => {
     // survey falls through to the approval gate — while `ml.dereference("@tool:abc")` is free, since
     // `dereference` is in ML_READONLY_METHODS. Expanding first is what stops the macro teaching the model
     // the more expensive spelling of a read it may do for nothing.
-    const { expandPointers } = await import("../src/pointer-macro.ts");
+    const { expandPointers } = await import("../src/pointers/pointer-macro.ts");
     const { code } = expandPointers("return @tool:a1b2c3f.length");
     assert.equal(code, 'return ml.dereference("@tool:a1b2c3f").length');
     // The dialect auto-awaits a facade call, so the pointer is a VALUE here too — the same semantics exec
@@ -1232,7 +1232,7 @@ test("a pointer read stays in-dialect once the macro is expanded", async () => {
 
 test("the macro cannot smuggle a non-readonly method past the dialect", async () => {
     // The expansion is a fixed template naming ONE method; nothing in a payload chooses which.
-    const { expandPointers } = await import("../src/pointer-macro.ts");
+    const { expandPointers } = await import("../src/pointers/pointer-macro.ts");
     const { code } = expandPointers(String.raw`return @tool:"x\") ; ml.pythonExec(\"1\") ; ("`);
     // Either it is refused, or it resolves to the harmless read — never the smuggled call.
     let value = null;

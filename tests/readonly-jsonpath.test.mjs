@@ -13,7 +13,7 @@ import { JSDOM } from "jsdom";
 import { Worker } from "node:worker_threads";
 import { evalReadonly, NotInDialect, Denied } from "../src/readonly-exec.ts";
 import { mlJsonPath } from "../src/json-path.ts";
-import { AnswerSet, makeAnswerFacade } from "../src/answer-set.ts";
+import { AnswerSet, makeAnswerFacade } from "../src/pointers/answer-set.ts";
 
 const doc = () => new JSDOM("<!doctype html><body><p id='p'>hello</p></body>").window.document;
 const CONFIG = { model: "qwen3.8-flash-next:vision", ocrModel: "qwen3-vl:30b", apiFormat: "openai", autoApproveReadonly: true };

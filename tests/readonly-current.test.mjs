@@ -14,7 +14,7 @@ import { runAgentLoop } from "../src/agent-loop.ts";
 import { snapshotCurrent, logText, messageId, UNRECORDED } from "../src/current-context.ts";
 import { evalReadonly, NotInDialect, Denied, NeedsPage, ABRIDGE_OVER, describeSwaps } from "../src/readonly-exec.ts";
 import { evalReadonlyInWorker } from "../src/sw/sw-readonly.ts";
-import { mlPipe } from "../src/text-pipe.ts";
+import { mlPipe } from "../src/pointers/text-pipe.ts";
 import { toolToken } from "../src/util.ts";
 
 const outOfDialect = (e) => e instanceof NotInDialect || e instanceof Denied;
@@ -350,7 +350,7 @@ test("evalReadonlyInWorker answers, defers, refuses, and reports a script's own 
     const a = await evalReadonlyInWorker({ js: "return ml.current.meta.length" }, deps);
     assert.equal(a.kind, "answered"); assert.equal(a.result, "4");
     // The step's In is the same code view the page's `exec` draws, so a survey answered here looks like one answered there.
-    const { execCodeIn } = await import("../src/pointer-macro.ts");
+    const { execCodeIn } = await import("../src/pointers/pointer-macro.ts");
     assert.deepEqual(a.renderIn, execCodeIn("return ml.current.meta.length"));
     assert.equal((await evalReadonlyInWorker({ js: "document.title" }, deps)).kind, "needs-page");
     assert.equal((await evalReadonlyInWorker({ js: "window.location" }, deps)).kind, "refused");

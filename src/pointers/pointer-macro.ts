@@ -17,7 +17,7 @@
 // result to acorn and refuse to run something we mangled, which is a check the un-expanded source could
 // never have had.
 import { TOKEN_HEX_SRC, TOOL_NAME_SRC } from "./token-id";
-import type { RenderDescriptor } from "./contract/contract-render";
+import type { RenderDescriptor } from "../contract/contract-render";
 
 /** One substitution, so a UI can mark it and say what it came from. */
 export interface PointerExpansion {

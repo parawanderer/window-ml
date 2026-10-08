@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 const { runAgentLoop } = await import("../src/agent-loop.ts");
-const { TokenStore } = await import("../src/token-pipe.ts");
+const { TokenStore } = await import("../src/pointers/token-pipe.ts");
 
 const TOOLS = [
     { name: "exec", description: "", parameters: { type: "object", properties: {} } },

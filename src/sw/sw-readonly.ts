@@ -18,7 +18,7 @@
 // owns and wires in its slice 2.
 
 import { evalReadonly, NeedsPage, NotInDialect, Denied } from "../readonly-exec";
-import { expandPointers, execCodeIn } from "../pointer-macro";
+import { expandPointers, execCodeIn } from "../pointers/pointer-macro";
 import { formatReadonlyExec } from "../approval";
 import { descriptorFor } from "../render-descriptor";
 import { outputCapEscalated } from "../contract/contract-pointers";

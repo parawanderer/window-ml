@@ -9,7 +9,7 @@ import type { FetchResult, FetchFormat, FetchAttempt } from "../contract/contrac
 import { acceptLanguageFrom } from "../contract/contract-fetch";
 import { classifyContent, jsonShape, markdownAlternateHref, resolveMarkdownAlternate, markdownSiblingUrl, isMarkdownResponse, typeFromExtension, typeFromHeader } from "../dom";
 import { looksParquet, tableFromParquet, looksArrowFile, tableFromArrow, MAX_TABLE_ROWS } from "../table-data";
-import type { ValueFormat } from "../value-store";
+import type { ValueFormat } from "../pointers/value-store";
 import { readCapped, decodeCapped, binaryKind } from "./body-read";
 import { ensureDebuggerAttached, releaseDebugger } from "./sw-cdp";
 import { incognitoEnableSteps } from "../util";

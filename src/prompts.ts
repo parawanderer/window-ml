@@ -91,7 +91,7 @@ export const ANSWER_CLAUSE =
     "`remove` an item by index, or `clear` and redo. If the task is to FIND / LOCATE an element, designate " +
     "it here so the real node reaches the caller. You can also curate it from `exec` for free via " +
     "`ml.answer` (`.add(el | \"text\")`, `.remove(i)`, `.clear()`, `.length`) — no approval.";
-import { PIPE_CMDS, PIPE_SYNTAX } from "./text-pipe";
+import { PIPE_CMDS, PIPE_SYNTAX } from "./pointers/text-pipe";
 
 export const TOOLTOKENS_CLAUSE =
     "\n\nTOOL OUTPUT TOKENS. An `@tool:<id>` is a HANDLE to one tool result, and it has TWO uses: showing that " +

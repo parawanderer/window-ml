@@ -13,7 +13,7 @@
 // page-side concern of the delegated exec path. See principle-adding-a-privileged-tool.)
 import type { NeutralMessage, ToolCall } from "./contract/contract-chat";
 import type { AgentResult, ApprovalDecision } from "./contract/contract-agent";
-import type { DerefRead } from "./token-pipe";
+import type { DerefRead } from "./pointers/token-pipe";
 import { runAgentLoop, shotTurnMessage } from "./agent-loop";
 import type { ToolMeta, AgentLoopDeps, ToolRunResult } from "./agent-loop";
 import { autoApprovePython } from "./auto-approve";
@@ -39,7 +39,7 @@ export interface RunAgentConfig {
     stream?: boolean;              // opt-in live streaming: the model's thinking AND each tool's live output (ctx.stream)
     runId?: string;                // the run's hash — seeds the deterministic tool-token ids
     seqBase?: number;              // per-turn seq offset so a multi-turn run mints globally-unique token ids (see AgentLoopOptions.seqBase)
-    tokenStore?: import("./token-pipe").TokenStore;
+    tokenStore?: import("./pointers/token-pipe").TokenStore;
     labelMatch?: import("./contract").LexicalMetric;   // which lexical metric ranks a near-miss on a pointer label   // the SESSION's `@tool:` pointer store, so pointers span a handle's turns
     after?: "human";               // this turn's first request follows a person (a follow-up, Continue, Retry) — see AgentLoopOptions.after
     resumeMessages?: NeutralMessage[];   // RESUME: continue this prior history (+ `task` as a new user turn) instead of a fresh system+task

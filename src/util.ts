@@ -3,7 +3,7 @@
 // into injected.js.
 
 import { truncate, shadowRootStats, iframeStats, markdownTwin } from "./dom";
-import { TOKEN_PAYLOAD_LEN, checkChar, formatToken } from "./token-id";
+import { TOKEN_PAYLOAD_LEN, checkChar, formatToken } from "./pointers/token-id";
 import type { ShotBox, VisionMemory } from "./contract/contract-render";
 
 /**

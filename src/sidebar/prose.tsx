@@ -14,7 +14,7 @@
 //     lets the text and the destination disagree. An http link stays the text it was written as.
 // A pointer we cannot resolve also stays TEXT: a link that goes nowhere is worse than the words.
 import type { AgentStep } from "./store";
-import { resolveTokenStep, codeRanges, inCode } from "../answer-tokens";
+import { resolveTokenStep, codeRanges, inCode } from "../pointers/answer-tokens";
 import { mdInline } from "./format";
 import { scrollToStepSeq } from "./step-scroll";
 import { cursorTipOn } from "./ui-kit";

@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { IDBFactory } from "fake-indexeddb";
-import { planEviction, ValueStore, ValueMissing, ValueTooLarge, IDLE_MS, TOMBSTONE_MS } from "../src/value-store.ts";
+import { planEviction, ValueStore, ValueMissing, ValueTooLarge, IDLE_MS, TOMBSTONE_MS } from "../src/pointers/value-store.ts";
 
 const MIN = 60_000, HOUR = 60 * MIN;
 const row = (key, bytes, lastReadAt, extra = {}) => ({ key, bytes, lastReadAt, createdAt: lastReadAt, sessions: [], format: "csv", ...extra });

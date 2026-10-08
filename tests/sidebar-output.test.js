@@ -1181,7 +1181,7 @@ test("table view: a table past the grid's rows opens as a SUMMARY of its preview
 
 test("table view: with the whole table in the value store, the summary covers every row and the copy control copies all of it", async () => {
     const { IDBFactory } = await import("fake-indexeddb");
-    const { ValueStore } = await import("../src/value-store.ts");
+    const { ValueStore } = await import("../src/pointers/value-store.ts");
     const idb = new IDBFactory();
     const csv = ["id,region", ...Array.from({ length: 300 }, (_, i) => `${i},${i < 250 ? "north" : "west"}`)].join("\n");
     const { key } = await new ValueStore({ idb, budgetBytes: () => 1e9 }).put(new Blob([csv]), { format: "csv" });

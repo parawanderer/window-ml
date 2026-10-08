@@ -17,11 +17,11 @@ export type CaptureAnswer = (els: Element[], note?: string, show?: "inline" | "h
 // domTools stay ml-free. Used by describeElement to reveal content a page selector can't enter.
 export type ShadowResolve = (selector: string) => Promise<{ line: string }[] | null>;
 import { truncate, clipOut, clipValue, errText, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError, isCspEvalBlocked, firstHopSealed, isSealedHost } from "./dom";
-import { expandPointers, execCodeIn } from "./pointer-macro";   // `@tool:` fantasy syntax → a real dereference call
+import { expandPointers, execCodeIn } from "./pointers/pointer-macro";   // `@tool:` fantasy syntax → a real dereference call
 import { execErrorLine } from "./exec-trace";       // a stack frame → the model's own line number
-import { runPipe, pipeHint, PIPE_SYNTAX, PIPE_REF } from "./text-pipe";
+import { runPipe, pipeHint, PIPE_SYNTAX, PIPE_REF } from "./pointers/text-pipe";
 import { outputCapParams, retryParams } from "./tool-params";
-import { DEREF_TOOL, type DerefRead } from "./token-pipe";
+import { DEREF_TOOL, type DerefRead } from "./pointers/token-pipe";
 import { DerefText } from "./deref-read";
 import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
 import { pageContext, browserInfo, agentState } from "./util";
@@ -34,7 +34,7 @@ import { resolveOutputCap, outputCapPrecheck, OUTPUT_CAP } from "./contract/cont
 import { UI_OUT_CAP } from "./contract/contract-chat";
 import { ML_API_PARTS } from "./api-docs.gen";
 import { queryApiDocs, isDefaultQuery, type ApiDocsQuery } from "./api-docs-query";
-import { answerItemFromString, type AnswerSet } from "./answer-set";
+import { answerItemFromString, type AnswerSet } from "./pointers/answer-set";
 
 /** A compact, model-facing echo of the current answer set (indexed, clamped previews — never the
  *  heavy media/nodes). Shown after every `answer` op so the model can see what it's curating. */

@@ -22,8 +22,8 @@ import { navTarget, errText, clipOut, askReaderNumCtx, jsonShape } from "../dom"
 import { htmlToMarkdown } from "../html-to-md";
 import { buildPythonTool } from "../python/python-tool";
 import { tableShape, asTable, tableFromDelimited, tablePreview, RENDER_TABLE_ROWS } from "../table-data";
-import { PIPE_REF, runPipe, pipeHint } from "../text-pipe";
-import { toolNameError } from "../token-id";
+import { PIPE_REF, runPipe, pipeHint } from "../pointers/text-pipe";
+import { toolNameError } from "../pointers/token-id";
 import { CALL_TITLE, type NoReservedParams } from "../tool-params";
 import { currentHasTool } from "../tool-exec";
 

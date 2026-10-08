@@ -10,7 +10,7 @@
 // prompt and tool-parameter description that names them); chain them with `|`.
 // The input text is the pipeline's stdin (no `cat`); each stage transforms the lines and feeds the next.
 
-import { jsonShape } from "./dom";
+import { jsonShape } from "../dom";
 
 /** Every verb the dialect implements — the SINGLE SOURCE for the refusal message AND for the system prompt's
  *  "here is what you can pipe" list. A prompt that advertises a verb the dialect lacks costs the model a whole

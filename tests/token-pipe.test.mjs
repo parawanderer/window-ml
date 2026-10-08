@@ -5,10 +5,10 @@
 import { test, describe } from "node:test";
 import assert from "node:assert";
 import { readFile } from "node:fs/promises";
-const P = await import("../src/token-pipe.ts");
+const P = await import("../src/pointers/token-pipe.ts");
 // editDistance lives beside the lexical matching that uses it; the cycle it made is why it moved.
-const LM = await import("../src/label-match.ts");
-const { PIPE_SYNTAX, PIPE_REF } = await import("../src/text-pipe.ts");
+const LM = await import("../src/pointers/label-match.ts");
+const { PIPE_SYNTAX, PIPE_REF } = await import("../src/pointers/text-pipe.ts");
 const { PIPE_CLAUSE } = await import("../src/prompts.ts");
 
 const tok = (over = {}) => ({ id: "a1b2c3f", tool: "exec", kind: "text", out: "hello", t: 1000, step: 1, ...over });
@@ -436,7 +436,7 @@ test("labels resolve: a quote or a backslash inside the label survives", () => {
 // alone does not give that: `deadbee` is a fine identifier AND a valid token shape. `ml.defineTool` therefore
 // rejects both malformed names and id-shaped ones, at definition time.
 test("tool names: the namespace guarantee is ENFORCED, not assumed", async () => {
-    const { toolNameError, isTokenShape } = await import("../src/token-id.ts");
+    const { toolNameError, isTokenShape } = await import("../src/pointers/token-id.ts");
 
     for (const ok of ["python_exec", "exec", "fetch_url", "look", "_private", "Tool2", "a"]) {
         assert.equal(toolNameError(ok), null, `${ok} should be a legal tool name`);
