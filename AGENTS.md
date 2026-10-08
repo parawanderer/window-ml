@@ -181,8 +181,7 @@ learned by shipping the wrong version first.
   `console.log` is never seen: `recordRunLog`/`noteRunMechanic`. `subsystem`/`kind` must be lowercase slugs or the
   record is SILENTLY dropped. It is not the housekeeping log. → run-log.md
 - **State in worker memory dies with the worker** (an MV3 eviction, ~30 s idle): open gates, in-memory grants and every
-  `@tool:` value (`tokensByRun`) go silently. A new store is declared with `defineState` or marked `// state: <kind>`
-  (`scripts/check-state.mjs`, ratcheted), and is not a fourth copy of something already there. → state.md
+  `@tool:` value (`tokensByRun`) go silently. Declaring it is the RULE under Conventions. → state.md
 - **Hub client.** A hub is trusted with nothing: act on the signature inside the seal, never `Envelope.sender`.
   `seal.ts` checks in a deliberate order, nonce last. → hub-client.md
 - **WHO THE ROOT IS:** a phone in a pocket, never a runtime (`extension-pairing.ts` refuses `createAccount`).
@@ -223,6 +222,15 @@ indexes every module, module-scope declaration and documented CSS class by its d
 undocumented thing is INVISIBLE and gets rebuilt. A new export or CSS family needs a first sentence saying what it
 is FOR (`--new` ratchet), a new file opens with `// <name>.ts — <what it is for>.` (`--headerless` gate).
 `.claude/skills/code-index/SKILL.md`.
+
+**RULE — state goes through the STATE REGISTRY, from the first commit of the component that adds it.** Anything kept
+across calls (a module-level Map/Set/signal/`let`, a storage key, an IndexedDB store, a grant) that a RUN depends on is
+declared beside the store with `defineState` (`src/state-registry.ts`): scope, realm (`worker`/`page`/`offscreen`),
+audience (`model`, `human`, or `never` for a secret) and what loses it, with a `read` returning plain data for one run.
+State that is not a run's is marked `// state: cache|ui|plumbing|fixed|test`. The Run state panel and `ml.current` read
+the registry, so an undeclared store is invisible to both; `scripts/check-state.mjs` ratchets it (pre-commit, CI). Check
+`docs/dev/state.md` first so it is not a fourth copy of something. This rule stays in AGENTS.md: it is for everyone
+adding code, not only someone reading the state docs.
 
 **RULE — a test goes under a SECTION (`// --- what this group is about ---`), and `node scripts/test-index.mjs
 '<regex>'` is how you find one.** Ratcheted on new tests; a new test file opens with a header comment.
