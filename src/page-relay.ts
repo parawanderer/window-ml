@@ -63,3 +63,15 @@ export const PAGE_STARTED_TYPES: ReadonlySet<string> = new Set<string>([
  *  one a run is currently on: the other page-started types are, until delegation tokens replace that allowance
  *  (sw-site-access.ts, slice 2). */
 export const RUN_CONTROL_TYPES: ReadonlySet<string> = new Set<string>(["START_RUN", "RESUME_RUN", "INJECT_MESSAGE", "PAGE_CANCEL_RUN"]);
+
+/** What a tab HOSTING a background run may send from its top frame whatever its origin: what that run's own tools send
+ *  while they run in the page (a vision tool's model call and screenshot, `fetch_url`, `python_exec`, a sheet, a server
+ *  tool, a shadow root's CDP resolve, the config reads `agent_api_docs` makes, and the abort of one of those requests).
+ *  Nothing that changes the model, unloads it, saves or reads sessions, embeds, or dumps a log: a page a run visits
+ *  gains only what the run itself needs there. It shrinks as tools move to the worker (docs/spec/SITE_ACCESS.md slice
+ *  2) and goes when none run in the page. */
+export const RUN_TAB_TYPES: ReadonlySet<string> = new Set<string>([
+    "FETCH_LLM", "ABORT_TASK", "MODEL_CAPS", "GET_MODEL", "GET_CONFIG", "GET_INVOCATION",
+    "CAPTURE_TAB", "FETCH_IMAGE_B64", "FETCH_URL", "PYTHON_EXEC", "FETCH_SHEET",
+    "LIST_SERVER_TOOLS", "SERVER_TOOL_EXEC", "CDP_SHADOW_RESOLVE",
+]);

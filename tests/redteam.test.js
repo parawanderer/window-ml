@@ -22,7 +22,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
 const { jsonResponse, streamResponse, loadBackground, loadPageWorld } = require("./helpers");
-const { PAGE_STARTED_TYPES, RUN_CONTROL_TYPES } = require("../src/page-relay.ts");
+const { PAGE_STARTED_TYPES, RUN_CONTROL_TYPES, RUN_TAB_TYPES } = require("../src/page-relay.ts");
 
 const baseConfig = (o = {}) => ({ chatUrl: "http://host/api/chat/completions", apiKey: "sk-SECRET-KEY", model: "default-model", apiFormat: "openai", ocrModel: "", ...o });
 const hostilePage = (id = 9, url = "https://evil.example/attack") => ({ tab: { id, url }, url });   // sender.tab set + web origin
@@ -148,16 +148,19 @@ test("GAIN blocked — EVERY page-started message type is refused from an unappr
     }
 });
 
-test("GAIN blocked — run control is refused from an unapproved page even while a run is on its tab; tool traffic is not (until slice 2)", async () => {
+test("GAIN blocked — a tab hosting a run may send only what the run's tools send; run control, the model, sessions and dumps are refused", async () => {
     for (const type of PAGE_STARTED_TYPES) {
         const bg = loadBackground({ config: baseConfig(), siteGate: true, onFetch: () => jsonResponse({ choices: [{ message: { content: "ok" } }] }) });
         bg.context.__mlSeedActiveRunForTest(9, "run-on-tab");
         const { res } = await attempt(bg, type, hostilePage());
         const refused = /^Refused: https:\/\/evil\.example/.test(res?.error || "");
         // The interim allowance is a recorded deviation (SITE_ACCESS.md): a run's own tools on that page still send
-        // these. RUN_CONTROL_TYPES never pass, so the page cannot start, resume, steer or stop anything.
-        assert.equal(refused, RUN_CONTROL_TYPES.has(type), `${type}: ${refused ? "refused" : "allowed"} on a tab hosting a run`);
+        // RUN_TAB_TYPES. Everything else is refused as from any unapproved page.
+        assert.equal(refused, !RUN_TAB_TYPES.has(type), `${type}: ${refused ? "refused" : "allowed"} on a tab hosting a run`);
     }
+    for (const type of RUN_TAB_TYPES) assert.ok(PAGE_STARTED_TYPES.has(type), `${type} is a page-started type (a typo would allow nothing and test nothing)`);
+    for (const type of [...RUN_CONTROL_TYPES, "SET_MODEL", "OLLAMA_UNLOAD", "SAVE_SESSION", "GET_SESSION", "EMBED", "DUMP_EVENTS", "ML_DEBUG_EVENT", "ML_SESSION_EVENT"])
+        assert.ok(!RUN_TAB_TYPES.has(type), `${type} is never sent by a run's tools`);
 });
 
 test("GAIN blocked — a sender that can never be granted is refused even when its host IS approved", async () => {

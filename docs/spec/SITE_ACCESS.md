@@ -329,7 +329,8 @@ Recorded as each slice lands, with the reason.
   makes its own request (a vision tool's model call, a screenshot, `fetch_url`, `python_exec`). Until slice 2's tokens,
   a tab in `activeRuns` may send every page-started type except RUN CONTROL (start, resume, steer, cancel). The red-team
   test asserts both halves. Attack 9 stays open until then. It also keeps a run working on a local `file:` page,
-  which is never grantable.
+  which is never grantable. Narrowed in slice 2 to `RUN_TAB_TYPES`, what the run's tools send: the allowance had let
+  any script on the tab change the model, unload it, read and save sessions, embed, and dump the debug logs.
 - **Slice 1: `pageApprovalDomains` IMPLIES approval, live, and over https only.** The spec said "seed the approved list
   from it on first start". Reading it at decision time is the same for the one install and stays true when a domain is
   added later. It implies approval for the host's `https://` origin only: the whitelist is keyed by HOST, and implying
