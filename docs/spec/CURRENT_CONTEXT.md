@@ -288,6 +288,11 @@ this contract.
 
 ## The kernel variable inspector shows the same objects
 
+[`STATE_INSPECTOR.md`](STATE_INSPECTOR.md) is that panel's spec. It adds members to this shape (`init`, `input`,
+`pointers`, `subagents`, `debug.userWatches` and others) and gives every member an AUDIENCE. A `model` member is in
+`ml.current`. A `human` member (the mailbox, today) is in the panel only, because this document's invariant forbids
+the model anything it was not already given.
+
 The right-dock "kernel state" panel — the unbuilt half of the pair whose other half is the execution log
 ([`../dev/run-log.md`](../dev/run-log.md)) — is a VIEW of this shape, not a second description of it. One surface reads it as data, the other draws it. That has a
 consequence for the contract: every value here must be plainly serializable and renderable, which is another reason
