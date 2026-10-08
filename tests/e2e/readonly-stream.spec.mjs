@@ -4,23 +4,24 @@
 // Each prints a line, AWAITS a call the test holds open, then prints another, so "streamed before the step finished"
 // is a state the test looks at rather than a race it happens to win.
 import { test, expect } from "@playwright/test";
-import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, watchRunEvents } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 
 // In the dialect (`ml.ps` is a free read), and valid JavaScript for the approved path too.
 const SURVEY = `console.log("before the wait"); const ps = await ml.ps(); console.log("after the wait"); return "done"`;
 
-/** Every live-output delta and every finished step this page's runs emit, collected on the page window. */
-const collect = (page) => page.evaluate(() => {
-    window.__deltas = []; window.__done = [];
-    window.addEventListener("message", (e) => {
-        const d = e.data && e.data.__mlDebug;
+/** Every live-output delta and every finished step of the runs on this page's tab, from the worker's DevTools port: a
+ *  run's events no longer reach the page's own window (#392). */
+async function collect(ext, page) {
+    const ev = { deltas: [], done: [] };
+    await watchRunEvents(ext, page, (d) => {
         if (!d || d.kind !== "agent-step") return;
-        if (d.streamOutput != null && d.tool == null) window.__deltas.push(d.streamOutput);
-        else if (d.tool === "exec" && !d.pending) window.__done.push({ approval: d.approval, result: d.result });
+        if (d.streamOutput != null && d.tool == null) ev.deltas.push(d.streamOutput);
+        else if (d.tool === "exec" && !d.pending) ev.done.push({ approval: d.approval, result: d.result });
     });
-});
+    return ev;
+}
 
 /** Run SURVEY with `ml.ps` held open, and return what streamed while it waited and how the step settled. */
 async function streamSurvey({ readonly, js = SURVEY, held = "before the wait\n" }) {
@@ -34,7 +35,7 @@ async function streamSurvey({ readonly, js = SURVEY, held = "before the wait\n" 
         const page = await ext.context.newPage();
         await page.goto(site.url + "/");
         await waitForMl(page);
-        await collect(page);
+        const ev = await collect(ext, page);
         if (readonly) fake.holdPs();
         await page.evaluate(() => { window.__run = window.ml.agent("survey the page", { stream: true, approvalRouting: "both" }); window.__run.catch(() => {}); });
 
@@ -47,14 +48,14 @@ async function streamSurvey({ readonly, js = SURVEY, held = "before the wait\n" 
         }
 
         // WHILE `ml.ps` is held: the first line is out, the second is not, and the step has not finished.
-        await expect.poll(() => page.evaluate(() => window.__deltas.at(-1) || ""), { timeout: 20000,
+        await expect.poll(() => ev.deltas.at(-1) || "", { timeout: 20000,
             message: "the line printed before the await streams while the survey waits" }).toBe(held);
-        const whileHeld = await page.evaluate(() => ({ deltas: window.__deltas.slice(), done: window.__done.length }));
+        const whileHeld = { deltas: ev.deltas.slice(), done: ev.done.length };
         fake.releasePs();
 
         // Wait for the RUN, not for a body element of a collapsed step.
         await page.evaluate(() => window.__run);
-        const after = await page.evaluate(() => ({ deltas: window.__deltas.slice(), done: window.__done.slice() }));
+        const after = { deltas: ev.deltas.slice(), done: ev.done.slice() };
         return { whileHeld, after };
     } finally {
         fake.releasePs();
@@ -97,18 +98,18 @@ test("a survey that streams and THEN falls out of dialect leaves nothing behind:
         const page = await ext.context.newPage();
         await page.goto(site.url + "/");
         await waitForMl(page);
-        await collect(page);
+        const ev = await collect(ext, page);
         await page.evaluate(() => { window.__run = window.ml.agent("click it", { stream: true, approvalRouting: "both" }); window.__run.catch(() => {}); });
 
         // The refused try reached the gate. By then its line must be gone: the last delta is the discard.
         await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 20000 }).toBe(1);
-        await expect.poll(() => page.evaluate(() => window.__deltas.slice()), { timeout: 5000,
+        await expect.poll(() => ev.deltas.slice(), { timeout: 5000,
             message: "the refused try streamed its line, then took it back" }).toEqual(["before the click\n", ""]);
         const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
         await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
         await page.evaluate(() => window.__run);
 
-        const { deltas, done } = await page.evaluate(() => ({ deltas: window.__deltas.slice(), done: window.__done.slice() }));
+        const { deltas, done } = ev;
         expect(done).toHaveLength(1);
         expect(done[0].approval).toBe("user");
         // The approved run streamed from empty: no delta after the discard carries the line twice.
