@@ -89,5 +89,6 @@ test("the loop's fan adds a post's `skipped` to what it reports dropped", async 
         emit: (ev) => emits.push(ev),
     });
     const last = emits.filter((e) => e.streamOutput != null && e.tool == null).at(-1).streamOutput;
-    assert.match(last, /\[\+5100 chars\]$/, "the skipped 5,000 and the 100 past the cap");
+    // 17,100 pushed; kept: the 500-character head the model read, and the 100 newest. The skipped 5,000 are in the gap.
+    assert.match(last, /^a{500}\n… \[16500 chars dropped here\] …\nb{100}$/, "the skipped 5,000 are counted with the rest of the gap");
 });

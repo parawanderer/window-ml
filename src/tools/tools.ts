@@ -32,6 +32,7 @@ import { ML_READONLY_METHODS } from "../readonly-exec";
 // surface, so the doc the model reads can never drift from the interface it describes.
 import { resolveOutputCap, outputCapPrecheck, OUTPUT_CAP } from "../contract/contract-pointers";
 import { UI_OUT_CAP } from "../contract/contract-chat";
+import { clipHeadTail, panelHead } from "../agent/output-clip";
 import { ML_API_PARTS } from "../api-docs.gen";
 import { queryApiDocs, isDefaultQuery, type ApiDocsQuery } from "./api-docs-query";
 import { answerItemFromString, type AnswerSet } from "../pointers/answer-set";
@@ -743,7 +744,8 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                         type: "exec-out",
                         // The UI keeps far more than the model's budget, and records where the model's view
                         // ENDED (`seen`) so the surplus renders marked instead of silently passing as "what it read".
-                        ...(logs.length ? { stdout: clipOut(joined, UI_OUT_CAP), seen: Math.min(joined.length, cap) } : {}),
+                        ...(logs.length ? { stdout: clipHeadTail(joined, UI_OUT_CAP, panelHead(cap)), seen: Math.min(joined.length, cap) } : {}),
+                        ...(joined.length > UI_OUT_CAP ? { capture: clipOut(joined, UI_OUT_CAP) } : {}),   // what a pointer reads, in one piece
                         ...(error != null ? { error } : {}),
                         ...(errorLine != null ? { errorLine } : {}),
                         ...(value != null ? { value } : {}),

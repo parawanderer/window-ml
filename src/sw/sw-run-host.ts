@@ -10,6 +10,7 @@ import type { ToolMeta } from "../agent/agent-loop";
 import type { HousekeepingReport } from "../log/housekeeping";
 import type { NeutralMessage, ToolCall, TokenUsage } from "../contract/contract-chat";
 import { UI_OUT_CAP } from "../contract/contract-chat";
+import { clipHeadTail, panelHead } from "../agent/output-clip";
 import type { ApprovalDecision } from "../contract/contract-agent";
 import { stepBudget } from "../agent/step-budget";
 import type { StartRunPayload, ResumeRunPayload } from "../contract/contract-messages";
@@ -596,7 +597,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                             const stdout = r.logs.join("\n");
                             const seen = Math.min(stdout.length, CDP_EXEC_CAP);
                             return { result: r.text, renderIn: env.renderIn,
-                                renderOut: { type: "exec-out", stdout: clipOut(stdout, UI_OUT_CAP), seen, value: r.value } };
+                                renderOut: { type: "exec-out", stdout: clipHeadTail(stdout, UI_OUT_CAP, panelHead(CDP_EXEC_CAP)), ...(stdout.length > UI_OUT_CAP ? { capture: clipOut(stdout, UI_OUT_CAP) } : {}), seen, value: r.value } };
                         }
                         return { result: `${env.result || ""}\n\n${r.error}`, renderIn: env.renderIn, renderOut: env.renderOut };
                     }

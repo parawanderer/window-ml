@@ -24,6 +24,8 @@ import { formatBytes } from "../resource/resource-model";
 import { type Capacity } from "../resource/resource-capacity";
 import { UNATTENDED_REFUSAL } from "./prompts";
 import { toolToken } from "../util";
+import { gapNote, panelHead, tailStart } from "./output-clip";
+import { resolveOutputCap } from "../contract/contract-pointers";
 import { recordAppended, snapshotCurrent, type CurrentSnapshot, type RecordedMeta } from "./current-context";
 import type { RunLogEvent } from "../log/run-log";
 import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, shortType, isAliasRef, parseLabel, DEREF_TOOL, type TokenKind, type TokenValue, type DerefRead } from "../pointers/token-pipe";
@@ -296,8 +298,9 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
 // text (a runaway print can't blow up a message). The DONE emit carries the full result and supersedes this,
 // so the cap only bounds the LIVE view. Mirrors the LLM stream's 90ms cadence.
 const STREAM_EMIT_MS = 90;
-// Same budget the finished render keeps (UI_OUT_CAP), so the live view and the settled one agree — output
-// never visibly shrinks (or jumps) when the step lands. Past it, a running "[+N chars]" note counts up.
+// Same budget the finished render keeps (UI_OUT_CAP), and the same SHAPE (output-clip.ts): the start the model read
+// and the LATEST output, with the gap counted between them. So the live view and the settled one agree, and a
+// runaway loop shows its newest lines, like a terminal, instead of freezing on its first ones.
 const STREAM_OUTPUT_CAP = UI_OUT_CAP;
 /** One tool call's live-output sink, as a host sees it. `discard` takes back everything pushed so far: a read-only
  *  try refused part way through printed lines from a run that did not happen, and the approved run, if any, streams
@@ -310,24 +313,64 @@ export interface LiveOutput {
 
 /** Build the per-tool-call streaming fan (or null when streaming is off). `push` accumulates + throttled-emits
  *  the running output; `done` stops any pending trailing emit (the DONE supersedes it); `discard` empties it and,
- *  if anything had been shown, emits the empty output, which the reducer reads as "nothing streamed". */
-function makeStreamFan(on: boolean | undefined, emit: (out: string, marks: [number, number][]) => void): (LiveOutput & { done: () => void }) | null {
+ *  if anything had been shown, emits the empty output, which the reducer reads as "nothing streamed". `head` is how
+ *  much of the START to keep once the output passes the cap ({@link panelHead} of the call's model cut); the rest of
+ *  the cap holds the latest output. */
+function makeStreamFan(on: boolean | undefined, emit: (out: string, marks: [number, number][]) => void, head = 0): (LiveOutput & { done: () => void }) | null {
     if (!on) return null;
-    let acc = "", dropped = 0, last = 0, timer: ReturnType<typeof setTimeout> | null = null;
-    const marks: [number, number][] = [];   // [offset in acc, when the producer emitted it]
-    // Past the cap we keep the HEAD (like the final clip) and COUNT what we dropped, re-emitting the note each
-    // flush — so a runaway loop shows a truncation figure that ticks up instead of silently freezing.
-    const send = (): void => { last = Date.now(); emit(dropped ? `${acc}… [+${dropped} chars]` : acc, marks.slice()); };
+    const h = Math.max(0, Math.min(head, STREAM_OUTPUT_CAP)), room = STREAM_OUTPUT_CAP - h;
+    // `start` is the kept head; `win` the last `room` characters after it, at absolute offset `winAt`; `prevNl` says
+    // whether the character before `win` is a newline. `total` is everything pushed.
+    let start = "", win = "", winAt = h, prevNl = h === 0, total = 0, last = 0, timer: ReturnType<typeof setTimeout> | null = null;
+    let marks: [number, number][] = [];   // [ABSOLUTE offset in the whole output, when the producer emitted it]
+    const view = (): [string, [number, number][]] => {
+        if (total <= STREAM_OUTPUT_CAP) return [start + win, marks.slice()];
+        const j = tailStart(win, prevNl), from = winAt + j, note = gapNote(from - h), at = h + note.length;
+        // A mark in the gap stamps the tail's first line, which began there; the latest one wins.
+        const out: [number, number][] = [];
+        let gap: number | null = null;
+        for (const [o, t] of marks) {
+            if (o < h) out.push([o, t]);
+            else if (o < from) gap = t;
+            else { if (gap != null && o > from) out.push([at, gap]); gap = null; out.push([at + o - from, t]); }
+        }
+        if (gap != null) out.push([at, gap]);
+        return [start + note + win.slice(j), out];
+    };
+    const send = (): void => { last = Date.now(); const [text, m] = view(); emit(text, m); };
     return {
         push(text: string, ts?: number, skipped?: number): void {
-            const s = String(text), room = STREAM_OUTPUT_CAP - acc.length;
-            if (skipped) dropped += skipped;   // the producer's sender only skips past the first cap, which `acc` already holds
+            let s = String(text);
+            // Characters the producer's sender left out before `text` (stream-sender.ts). It forwards the stream's
+            // first cap whole, so the head is already full; what it skipped never arrived, so the window cannot hold
+            // it, and `text` starts the window afresh.
+            if (skipped) {
+                total += skipped; winAt += win.length + skipped; win = ""; prevNl = false;
+                const behind = marks.filter(([o]) => o >= h && o < winAt);
+                if (behind.length > 1) { const keep = behind[behind.length - 1]; marks = marks.filter((m) => m[0] < h || m[0] >= winAt || m === keep); }
+            }
             // The EXECUTOR's timestamp wins (it may have crossed a worker/network hop); fall back to now only
             // when the producer is this realm. One mark per push — the UI maps a line back to the mark at or
             // before its offset.
-            if (room > 0 && s) marks.push([acc.length, ts ?? Date.now()]);
-            if (room > 0) { acc += s.slice(0, room); if (s.length > room) dropped += s.length - room; }
-            else dropped += s.length;
+            if (s) marks.push([total, ts ?? Date.now()]);
+            total += s.length;
+            if (start.length < h) {
+                const take = s.slice(0, h - start.length);
+                start += take; s = s.slice(take.length);
+                if (start.length === h) prevNl = start.endsWith("\n");
+            }
+            if (s) {
+                win += s;
+                if (win.length > room) {
+                    const cut = win.length - room;
+                    prevNl = win[cut - 1] === "\n";
+                    win = win.slice(cut); winAt += cut;
+                    // Bounded: drop the marks the window has left behind, but the latest of them, which may still
+                    // stamp the tail's first line.
+                    const behind = marks.filter(([o]) => o >= h && o < winAt);
+                    if (behind.length > 1) { const keep = behind[behind.length - 1]; marks = marks.filter((m) => m[0] < h || m[0] >= winAt || m === keep); }
+                }
+            }
             if (Date.now() - last >= STREAM_EMIT_MS) { if (timer) { clearTimeout(timer); timer = null; } send(); }   // leading edge
             else if (!timer) timer = setTimeout(() => { timer = null; send(); }, STREAM_EMIT_MS);                    // trailing, coalesced
         },
@@ -335,7 +378,7 @@ function makeStreamFan(on: boolean | undefined, emit: (out: string, marks: [numb
         discard(): void {
             if (timer) { clearTimeout(timer); timer = null; }
             const shown = last > 0;
-            acc = ""; dropped = 0; last = 0; marks.length = 0;
+            start = ""; win = ""; winAt = h; prevNl = h === 0; total = 0; last = 0; marks = [];
             if (shown) emit("", []);
         },
     };
@@ -761,7 +804,9 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             deps.emit?.({ step, seq: s, pending: true, tool: call.name, arguments: args, renderIn: preIn });   // in-flight START
             // Live tool-output fan for THIS call (opt-in `stream`): a delta emit carries only { step, seq,
             // streamOutput } so the reducer patches the pending row additively; the DONE below supersedes it.
-            const fan = makeStreamFan(opts.stream, (out, marks) => deps.emit?.({ step, seq: s, streamOutput: out, streamMarks: marks }));
+            // Its head is the model's cut, for a tool that has one, so the part the model read stays in view.
+            const cut = call.name === "exec" || call.name === "python_exec" ? resolveOutputCap(call.name, args.maxChars, args.maxCharsReason).cap : 0;
+            const fan = makeStreamFan(opts.stream, (out, marks) => deps.emit?.({ step, seq: s, streamOutput: out, streamMarks: marks }), panelHead(cut));
             let result: string, approval: Approval | undefined;
             let tr: ToolRunResult | undefined;   // the full result — its render slots ride the DONE emit
             if (!meta) {
@@ -933,7 +978,8 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 // model's context budget, so a pointer holding only that would hand back exactly what the model
                 // already has — useless. The render descriptor kept far more (UI_OUT_CAP), and reaching THAT is
                 // the main reason to dereference at all.
-                const fuller = (r?.type === "python-out" || r?.type === "exec-out") ? r.stdout : undefined;
+                // `capture` when the panel's copy dropped a middle part: the pointer keeps one contiguous piece (contract-render.ts).
+                const fuller = (r?.type === "python-out" || r?.type === "exec-out") ? (r.capture ?? r.stdout) : undefined;
                 const full = fuller && fuller.length > result.length ? fuller : undefined;
                 // Carry the typed PAYLOADS too, not just the kind — an image pointer with no image is what
                 // `look` would resolve to, and a `latex` cast needs the symbolic string.

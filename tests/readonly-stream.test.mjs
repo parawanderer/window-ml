@@ -190,7 +190,7 @@ test("a survey printing past the model's limit streams EVERY line; only the resu
     assert.ok(!result.includes("line 29"), "and not the tail");
 });
 
-test("a survey printing past the STREAM's cap keeps the head and counts what it dropped; the model's result is unaffected", async () => {
+test("a survey printing past the STREAM's cap keeps the head and the LATEST lines, counting the gap; the model's result is unaffected", async () => {
     const lines = 400, width = 50;   // 400 x 51 chars, past UI_OUT_CAP
     // Then a slow read, so the throttled emit lands before the step's DONE supersedes the live view.
     const js = `for (const i of ml.range(${lines})) console.log("${"y".repeat(width - 4)}" + String(i).padStart(4, "0")); await ml.ps()`;
@@ -205,7 +205,9 @@ test("a survey printing past the STREAM's cap keeps the head and counts what it 
     const total = lines * (width + 1);
     assert.ok(total > UI_OUT_CAP);
     assert.ok(last.startsWith("y".repeat(width - 4) + "0000\n"), "the HEAD is kept, as the settled clip keeps it");
-    assert.match(last, new RegExp(`… \\[\\+${total - UI_OUT_CAP} chars\\]$`), "and the note counts exactly what was dropped");
+    assert.ok(last.endsWith("y".repeat(width - 4) + String(lines - 1).padStart(4, "0") + "\n"), "and the newest line, like a terminal");
+    const [head, tail] = last.split(/\n… \[\d+ chars dropped here\] …\n/);
+    assert.equal(Number(last.match(/\[(\d+) chars dropped here\]/)[1]), total - head.length - tail.length, "the note counts exactly what was dropped");
     assert.ok(res.transcript[0].result.length < 1000, "the model's result is cut at its own limit, not the stream's");
 });
 
