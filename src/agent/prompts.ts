@@ -75,7 +75,7 @@ export const SELF_CLAUSE =
  *  cannot describe one the code no longer has. `docs` is whether `agent_api_docs` is in the toolset. */
 export const currentClause = (docs: boolean): string =>
     `\n\nYou can read YOUR OWN RUN as data: \`ml.current\` in a read-only \`exec\` is \`${CURRENT_SIGNATURE}\`, with \`meta[i]\` describing \`messages[i]\` (system prompt first; \`tokens\` is an estimate unless \`tokensBasis\` is "counted"); ` +
-    "`run.step`, `maxSteps` and `startedTs` are THIS turn's, and a shared watch is re-evaluated on every read, so its value is now; its `note` is the user's question about it, so answer that. Use it to " +
+    "`run.step` (1 on this turn's first call), `maxSteps` and `startedTs` are THIS turn's; a read holds the call making it, not its result, and a shared watch is re-evaluated on every read, so its value is now; its `note` is the user's question about it, so answer that. Use it to " +
     "check what is in your context, what a tool really returned, or what the user shared with you in " +
     "`ml.current.debug.userWatches`" + (docs ? "; `agent_api_docs` has every type" : "") + ". It is read-only and never " +
     "reaches the page, so a script that also acts on the page cannot read it: read in one exec, act in the next.";

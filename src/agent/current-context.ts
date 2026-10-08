@@ -78,8 +78,9 @@ export interface CurrentRun {
     /** The run's session hash: the same in every turn of the conversation. */
     id: string;
     model: string | null;
-    /** Model calls so far in THIS TURN. It restarts when a new message starts a turn, so it is not a session-wide count:
-     *  a real model read 2, then 1 after the next message, and took the watch it was reading for a stale snapshot. */
+    /** Model calls so far in THIS TURN, counting the one that is reading it: 1 on a turn's first call. It restarts when a
+     *  new message starts a turn, so it is not a session-wide count (a real model read 2, then 1 after the next message,
+     *  and took the watch it was reading for a stale snapshot). */
     step: number;
     /** THIS TURN's step budget. */
     maxSteps: number;
@@ -104,7 +105,8 @@ export interface CurrentLogRecord {
 /** The records, and the same log as greppable lines on `.text`, for `ml.pipe`. One member, two views. */
 export type CurrentLog = CurrentLogRecord[] & { text: string };
 
-/** Everything `ml.current` is, at one instant. */
+/** Everything `ml.current` is, at one instant: the moment the exec reading it runs. So it holds the assistant message
+ *  that made that call, and not the call's result, and every later read has more messages than this one. */
 export interface CurrentSnapshot {
     run: CurrentRun;
     /** The NeutralMessage[] the next model call gets, verbatim: the system prompt first, then every user and assistant

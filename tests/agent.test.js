@@ -880,8 +880,14 @@ test("answer tool curates the answer set (add element/text, remove, clear)", asy
 
     // no-op echo shows the set; clear empties it
     assert.match(await call({}), /the total is 42/);
-    await call({ clear: true });
+    assert.match(await call({ clear: true }), /^Answer cleared\./);
     assert.equal(set.length, 0, "clear empties the set");
+
+    // clear WITH text replaces the set with it, rather than dropping the text (Gemini Flash sent this twice in a row)
+    await call({ text: "an old draft" });
+    const replaced = await call({ clear: true, text: "the final answer" });
+    assert.match(replaced, /^cleared; added text\./);
+    assert.deepEqual(set.items.map(i => i.text), ["the final answer"]);
 });
 
 test("pageInfo grounds time/locale for time-relative tasks", () => {

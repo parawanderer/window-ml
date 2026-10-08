@@ -659,7 +659,8 @@ test("UPGRADE: a stored config from before the flag reads as ON: the prompt show
     assert.match(system, /agent_api_docs` has every type/);
     // What two real models got wrong from the shape alone (converse sessions, 2026-10-08): a per-turn step read as
     // session-wide, and a shared watch read as a snapshot from when it was shared.
-    assert.match(system, /`run\.step`, `maxSteps` and `startedTs` are THIS turn's/);
+    assert.match(system, /`run\.step` \(1 on this turn's first call\), `maxSteps` and `startedTs` are THIS turn's/);
+    assert.match(system, /a read holds the call making it, not its result/);
     assert.match(system, /a shared watch is re-evaluated on every read, so its value is now/);
     // From real runs: DeepSeek V4 Pro summed `meta[].tokens` and called the total exact, and read a watch's note asking
     // "is it climbing?" as a label, reporting the number instead of answering it.
