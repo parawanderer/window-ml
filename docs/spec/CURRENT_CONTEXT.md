@@ -32,11 +32,11 @@ today and both come up constantly:
 ## The shape
 
 ```js
-ml.current.run        // { id, model, step, maxSteps, startedTs } — which run this is; step, maxSteps and startedTs are THIS turn's
-ml.current.messages   // `NeutralMessage[]` VERBATIM — the exact array `ml.step()` takes
+ml.current.run        // { id, model, step, maxSteps, startedTs } — which run this is; step (1 on a turn's first call), maxSteps and startedTs are THIS turn's
+ml.current.messages   // `NeutralMessage[]` VERBATIM — the exact array `ml.step()` takes, system prompt first, as of the exec reading it (its own call in, its result not)
 ml.current.meta       // a PARALLEL array, same length and order: what we KNOW about each message
 ml.current.log        // this run's execution log: records, carrying `.text` for ml.pipe
-ml.current.debug      // { userWatches: [{ expression, value | error }] }: watches the person shared (worker-hosted runs)
+ml.current.debug      // { userWatches: [{ expression, note?, value | error }] }: watches the person shared (worker-hosted runs); a note is their question
 ```
 
 Five decisions make it survive the write half. Each is the non-obvious choice.

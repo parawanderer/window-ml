@@ -1019,7 +1019,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     note: { type: "string", description: "Optional note about what the added element(s) are." },
                     show: { type: "string", enum: ["inline", "highlight"], description: "How the HUD shows an added element: 'inline' renders its image/screenshot in the card; 'highlight' shows a chip that spotlights the live element. Default: <img> → inline, else highlight." },
                     remove: { type: ["integer", "array"], items: { type: "integer" }, description: "Remove item(s) from the set by index (from the echo). A single index or a list." },
-                    clear: { type: "boolean", description: "Empty the answer set." }
+                    clear: { type: "boolean", description: "Empty the answer set first; with `text` or `selector`, replace it with that." }
                 }
             },
             run: async (
@@ -1029,12 +1029,15 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
             ): Promise<string | ToolResult> => {
                 const set = ctx?.answer;
                 if (!set) return "Error: no active run to answer into.";
-                if (clear) { set.clear(); return "Answer cleared.\n  (empty)"; }
+                // `clear` first, then whatever else the call carries: `{ clear: true, text }` is "replace the answer
+                // with this". It used to return here, and Gemini Flash's text was dropped on two turns running.
+                if (clear) set.clear();
+                if (clear && text == null && selector == null) return "Answer cleared.\n  (empty)";
 
                 // Apply every op the call carries, in order — models naturally send `{ text, selector }` to add
                 // BOTH at once, so don't make them do two round-trips. A bad selector is NOTED, not fatal (any
-                // text still lands). `clear` above is exclusive.
-                const notes: string[] = [];
+                // text still lands).
+                const notes: string[] = clear ? ["cleared"] : [];
                 if (remove != null) {
                     const idxs = Array.isArray(remove) ? remove : [remove];
                     let removed = 0;

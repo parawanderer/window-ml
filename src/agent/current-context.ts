@@ -57,7 +57,8 @@ export interface MessageMeta {
     gapMs: number | null;
     /** Where a user message was typed. Null for every other role, and for history. */
     surface: PromptSurface | null;
-    /** The size of this message: what compacting it would reclaim. Text only; see `images`. */
+    /** The size of this message: what compacting it would reclaim. Text only; see `images`. An ESTIMATE unless
+     *  `tokensBasis` is `"counted"`: a real model summed these and called the total exact. */
     tokens: number;
     tokensBasis: TokensBasis;
     /** Images the message carries, which `tokens` does NOT include: an image's cost depends on the model, and
@@ -77,8 +78,9 @@ export interface CurrentRun {
     /** The run's session hash: the same in every turn of the conversation. */
     id: string;
     model: string | null;
-    /** Model calls so far in THIS TURN. It restarts when a new message starts a turn, so it is not a session-wide count:
-     *  a real model read 2, then 1 after the next message, and took the watch it was reading for a stale snapshot. */
+    /** Model calls so far in THIS TURN, counting the one that is reading it: 1 on a turn's first call. It restarts when a
+     *  new message starts a turn, so it is not a session-wide count (a real model read 2, then 1 after the next message,
+     *  and took the watch it was reading for a stale snapshot). */
     step: number;
     /** THIS TURN's step budget. */
     maxSteps: number;
@@ -103,10 +105,12 @@ export interface CurrentLogRecord {
 /** The records, and the same log as greppable lines on `.text`, for `ml.pipe`. One member, two views. */
 export type CurrentLog = CurrentLogRecord[] & { text: string };
 
-/** Everything `ml.current` is, at one instant. */
+/** Everything `ml.current` is, at one instant: the moment the exec reading it runs. So it holds the assistant message
+ *  that made that call, and not the call's result, and every later read has more messages than this one. */
 export interface CurrentSnapshot {
     run: CurrentRun;
-    /** The NeutralMessage[] the next model call gets, verbatim: a COPY, so nothing a script does reaches the loop's. */
+    /** The NeutralMessage[] the next model call gets, verbatim: the system prompt first, then every user and assistant
+     *  message, tool call and tool result. A COPY, so nothing a script does reaches the loop's. */
     messages: NeutralMessage[];
     /** Parallel to `messages`: same length, same order. */
     meta: MessageMeta[];
@@ -120,7 +124,8 @@ export interface CurrentSnapshot {
  *  failed or its value was too large to hand over. */
 export interface UserWatch {
     expression: string;
-    /** What the person wrote about WHY they shared it ("is this growing?"), when they wrote anything. Their words. */
+    /** What the person wrote about WHY they shared it ("is this growing?"), when they wrote anything. Their words, and
+     *  often their question: answer it, not just the value (a real model read "is it climbing?" and reported the number). */
     note?: string;
     value?: unknown;
     error?: string;
