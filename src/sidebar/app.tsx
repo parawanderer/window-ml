@@ -41,7 +41,7 @@ import { applyTheme, applyFont, applyCodePrefs, applyFocus, initThemeStyle } fro
 import { DEFAULT_CODE_THEME } from "../code-themes";
 import { IconWarn, IconTimer, IconGear, IconExport, IconVram, IconBench, IconTools, IconBrain, IconClose, IconCollapse, IconMore } from "./icons";
 import { HousekeepingView } from "./housekeeping-log";
-import { Settings, openSettingsAt } from "./settings";
+import { Settings, openSettingsAt } from "./settings/settings";
 import { DetailView } from "./transcript/session-detail";
 
 

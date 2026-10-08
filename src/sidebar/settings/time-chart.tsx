@@ -11,7 +11,7 @@
 
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { cursorTip } from "./ui-kit";
+import { cursorTip } from "../ui-kit";
 
 /** One stacked series: its key in each point's `values`, what the tooltip and legend call it, and the class that
  *  colours it (the class sets `fill` for the area and `background` for the tooltip's swatch). */

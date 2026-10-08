@@ -3,30 +3,30 @@
 // this runs in the extension-origin iframe, not the page DOM — so edits sync live
 // with the popup. Text fields persist on change (blur) to avoid chatty writes; the
 // signal updates on input for a responsive UI + the utility-field enable gating.
-import { SITE_ACCESS_KEYS, originFromInput, type SiteEdit, type SiteLists } from "../site-access";
+import { SITE_ACCESS_KEYS, originFromInput, type SiteEdit, type SiteLists } from "../../site-access";
 import { StorageBody } from "./storage-section";
 import { LocalArchiveFolder } from "./archive-section";
 import { signal } from "@preact/signals";
 import { useState, useEffect, useLayoutEffect, useRef } from "preact/hooks";
 import { filterSettings } from "./settings-search";
 import type { ComponentChildren } from "preact";
-import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, LexicalMetric, ProtoMode } from "../contract/contract-config";
-import type { VisionSupport } from "../contract/contract-render";
-import type { LoadedModel, ServerTool } from "../contract/contract-server";
-import { DEFAULT_CONFIG, modelFilterAllows, protoMode } from "../contract/contract-config";
-import { DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX } from "../contract/contract-render";
-import { detectGroundingModel, generatesText, producesEmbeddings } from "../contract/contract-server";
-import { PY_PACKAGES } from "../python/python-env";
+import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, LexicalMetric, ProtoMode } from "../../contract/contract-config";
+import type { VisionSupport } from "../../contract/contract-render";
+import type { LoadedModel, ServerTool } from "../../contract/contract-server";
+import { DEFAULT_CONFIG, modelFilterAllows, protoMode } from "../../contract/contract-config";
+import { DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX } from "../../contract/contract-render";
+import { detectGroundingModel, generatesText, producesEmbeddings } from "../../contract/contract-server";
+import { PY_PACKAGES } from "../../python/python-env";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes,
-    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, CODE_THEME_KEY, CODE_THEME_VSCODE_KEY, CODE_THEME_UI_KEY, codeTheme, codeThemeCustom, codeThemeUi, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, modelKinds, embedDims, view } from "./store";
-import { truncate } from "./format";
-import { ToolDefsView } from "./transcript/agent-detail";   // the SAME viewer an agent run uses for its local toolset
-import { applyTheme, applyFont, applyCodePrefs, panelThemeActive } from "./prefs";
-import { CODE_THEME_PRESETS, DEFAULT_CODE_THEME, VSCODE_THEME_ID, convertVscodeTheme, parseJsonc, type CodeThemePreset, type ConvertedTheme } from "../code-themes";
-import { convertStored } from "./code-theme-css";
-import { IconCheck } from "./icons";
-import { Disclosure } from "./ui-kit";
+    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, CODE_THEME_KEY, CODE_THEME_VSCODE_KEY, CODE_THEME_UI_KEY, codeTheme, codeThemeCustom, codeThemeUi, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, modelKinds, embedDims, view } from "../store";
+import { truncate } from "../format";
+import { ToolDefsView } from "../transcript/agent-detail";   // the SAME viewer an agent run uses for its local toolset
+import { applyTheme, applyFont, applyCodePrefs, panelThemeActive } from "../prefs";
+import { CODE_THEME_PRESETS, DEFAULT_CODE_THEME, VSCODE_THEME_ID, convertVscodeTheme, parseJsonc, type CodeThemePreset, type ConvertedTheme } from "../../code-themes";
+import { convertStored } from "../code-theme-css";
+import { IconCheck } from "../icons";
+import { Disclosure } from "../ui-kit";
 
 /** The chart-window lengths the picker offers by name. The scrub strip can set others by drag, which is
  *  why the select needs to know which values it already has an option for. */

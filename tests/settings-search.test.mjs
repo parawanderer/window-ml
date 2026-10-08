@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
-import { filterSettings, queryWords, MISS } from "../src/sidebar/settings-search.ts";
+import { filterSettings, queryWords, MISS } from "../src/sidebar/settings/settings-search.ts";
 
 const BODY = `
 <div class="set-search-tab">Connection</div>

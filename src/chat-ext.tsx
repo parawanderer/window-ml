@@ -28,7 +28,7 @@ import { VramPanel } from "./sidebar/resource/vram";
 import { BACKEND_HEALTH_MS, connectResourceStream, fetchModels, loadedAt, pollBackendHealth, readPs } from "./sidebar/resource/resource-feed";
 import { PythonBench } from "./sidebar/vram-bench";
 import type { RuntimeId } from "./session/session-host";
-import { Settings } from "./sidebar/settings";
+import { Settings } from "./sidebar/settings/settings";
 import { config, psError } from "./sidebar/store";
 import { residentNow } from "./sidebar/resource/panel-facts";
 import { residentReader } from "./sidebar/resident-reader";
