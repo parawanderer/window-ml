@@ -2,17 +2,17 @@
 // card (ComposerCard) that starts/steers a run from the HUD. Extracted from hud-card.tsx; reads the shared
 // composer signals from ./card-state and the shared attach/thumb bits from ./composer.
 import { useState, useEffect, useRef } from "preact/hooks";
-import { models, modelKinds, config, ollamaIds, rev, sessionMap, backendError } from "./store";
-import { generatesText, producesEmbeddings } from "../contract/contract-server";
-import { IconChevron, IconEye, IconEyeOff } from "./icons";
-import { useImageAttach, ThumbStrip, ElementPill } from "./composer";
+import { models, modelKinds, config, ollamaIds, rev, sessionMap, backendError } from "../store";
+import { generatesText, producesEmbeddings } from "../../contract/contract-server";
+import { IconChevron, IconEye, IconEyeOff } from "../icons";
+import { useImageAttach, ThumbStrip, ElementPill } from "../composer";
 import {
     composerModel, composerModelOpen, composerVision, composerStream, composerMaxSteps, composerResolvedModel,
     composerOpen, composerElement, composerTarget, composerStarting, setDefaultModel,
     isOllamaModel,
 } from "./card-state";
-import { isCloudModel } from "./model";
-import { STEP_BUDGETS } from "../agent/step-budget";
+import { isCloudModel } from "../model";
+import { STEP_BUDGETS } from "../../agent/step-budget";
 
 // The composer's model control: a chip showing the run's model (the per-call pick, else the default) that
 // opens a dropdown of the allowed models. Picking a row overrides the model FOR THIS RUN; the ★ persists it

@@ -3,14 +3,14 @@
 // controls live in CardApp's fixed footer. While it's up, the target element is highlighted on the page
 // (green spotlight) and the card names where it sits. Extracted from hud-card.tsx.
 import { useEffect } from "preact/hooks";
-import type { AgentStep } from "./store";
-import { rev } from "./store";
-import { truncate } from "./format";
-import { IconWarn } from "./icons";
-import { Code, SheetChip, highlightApprove, highlightPos, clearHighlight, inlineJson, stepKey } from "./ui-kit";
-import { RenderPanel } from "./render-panel";
-import { IntentSentence, intentFor, codeOf, ensureCodeSummary, ensureActionSummary, codeSummaries } from "./summaries";
-import { HostAccessNote, OutputRaiseNote, externalSheetGrant } from "./agent-detail";
+import type { AgentStep } from "../store";
+import { rev } from "../store";
+import { truncate } from "../format";
+import { IconWarn } from "../icons";
+import { Code, SheetChip, highlightApprove, highlightPos, clearHighlight, inlineJson, stepKey } from "../ui-kit";
+import { RenderPanel } from "../render-panel";
+import { IntentSentence, intentFor, codeOf, ensureCodeSummary, ensureActionSummary, codeSummaries } from "../summaries";
+import { HostAccessNote, OutputRaiseNote, externalSheetGrant } from "../agent-detail";
 
 /** THE CONSENT SURFACE for a gated call — what the agent wants to do, said as an intent sentence with
  *  the part that matters picked out, plus the actual code or arguments (you cannot approve what you

@@ -30,11 +30,11 @@ import { VRAM_PALETTE_KEY, VRAM_PALETTES, vramPalette } from "./palette";
 import { ModelStatusDot } from "./resource/model-status";
 import { fetchModels, pollPs, connectResourceStream, pollBackendHealth, BACKEND_HEALTH_MS } from "./resource/resource-feed";
 import { PythonBench, BenchDrawer, BenchVer } from "./vram-bench";
-import { CardApp, endActiveCardDrag } from "./hud-card";
+import { CardApp, endActiveCardDrag } from "./card/hud-card";
 import { releaseAxisHold } from "./resource/chart-interaction";
 import {
     composerOpen, composerElement, composerTarget, selectedRun, cardSteerHash, setCardCollapsed,
-} from "./card-state";
+} from "./card/card-state";
 import { shownModel, sessionProfile } from "./model";
 import { exportSession, exportSessionJson, printSession } from "./export";
 import { applyTheme, applyFont, applyCodePrefs, applyFocus, initThemeStyle } from "./prefs";

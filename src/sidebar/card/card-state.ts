@@ -3,12 +3,12 @@
 // stream/vision), and the run-selection logic (cardRuns / selectedRun / isPendingGate). A leaf module
 // (no JSX) shared by the card view components AND app.tsx's message bus. Extracted from hud-card.tsx.
 import { signal } from "@preact/signals";
-import type { ElementContext } from "../contract/contract-run";
-import { sessionMap, ollamaIds, config } from "./store";
-import type { AgentStep, Session } from "./store";
-import { decidedSteps, stepKey } from "./ui-kit";
-import { utilitySummariesOn } from "./summaries";
-import { genTitle } from "./debug-reducer";
+import type { ElementContext } from "../../contract/contract-run";
+import { sessionMap, ollamaIds, config } from "../store";
+import type { AgentStep, Session } from "../store";
+import { decidedSteps, stepKey } from "../ui-kit";
+import { utilitySummariesOn } from "../summaries";
+import { genTitle } from "../debug-reducer";
 
 // Multi-run HUD state. The card shows ONE run (the SELECTED one); a tab strip switches between concurrent
 // runs. These are keyed by run hash so one run's collapse/dismiss never touches another's ("" selection =

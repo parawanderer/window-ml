@@ -2,16 +2,16 @@
 // disclosure (CardTraceMsg), and — for a multi-task run — per-task blocks (RunTaskBlockView). Extracted
 // from hud-card.tsx; reuses the run-render layer (AgentTurn / AnswerBody) so the card matches the sidebar.
 import { useState, useEffect, useRef } from "preact/hooks";
-import type { Session, AgentStep } from "./store";
-import { rev, cardShowWorkHash, revealSeq } from "./store";
-import { markdown, inlineMarkdown } from "./format";
-import { IconChevron } from "./icons";
-import { ClickableImg, inlineText } from "./ui-kit";
-import { exportSession, exportSessionJson, printSession } from "./export";
-import { AnswerBody } from "./answer-render";
-import { AgentTurn, SteerSeen } from "./agent-detail";
-import { buildRunBlocks, ensureBlockSummary, blockSummaries, blockKey, groupTurns } from "./debug-reducer";
-import type { RunTaskBlock } from "./debug-reducer";
+import type { Session, AgentStep } from "../store";
+import { rev, cardShowWorkHash, revealSeq } from "../store";
+import { markdown, inlineMarkdown } from "../format";
+import { IconChevron } from "../icons";
+import { ClickableImg, inlineText } from "../ui-kit";
+import { exportSession, exportSessionJson, printSession } from "../export";
+import { AnswerBody } from "../answer-render";
+import { AgentTurn, SteerSeen } from "../agent-detail";
+import { buildRunBlocks, ensureBlockSummary, blockSummaries, blockKey, groupTurns } from "../debug-reducer";
+import type { RunTaskBlock } from "../debug-reducer";
 
 /** The HUD card's "show work" TRACE — a run's steps, folded, on the corner surface. The same step rows
  *  the panel draws, so a run reads the same in both places. */

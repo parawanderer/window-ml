@@ -6,19 +6,19 @@
 // the top of the view tree (imports the run/composer/summary layers; nothing imports it but app).
 import { useState, useEffect, useRef } from "preact/hooks";
 import { signal } from "@preact/signals";
-import { isBackendUnreachable } from "../contract/contract-server";
-import { sessionMap, rev, view, config, backendError, cardShowWorkHash, surface } from "./store";
-import type { Session, AgentStep } from "./store";
-import { truncate, markdown } from "./format";
-import { residentNow } from "./resource/panel-facts";
-import { orbStatus } from "./orb-status";   // the orb's live status projection (humanized tool phase + live token count + stall heartbeat)
-import { exportSession, printSession } from "./export";
-import { IconChevron, IconWarn, IconSend, IconPlay } from "./icons";
-import { cursorTipOn, AnswerMediaGallery, ContextMenu, clearHighlight, decideGate, decidedSteps, stepKey } from "./ui-kit";
-import { ContinueRun, ReplyBubble } from "./reply";
-import { AgentTurn, ToolStep, GrantCard, hasPersistGrants, KEEP_HINT } from "./agent-detail";
-import { AnswerBody, ResultBlock } from "./answer-render";
-import { useImageAttach, ThumbStrip } from "./composer";
+import { isBackendUnreachable } from "../../contract/contract-server";
+import { sessionMap, rev, view, config, backendError, cardShowWorkHash, surface } from "../store";
+import type { Session, AgentStep } from "../store";
+import { truncate, markdown } from "../format";
+import { residentNow } from "../resource/panel-facts";
+import { orbStatus } from "../orb-status";   // the orb's live status projection (humanized tool phase + live token count + stall heartbeat)
+import { exportSession, printSession } from "../export";
+import { IconChevron, IconWarn, IconSend, IconPlay } from "../icons";
+import { cursorTipOn, AnswerMediaGallery, ContextMenu, clearHighlight, decideGate, decidedSteps, stepKey } from "../ui-kit";
+import { ContinueRun, ReplyBubble } from "../reply";
+import { AgentTurn, ToolStep, GrantCard, hasPersistGrants, KEEP_HINT } from "../agent-detail";
+import { AnswerBody, ResultBlock } from "../answer-render";
+import { useImageAttach, ThumbStrip } from "../composer";
 import {
     cardSelectedHash, cardDetail, cardSteerHash, cardMaximizedHash, isCardCollapsed, setCardCollapsed, dismissCardRun,
     composerOpen, composerElement, composerTarget, composerStarting,
