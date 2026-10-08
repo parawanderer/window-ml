@@ -10,9 +10,9 @@
 // phone that wakes to a sleeping laptop then backfills a run of upserts with nothing to apply them to — a list that
 // looks complete and is not. So the PUBLISHER re-publishes a whole snapshot every `SNAPSHOT_EVERY` updates, which
 // keeps one inside the ring at all times, and the READER's single job is to know whether it has seen one yet.
-import type { SessionIndexUpdate, SessionStreamMessage, SessionSummary } from "./session/session-host";
-import type { ChannelKey } from "./hub/seal";
-import type { Bytes } from "./hub/hpke";
+import type { SessionIndexUpdate, SessionStreamMessage, SessionSummary } from "../../session/session-host";
+import type { ChannelKey } from "../seal";
+import type { Bytes } from "../hpke";
 
 /**
  * How many index updates may go by before the whole index is published again.
@@ -237,7 +237,7 @@ export class LivePreview {
         const last = this.sent.get(hash);
         if (last != null && this.now() - last < this.everyMs) return null;
         this.sent.set(hash, this.now());
-        return { ...m, event: tail(m.event as import("./contract/contract-debug").DebugAgentStream, this.chars) };
+        return { ...m, event: tail(m.event as import("../../contract/contract-debug").DebugAgentStream, this.chars) };
     }
 }
 
@@ -250,7 +250,7 @@ export class LivePreview {
  * knows WHICH channel was cut, where `elided` is a single number for both. What `elided` is for is a reader that
  * wants to say how much, or to tell a tail from a short answer without parsing prose.
  */
-function tail(ev: import("./contract/contract-debug").DebugAgentStream, chars: number): import("./contract/contract-debug").DebugAgentStream {
+function tail(ev: import("../../contract/contract-debug").DebugAgentStream, chars: number): import("../../contract/contract-debug").DebugAgentStream {
     const over = (s: string | undefined): number => Math.max(0, (s?.length ?? 0) - chars);
     const elided = over(ev.reasoning) + over(ev.content);
     if (!elided) return ev;

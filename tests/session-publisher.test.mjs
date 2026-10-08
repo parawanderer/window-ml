@@ -8,8 +8,8 @@ const { generateIdentity, SCOPE } = await import("../src/hub/keys.ts");
 const { ChannelKey, StreamReader } = await import("../src/hub/seal.ts");
 const { HubClient } = await import("../src/hub/client.ts");
 const { Kind, Role } = await import("../src/hub/wire.ts");
-const { SessionPublisher, hubPublish } = await import("../src/session-publisher.ts");
-const { eventsChannel, keysChannel, decodeStreamFrame } = await import("../src/session-relay.ts");
+const { SessionPublisher, hubPublish } = await import("../src/hub/runtime/session-publisher.ts");
+const { eventsChannel, keysChannel, decodeStreamFrame } = await import("../src/hub/runtime/session-relay.ts");
 
 const msg = (hash, cursor, text) => ({ type: "event", v: 1, session: { runtime: "rt", hash }, epoch: "w1.0", cursor, event: { kind: "agent-say", id: hash, text } });
 
@@ -118,7 +118,7 @@ test("each session has its OWN key: one session's grant does not open another's 
 
 // --- the index, through the same grant path ---
 
-const { IndexPublisher, IndexReader, indexChannel, indexKeysChannel } = await import("../src/session-relay.ts");
+const { IndexPublisher, IndexReader, indexChannel, indexKeysChannel } = await import("../src/hub/runtime/session-relay.ts");
 
 test("the index's key reaches a device the same way a session's does, and the list reads back whole", LIVE, async () => {
     // Without the index's key a device could subscribe to a runtime's session list and never be able to read it.

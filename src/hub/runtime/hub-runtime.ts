@@ -10,19 +10,19 @@
 // `session.delete` is refused here.
 //
 // chrome-free, over its inputs, so it is tested against the real hub; `sw-hub.ts` plugs it into the worker.
-import { COMMAND_SCOPE, type Command, type CommandResult, type CommandType, type SessionIndexUpdate, type SessionStreamMessage, type SessionSummary } from "./session/session-host";
+import { COMMAND_SCOPE, type Command, type CommandResult, type CommandType, type SessionIndexUpdate, type SessionStreamMessage, type SessionSummary } from "../../session/session-host";
 import { SessionPublisher, hubPublish } from "./session-publisher";
 import { IndexPublisher, LivePreview } from "./session-relay";
-import type { HubClient, HubEvent } from "./hub/client";
-import { bytes, type Bytes } from "./hub/hpke";
-import { encodeChain, issueCertificate, renewalPredecessor, verifyChain, MAX_CERTIFICATE_MS, RENEW_WITHIN_MS } from "./hub/keys";
-import type { Membership } from "./hub/keyring";
-import { Certificate, CertificateBody } from "./proto/wmlhub/v1/identity.gen";
-import { ChannelKey, replyTo, type Opened } from "./hub/seal";
-import { encodeRevocations } from "./hub/revocation";
-import type { Identity } from "./hub/keys";
+import type { HubClient, HubEvent } from "../client";
+import { bytes, type Bytes } from "../hpke";
+import { encodeChain, issueCertificate, renewalPredecessor, verifyChain, MAX_CERTIFICATE_MS, RENEW_WITHIN_MS } from "../keys";
+import type { Membership } from "../keyring";
+import { Certificate, CertificateBody } from "../../proto/wmlhub/v1/identity.gen";
+import { ChannelKey, replyTo, type Opened } from "../seal";
+import { encodeRevocations } from "../revocation";
+import type { Identity } from "../keys";
 import type { DeviceRegistry } from "./hub-devices";
-import { Kind, Role } from "./hub/wire";
+import { Kind, Role } from "../wire";
 
 /** How far back a freshly issued window reaches, so a device whose clock runs a little behind is not refused. */
 const CLOCK_SKEW_MS = 5 * 60_000;

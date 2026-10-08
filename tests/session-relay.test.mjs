@@ -2,7 +2,7 @@
 // an incomplete list as a complete one. Pure — the hub itself is exercised in tests/hub-connection.test.mjs.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { IndexPublisher, IndexReader, SNAPSHOT_EVERY, decodeIndexFrame, encodeIndexFrame } from "../src/session-relay.ts";
+import { IndexPublisher, IndexReader, SNAPSHOT_EVERY, decodeIndexFrame, encodeIndexFrame } from "../src/hub/runtime/session-relay.ts";
 
 const row = (hash, over = {}) => ({ id: { runtime: "rt", hash }, kind: "agent", status: "done", createdTs: 1, lastTs: 1, pendingApprovals: 0, saved: true, ...over });
 
@@ -81,7 +81,7 @@ test("a frame that opened but is not an index message is ignored, not thrown on"
 
 // --- one session's event stream ---
 
-const { eventsChannel, keysChannel, encodeStreamFrame, decodeStreamFrame, grantees } = await import("../src/session-relay.ts");
+const { eventsChannel, keysChannel, encodeStreamFrame, decodeStreamFrame, grantees } = await import("../src/hub/runtime/session-relay.ts");
 const { ChannelKey } = await import("../src/hub/seal.ts");
 
 test("a session's channels hide its hash, and are distinct per session and per purpose", async () => {
@@ -132,7 +132,7 @@ test("only a device whose verified leaf holds `view` is handed a session's key",
 
 // --- what a live preview costs over a hub ---
 
-const { LivePreview, LIVE_PREVIEW_CHARS, LIVE_PREVIEW_MS } = await import("../src/session-relay.ts");
+const { LivePreview, LIVE_PREVIEW_CHARS, LIVE_PREVIEW_MS } = await import("../src/hub/runtime/session-relay.ts");
 
 const S = { runtime: "rt", hash: "aaaa0001" };
 /** One `agent-stream` as the stream message that carries it, with `n` characters of accumulated reasoning. */

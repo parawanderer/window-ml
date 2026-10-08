@@ -29,7 +29,7 @@ import type {
     Command, CommandResult, HostStatus, Principal, RuntimeCapabilities, RuntimeId, RuntimeInfo, SessionHost, SessionId,
     SessionIndexUpdate, SessionStreamMessage, StreamPosition, Unsubscribe,
 } from "../session/session-host";
-import { IndexReader, decodeStreamFrame, eventsChannel, indexChannel, indexKeysChannel, keysChannel } from "../session-relay";
+import { IndexReader, decodeStreamFrame, eventsChannel, indexChannel, indexKeysChannel, keysChannel } from "../hub/runtime/session-relay";
 import type { Position } from "../hub/wire";
 import type { HubConnection, HubPeer, StreamEvent } from "./hub-connection";
 import { HubStreamAdapter } from "./hub-stream";

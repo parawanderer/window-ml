@@ -8,13 +8,13 @@
 // forgotten one visible (a runtime renews what it lists, so nothing leaves by expiring).
 //
 // chrome-free; persistence is injected (the keyring's records, in the worker).
-import type { Certificate } from "./proto/wmlhub/v1/identity.gen";
-import { CertificateBody } from "./proto/wmlhub/v1/identity.gen";
-import type { DeviceInfo } from "./session/session-host";
-import { principalId, type Identity, type Verified } from "./hub/keys";
-import { bytes, type Bytes } from "./hub/hpke";
-import { Revoked, certificateHash, signRevocations } from "./hub/revocation";
-import { Role } from "./hub/wire";
+import type { Certificate } from "../../proto/wmlhub/v1/identity.gen";
+import { CertificateBody } from "../../proto/wmlhub/v1/identity.gen";
+import type { DeviceInfo } from "../../session/session-host";
+import { principalId, type Identity, type Verified } from "../keys";
+import { bytes, type Bytes } from "../hpke";
+import { Revoked, certificateHash, signRevocations } from "../revocation";
+import { Role } from "../wire";
 
 const hex = (b: Uint8Array): string => [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
 const unhex = (h: string): Bytes => new Uint8Array(h.match(/../g)!.map((b) => parseInt(b, 16))) as Bytes;

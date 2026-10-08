@@ -10,8 +10,8 @@ import { HubClient } from "../hub/client";
 import { bytes } from "../hub/hpke";
 import { Keyring } from "../hub/keyring";
 import { Role } from "../hub/wire";
-import { HubRuntime, type HubRuntimeStatus } from "../hub-runtime";
-import { DeviceRegistry, type DeviceState } from "../hub-devices";
+import { HubRuntime, type HubRuntimeStatus } from "../hub/runtime/hub-runtime";
+import { DeviceRegistry, type DeviceState } from "../hub/runtime/hub-devices";
 import type { DeviceInfo } from "../session/session-host";
 import { LOCAL_RUNTIME, localRuntimeId, runSessionCommand, sessionServer } from "./sw-sessions";
 

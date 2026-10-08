@@ -274,7 +274,7 @@ test("KNOWN GAP: two signers do not produce the rising version a publisher requi
     // `defaultGrant` handing it to every runtime is a defect rather than a choice.
     //
     // WHEN THIS FAILS, two signers have stopped being reachable. Delete it and the gap tests above.
-    const { DeviceRegistry } = await import("../src/hub-devices.ts");
+    const { DeviceRegistry } = await import("../src/hub/runtime/hub-devices.ts");
     const { generateIdentity, issueCertificate } = await import("../src/hub/keys.ts");
     const { generateAgreementKey } = await import("../src/hub/hpke.ts");
     const { Role, RevocationBody } = await import("../src/proto/wmlhub/v1/identity.gen.ts");

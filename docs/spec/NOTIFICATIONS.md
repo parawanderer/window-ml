@@ -179,7 +179,7 @@ choice to work around here, it is the code disagreeing with window-ml-hub `docs/
 `may_revoke` is "held by exactly one principal at a time" and that "a second runtime that may revoke is the root's
 decision to re-place, not a default".
 
-The expiry cliff is the milder symptom. The worse one is that `src/hub-devices.ts` signs with
+The expiry cliff is the milder symptom. The worse one is that `src/hub/runtime/hub-devices.ts` signs with
 `version = Math.max(nowMs, this.state.version + 1)` where `this.state.version` is each runtime's OWN stored state, so
 two signers race and the one whose state or clock trails the other has its list refused as stale: a removal of a lost
 device can silently fail, which that doc names as the worst possible way for a revocation to fail.
