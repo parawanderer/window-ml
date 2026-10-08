@@ -1661,9 +1661,10 @@ export function ValueOut({ text, fill, seen, after }: { text: string; fill?: boo
 /** The print boundary's notes for one part of an exec's output: what the print showed as a VIEW of the value (a large
  *  `ml.current` message summarised), with the JSONPaths of what was replaced. Drawn INSIDE the part's output cell, after
  *  the output, because the model reads them right after its cut: they scroll with the output, and the cell's find
- *  (Ctrl/Cmd+F) searches them with it. A rule above them says they are not more of the output. */
+ *  (Ctrl/Cmd+F) searches them with it. A code block of their own, like the output above them, because they are text
+ *  the model read in the same place. */
 function PrintNotes({ notes }: { notes: string[] }) {
-    return <div class="r-print-notes">{notes.map((n, i) => <div key={i}>{n}</div>)}</div>;
+    return <div class="r-print-notes"><Code text={notes.join("\n")} lang="text" /></div>;
 }
 
 function ExecOutRender({ d, marks, live, ranMs, ranSince, lineMap, remoteMs }: { d: Extract<RenderDescriptor, { type: "exec-out" }>; marks?: [number, number][]; live?: boolean; ranMs?: number; ranSince?: number; lineMap?: number[] | null; remoteMs?: { durationMs: number; bootMs?: number } | null }) {
