@@ -550,9 +550,17 @@ test("the run state panel lists every declared member of the open run, what each
         const line = await firstRow("run.mailbox").boundingBox();
         const chipBox = await panel.locator('[data-member="run.mailbox"] .rstate-aud').boundingBox();
         expect(Math.abs(chipBox.y + chipBox.height / 2 - (line.y + line.height / 2)), "the chip is on the member's own line").toBeLessThan(line.height / 2);
-        // Named by the expression that reaches them. Nothing is in the model's `ml.current` yet, so every member is under
-        // `inspector.`; the person's own are marked "you only", and a model member waiting for its path carries no chip.
+        // Named by the expression that reaches them: what the model reads, by its `ml.current` path; the rest under
+        // `inspector.`, the person's own marked "you only".
         await expect(firstRow("run.mailbox").locator(".rstate-key")).toHaveText("inspector.run.mailbox:");
+        await expect(firstRow("run.messages").locator(".rstate-key")).toHaveText("ml.current.messages:");
+        await expect(firstRow("run.log").locator(".rstate-key")).toHaveText("ml.current.log:");
+        await expect(panel.locator('[data-member="run.log"] .rstate-aud')).toHaveCount(0);
+        // A message row has ml.current's own field names, so a copied path names what the model reads.
+        await messages.locator(".jt-clickable").first().click();
+        await messages.locator(".jt-clickable").nth(1).click();
+        await expect(messages.locator(".jt-row", { hasText: "content:" }).first()).toBeVisible();
+        await messages.locator(".jt-clickable").first().click();
         await expect(panel.locator('[data-member="run.mailbox"] .rstate-aud')).toHaveText("you only");
         await expect(panel.locator('[data-member="grants.fetch"] .rstate-aud')).toHaveText("you only");
         // The name's tooltip: the sentence, then one fact per row, the path among them.

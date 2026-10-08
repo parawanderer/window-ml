@@ -3,20 +3,23 @@
 //
 // EXTENSION PAGES ONLY. A page may report into the housekeeping log and read it back, because nothing there
 // identifies anyone but the reporter; this ring holds every run's records, and a record's `key` can be another
-// tab's URL. Letting the MODEL read its own run's mechanics is a deliberate later step behind its own approval
-// (idea-right-dock-run-panels), and the records come first so the surface is shaped around real ones.
+// tab's URL. The MODEL reads its own run's records through `ml.current.log` instead (docs/dev/run-log.md): filtered to
+// that run in the worker, and without `key`, `tab` or `origin`.
 import { RunLog, eventsForRun, runsInLog, type RunLogEvent } from "../log/run-log";
 import { sessionArea, senderOrigin } from "./sw-housekeeping";
 import type { HousekeepingReport } from "../log/housekeeping";
 import { defineState } from "../state-registry";
+import { currentLogRecords } from "../agent/current-context";
 
 /** This worker's one execution log: every run's mechanics in one ring, in storage.session so an evicted worker
  *  does not take a run's history with it (the eviction is itself one of the things worth knowing about). */
 export const runLog = new RunLog(sessionArea());
 defineState({
-    id: "run.log", scope: "run", realm: "worker", audience: "human", lostOn: ["browser-restart"],
-    describe: "What the machinery did under the run: a discarded tab reloaded, a debugger attached, a fetch refused.",
-    read: async ({ runId }) => { const r = runId ? await runLog.forRun(runId) : []; return r.length ? r : undefined; },
+    // THE MODEL READS IT (Shane, 2026-10-08): `ml.current.log` became reachable with #410, and the records are structured,
+    // with the free-text `key` withheld. Shown here as the model reads it; the Execution log panel is the person's full view.
+    id: "run.log", scope: "run", realm: "worker", audience: "model", lostOn: ["browser-restart"], exposedAs: "ml.current.log",
+    describe: "What the machinery did under the run: a discarded tab reloaded, a debugger attached, a fetch refused. As the model reads it; the Execution log panel has the full records.",
+    read: async ({ runId }) => { const r = runId ? await runLog.forRun(runId) : []; return r.length ? currentLogRecords(r) : undefined; },
 });
 
 /**

@@ -66,7 +66,7 @@ change when it lands).
 | `pointers` | every value the run holds by token: `@tool:` values (key, size, format, source, age, and whether the current context still REFERENCES it), and the `@pt` / `@box` tokens with what they point at | model | three stores: `@tool:` values are the in-memory `TokenStore` (`tokensByRun` for a background run, `control.tokens` for a page-hosted one); large bodies are `ValueStore` rows claimed by the session; `@pt`/`@box` are page registries that die on navigation. The `linked` join is new |
 | `approvals` | the gates the run is blocked on: tool, arguments, step, since when | model (it asked) | exists (`pendingApprovals`, `sw-consent.ts`); worker memory, lost on an eviction |
 | `answer` | the answer set the run will hand you (`ml.answer`), reset each turn | model | exists in the page (`answerSets`) |
-| `log` | the run's execution log | **human** | exists (`runLog`). The model reading it is "a deliberate later step behind its own approval" (`sw-run-log.ts`); `ml.current.log` waits on that decision |
+| `log` | the run's execution log | model | exists (`runLog`). The model reads it as `ml.current.log`, without `key`, `tab` or `origin` (Shane, 2026-10-08: pull-only, no approval of its own; `docs/dev/run-log.md`). The inspector shows that view; the Execution log panel the full one |
 | `mailbox` | messages queued for the run and not yet attached to its context (today: your steering messages) | **human** | exists: `runInboxes` for a background run (LIVE TURN only: a message after the turn ends is a resume, not mail) and `AgentControl.inbox` for a page-hosted one. Not `model`: by definition it has not been given to the model |
 | `subagents` | runs this run started (`ml.agent()` from `exec`; see [`HEADLESS_AGENTS.md`](HEADLESS_AGENTS.md)): id, task, status, and WHERE it runs | model | slot. A child run does not record its parent today; `{ parent, where }` is the missing piece. `where` is this browser or a runtime on the hub, so a remote subagent needs no new shape |
 | `tasks` | tools that detached and will report back (unspecified: a tool that outlives its step and announces itself later) | model | slot |
@@ -254,7 +254,10 @@ exactly the model half of the registry and `inspector` the rest.
    for a worker id only for a run the index says the page hosts, and only where the worker holds nothing for it
    (`withPageState`). The panel draws each member on ONE LINE until opened (name, preview, chips), folds a group to
    "N members · M holding something", copies a member's value from a button and any row's value or path from a
-   right-click, and says in a sentence when this browser holds nothing live for the session. A remote reader is not
+   right-click, and says in a sentence when this browser holds nothing live for the session. What the model reads is
+   declared with `exposedAs` and drawn under its real path (2026-10-08, after #410 made `ml.current` reachable):
+   `run.messages` (rows cut to previews, with `ml.current.messages`' own field names), `run.meta`, `run.current`
+   (`ml.current.run`) and `run.log`. A remote reader is not
    step 1: the inspector is offered only where the run runs (below).
 2. **Watches**, device-local, then the share toggle and `debug.userWatches`.
 3. **The read-only console.**

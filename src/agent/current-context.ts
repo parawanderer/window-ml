@@ -128,6 +128,15 @@ export function logText(records: readonly CurrentLogRecord[]): string {
     ].join(" ")).join("\n");
 }
 
+/** Execution-log records as the model reads them in `ml.current.log`, oldest first: never `key`, `tab` or `origin`. Also
+ *  what the state inspector shows for `run.log`, so the panel draws the model's view, not a fuller one. */
+export function currentLogRecords(log: readonly RunLogEvent[]): CurrentLogRecord[] {
+    return log.map((e): CurrentLogRecord => ({
+        ts: e.t, level: e.level ?? "info", subsystem: e.subsystem, kind: e.kind, reason: e.reason ?? null,
+        detail: e.detail && typeof e.detail === "object" ? structuredClone(e.detail) as Record<string, unknown> : null,
+    })).sort((a, b) => a.ts - b.ts);
+}
+
 /** Assemble a snapshot. `recorded` may be shorter than `messages` (a host appended outside the loop's pushes), and
  *  each missing entry reads as {@link UNRECORDED}: absent, never invented. */
 export function snapshotCurrent(src: {
@@ -157,10 +166,7 @@ export function snapshotCurrent(src: {
             truncated: r.truncated,
         };
     });
-    const records = (src.log ?? []).map((e): CurrentLogRecord => ({
-        ts: e.t, level: e.level ?? "info", subsystem: e.subsystem, kind: e.kind, reason: e.reason ?? null,
-        detail: e.detail && typeof e.detail === "object" ? structuredClone(e.detail) as Record<string, unknown> : null,
-    })).sort((a, b) => a.ts - b.ts);
+    const records = currentLogRecords(src.log ?? []);
     const log = Object.assign(records, { text: logText(records) });
     return { run: { ...src.run }, messages, meta, log };
 }
