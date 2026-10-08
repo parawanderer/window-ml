@@ -25,6 +25,14 @@ async function collectDebug(page, events) {
 
 const kindsOf = (phases) => (phases || []).map((p) => p.kind);
 
+/** Wait until the worker has reported every one of the run's `turns` model calls: each is one `agent-step` carrying
+ *  `usage`. The run's promise settles on the page, and the worker's events reach the DevTools port on their own
+ *  schedule, so reading `events` the moment it settles sometimes found no usage step yet (`u` undefined: "reading
+ *  'evalMs'", 4 of 4 on one PR's CI). Not the run's `agent-result`: a page-started run's goes to the page window,
+ *  ahead of the worker's steps, and the port never carries one. */
+const settled = (events, turns) => expect.poll(() => events.filter((e) => e.kind === "agent-step" && e.usage).length,
+    { timeout: 10_000, message: "every model call's usage reached the DevTools port" }).toBeGreaterThanOrEqual(turns);
+
 test("a streamed turn is split by channel, and an INTERLEAVED one keeps its order", async () => {
     const fake = await startFakeLlm({ model: "fake-model", streamDelayMs: 60 });
     const site = await startPageServer({});
@@ -53,6 +61,7 @@ test("a streamed turn is split by channel, and an INTERLEAVED one keeps its orde
         await watchRunEvents(ext, page, (ev) => events.push(ev));   // the worker's events, which never reach the page
 
         const res = await page.evaluate(() => window.ml.agent("settle the page", { stream: true, maxSteps: 4 }));
+        await settled(events, 2);
         expect(res.summary).toContain("Done");
 
         // The marks ride the call's usage, which is where every other client-side measurement of a model call
@@ -107,6 +116,7 @@ test("a NON-streamed turn reports no phases — the boundary is not observable, 
         await waitForMl(page);
         await watchRunEvents(ext, page, (ev) => events.push(ev));   // the worker's events, which never reach the page
         await page.evaluate(() => window.ml.agent("answer", { maxSteps: 2 }));
+        await settled(events, 1);
 
         const withUsage = events.filter((e) => e.kind === "agent-step" && e.usage);
         expect(withUsage.length, "the run must still report its token usage").toBeGreaterThan(0);
@@ -197,6 +207,7 @@ test("ollama-native + streaming: the split works on the other wire shape too", a
         await waitForMl(page);
         await watchRunEvents(ext, page, (ev) => events.push(ev));   // the worker's events, which never reach the page
         await page.evaluate(() => window.ml.agent("settle the page", { stream: true, maxSteps: 4 }));
+        await settled(events, 2);
 
         const [withPhases] = events.filter((e) => e.kind === "agent-step" && e.usage?.genPhases?.length);
         expect(withPhases, "thinking arrives on message.thinking here, and must still be recognised").toBeTruthy();
@@ -227,6 +238,7 @@ test("ollama-native without streaming: real timings, and still no invented split
         await waitForMl(page);
         await watchRunEvents(ext, page, (ev) => events.push(ev));   // the worker's events, which never reach the page
         await page.evaluate(() => window.ml.agent("answer", { maxSteps: 2 }));
+        await settled(events, 1);
 
         const [u] = events.filter((e) => e.kind === "agent-step" && e.usage).map((e) => e.usage);
         // The three durations are the reason this combination matters: it is the ONLY one where the box
@@ -259,6 +271,7 @@ test("the OpenAI route reports no model timings at all — and reports that, rat
         await waitForMl(page);
         await watchRunEvents(ext, page, (ev) => events.push(ev));   // the worker's events, which never reach the page
         await page.evaluate(() => window.ml.agent("answer", { maxSteps: 2 }));
+        await settled(events, 1);
 
         const [u] = events.filter((e) => e.kind === "agent-step" && e.usage).map((e) => e.usage);
         expect(u.evalMs).toBeUndefined();
