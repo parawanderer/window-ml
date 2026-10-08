@@ -18,7 +18,7 @@ import { hintSession } from "./contract-run";
 import { outputCapEscalated } from "./contract-pointers";
 import { executeTool, toolContext, answerSetFor, withRunSession, withRunDeref } from "./tool-exec";
 import { expandPointers } from "./pointer-macro";
-import { derefViaBackground } from "./ml-agent";
+import { derefViaBackground } from "./token-pipe";
 import { captureVerify, captureVerifyElement } from "./builtin-tools";
 import { htmlToMarkdown } from "./html-to-md";
 import { clipOut, elLine, errText } from "./dom";

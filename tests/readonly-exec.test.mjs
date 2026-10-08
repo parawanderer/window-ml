@@ -1,8 +1,8 @@
 "use strict";
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { evalReadonly, NotInDialect, Denied } from "../src/readonly-exec.ts";
+import { evalReadonly, NotInDialect, Denied, STEP_BUDGET } from "../src/readonly-exec.ts";
 import { expandPointers } from "../src/pointer-macro.ts";
 
 function world() {
@@ -1143,7 +1143,7 @@ const SCHEMA_ML = {
     ...ML,
     schema: async (...vs) => { ML_CALLS.push(["schema", vs.length]); const { joinShapes, jsonValue } = await import("../src/dom.ts"); return joinShapes(vs.map((v, i) => jsonValue(v, `argument ${i + 1}`))); },
     dereference: async (ref) => {
-        const { DerefText } = await import("../src/ml-agent.ts");
+        const { DerefText } = await import("../src/token-pipe.ts");
         return new DerefText('{"id":1,"name":"a"}', { id: "a1b2c3f", tool: "fetch_url", kind: "json", step: 2 },
             async () => { throw new Error("repipe reached"); });
     },
@@ -1255,8 +1255,6 @@ test("the macro cannot smuggle a non-readonly method past the dialect", async ()
 // Each case runs in a WORKER with a timeout: the interpreter is synchronous between awaits, so a regression here
 // is an infinite loop, and on the main thread it would hang the whole runner instead of failing one test.
 import { Worker } from "node:worker_threads";
-import { after } from "node:test";
-import { STEP_BUDGET } from "../src/readonly-exec.ts";
 const RO_URL = new URL("../src/readonly-exec.ts", import.meta.url).href;
 // A worker does not inherit the runner's tsx hooks (Node's own type stripping takes the import instead, and it
 // rejects the interpreter's parameter properties), so the worker registers tsx itself before importing.

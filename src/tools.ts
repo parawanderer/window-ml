@@ -21,8 +21,7 @@ import { expandPointers, execCodeIn } from "./pointer-macro";   // `@tool:` fant
 import { execErrorLine } from "./exec-trace";       // a stack frame → the model's own line number
 import { runPipe, pipeHint, PIPE_SYNTAX, PIPE_REF } from "./text-pipe";
 import { outputCapParams, retryParams } from "./tool-params";
-import { DEREF_TOOL, type DerefRead } from "./token-pipe";
-import { DerefText } from "./ml-agent";
+import { DEREF_TOOL, type DerefRead, DerefText } from "./token-pipe";
 import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
 import { pageContext, browserInfo, agentState } from "./util";
 import { makeBackgroundTaskPromise } from "./bridge";

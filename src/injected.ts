@@ -20,7 +20,7 @@ import { pageContext, resolvePoint, resolveBox, agentState, mlRange } from "./ut
 import { suspiciousChars } from "./security";
 import { emitDebug, sessionRegistry, agentRegistry, handleRegistry } from "./bus";
 import { makeDomTools } from "./tools";
-import { pipeStages } from "./token-pipe";
+import { pipeStages, DerefText } from "./token-pipe";
 import { makeBackgroundTaskPromise } from "./bridge";
 import { makeDynamicTools } from "./dynamic-tools";
 import type { DynamicToolNamespace } from "./dynamic-tools";
@@ -28,7 +28,6 @@ import { renderArgs, logStep } from "./approval";
 import { captureVerify } from "./builtin-tools";
 import { currentAnswer, currentDeref, currentServerAllow, currentHasTool } from "./tool-exec";
 import { installToolDelegation, registerRun, endRun } from "./run-delegation";
-import { DerefText } from "./ml-agent";   // run-control object (createAgent/agent) + page-loop same-origin auto-approve predicates
 import { models, serverTools, execServerTool, info, capabilities, getModel, embed, config, setModel, ps, unload } from "./ml-server";
 import { defineTool, lookTool, locateTool, clickTool, typeTool, navigateTool, fetchTool, pythonTool, chatMetaTool } from "./ml-tool-factories";
 import { read, screenshot, _shotBox, _stitchFullPage, _resolveVisionModel, _modelSees, _nativeLookTool, _imageToDataUrl, _fetchImageBase64 } from "./ml-vision";
