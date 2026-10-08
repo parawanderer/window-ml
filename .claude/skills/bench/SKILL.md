@@ -13,6 +13,9 @@ Reach for **observe** to understand ONE run. Reach for **bench** when the questi
 does this model follow the rules better than that one, does this prompt change help, does an
 experimental identifier format reduce re-emission.
 
+The next planned experiment is the prompt budget (cuts to the system prompt and tool schemas as build-time
+variants): [docs/spec/PROMPT_BUDGET.md](../../../docs/spec/PROMPT_BUDGET.md), including where the bench was left off.
+
 **Two audiences, one run.** You define the experiment in code, run it, and read the terminal. A human
 watching over your shoulder opens the live page (`--serve`). Same data, rendered for whoever is looking —
 so START A SWEEP WITH `--serve` AND HAND THE HUMAN THE URL. It prints as a banner for exactly that:
