@@ -64,7 +64,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
         requiresApproval: true,
         description: "Run SANDBOXED Python (numpy/Pillow/pandas, WASM) for array/pixel/spatial/table work better " +
             "done in Python than JS — pixel-mask & centroid a target, count regions, BFS a maze, or SUM/AVG/GROUP a " +
-            "table. It's ONE cell of a live Jupyter notebook: your inputs are ALREADY loaded — `image`→`img`/`img_np` " +
+            "table. Your inputs are ALREADY loaded as variables — `image`→`img`/`img_np` " +
             "(PIL + H×W×3 uint8), `tables`→DataFrame(s) — so reference them directly, never re-open/parse/read_csv " +
             "them. `return` a value → comes back as TEXT (or set `cast` to mint a clickable @pt/@box). RETURN TYPE " +
             "auto-renders: a sympy expression → typeset LaTeX, a PIL Image (or to_base64()) → an image, a DataFrame " +
