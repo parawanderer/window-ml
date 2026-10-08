@@ -20,7 +20,7 @@ import type { PlatformPrefs } from "./platform";
 import { CODE_DEFAULT, CODE_SIZES } from "../native/text-size";
 
 /** Preference keys, under the platform's own namespace. */
-export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", PINNED_MODELS_KEY = "view.pinnedModels", CODE_KEY = "view.codeSize", GROUP_ALL_KEY = "view.groupAll", LOG_OPEN_KEY = "view.log", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups", THEME_KEY = "view.theme";
+export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", PINNED_MODELS_KEY = "view.pinnedModels", CODE_KEY = "view.codeSize", GROUP_ALL_KEY = "view.groupAll", LOG_OPEN_KEY = "view.log", STATE_OPEN_KEY = "view.state", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups", THEME_KEY = "view.theme";
 
 /** Is the page in calm view? Read it in a render to re-render when it changes. */
 export const calm = signal(true);
@@ -53,6 +53,10 @@ export const pane = signal<"resource" | null>(null);
  * because the question it answers ("what happened under THIS") is always about what is being read.
  */
 export const logOpen = signal<boolean>(false);
+
+/** Is the open run's RUN STATE showing (the state inspector)? Remembered per device and following the open session,
+ *  like the execution log beside it. */
+export const stateOpen = signal<boolean>(false);
 
 /** Runtimes whose group in the list is folded away. By id, so a runtime that goes offline and comes back stays as
  *  it was left, and one this device has never seen starts open. */
@@ -142,6 +146,7 @@ export function installViewPrefs(prefs: PlatformPrefs): void {
     const ga = prefs.get<boolean>(GROUP_ALL_KEY);
     groupAllTools.value = ga !== false;
     logOpen.value = prefs.get<boolean>(LOG_OPEN_KEY) === true;
+    stateOpen.value = prefs.get<boolean>(STATE_OPEN_KEY) === true;
     const pn = prefs.get<string>(PANE_KEY);
     pane.value = pn === "resource" ? pn : null;
     const f = prefs.get<string[]>(FOLDED_KEY);
@@ -237,6 +242,12 @@ export function setListOpen(on: boolean): void {
 export function setLogOpen(on: boolean): void {
     logOpen.value = on;
     store?.set(LOG_OPEN_KEY, on);
+}
+
+/** Open or close the open run's state. */
+export function setStateOpen(on: boolean): void {
+    stateOpen.value = on;
+    store?.set(STATE_OPEN_KEY, on);
 }
 
 /** Show something in the right-hand pane, or close it. */

@@ -3253,6 +3253,24 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
    is what pins the page's code to that variable in the first place. */
 .runlog { font-size: calc(1em * var(--runlog-zoom, 1)); }
 .runlog pre.code { font-size: calc(var(--code-fs, 0.92em) * var(--runlog-zoom, 1)); }
+/* The RUN STATE panel (run-state-view.tsx): the members of the open run's state, grouped by the first part of their
+   id, scrolling as one column. */
+.rstate { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px 8px 8px; font-size: 0.92em; }
+.rstate > .hint { padding: 4px 0; margin: 0; }
+/* When the panel's snapshot was read, in the dock's bar. */
+.rstate-asof { color: var(--fg-faint); font-size: 0.85em; font-variant-numeric: tabular-nums; margin-left: auto; padding-right: 4px; }
+/* A group of members (`run`, `grants`), headed by its name. */
+.rstate-group { margin-top: 6px; }
+.rstate-group-head { margin: 4px 0 2px; font-size: 0.8em; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--fg-dim); }
+/* One member: its name over what it holds; dimmed when it holds nothing for this run. */
+.rstate-member { padding: 3px 0; border-top: 1px solid var(--border); }
+.rstate-member.empty { opacity: 0.6; }
+.rstate-name { display: flex; align-items: baseline; gap: 6px; }
+.rstate-key { font-family: var(--mono, monospace); font-weight: 600; cursor: help; }
+/* The chip on a member the model is not given. */
+.rstate-aud { font-size: 0.75em; padding: 0 5px; border-radius: 8px; border: 1px solid var(--border); color: var(--fg-dim); }
+.rstate-none { color: var(--fg-faint); font-style: italic; font-size: 0.9em; }
+.rstate-val { margin-top: 1px; }
 /* The states that are not a log — nothing open, nothing recorded, unreadable — do want the margin back. */
 .runlog > .hint { padding: 8px; margin: 0; }
 /* A SECOND BLOCK IN A TOOLTIP, under a rule: the same divider `.tt-said` draws for a model's claim, without its

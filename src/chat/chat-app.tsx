@@ -13,7 +13,7 @@ import { DetailView } from "../sidebar/transcript/session-detail";
 import { Composer } from "../sidebar/transcript/composer";
 import { RUN_LOG_ABOUT } from "../log/run-log";
 import { useDismissAt } from "../sidebar/use-dismiss";
-import { IconBack, IconBench, IconBrain, IconCopy, IconCamera, IconClose, IconExport, IconLog, IconMore, IconSave, IconVram } from "../sidebar/icons";
+import { IconBack, IconBench, IconBrain, IconCopy, IconCamera, IconClose, IconExport, IconLog, IconMore, IconRows, IconSave, IconVram } from "../sidebar/icons";
 import { ContextMenu, CursorTipLayer, Hash } from "../sidebar/ui-kit";
 import { benchOpen, openBench, rev, sessionMap, view } from "../sidebar/store";
 import { truncate } from "../sidebar/format";
@@ -28,7 +28,7 @@ import { setAppBadge } from "./app-badge";
 import { useNotifications } from "./notify";
 import { useFadeEdges } from "./fade-edges";
 import { ExportChat, exportingChat, type PartialWhy } from "./export-dialog";
-import { ViewToggle, calm, codeSize, panelSize, listOpen, logOpen, pane, setCalm, setLogOpen, setPane } from "./view-mode";
+import { ViewToggle, calm, codeSize, panelSize, listOpen, logOpen, pane, setCalm, setLogOpen, setPane, setStateOpen, stateOpen } from "./view-mode";
 import { MenuItem } from "./menu";
 import { SessionModelPicker } from "./model-picker";
 import { DeleteConfirm, RenameDialog, SessionActions, usePeek } from "./row-menu";
@@ -609,6 +609,10 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
     const aside = pane.value === "resource" && graphsRt ? extras?.resourcePanel?.(graphsRt.id) : null;
     const bench = benchOpen.value && benchOwner ? extras?.bench?.(benchOwner.id) : null;
     const runLog = logOpen.value && logRt ? extras?.runLog?.(logRt.id, logRun) : null;
+    // The run's state follows the open session the same way, and for the same reason.
+    const stateRt = offering((r) => extras?.runState?.(r.id, null) != null);
+    const stateRun = stateRt && openOn?.runtime === stateRt.id ? openOn.hash : null;
+    const runState = stateOpen.value && stateRt ? extras?.runState?.(stateRt.id, stateRun) : null;
     // The open panels, for the dock to place (dock.tsx): each is docked where this device last put it.
     const panels: DockPanel[] = [];
     if (aside) panels.push({ id: "resource", title: "Resources", icon: <IconVram />, body: aside, close: () => setPane(null),
@@ -619,6 +623,8 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
     // width is the scarce thing; on the tab it is read once, by whoever is wondering, and costs the log nothing.
     if (runLog) panels.push({ id: "runlog", title: "Execution log", icon: <IconLog />, body: runLog, close: () => setLogOpen(false),
         tip: <>What {logRt!.name}'s machinery did under the run you are reading<span class="tt-note">{RUN_LOG_ABOUT}</span></> });
+    if (runState) panels.push({ id: "state", title: "Run state", icon: <IconRows />, body: runState, close: () => setStateOpen(false),
+        tip: <>What the run you are reading holds right now on {stateRt!.name}<span class="tt-note">Its pointers, approvals, grants and context, as the worker has them. Hover a name for what it is, who sees it and what loses it.</span></> });
     // The runtime whose settings this device may edit: one that reports `localSettings` and this device can draw.
     // Not gated on `online`: these read and write this browser's own storage, which needs no worker, and the browser
     // stops an idle worker every half minute, which took the Extension tab away with it.
@@ -642,8 +648,8 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
     // left alone (app-badge.ts).
     const attN = attentionCount(att.items);
     useEffect(() => setAppBadge(attN), [attN]);
-    const gear = <><AttentionButton items={att.items} /><GearMenu graphsRt={graphsRt} benchRt={benchOwner} logRt={logRt} /></>;
-    const gearWide = <><AttentionButton items={att.items} labelled /><GearMenu graphsRt={graphsRt} benchRt={benchOwner} logRt={logRt} labelled /></>;
+    const gear = <><AttentionButton items={att.items} /><GearMenu graphsRt={graphsRt} benchRt={benchOwner} logRt={logRt} stateRt={stateRt} /></>;
+    const gearWide = <><AttentionButton items={att.items} labelled /><GearMenu graphsRt={graphsRt} benchRt={benchOwner} logRt={logRt} stateRt={stateRt} labelled /></>;
     // The sheet is always there: this page's own display settings need no runtime; the browser's settings join them
     // where a runtime offers them and this device can draw them.
     const browserSettings = settingsRt ? extras?.settings?.(settingsRt.id) : null;

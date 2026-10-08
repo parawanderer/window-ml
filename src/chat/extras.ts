@@ -30,6 +30,9 @@ export interface ChatExtras {
      * shared views may not import `src/chat/`. Null with nothing open is a real answer: the panel says so.
      */
     runLog?(runtime: RuntimeId, run: string | null): ComponentChildren | null;
+    /** The RUN STATE for one run on one runtime: what it holds right now, member by member (the state inspector,
+     *  docs/spec/STATE_INSPECTOR.md). Offered only by the runtime's own pages; a remote one has no such view yet. */
+    runState?(runtime: RuntimeId, run: string | null): ComponentChildren | null;
     /**
      * The one-click fix for an attention code (attention.ts) on a runtime this device IS: a permission (`tab-groups`,
      * `site-access`), a setting (`archive-off`), the folder picker (`archive-folder-none`, `archive-folder-lapsed`). A

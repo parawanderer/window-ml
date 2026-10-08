@@ -24,7 +24,7 @@ import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
 import { noteRunMechanic } from "./sw-runs";
 import { ensureLocalTools, runLocalTool } from "./sw-local-tools";
-import { navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
+import { navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue } from "./sw-values";
 import { focusLineFor } from "./sw-focus";
@@ -625,6 +625,8 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             // Keep this run's pointer resolver so a page-side tool's `ml.dereference` (DEREF_TOKEN) can
             // read the outputs THIS run captured. Dropped in the run's finally, with the other per-run state.
             tokenSink: (fn) => { derefByRun.set(runId, fn); },
+            // The live context, for `ml.current` and the state inspector (contextByRun). Per turn, like the resolver.
+            contextSink: (fn) => { contextByRun.set(runId, fn); },
             // A pointer to a stored table: this session holds it until the session is released.
             claimValue: (key) => claimValue(key, runId),
             tryReadonly: p.autoApproveReadonly ? async (name, args, live) => {

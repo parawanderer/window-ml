@@ -489,6 +489,54 @@ test("the execution log is what the machinery did under the open run, which its 
     } finally { await ext.context.close(); await site.stop(); await fake.stop(); }
 });
 
+test("the run state panel lists every declared member of the open run, what each holds, and which the model never sees", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const site = await startPageServer({});
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off" });
+        fake.setScript([{ content: "nothing to do" }]);
+        const site1 = await ext.context.newPage();
+        await site1.goto(site.url + "/");
+        await waitForMl(site1);
+        const hash = await site1.evaluate(() => window.ml.agent("count the widgets", { env: false }).then((r) => r.hash));
+
+        const { page: chat, errors } = await openChatPage(ext);
+        await chat.locator(".chat-row", { hasText: "count the widgets" }).click();
+        await expect(chat).toHaveURL(new RegExp(`#/s/local%3A${hash}`));
+        await chat.locator(".chat-gear-btn").click();
+        await chat.getByRole("menuitem", { name: "Panels" }).click();
+        const row = chat.getByRole("menuitemcheckbox", { name: /Run state/ });
+        await expect(row).toHaveAccessibleName(/This browser/);
+        await row.click();
+
+        const panel = chat.locator(".chat-dock.chat-dock-right .rstate");
+        await expect(panel).toBeVisible();
+        await expect(chat.locator(".dock-bar .rstate-asof")).toContainText("as of");
+        // What the run was started with, read from the worker's registry and expanded on a click.
+        const init = panel.locator('[data-member="run.init"]');
+        await expect(init).not.toHaveClass(/empty/);
+        await init.locator(".jt-clickable").first().click();
+        await expect(init).toContainText("count the widgets");
+        // The context, between turns: the history the run kept for a follow-up, one row per message.
+        const messages = panel.locator('[data-member="run.messages"]');
+        await expect(messages).not.toHaveClass(/empty/);
+        await expect(messages.locator(".jt-preview")).toContainText(/\[ [2-9] items \]/);
+        // A member holding nothing for this run is still LISTED, so "none" is told apart from "no such thing".
+        await expect(panel.locator('[data-member="run.approvals"]')).toHaveClass(/empty/);
+        await expect(panel.locator('[data-member="run.approvals"]')).toContainText("nothing for this run");
+        // The mailbox and the grants are the person's: marked, since the model's `ml.current` leaves them out.
+        await expect(panel.locator('[data-member="run.mailbox"] .rstate-aud')).toHaveText("you only");
+        await expect(panel.locator('[data-member="grants.fetch"] .rstate-aud')).toHaveText("you only");
+        await expect(panel.locator('[data-member="run.pointers"] .rstate-aud')).toHaveCount(0);
+
+        // It is the OPEN run's: with nothing open there is nothing to describe.
+        await chat.evaluate(() => { location.hash = "#/"; });
+        await expect(panel.locator(".hint")).toContainText("Open a session to see what its run holds");
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); await site.stop(); await fake.stop(); }
+});
+
 test("the start page holds through a worker restart, and its tab list is fresh and has the sites' icons", async () => {
     const fake = await startFakeLlm({ model: "fake-model" });
     // Pages with an icon: a tab's icon is what the runtime fetches and hands the picker as a data URL.

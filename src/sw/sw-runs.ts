@@ -26,6 +26,7 @@ import { createNavBarrier } from "./nav-barrier";
 import { releaseSessionValues } from "./sw-values";
 import { TokenStore } from "../pointers/token-pipe";
 import { defineState } from "../state-registry";
+import { CHARS_PER_TOKEN, type CurrentSnapshot, type MessageMeta } from "../agent/current-context";
 
 // Design A: the AbortController for each live background run, keyed by runId, so a CANCEL_RUN message
 // (the HUD's "Cancel agent run") stops the loop at the next boundary AND kills a slow in-flight model
@@ -337,6 +338,7 @@ export const tabHasBgRun = (tabId: number): boolean => { for (const r of bgRuns.
 export const untrackRun = (tabId: number, runId: string): void => {
     runRebuilds.delete(runId);
     derefByRun.delete(runId);   // the resolver is a per-TURN closure over that turn's loop — it must not outlive it
+    contextByRun.delete(runId);
     // NOT tokensByRun: this runs in each TURN's finally (the run stays resumable in bgRuns), so dropping the
     // pointer store here emptied it between turns — the exact bug the session-scoped store was meant to fix.
     // Its life is the SESSION's, so it is released with the bgRuns entry instead (see releaseSessionTokens).
@@ -357,6 +359,32 @@ export const untrackRun = (tabId: number, runId: string): void => {
 // Pointer resolvers for background-hosted runs, keyed by runId — handed over by the loop at start (tokenSink)
 // so a page-side tool's `ml.dereference` can read THIS run's captured outputs. Deleted when the run ends.
 export const derefByRun = new Map<string, (ref: string, pipe?: string | string[]) => DerefRead>();
+
+/** The live turn's context snapshot per background-hosted run (the loop's `contextSink`): what `ml.current` and the
+ *  state inspector read while a turn runs. A per-TURN closure like `derefByRun`, dropped with it in `untrackRun`;
+ *  between turns `run.messages` reads the history `bgRuns` kept instead. */
+export const contextByRun = new Map<string, (extra?: { model?: string | null }) => CurrentSnapshot>();
+
+/** How much of each message's text the inspector is handed: enough to recognise it, never the whole context. */
+const MESSAGE_PREVIEW = 160;
+const preview = (m: NeutralMessage): string => {
+    const t = typeof m.content === "string" ? m.content : "";
+    const calls = m.tool_calls?.map((c) => c.name).join(", ");
+    const text = t || (calls ? `→ ${calls}` : "");
+    return text.length > MESSAGE_PREVIEW ? `${text.slice(0, MESSAGE_PREVIEW)}…` : text;
+};
+defineState({
+    id: "run.messages", scope: "session", realm: "worker", audience: "model", lostOn: ["worker-eviction"],
+    describe: "The context the run's next model call gets, one row per message: who wrote it, its size, when, and from which step.",
+    read: ({ runId }) => {
+        if (!runId) return undefined;
+        const live = contextByRun.get(runId)?.();
+        if (live) return live.messages.map((m, i) => ({ role: m.role, text: preview(m), ...pickMeta(live.meta[i]) }));
+        // Between turns: the history the run kept for a follow-up, with nothing known about each message but itself.
+        return bgRuns.get(runId)?.messages.map((m) => ({ role: m.role, text: preview(m), tokens: Math.ceil(((typeof m.content === "string" ? m.content.length : 0) + JSON.stringify(m.tool_calls ?? "").length) / CHARS_PER_TOKEN), tokensBasis: "estimated", images: m.images?.length ?? 0 }));
+    },
+});
+const pickMeta = (x: MessageMeta) => ({ id: x.id, tokens: x.tokens, tokensBasis: x.tokensBasis, images: x.images, ts: x.ts, step: x.step, tool: x.tool, truncated: x.truncated });
 
 // The `@tool:` pointer store per background-hosted run, kept ACROSS the turns of one session so a follow-up
 // ("how did you compute that?") can still dereference the previous turn's output. Deliberately NOT a field on
@@ -422,3 +450,6 @@ export const retabRuns = (from: number, to: number): number => {
     navBarrier.forget(from);
     return moved;
 };
+
+/** The key a state read for one run needs: the run, and the tab it is on (the grants are filed by tab). */
+export const stateKeyFor = (runId: string): { runId: string; tabId?: number } => ({ runId, tabId: bgRuns.get(runId)?.tabId });

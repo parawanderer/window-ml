@@ -227,6 +227,14 @@ The Python bench is the Python half of this already. The two are the same kind o
    `answer`, `messages`/`meta` (wiring `contextSink` into the background host first), `log`, `grants`, and `pointers`
    with the `linked` join across all three stores, in a right-dock pane beside the execution log (the splits from #391 give that
    layout directly), drawn from `session.context`.
+   **First cut built** (2026-10-08): the chat page's "Run state" panel (`run-state-view.tsx`) reads the worker's state
+   registry (`DUMP_RUN_STATE`, `sw-run-state.ts`, extension pages only) every 2 s and lists every declared member, empty
+   ones included. Members so far: `run.init`, `run.messages` (live through `contextByRun`, the background host's
+   `contextSink`; between turns the history `bgRuns` keeps, without meta), `run.model`, `run.sub`, `run.page`,
+   `run.interrupted`, `run.mailbox`, `run.pointers` (the worker's `@tool:` store only), `run.approvals`, `run.log`,
+   `grants.call`, `grants.fetch`, `grants.credentialedFetch`. Still to come in step 1: the title, `input`, `answer`,
+   the per-turn grants held in `hostRun`'s closure, the `linked` pointer join with `ValueStore` and `@pt`/`@box`,
+   page-hosted runs, and `session.context` for a remote reader.
 2. **Watches**, device-local, then the share toggle and `debug.userWatches`.
 3. **The read-only console.**
 4. **Python per-run state**: the investigation above, then the design, then the Python group.

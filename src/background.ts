@@ -21,6 +21,7 @@ import { folderAction } from "./sw/sw-archive";   // the session archive's folde
 import { ensureHubRuntime, hubDevices, hubLog, hubState, revokeHubDevice, stopHubRuntime } from "./sw/sw-hub";   // this browser as a runtime on a hub
 import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, senderOrigin } from "./sw/sw-housekeeping";
 import { handleRunLogDump } from "./sw/sw-run-log";
+import { handleRunStateDump } from "./sw/sw-run-state";
 import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw/sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, pendingGrants, takeCredFetch, isExtensionSender } from "./sw/sw-consent";
 import { isWorkerRun, makeWorkerRun, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
@@ -942,6 +943,11 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // The chat page's Execution log panel. Extension pages only: the ring holds every run's records, and a
         // record's key can be another tab's URL (sw-run-log.ts says why the model's own read waits for a gate).
         handleRunLogDump(message.payload, sender).then(sendResponse, (e) => sendResponse({ error: String((e as Error)?.message || e) }));
+        return true;
+
+    } else if (message.type === "DUMP_RUN_STATE") {
+        // The chat page's Run state panel (the state inspector). Extension pages only: it carries the run's grants.
+        handleRunStateDump(message.payload, sender).then(sendResponse, (e) => sendResponse({ error: String((e as Error)?.message || e) }));
         return true;
 
     } else if (message.type === "SESSION_STORAGE_STATS") {
