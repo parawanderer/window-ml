@@ -422,12 +422,29 @@ const MAX_TOKEN_SESSIONS = 24;
 defineState({
     id: "run.pointers", scope: "session", realm: "worker", audience: "model", lostOn: ["worker-eviction"],
     describe: "The run's `@tool:` values: what each tool call returned, addressable by id, label or tool name.",
-    read: ({ runId }) => runId ? tokensByRun.get(runId)?.all().map((v) => ({
-        id: v.id, tool: v.tool, kind: v.kind, label: v.label ?? null, step: v.step, seq: v.seq ?? null, ts: v.t,
-        chars: (v.full ?? v.out).length, shownChars: v.out.length, rows: v.table?.shape?.[0] ?? null,
-        image: !!v.image, stored: v.value ?? null,
-    })) : undefined,
+    read: ({ runId }) => {
+        const all = runId ? tokensByRun.get(runId)?.all() : undefined;
+        if (!all) return undefined;
+        const text = contextText(runId!);
+        return all.map((v) => ({
+            id: v.id, tool: v.tool, kind: v.kind, label: v.label ?? null, step: v.step, seq: v.seq ?? null, ts: v.t,
+            chars: (v.full ?? v.out).length, shownChars: v.out.length, rows: v.table?.shape?.[0] ?? null,
+            image: !!v.image,
+            // The value-store key of its whole body, when the pointer holds only a preview (`run.values` has the row).
+            stored: v.value ?? null,
+            // Whether the context the next model call gets still MENTIONS it. Null when that context cannot be read.
+            linked: text == null ? null : text.includes(v.id),
+        }));
+    },
 });
+
+/** The text of the run's context (the live turn's, or the history kept between turns), for finding which pointers it
+ *  still mentions. Null when neither is held. */
+function contextText(runId: string): string | null {
+    const msgs = contextByRun.get(runId)?.().messages ?? bgRuns.get(runId)?.messages;
+    if (!msgs) return null;
+    return msgs.map((m) => `${typeof m.content === "string" ? m.content : ""}${m.tool_calls ? JSON.stringify(m.tool_calls) : ""}`).join("\n");
+}
 
 /** This run's pointer store, created on the first turn and REUSED by every later turn of the same session. */
 export const sessionTokens = (runId: string): TokenStore => {

@@ -11,6 +11,20 @@ import { storedColumns } from "../table/table-data";
 import type { FetchedBody } from "./sw-fetch";
 import { recordHousekeeping } from "./sw-housekeeping";
 import { DEFAULT_CONFIG } from "../contract/contract-config";
+import { defineState } from "../state-registry";
+
+defineState({
+    id: "run.values", scope: "session", realm: "worker", audience: "model", lostOn: [],
+    describe: "Large values the run holds in the value store (whole fetched tables): size, format, where each came from, and whether another session holds it too.",
+    read: async ({ runId }) => {
+        if (!runId) return undefined;
+        const rows = ((await values()?.rows().catch(() => [])) ?? []).filter((r) => r.sessions.includes(runId));
+        return rows.length ? rows.map((r) => ({
+            key: r.key, bytes: r.bytes, format: r.format, source: r.source ?? null, createdAt: r.createdAt,
+            lastReadAt: r.lastReadAt, sharedWith: r.sessions.length - 1,
+        })) : undefined;
+    },
+});
 
 /** At most this share of the browser's quota for this origin, whatever the setting says. */
 const QUOTA_SHARE = 0.5;

@@ -233,9 +233,10 @@ The Python bench is the Python half of this already. The two are the same kind o
    `contextSink`; between turns the history `bgRuns` keeps, without meta), `run.model`, `run.sub`, `run.page`,
    `run.interrupted`, `run.mailbox`, `run.pointers` (the worker's `@tool:` store only), `run.approvals`, `run.log`,
    `grants.call`, `grants.fetch`, `grants.credentialedFetch`, and for the live turn `run.input` and `grants.turn`
-   (the consented origins and approved sheets in `hostRun`'s closure, through `turnByRun`). Still to come in step 1:
-   the title, `answer`, the `linked` pointer join with `ValueStore` and `@pt`/`@box`, page-hosted runs, and
-   `session.context` for a remote reader.
+   (the consented origins and approved sheets in `hostRun`'s closure, through `turnByRun`), and `run.values` (the
+   `ValueStore` rows the session holds), joined to `run.pointers` by each pointer's `stored` key, with `linked` saying
+   whether the context still mentions a pointer. Still to come in step 1: the title, `answer`, the page's `@pt`/`@box`
+   tokens (page realm), page-hosted runs, and `session.context` for a remote reader.
 2. **Watches**, device-local, then the share toggle and `debug.userWatches`.
 3. **The read-only console.**
 4. **Python per-run state**: the investigation above, then the design, then the Python group.
@@ -247,6 +248,15 @@ The Python bench is the Python half of this already. The two are the same kind o
 - **`mailbox` for agents.** Today it holds only your queued follow-ups, and it is `human`. When it carries subagent
   and cross-agent messages ([`AGENT_MAIL.md`](AGENT_MAIL.md)), whether the run may see what is queued for it before it is attached
   is a decision for that design. The audience column is where it gets recorded.
+- **Secrets** (Shane, 2026-10-08; [`SECRET_HANDLES.md`](SECRET_HANDLES.md), unbuilt). The list of secrets is state
+  the PERSON may inspect and the model may not: the opposite case from `mailbox`, and not `never`, which today means
+  "no read at all" (the API key, the keyring). Probably its own tab beside Run state rather than a group in it, so a
+  secret is never drawn in the pane a screenshot of a run captures. The plain case is a password manager: the model
+  is given `TEST_EXAMPLE_PASSWORD` and writes that handle in its scripts; the value behind it is bound to one
+  destination (the password field of the login dialog on `test.example/login`) and fills nothing else. So the model
+  sees the handles' NAMES and their bindings, and only the person sees the values. Open: whether a value is shown or
+  only revealed on request, and how the registry says it (a fourth audience, or `human` plus a flag the model's
+  snapshot can never set).
 - **A finished session** has no live run. The pane shows the last snapshot the session kept, labelled with the step
   it is from. What is kept, and for how long, is `session.context`'s question (`CHAT_PAGE.md`).
 - **Custom visualisations.** The pane is the debug view; nothing stops a member having a human-facing view elsewhere

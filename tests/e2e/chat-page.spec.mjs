@@ -590,6 +590,56 @@ test("the run state panel shows the LIVE turn: what it was asked, the gate it wa
     } finally { await ext.context.close(); await site.stop(); await fake.stop(); }
 });
 
+test("the run state panel joins the run's pointers to the stored values behind them, and says which the context still mentions", async () => {
+    // A table past the parse cap: the pointer holds a preview, and the whole body goes to the value store.
+    const big = ["order_id,region,revenue"];
+    for (let i = 0; i < 300_000; i++) big.push(`${i},${["north", "south"][i % 2]},${i % 97}`);
+    const srv = createServer((q, r) => {
+        if (q.url === "/big.csv") { r.writeHead(200, { "content-type": "text/csv" }); r.end(big.join("\n")); return; }
+        r.writeHead(200, { "content-type": "text/html" }); r.end("<title>orders</title><p>orders");
+    });
+    await new Promise((res) => srv.listen(0, "127.0.0.1", res));
+    const origin = `http://127.0.0.1:${srv.address().port}`;
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off" });
+        fake.setScript([{ tool: "fetch_url", args: { url: `${origin}/big.csv`, token: "the orders" } }, { content: "fetched" }]);
+        const site1 = await ext.context.newPage();
+        await site1.goto(origin + "/");
+        await waitForMl(site1);
+        // Same origin as the page, so the fetch is free and nothing waits on a gate.
+        await site1.evaluate(() => window.ml.agent("fetch the orders", { env: false, toolTokens: true }));
+
+        const { page: chat, errors } = await openChatPage(ext);
+        await chat.locator(".chat-row", { hasText: "fetch the orders" }).click();
+        await chat.locator(".chat-gear-btn").click();
+        await chat.getByRole("menuitem", { name: "Panels" }).click();
+        await chat.getByRole("menuitemcheckbox", { name: /Run state/ }).click();
+        const panel = chat.locator(".chat-dock.chat-dock-right .rstate");
+
+        const pointers = panel.locator('[data-member="run.pointers"]');
+        await expect(pointers).not.toHaveClass(/empty/);
+        await pointers.locator(".jt-clickable").first().click();
+        await pointers.locator(".jt-clickable").nth(1).click();
+        await expect(pointers).toContainText('"fetch_url"');
+        await expect(pointers).toContainText('"the orders"');
+        // The tool result the model was handed names it, so the context still MENTIONS it.
+        await expect(pointers.locator(".jt-row", { hasText: "linked:" })).toContainText("true");
+        const stored = (await pointers.locator(".jt-row", { hasText: "stored:" }).textContent()).match(/"([^"]+)"/)?.[1];
+        expect(stored, "the pointer names the stored body it previews").toBeTruthy();
+
+        // The stored body, joined by its key: the same key, with where it came from.
+        const values = panel.locator('[data-member="run.values"]');
+        await expect(values).not.toHaveClass(/empty/);
+        await values.locator(".jt-clickable").first().click();
+        await values.locator(".jt-clickable").nth(1).click();
+        await expect(values).toContainText(stored);
+        await expect(values).toContainText("/big.csv");
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); await fake.stop(); await new Promise((r) => srv.close(r)); }
+});
+
 test("the start page holds through a worker restart, and its tab list is fresh and has the sites' icons", async () => {
     const fake = await startFakeLlm({ model: "fake-model" });
     // Pages with an icon: a tab's icon is what the runtime fetches and hands the picker as a data URL.
