@@ -92,6 +92,21 @@ test("live tool output (sidebar): a stream delta fills the running step's Out; t
     assert.equal(w.shadow.querySelector(".astep-streaming"), null, "the live block clears once the result lands");
 });
 
+// A read-only try refused part way through printed lines from a run that did not happen: the loop's discard sends an
+// EMPTY output, and the row goes back to having streamed nothing while the human is asked.
+test("live tool output (sidebar): an EMPTY delta (a refused read-only try's discard) takes back what streamed", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("discard", "survey"));
+    await w.dispatch(agentStep("discard", 1, { seq: 1, pending: true, tool: "exec", arguments: { js: "survey()" } }));
+    await w.dispatch(agentStep("discard", 1, { seq: 1, streamOutput: "from the refused try\n", streamMarks: [[0, 1]] }));
+    await w.dispatch(agentStep("discard", 1, { seq: 1, streamOutput: "", streamMarks: [] }));
+    await openRun(w);
+    assert.match(w.shadow.querySelector(".astep-preview").textContent, /running/, "back to 'running…'");
+    w.shadow.querySelector(".astep-head").click(); await w.tick();
+    assert.equal(w.shadow.querySelector(".astep-streaming"), null, "no live block");
+    assert.doesNotMatch(w.shadow.querySelector(".astep.tool").textContent, /refused try/);
+});
+
 // The shared tool OUTPUT CELL: python_exec and exec BOTH render their Out into it, so it caps + scrolls +
 // offers a resize grip identically — and any future code-ish tool (a bash_exec, say) inherits that by
 // wrapping its own sections in the same component. Also pins the per-tool section labels (stdout vs console).
@@ -240,6 +255,21 @@ test("live output: the doomed tail is marked AS IT STREAMS, at the call's own ra
     assert.match(await hoverTip(w, lbl), /NOT be part of the result sent to the model/i, "with a hover explainer");
     const tail = w.shadow.querySelector(".r-unseen");
     assert.ok(tail && tail.textContent.trim().length >= 100, "exactly the text past the RAISED 600-char cap is marked");
+});
+
+// At the DEFAULT limit too: a read-only survey never raises it (a raise goes to the human), so this is the cut every
+// streamed survey is greyed at, and it is the same one an approved exec without `maxChars` gets.
+test("live output: with no raised limit, the doomed tail is marked at exec's default", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("livecut0", "survey"));
+    await w.dispatch(agentStep("livecut0", 1, { seq: 1, pending: true, tool: "exec", arguments: { js: "survey()" } }));
+    await w.dispatch(agentStep("livecut0", 1, { seq: 1, streamOutput: "S".repeat(500) + "U".repeat(200) }));
+    await openRun(w);
+    w.shadow.querySelector(".astep.tool .astep-head").click(); await w.tick();
+    assert.ok(w.shadow.querySelector(".r-unseen-lbl.live"), "the streaming view marks the model's cut");
+    const tail = w.shadow.querySelector(".r-unseen");
+    assert.match(tail.textContent, /^U+$/m, "exactly the text past 500 chars is marked");
+    assert.doesNotMatch(tail.textContent, /S/, "and none of the part the model will get");
 });
 
 // The executor's per-line timestamps must SURVIVE the step settling: the finished Out renders the same

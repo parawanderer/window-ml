@@ -106,7 +106,7 @@ export const delegateSend = async (tabId: number, msg: unknown): Promise<any> =>
 // LIVE tool-output streaming on the BACKGROUND path: the in-flight delegated tool's onStream, keyed by runId.
 // The loop delegates tool calls SEQUENTIALLY (one in flight per run), so runId alone correlates a page-posted
 // PAGE_TOOL_STREAM chunk to the right callback. Set in delegateTool while a streaming call runs, deleted after.
-export const delegateStreams = new Map<string, (chunk: string, ts?: number) => void>();
+export const delegateStreams = new Map<string, (chunk: string, ts?: number, skipped?: number) => void>();
 
 /** Host one background agent run for a tab: START_RUN begins one, RESUME_RUN continues a stored one with a
  *  follow-up. The loop runs here (extension origin) and delegates every tool back to the page that built the
@@ -625,11 +625,19 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             tokenSink: (fn) => { derefByRun.set(runId, fn); },
             // A pointer to a stored table: this session holds it until the session is released.
             claimValue: (key) => claimValue(key, runId),
-            tryReadonly: p.autoApproveReadonly ? async (name, args) => {
+            tryReadonly: p.autoApproveReadonly ? async (name, args, live) => {
                 if (name !== "exec") return null;
-                const env = await sendTool({ runId, name, args, readonlyTry: true })
-                    .catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
-                return env && env.readonly ? { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut, reused: env.reused } : null;
+                // Live console lines reach the loop's fan the way a delegated tool's do (delegateStreams). Dropped
+                // BEFORE returning, so a chunk still in flight from a refused try cannot land after the loop's
+                // discard: it finds no sink.
+                if (live) delegateStreams.set(runId, live.push);
+                try {
+                    const env = await sendTool({ runId, name, args, readonlyTry: true, stream: !!live }, live?.push)
+                        .catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
+                    return env && env.readonly ? { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut, reused: env.reused } : null;
+                } finally {
+                    if (live) delegateStreams.delete(runId);
+                }
             } : undefined,
             // Doomed-action precheck (click/type): ask the page to resolve the target side-effect-free.
             // A non-null error → the gate is SKIPPED and the error returned. Only delegated for tools

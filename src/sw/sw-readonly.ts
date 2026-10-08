@@ -26,6 +26,7 @@ import { errText } from "../dom/dom";
 import type { CurrentSnapshot } from "../agent/current-context";
 import type { MlTool } from "../contract/contract-agent";
 import type { RenderDescriptor } from "../contract/contract-render";
+import type { LiveOutput } from "../agent/agent-loop";
 
 /** What the worker holds for one run, handed in by the host so this module stays testable without one. */
 export interface WorkerReadonlyDeps {
@@ -40,6 +41,9 @@ export interface WorkerReadonlyDeps {
     /** The run's `exec` tool, whose `render` draws the step's In. Absent: the same code view the page's `exec` draws
      *  (`execCodeIn`), so a step answered here looks like one answered there. */
     tool?: MlTool;
+    /** The call's live output (the loop's `LiveOutput`): console lines stream into it as they print. On `needs-page`
+     *  and `refused` it is discarded here, so the page's retry, or the approved run, streams from empty. */
+    live?: LiveOutput;
 }
 
 /** The outcome. `answered`: auto-approved, with the result the page path would have produced. `needs-page`: delegate
@@ -63,13 +67,14 @@ export async function evalReadonlyInWorker(args: Record<string, unknown>, deps: 
     // such member, which in the worker defers to the page, where there is none either, so it reaches the human.
     const current = deps.current && /\bcurrent\b/.test(code) ? deps.current() : undefined;
     try {
-        const ro = await evalReadonly(code, null, deps.ml ?? {}, undefined, { realm: "worker", current });
+        const ro = await evalReadonly(code, null, deps.ml ?? {}, undefined, { realm: "worker", current,
+            onLog: deps.live ? (line) => deps.live!.push(line + "\n") : undefined });
         const { result, render } = formatReadonlyExec(ro.value, ro.logs, ro.prints);
         const { in: renderIn, out: renderOut } = descriptorFor(deps.tool, { result, render, ...(deps.tool ? {} : { renderIn: codeIn }) }, args);
         return { kind: "answered", result, renderIn, renderOut };
     } catch (e) {
-        if (e instanceof NeedsPage) return { kind: "needs-page" };
-        if (e instanceof NotInDialect || e instanceof Denied) return { kind: "refused" };
+        if (e instanceof NeedsPage) { deps.live?.discard(); return { kind: "needs-page" }; }
+        if (e instanceof NotInDialect || e instanceof Denied) { deps.live?.discard(); return { kind: "refused" }; }
         // A runtime error in the script is the model's to fix, reported with its line, exactly as the page path does.
         const at = (e as { mlLine?: number })?.mlLine ?? null;
         const error = `${errText(e)}${at ? ` (line ${at})` : ""}`;

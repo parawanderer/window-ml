@@ -363,7 +363,10 @@ test("output cell (real layout): the find scrolls SIDEWAYS to a match past the f
         await page.setViewportSize({ width: 1400, height: 900 });
         await page.goto(site.url + "/");
         await waitForMl(page);
-        await page.evaluate(() => { window.ml.agent("print a wide line", { stream: true, approvalRouting: "both" }); });
+        // NOT streamed: a streamed console keeps its produced-at marks, and the timestamped view wraps by design, so
+        // there is nothing to scroll sideways. This survey is in the read-only dialect, which streams like an
+        // approved exec since #397; it passed before only because a read-only answer carried no marks.
+        await page.evaluate(() => { window.ml.agent("print a wide line", { approvalRouting: "both" }); });
         for (let i = 0; i < 60; i++) {
             const n = await ext.sw.evaluate(() => {
                 const p = globalThis.__mlApprovals?.list?.() || [];

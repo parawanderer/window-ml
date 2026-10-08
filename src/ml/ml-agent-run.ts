@@ -463,7 +463,7 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
         // and (in-dialect) BOTH auto-approves AND returns the result — no eval (clears Trusted Types).
         // `this` is window.ml; the interpreter reduces it to a facade of ML_READONLY_METHODS, so the
         // agent can read its own setup (getModel/config/…) without the gate and nothing else.
-        tryReadonly: autoRO ? async (name, args) => {
+        tryReadonly: autoRO ? async (name, args, live) => {
             if (name !== "exec" || typeof (args as { js?: unknown }).js !== "string") return null;
             if (outputCapEscalated("exec", args)) return null;   // a raised output cap must hit the human gate, never auto-approve
             try {
@@ -479,7 +479,8 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
                 // The run's resolver is bound for the attempt: it runs before any tool call, outside
                 // executeTool's binding, and `ml.dereference` reads whatever is bound.
                 const ro = await withRunDeref(toolCtx.deref, () => evalReadonly(roSrc, document, this,
-                    makeAnswerFacade(answerSet, elLine), { checkpoint: () => answerSet.checkpoint() }));
+                    makeAnswerFacade(answerSet, elLine), { checkpoint: () => answerSet.checkpoint(),
+                    onLog: live ? (line) => live.push(line + "\n") : undefined }));   // each line as it prints, as an approved exec streams it
                 const { result, elements, render } = formatReadonlyExec(ro.value, ro.logs);
                 const { in: renderIn, out: renderOut } = descriptorFor(byName[name], { result, elements, render }, args);
                 // Cached ml.fetch URLs this survey re-read → a "reused a grant you approved" note (transparency).

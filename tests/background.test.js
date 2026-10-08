@@ -1876,6 +1876,54 @@ test("START_RUN (stream:true) streams reasoning LIVE and accumulates fragmented 
     assert.equal(res.data.summary, "All done.");
 });
 
+test("START_RUN (stream:true): a read-only try streams live, and a REFUSED one is discarded before the gate, late chunks included", async () => {
+    // The background-hosted try: the page evaluates the survey and posts each console line back (PAGE_TOOL_STREAM),
+    // which reaches the loop's fan through delegateStreams. Refused part way, its lines are from a run that did not
+    // happen: the loop empties the step's output, and a chunk still in flight when the try returns finds no sink.
+    let call = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onTabMessage: async (_tabId, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) {
+                // The human takes a while: the late chunk below arrives while the gate is open.
+                await new Promise(r => setTimeout(r, 80));
+                await bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+            }
+            if (msg?.type !== "RUN_TOOL_IN_PAGE" || msg.payload?.name !== "exec" || msg.payload.renderOnly || msg.payload.precheck) return undefined;
+            if (msg.payload.readonlyTry) {
+                assert.equal(msg.payload.stream, true, "the try is asked to stream");
+                // Not awaited: PAGE_TOOL_STREAM is one-way, so the send never resolves.
+                void bg.send({ type: "PAGE_TOOL_STREAM", runId: "rostream", chunk: "from the refused try\n", ts: 5 }, { tab: { id: 7 } });
+                setTimeout(() => { void bg.send({ type: "PAGE_TOOL_STREAM", runId: "rostream", chunk: "LATE\n" }, { tab: { id: 7 } }); }, 30);
+                return { result: "", readonly: false };
+            }
+            void bg.send({ type: "PAGE_TOOL_STREAM", runId: "rostream", chunk: "from the approved run\n" }, { tab: { id: 7 } });
+            return { result: "console:\nfrom the approved run" };
+        },
+        onFetch: () => {
+            call++;
+            if (call === 1) return streamResponse([
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"exec","arguments":"{\\"js\\":\\"x\\"}"}}]}}]}\n',
+                'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n', 'data: [DONE]\n',
+            ]);
+            return streamResponse(['data: {"choices":[{"delta":{"content":"done"}}]}\n', 'data: [DONE]\n']);
+        },
+    });
+    const panel = bg.connect("ml-devtools");
+    panel.send({ type: "ml-devtools-init", tabId: 7 });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "rostream", task: "survey", systemPrompt: "s",
+        tools: [{ name: "exec", requiresApproval: true, description: "", parameters: { type: "object", properties: { js: { type: "string" } } }, capabilities: [] }],
+        model: "m", think: null, maxSteps: 3, autoApprovePython: false, autoApproveReadonly: true, surface: "devtools", stream: true,
+    } }, { tab: { id: 7 } });
+    await new Promise(r => setTimeout(r, 150));   // past the fan's trailing emit
+    const outs = panel.messages.map(m => m.__mlDebug).filter(e => e?.kind === "agent-step" && e.streamOutput != null && e.tool == null).map(e => e.streamOutput);
+    assert.equal(outs[0], "from the refused try\n", "the try's line streamed live");
+    assert.equal(outs[1], "", "then the discard");
+    assert.ok(outs.every(o => !/LATE/.test(o)), "a chunk that arrived after the try returned found no sink");
+    assert.equal(outs.at(-1), "from the approved run\n", "the approved run streams from empty");
+});
+
 test("START_RUN (devtools) after a NAVIGATION fans the agent-result to the PANEL (not just the dead page)", async () => {
     // The bug: a background run in devtools mode that NAVIGATED stuck the panel on "running" with no answer —
     // the HUD (page-fed) had it, the panel didn't. After a nav the page-side caller that normally feeds the

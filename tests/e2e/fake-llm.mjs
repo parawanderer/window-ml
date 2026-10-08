@@ -99,6 +99,8 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
     // lands AFTER it, which is the race the panel must not lose.
     let psDelayMs = 0;
     let psPolls = 0;   // answered /api/ps polls, see `psPolls()`
+    /** @type {(() => void)[] | null} /api/ps replies waiting for `releasePs()`; null = not held */
+    let psHeld = null;
     // The same for /api/info: a capacity reading asked for before the stream went live and answered after it.
     let infoDelayMs = 0;
     /** @type {any} */
@@ -212,6 +214,7 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
         if (req.method === "GET" && (path === "/api/ps" || path === "/ollama/api/ps")) {
             psPolls++;
             const body = { models: resident };
+            if (psHeld) { psHeld.push(() => json(res, 200, body)); return; }
             if (psDelayMs) { setTimeout(() => json(res, 200, body), psDelayMs); return; }
             return json(res, 200, body);
         }
@@ -354,6 +357,11 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
                 setResident: (/** @type {any[]} */ models) => { resident = models; },
                 /** Delay every /api/ps reply by `ms` (0 = immediate). */
                 setPsDelay: (/** @type {number} */ ms) => { psDelayMs = ms; },
+                /** Hold every /api/ps reply until `releasePs()`: a test that needs a call to be IN FLIGHT holds it for
+                 *  exactly as long as it looks, where a delay is a race against a slow runner. */
+                holdPs: () => { psHeld = psHeld || []; },
+                /** Answer the held /api/ps replies and stop holding. */
+                releasePs: () => { const held = psHeld || []; psHeld = null; for (const answer of held) answer(); },
                 /** How many /api/ps polls have been answered: a test waits on polls LANDING rather than on a timer. */
                 psPolls: () => psPolls,
                 /** Delay every /api/info reply by `ms` (0 = immediate). */

@@ -378,7 +378,7 @@ Tests: the `stored table` block in `tests/readonly-exec.test.mjs`.
 
 ## Where it is called
 
-- **Page-hosted runs**: `tryReadonly` in `injected.ts` expands pointers, binds the run's resolver, calls
+- **Page-hosted runs**: `tryReadonly` in `ml-agent-run.ts` expands pointers, binds the run's resolver, calls
   `evalReadonly`, and returns the result as the tool's; on any throw it returns null and the loop goes to the
   approval gate.
 - **Background-hosted runs**: `readonlyTry` in `run-delegation.ts` does the same inside the page for a loop that
@@ -390,7 +390,29 @@ Both read-only callers format through ONE function, `formatReadonlyExec` (approv
 string (`console:` then `value:`, clipped at 500) AND the UI's `exec-out` descriptor — console and value as their
 own sections, `seen` at the model's cut — so an auto-approved survey renders like an approved `exec` instead of as
 one raw blob. A script error already had one. An element result is the exception: it keeps the hoverable
-element list. The read-only console carries no produced-at marks, so its output has no timestamp gutter.
+element list.
+
+### It streams, and a refused try takes its lines back
+
+On a streaming run (`stream: true`) a survey's console lines stream live, as an approved `exec`'s do. The loop hands
+`tryReadonly` the call's live sink (`LiveOutput`, agent-loop.ts), and `evalReadonly` calls `opts.onLog` with each
+line as it prints: the SAME string it pushes to `logs`, through the print boundary, so what streams is what the model
+will be given, abridged rows included. Each host carries it to the sink: the page-hosted path directly, the
+background-hosted path through `PAGE_TOOL_STREAM` and `delegateStreams` like any delegated tool, the worker realm
+through `WorkerReadonlyDeps.live`. Lines carry produced-at marks, so a streamed survey has a timestamp gutter; one
+that did not stream has none.
+
+A try can be refused PART WAY through, at run time, after lines have printed. Those are output from a run that did
+not happen, and the dialect's promise is that a refusal leaves nothing behind. So when `tryReadonly` returns null the
+loop calls the sink's `discard()`, before the gate opens: it cancels a pending throttled emit, empties the fan, and,
+if anything had been shown, emits an empty `streamOutput`, which the reducer reads as "nothing streamed". The
+approved run, if any, streams into the same sink from empty. The background host drops its `delegateStreams` entry
+before returning, so a chunk still in flight from the refused try finds no sink instead of landing after the
+discard. The worker realm discards on `needs-page` too, since the page's retry prints the same lines again.
+
+Holding the lines until the try is known to be in dialect was the alternative, and it defeats the point: refusal is
+decided at run time, so nothing could stream until the survey had finished. Tests: `tests/readonly-stream.test.mjs`
+and `tests/e2e/readonly-stream.spec.mjs`.
 
 ## Two realms: the page, and the worker
 

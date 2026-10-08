@@ -2,10 +2,12 @@
 //
 //   npm run build && node --import tsx tests/e2e/stream-demo.mjs
 //
-// Opens a headful browser, slides the overlay sidebar open on a real agent run, and drives TWO deliberately
-// SLOW tools so you can watch their output fill in Jupyter-style instead of appearing all at once:
+// Opens a headful browser, slides the overlay sidebar open on a real agent run, and drives THREE deliberately
+// SLOW tool calls so you can watch their output fill in Jupyter-style instead of appearing all at once:
 //   1. `exec`        — console.log lines paced by awaits      (page-side console → ctx.stream)
-//   2. `python_exec` — print() lines paced by time.sleep      (offscreen WORKER stdout → the whole reverse chain)
+//   2. `exec`, read-only — a survey the dialect answers with NO approval, paced by awaiting `ml.ps()` (which the
+//                      fake answers slowly); its lines stream the same way, from the mediated interpreter
+//   3. `python_exec` — print() lines paced by time.sleep      (offscreen WORKER stdout → the whole reverse chain)
 // The run is BACKGROUND-hosted (overlay mode = design A), so this exercises the real path: the page tool's
 // ctx.stream → PAGE_TOOL_STREAM → service worker → the loop's throttled fan → an agent-step `streamOutput`
 // delta → the step's live Out on every surface.
@@ -36,6 +38,13 @@ console.log('a very wide line ' + '-'.repeat(200) + ' NEEDLEFAR');
 for (let i = 1; i <= 18; i++) { console.log('exec line ' + i + ' — streaming into a capped, scrollable cell'); await wait(260); }
 console.log('exec finished');
 return 'exec done';
+`.trim();
+
+// A READ-ONLY survey: in the dialect, so it runs with no approval. The dialect has no timers, so it is paced by a
+// free read the fake answers slowly (setPsDelay below).
+const SURVEY_JS = `
+for (const i of ml.range(8)) { console.log('survey line ' + (i + 1) + ' — no approval asked, streamed all the same'); await ml.ps(); }
+return document.title;
 `.trim();
 
 // Paced Python: same idea, but the prints originate in the offscreen Pyodide WORKER.
@@ -71,7 +80,9 @@ const main = async () => {
             chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model",
             debugMode: "overlay",        // overlay → BACKGROUND-hosted run (the real streaming path)
             autoApprovePython: true,     // readonly python needs no gate
+            autoApproveReadonly: true,   // the survey runs through the dialect, with no gate
         });
+        fake.setPsDelay(350);            // paces the survey: each `await ml.ps()` takes this long
         // WRAPPING OFF, before anything mounts. The horizontal half of the find only means something when a
         // line can actually run off the edge — and this pref is read at MOUNT, so setting it later (as a
         // first version of this demo did) leaves every block wrapped and the sideways beat measuring 0px,
@@ -79,11 +90,12 @@ const main = async () => {
         await ext.sw.evaluate(() => chrome.storage.local.set({ ml_debug_codewrap: false }));
         fake.setScript([
             { tool: "exec", args: { js: EXEC_JS } },
+            { tool: "exec", args: { js: SURVEY_JS } },
             { tool: "python_exec", args: { code: PY_CODE, mode: "readonly" } },
             // A NON-streaming tool, to show the SAME output cell wrapping any tool's plain result — a fetched
             // page is the case you actually want Ctrl+F for.
             { tool: "fetch_url", args: { url: site.url + "/" } },
-            { content: "Both code tools streamed live; the fetched page uses the same output cell." },
+            { content: "All three code calls streamed live, the read-only survey included; the fetched page uses the same output cell." },
         ]);
 
         const page = await ext.context.newPage();
@@ -92,6 +104,7 @@ const main = async () => {
         await waitForMl(page);
 
         log("starting the run (stream: true) …");
+        await narrate(page, "Live tool output", { sub: "An approved exec, a read-only survey and python_exec, each streaming as it runs." });
         await page.evaluate(() => {
             window.ml.agent("run the two slow tools", {
                 stream: true, approvalRouting: "both", extraTools: [window.ml.pythonTool()],
@@ -127,7 +140,7 @@ const main = async () => {
         // Poll fast: approve gates, EXPAND every collapsed tool step (the wrapper drives the UI — a step
         // starts collapsed, and we want its live Out visible), and snapshot each new line as it lands.
         // Polling well under the 700ms line cadence so no line is missed.
-        let shot = 0, lastSeen = "";
+        let shot = 0, lastSeen = "", surveyNarrated = false;
         // Expand each tool step EXACTLY ONCE (keyed by its stable data-astep-seq) — re-clicking every tick
         // would toggle it shut and make the panel flicker.
         const expanded = new Set();
@@ -156,6 +169,10 @@ const main = async () => {
             if (live && live !== lastSeen) {
                 lastSeen = live;
                 log(`  live → ${live.trim().split("\n").pop()}`);
+                if (!surveyNarrated && /survey line/.test(live)) {
+                    surveyNarrated = true;
+                    await narrate(page, "A read-only survey streams too", { sub: "No approval was asked: the dialect ran it, and its lines arrive as they print." });
+                }
                 if (++shot <= 14) await page.screenshot({ path: path.join(ART, `live-${String(shot).padStart(2, "0")}.png`) }).catch(() => {});
             }
             if (await answered()) break;    // only stop once the FINAL answer lands (so python runs too)

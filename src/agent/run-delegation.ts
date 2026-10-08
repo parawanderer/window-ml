@@ -26,6 +26,7 @@ import { makeAnswerFacade, finalizeAnswer } from "../pointers/answer-set";
 import { runPipe, pipeHint } from "../pointers/text-pipe";
 import { descriptorFor } from "../tools/render-descriptor";
 import { evalReadonly } from "../readonly-exec";
+import { makeStreamSender } from "./stream-sender";
 import { formatReadonlyExec, readonlyRefused } from "./approval";
 import { subcallUsage } from "../bus";
 
@@ -199,7 +200,10 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
             // store lives. Without either, every pointer read in a survey went to the approval gate.
             const { code } = expandPointers((args as { js: string }).js);
             const ro = await withRunDeref((ref, pipe) => derefViaBackground(runId, ref, pipe), () => evalReadonly(code, document,
-                typeof window !== "undefined" ? window.ml : null, makeAnswerFacade(set, elLine), { checkpoint: () => set.checkpoint() }));
+                typeof window !== "undefined" ? window.ml : null, makeAnswerFacade(set, elLine), { checkpoint: () => set.checkpoint(),
+                // Each line as it prints, stamped here (the executor) like an approved exec's. A refused try's lines
+                // are discarded by the loop, which owns the stream.
+                onLog: opts.onStream ? (line) => opts.onStream!(line + "\n", Date.now()) : undefined }));
             const { result, elements, render } = formatReadonlyExec(ro.value, ro.logs);
             const { in: renderIn, out: renderOut } = descriptorFor(tool, { result, elements, render }, args);
             const urls = [...new Set(ro.reused)];   // cached ml.fetch URLs this survey reused → the "reused a grant" note
@@ -282,11 +286,16 @@ export function installToolDelegation(): void {
             window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope: { result: "", ...(a?.answer ? { answer: a.answer } : {}), ...(a?.media.length ? { answerMedia: a.media } : {}) } }, "*");
             return;
         }
-        // LIVE tool output: when the background asked for streaming, hand the tool a ctx.stream that posts each
-        // chunk straight back up the delegation chain (→ content → background → the loop's fan). Keyed by runId,
-        // which is all the background needs (one delegated call is in flight per run).
-        const onStream = stream ? (chunk: string, ts?: number) => { try { window.postMessage({ type: "PAGE_TOOL_STREAM", runId, chunk, ts }, "*"); } catch { /* non-cloneable → drop */ } } : undefined;
+        // LIVE tool output: when the background asked for streaming, hand the tool a ctx.stream that posts back up the
+        // delegation chain (→ content → background → the loop's fan). Keyed by runId, which is all the background needs
+        // (one delegated call is in flight per run). Through a SENDER: one post per beat, never more than the panel
+        // keeps, so a runaway print is not gigabytes of messages (stream-sender.ts).
+        const sender = stream ? makeStreamSender((chunk, ts, skipped) => {
+            try { window.postMessage({ type: "PAGE_TOOL_STREAM", runId, chunk, ts, ...(skipped ? { skipped } : {}) }, "*"); } catch { /* non-cloneable → drop */ }
+        }) : null;
+        const onStream = sender ? (chunk: string, ts?: number) => sender.push(chunk, ts) : undefined;
         const envelope = await runDelegatedTool(runId, name, args || {}, { renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt, verifyViewport: !!verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, onStream });
+        sender?.flush();   // the last lines go out BEFORE the result, which supersedes the live view
         window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope }, "*");
     });
 }
