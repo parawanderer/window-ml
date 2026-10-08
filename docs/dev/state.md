@@ -137,9 +137,12 @@ Each realm's bundle has its own registry (`src/state-registry.ts`); a snapshot a
 Declared so far, in the worker: `run.init`, `run.sub`, `run.model`, `run.interrupted`, `run.mailbox`, `run.pointers`,
 `run.page`, `run.messages`, `run.input`, `grants.turn` (`sw-runs.ts`), `run.values` (`sw-values.ts`), `run.approvals`, `grants.call`, `grants.fetch`, `grants.credentialedFetch` (`sw-consent.ts`),
 `run.log` (`sw-run-log.ts`), `session.title` (`sw-sessions.ts`). In the page: `run.answer` (`run-delegation.ts`),
-`page.points`, `page.boxes` (`util.ts`), asked of the run's tab with `RUN_STATE_IN_PAGE` (`sw-run-state.ts`). Each realm
+`page.points`, `page.boxes` (`util.ts`), and for a page-hosted run `run.messages`, `run.pointers`, `run.mailbox`
+(`page-run-state.ts`), asked of the run's tab with `RUN_STATE_IN_PAGE` (`sw-run-state.ts`). An id is unique per realm,
+not overall: both hosts declare the same member of a run. Each realm
 answers only for the declarations whose `realm` is its own, since a module both bundles load declares in each. A page's
-answer is the page's word: the worker sanitizes it (`pageStateFrom`), forces its realm, and refuses a member id the
-worker already declares. `node scripts/check-state.mjs` with no arguments lists the stores that predate the ratchet
+answer is the page's word: the worker sanitizes it (`pageStateFrom`), forces its realm, and takes it for a member id
+the worker declares only for a run the session index says the page hosts, where the worker holds nothing
+(`withPageState`). `node scripts/check-state.mjs` with no arguments lists the stores that predate the ratchet
 and are neither declared nor marked (134 when it was written). This file shrinks to the scopes, the places and the
 hazards as the declarations take over its rows.

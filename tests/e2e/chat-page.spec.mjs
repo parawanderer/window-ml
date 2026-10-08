@@ -660,6 +660,50 @@ test("the run state panel joins the run's pointers to the stored values behind t
     } finally { await ext.context.close(); await fake.stop(); await new Promise((r) => srv.close(r)); }
 });
 
+test("a PAGE-hosted run's state comes from the page it runs in: its context and its answer, marked as the page's word", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const site = await startPageServer({});
+    const ext = await launchExtension();
+    try {
+        // A site on the page-approval list runs its agent IN THE PAGE: the worker holds no start payload, no history and
+        // no pointer store for it. Its sessions reach the index from the page's own bus (`listPageSessions`).
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off",
+            autoApproveReadonly: false, listPageSessions: true, pageApprovalDomains: [new URL(site.url).hostname] });
+        fake.setScript([{ tool: "exec", args: { js: "document.title = 'held'; 'ok'" } }, { content: "done" }]);
+        const site1 = await ext.context.newPage();
+        await site1.goto(site.url + "/");
+        await waitForMl(site1);
+        // Held at the page's OWN approval callback, so the turn is live while the panel reads it.
+        await site1.evaluate(() => {
+            window.__held = new Promise((go) => { window.__go = go; });
+            window.__run = window.ml.agent("count in the page", { env: false, approve: () => window.__held }).catch(() => {});
+        });
+        await expect.poll(() => fake.calls().length, { timeout: 15000 }).toBe(1);
+
+        const { page: chat, errors } = await openChatPage(ext);
+        await chat.locator(".chat-row", { hasText: "count in the page" }).click();
+        await chat.locator(".chat-gear-btn").click();
+        await chat.getByRole("menuitem", { name: "Panels" }).click();
+        await chat.getByRole("menuitemcheckbox", { name: /Run state/ }).click();
+        const panel = chat.locator(".chat-dock.chat-dock-right .rstate");
+
+        // The context is the PAGE loop's, live: the task is in it, and the row says whose word it is.
+        const messages = panel.locator('[data-member="run.messages"]');
+        await expect(messages).not.toHaveClass(/empty/, { timeout: 10_000 });
+        await expect(messages.locator(".rstate-page")).toHaveText("from the page");
+        await messages.locator(".jt-clickable").first().click();
+        await messages.locator(".jt-clickable").nth(2).click();   // the system prompt, then the task: open the task
+        await expect(messages).toContainText("count in the page");
+        await expect(panel.locator('[data-member="run.answer"] .rstate-page')).toHaveText("from the page");
+        // The worker never held this run's start payload, and the page may not answer for it either: it stays empty.
+        await expect(panel.locator('[data-member="run.init"]')).toHaveClass(/empty/);
+
+        await site1.evaluate(() => window.__go(true));
+        await site1.evaluate(() => window.__run);
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); await site.stop(); await fake.stop(); }
+});
+
 test("the start page holds through a worker restart, and its tab list is fresh and has the sites' icons", async () => {
     const fake = await startFakeLlm({ model: "fake-model" });
     // Pages with an icon: a tab's icon is what the runtime fetches and hands the picker as a data URL.

@@ -85,23 +85,27 @@ export function storesIn(text) {
 }
 
 /**
- * The text of every `defineState(…)` call's arguments, and the ids they declare.
+ * The text of every `defineState(…)` call's arguments, the ids they declare, and each id's realm (parallel to `ids`).
  * @param {string} text the source
- * @returns {{ bodies: string[], ids: string[] }}
+ * @returns {{ bodies: string[], ids: string[], realms: (string|null)[] }}
  */
 export function declarationsIn(text) {
-    if (!text.includes("defineState")) return { bodies: [], ids: [] };
+    if (!text.includes("defineState")) return { bodies: [], ids: [], realms: [] };
     const { code, strings } = scan(text);
-    const bodies = [], ids = [];
+    const bodies = [], ids = [], realms = [];
     for (const m of code.matchAll(/\bdefineState\s*\(/g)) {
         let depth = 1, i = m.index + m[0].length;
         while (i < code.length && depth) { const c = code[i++]; if (c === "(") depth++; else if (c === ")") depth--; }
         const body = code.slice(m.index + m[0].length, i - 1);
         bodies.push(body);
         const id = /\bid\s*:\s*\0(\d+)\0/.exec(body);
-        if (id && strings[+id[1]]?.value) ids.push(strings[+id[1]].value);
+        if (id && strings[+id[1]]?.value) {
+            ids.push(strings[+id[1]].value);
+            const realm = /\brealm\s*:\s*\0(\d+)\0/.exec(body);
+            realms.push(realm ? strings[+realm[1]]?.value ?? null : null);
+        }
     }
-    return { bodies, ids };
+    return { bodies, ids, realms };
 }
 
 /**

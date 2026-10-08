@@ -239,8 +239,11 @@ The Python bench is the Python half of this already. The two are the same kind o
    members are asked of the run's tab (`RUN_STATE_IN_PAGE`, relayed by the content script; never a discarded tab,
    which a read must not wake): `run.answer` (the answer set, while a turn runs), `page.points` and `page.boxes` (the
    `@pt`/`@box` registries, page-wide). A page answers this itself, so what it says is sanitized in the worker and
-   labelled "from the page", and may not shadow a worker member. Still to come in step 1:
-   page-hosted runs, and `session.context` for a remote reader.
+   labelled "from the page", and may not shadow a worker member. A PAGE-HOSTED run (its loop in the page: a site on
+   the page-approval list) declares the same `run.messages`, `run.pointers`, `run.mailbox` in the page
+   (`page-run-state.ts`, the page loop's `contextSink`), and its tab comes from the session index. The page may answer
+   for a worker id only for a run the index says the page hosts, and only where the worker holds nothing for it
+   (`withPageState`). Still to come in step 1: `session.context` for a remote reader.
 2. **Watches**, device-local, then the share toggle and `debug.userWatches`.
 3. **The read-only console.**
 4. **Python per-run state**: the investigation above, then the design, then the Python group.

@@ -38,7 +38,7 @@ function Member({ m, e }: { m: RunStateMember; e: StateEntry | undefined }) {
                 <span class="rstate-key" {...cursorTipOn(memberTip(m))}>{name}</span>
                 {m.audience === "human" ? <span class="rstate-aud" {...cursorTipOn("Only you see this: the model is not given it.")}>you only</span> : null}
                 {/* The PAGE answered for this one, and a hostile page answers whatever it likes: said, not hidden. */}
-                {m.realm === "page" ? <span class="rstate-aud rstate-page" {...cursorTipOn("Reported by the page the run is on. A page can put anything here, so read it as the page's word.")}>from the page</span> : null}
+                {m.realm === "page" || e?.realm === "page" ? <span class="rstate-aud rstate-page" {...cursorTipOn("Reported by the page the run is on. A page can put anything here, so read it as the page's word.")}>from the page</span> : null}
             </div>
             {!e ? <div class="rstate-none">nothing for this run</div>
                 : e.error ? <div class="hint err">could not read: {e.error}</div>

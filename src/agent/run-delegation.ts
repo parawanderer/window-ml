@@ -30,6 +30,7 @@ import { makeStreamSender } from "./stream-sender";
 import { formatReadonlyExec, readonlyRefused } from "./approval";
 import { subcallUsage } from "../bus";
 import { defineState, readState, readableMembers } from "../state-registry";
+import { pageHostedAnswer } from "./page-run-state";
 
 /** The delegated vision-sub-call tokens `fn` spent, as a DELTA around the page-side meter (bus.ts). The
  *  background loop can't read the page's accumulator, so each delegated tool call reports its own spend and
@@ -73,7 +74,11 @@ const runs = new Map<string, PageRun>();
 defineState({
     id: "run.answer", scope: "run", realm: "page", audience: "model", lostOn: ["navigation", "turn-end"],
     describe: "What the run will hand you as its result (`ml.answer`): elements, text and `@tool:` values, in order. Held by the page while a turn runs; handed over when it ends.",
-    read: ({ runId }) => { const r = runId ? runs.get(runId) : undefined; return r ? answerSetFor(r.byName).dump() : undefined; },
+    read: ({ runId }) => {
+        if (!runId) return undefined;
+        const r = runs.get(runId);
+        return (r ? answerSetFor(r.byName) : pageHostedAnswer(runId))?.dump();
+    },
 });
 
 /** Register an agent run's live toolset page-side (called by ml.agent's START_RUN shim). `model`/`driverSees`/

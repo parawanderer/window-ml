@@ -3,9 +3,10 @@
 // the tab the run is on. Extension pages only, like DUMP_RUN_LOG: the grants and the mailbox are the person's to see,
 // and a page could otherwise read another tab's run.
 
-import { pageStateFrom, readState, readableMembers, type StateEntry, type StateMember } from "../state-registry";
+import { readState, readableMembers, withPageState, type StateEntry, type StateMember } from "../state-registry";
 import { hydrationDone, stateKeyFor } from "./sw-runs";
 import { senderOrigin } from "./sw-housekeeping";
+import { sessionServer } from "./sw-sessions";
 
 /** A declared member, whether or not it holds anything for this run, so the pane can show an empty one as empty. */
 export type RunStateMember = StateMember;
@@ -28,7 +29,7 @@ export interface RunStateDump {
 
 /** Ask the run's tab what its page holds for the run. Never wakes a discarded tab: reading state must not reload a
  *  page, which is what a delegated tool send does (`delegateSend`). */
-async function askPage(tabId: number, runId: string, taken: ReadonlySet<string>): Promise<{ members: StateMember[]; entries: StateEntry[] } | { error: string }> {
+async function askPage(tabId: number, runId: string): Promise<{ raw: unknown } | { error: string }> {
     const tab = await chrome.tabs.get(tabId).catch(() => null);
     if (!tab) return { error: "the run's tab is closed" };
     if (tab.discarded) return { error: "the run's tab is asleep (discarded by the browser); it is not woken to be read" };
@@ -39,7 +40,7 @@ async function askPage(tabId: number, runId: string, taken: ReadonlySet<string>)
     ]);
     clearTimeout(timer);
     if (answer === "timeout") return { error: "the page did not answer in time" };
-    return pageStateFrom(answer, taken) ?? { error: "the page did not answer" };
+    return answer ? { raw: answer } : { error: "the page did not answer" };
 }
 
 /** DUMP_RUN_STATE: every readable member of one run's state, as of now. */
@@ -52,8 +53,15 @@ export async function handleRunStateDump(payload: unknown, sender: chrome.runtim
     if (!run) return { data: { ts: Date.now(), members, entries: [] } };
     const key = stateKeyFor(run);
     const entries = await readState(key, "human", "worker");
-    if (key.tabId == null) return { data: { ts: Date.now(), members, entries } };
-    const page = await askPage(key.tabId, run, new Set(members.map((m) => m.id)));
+    // WHO HOSTS THE LOOP is the session index's word, from where each event came from (session-index.ts), never the
+    // page's. A page-hosted run's messages, pointers and mailbox are the page's: it may answer for those worker ids,
+    // but only where the worker itself holds nothing for this run, and the row says it came from the page.
+    const binding = sessionServer.index.binding(run);
+    const pageHosts = binding?.hostedBy === "page";
+    const tabId = key.tabId ?? (pageHosts ? binding?.tabId : undefined);
+    if (tabId == null) return { data: { ts: Date.now(), members, entries } };
+    const page = await askPage(tabId, run);
     if ("error" in page) return { data: { ts: Date.now(), members, entries, pageError: page.error } };
-    return { data: { ts: Date.now(), members: [...members, ...page.members], entries: [...entries, ...page.entries] } };
+    const merged = withPageState({ members, entries }, page.raw, pageHosts);
+    return { data: { ts: Date.now(), ...(merged ?? { members, entries, pageError: "the page's answer was not a state snapshot" }) } };
 }
