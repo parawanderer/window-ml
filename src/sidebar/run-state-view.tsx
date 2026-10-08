@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { JsonNode, copyableValue } from "./transcript/json-tree";
 import { PanelHead } from "./panel-head";
 import { TipText, cursorTipOn, useCopy, type CtxItem } from "./ui-kit";
-import { MAX_NOTE_CHARS, MAX_SHARED_WATCHES, MAX_WATCHES, SHARED_WATCHES_KEY, WATCH_NOTES_KEY, panelPath, shareable, watchNotes, type WatchResult, type WatchShape } from "../state-watch";
+import { MAX_CONSOLE_CHARS, MAX_NOTE_CHARS, MAX_SHARED_WATCHES, MAX_WATCH_CHARS, MAX_WATCHES, SHARED_WATCHES_KEY, WATCH_NOTES_KEY, panelPath, shareable, watchNotes, type ConsoleResult, type WatchResult, type WatchShape } from "../state-watch";
 import { completeWatch, type WatchCompletion } from "../watch-complete";
 import { IconCheck, IconChevron, IconCopy, IconEye, IconClose } from "./icons";
 import type { RunStateDump, RunStateMember } from "../sw/sw-run-state";
@@ -217,7 +217,28 @@ function setWatches(next: readonly string[]): void {
 /** The right-click item every row with a path gets: pin that path as a watch. */
 const watchItem = (path: string): CtxItem[] => [{ label: "Watch this", icon: <IconEye />, run: () => addWatch(path) }];
 
-/** One watch, on one line until opened: its expression, what it matched, and the ✕ that stops watching it. */
+/** A watch's or a console entry's answer, on one line until opened: `label` and `trail` frame it, as a member's name and
+ *  chips frame its value. Not read yet, refused, or matching nothing each stay on that one line. */
+function ResultBody({ r, label, trail }: { r: WatchResult | undefined; label: preact.ComponentChildren; trail?: preact.ComponentChildren }) {
+    const spacer = <span class="tri jt-tri-space" aria-hidden="true"><IconChevron /></span>;
+    if (!r) return <div class="jt-row">{spacer}{label}<span class="rstate-none">…</span>{trail}</div>;
+    if (r.error) return <div class="jt-row">{spacer}{label}<span class="rstate-watch-err">{r.error}</span>{trail}</div>;
+    // A JS answer is one value, at its own path when it is a plain path (`inspector.run.init.task`), so its rows copy and
+    // watch like a member's; a computed one (`….length`) has no path, so its rows copy values only.
+    if (!r.nodes) return r.value === undefined
+        ? <div class="jt-row">{spacer}{label}<span class="rstate-none">undefined</span>{trail}</div>
+        : <JsonNode v={r.value} defaultOpen={false} label={label} trail={trail} times {...(r.at ? { path: r.at, menuExtra: watchItem } : {})} />;
+    const nodes = r.nodes;
+    if (!nodes.length) return <div class="jt-row">{spacer}{label}<span class="rstate-none">no match</span>{trail}</div>;
+    // One match is that value, at the path it was found at, so its rows copy and watch like any member's. Several are a
+    // list of what matched; a list of matches has no single path, so its rows copy values only.
+    return nodes.length === 1
+        ? <JsonNode v={nodes[0].value} defaultOpen={false} path={panelPath(nodes[0].path)} label={label} trail={trail} times menuExtra={watchItem} />
+        : <JsonNode v={nodes.map((n) => n.value)} defaultOpen={false} label={label} trail={trail} times />;
+}
+
+/** One watch, on one line until opened: its expression, what it matched, the eye that shares it and the ✕ that stops
+ *  watching it. */
 function WatchRow({ expr, r }: { expr: string; r: WatchResult | undefined }) {
     const label = <span class="rstate-key rstate-watch-key" {...cursorTipOn(paneTip(expr))}>{expr}:</span>;
     const on = shared.value.includes(expr);
@@ -228,53 +249,46 @@ function WatchRow({ expr, r }: { expr: string; r: WatchResult | undefined }) {
         <button class="rstate-unwatch" aria-label={`Stop watching ${expr}`} onClick={(e) => { e.stopPropagation(); removeWatch(expr); }}
             {...cursorTipOn(paneTip("Stop watching this"))}><IconClose /></button>
     </span>;
-    const spacer = <span class="tri jt-tri-space" aria-hidden="true"><IconChevron /></span>;
-    // Not read yet (it was just added, and the next read is under two seconds away), refused, or matching nothing: each
-    // on the watch's own line, so the list keeps its shape.
-    if (!r) return <div class="rstate-member rstate-watch" data-watch={expr}><div class="jt-row">{spacer}{label}<span class="rstate-none">…</span>{trail}</div></div>;
-    if (r.error) return <div class="rstate-member rstate-watch" data-watch={expr}><div class="jt-row">{spacer}{label}<span class="rstate-watch-err">{r.error}</span>{trail}</div></div>;
-    // A JS watch answers with one value, at its own path when it is a plain path (`inspector.run.init.task`), so its rows
-    // copy and watch like a member's; a computed one (`….length`) has no path, so its rows copy values only.
-    if (!r.nodes) return <div class="rstate-member rstate-watch" data-watch={expr}>
-        {r.value === undefined
-            ? <div class="jt-row">{spacer}{label}<span class="rstate-none">undefined</span>{trail}</div>
-            : <JsonNode v={r.value} defaultOpen={false} label={label} trail={trail} times
-                {...(r.at ? { path: r.at, menuExtra: watchItem } : {})} />}
-    </div>;
-    const nodes = r.nodes;
-    if (!nodes.length) return <div class="rstate-member rstate-watch rstate-empty" data-watch={expr}><div class="jt-row">{spacer}{label}<span class="rstate-none">no match</span>{trail}</div></div>;
-    // One match is that value, at the path it was found at, so its rows copy and watch like any member's. Several are a
-    // list of what matched; a list of matches has no single path, so its rows copy values only.
-    return <div class="rstate-member rstate-watch" data-watch={expr}>
-        {nodes.length === 1
-            ? <JsonNode v={nodes[0].value} defaultOpen={false} path={panelPath(nodes[0].path)} label={label} trail={trail} times menuExtra={watchItem} />
-            : <JsonNode v={nodes.map((n) => n.value)} defaultOpen={false} label={label} trail={trail} times />}
-    </div>;
+    const empty = !!r?.nodes && !r.nodes.length;
+    return <div class={`rstate-member rstate-watch${empty ? " rstate-empty" : ""}`} data-watch={expr}><ResultBody r={r} label={label} trail={trail} /></div>;
 }
 
-/** The watch group: every watch over this run's snapshot, then a line to add one. Shown first, since a watch is what
- *  you pinned because you came back for it. */
-function WatchGroup({ results, shape }: { results: WatchResult[] | undefined; shape: WatchShape | undefined }) {
+/**
+ * The line an expression is typed on, completing against the shape of what it reads (watch-complete.ts): the watch
+ * group's and the console's. Tab takes the highlighted row; Enter takes it only after the arrows were used, so Enter
+ * still submits what was typed. With no list open, the arrows recall `recall`'s history, when there is one.
+ */
+function ExprInput({ shape, onSubmit, recall, label, placeholder, maxLength, cls = "", inputCls = "rstate-watch-input" }: {
+    shape: WatchShape | undefined;
+    /** Called with what was typed; the line is cleared afterwards. */
+    onSubmit: (text: string) => void;
+    /** The entry `dir` steps back (-1 is older) from the one shown, or undefined at either end. */
+    recall?: (dir: -1 | 1) => string | undefined;
+    label: string;
+    placeholder: string;
+    maxLength?: number;
+    cls?: string;
+    inputCls?: string;
+}) {
     const [draft, setDraft] = useState("");
     const [caret, setCaret] = useState(0);
     // The list is open while typing, shut by Escape, a blur or a pick; `hot` is the highlighted row and `chosen` says the
-    // arrows were used, which is what lets Enter take a row rather than add the watch as typed.
+    // arrows were used, which is what lets Enter take a row rather than submit what was typed.
     const [listing, setListing] = useState(false);
     const [hot, setHot] = useState(0);
     const [chosen, setChosen] = useState(false);
     const input = useRef<HTMLInputElement>(null);
-    const shut = folded.value.has("watch");
-    const byExpr = new Map((results ?? []).map((r) => [r.expr, r]));
+    const listId = useRef(`rstate-complete-${++completeIds}`).current;
     const items = listing ? completeWatch(draft, caret, shape) : [];
     const edit = (v: string, at: number) => { setDraft(v); setCaret(at); setHot(0); setChosen(false); };
-    const add = () => { addWatch(draft); edit("", 0); setListing(false); };
+    const put = (v: string, at: number) => { edit(v, at); requestAnimationFrame(() => input.current?.setSelectionRange(at, at)); };
+    const submit = () => { onSubmit(draft); edit("", 0); setListing(false); };
     const take = (c: WatchCompletion) => {
         // A method is taken with its parenthesis open: what comes next is its arguments.
         const ins = c.insert + (c.kind === "method" ? "(" : "");
-        const v = draft.slice(0, c.from) + ins + draft.slice(caret), at = c.from + ins.length;
-        edit(v, at);
+        const v = draft.slice(0, c.from) + ins + draft.slice(caret);
+        put(v, c.from + ins.length);
         setListing(c.kind !== "method");
-        requestAnimationFrame(() => input.current?.setSelectionRange(at, at));
     };
     const onKey = (e: KeyboardEvent) => {
         const el = e.target as HTMLInputElement;
@@ -282,12 +296,50 @@ function WatchGroup({ results, shape }: { results: WatchResult[] | undefined; sh
             e.preventDefault();
             setHot((hot + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length);
             setChosen(true);
+        } else if (recall && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+            e.preventDefault();
+            const v = recall(e.key === "ArrowUp" ? -1 : 1);
+            if (v !== undefined) put(v, v.length);
         } else if (items.length && (e.key === "Tab" || (e.key === "Enter" && chosen))) { e.preventDefault(); take(items[Math.min(hot, items.length - 1)]); }
-        else if (e.key === "Enter") add();
+        else if (e.key === "Enter") submit();
         else if (e.key === "Escape") { if (items.length) setListing(false); else edit("", 0); }
         else if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Home" || e.key === "End")
             requestAnimationFrame(() => setCaret(el.selectionStart ?? el.value.length));
     };
+    return (
+        <div class={`jt-row rstate-watch-add${cls ? ` ${cls}` : ""}`}>
+            <span class="tri jt-tri-space" aria-hidden="true"><IconChevron /></span>
+            <input ref={input} class={inputCls} type="text" spellcheck={false} aria-label={label} value={draft} maxLength={maxLength}
+                role="combobox" aria-autocomplete="list" aria-expanded={items.length > 0} aria-controls={listId}
+                aria-activedescendant={items.length ? `${listId}-${Math.min(hot, items.length - 1)}` : undefined}
+                placeholder={placeholder}
+                onInput={(e) => { const el = e.target as HTMLInputElement; edit(el.value, el.selectionStart ?? el.value.length); setListing(true); }}
+                onClick={(e) => setCaret((e.target as HTMLInputElement).selectionStart ?? 0)}
+                onBlur={() => setListing(false)}
+                onKeyDown={onKey} />
+            {items.length ? (
+                <ul class="rstate-complete" id={listId} role="listbox" aria-label="Completions">
+                    {items.map((c, i) => (
+                        <li key={c.label} id={`${listId}-${i}`} role="option" aria-selected={i === Math.min(hot, items.length - 1)}
+                            class={`rstate-complete-row ${c.kind}`}
+                            // pointerdown, not click: a click lands after the input's blur has closed the list.
+                            onPointerDown={(e) => { e.preventDefault(); take(c); }}>
+                            <span class="rstate-complete-label">{c.label}</span>
+                            {c.detail ? <span class="rstate-complete-detail">{c.detail}</span> : null}
+                        </li>))}
+                </ul>) : null}
+        </div>
+    );
+}
+
+/** Ids for each {@link ExprInput}'s list, so two on one panel do not share one. */
+let completeIds = 0;
+
+/** The watch group: every watch over this run's snapshot, then a line to add one. Shown first, since a watch is what
+ *  you pinned because you came back for it. */
+function WatchGroup({ results, shape }: { results: WatchResult[] | undefined; shape: WatchShape | undefined }) {
+    const shut = folded.value.has("watch");
+    const byExpr = new Map((results ?? []).map((r) => [r.expr, r]));
     return (
         <section class={`rstate-group rstate-watches${shut ? " shut" : ""}`} data-group="watch">
             <button class="rstate-group-head" aria-expanded={!shut} onClick={() => toggleGroup("watch")}>
@@ -302,28 +354,101 @@ function WatchGroup({ results, shape }: { results: WatchResult[] | undefined; sh
                     <WatchRow expr={w} r={byExpr.get(w)} />
                     {shared.value.includes(w) ? <NoteLine expr={w} /> : null}
                 </Fragment>)}
-                <div class="jt-row rstate-watch-add">
-                    <span class="tri jt-tri-space" aria-hidden="true"><IconChevron /></span>
-                    <input ref={input} class="rstate-watch-input" type="text" spellcheck={false} aria-label="Add a watch" value={draft}
-                        role="combobox" aria-autocomplete="list" aria-expanded={items.length > 0} aria-controls="rstate-complete"
-                        aria-activedescendant={items.length ? `rstate-complete-${Math.min(hot, items.length - 1)}` : undefined}
-                        placeholder={watches.value.length ? "add a watch" : "add a watch: a JS expression (inspector.…, ml.current.…) or JSONPath ($..)"}
-                        onInput={(e) => { const el = e.target as HTMLInputElement; edit(el.value, el.selectionStart ?? el.value.length); setListing(true); }}
-                        onClick={(e) => setCaret((e.target as HTMLInputElement).selectionStart ?? 0)}
-                        onBlur={() => setListing(false)}
-                        onKeyDown={onKey} />
-                    {items.length ? (
-                        <ul class="rstate-complete" id="rstate-complete" role="listbox" aria-label="Completions">
-                            {items.map((c, i) => (
-                                <li key={c.label} id={`rstate-complete-${i}`} role="option" aria-selected={i === Math.min(hot, items.length - 1)}
-                                    class={`rstate-complete-row ${c.kind}`}
-                                    // pointerdown, not click: a click lands after the input's blur has closed the list.
-                                    onPointerDown={(e) => { e.preventDefault(); take(c); }}>
-                                    <span class="rstate-complete-label">{c.label}</span>
-                                    {c.detail ? <span class="rstate-complete-detail">{c.detail}</span> : null}
-                                </li>))}
-                        </ul>) : null}
-                </div>
+                <ExprInput shape={shape} onSubmit={addWatch} label="Add a watch"
+                    placeholder={watches.value.length ? "add a watch" : "add a watch: a JS expression (inspector.…, ml.current.…) or JSONPath ($..)"} />
+            </>}
+        </section>
+    );
+}
+
+/** One console entry as it ran: what was typed, against which run, and its answer once the worker sent it. */
+export interface ConsoleEntry {
+    run: string;
+    code: string;
+    /** Absent while it runs. */
+    r?: ConsoleResult;
+}
+
+/** The console's entries this browser session, every run's, newest last; a run's panel shows its own. A module signal, so
+ *  closing the panel keeps them, and replaced rather than mutated, which a signal would not see. */
+export const consoleEntries = signal<readonly ConsoleEntry[]>([]);
+/** Entries kept, across runs: past it the oldest go. */
+export const MAX_CONSOLE_ENTRIES = 100;
+
+/** What was typed into the console, newest last and without repeats, kept on this device for the arrow keys. */
+export const consoleHistory = signal<readonly string[]>([]);
+const CONSOLE_HISTORY_KEY = "ml_runstate_console";
+/** Lines of history kept. */
+export const MAX_CONSOLE_HISTORY = 50;
+
+/** Run one console entry against a run: once, through the worker (DUMP_RUN_STATE's `console`), over the snapshot it reads
+ *  at that moment. Not re-run: a watch is what re-reads. */
+export function runConsole(run: string, code: string): void {
+    const c = code.trim();
+    if (!c) return;
+    const hist = [...consoleHistory.value.filter((h) => h !== c), c].slice(-MAX_CONSOLE_HISTORY);
+    consoleHistory.value = hist;
+    try { chrome.storage.local.set({ [CONSOLE_HISTORY_KEY]: hist }); } catch { /* no storage: the history lasts until the page closes */ }
+    const entry: ConsoleEntry = { run, code: c };
+    consoleEntries.value = [...consoleEntries.value, entry].slice(-MAX_CONSOLE_ENTRIES);
+    const settle = (r: ConsoleResult) => { consoleEntries.value = consoleEntries.value.map((e) => (e === entry ? { ...e, r } : e)); };
+    chrome.runtime.sendMessage({ type: "DUMP_RUN_STATE", payload: { run, console: c } },
+        (a: { data?: { console?: ConsoleResult }; error?: string } | undefined) => {
+            if (!a) settle({ expr: c, error: chrome.runtime.lastError?.message || "no answer from the service worker" });
+            else if (a.error) settle({ expr: c, error: a.error });
+            else settle(a.data?.console ?? { expr: c, error: "the service worker did not run it" });
+        });
+}
+
+/** One console entry: the line as typed, what it printed, and what it answered. Its answer copies and watches like a
+ *  watch's; the line itself can be pinned as a watch when it is short enough to be one. */
+function ConsoleRow({ e }: { e: ConsoleEntry }) {
+    const pinnable = e.code.length <= MAX_WATCH_CHARS && !watches.value.includes(e.code);
+    return (
+        <div class="rstate-console-entry">
+            <div class="jt-row rstate-console-code">
+                <span class="rstate-console-prompt" aria-hidden="true">›</span>
+                <code class="rstate-console-text">{e.code}</code>
+                <span class="rstate-trail">
+                    {pinnable ? <button class="rstate-copy" aria-label={`Watch ${e.code}`} onClick={() => addWatch(e.code)}
+                        {...cursorTipOn(paneTip("Watch this: re-read it every two seconds, above"))}><IconEye /></button> : null}
+                </span>
+            </div>
+            {(e.r?.logs ?? []).map((l, i) => <div key={i} class="jt-row rstate-console-log"><span class="tri jt-tri-space" aria-hidden="true"><IconChevron /></span>{l}</div>)}
+            <ResultBody r={e.r} label={<span class="rstate-key rstate-console-out" aria-label="Result">‹</span>} />
+        </div>
+    );
+}
+
+/** The CONSOLE (spec, "A console beside it"): the watch's language as a program, run once when Enter is pressed, against
+ *  this run's state. Read-only, so it asks no one: it cannot write, reach the page, fetch or spend tokens. */
+function ConsoleGroup({ run, shape }: { run: string; shape: WatchShape | undefined }) {
+    const shut = folded.value.has("console");
+    const mine = consoleEntries.value.filter((e) => e.run === run);
+    // Where the arrows are in the history: 0 is the line being typed, 1 the newest entry, and so on back.
+    const back = useRef(0);
+    const recall = (dir: -1 | 1): string | undefined => {
+        const h = consoleHistory.value;
+        const next = back.current + (dir === -1 ? 1 : -1);
+        if (next < 0 || next > h.length) return undefined;
+        back.current = next;
+        return next === 0 ? "" : h[h.length - next];
+    };
+    return (
+        <section class={`rstate-group rstate-console${shut ? " shut" : ""}`} data-group="console">
+            <button class="rstate-group-head" aria-expanded={!shut} onClick={() => toggleGroup("console")}>
+                console
+                <span class="rstate-group-end">
+                    {shut ? <span class="rstate-count">{mine.length} entr{mine.length === 1 ? "y" : "ies"}</span> : null}
+                    <span class={`tri${shut ? "" : " open"}`} aria-hidden="true"><IconChevron /></span>
+                </span>
+            </button>
+            {shut ? null : <>
+                {mine.map((e, i) => <ConsoleRow key={i} e={e} />)}
+                <ExprInput shape={shape} cls="rstate-console-add" inputCls="rstate-console-input" label="Run in the console" maxLength={MAX_CONSOLE_CHARS}
+                    onSubmit={(code) => { back.current = 0; runConsole(run, code); }} recall={recall}
+                    placeholder={mine.length ? "run" : "run read-only JS against this run: inspector.…, ml.current.…, statements, console.log"} />
+                {mine.length ? <button class="rstate-console-clear" onClick={() => { consoleEntries.value = consoleEntries.value.filter((e) => e.run !== run); }}>clear</button> : null}
             </>}
         </section>
     );
@@ -370,7 +495,7 @@ export function RunStateView({ run }: { run: string | null }) {
         if (foldedRead) return;
         foldedRead = true;
         try {
-            chrome.storage.local.get([FOLDED_KEY, WATCHES_KEY, SHARED_WATCHES_KEY, WATCH_NOTES_KEY], (d: Record<string, unknown>) => {
+            chrome.storage.local.get([FOLDED_KEY, WATCHES_KEY, SHARED_WATCHES_KEY, WATCH_NOTES_KEY, CONSOLE_HISTORY_KEY], (d: Record<string, unknown>) => {
                 const v = d?.[FOLDED_KEY];
                 if (Array.isArray(v)) folded.value = new Set(v.filter((x): x is string => typeof x === "string"));
                 const w = d?.[WATCHES_KEY];
@@ -378,6 +503,8 @@ export function RunStateView({ run }: { run: string | null }) {
                 const sh = d?.[SHARED_WATCHES_KEY];
                 if (Array.isArray(sh)) shared.value = sh.filter((x): x is string => typeof x === "string" && watches.value.includes(x)).slice(0, MAX_SHARED_WATCHES);
                 notes.value = watchNotes(d?.[WATCH_NOTES_KEY]);
+                const h = d?.[CONSOLE_HISTORY_KEY];
+                if (Array.isArray(h)) consoleHistory.value = h.filter((x): x is string => typeof x === "string").slice(-MAX_CONSOLE_HISTORY);
             });
         } catch { /* no storage here: nothing is folded */ }
     }, []);
@@ -408,6 +535,7 @@ export function RunStateView({ run }: { run: string | null }) {
                                 ended and the service worker has restarted since, or it was a chat rather than an agent run. What the session kept is
                                 its transcript and its execution log.</div>] : []),
                             <WatchGroup key="watch" results={dump.watches} shape={dump.shape} />,
+                            <ConsoleGroup key="console" run={run} shape={dump.shape} />,
                             ...[...groups].map(([g, ms]) => <Group key={g} g={g} ms={ms} byId={byId} />)]}
         </div>
     );

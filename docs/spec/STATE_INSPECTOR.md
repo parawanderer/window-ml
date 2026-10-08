@@ -283,6 +283,13 @@ exactly the model half of the registry and `inspector` the rest.
    so it is always now (a real model read `at` as "when it was pinned"). Not yet: a page-hosted run's `ml.current` has
    no `debug`.
 3. **The read-only console.**
+   **Built** (2026-10-08): a `console` group under the watches. Enter runs the line ONCE in the worker, over the snapshot
+   that read takes (`evalConsole`, `state-watch.ts`, sent as DUMP_RUN_STATE's `console`): the watch's language and roots
+   (`inspector`, `ml.current` while a turn runs) as a program, so statements, `for…of` and `console.log` work, its value
+   is the last expression, and lines printed before a throw are kept. No approval, since it cannot write, reach the page,
+   fetch or spend tokens. It completes as the watch input does (one `ExprInput` for both), the arrows recall what was
+   typed (kept on this device, `ml_runstate_console`, the last 50), an entry's eye pins it as a watch, and each run shows
+   its own entries. Not yet: the second console, on the run's page (above, item 2).
 4. **Python per-run state**: the investigation above, then the design, then the Python group.
 5. **The slots** fill in as the features behind them land: `mailbox` (once its audience is settled for subagent
    and cross-agent mail), `subagents` (with `parent`/`where` on a child run), `tasks`, `crossPage`, `policies`, `hooks`.

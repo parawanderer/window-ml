@@ -405,6 +405,11 @@ Tests: the `stored table` block in `tests/readonly-exec.test.mjs`.
   (the copy refuses it). The dialect already refuses a write to anything the script did not build, so the copy is a
   second wall. A watch runs on a smaller budget (`WATCH_STEPS`), since the panel re-reads every watch every two seconds.
   Its adversarial, halting and failure tests are `tests/readonly-globals.test.mjs`.
+- **The Run state panel's console** (`evalConsole`, `state-watch.ts`; DUMP_RUN_STATE's `console` field): the same
+  bindings as a watch, as a whole program (statements, `for…of`, `console.log`) run ONCE when the person presses Enter,
+  so it gets ten watches' budget (`CONSOLE_STEPS`) and up to `MAX_CONSOLE_CHARS`. Lines printed before a throw are kept
+  (collected through `onLog`). It adds no construct, so its tests are about what it can NOT do (write, reach the page,
+  fetch, outrun its budget): `tests/state-watch.test.mjs`, "the console".
 
 Both read-only callers format through ONE function, `formatReadonlyExec` (approval.ts), which returns the model's
 string (`console:` then `value:`, clipped at 500) AND the UI's `exec-out` descriptor — console and value as their
