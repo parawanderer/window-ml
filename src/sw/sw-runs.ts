@@ -339,6 +339,7 @@ export const untrackRun = (tabId: number, runId: string): void => {
     runRebuilds.delete(runId);
     derefByRun.delete(runId);   // the resolver is a per-TURN closure over that turn's loop — it must not outlive it
     contextByRun.delete(runId);
+    turnByRun.delete(runId);
     // NOT tokensByRun: this runs in each TURN's finally (the run stays resumable in bgRuns), so dropping the
     // pointer store here emptied it between turns — the exact bug the session-scoped store was meant to fix.
     // Its life is the SESSION's, so it is released with the bgRuns entry instead (see releaseSessionTokens).
@@ -364,6 +365,28 @@ export const derefByRun = new Map<string, (ref: string, pipe?: string | string[]
  *  state inspector read while a turn runs. A per-TURN closure like `derefByRun`, dropped with it in `untrackRun`;
  *  between turns `run.messages` reads the history `bgRuns` kept instead. */
 export const contextByRun = new Map<string, (extra?: { model?: string | null }) => CurrentSnapshot>();
+
+/** What the live TURN holds that lives only in `hostRun`'s closure: what it was asked, and what it was allowed this
+ *  turn without asking again. Set at the turn's start and dropped with it in `untrackRun`, like `contextByRun`. */
+export const turnByRun = new Map<string, () => {
+    task: string; images: number; origin: import("../contract/contract-run").PromptOrigin | null; startedTs: number; origins: string[]; sheets: string[];
+}>();
+defineState({
+    id: "run.input", scope: "run", realm: "worker", audience: "model", lostOn: ["worker-eviction", "turn-end"],
+    describe: "What the turn now running was asked: the prompt, how many images came with it, and where it was typed.",
+    read: ({ runId }) => {
+        const t = runId ? turnByRun.get(runId)?.() : undefined;
+        return t && { task: t.task, images: t.images, origin: t.origin, startedTs: t.startedTs };
+    },
+});
+defineState({
+    id: "grants.turn", scope: "run", realm: "worker", audience: "human", lostOn: ["worker-eviction", "turn-end"],
+    describe: "What this turn may do without asking again: the origins it may navigate to (and fetch from), and the spreadsheets approved for python_exec.",
+    read: ({ runId }) => {
+        const t = runId ? turnByRun.get(runId)?.() : undefined;
+        return t && { origins: t.origins, sheets: t.sheets };
+    },
+});
 
 /** How much of each message's text the inspector is handed: enough to recognise it, never the whole context. */
 const MESSAGE_PREVIEW = 160;
