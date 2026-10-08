@@ -44,7 +44,8 @@ defineState({
     id: "run.init", scope: "session", realm: "worker", audience: "model", lostOn: ["worker-eviction"],
     describe: "What the run was started with: the task, model, step budget, tool names and what it may do without asking.",
     read: ({ runId }) => {
-        const p = runId ? bgRuns.get(runId)?.p : undefined;
+        // `bgRuns` holds a run once a turn has settled; during the FIRST turn the payload is only the live turn's.
+        const p = runId ? bgRuns.get(runId)?.p ?? turnByRun.get(runId)?.().payload : undefined;
         return p && {
             task: p.task, model: p.model, think: p.think, maxSteps: p.maxSteps, tools: p.tools.map((t) => t.name),
             images: p.images?.length ?? 0, surface: p.surface, unattended: !!p.unattended, toolTokens: !!p.toolTokens,
@@ -371,6 +372,8 @@ export const contextByRun = new Map<string, (extra?: { model?: string | null }) 
  *  turn without asking again. Set at the turn's start and dropped with it in `untrackRun`, like `contextByRun`. */
 export const turnByRun = new Map<string, () => {
     task: string; images: number; origin: import("../contract/contract-run").PromptOrigin | null; startedTs: number; origins: string[]; sheets: string[];
+    /** The payload the turn was hosted with: on a first turn, the only copy of the start payload (`bgRuns` has none yet). */
+    payload: StartRunPayload;
 }>();
 defineState({
     id: "run.input", scope: "run", realm: "worker", audience: "model", lostOn: ["worker-eviction", "turn-end"],

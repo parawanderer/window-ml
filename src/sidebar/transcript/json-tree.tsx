@@ -2,8 +2,9 @@
 // as a tree without importing agent-detail.tsx, which imports them. Moved here from agent-detail.tsx, which
 // re-exports it.
 import { useState } from "preact/hooks";
-import { IconChevron } from "../icons";
-import { TipText, cursorTipOn } from "../ui-kit";
+import type { ComponentChildren } from "preact";
+import { IconChevron, IconCopy } from "../icons";
+import { TipText, copyText, cursorTipOn, openCtxMenu, type CtxItem } from "../ui-kit";
 
 /** Marks where a CUT-OFF value ended: a JSON value whose text was clipped is drawn as the part that arrived, and this
  *  sentinel, placed as the last member of the innermost container open at the cut, draws a "truncated" row there. */
@@ -56,14 +57,32 @@ export function JtKey({ name, desc, unknown }: { name: string; desc?: string; un
     if (desc) return <span class="tt jt-key jt-key-doc" tabIndex={0}>{name}:<span class="tt-pop left" role="tooltip"><TipText md={desc} /></span></span>;
     return <span class="jt-key">{name}:</span>;
 }
+/** The JSONPath (RFC 9535) of a member: `[i]` for an array index, `.name` for a key that is an identifier, `["key"]`
+ *  for any other key. What a watch takes, so a copied path can be pasted in as one. */
+export const childPath = (path: string, key: string, arr: boolean): string =>
+    arr ? `${path}[${key}]` : /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) ? `${path}.${key}` : `${path}[${JSON.stringify(key)}]`;
+
+/** A value as text to paste: a string as itself, anything else as indented JSON. */
+export const copyableValue = (v: unknown): string => (typeof v === "string" ? v : JSON.stringify(v, null, 2) ?? String(v));
+
+/** The tree's right-click menu for one node: its value, and the path that reaches it. */
+const copyMenu = (v: unknown, path: string): CtxItem[] => [
+    { label: "Copy value", icon: <IconCopy />, run: () => { void copyText(copyableValue(v)).catch(() => {}); } },
+    { label: "Copy path", run: () => { void copyText(path).catch(() => {}); } },
+];
+
 /** A JSON TREE — the raw args, a tool's parameter schema. Collapsible by default; `allOpen` makes it
  *  non-collapsible at EVERY depth, which is what the raw In view passes so nothing can be folded away
  *  from a Ctrl+F. Keys carry their schema `description` as a tooltip, and one not in the schema is
  *  flagged as a likely hallucinated argument. */
-export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, allOpen, cut, unsent, dim }: { k?: string; v: unknown; depth?: number; defaultOpen?: boolean; schema?: JsonSchemaNode; desc?: string; unknown?: boolean; allOpen?: boolean; cut?: string;
+export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, allOpen, cut, unsent, dim, path, label, trail }: { k?: string; v: unknown; depth?: number; defaultOpen?: boolean; schema?: JsonSchemaNode; desc?: string; unknown?: boolean; allOpen?: boolean; cut?: string;
     /** Container → index of its first member the model was NOT sent (see JT_SEEN). */ unsent?: WeakMap<object, number>;
-    /** This member was not sent to the model: drawn dimmed. */ dim?: boolean }) {
+    /** This member was not sent to the model: drawn dimmed. */ dim?: boolean;
+    /** This node's JSONPath. Given, every row offers a right-click menu: copy its value, copy its path. */ path?: string;
+    /** Drawn instead of the key on THIS row (not its members'): a caller's own name for the root. */ label?: ComponentChildren;
+    /** Drawn at the end of THIS row: a caller's chips and buttons, so a root takes one line. */ trail?: ComponentChildren }) {
     const branch = !!v && typeof v === "object";
+    const menu = path != null && v !== JT_CUT && v !== JT_SEEN ? (e: MouseEvent) => { e.stopPropagation(); openCtxMenu(e, copyMenu(v, path)); } : undefined;
     const [open, setOpen] = useState(allOpen || (defaultOpen ?? depth < 1));   // allOpen → expanded at EVERY depth (the raw In view)
     const [shown, setShown] = useState(JT_PAGE);
     const pad = { paddingLeft: `${depth * 13}px` };
@@ -77,9 +96,10 @@ export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, 
         ↓ not sent to the model</div>;
     if (!branch) {
         const t = v === null ? "null" : typeof v;
-        return <div class={`jt-row${dimCls}`} style={pad}>
-            {k != null ? <JtKey name={k} desc={desc} unknown={unknown} /> : null}
+        return <div class={`jt-row${dimCls}`} style={pad} onContextMenu={menu}>
+            {label ?? (k != null ? <JtKey name={k} desc={desc} unknown={unknown} /> : null)}
             <span class={`jt-val jt-${t}`}>{typeof v === "string" ? JSON.stringify(v) : String(v)}</span>
+            {trail}
         </div>;
     }
     const arr = Array.isArray(v);
@@ -96,10 +116,11 @@ export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, 
     const collapsible = !allOpen;
     const from = unsent?.get(v as object);
     return <div class={`jt-node${dimCls}`}>
-        <div class={`jt-row jt-branch${collapsible ? " jt-clickable" : ""}`} style={pad} role={collapsible ? "button" : undefined} onClick={collapsible ? () => setOpen(o => !o) : undefined}>
+        <div class={`jt-row jt-branch${collapsible ? " jt-clickable" : ""}`} style={pad} role={collapsible ? "button" : undefined} onClick={collapsible ? () => setOpen(o => !o) : undefined} onContextMenu={menu}>
             {collapsible ? <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span> : null}
-            {k != null ? <JtKey name={k} desc={desc} unknown={unknown} /> : null}
+            {label ?? (k != null ? <JtKey name={k} desc={desc} unknown={unknown} /> : null)}
             {open ? <span class="jt-brace">{arr ? "[" : "{"}</span> : <span class="jt-preview">{jtPreview(v as object, from != null)}</span>}
+            {trail}
         </div>
         {open ? <>
             {/* allOpen (the raw In view) draws every member: it exists so Ctrl+F can reach all of them. */}
@@ -107,7 +128,7 @@ export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, 
                 const mark = ev === JT_CUT || ev === JT_SEEN;
                 return <JsonNode key={ek} k={arr || mark ? undefined : ek} v={ev} depth={depth + 1} schema={childOf(ek)} desc={arr ? undefined : childOf(ek)?.description} unknown={!!props && !mark && !(ek in props)} allOpen={allOpen} cut={cut}
                     // Only at the boundary: opacity compounds, so a dimmed container's own members are not dimmed again.
-                    unsent={unsent} dim={from != null && i >= from} />;
+                    unsent={unsent} dim={from != null && i >= from} path={path != null && !mark ? childPath(path, ek, arr) : undefined} />;
             })}
             {!allOpen && entries.length > shown
                 ? <div class="jt-row" style={{ paddingLeft: `${(depth + 1) * 13}px` }}><button class="jt-more" onClick={() => setShown(n => n + JT_PAGE)}>show {Math.min(JT_PAGE, entries.length - shown)} more of {entries.length - shown}</button></div>

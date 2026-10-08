@@ -535,16 +535,25 @@ test("the run state panel lists every declared member of the open run, what each
         await expect(messages.locator(".jt-preview")).toContainText(/\[ [2-9] items \]/);
         // A member holding nothing for this run is still LISTED, so "none" is told apart from "no such thing".
         await expect(panel.locator('[data-member="run.approvals"]')).toHaveClass(/empty/);
-        await expect(panel.locator('[data-member="run.approvals"]')).toContainText("nothing for this run");
-        // The mailbox and the grants are the person's: marked, since the model's `ml.current` leaves them out.
+        await expect(panel.locator('[data-member="run.approvals"]')).toContainText("none");
+        // ONE LINE per member until it is opened, like a debug console's variables: the name, the value folded to a
+        // preview, and the chips, on one row.
+        const firstRow = (id) => panel.locator(`[data-member="${id}"] .jt-row`).first();
+        expect((await panel.locator('[data-member="run.messages"] .jt-row').count())).toBe(1);
+        const line = await firstRow("run.messages").boundingBox();
+        const chipBox = await panel.locator('[data-member="run.messages"] .rstate-aud').boundingBox();
+        expect(Math.abs(chipBox.y + chipBox.height / 2 - (line.y + line.height / 2)), "the chip is on the member's own line").toBeLessThan(line.height / 2);
+        // Named by the expression that reaches them. Nothing is in the model's `ml.current` yet, so every member is under
+        // `inspector.`; the person's own are marked "you only", the model's-to-be "not in ml.current yet".
+        await expect(firstRow("run.mailbox").locator(".rstate-key")).toHaveText("inspector.run.mailbox:");
         await expect(panel.locator('[data-member="run.mailbox"] .rstate-aud')).toHaveText("you only");
         await expect(panel.locator('[data-member="grants.fetch"] .rstate-aud')).toHaveText("you only");
-        await expect(panel.locator('[data-member="run.pointers"] .rstate-aud')).toHaveCount(0);
+        await expect(panel.locator('[data-member="run.pointers"] .rstate-aud')).toHaveText("not in ml.current yet");
         // The title is the session's, read from the one place that owns it (the worker's index): no utility model
         // is set here, so it holds no title yet, but the member is filled, not empty, and the model may read it.
         const title = panel.locator('[data-member="session.title"]');
         await expect(title).not.toHaveClass(/empty/);
-        await expect(title.locator(".rstate-aud")).toHaveCount(0);
+        await expect(title.locator(".rstate-aud")).toHaveText("not in ml.current yet");
         // The page's members come from the run's tab. Finished, the run's answer has been handed over, but the page is
         // still there to say so; closed, the panel says why the page's members are missing instead of dropping them.
         await expect(panel.locator('[data-member="run.answer"]')).toHaveClass(/empty/);
@@ -598,6 +607,17 @@ test("the run state panel shows the LIVE turn: what it was asked, the gate it wa
         await expect(answer.locator(".rstate-page")).toHaveText("from the page");
         await expect(panel.locator('[data-member="page.points"]')).toHaveClass(/empty/);
         await expect(panel.locator('[data-member="page.boxes"]')).toHaveClass(/empty/);
+
+        // IT FOLLOWS THE RUN: a message sent while the turn waits is queued for its next step, and the panel's next
+        // read shows it in the mailbox without anything being reopened.
+        const mailbox = panel.locator('[data-member="run.mailbox"]');
+        await expect(mailbox.locator(".jt-preview")).toHaveText("[ ]");
+        await chat.getByPlaceholder(/Steer this run/).fill("also check the totals");
+        await chat.getByPlaceholder(/Steer this run/).press("Enter");
+        await expect(mailbox.locator(".jt-preview")).toHaveText("[ 1 item ]", { timeout: 10_000 });
+        await mailbox.locator(".jt-clickable").first().click();
+        await mailbox.locator(".jt-clickable").nth(1).click();
+        await expect(mailbox).toContainText("also check the totals");
 
         // Approved out of band: the turn finishes, and what lived only in it goes with it.
         const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
@@ -700,6 +720,99 @@ test("a PAGE-hosted run's state comes from the page it runs in: its context and 
 
         await site1.evaluate(() => window.__go(true));
         await site1.evaluate(() => window.__run);
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); await site.stop(); await fake.stop(); }
+});
+
+test("the run state panel folds a group to a count, and copies a member's value, or any row's value or path", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const site = await startPageServer({});
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off" });
+        fake.setScript([{ content: "nothing to do" }]);
+        const site1 = await ext.context.newPage();
+        await site1.goto(site.url + "/");
+        await waitForMl(site1);
+        await site1.evaluate(() => window.ml.agent("count the widgets", { env: false }));
+
+        const { page: chat, errors } = await openChatPage(ext);
+        await chat.locator(".chat-row", { hasText: "count the widgets" }).click();
+        await chat.locator(".chat-gear-btn").click();
+        await chat.getByRole("menuitem", { name: "Panels" }).click();
+        await chat.getByRole("menuitemcheckbox", { name: /Run state/ }).click();
+        const panel = chat.locator(".chat-dock.chat-dock-right .rstate");
+        // What was copied, recorded at the clipboard call: an extension page cannot be granted clipboard READ here.
+        const recordCopies = () => chat.evaluate(() => { window.__clip = null; navigator.clipboard.writeText = async (t) => { window.__clip = t; }; });
+        const clip = () => chat.evaluate(() => window.__clip);
+        await recordCopies();
+
+        // FOLDED, a group says how many members it has and how many hold something, so it still answers "is anything
+        // here". The turn is over, so its grants hold nothing.
+        const grants = panel.locator('[data-group="grants"]');
+        await grants.locator(".rstate-group-head").click();
+        await expect(grants.locator(".rstate-group-head")).toHaveAttribute("aria-expanded", "false");
+        await expect(grants.locator(".rstate-count")).toHaveText("4 members · 0 holding something");
+        await expect(grants.locator(".rstate-member")).toHaveCount(0);
+        // Remembered on this device: a reload leaves it folded.
+        await chat.reload();
+        await expect(panel.locator('[data-group="grants"] .rstate-count')).toBeVisible({ timeout: 10_000 });
+        await panel.locator('[data-group="grants"] .rstate-group-head').click();
+        await expect(panel.locator('[data-group="grants"] .rstate-member')).toHaveCount(4);
+        await recordCopies();
+
+        // COPY: the whole value from the button on the member's line (shown on hover)...
+        const init = panel.locator('[data-member="run.init"]');
+        await init.hover();
+        await init.getByRole("button", { name: "Copy the value", exact: true }).click();
+        await expect.poll(clip).toContain('"task": "count the widgets"');
+        // ...and any row's value or PATH from a right-click. The path is the expression that reaches it, rooted where
+        // the member lives, so it pastes into a watch or the console as is.
+        await init.locator(".jt-clickable").first().click();
+        const task = init.locator(".jt-row", { hasText: "task:" });
+        await task.click({ button: "right" });
+        await chat.getByRole("button", { name: "Copy path" }).click();
+        await expect.poll(clip).toBe("inspector.run.init.task");
+        await task.click({ button: "right" });
+        await chat.getByRole("button", { name: "Copy value" }).click();
+        await expect.poll(clip).toBe("count the widgets");
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); await site.stop(); await fake.stop(); }
+});
+
+test("a session this browser holds nothing live for says so: a plain chat, and a finished run after the worker restarted", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const site = await startPageServer({});
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off", listPageSessions: true });
+        fake.setScript([{ content: "hello back" }, { content: "nothing to do" }]);
+        const site1 = await ext.context.newPage();
+        await site1.goto(site.url + "/");
+        await waitForMl(site1);
+
+        // A CHAT is not a run: nothing in the worker or the page holds state for it, and the panel says that in a
+        // sentence instead of a column of "none".
+        await site1.evaluate(() => window.ml.createChat().chat("say hello"));
+        const { page: chat, errors } = await openChatPage(ext);
+        await chat.locator(".chat-row", { hasText: "say hello" }).click();
+        await chat.locator(".chat-gear-btn").click();
+        await chat.getByRole("menuitem", { name: "Panels" }).click();
+        await chat.getByRole("menuitemcheckbox", { name: /Run state/ }).click();
+        const panel = chat.locator(".chat-dock.chat-dock-right .rstate");
+        await expect(panel.locator(".rstate-idle")).toContainText("holds nothing live for this session", { timeout: 10_000 });
+
+        // A finished RUN is live until the worker is stopped (the browser does that after ~30 s idle): then nothing it
+        // held in memory is left, and the panel, still open on the session, says so on its next read.
+        await site1.evaluate(() => window.ml.agent("count the widgets", { env: false }));
+        await chat.locator(".chat-row", { hasText: "count the widgets" }).click();
+        await expect(panel.locator('[data-member="run.init"]')).not.toHaveClass(/empty/, { timeout: 10_000 });
+        await expect(panel.locator(".rstate-idle")).toHaveCount(0);
+        const cdp = await ext.context.newCDPSession(chat);
+        await cdp.send("ServiceWorker.enable");
+        await cdp.send("ServiceWorker.stopAllWorkers");
+        await expect(panel.locator(".rstate-idle")).toBeVisible({ timeout: 15_000 });
+        await expect(panel.locator('[data-member="run.init"]')).toHaveClass(/empty/);
         expect(errors).toEqual([]);
     } finally { await ext.context.close(); await site.stop(); await fake.stop(); }
 });

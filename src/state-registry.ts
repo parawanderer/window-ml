@@ -36,6 +36,9 @@ export interface StateDecl {
     lostOn: StateLoss[];
     /** One sentence saying what it holds, in words the person reading the inspector would use. */
     describe: string;
+    /** Where the MODEL actually reads it (`ml.current.messages`), once it does. Absent for a `model` member means meant
+     *  for the model and not given to it yet: the inspector says so rather than claim a path that does not exist. */
+    exposedAs?: string;
     /** Plain data for one run, or undefined when the store holds nothing for it. Never a live reference: the result is
      *  handed to a reader that must not be able to reach the store through it. A store kept in storage reads async. */
     read?: (key: StateKey) => unknown;
@@ -107,12 +110,15 @@ export interface StateMember {
     audience: "model" | "human";
     lostOn: StateLoss[];
     describe: string;
+    /** See {@link StateDecl.exposedAs}. */
+    exposedAs?: string;
 }
 
 /** Every readable member one realm declares, in id order. */
 export const readableMembers = (realm: StateRealm): StateMember[] => declaredState()
     .filter((d) => d.read && d.audience !== "never" && d.realm === realm)
-    .map((d) => ({ id: d.id, realm: d.realm, scope: d.scope, audience: d.audience as "model" | "human", lostOn: [...d.lostOn], describe: d.describe }));
+    .map((d) => ({ id: d.id, realm: d.realm, scope: d.scope, audience: d.audience as "model" | "human", lostOn: [...d.lostOn], describe: d.describe,
+        ...(d.exposedAs ? { exposedAs: d.exposedAs } : {}) }));
 
 /** Forget every declaration. Tests only: a module's declarations run once per load. */
 export function resetStateRegistry(): void { registry.clear(); }

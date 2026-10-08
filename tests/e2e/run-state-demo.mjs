@@ -80,7 +80,7 @@ try {
     await chat.waitForFunction(() => document.querySelector(".chat-row"), null, { timeout: 15000 });
     await chat.bringToFront();
     await openSession("Export this quarter");
-    await narrate(chat, "2 · A live turn, held at its approval gate", { sub: "every member the registry declares is listed, empty ones too: \"nothing for this run\" is an answer, an absent row would not be. Grouped by what each belongs to" });
+    await narrate(chat, "2 · A live turn, held at its approval gate", { sub: "one line per member, like a debug console: named by the expression that reaches it (inspector.… until the model is given it), empty ones too, grouped by what each belongs to" });
     await member("run.init").waitFor();
     await sleep(BEAT + 600); await shot("live-turn-overview");
 

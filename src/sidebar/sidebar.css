@@ -3259,18 +3259,33 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .rstate > .hint { padding: 4px 0; margin: 0; }
 /* When the panel's snapshot was read, in the dock's bar. */
 .rstate-asof { color: var(--fg-faint); font-size: 0.85em; font-variant-numeric: tabular-nums; margin-left: auto; padding-right: 4px; }
-/* A group of members (`run`, `grants`), headed by its name. */
-.rstate-group { margin-top: 6px; }
-.rstate-group-head { margin: 4px 0 2px; font-size: 0.8em; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--fg-dim); }
-/* One member: its name over what it holds; dimmed when it holds nothing for this run. */
-.rstate-member { padding: 3px 0; border-top: 1px solid var(--border); }
+/* A group of members (`run`, `grants`), headed by its name, which folds it. */
+.rstate-group { margin-top: 4px; }
+.rstate-group-head { display: flex; align-items: center; gap: 4px; width: 100%; margin: 2px 0; padding: 2px 0; border: 0; background: none;
+    font: inherit; font-size: 0.8em; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--fg-dim); cursor: pointer; text-align: left; }
+.rstate-group-head:hover { color: var(--fg); }
+/* A folded group's count: how many members, and how many hold something. */
+.rstate-count { margin-left: auto; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+/* One member: ONE LINE until opened, like a debug console's variables. Dimmed when it holds nothing for this run. */
+.rstate-member { border-top: 1px solid var(--border); }
+.rstate-member > .jt-row, .rstate-member > .jt-node > .jt-row:first-child { position: relative; padding-right: 0; }
 .rstate-member.empty { opacity: 0.6; }
-.rstate-name { display: flex; align-items: baseline; gap: 6px; }
-.rstate-key { font-family: var(--mono, monospace); font-weight: 600; cursor: help; }
-/* The chip on a member the model is not given. */
-.rstate-aud { font-size: 0.75em; padding: 0 5px; border-radius: 8px; border: 1px solid var(--border); color: var(--fg-dim); }
-.rstate-none { color: var(--fg-faint); font-style: italic; font-size: 0.9em; }
-.rstate-val { margin-top: 1px; }
+.rstate-key { font-family: var(--mono, monospace); font-weight: 600; cursor: help; margin-right: 6px; }
+/* A member meant for the model that it is not given yet: quieter than "you only", which is a decision rather than a gap. */
+.rstate-notyet { border-style: dashed; color: var(--fg-faint); }
+/* The `inspector.` root of a member the model does not read: dimmed, so the part that is the model's path stands out. */
+.rstate-root { font-weight: 400; color: var(--fg-faint); }
+/* What sits at the end of a member's line: who sees it, whose word it is, and copy. */
+.rstate-trail { float: right; display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; }
+/* The chip on a member the model is not given, or one the page reported. */
+.rstate-aud { font-size: 0.75em; padding: 0 5px; border-radius: 8px; border: 1px solid var(--border); color: var(--fg-dim); font-style: normal; }
+.rstate-none { color: var(--fg-faint); font-style: italic; }
+/* Copy a member's value: shown on the row the pointer is over, and to keyboard focus. */
+.rstate-copy { display: inline-flex; padding: 1px; border: 0; background: none; color: var(--fg-dim); cursor: pointer; opacity: 0; }
+.rstate-member:hover .rstate-copy, .rstate-copy:focus-visible { opacity: 1; }
+.rstate-copy svg { width: 13px; height: 13px; }
+/* The sentence a session with nothing live gets, above its (empty) members. */
+.rstate-idle { color: var(--fg-dim); }
 /* The states that are not a log — nothing open, nothing recorded, unreadable — do want the margin back. */
 .runlog > .hint { padding: 8px; margin: 0; }
 /* A SECOND BLOCK IN A TOOLTIP, under a rule: the same divider `.tt-said` draws for a model's claim, without its

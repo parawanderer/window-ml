@@ -221,6 +221,15 @@ You will want to evaluate things against these variables, not only read them. In
 
 The Python bench is the Python half of this already. The two are the same kind of tool for two languages.
 
+### One set of names (Shane, 2026-10-08)
+
+The panel, its copied paths, watches and the console use the same expressions. A member the model reads is named by
+the path it reads it at (`ml.current.messages`, a declaration's `exposedAs`). Everything else is under `inspector.`
+(`inspector.grants.turn`), a root the model does not have, so the name alone says who can reach it; the console
+exposes that root for real rather than as a label. A `model` member with no `exposedAs` is meant for the model and not
+given to it yet, and the panel says so instead of naming a path that does not exist. Over time `ml.current` becomes
+exactly the model half of the registry and `inspector` the rest.
+
 ## Order
 
 1. **Session group from what exists**: `run` (with the title, once it has one owner), `init`, `input`, `approvals`,
@@ -243,7 +252,10 @@ The Python bench is the Python half of this already. The two are the same kind o
    the page-approval list) declares the same `run.messages`, `run.pointers`, `run.mailbox` in the page
    (`page-run-state.ts`, the page loop's `contextSink`), and its tab comes from the session index. The page may answer
    for a worker id only for a run the index says the page hosts, and only where the worker holds nothing for it
-   (`withPageState`). Still to come in step 1: `session.context` for a remote reader.
+   (`withPageState`). The panel draws each member on ONE LINE until opened (name, preview, chips), folds a group to
+   "N members · M holding something", copies a member's value from a button and any row's value or path from a
+   right-click, and says in a sentence when this browser holds nothing live for the session. A remote reader is not
+   step 1: the inspector is offered only where the run runs (below).
 2. **Watches**, device-local, then the share toggle and `debug.userWatches`.
 3. **The read-only console.**
 4. **Python per-run state**: the investigation above, then the design, then the Python group.

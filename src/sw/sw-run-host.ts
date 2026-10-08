@@ -236,7 +236,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     // The turn's ask and its grants, readable by the state inspector (`run.input`, `grants.turn`) for as long as the turn runs.
     const turnStarted = Date.now();
     turnByRun.set(runId, () => ({ task: p.task, images: p.images?.length ?? 0, origin: p.origin ?? null, startedTs: turnStarted,
-        origins: [...consentedOrigins], sheets: [...approvedSheets] }));
+        origins: [...consentedOrigins], sheets: [...approvedSheets], payload: p }));
     const navNeedsConsent = (url: string): boolean => {
         if (!p.crossOrigin) return false;   // can't cross origins → tool refuses cross-origin; same-site fine → no gate
         try {
