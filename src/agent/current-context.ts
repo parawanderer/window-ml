@@ -8,6 +8,7 @@
 
 import type { NeutralMessage } from "../contract/contract-chat";
 import type { PromptSurface } from "../contract/contract-run";
+import type { LogLevel } from "../log/housekeeping";
 import type { RunLogEvent } from "../log/run-log";
 import { toolToken } from "../util";
 
@@ -86,6 +87,8 @@ export interface CurrentRun {
  *  that did not report the event, nor `tab`/`origin`, which say who REPORTED it. */
 export interface CurrentLogRecord {
     ts: number;
+    /** `info` for the routine, `warn` for something that went wrong and was worked around, `error` for what was not. */
+    level: LogLevel;
     subsystem: string;
     kind: string;
     reason: string | null;
@@ -116,11 +119,11 @@ function textChars(m: NeutralMessage): number {
     return n;
 }
 
-/** The log as lines: ISO time, subsystem, kind, reason, then the detail as JSON. Single spaces and no padding, since
+/** The log as lines: ISO time, level, subsystem, kind, reason, then the detail as JSON. Single spaces and no padding, since
  *  a model reads it (AGENTS.md); the order is fixed so `grep` patterns written against it keep working. */
 export function logText(records: readonly CurrentLogRecord[]): string {
     return records.map((r) => [
-        new Date(r.ts).toISOString().replace(/\.\d{3}Z$/, "Z"), r.subsystem, r.kind,
+        new Date(r.ts).toISOString().replace(/\.\d{3}Z$/, "Z"), r.level, r.subsystem, r.kind,
         ...(r.reason ? [r.reason] : []), ...(r.detail ? [JSON.stringify(r.detail)] : []),
     ].join(" ")).join("\n");
 }
@@ -155,7 +158,7 @@ export function snapshotCurrent(src: {
         };
     });
     const records = (src.log ?? []).map((e): CurrentLogRecord => ({
-        ts: e.t, subsystem: e.subsystem, kind: e.kind, reason: e.reason ?? null,
+        ts: e.t, level: e.level ?? "info", subsystem: e.subsystem, kind: e.kind, reason: e.reason ?? null,
         detail: e.detail && typeof e.detail === "object" ? structuredClone(e.detail) as Record<string, unknown> : null,
     })).sort((a, b) => a.ts - b.ts);
     const log = Object.assign(records, { text: logText(records) });

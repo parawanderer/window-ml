@@ -162,7 +162,7 @@ test("an interface's BASE members are published too: `extends` used to be matche
     const ev = buildSchema("run-log").$defs.RunLogEvent;
     // `run` is RunLogEvent's own; everything else comes from the HousekeepingEvent it extends, and a schema
     // describing only `run` would look complete and describe almost nothing.
-    for (const k of ["t", "subsystem", "kind", "reason", "key", "bytes", "ms", "origin", "tab", "detail", "run"])
+    for (const k of ["t", "level", "subsystem", "kind", "reason", "key", "bytes", "ms", "origin", "tab", "detail", "run"])
         assert.ok(ev.properties[k], `RunLogEvent.${k}`);
     assert.deepEqual(ev.required.sort(), ["kind", "origin", "run", "subsystem", "t"]);
 });

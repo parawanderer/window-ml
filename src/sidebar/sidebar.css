@@ -3281,6 +3281,10 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 /* The panel's own menu sits at the RIGHT of the dock's bar, against the region's `\22EE` — the bar's slot stretches
    (`.dock-slot > *`), so without this the button floats at the far left, a whole bar away from the other menu. */
 .runlog-menu { justify-content: flex-end; }
+/** The execution log's header row in the dock bar: the text filter, then the menu. */
+.runlog-head { display: inline-flex; align-items: center; gap: 6px; }
+/** The execution log's text filter: hides the lines that do not contain it. Narrow, since it shares the dock's tab bar. */
+.runlog-find { width: 9em; font: inherit; font-size: 0.85em; padding: 2px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--fg); }
 /* THE −/VALUE/+ PILL (`Stepper`, ui-kit.tsx): one rounded control, not three loose buttons, because the three are
    one question. Segment borders rather than gaps, so it reads as a single object at any size. */
 /* EVERY measurement here is in `em`, so the pill is sized BY THE TEXT IT SITS BESIDE rather than by a px figure

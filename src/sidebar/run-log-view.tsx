@@ -23,7 +23,8 @@ import { Stepper } from "./ui-kit";
 import { IconFilter, IconGear } from "./icons";
 import { downloadBlob } from "./export/download";
 import { exportSessionJson } from "./export/export";
-import { RUN_LOG_KEY, runLogDocument, type RunLogEvent } from "../log/run-log";
+import { RUN_LOG_KEY, runLogDocument, filterRunLog, levelCounts, type RunLogEvent } from "../log/run-log";
+import type { LogLevel } from "../log/housekeeping";
 import type { RunLogDump } from "../sw/sw-run-log";
 
 // THIS PANEL'S OWN TWO PREFERENCES. Kept in `chrome.storage.local` beside the panel's neighbours (`outMaxH` and
@@ -69,6 +70,8 @@ export function RunLogView({ run }: { run: string | null }) {
     const [dump, setDump] = useState<RunLogDump | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [hidden, setHidden] = useState<Set<string>>(new Set());
+    const [minLevel, setMinLevel] = useState<LogLevel>("info");
+    const [find, setFind] = useState("");
 
     useEffect(() => {
         let live = true;
@@ -121,20 +124,30 @@ export function RunLogView({ run }: { run: string | null }) {
     // moment a run is re-filed under a new tab it differs, which is exactly when it is worth reading. The
     // download is unaffected: it carries the records.
     const tabs = new Set(all.map((e) => e.detail?.tab).filter((v) => v != null));
-    const { text, marks, groups, headWidth } = housekeepingText(all, hidden, tabs.size > 1 ? new Set() : new Set(["tab"]));
+    // The level and the text NARROW the lines; the subsystem colours, the count and the download stay over every
+    // record, so narrowing never recolours a line or shrinks what is saved.
+    const shown = filterRunLog(all, { minLevel, text: find });
+    const { text, marks, groups, headWidth } = housekeepingText(shown, hidden, tabs.size > 1 ? new Set() : new Set(["tab"]));
     const elsewhere = (dump?.runs || []).filter((r) => r.run !== run);
 
     return (
         <div class="runlog" style={{ "--runlog-zoom": LOG_ZOOMS[zoomStep.value] }} onKeyDown={onKey}>
             <PanelHead>
-                <RunLogMenu run={run} records={all} counts={counts} hidden={hidden} setHidden={setHidden} />
+                <span class="runlog-head">
+                    {/* A FILTER, not a find: it hides the lines that do not match. Ctrl+F inside the log is still the
+                        find, which keeps the context around a hit. */}
+                    <input class="runlog-find" type="search" placeholder="Filter" aria-label="Filter the execution log"
+                        value={find} onInput={(e) => setFind((e.target as HTMLInputElement).value)} />
+                    <RunLogMenu run={run} records={all} counts={counts} hidden={hidden} setHidden={setHidden}
+                        minLevel={minLevel} setMinLevel={setMinLevel} />
+                </span>
             </PanelHead>
             {error ? <div class="hint err">could not read the log: {error}</div>
                 : !run ? <div class="hint">Open a session to read what happened underneath it.</div>
                     : dump == null ? null
                         : !text ? (
                             <div class="hint">
-                                {all.length ? "Every subsystem is filtered out."
+                                {all.length ? "No record matches the filters."
                                     : "Nothing happened underneath this run — no sleeping tab, no debugger, nothing reloaded."}
                                 {!all.length && elsewhere.length
                                     ? ` ${elsewhere.length} other run${elsewhere.length === 1 ? " has" : "s have"} records.`
@@ -153,9 +166,10 @@ export function RunLogView({ run }: { run: string | null }) {
 
 /** The panel's one control: which subsystems to show, and the three things you can do with the records. A menu
  *  rather than a row of buttons because the row was competing with the log for a width the log needs. */
-function RunLogMenu({ run, records, counts, hidden, setHidden }: {
+function RunLogMenu({ run, records, counts, hidden, setHidden, minLevel, setMinLevel }: {
     run: string | null; records: RunLogEvent[]; counts: [string, number][];
     hidden: Set<string>; setHidden: (f: (h: Set<string>) => Set<string>) => void;
+    minLevel: LogLevel; setMinLevel: (l: LogLevel) => void;
 }) {
     const [open, setOpen] = useState(false);
     const wrap = useRef<HTMLSpanElement>(null);
@@ -177,6 +191,8 @@ function RunLogMenu({ run, records, counts, hidden, setHidden }: {
         new Blob([JSON.stringify(runLogDocument(records, run), null, 1)], { type: "application/json" }));
     const clear = () => chrome.runtime.sendMessage({ type: "DUMP_RUN_LOG", payload: { ...(run ? { run } : {}), clear: true } }, () => { void chrome.runtime.lastError; });
     const n = records.length;
+    const atLeast = levelCounts(records);
+    const LEVEL_CHOICES: [LogLevel, string][] = [["info", "Everything"], ["warn", "Warnings and errors"], ["error", "Errors only"]];
 
     return (
         <span class="menuwrap runlog-menu" ref={wrap}>
@@ -189,6 +205,19 @@ function RunLogMenu({ run, records, counts, hidden, setHidden }: {
             </button>
             {show ? (
                 <div class={`menu${closing ? " leaving" : ""}`} role="menu">
+                    {/* Offered only when there is a choice to make, the rule the subsystems below follow: a log of
+                        routine lines would show three rows that all mean "everything". Kept while a level is chosen,
+                        so the way back is never what disappears. */}
+                    {atLeast.warn || minLevel !== "info" ? (<>
+                    <div class="menu-head">Show</div>
+                    {LEVEL_CHOICES.map(([l, label]) => (
+                        <button class="menu-item menu-check" role="menuitemradio" key={l} aria-checked={minLevel === l}
+                            onClick={() => setMinLevel(l)}>
+                            <span class="menu-tick">{minLevel === l ? "✓" : ""}</span>{label}<span class="menu-hint">{atLeast[l]}</span>
+                        </button>
+                    ))}
+                    <div class="menu-rule" role="separator" />
+                    </>) : null}
                     {counts.length > 1 ? (
                         <>
                             <div class="menu-head"><IconFilter />Filters</div>

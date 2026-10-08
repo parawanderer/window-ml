@@ -34,8 +34,8 @@ rather than lossy: this log is a run's, and with no run there is nobody to tell.
 Both are fire-and-forget and neither can throw: a log line must never fail the run being logged. The cost of that
 is the trap below — a malformed record is dropped in silence.
 
-The fields are `HousekeepingReport`'s (`subsystem`, `kind`, `reason?`, `key?`, `bytes?`, `ms?`, `detail?`) plus
-the `run`, which the call supplies. Pick `subsystem`/`kind` freely; both are open registries. Add the row to the
+The fields are `HousekeepingReport`'s (`level?`, `subsystem`, `kind`, `reason?`, `key?`, `bytes?`, `ms?`,
+`detail?`) plus the `run`, which the call supplies. Pick `subsystem`/`kind` freely; both are open registries. Add the row to the
 table below in the same change, which the tests check (see "Why a bad name is dangerous").
 
 ### Watching them while you drive
@@ -79,6 +79,18 @@ any new mechanism reports.
 | `tab` | `pinned` (`hosting`) | `autoDiscardable: false` while a run is hosted here |
 | `tab` | `released` | and let go again, which is the half that is easy to forget |
 | `tab` | `replaced` | `chrome.tabs.onReplaced` re-filed the run under a new tab id |
+
+### Levels
+
+`level` is `info`, `warn` or `error`, and **absent means `info`**: almost every record is routine, so a
+reporter writes a level only when it is not. `warn` is something that went wrong and was worked around (a
+discarded tab, reloaded); `error` is something that was not, where the tool fails with it (a page
+unreachable, a reload that failed, a CDP refusal). Any other value is dropped by the sanitizer, as `info`
+is: it is the default, so storing it would only make two spellings of one record. The level lives on the
+shared record shape, so the housekeeping log can use it too; nothing there sets one yet.
+
+A rendered line prints `WARN` or `ERROR` after the subsystem and nothing for `info`. The model's view
+(`ml.current.log`) always carries it, as the second word of each `.text` line, so a pattern can anchor on it.
 
 **Which tab a record is ABOUT goes in `detail.tab`**, never the event's own `tab` field: that one means
 the tab that REPORTED an event, which for a worker record is nobody, and the shared renderer prints it
@@ -138,6 +150,18 @@ may not reach into `src/chat/`:
   zoomed instead of the two settings disagreeing. `Ctrl`/`⌘` with `+`, `−` or `0` does the same thing while the
   log has focus — the output cell is focusable already, since it owns Ctrl+F — and the key is prevented, so the
   browser does not zoom the whole page instead.
+
+Two NARROWING controls, neither remembered (each is about the question being asked now, not a way of reading):
+
+- **A text filter** in the dock's bar, beside the menu. It HIDES the records that do not match, unlike Ctrl+F in
+  the log, which finds and keeps the context around a hit. It matches every field a line prints, ignoring case,
+  details included as `k=v`, so `tab=12` or `python_exec` finds what the reader sees (`filterRunLog`).
+- **A least level** in the menu ("Everything", "Warnings and errors", "Errors only", each with how many records
+  it would show). Offered only when some record is above `info`, by the rule the subsystem filters follow: three
+  rows that all mean "everything" are not a choice.
+
+Both narrow the LINES only. The subsystem colours, the count and the download stay over every record, so
+narrowing never recolours a line or shrinks what is saved.
 
 The tab id is dropped from the rendered LINES while it is the same on all of them — in a region this
 narrow that width is what turns each record into two wrapped lines — and comes back the moment a run is

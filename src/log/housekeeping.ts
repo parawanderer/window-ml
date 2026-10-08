@@ -14,11 +14,22 @@ import { StorageRing, type SessionArea } from "./storage-ring";
 /** Who reported an event. Set by the WORKER from the message's sender, never by the reporter. */
 export type HousekeepingOrigin = "worker" | "offscreen" | "extension" | "page";
 
+/** How much a record matters, least first. A record with none is `info`: almost everything a log says is routine,
+ *  so a reporter only says so when it is not. */
+export const LOG_LEVELS: readonly LogLevel[] = ["info", "warn", "error"];
+/** One of {@link LOG_LEVELS}. Spelled out rather than derived, since the export schema is generated from it. */
+export type LogLevel = "info" | "warn" | "error";
+
+/** A record's level, `info` when it has none. */
+export const levelOf = (e: { level?: LogLevel }): LogLevel => e.level ?? "info";
+
 /** One thing the system decided without being asked. Structured, so a test asserts the decision, not only
  *  that a value disappeared. `subsystem` and `kind` are open by intent: a new mechanism adds its own. */
 export interface HousekeepingEvent {
     /** Epoch ms. */
     t: number;
+    /** `"warn"` when something went wrong and was worked around, `"error"` when it was not. Absent means `"info"`. */
+    level?: LogLevel;
     /** `"sw"`, `"offscreen"`, `"pyodide"`, `"fetch-cache"`, `"value-store"`, `"grants"`, `"quota"`, `"log"`, … */
     subsystem: string;
     /** `"start"`, `"evicted-inferred"`, `"evict"`, `"sweep"`, `"prewarm"`, `"cold-start"`, `"kill"`, `"clear"`, … */
@@ -69,6 +80,7 @@ export function sanitizeReport(raw: unknown): HousekeepingReport | null {
     if (typeof r.subsystem !== "string" || !NAME.test(r.subsystem)) return null;
     if (typeof r.kind !== "string" || !NAME.test(r.kind)) return null;
     const out: HousekeepingReport = { subsystem: r.subsystem, kind: r.kind };
+    if (r.level === "warn" || r.level === "error") out.level = r.level;
     if (typeof r.reason === "string" && NAME.test(r.reason)) out.reason = r.reason;
     if (typeof r.key === "string" && r.key) out.key = r.key.slice(0, MAX_KEY);
     const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);

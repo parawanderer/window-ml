@@ -33,7 +33,7 @@ export async function ensureDebuggerAttached(tabId: number): Promise<{ ok: true 
     // explains a step that otherwise reads as an inexplicable failure, and "the debugger is not granted" is a
     // thing only the person can fix — so it must be somewhere they can see it, not only in the tool's error.
     if (!(await hasDebuggerPermission())) {
-        noteRunMechanic(tabId, { subsystem: "cdp", kind: "refused", reason: "permission", detail: { tab: tabId } });
+        noteRunMechanic(tabId, { subsystem: "cdp", kind: "refused", level: "error", reason: "permission", detail: { tab: tabId } });
         return { error: "The `debugger` permission isn't granted — enable \"Debugger-based actions (CDP)\" in window.ml Settings → Advanced.", needsPermission: true };
     }
     if (attachedDebuggees.has(tabId)) return { ok: true };   // reusing a live attachment: the attach below is what is worth a line
@@ -51,7 +51,7 @@ export async function ensureDebuggerAttached(tabId: number): Promise<{ ok: true 
         }
         // Usually DevTools is open on the tab: the browser allows one debugger client, so this is the other
         // common "CDP did not happen" and it is not the same thing as the setting being off.
-        noteRunMechanic(tabId, { subsystem: "cdp", kind: "refused", reason: "busy", key: msg, detail: { tab: tabId } });
+        noteRunMechanic(tabId, { subsystem: "cdp", kind: "refused", level: "error", reason: "busy", key: msg, detail: { tab: tabId } });
         return { error: msg };
     }
 }

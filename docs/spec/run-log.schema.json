@@ -39,6 +39,15 @@
           "description": "Epoch ms.",
           "type": "number"
         },
+        "level": {
+          "description": "`\"warn\"` when something went wrong and was worked around, `\"error\"` when it was not. Absent means `\"info\"`.",
+          "type": "string",
+          "enum": [
+            "info",
+            "warn",
+            "error"
+          ]
+        },
         "subsystem": {
           "description": "`\"sw\"`, `\"offscreen\"`, `\"pyodide\"`, `\"fetch-cache\"`, `\"value-store\"`, `\"grants\"`, `\"quota\"`, `\"log\"`, …",
           "type": "string"

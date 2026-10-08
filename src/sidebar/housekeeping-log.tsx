@@ -40,6 +40,9 @@ export function housekeepingText(events: HousekeepingEvent[], hidden: ReadonlySe
     let offset = 0;
     for (const e of shown) {
         const parts = [e.subsystem.padEnd(width), e.reason ? `${e.kind} (${e.reason})` : e.kind];
+        // Only the levels that are NOT routine say so, in capitals, ahead of what happened: an `info` tag on every
+        // line would be width spent on the case nobody is scanning for.
+        if (e.level === "warn" || e.level === "error") parts.splice(1, 0, e.level.toUpperCase());
         if (e.ms != null) parts.push(fmtDelta(e.ms));
         if (e.bytes != null) parts.push(formatBytes(e.bytes));
         if (e.key) parts.push(e.key);
