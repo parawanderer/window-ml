@@ -500,7 +500,9 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 "(e.g. `const r = await fetch('/api').then(x => x.json()); return r.length`). " +
                 `The returned value AND the console output are EACH truncated to ${OUTPUT_CAP.exec.default} chars, and the note at the cut says how much of how much you got, so ` +
                 "don't dump whole elements/pages — return a compact, filtered summary (counts, a " +
-                "handful of fields, the few items you actually need), not a full outerHTML dump. " +
+                "handful of fields, the few items you actually need), not a full outerHTML dump. When a value is too large " +
+                "to return whole, return its SHAPE: `ml.schema(x)` gives the TS-like type of any JSON, then read only the " +
+                "fields you need. " +
                 `If you GENUINELY need more room for ONE call, pass \`maxChars\` (up to ${OUTPUT_CAP.exec.ceiling}) WITH a ` +
                 "`maxCharsReason` — that raise asks the human first (a bigger dump costs your own context). " +
                 // Define "read-only" so the model writes qualifying code instead of guessing why some
@@ -518,7 +520,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 // The macro is advertised HERE for the same reason ml.pipe is: exec is where you would write it,
                 // and it exists nowhere else. Naming it as a PROMISE is the load-bearing half — a model that
                 // thinks `@tool:x` is a value writes `.length` on a Promise and gets `undefined` with no error.
-                "POINTERS: write `@tool:abc1234` (or `@tool:python_exec`, or `@tool:\"a label\"`) directly in the " +
+                "POINTERS: write `@tool:abc1234` (or `@tool:fetch_url`, or `@tool:\"a label\"`) directly in the " +
                 "code — it is real syntax here and reads that output. It is a plain VALUE, not a promise: no " +
                 "`await`, no `.then`. `const rows = @tool:abc1234.split(\"\\n\");` works as written, because " +
                 "every pointer you name is resolved before the script starts. Inside a string or a comment it " +
@@ -1009,7 +1011,9 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 "everything you touched. Add a result: `text` (a fact/summary line), or `selector` (+`index`) to " +
                 "designate element(s) (handed back to the caller, hoverable, shown in the card). Manage it: " +
                 "`remove` an item by its index (from the echo), or `clear` to start over. Each call echoes the " +
-                "current set so you can see what's in it. Call with no fields to just view it.",
+                "current set so you can see what's in it. Call with no fields to just view it. If the task is to " +
+                "FIND / LOCATE an element, designate it here so the real node reaches the caller. From `exec` the same " +
+                "set is `ml.answer` (`.add(el | \"text\")`, `.remove(i)`, `.clear()`, `.length`), with no approval.",
             parameters: {
                 type: "object",
                 properties: {

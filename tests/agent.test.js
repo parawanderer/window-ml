@@ -2751,7 +2751,7 @@ test("result.elements is empty for a plain action task", async () => {
     assert.deepEqual(res.elements, []);
 });
 
-test("agent adds tool-aware clauses to the DEFAULT prompt (vision/answer), not a custom one", async () => {
+test("agent adds tool-aware clauses to the DEFAULT prompt (vision), not a custom one", async () => {
     const seen = [];
     const world = loadPageWorld({
         onRuntimeMessage: (m) => {
@@ -2765,7 +2765,12 @@ test("agent adds tool-aware clauses to the DEFAULT prompt (vision/answer), not a
 
     await world.ml.agent("t", { tools: [look, answer] });       // default system → clauses added
     assert.match(seen[0], /VISION tool/);
-    assert.match(seen[0], /`answer` tool curates/);
+    // The answer paragraph repeated the answer tool's own description (a model-panel review, 2026-10-08): it is said
+    // once, in the tool, which carries the two lines only the prompt had.
+    assert.doesNotMatch(seen[0], /`answer` tool curates/);
+    const answerDesc = world.ml.domTools.find(t => t.name === "answer").description;
+    assert.match(answerDesc, /FIND \/ LOCATE an element, designate it here/);
+    assert.match(answerDesc, /From `exec` the same set is `ml.answer`/);
 
     await world.ml.agent("t", { tools: [plain] });              // no vision/answer capability
     assert.doesNotMatch(seen[1], /VISION tool/);
@@ -2776,7 +2781,7 @@ test("agent adds tool-aware clauses to the DEFAULT prompt (vision/answer), not a
     assert.doesNotMatch(seen[2], /VISION tool/);
 });
 
-test("agent adds the async/wait clause when a wait tool is present", async () => {
+test("the async/wait advice is the wait tool's own, not repeated in the prompt", async () => {
     const seen = [];
     const world = loadPageWorld({
         onRuntimeMessage: (m) => {
@@ -2785,14 +2790,29 @@ test("agent adds the async/wait clause when a wait tool is present", async () =>
         }
     });
     const wait = world.ml.domTools.find(t => t.name === "wait");
-    const plain = world.ml.defineTool({ name: "plain", run: () => "" });
 
+    // The prompt paragraph said what the tool's description says (a model-panel review, 2026-10-08), so only the tool
+    // says it, and it arrives exactly when the tool does.
     await world.ml.agent("t", { tools: [wait], vision: false });
-    assert.match(seen[0], /updates ASYNCHRONOUSLY/);
-    assert.match(seen[0], /`wait`/);
+    assert.doesNotMatch(seen[0], /updates ASYNCHRONOUSLY/);
+    assert.match(wait.description, /async update/);
+    assert.match(wait.description, /Use it generously before you look\/read again/);
+});
 
-    await world.ml.agent("t", { tools: [plain], vision: false });   // no wait tool → no clause
-    assert.doesNotMatch(seen[1], /updates ASYNCHRONOUSLY/);
+test("the shadow-DOM sentence names only the piercing tools the run has: a console run has no click or type", async () => {
+    const seen = [];
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type === "GET_CONFIG" || m.type === "MODEL_CAPS") return undefined;
+            seen.push(m.payload.messages[0].content); return { data: reply("done") };
+        }
+    });
+    const named = (p) => p.match(/the DOM tools \(([^)]*)\) pierce/)[1].split(" / ");
+    await world.ml.agent("t", { vision: false });   // the console's default toolset
+    assert.ok(named(seen[0]).includes("findByText"));
+    assert.ok(!named(seen[0]).includes("click") && !named(seen[0]).includes("type"), named(seen[0]).join(","));
+    await world.ml.agent("t", { vision: false, extraTools: [world.ml.clickTool(), world.ml.typeTool()] });
+    assert.ok(named(seen[1]).includes("click") && named(seen[1]).includes("type"), "a run that has them is told they pierce");
 });
 
 test("wait tool: fixed ms pause and wait-for-selector resolve", async () => {
