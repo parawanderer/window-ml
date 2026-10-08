@@ -404,6 +404,46 @@ test.describe("@security attack 15: the run's event stream and the page", () => 
             expect(text, text).not.toContain("BLIND");
         } finally { await close(); }   // abandons the still-gated run
     });
+
+    test("15e: the shell's own admission keeps the page out of the card, after the worker's start has landed", async () => {
+        // 15d cannot tell WHICH layer stopped it: its forgeries race ahead of the worker's run start reaching the shell,
+        // so the claim-early fix and the drop-on-start cleanup both apply. This one waits until the real gate is in the
+        // card — every forgery lands after the start, the claim is long since made, and the cleanup is spent — in the one
+        // mode where the corner card DOES take the page's own events (DevTools with the HUD alongside). What is left
+        // standing between the page's events and the card is the shell's admission rule and nothing else. That is what
+        // the mutation check proves: with `pageMayWrite` returning true unconditionally, this test fails.
+        const { fake, site, ext, close } = await setup({ debugMode: "devtools", agentHudInDevtools: true });
+        try {
+            const page = await open(ext, site.url("evil.test", "/?poststart=1"));
+            const idx = await sessions(ext);
+            fake.setScript([{ tool: "click", args: { selector: "#next" } }, { content: "the real answer" }]);
+            const hash = await userStartsRun(ext, idx, page, "click the Next link");
+            await expect.poll(() => page.evaluate(() => window.__poststart.runId), { timeout: 15000 }).toBe(hash);
+            const card = () => page.frames().find((f) => f.url().includes("sidebar.html"));
+            const cardText = async () => { const c = card(); return c ? await c.locator("body").innerText().catch(() => "") : ""; };
+            await expect.poll(cardText, { timeout: 15000 }).toContain("click the link");   // the worker's gate is in the card
+            // Only now does the attack start, and it keeps going for the rest of the gate.
+            await page.evaluate(() => { window.__poststart.go = true; });
+            await expect.poll(() => page.evaluate(() => window.__poststart.posts.length), { timeout: 15000 }).toBeGreaterThan(0);
+            // Sample the card across several rounds of forgeries: the real call throughout, the page's markers never.
+            for (let i = 0; i < 5; i++) {
+                const text = await cardText();
+                expect(text, `sample ${i}`).toContain("click the link");
+                expect(text, `sample ${i}`).not.toContain("FORGED");
+                expect(text, `sample ${i}`).not.toContain("#totally-harmless");
+                await page.waitForTimeout(400);
+            }
+            // The forged `agent-result` did not reach the index either: the run is still waiting on its real gate.
+            expect(await idx.status(hash), "a forged result finished the run").toBe("waiting");
+            await page.evaluate(() => { window.__poststart = "stop"; });
+            // The person approves by clicking the card, and the run finishes on the real call with the real answer.
+            await card().locator(".appr-btn.yes").click();
+            expect(await idx.settled(hash)).toBe("done");
+            await expect.poll(cardText, { timeout: 15000 }).toContain("the real answer");
+            expect(await cardText()).not.toContain("FORGED");
+            expect(JSON.stringify(fake.calls()), "the page's forged say reached the model").not.toContain("FORGED");
+        } finally { await close(); }
+    });
 });
 
 // ATTACK 16, found 2026-10-07 while closing 15. The shell's shadow roots are open, so a page reaches the corner card's
