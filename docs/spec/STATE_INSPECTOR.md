@@ -50,19 +50,24 @@ by a decision recorded here.
 
 ## The Session group
 
+Where each member's data lives today, its lifetime, and which copies of it can disagree, is
+[`../dev/state.md`](../dev/state.md), the catalogue from the state survey.
+
 Each member's status: **exists** (the data is there and needs reading out), **new** (a small derivation of data that
 exists), or **slot** (the feature behind it is not built; the group shows a labelled empty row so the shape does not
 change when it lands).
 
 | Member | What it holds | Audience | Status |
 | --- | --- | --- | --- |
-| `run` | id, model, step, max steps, started; the session's TITLE | model | exists (`ml.current.run`); the title is new |
+| `run` | id, model, step, max steps, started; the model it was SWITCHED to (`runModels`), the tab and URL it is on now (`activeRuns`, `tabPageUrl`), interrupted or auto-resumed, delegated sub-call spend; its environment (debugger attached, tab pinned awake, waiting for a page to load, hub devices granted the session); the session's TITLE | model, except the environment (human) | `ml.current.run` exists; the rest is in the worker (`docs/dev/state.md`). The TITLE has no owner: each reading client generates its own (`genTitle`), so one must be chosen |
 | `init` | the options the run was started with (`AgentOptions` / the `agent.start` payload) | model | new. Never config the page cannot read: `MlPublicConfig`'s omissions stay a security boundary, and no key, no URL |
 | `input` | the system prompt as sent, and the tool list as sent (names, descriptions, schemas) | model | new. The run has both; nothing exposes them |
-| `messages` + `meta` | the context, verbatim, and what is known about each message | model | exists (#380) |
-| `pointers` | every `@tool:` value the run holds: key, size, format, source, age, and whether the current context still REFERENCES it | model | the heap exists (`ValueStore.rows()`); the `linked` join is new |
-| `log` | the run's execution log | model | exists (`ml.current.log`) |
-| `mailbox` | messages queued for the run and not yet attached to its context (today: your queued follow-ups) | **human** | new. Not `model`: by definition it has not been given to the model |
+| `messages` + `meta` | the context, verbatim, and what is known about each message | model | exists for a PAGE-hosted run (#380). A BACKGROUND-hosted run's loop is not given `contextSink` (`sw-run-host.ts`), so its context cannot be snapshotted yet: wiring it is part of step 1 |
+| `pointers` | every value the run holds by token: `@tool:` values (key, size, format, source, age, and whether the current context still REFERENCES it), and the `@pt` / `@box` tokens with what they point at | model | three stores: `@tool:` values are the in-memory `TokenStore` (`tokensByRun` for a background run, `control.tokens` for a page-hosted one); large bodies are `ValueStore` rows claimed by the session; `@pt`/`@box` are page registries that die on navigation. The `linked` join is new |
+| `approvals` | the gates the run is blocked on: tool, arguments, step, since when | model (it asked) | exists (`pendingApprovals`, `sw-consent.ts`); worker memory, lost on an eviction |
+| `answer` | the answer set the run will hand you (`ml.answer`), reset each turn | model | exists in the page (`answerSets`) |
+| `log` | the run's execution log | **human** | exists (`runLog`). The model reading it is "a deliberate later step behind its own approval" (`sw-run-log.ts`); `ml.current.log` waits on that decision |
+| `mailbox` | messages queued for the run and not yet attached to its context (today: your steering messages) | **human** | exists: `runInboxes` for a background run (LIVE TURN only: a message after the turn ends is a resume, not mail) and `AgentControl.inbox` for a page-hosted one. Not `model`: by definition it has not been given to the model |
 | `subagents` | runs this run started (`ml.agent()` from `exec`; see [`HEADLESS_AGENTS.md`](HEADLESS_AGENTS.md)): id, task, status, and WHERE it runs | model | slot. A child run does not record its parent today; `{ parent, where }` is the missing piece. `where` is this browser or a runtime on the hub, so a remote subagent needs no new shape |
 | `tasks` | tools that detached and will report back (unspecified: a tool that outlives its step and announces itself later) | model | slot |
 | `crossPage` | state the run explicitly carried across pages, if it was kept | model | slot, until cross-page persistence says what survives |
@@ -74,21 +79,27 @@ change when it lands).
 ### `grants`: what the run may do without asking
 
 (Shane, 2026-10-08.) Every approval that is remembered is state: it decides what the next identical call does without
-a prompt. They live in the worker (`src/sw/sw-consent.ts`, `src/site-access.ts`), and nothing shows them today.
+a prompt. They live in the worker (`src/sw/sw-consent.ts`, `sw-run-host.ts`, `src/site-access.ts`) and in the page, and
+nothing shows them today. The table was corrected after the state survey (`docs/dev/state.md`): most of what looked
+like per-tab grants last one call or one turn.
 
 | Grant | What it allows | Scope and lifetime |
 | --- | --- | --- |
-| fetch URLs (`fetchConsent`) | `ml.fetch` of these exact URLs again (approve and remember) | the TAB, until it closes |
-| Sheets (`pendingGrants.sheets`) | reading these Google Sheets | the tab |
-| Python code (`pendingGrants.pyCode`) | running this exact code again | the tab |
-| server tools (`pendingGrants.serverTools`) | this server tool with these exact arguments | the tab |
-| fetches during an approved `exec` (`fetchOpen`) | the `ml.fetch` calls inside code the person approved | that one `exec` |
+| approved cross-origin navigations (`consentedOrigins`) | navigating to those origins, and fetching from them free | ONE TURN (a closure in `sw-run-host.ts`): reset on resume, unreadable today |
+| Sheets for `python_exec` (`approvedSheets`) | reading these sheets | one turn; a page-hosted run's set is PAGE-wide |
+| sub-operations of an approved call (`pendingGrants`: sheets, Python code, server-tool calls, fetches inside an approved `exec`) | what the approved call itself does | ONE DELEGATED CALL. Cleared per TAB when the call returns, so two runs on one tab clobber each other's |
+| fetch URLs (`fetchConsent`) | `ml.fetch` of these exact URLs again (approve and remember) | the TAB, until it closes (worker memory) |
 | credentialed fetches (`credFetchGrants`) | one fetch as the person, cookies included | ONE use, consumed by the fetch |
-| site access (approved and denied origins) | a page on that origin using `window.ml` at all | the BROWSER, persistent |
+| remembered `confirm()` decisions (`approveOnce.remembered`) | the same call again, page-hosted | the gate |
+| site access (`ml_site_always` / `ml_site_denied`, and `ml_site_session`) | a page on that origin using `window.ml` at all | persistent, or until the browser restarts |
+| implicit: `pageApprovalDomains`, and a tab hosting a run (`sw-site-access.ts`) | site access without a list entry | persistent; while the run is hosted |
 | auto-approve settings in effect | read-only `exec`, read-only Python, reading the extension's own source | the browser |
 
-**Grants belong to TABS and to the browser, not to runs.** A run that moves between tabs has a different set on each,
-and two runs on one tab share one. So the member shows what applies to THIS run right now: the grants of every tab it
+Every grant held in worker memory is lost on an eviction, silently. Where each lives, and what else is lost with it, is
+`docs/dev/state.md`.
+
+**Grants belong to calls, turns, tabs and the browser, almost never to the run as a whole.** A run that moves between
+tabs has a different set on each, two runs on one tab share one, and a resumed run starts its turn grants empty. So the member shows what applies to THIS run right now: the grants of every tab it
 acts on, plus the browser-wide ones, each row labelled with its scope (tab, browser, or one use). A grant from another
 run on the same tab is shown as that, not as this run's.
 
@@ -110,7 +121,8 @@ sense: they are right now or never.
 
 **The pointer join** is the row to get right first. "Alive and referenced" versus "alive and no longer mentioned"
 says what compaction or a sweep would free, and neither the heap nor the context can say it alone. The join is a scan
-of `messages` for `@tool:` references against `ValueStore.rows()`. The token forms are the ones `PIPE_CMDS` and
+of `messages` for `@tool:` references against the run's `TokenStore` ids, plus the `ValueStore` rows whose `sessions`
+include the session (the large bodies). The token forms are the ones `PIPE_CMDS` and
 `TOOL_TOKENS.md` define, told apart by shape.
 
 ## The Runtime group
@@ -138,6 +150,18 @@ several mechanisms that grew one at a time:
 - `wrapUserCode`'s return capture and the RESET that wipes non-underscore globals;
 - the readonly hardening (purged `js`, nulled network globals);
 - the bench's own `persist` path, one namespace per mode.
+
+Facts the state survey already established (`docs/dev/state.md`, "Python"):
+
+- The tool's description contradicts itself today: "ONE cell of a live Jupyter notebook" and "Each call is STATELESS"
+  (`python-tool.ts`). Models are told both.
+- State already leaks between calls: `_`-prefixed globals (a model's own `global _x`) and module state survive `RESET`.
+- The bench's persistence is a mechanism, not a special case: the script's names are promoted to globals (`symtable`)
+  of a kept namespace. Per run is the same mechanism on a namespace per run.
+- `PY_RESERVED_NAMES` / `PY_BENCH_BASE_NAMES` already tell prelude names from the user's, which a variable list needs,
+  and `completeIn` already completes against a namespace.
+- The housekeeping log already records pyodide kills and cold starts with a time and a reason: the source for "lost at".
+- Every run shares ONE interpreter, serially.
 
 Questions the investigation must answer before anything is built:
 
@@ -199,8 +223,9 @@ The Python bench is the Python half of this already. The two are the same kind o
 
 ## Order
 
-1. **Session group from what exists**: `run` (with the title), `init`, `input`, `messages`/`meta`, `log`, `grants`,
-   and `pointers` with the `linked` join, in a right-dock pane beside the execution log (the splits from #391 give that
+1. **Session group from what exists**: `run` (with the title, once it has one owner), `init`, `input`, `approvals`,
+   `answer`, `messages`/`meta` (wiring `contextSink` into the background host first), `log`, `grants`, and `pointers`
+   with the `linked` join across all three stores, in a right-dock pane beside the execution log (the splits from #391 give that
    layout directly), drawn from `session.context`.
 2. **Watches**, device-local, then the share toggle and `debug.userWatches`.
 3. **The read-only console.**
