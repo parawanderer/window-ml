@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 const { jsonShape, joinShapes, jsonValue } = await import("../src/dom.ts");
-const { DerefText } = await import("../src/token-pipe.ts");
+const { DerefText } = await import("../src/deref-read.ts");
 
 // --- the merge is recursive, which is what the string-union version could not do ---
 

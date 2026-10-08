@@ -20,7 +20,8 @@ import { pageContext, resolvePoint, resolveBox, agentState, mlRange } from "./ut
 import { suspiciousChars } from "./security";
 import { emitDebug, sessionRegistry, agentRegistry, handleRegistry } from "./bus";
 import { makeDomTools } from "./tools";
-import { pipeStages, DerefText } from "./token-pipe";
+import { pipeStages } from "./token-pipe";
+import { DerefText } from "./deref-read";
 import { makeBackgroundTaskPromise } from "./bridge";
 import { makeDynamicTools } from "./dynamic-tools";
 import type { DynamicToolNamespace } from "./dynamic-tools";

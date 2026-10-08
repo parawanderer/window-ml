@@ -27,7 +27,8 @@ import { agentRegistry, resetSubcallUsage, handleRegistry, emitDebug, enterAgent
 import { type MlApi, type MlTool, type ApprovalRequest, type ApprovalDecision, type AgentResult, shortHash, type MlAgentHandle, type NeutralMessage, type RenderDescriptor, type ToolFeedback, type TokenUsage, hintSession, type DerefRead, type ToolRenderInput, outputCapEscalated } from "./contract";
 import { setPierceClosedShadow, externalSheetIds, isCurrentPage, elLine, errText } from "./dom";
 import { type AgentControl, sameOriginNav, sameOriginFetch } from "./ml-agent";
-import { columnsViaBackground, TokenStore } from "./token-pipe";
+import { TokenStore } from "./token-pipe";
+import { columnsViaBackground } from "./deref-read";
 import { expandPointers } from "./pointer-macro";
 import { evalReadonly } from "./readonly-exec";
 import { descriptorFor } from "./render-descriptor";
