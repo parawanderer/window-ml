@@ -232,9 +232,10 @@ The Python bench is the Python half of this already. The two are the same kind o
    ones included. Members so far: `run.init`, `run.messages` (live through `contextByRun`, the background host's
    `contextSink`; between turns the history `bgRuns` keeps, without meta), `run.model`, `run.sub`, `run.page`,
    `run.interrupted`, `run.mailbox`, `run.pointers` (the worker's `@tool:` store only), `run.approvals`, `run.log`,
-   `grants.call`, `grants.fetch`, `grants.credentialedFetch`. Still to come in step 1: the title, `input`, `answer`,
-   the per-turn grants held in `hostRun`'s closure, the `linked` pointer join with `ValueStore` and `@pt`/`@box`,
-   page-hosted runs, and `session.context` for a remote reader.
+   `grants.call`, `grants.fetch`, `grants.credentialedFetch`, and for the live turn `run.input` and `grants.turn`
+   (the consented origins and approved sheets in `hostRun`'s closure, through `turnByRun`). Still to come in step 1:
+   the title, `answer`, the `linked` pointer join with `ValueStore` and `@pt`/`@box`, page-hosted runs, and
+   `session.context` for a remote reader.
 2. **Watches**, device-local, then the share toggle and `debug.userWatches`.
 3. **The read-only console.**
 4. **Python per-run state**: the investigation above, then the design, then the Python group.

@@ -537,6 +537,48 @@ test("the run state panel lists every declared member of the open run, what each
     } finally { await ext.context.close(); await site.stop(); await fake.stop(); }
 });
 
+test("the run state panel shows the LIVE turn: what it was asked, the gate it waits on, what it may do without asking", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const site = await startPageServer({});
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off", autoApproveReadonly: false });
+        fake.setScript([{ tool: "exec", args: { js: "document.title = 'held'; 'ok'" } }, { content: "done" }]);
+        const site1 = await ext.context.newPage();
+        await site1.goto(site.url + "/");
+        await waitForMl(site1);
+        // Held at its exec gate, so the turn is live while the panel reads it.
+        void site1.evaluate(() => window.ml.agent("rename the page", { env: false, approvalRouting: "both" })).catch(() => {});
+        await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 15000 }).toBe(1);
+
+        const { page: chat, errors } = await openChatPage(ext);
+        await chat.locator(".chat-row", { hasText: "rename the page" }).click();
+        await chat.locator(".chat-gear-btn").click();
+        await chat.getByRole("menuitem", { name: "Panels" }).click();
+        await chat.getByRole("menuitemcheckbox", { name: /Run state/ }).click();
+        const panel = chat.locator(".chat-dock.chat-dock-right .rstate");
+        const open = async (id) => { const m = panel.locator(`[data-member="${id}"]`); await m.locator(".jt-clickable").first().click(); return m; };
+
+        await expect(await open("run.input")).toContainText("rename the page");
+        const gates = await open("run.approvals");
+        await gates.locator(".jt-clickable").nth(1).click();   // the one gate, folded inside the list
+        await expect(gates).toContainText('"exec"');
+        // The start origin is consented from the first step: navigating and fetching there never asks.
+        const turn = await open("grants.turn");
+        await turn.getByRole("button", { name: /origins:/ }).click();
+        await expect(turn).toContainText(new URL(site.url).origin);
+        await expect(turn.locator(".rstate-aud")).toHaveText("you only");
+
+        // Approved out of band: the turn finishes, and what lived only in it goes with it.
+        const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
+        await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
+        await expect(panel.locator('[data-member="run.input"]')).toHaveClass(/empty/, { timeout: 10_000 });
+        await expect(panel.locator('[data-member="grants.turn"]')).toHaveClass(/empty/);
+        await expect(panel.locator('[data-member="run.approvals"]')).toHaveClass(/empty/);
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); await site.stop(); await fake.stop(); }
+});
+
 test("the start page holds through a worker restart, and its tab list is fresh and has the sites' icons", async () => {
     const fake = await startFakeLlm({ model: "fake-model" });
     // Pages with an icon: a tab's icon is what the runtime fetches and hands the picker as a data URL.

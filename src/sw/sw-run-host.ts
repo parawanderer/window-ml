@@ -24,7 +24,7 @@ import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
 import { noteRunMechanic } from "./sw-runs";
 import { ensureLocalTools, runLocalTool } from "./sw-local-tools";
-import { navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
+import { navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, turnByRun, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue } from "./sw-values";
 import { focusLineFor } from "./sw-focus";
@@ -233,6 +233,10 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     // skip the gate). A run that didn't opt into crossOrigin never gates (its tool refuses cross-origin).
     const consentedOrigins = new Set<string>();
     if (p.pageOrigin) consentedOrigins.add(p.pageOrigin);
+    // The turn's ask and its grants, readable by the state inspector (`run.input`, `grants.turn`) for as long as the turn runs.
+    const turnStarted = Date.now();
+    turnByRun.set(runId, () => ({ task: p.task, images: p.images?.length ?? 0, origin: p.origin ?? null, startedTs: turnStarted,
+        origins: [...consentedOrigins], sheets: [...approvedSheets] }));
     const navNeedsConsent = (url: string): boolean => {
         if (!p.crossOrigin) return false;   // can't cross origins → tool refuses cross-origin; same-site fine → no gate
         try {
