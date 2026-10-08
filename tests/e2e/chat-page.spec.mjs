@@ -540,6 +540,11 @@ test("the run state panel lists every declared member of the open run, what each
         await expect(panel.locator('[data-member="run.mailbox"] .rstate-aud')).toHaveText("you only");
         await expect(panel.locator('[data-member="grants.fetch"] .rstate-aud')).toHaveText("you only");
         await expect(panel.locator('[data-member="run.pointers"] .rstate-aud')).toHaveCount(0);
+        // The title is the session's, read from the one place that owns it (the worker's index): no utility model
+        // is set here, so it holds no title yet, but the member is filled, not empty, and the model may read it.
+        const title = panel.locator('[data-member="session.title"]');
+        await expect(title).not.toHaveClass(/empty/);
+        await expect(title.locator(".rstate-aud")).toHaveCount(0);
 
         // It is the OPEN run's: with nothing open there is nothing to describe.
         await chat.evaluate(() => { location.hash = "#/"; });

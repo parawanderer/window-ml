@@ -17,6 +17,7 @@ import { STORE_MAX_SESSIONS, SessionStore, indexedDbBackend, type SessionHistory
 import { AGENT_START_PAGE, DEFAULT_CONFIG, modelFilterAllows } from "../contract/contract-config";
 import type { NeutralMessage } from "../contract/contract-chat";
 import { cleanTitle, titleMessages } from "../session/session-title";
+import { defineState } from "../state-registry";
 import { bgRuns, makeWorkerRun, trackRun, untrackRun } from "./sw-runs";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { isExtensionSender } from "./sw-consent";
@@ -716,6 +717,14 @@ export function maybeTitle(hash: string): void {
 
 /** Titles being asked for right now, so a second asker waits for the same answer instead of asking again. */
 const titling = new Map<string, Promise<string | null>>(); // state: plumbing
+defineState({
+    id: "session.title", scope: "session", realm: "worker", audience: "model", lostOn: ["worker-eviction"],
+    describe: "The session's one name, which every surface shows: set by a person, or asked of the utility model once. A saved session keeps it across restarts.",
+    read: ({ runId }) => {
+        const row = runId ? sessionServer.index.get(runId) : undefined;
+        return row && { title: row.title ?? null, renamed: !!row.renamed, asking: titling.has(runId!) };
+    },
+});
 
 /**
  * THE session's title, which this worker owns: the one it already has, or one asked of the utility model ONCE and
