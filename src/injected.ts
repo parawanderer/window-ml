@@ -10,8 +10,6 @@ import { htmlToMarkdown } from "./dom/html-to-md";
 import { mlPipe } from "./pointers/text-pipe";
 import { mlJsonPath } from "./json-path";
 import { truncate, elPath, describeSkeleton, queryAll, selectorError, viewportRect, shadowHostReport, clickSelector, elLine, isCurrentPage, typeFromExtension } from "./dom/dom";
-import { tableFromDelimited, asTable } from "./table/table-data";
-import { isTable } from "./table/table-brand";
 import { makeAnswerFacade } from "./pointers/answer-set";
 import { accessibleName, roleOf, ariaState } from "./dom/a11y";
 import { askAboutTask } from "./agent/prompts";
@@ -38,6 +36,7 @@ import { createChat, resumeChat, chat, step } from "./ml/ml-chat";
 import { agent } from "./ml/ml-agent-run";
 import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } from "./ml/ml-agent-handle";
 import { mlSchema } from "./ml/ml-schema";
+import { derivedFetchFields } from "./ml/fetch-result";
 
 // Every family that used to live in the window.ml literal now has a module above; what is left here is the
 // object that binds them together, the small `_`-prefixed introspection helpers, and the page's own window
@@ -357,41 +356,9 @@ import { mlSchema } from "./ml/ml-schema";
             if (credentials && rendered && isCurrentPage(key, location.href)) return Promise.resolve(liveDocumentFetch());
             return makeBackgroundTaskPromise<import("./contract").FetchResult>("FETCH_URL_REQUEST", "FETCH_URL_RESPONSE", { url: key, credentials, rendered, format })
                 .then(r => {
-                    // For an HTML body, attach a `.markdown` distillation (scripts/nav/chrome stripped) so ANY
-                    // caller — exec, a read-only survey (`ml.fetch(url).markdown`), the fetch_url tool — gets the
-                    // readable content without re-converting. Computed here in the page main world (has a DOM);
-                    // the cost is negligible and the cached copy carries it. `.text` still holds the raw HTML.
-                    if (r && r.type === "html" && typeof r.text === "string" && r.markdown === undefined) {
-                        try { r.markdown = htmlToMarkdown(r.text); } catch { /* leave undefined — callers fall back to .text */ }
-                    }
-                    // Same move for a CSV/TSV body: attach the PARSED table, with its separator discovered and
-                    // numeric columns cast, so no caller has to re-split the text (and get the separator wrong —
-                    // the reason this exists is that they did). Page-side for the same reason as `.markdown`: the
-                    // text has already crossed the message channel, so parsing here adds nothing to the wire.
-                    if (r && r.type === "csv" && typeof r.text === "string" && r.table === undefined) {
-                        try {
-                            const parsed = tableFromDelimited(r.text);
-                            // A body clipped at the size cap ends mid-row, so that row is a fragment rather than
-                            // data. Drop it and say the table is a prefix — silently keeping it would put a
-                            // half-parsed record into a DataFrame. BEFORE wrapping: the facade is read-only, and
-                            // trimming through it threw halfway, leaving the fragment dropped but the shape wrong.
-                            if (r.truncated && parsed.rows.length) {
-                                parsed.rows.pop();
-                                parsed.shape = [parsed.rows.length, parsed.columns.length];
-                                parsed.truncated = true;
-                                // …unless the worker read the whole body (it is stored), in which case its real length is
-                                // known: the preview is a prefix of a table this big, not the whole of a table this small.
-                                const whole = typeof r.bodyLines === "number" ? r.bodyLines - (parsed.headerless ? 0 : 1) : 0;
-                                if (whole > parsed.rows.length) parsed.shape = [whole, parsed.columns.length];
-                            }
-                            r.table = parsed;
-                        } catch { /* leave undefined — callers fall back to .text */ }
-                    }
-                    // Every table a caller receives is a FACADE, not the bare data — a Parquet one decoded in the
-                    // worker as much as a CSV parsed here: the description is pandas-shaped, so the object has to
-                    // answer a pandas reach with a message rather than `undefined`. Whether the message may point
-                    // at python_exec is read from the running run's toolset.
-                    if (r && r.table && !isTable(r.table)) r.table = asTable(r.table, { python: currentHasTool("python_exec") });
+                    // `.markdown` and `.table` for every caller (exec, a read-only survey, the fetch_url tool), so none
+                    // re-derives them. Computed here in the page main world, which has a DOM; the cached copy carries it.
+                    derivedFetchFields(r, { markdown: htmlToMarkdown, python: currentHasTool("python_exec") });
                     // Cache ONLY a successful UNCREDENTIALED, non-rendered fetch (as-you bytes are authenticated —
                     // never cache). Keyed by url ALONE, so only the DEFAULT format is cached: `format:"html"`
                     // returns different bytes for the same url, and letting it share the key would hand a later
