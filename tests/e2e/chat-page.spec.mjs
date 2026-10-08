@@ -440,8 +440,8 @@ test("the execution log is what the machinery did under the open run, which its 
         await expect(panel.locator(".runlog .hk-bar")).toHaveCount(0);
         await panel.locator(".runlog-menu button").first().click();
         await expect(panel.locator(".runlog-menu .menu")).toBeVisible();
-        // Exactly one subsystem is in play here, so there is nothing to filter between and no filter group — the
-        // only checkable row left is the colouring toggle, which is not one of them.
+        // Exactly one subsystem is in play here, and every record is routine, so there is nothing to filter between:
+        // no subsystem group and no level choice. The only checkable row left is the colouring toggle.
         await expect(panel.locator(".menu-head")).toHaveCount(0);
         await expect(panel.getByRole("menuitemcheckbox")).toHaveCount(1);
         // The two exports this panel owes: the records themselves, and the run's WHOLE timeline, which is
@@ -457,6 +457,17 @@ test("the execution log is what the machinery did under the open run, which its 
         await panel.getByRole("menuitemcheckbox", { name: /Colour by group/ }).click();
         await expect(panel.locator(".r-ts-g").first()).toBeVisible();
         await dismiss();
+
+        // THE TEXT FILTER, in the dock's bar beside the menu: it hides the lines that do not match (Ctrl+F inside
+        // the log is the find), and clearing it brings them back.
+        const filter = panel.locator(".dock-bar .runlog-find");
+        await filter.fill("released");
+        await expect(panel.locator(".r-outcell")).toContainText("released");
+        await expect(panel.locator(".r-outcell")).not.toContainText("pinned");
+        await filter.fill("no such mechanic");
+        await expect(panel.locator(".runlog .hint")).toContainText("No record matches the filters");
+        await filter.fill("");
+        await expect(panel.locator(".r-outcell")).toContainText("pinned (hosting)");
 
         // THE TIMESTAMP GUTTER IS AS WIDE AS THE STAMP, in `ch` — a fixed pixel width clipped the leading digit
         // the moment the zoom below scaled the text, and was already a shade under `mm:ss` at the default size.

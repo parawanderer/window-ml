@@ -75,7 +75,7 @@ export const delegateSend = async (tabId: number, msg: unknown): Promise<any> =>
     try { return await watchWhileWaiting(chrome.tabs.sendMessage(tabId, msg), () => tabState(tabId)); }
     catch (e) {
         if (!(e instanceof PageUnreachable) || e.state !== "asleep") {
-            if (e instanceof PageUnreachable) note("unreachable", { reason: e.state, ms: e.waitedMs });
+            if (e instanceof PageUnreachable) note("unreachable", { level: "error", reason: e.state, ms: e.waitedMs });
             throw e;
         }
         // A DISCARDED tab has no document, so there is nothing to preserve and a reload costs nothing that is
@@ -83,13 +83,13 @@ export const delegateSend = async (tabId: number, msg: unknown): Promise<any> =>
         // one way to touch the tab that does not take the person's screen away from them, and the new document
         // re-adopts the run on CONTENT_READY, which is exactly what the barrier waits for. One retry: if the
         // page cannot answer after being rebuilt, the tool fails with a sentence instead of looping.
-        note("discarded", { ms: e.waitedMs });
+        note("discarded", { level: "warn", ms: e.waitedMs });
         navBarrier.noteNavigating(tabId);
         const ok = await chrome.tabs.reload(tabId).then(() => true, () => false);
         await navBarrier.whenReady(tabId);
         // No reason when the reload worked, the browser's own word for it when it did not: an absent reason
         // reads as "and then it was fine", which is what the next line is about to confirm or deny.
-        note("reloaded", ok ? {} : { reason: "gone" });
+        note("reloaded", ok ? {} : { level: "error", reason: "gone" });
         const from = Date.now();
         try {
             const answer = await watchWhileWaiting(chrome.tabs.sendMessage(tabId, msg), () => tabState(tabId));
@@ -98,7 +98,7 @@ export const delegateSend = async (tabId: number, msg: unknown): Promise<any> =>
             note("recovered", { ms: Date.now() - from });
             return answer;
         } catch (again) {
-            if (again instanceof PageUnreachable) note("unreachable", { reason: again.state, ms: again.waitedMs, detail: { retried: true } });
+            if (again instanceof PageUnreachable) note("unreachable", { level: "error", reason: again.state, ms: again.waitedMs, detail: { retried: true } });
             throw again;
         }
     }

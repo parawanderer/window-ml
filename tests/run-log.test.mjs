@@ -2,7 +2,7 @@
 // watching a sleeping tab cannot push every other run's mechanics out of the ring.
 import { test } from "node:test";
 import assert from "node:assert";
-import { RunLog, sanitizeRunReport, trimRunRing, eventsForRun, runsInLog, runLogDocument, RUN_LOG_KEY, RUN_LOG_CAP, PER_RUN_CAP, RUN_LOG_SCHEMA_VERSION } from "../src/log/run-log.ts";
+import { RunLog, sanitizeRunReport, trimRunRing, eventsForRun, runsInLog, runLogDocument, filterRunLog, levelCounts, RUN_LOG_KEY, RUN_LOG_CAP, PER_RUN_CAP, RUN_LOG_SCHEMA_VERSION } from "../src/log/run-log.ts";
 
 function area(seed = {}) {
     const store = { ...seed };
@@ -188,4 +188,55 @@ test("the kinds and reasons the module's own map documents are the ones the emit
     // kind written down that nothing emits is a map describing a log that does not exist.
     for (const key of ["subsystem", "kind", "reason"])
         for (const w of mapped[key]) assert.ok(names[key].has(w), `the map lists ${key} "${w}", which nothing emits`);
+});
+
+// --- levels, and the panel's filter over them ---
+
+test("a record keeps a warn or error level; info is the default and is not stored, anything else is dropped", () => {
+    assert.equal(sanitizeRunReport({ run: "abc123", subsystem: "page", kind: "x", level: "warn" }).level, "warn");
+    assert.equal(sanitizeRunReport({ run: "abc123", subsystem: "page", kind: "x", level: "error" }).level, "error");
+    for (const level of ["info", "WARN", "fatal", 2, null, {}])
+        assert.ok(!("level" in sanitizeRunReport({ run: "abc123", subsystem: "page", kind: "x", level })), String(level));
+});
+
+test("every level an emitter passes is one the sanitizer keeps", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const levels = new Set();
+    for (const f of ["sw-run-host.ts", "sw-cdp.ts", "sw-runs.ts"]) {
+        const src = await readFile(new URL(`../src/sw/${f}`, import.meta.url), "utf8");
+        for (const m of src.matchAll(/\blevel:\s*"([^"]*)"/g)) levels.add(m[1]);
+    }
+    assert.deepEqual([...levels].sort(), ["error", "warn"], "the scan found the emitters' levels");
+    for (const level of levels) assert.equal(sanitizeRunReport({ run: "abc123", subsystem: "page", kind: "x", level }).level, level);
+});
+
+const MIXED = [
+    rec("r1", { t: 1, subsystem: "page", kind: "held", reason: "navigating", detail: { tab: 12, tool: "pageInfo" } }),
+    rec("r1", { t: 2, level: "warn", subsystem: "page", kind: "discarded", detail: { tab: 12 } }),
+    rec("r1", { t: 3, level: "error", subsystem: "cdp", kind: "refused", reason: "busy", key: "Another debugger is attached", detail: { tab: 9 } }),
+];
+
+test("the least level keeps that level and everything above it, and none means everything", () => {
+    const kinds = (f) => filterRunLog(MIXED, f).map((r) => r.kind);
+    assert.deepEqual(kinds({}), ["held", "discarded", "refused"]);
+    assert.deepEqual(kinds({ minLevel: "info" }), ["held", "discarded", "refused"]);
+    assert.deepEqual(kinds({ minLevel: "warn" }), ["discarded", "refused"]);
+    assert.deepEqual(kinds({ minLevel: "error" }), ["refused"]);
+});
+
+test("the text matches any field the line prints, ignoring case, and combines with the level", () => {
+    const kinds = (f) => filterRunLog(MIXED, f).map((r) => r.kind);
+    assert.deepEqual(kinds({ text: "tab=12" }), ["held", "discarded"], "a detail as k=v");
+    assert.deepEqual(kinds({ text: "PAGEINFO" }), ["held"], "a detail value, case-insensitively");
+    assert.deepEqual(kinds({ text: "debugger" }), ["refused"], "the key");
+    assert.deepEqual(kinds({ text: "navigating" }), ["held"], "the reason");
+    assert.deepEqual(kinds({ text: "error" }), ["refused"], "the level itself");
+    assert.deepEqual(kinds({ text: "  " }), ["held", "discarded", "refused"], "blank is no filter");
+    assert.deepEqual(kinds({ text: "tab=12", minLevel: "warn" }), ["discarded"]);
+    assert.deepEqual(kinds({ text: "nothing like it" }), []);
+});
+
+test("the level counts are of records AT OR ABOVE each level, which is what each choice would show", () => {
+    assert.deepEqual(levelCounts(MIXED), { info: 3, warn: 2, error: 1 });
+    assert.deepEqual(levelCounts([]), { info: 0, warn: 0, error: 0 });
 });

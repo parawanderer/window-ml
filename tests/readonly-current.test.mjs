@@ -36,7 +36,7 @@ function sampleSnapshot(now = 1_000_000) {
             { ...UNRECORDED, ts: now - 50_000, step: 1, counted: 37 },
             { ...UNRECORDED, ts: now - 10_000, step: 1, seq: 1, tool: "exec", truncated: true },
         ],
-        log: [{ t: now - 20_000, subsystem: "page", kind: "discarded", origin: "sw", run: "runhash1", key: "SECRET-KEY" },
+        log: [{ t: now - 20_000, level: "warn", subsystem: "page", kind: "discarded", origin: "sw", run: "runhash1", key: "SECRET-KEY" },
               { t: now - 15_000, subsystem: "page", kind: "reloaded", reason: "gone", origin: "sw", run: "runhash1", detail: { tab: 7 } }],
         now,
     });
@@ -91,11 +91,14 @@ test("the log is records AND greppable text; the withheld key never appears", ()
     const { log } = sampleSnapshot();
     assert.ok(Array.isArray(log));
     assert.deepEqual(log.map((r) => r.kind), ["discarded", "reloaded"]);
-    assert.deepEqual(Object.keys(log[1]).sort(), ["detail", "kind", "reason", "subsystem", "ts"]);
+    assert.deepEqual(Object.keys(log[1]).sort(), ["detail", "kind", "level", "reason", "subsystem", "ts"]);
     assert.ok(!JSON.stringify(log).includes("SECRET-KEY") && !log.text.includes("SECRET-KEY"), "`key` is withheld from a model as from a page");
     assert.equal(log.text, logText(log));
-    assert.match(log.text, /^1970-01-01T00:16:20Z page discarded\n1970-01-01T00:16:25Z page reloaded gone \{"tab":7\}$/);
+    assert.match(log.text, /^1970-01-01T00:16:20Z warn page discarded\n1970-01-01T00:16:25Z info page reloaded gone \{"tab":7\}$/);
     assert.doesNotMatch(log.text, / {2}/, "no padding: a model reads it");
+    // A record with no level is `info` on every line, so the level is always the second word and a pattern can
+    // anchor on it.
+    assert.deepEqual(log.map((r) => r.level), ["warn", "info"]);
 });
 
 // --- the loop records each message as it is appended -----------------------------------------------------------------
@@ -306,7 +309,7 @@ test("EVERY SUBSTITUTION DOCUMENTS ITSELF: a print that differs from the value h
 
 test("the log: an ordinary Array for filtering, and `.text` for ml.pipe", async () => {
     assert.deepEqual((await inWorkerRealm(`ml.current.log.filter(r => r.kind === "reloaded").map(r => r.reason)`)).value, ["gone"]);
-    assert.equal((await inWorkerRealm(`ml.pipe(ml.current.log, "grep reloaded")`)).value, "1970-01-01T00:16:25Z page reloaded gone {\"tab\":7}");
+    assert.equal((await inWorkerRealm(`ml.pipe(ml.current.log, "grep reloaded")`)).value, "1970-01-01T00:16:25Z info page reloaded gone {\"tab\":7}");
 });
 
 // --- the worker realm: run context and no page; the page: a DOM and no run context -------------------------------------

@@ -58,3 +58,20 @@ test("an omitted detail key leaves the LINE, not the record — the width it was
     const { text, marks } = housekeepingText(two, new Set(), new Set(["tab"]));
     assert.equal(timeForOffset(marks, text.indexOf("reloaded")), 200);
 });
+
+// --- levels: only the records that are not routine say so ---
+
+test("a warning or an error names its level ahead of what happened; an info record says nothing extra", () => {
+    const { text } = housekeepingText([
+        { t: 1, subsystem: "page", kind: "held", reason: "navigating", origin: "worker" },
+        { t: 2, level: "warn", subsystem: "page", kind: "discarded", origin: "worker" },
+        { t: 3, level: "error", subsystem: "cdp", kind: "refused", reason: "busy", origin: "worker" },
+        { t: 4, level: "info", subsystem: "tab", kind: "pinned", origin: "worker" },
+    ]);
+    assert.deepEqual(text.split("\n").map((l) => l.split(/ {2}/).map((w) => w.trim())), [
+        ["page", "held (navigating)"],
+        ["page", "WARN", "discarded"],
+        ["cdp", "ERROR", "refused (busy)"],
+        ["tab", "pinned"],
+    ]);
+});

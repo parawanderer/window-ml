@@ -44,7 +44,7 @@ try {
 export const recordRunLog = (run: string, report: HousekeepingReport): void => {
     runLog.record(run, report);
     // The record as ONE line, in the order the panel prints it, so a run's console and its panel read alike.
-    if (echo) console.debug(`[run-log] ${run} ${report.subsystem} ${report.kind}${report.reason ? ` (${report.reason})` : ""}`,
+    if (echo) (report.level === "error" ? console.warn : console.debug)(`[run-log] ${run}${report.level ? ` ${report.level.toUpperCase()}` : ""} ${report.subsystem} ${report.kind}${report.reason ? ` (${report.reason})` : ""}`,
         ...(report.ms != null ? [`${report.ms}ms`] : []), ...(report.detail ? [report.detail] : []));
 };
 

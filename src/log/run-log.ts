@@ -12,7 +12,7 @@
 //
 // It REUSES that log's record shape (plus a `run`) and its sanitizer, so one renderer draws both, and the
 // ring itself (storage-ring.ts), so there is one serialized write rather than two.
-import { sanitizeReport, type HousekeepingEvent, type HousekeepingReport } from "./housekeeping";
+import { sanitizeReport, levelOf, LOG_LEVELS, type HousekeepingEvent, type HousekeepingReport, type LogLevel } from "./housekeeping";
 import { HASH_RE } from "../contract/contract-run";
 import { StorageRing, type SessionArea } from "./storage-ring";
 
@@ -32,6 +32,9 @@ export interface RunLogEvent extends HousekeepingEvent {
 //   page  held (reason: navigating) · discarded · reloaded (reason: gone) · recovered · unreachable (reason: asleep|gone|silent)
 //   cdp   attached (reason: already) · refused (reason: permission|busy) · detached
 //   tab   pinned (reason: hosting) · released · replaced
+//
+// Levels: `warn` for a page discarded (and then reloaded); `error` for a page unreachable, a reload that failed
+// (`gone`) and a CDP refusal, since the tool fails on each. Everything else is `info`, which goes unwritten.
 
 /** What a reporter may say about a run. `t` and `origin` are the worker's to set, as in the housekeeping log. */
 export type RunLogReport = HousekeepingReport & { run: string };
@@ -94,6 +97,36 @@ export function runsInLog(records: readonly RunLogEvent[]): { run: string; count
         else by.set(r.run, { run: r.run, count: 1, last: r.t });
     }
     return [...by.values()].sort((a, b) => b.last - a.last);
+}
+
+/** What the panel narrows the log to: a least level, and text that must appear somewhere in the record. */
+export interface RunLogFilter {
+    minLevel?: LogLevel;
+    text?: string;
+}
+
+/**
+ * The records a filter keeps, in order. The text is matched case-insensitively against every field a line prints
+ * (level, subsystem, kind, reason, key, and each detail as `k=v`), so a search for `tab=12` or `python_exec` finds
+ * what the reader sees, not only what one field holds.
+ */
+export function filterRunLog<T extends HousekeepingEvent>(records: readonly T[], f: RunLogFilter): T[] {
+    const least = LOG_LEVELS.indexOf(f.minLevel ?? "info");
+    const needle = (f.text ?? "").trim().toLowerCase();
+    return records.filter((r) => {
+        if (LOG_LEVELS.indexOf(levelOf(r)) < least) return false;
+        if (!needle) return true;
+        const hay = [levelOf(r), r.subsystem, r.kind, r.reason ?? "", r.key ?? "",
+            ...Object.entries(r.detail ?? {}).map(([k, v]) => `${k}=${v}`)].join(" ").toLowerCase();
+        return hay.includes(needle);
+    });
+}
+
+/** How many records sit at each level or above, for the menu's level choices: `[info, warn, error]` order. */
+export function levelCounts(records: readonly HousekeepingEvent[]): Record<LogLevel, number> {
+    const out: Record<LogLevel, number> = { info: 0, warn: 0, error: 0 };
+    for (const r of records) for (const l of LOG_LEVELS.slice(0, LOG_LEVELS.indexOf(levelOf(r)) + 1)) out[l]++;
+    return out;
 }
 
 /**
