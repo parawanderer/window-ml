@@ -127,6 +127,8 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const debuggerEventListeners = new Set();   // chrome.debugger.onEvent listeners (CDP streaming)
     let permsHeld = new Set(debuggerPermission ? ["debugger"] : []);
     const permAddedListeners = [];
+    const committedListeners = [];   // chrome.webNavigation.onCommitted listeners; fired by bg.commit(tabId, …)
+    const committedDocs = new Map();   // tabId → the main-frame documentId last committed, for webNavigation.getFrame
     const listeners = [];
     const connectListeners = [];
     const tabRemovedListeners = [];   // chrome.tabs.onRemoved listeners; fired by bg.closeTab(id)
@@ -184,6 +186,12 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
             return onFetch(call);
         },
         chrome: {
+            // Only what the worker reads to know which document a tab holds: a commit is fired by bg.commit, never by
+            // the harness on its own, so a test that never commits sees no document at all.
+            webNavigation: {
+                onCommitted: { addListener: (fn) => committedListeners.push(fn) },
+                getFrame: async ({ tabId, frameId }) => (frameId === 0 && committedDocs.has(tabId) ? { documentId: committedDocs.get(tabId), frameId: 0 } : null),
+            },
             storage: {
                 sync: {
                     get: async (defaults) => ({ ...defaults, ...stored }),
@@ -316,6 +324,11 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
             const changes = Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, { oldValue: stored[k], newValue: v }]));
             Object.assign(stored, obj);
             for (const fn of syncListeners) fn(changes, "sync");
+        },
+        /** Commit a main-frame document on a tab, the way the browser reports a navigation (webNavigation.onCommitted). */
+        commit: (tabId, { documentId, url = "https://page.test/" }) => {
+            committedDocs.set(tabId, documentId);
+            for (const fn of committedListeners) fn({ tabId, frameId: 0, documentId, url });
         },
         /** Grant a permission the way the browser's prompt does: held, then permissions.onAdded. */
         grantPermission: (name) => { permsHeld.add(name); for (const fn of permAddedListeners) fn({ permissions: [name] }); },

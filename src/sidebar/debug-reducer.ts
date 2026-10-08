@@ -171,6 +171,10 @@ export function onDebug(ev: MlDebugEvent, runtime?: string): void {
         // resource panel's event lane places it against what memory was doing at that moment.
         const step = { step: ev.step, localStep: ev.localStep, seq: ev.seq, toolMs: ev.toolMs, approveMs: ev.approveMs, remoteMs: ev.remoteMs, ts: ev.ts, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, modelResult: ev.modelResult, streamMarks: ev.streamMarks, token: ev.token, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, feedback: ev.feedback, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage, subUsage: ev.subUsage, grants: ev.grants, reused: ev.reused };
         const steps = s.steps || [];
+        // A step with no `seq` (a thought) cannot be patched, so the same one delivered twice (a replay into an app that
+        // already has it, which a page can trigger at will) would show twice. It is the same row if it is the same step at
+        // the same instant saying the same thing.
+        if (ev.seq == null && (batching ? batchSteps(s) : steps).some(x => x.seq == null && x.step === ev.step && x.ts === ev.ts && x.thought === ev.thought && x.tool === ev.tool)) return;
         // In-flight: a tool step arrives twice — a pending START then the DONE, sharing a `seq`.
         // Patch the existing row in place (immutably) so it fills in; otherwise append. Thoughts
         // and single-emit steps have no seq → always append.

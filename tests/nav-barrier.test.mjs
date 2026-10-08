@@ -97,3 +97,38 @@ test("tabs are independent — one navigating doesn't hold another", async () =>
     assert.equal(b.isNavigating(1), true);
     assert.equal(b.isNavigating(2), false);
 });
+
+// --- which document may release it: never the one being left (docs/spec/SITE_ACCESS.md, the ungated sends) ---
+
+test("a re-adopt releases only during a navigation, and never from the document it is leaving", () => {
+    const b = createNavBarrier();
+    b.noteDocument(4, "old");
+    assert.equal(b.accepts(4, "old"), false, "no navigation: nothing to release");
+    b.noteNavigating(4);   // leaving defaults to the committed document
+    assert.equal(b.noteReadopted(4, "old"), false, "the departing document");
+    assert.equal(b.isNavigating(4), true, "still held");
+    b.noteDocument(4, "new");
+    assert.equal(b.accepts(4, "stale"), false, "a document that is not the committed one");
+    assert.equal(b.noteReadopted(4, "new"), true);
+    assert.equal(b.isNavigating(4), false);
+});
+
+test("the leaving document is fixed when the navigation starts: a commit, or a second note, does not move it", () => {
+    const b = createNavBarrier();
+    b.noteDocument(5, "a");
+    b.noteNavigating(5, "a");
+    b.noteDocument(5, "b");
+    b.noteNavigating(5);   // onCommitted's own note, after the navigate path's: keeps "a"
+    assert.equal(b.accepts(5, "a"), false);
+    assert.equal(b.accepts(5, "b"), true);
+});
+
+test("null leaves nothing to refuse (a fresh document about to re-adopt); an unnamed document is judged on the navigation", () => {
+    const b = createNavBarrier();
+    b.noteDocument(6, "fresh");
+    b.noteNavigating(6, null);
+    assert.equal(b.accepts(6, "fresh"), true);
+    assert.equal(b.accepts(6, undefined), true);
+    b.noteReadopted(6, "fresh");
+    assert.equal(b.accepts(6, undefined), false, "but not outside one");
+});

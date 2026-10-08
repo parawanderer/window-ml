@@ -357,6 +357,13 @@ Recorded as each slice lands, with the reason.
   and result for a run it built that the worker hosts. `ml.__events()` from a page leaves out the events of runs the
   worker built. Tests that watched a background run on the page's window now watch the DevTools port
   (`watchRunEvents` in the e2e harness), and the ones that opened the sidebar by posting into its iframe click its tab.
+- **Found by the red-team session: the content script's ungated sends.** Five types it sends on a page's word bypass
+  the origin gate by design and were never enumerated. Two were attacks. The document a run navigates away from could
+  send `RUN_READOPTED` before the destination did, writing what the model is told about the destination and opening
+  the barrier before the destination's tools existed. Any tab knowing a run id could write into its live tool output
+  (`PAGE_TOOL_STREAM`). A third was a nuisance: `CONTENT_READY` replayed a run's whole history on every request,
+  repeating thoughts in the transcript. Each is now bound to the sender: the browser's committed document, the run's
+  tab, and once per document. These are not covered by the slices above; see `docs/dev/site-access.md`.
 - **Not fixed, noticed:** `GET_CONFIG` never sent `labelMatch`, so a page-built run always used the default metric.
   `publicConfig` keeps that behaviour; the worker path inherits it.
 

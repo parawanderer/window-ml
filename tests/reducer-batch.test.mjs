@@ -104,7 +104,7 @@ test("maxSessionStep reads a session no argument list could hold", () => {
 
 // --- a replay delivered twice into one document ---
 
-test("OPEN — the same replay reduced twice is the same session: a step with no seq is not appended again", { todo: "thought steps carry no seq; CONTENT_READY replays on the page's word" }, () => {
+test("the same replay reduced twice is the same session: a step with no seq is not appended again", () => {
     // The worker replays a run's history to a tab's shell on every CONTENT_READY, and a page sends that at will
     // (PAGE_ADOPT_HELLO → content.ts, ungated). Within one document the card's app keeps its sessionMap, so the second
     // replay patches the seq'd rows and APPENDS every row without one: the model's thoughts, repeated, in the
