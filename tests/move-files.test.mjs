@@ -52,6 +52,13 @@ test("a moved file with no paths in it is still carried, under its new path", ()
     assert.strictEqual(p.rewritten.get("src/zz/zz-a.ts"), "export const a = 1;\n");
 });
 
+test("a path to a generated, untracked file (`extra`) still follows the move, and the generated file is never rewritten", () => {
+    const tree = { "src/zz-a.ts": `import { B } from "./zz-info.gen";\n` };
+    const p = planMove({ files: Object.keys(tree), extra: ["src/zz-info.gen.ts"], read: (r) => tree[r], moves: new Map([["src/zz-a.ts", "src/zz/zz-a.ts"]]) });
+    assert.strictEqual(p.rewritten.get("src/zz/zz-a.ts"), `import { B } from "../zz-info.gen";\n`);
+    assert.ok(!p.rewritten.has("src/zz-info.gen.ts"));
+});
+
 // --- docs and the paths it can only report ---
 
 test("a doc's exact old path is rewritten; a bare name, which stays true, is not", () => {

@@ -82,12 +82,13 @@ function specFor(fromDir, file, ext) {
 /**
  * Plan a move: the new text of every file whose literals change, the moves themselves, and what could only be
  * reported. Pure over the files it is handed, so the tests drive it on a fixture tree.
- * @param {{ files: string[], read: (rel: string) => string, moves: Map<string, string> }} input
- *   `files` every tracked file, `moves` old root-relative path → new.
+ * @param {{ files: string[], read: (rel: string) => string, moves: Map<string, string>, extra?: string[] }} input
+ *   `files` every tracked file, `moves` old root-relative path → new, `extra` files that exist but are not tracked
+ *   (a generated, gitignored `build-info.gen.ts`): a path may NAME one, so it resolves, but it is never rewritten.
  */
-export function planMove({ files, read, moves }) {
-    const before = new Set(files);
-    const after = new Set(files.map((f) => moves.get(f) ?? f));
+export function planMove({ files, read, moves, extra = [] }) {
+    const before = new Set([...files, ...extra]);
+    const after = new Set([...files.map((f) => moves.get(f) ?? f), ...extra]);
     const newPath = (f) => moves.get(f) ?? f;
     /** @type {Map<string, string>} keyed by the file's NEW path */
     const rewritten = new Map();
@@ -195,7 +196,11 @@ function main() {
     if (dirty && !opts.dryRun) { console.error("move-files: the working tree has uncommitted changes; commit or stash them first, so the move can be undone with a checkout"); process.exit(1); }
 
     const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
-    const plan = planMove({ files, read, moves });
+    // Generated, gitignored sources (`src/*.gen.ts`) are imported like any other module. Without them a moved file's
+    // `./build-info.gen` resolved to nothing, was left alone, and broke; the typecheck caught it on the first big move.
+    const extra = execFileSync("git", ["ls-files", "--others", "--ignored", "--exclude-standard", "--", "src"], { cwd: root, encoding: "utf8" })
+        .split("\n").filter((f) => /\.(m?[jt]sx?)$/.test(f) && !f.includes("node_modules/"));
+    const plan = planMove({ files, read, moves, extra });
     const readAfter = (rel) => {
         if (plan.rewritten.has(rel)) return plan.rewritten.get(rel);
         const old = [...moves].find(([, to]) => to === rel)?.[0] ?? rel;
