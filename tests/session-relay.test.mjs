@@ -185,3 +185,71 @@ test("previews are paced per session, and nothing else is paced at all", () => {
     // Another session is another pace: two runs streaming at once must not starve each other.
     assert.ok(p.forWire("bbbb0002", { ...preview(10, 5), session: { runtime: "rt", hash: "bbbb0002" } }));
 });
+
+// --- live TOOL output over a hub: paced, with a trailing send, and a discard never held ---
+
+/** One live tool-output delta (the loop's fan): an `agent-step` with `streamOutput` and no `tool`. */
+const out = (text, cursor, seq = 1) => ({ type: "event", v: 1, session: S, epoch: "w1.0", cursor, event: { kind: "agent-step", id: S.hash, step: 0, seq, streamOutput: text, streamMarks: [] } });
+/** The step's own result, which supersedes its live output. */
+const done = (cursor, seq = 1) => ({ type: "event", v: 1, session: S, epoch: "w1.0", cursor, event: { kind: "agent-step", id: S.hash, step: 0, seq, tool: "exec", result: "ok" } });
+const tick = (ms) => new Promise((r) => setTimeout(r, ms));
+/** A preview whose trailing sends are recorded, paced at `everyMs` of real time. */
+function paced(everyMs = 40) {
+    const flushed = [];
+    const p = new LivePreview({ everyMs, flush: (hash, m) => flushed.push(m.cursor) });
+    return { p, flushed };
+}
+
+test("a tool's live output is paced like a model preview: 60 s of 90 ms deltas is one frame per window, not 667", () => {
+    let now = 0;
+    const p = new LivePreview({ now: () => now });
+    let sent = 0;
+    for (let i = 0; i < 667; i++, now += 90) if (p.forWire(S.hash, out("x".repeat(12000), i + 1))) sent++;
+    assert.ok(sent <= Math.ceil(667 * 90 / LIVE_PREVIEW_MS) + 1, `${sent} frames`);
+    assert.ok(sent >= 60, `and still live: ${sent} frames`);
+});
+
+test("a tool that prints a line and then goes quiet still gets that line out: the held delta is sent when its window ends", async () => {
+    const { p, flushed } = paced();
+    assert.ok(p.forWire(S.hash, out("a\n", 1)), "the first line goes at once");
+    assert.equal(p.forWire(S.hash, out("a\nb\n", 2)), null, "the next, inside the window, is held");
+    assert.equal(p.forWire(S.hash, out("a\nb\nc\n", 3)), null);
+    await tick(80);
+    assert.deepEqual(flushed, [3], "the NEWEST held delta went out once the window was over, and only it");
+});
+
+test("held output goes out before the next message of its session, in order; the step's own result drops it instead", async () => {
+    const { p, flushed } = paced();
+    p.forWire(S.hash, out("a\n", 1));
+    p.forWire(S.hash, out("a\nb\n", 2));
+    const say = { type: "event", v: 1, session: S, epoch: "w1.0", cursor: 3, event: { kind: "agent-say", id: S.hash } };
+    assert.ok(p.forWire(S.hash, say));
+    assert.deepEqual(flushed, [2], "flushed BEFORE the message that followed it returned, so it is published first");
+
+    p.forWire(S.hash, out("a\nb\nc\n", 4));   // inside the window again: held
+    assert.ok(p.forWire(S.hash, done(5)), "the result goes");
+    await tick(80);
+    assert.deepEqual(flushed, [2], "and the output it supersedes never does");
+    assert.ok(p.forWire(S.hash, out("next step\n", 6, 2)), "the next step's first line goes at once");
+});
+
+test("a DISCARD is never paced or held: a remote reader must not keep a refused try's lines while the run waits", async () => {
+    const { p, flushed } = paced();
+    p.forWire(S.hash, out("before the click\n", 1));
+    p.forWire(S.hash, out("before the click\nmore\n", 2));   // held
+    const discard = p.forWire(S.hash, out("", 3));
+    assert.ok(discard, "the discard goes at once, inside the window");
+    assert.equal(discard.event.streamOutput, "");
+    await tick(80);
+    assert.deepEqual(flushed, [], "and the try's held lines are dropped, not sent after it");
+    assert.ok(p.forWire(S.hash, out("approved run\n", 4)), "the approved run's first line goes at once");
+});
+
+test("closing drops held output: nothing is sent for a connection that is gone", async () => {
+    const { p, flushed } = paced();
+    p.forWire(S.hash, out("a\n", 1));
+    p.forWire(S.hash, out("a\nb\n", 2));
+    p.close();
+    await tick(80);
+    assert.deepEqual(flushed, []);
+});

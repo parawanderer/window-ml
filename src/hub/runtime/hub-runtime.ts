@@ -167,7 +167,7 @@ export class HubRuntime {
         // What a streamed run costs over a hub, bounded here rather than at the loop that emits it: a reader in this
         // browser pays a function call per preview and a remote one pays a sealed frame, a ring slot and a queue
         // entry on every subscriber (session-relay.ts `LivePreview`).
-        const previews = new LivePreview();
+        const previews = new LivePreview({ flush: (hash, m) => { void publisher.publish(hash, m).catch(() => {}); } });
         const devices = new Set<string>();
 
         // Watch first, then snapshot: a change landing between the two is in the snapshot or after it, never lost. A
@@ -206,6 +206,7 @@ export class HubRuntime {
             }
         } finally {
             clearInterval(resign);
+            previews.close();
             this.publishList = null;
             stop();
         }
