@@ -4,8 +4,8 @@
 "use strict";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { foldStreaks, streakFacts, holdsSeq, foldedInView, STREAK_MIN, STREAK_MIN_ALL } from "../src/sidebar/step-streak.tsx";
-import { JUST_ARRIVED_MS } from "../src/sidebar/just-arrived.ts";
+import { foldStreaks, streakFacts, holdsSeq, foldedInView, STREAK_MIN, STREAK_MIN_ALL } from "../src/sidebar/transcript/step-streak.tsx";
+import { JUST_ARRIVED_MS } from "../src/sidebar/transcript/just-arrived.ts";
 
 /** One turn with a single tool call, which is the shape a streak is made of. */
 const turn = (step, tool, over = {}) => ({ step, localStep: step, tools: [{ step, seq: step, tool, ...over }] });

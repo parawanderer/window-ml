@@ -5,41 +5,41 @@
 // sits above ./reply (uses ReplyBubble) and the ui-kit / answer-render / render-panel / debug-reducer layers.
 import { SentImages, UserActions, UserText } from "./user-text";
 import type { ComponentChildren } from "preact";
-import { services } from "./services";
+import { services } from "../services";
 import { useState, useEffect, useRef } from "preact/hooks";
-import type { PersistGrant } from "../contract/contract-agent";
-import type { RenderDescriptor } from "../contract/contract-render";
-import type { DebugAgentConfig } from "../contract/contract-debug";
-import { resolveOutputCap } from "../contract/contract-pointers";
-import { runStats, fmtTokPerSec, runStatsProvenance } from "../contract/contract-chat";
-import { externalSheetIds } from "../dom/dom";
-import { surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, showStatsTps, laneLitSeqs, focusMode, groupAllTools } from "./store";
-import type { Session, AgentStep, Status } from "./store";
-import { pretty, truncate, markdown, collapsedPreview, toolFailed } from "./format";
-import { sessionProfile } from "./model";
-import { Dialog } from "./dialog";
-import { useCloseAnimation } from "./use-close";
-import { IconChevron, IconWarn, IconInfo, IconCopy, IconCheck, IconIn, IconOut } from "./icons";
+import type { PersistGrant } from "../../contract/contract-agent";
+import type { RenderDescriptor } from "../../contract/contract-render";
+import type { DebugAgentConfig } from "../../contract/contract-debug";
+import { resolveOutputCap } from "../../contract/contract-pointers";
+import { runStats, fmtTokPerSec, runStatsProvenance } from "../../contract/contract-chat";
+import { externalSheetIds } from "../../dom/dom";
+import { surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, showStatsTps, laneLitSeqs, focusMode, groupAllTools } from "../store";
+import type { Session, AgentStep, Status } from "../store";
+import { pretty, truncate, markdown, collapsedPreview, toolFailed } from "../format";
+import { sessionProfile } from "../model";
+import { Dialog } from "../dialog";
+import { useCloseAnimation } from "../use-close";
+import { IconChevron, IconWarn, IconInfo, IconCopy, IconCheck, IconIn, IconOut } from "../icons";
 import { usageSamples, liveOutTokens } from "./usage";
 import { currentTurnSteps, liveShownByTranscript, orbStatus } from "./orb-status";
-import { fmtDur } from "./timestamps";
+import { fmtDur } from "../timestamps";
 import {
     BusyBlob, Code, CopyBtn, SheetChip, Hash, Stamp, Dot, Disclosure,
     decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText, cursorTipOn, PointerChip, TipText,
-} from "./ui-kit";
+} from "../ui-kit";
 import { FeedbackBlock, ReusedBlock } from "./answer-render";
 import { foldStreaks, StepStreak } from "./step-streak";
-import { CALL_TITLE } from "../tools/tool-params";
+import { CALL_TITLE } from "../../tools/tool-params";
 import { justArrived } from "./just-arrived";
-import { deepestUserLine } from "../python/py-format";
+import { deepestUserLine } from "../../python/py-format";
 import { JsonNode, type JsonSchemaNode } from "./json-tree";
 export { JsonNode, JtKey, jtPreview, type JsonSchemaNode } from "./json-tree";
 import { RenderPanel, OutputCell, SeenSplit, RanFor, RunningFor, inLineMap, type CodeCtx } from "./render-panel";
 import { ReplyBubble } from "./reply";
 import { CodeExplain, IntentSentence, codeOf, intentFor } from "./summaries";
-import { groupTurns } from "./debug-reducer";
+import { groupTurns } from "../debug-reducer";
 import { EarlierInThread, tail } from "./transcript-window";
-import type { AgentTurnGroup } from "./debug-reducer";
+import type { AgentTurnGroup } from "../debug-reducer";
 
 // A Jupyter-style In:/Out: block: a gutter label + content, collapsible on its
 // own (a grey inline preview shows when collapsed). If a descriptor targets THIS

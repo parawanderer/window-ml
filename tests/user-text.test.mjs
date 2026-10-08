@@ -10,7 +10,7 @@ Object.assign(globalThis, { window: dom.window, document: dom.window.document, g
 // Through require, NOT `import("preact")`: tsx compiles the component to CJS, and an ESM import here would be a second
 // preact whose hooks have no current component (as tests/output-cell.test.mjs says).
 const { h, render } = createRequire(import.meta.url)("preact");
-const { UserText, SentImages } = await import("../src/sidebar/user-text.tsx");
+const { UserText, SentImages } = await import("../src/sidebar/transcript/user-text.tsx");
 const flush = () => new Promise((r) => setTimeout(r, 10));
 
 /** Draw it with the text's height FAKED, since jsdom lays nothing out: `lines` lines of 20px. */

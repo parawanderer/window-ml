@@ -15,7 +15,7 @@
 // empty panel can be told from a broken one.
 import { signal } from "@preact/signals";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { OutputCell, TimedOutput } from "./render-panel";
+import { OutputCell, TimedOutput } from "./transcript/render-panel";
 import { housekeepingText, subsystemCounts } from "./housekeeping-log";
 import { PanelHead } from "./panel-head";
 import { useDismiss } from "./use-dismiss";

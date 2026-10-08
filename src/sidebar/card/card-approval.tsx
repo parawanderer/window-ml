@@ -8,9 +8,9 @@ import { rev } from "../store";
 import { truncate } from "../format";
 import { IconWarn } from "../icons";
 import { Code, SheetChip, highlightApprove, highlightPos, clearHighlight, inlineJson, stepKey } from "../ui-kit";
-import { RenderPanel } from "../render-panel";
-import { IntentSentence, intentFor, codeOf, ensureCodeSummary, ensureActionSummary, codeSummaries } from "../summaries";
-import { HostAccessNote, OutputRaiseNote, externalSheetGrant } from "../agent-detail";
+import { RenderPanel } from "../transcript/render-panel";
+import { IntentSentence, intentFor, codeOf, ensureCodeSummary, ensureActionSummary, codeSummaries } from "../transcript/summaries";
+import { HostAccessNote, OutputRaiseNote, externalSheetGrant } from "../transcript/agent-detail";
 
 /** THE CONSENT SURFACE for a gated call — what the agent wants to do, said as an intent sentence with
  *  the part that matters picked out, plus the actual code or arguments (you cannot approve what you

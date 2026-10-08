@@ -7,7 +7,7 @@ import type { ElementContext } from "../../contract/contract-run";
 import { sessionMap, ollamaIds, config } from "../store";
 import type { AgentStep, Session } from "../store";
 import { decidedSteps, stepKey } from "../ui-kit";
-import { utilitySummariesOn } from "../summaries";
+import { utilitySummariesOn } from "../transcript/summaries";
 import { genTitle } from "../debug-reducer";
 
 // Multi-run HUD state. The card shows ONE run (the SELECTED one); a tab strip switches between concurrent

@@ -3,34 +3,34 @@
 // auto-derive image/elements, else the default In:/Out: renders the raw result.
 // Extracted from app.tsx; leans on the shared primitives in ./ui-kit.
 import type { ComponentChildren } from "preact";
-import { GLYPH, RESOLVED_LABEL, rungLabel, rungMeta } from "./fetch-ladder";
-import { IconCheck, IconChevron, IconCopy, IconEye, IconEyeOff, IconRows, IconSummary } from "./icons";
+import { GLYPH, RESOLVED_LABEL, rungLabel, rungMeta } from "../fetch-ladder";
+import { IconCheck, IconChevron, IconCopy, IconEye, IconEyeOff, IconRows, IconSummary } from "../icons";
 import { scrollToStepSeq } from "./step-scroll";
 import { useState, useRef, useEffect, useLayoutEffect, useMemo } from "preact/hooks";
 import { signal } from "@preact/signals";
-import type { RenderDescriptor, LocateSubstep, CodeRevision } from "../contract/contract-render";
-import type { TableSource } from "../contract/contract-fetch";
-import { codeDiff, diffStat } from "../diff";
-import { downloadBlob } from "./download";   // a table too large for the clipboard is saved as a file
-import { elementReference } from "../dom/dom";
-import { pyFormat, lineChanged } from "../python/py-format";
-import { lineMapBetween } from "../line-map";
-import { services, type StoredTableRead } from "./services";
-import { summarizeColumns, summarizeRows, type ColumnSummary } from "../table/table-summary";
-import { rev, view, sessionMap, outMaxH, showOutTimes, focusMode, lsSet, BENCH_CODE_KEY, surface, codeLineNumbers, openBench, benchTimes } from "./store";
-import { poolColor } from "./palette";
-import { timeForOffset, alignedMarks, elideHour, hhmmss, hhmmssms, fmtDelta, fmtDur, hourNow, armHourTick, dayBreaks } from "./timestamps";
-import { markdown, truncate, pretty, highlight } from "./format";
+import type { RenderDescriptor, LocateSubstep, CodeRevision } from "../../contract/contract-render";
+import type { TableSource } from "../../contract/contract-fetch";
+import { codeDiff, diffStat } from "../../diff";
+import { downloadBlob } from "../download";   // a table too large for the clipboard is saved as a file
+import { elementReference } from "../../dom/dom";
+import { pyFormat, lineChanged } from "../../python/py-format";
+import { lineMapBetween } from "../../line-map";
+import { services, type StoredTableRead } from "../services";
+import { summarizeColumns, summarizeRows, type ColumnSummary } from "../../table/table-summary";
+import { rev, view, sessionMap, outMaxH, showOutTimes, focusMode, lsSet, BENCH_CODE_KEY, surface, codeLineNumbers, openBench, benchTimes } from "../store";
+import { poolColor } from "../palette";
+import { timeForOffset, alignedMarks, elideHour, hhmmss, hhmmssms, fmtDelta, fmtDur, hourNow, armHourTick, dayBreaks } from "../timestamps";
+import { markdown, truncate, pretty, highlight } from "../format";
 import { codeNotes, notesState, notesHidden, fetchLineNotes, toggleLineNotes } from "./summaries";
 import { Prose } from "./prose";
 import { JsonNode, JT_CUT, JT_SEEN } from "./json-tree";
-import { parseLooseJson } from "../json-repair";
-import { notesByLine } from "./annotate";
-import { followDrag } from "./drag";
+import { parseLooseJson } from "../../json-repair";
+import { notesByLine } from "../annotate";
+import { followDrag } from "../drag";
 import {
     openCtxMenu, copyText, ClickableImg, Code, CopyBtn, SheetChip, inlineText, stepKey, displaySource, cursorTipOn, PointerChip, TipText,
     highlightToken, highlightEl, clearHighlight, tokenHover, pickedHover,
-} from "./ui-kit";
+} from "../ui-kit";
 
 /** A tool's returned DOM ELEMENTS, as a hoverable list. Each row carries the same stateless
  *  `clickSelector` the model was handed, so hovering outlines the node on the page and "copy reference"
@@ -741,7 +741,7 @@ export const atBottomOf = (el: { scrollHeight: number; scrollTop: number; client
  *  exec (and any future tool that reports a `seen` boundary). No boundary → plain output, unchanged. */
 // The per-line timestamp helpers live in ./timestamps (pure — the exports read the same mapping). Re-exported
 // here because this module is where they were first published and the standalone tests import them from it.
-export { timeForOffset, alignedMarks, elideHour, fmtDelta } from "./timestamps";
+export { timeForOffset, alignedMarks, elideHour, fmtDelta } from "../timestamps";
 
 /** Streamed output with a TIMESTAMP GUTTER — when each line was produced, per the executor's marks. The time
  *  is repeated only when it CHANGES, so a burst of lines reads as one moment rather than a wall of identical
@@ -1719,7 +1719,7 @@ function LookRender({ d }: { d: Extract<RenderDescriptor, { type: "look" }> }) {
  *  drawn, dimmed when unused, so the protocol is legible from any single render rather than having to be
  *  inferred across several. The failures it exists to expose are invisible in the body alone — a stub twin is
  *  a valid 200 Markdown document that is simply the wrong page. */
-function FetchLadder({ attempts, resolvedBy }: { attempts: import("../contract").FetchAttempt[]; resolvedBy?: string }): preact.JSX.Element {
+function FetchLadder({ attempts, resolvedBy }: { attempts: import("../../contract").FetchAttempt[]; resolvedBy?: string }): preact.JSX.Element {
     return (
         <div class="r-lad">
             {attempts.map((a, i) => {
@@ -1735,7 +1735,7 @@ function FetchLadder({ attempts, resolvedBy }: { attempts: import("../contract")
                     </div>
                 );
             })}
-            {resolvedBy ? <div class="r-lad-by"><b>resolved by</b> {RESOLVED_LABEL[resolvedBy as import("../contract").FetchAttempt["strategy"]] || resolvedBy}</div> : null}
+            {resolvedBy ? <div class="r-lad-by"><b>resolved by</b> {RESOLVED_LABEL[resolvedBy as import("../../contract").FetchAttempt["strategy"]] || resolvedBy}</div> : null}
         </div>
     );
 }

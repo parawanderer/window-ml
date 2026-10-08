@@ -33,7 +33,7 @@ descriptors carry **`seen`**: how many characters the model actually received. E
 what the model read (the raw view still shows the model-facing text verbatim).
 
 *The output cell.* `python_exec` and `exec` render their Out through ONE shared **`OutputCell`**
-(src/sidebar/render-panel.tsx) — a future code-ish tool (a `bash_exec`, say) wraps its own sections in it and
+(src/sidebar/transcript/render-panel.tsx) — a future code-ish tool (a `bash_exec`, say) wraps its own sections in it and
 inherits everything: a height cap (Settings → Appearance, per-cell drag-to-resize), scrolling, **tail-follow**
 (new output scrolls into view only while you're parked at the bottom; scroll up and it holds), and an in-cell
 **Ctrl+F find** (substring only — no regex — with a case toggle, match count, ↑/↓ navigation, painted via the

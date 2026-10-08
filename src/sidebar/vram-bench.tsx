@@ -19,7 +19,7 @@ import { pyValueParts } from "../python/py-render";
 import { CodeEditor } from "./code-editor";
 import type { RemoteCompletion, CodeEditorHandle } from "./code-editor-api";
 import { IconExpand, IconClose, IconChevron, IconTimer, IconPlay, IconSendToModel } from "./icons";
-import { type BenchJumpDetail, BENCH_JUMP_EVENT, PyBenchOut } from "./render-panel";
+import { type BenchJumpDetail, BENCH_JUMP_EVENT, PyBenchOut } from "./transcript/render-panel";
 import { benchH, BENCH_H_KEY, benchDock, BENCH_DOCK_KEY, view, viewReturn, benchOpen, BENCH_OPEN_KEY, benchEnv, benchMode, benchKept, noteBenchEnv, benchLost, benchCode, lsSet, BENCH_CODE_KEY, benchRunning, benchResult, type BenchRun, benchLive, benchTimeout, noteBenchKept, benchSplit, BENCH_SPLIT_KEY, codeLineNumbers } from "./store";
 import { cursorTipOn, TipText } from "./ui-kit";
 import { followDrag } from "./drag";

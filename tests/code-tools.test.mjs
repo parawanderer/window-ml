@@ -28,9 +28,9 @@ before(async () => {
     // Rendered without the app, so this test is the entry point: it installs the extension frames' services, as
     // app.tsx does, and the explain call reaches the mocked `chrome.runtime` above.
     (await import("../src/sidebar/services.ts")).installServices((await import("../src/sidebar/services-ext.ts")).extensionServices);
-    ({ RenderPanel } = await import("../src/sidebar/render-panel.tsx"));
+    ({ RenderPanel } = await import("../src/sidebar/transcript/render-panel.tsx"));
     store = await import("../src/sidebar/store.ts");
-    summaries = await import("../src/sidebar/summaries.tsx");
+    summaries = await import("../src/sidebar/transcript/summaries.tsx");
 });
 after(() => { try { globalThis.window?.close(); } catch { /* already gone */ } });
 

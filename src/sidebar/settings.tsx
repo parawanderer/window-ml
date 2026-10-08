@@ -21,7 +21,7 @@ import {
     config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes,
     MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, CODE_THEME_KEY, CODE_THEME_VSCODE_KEY, CODE_THEME_UI_KEY, codeTheme, codeThemeCustom, codeThemeUi, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, modelKinds, embedDims, view } from "./store";
 import { truncate } from "./format";
-import { ToolDefsView } from "./agent-detail";   // the SAME viewer an agent run uses for its local toolset
+import { ToolDefsView } from "./transcript/agent-detail";   // the SAME viewer an agent run uses for its local toolset
 import { applyTheme, applyFont, applyCodePrefs, panelThemeActive } from "./prefs";
 import { CODE_THEME_PRESETS, DEFAULT_CODE_THEME, VSCODE_THEME_ID, convertVscodeTheme, parseJsonc, type CodeThemePreset, type ConvertedTheme } from "../code-themes";
 import { convertStored } from "./code-theme-css";

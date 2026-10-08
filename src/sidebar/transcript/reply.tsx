@@ -3,19 +3,19 @@
 // app.tsx; a leaf view layer over ui-kit + answer-render (no agent-detail / HUD deps, so agent-detail
 // can import ReplyBubble without a cycle).
 import { SentImages, UserActions, UserText } from "./user-text";
-import { cssDurationMs } from "./use-close";
-import { services, bareHash } from "./services";
+import { cssDurationMs } from "../use-close";
+import { services, bareHash } from "../services";
 import { useRef, useState } from "preact/hooks";
-import type { ExtendProfile } from "../contract/contract-chat";
-import { view } from "./store";
-import type { Session, Turn, Status, AgentStep } from "./store";
-import { pretty, truncate, collapsedPreview, markdown } from "./format";
-import { annotatedConfig, turnProfile } from "./model";
-import { IconAgent, IconChevron, IconPlay } from "./icons";
-import { cursorTipOn, openCtxMenu, Dot, Stamp, Hash, TagBadge, CopyBtn, CopyModel, Code } from "./ui-kit";
-import { STEP_BUDGETS } from "../agent/step-budget";
+import type { ExtendProfile } from "../../contract/contract-chat";
+import { view } from "../store";
+import type { Session, Turn, Status, AgentStep } from "../store";
+import { pretty, truncate, collapsedPreview, markdown } from "../format";
+import { annotatedConfig, turnProfile } from "../model";
+import { IconAgent, IconChevron, IconPlay } from "../icons";
+import { cursorTipOn, openCtxMenu, Dot, Stamp, Hash, TagBadge, CopyBtn, CopyModel, Code } from "../ui-kit";
+import { STEP_BUDGETS } from "../../agent/step-budget";
 import { aliasOf, AnswerBody, ResultBlock } from "./answer-render";
-import { hasTokens } from "../pointers/answer-tokens";
+import { hasTokens } from "../../pointers/answer-tokens";
 
 // The session's createChat config (not the per-turn request/messages — full
 // message history is a separate export feature).

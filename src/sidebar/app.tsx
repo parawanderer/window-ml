@@ -22,8 +22,8 @@ import { ContextMenu, CursorTipLayer, Hash, highlightPos } from "./ui-kit";
 import { onDebug, maybeGenerateTitles, titleTried } from "./debug-reducer";
 import { installServices } from "./services";
 import { extensionServices } from "./services-ext";
-import { ProfileBadge, SessionRow, AgentBadge } from "./reply";
-import { Composer } from "./composer";
+import { ProfileBadge, SessionRow, AgentBadge } from "./transcript/reply";
+import { Composer } from "./transcript/composer";
 import { chartKey, VramPanel } from "./resource/vram";
 import { keyRelay, VRAM_POLL_MS } from "./resource/panel-state";
 import { VRAM_PALETTE_KEY, VRAM_PALETTES, vramPalette } from "./palette";
@@ -42,7 +42,7 @@ import { DEFAULT_CODE_THEME } from "../code-themes";
 import { IconWarn, IconTimer, IconGear, IconExport, IconVram, IconBench, IconTools, IconBrain, IconClose, IconCollapse, IconMore } from "./icons";
 import { HousekeepingView } from "./housekeeping-log";
 import { Settings, openSettingsAt } from "./settings";
-import { DetailView } from "./session-detail";
+import { DetailView } from "./transcript/session-detail";
 
 
 /* ------------------------------ components ------------------------------- */

@@ -22,11 +22,11 @@ import { type ResourceSample, percentOf, loadTrace, formatBytes } from "../../re
 import { type ResourceEvent, type PhaseKind, eventsIn } from "../../resource/resource-timeline";
 import { decodeCeiling } from "../../resource/resource-decode";
 import { kvFill, predictionLine, serverGenNote } from "../../resource/resource-gens";
-import { scrollToAnswer } from "../answer-render";
+import { scrollToAnswer } from "../transcript/answer-render";
 import { live, eventHover, cursorAt, noteRuns, litBy, holdAxis, hoverAt, releaseAxis, trackCursor, barKey } from "./chart-interaction";
 import { sampleGraceMs, resourceHistory, laneFilter, sampleGapMs, streamLive } from "./panel-state";
 import { colorFor } from "../palette";
-import { scrollToStepSeq } from "../step-scroll";
+import { scrollToStepSeq } from "../transcript/step-scroll";
 import { brush, snapDot, zoomRange, ollamaIds, models, laneScoped, predictView, sessionMap, view, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, showLane, laneHidden, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showModels, LANE_SCOPE_KEY } from "../store";
 import { fmtDur, hhmmssms } from "../timestamps";
 import { Disclosure } from "../ui-kit";

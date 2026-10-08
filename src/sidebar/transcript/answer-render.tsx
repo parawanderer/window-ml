@@ -3,15 +3,15 @@
 // the bottom-of-answer Result / Feedback / Reused blocks. Extracted from app.tsx; sits above ./render-panel.
 import type { ComponentChildren } from "preact";
 import { h } from "preact";
-import type { ReusedGrant } from "../contract/contract-agent";
-import type { RenderDescriptor, ToolFeedback } from "../contract/contract-render";
-import { splitAnswer, hasTokens, resolveTokenStep, answerWithoutShown } from "../pointers/answer-tokens";
-import type { AnswerSegment } from "../pointers/answer-tokens";
-import type { Session, AgentStep } from "./store";
-import { pretty, markdown, inlineMarkdown } from "./format";
+import type { ReusedGrant } from "../../contract/contract-agent";
+import type { RenderDescriptor, ToolFeedback } from "../../contract/contract-render";
+import { splitAnswer, hasTokens, resolveTokenStep, answerWithoutShown } from "../../pointers/answer-tokens";
+import type { AnswerSegment } from "../../pointers/answer-tokens";
+import type { Session, AgentStep } from "../store";
+import { pretty, markdown, inlineMarkdown } from "../format";
 import { reveal } from "./transcript-window";
-import { IconChevron, IconEye, IconCheck } from "./icons";
-import { ClickableImg, Code, SheetChip, cursorTipOn } from "./ui-kit";
+import { IconChevron, IconEye, IconCheck } from "../icons";
+import { ClickableImg, Code, SheetChip, cursorTipOn } from "../ui-kit";
 import { RenderPanel, PyDfTable, CodeRender } from "./render-panel";
 import type { CodeCtx } from "./render-panel";
 import { scrollToStepSeq } from "./step-scroll";

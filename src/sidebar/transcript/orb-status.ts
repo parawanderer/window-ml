@@ -4,8 +4,8 @@
 // tell "the model is working" from "the glue broke". Kept pure + framework-free so it's unit-tested directly
 // (streaming vs non-streaming) without mounting the component; hud-card.tsx calls orbStatus(run, now) and the
 // heartbeat re-render is driven by a gated 1s ticker there.
-import type { Session, AgentStep } from "./store";
-import { stripFormatting } from "./format";
+import type { Session, AgentStep } from "../store";
+import { stripFormatting } from "../format";
 
 // Per-tool humanized status: `label` = what it's doing while the tool RUNS ("Running Python…"); `about` =
 // what the model is chewing on once the tool has RETURNED ("Thinking about the Python output…"). `short` is

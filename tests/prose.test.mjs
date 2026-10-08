@@ -4,7 +4,7 @@
 // markdown renderer" change six months from now.
 import { test } from "node:test";
 import assert from "node:assert";
-import { splitProse } from "../src/sidebar/prose.tsx";
+import { splitProse } from "../src/sidebar/transcript/prose.tsx";
 
 const kinds = (parts) => parts.map((p) => ("text" in p ? `t:${p.text}` : `p:${p.id}${p.slot ? ":" + p.slot : ""}`));
 

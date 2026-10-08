@@ -8,8 +8,8 @@ import { markdown, inlineMarkdown } from "../format";
 import { IconChevron } from "../icons";
 import { ClickableImg, inlineText } from "../ui-kit";
 import { exportSession, exportSessionJson, printSession } from "../export";
-import { AnswerBody } from "../answer-render";
-import { AgentTurn, SteerSeen } from "../agent-detail";
+import { AnswerBody } from "../transcript/answer-render";
+import { AgentTurn, SteerSeen } from "../transcript/agent-detail";
 import { buildRunBlocks, ensureBlockSummary, blockSummaries, blockKey, groupTurns } from "../debug-reducer";
 import type { RunTaskBlock } from "../debug-reducer";
 

@@ -11,8 +11,8 @@
 // window, pages the store if it must, and says so when the step is gone for good — so a reference never silently does
 // nothing, which is what the eight-frame retry it replaces did.
 
-import { services } from "./services";
-import { rev } from "./store";
+import { services } from "../services";
+import { rev } from "../store";
 
 /** How many items a transcript draws before you ask for more, and how many each "earlier" adds. */
 export const WINDOW = 50;

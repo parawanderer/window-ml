@@ -14,14 +14,14 @@
 // CALM ONLY, and nothing is dropped: the busy view keeps the whole trace, and so do both exports. Design note and
 // the rules behind each clause: tmp/design-tool-streaks.md.
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { AgentStep } from "./store";
-import { rev, revealSeq } from "./store";
-import type { AgentTurnGroup } from "./debug-reducer";
-import { fmtDur } from "./timestamps";
-import { toolFailed } from "./format";
-import { IconChevron } from "./icons";
-import { cursorTipOn } from "./ui-kit";
-import { useCloseAnimation } from "./use-close";
+import type { AgentStep } from "../store";
+import { rev, revealSeq } from "../store";
+import type { AgentTurnGroup } from "../debug-reducer";
+import { fmtDur } from "../timestamps";
+import { toolFailed } from "../format";
+import { IconChevron } from "../icons";
+import { cursorTipOn } from "../ui-kit";
+import { useCloseAnimation } from "../use-close";
 import { justArrived } from "./just-arrived";
 
 /** The fewest turns worth folding. Two is a pair; three is where a reader starts skipping. */

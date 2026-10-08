@@ -12,7 +12,7 @@ import { useRef, useEffect } from "preact/hooks";
 import type { SessionStatus, SessionKey, RuntimeInfo, SessionSummary } from "../session/session-host";
 import { truncate } from "../sidebar/format";
 import { IconChevron, IconHistory, IconPin, IconPlus, IconSearch, IconCompose, IconInbox } from "../sidebar/icons";
-import { AgentBadge } from "../sidebar/reply";
+import { AgentBadge } from "../sidebar/transcript/reply";
 import type { Status } from "../sidebar/store";
 import { Stamp, Dot, cursorTipOn } from "../sidebar/ui-kit";
 import type { ChatStore } from "./chat-store";

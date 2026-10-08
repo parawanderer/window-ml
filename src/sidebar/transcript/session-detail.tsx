@@ -3,7 +3,7 @@
 // session views and the store.
 import { AgentRunView } from "./agent-detail";
 import { EmbedRunView, OptionsBlock, MessageTurn } from "./reply";
-import { sessionMap } from "./store";
+import { sessionMap } from "../store";
 import { EarlierInThread, tail } from "./transcript-window";
 
 /** A session's transcript by its key (`Session.hash`): the agent run view, the embed view, or a chat's turns. */

@@ -8,7 +8,7 @@
 // `visibleAnchor` came with it because only this uses it: a citation can name a SLOT rather than a step, and
 // the thing worth scrolling to is then the cell the slot is about, not the top of the step containing it.
 
-import { atBottom, cardShowWorkHash, revealSeq } from "./store";
+import { atBottom, cardShowWorkHash, revealSeq } from "../store";
 import { reveal } from "./transcript-window";
 
 /** Fired on `document` when a citation sends the reader to a step. A transcript that FOLLOWS its newest event

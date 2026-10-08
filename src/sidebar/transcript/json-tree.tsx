@@ -2,8 +2,8 @@
 // as a tree without importing agent-detail.tsx, which imports them. Moved here from agent-detail.tsx, which
 // re-exports it.
 import { useState } from "preact/hooks";
-import { IconChevron } from "./icons";
-import { TipText, cursorTipOn } from "./ui-kit";
+import { IconChevron } from "../icons";
+import { TipText, cursorTipOn } from "../ui-kit";
 
 /** Marks where a CUT-OFF value ended: a JSON value whose text was clipped is drawn as the part that arrived, and this
  *  sentinel, placed as the last member of the innermost container open at the cut, draws a "truncated" row there. */

@@ -34,7 +34,7 @@ import { ResourceTracks, muteTip } from "./resource-chart";
 import { stepPool, readingIsOverlay } from "./chart-interaction";
 import { ScopeSwitch } from "./resource-lane-ui";
 
-import { RenderPanel } from "../render-panel";
+import { RenderPanel } from "../transcript/render-panel";
 import { hoverModel, kbFocus, stepFocus, stepDepth, noteFocusOrder } from "./vram-focus";
 import { capacity, resourceHistory, layout, streamLive, frameFocused, VRAM_HISTORY, sessionModels, choosePreset, customTracks, presetId, restoreLayout, hiddenModels } from "./panel-state";
 import { loadSeenCards, unavailableGpus, seenCards, machineEvents, servingSince, pollPs, fetchCapacity, loadingModels, psLoading, capacityAsked } from "./resource-feed";

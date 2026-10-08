@@ -3,7 +3,7 @@
 // than built as a list because a log IS output: the cell already gives it a timestamp gutter, find (Ctrl+F),
 // a resize grip and tail-follow, and a second list component would have grown half of those, differently.
 import { useEffect, useState } from "preact/hooks";
-import { OutputCell, TimedOutput } from "./render-panel";
+import { OutputCell, TimedOutput } from "./transcript/render-panel";
 import { downloadBlob } from "./download";
 import { formatBytes } from "../resource/resource-model";
 import { fmtDelta } from "./timestamps";
