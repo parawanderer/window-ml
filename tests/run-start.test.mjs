@@ -461,3 +461,187 @@ test("an approved exec is sent the values of the pointers its script names, and 
     assert.match(runs[1].reads[0].value, /FIRST OUTPUT/);
     assert.equal(runs[1].reads[0].meta.tool, "exec");
 });
+
+// --- tools that never read the page run in the worker (slice 2 part 2) ---
+
+/** A worker-built run on SITE whose model calls `fetch_url` with `args`, approved (or denied) by the person, then
+ *  answers. `doc` is what https://other.example/doc serves. Returns what reached the page and the model. */
+async function fetchRun(args, { approve = true, doc = "<h1>SECRET OTHER SITE</h1>", reader = "the reader's answer", then = [] } = {}) {
+    let turns = 0, bg;
+    const calls = [{ name: "fetch_url", args }, ...then];
+    const seenByModel = [];
+    bg = loadBackground({
+        config: { ...config, autoApproveReadonly: true }, openTabs: [SITE],
+        onFetch: (call) => {
+            if (call.url.startsWith("https://other.example/")) return { ok: true, status: 200, url: call.url, headers: { get: (h) => (/content-type/i.test(h) ? "text/html; charset=utf-8" : null) }, text: async () => doc, arrayBuffer: async () => new TextEncoder().encode(doc).buffer, body: null };
+            if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            const msgs = call.body.messages;
+            if (msgs.length === 1 && /Question:/.test(msgs[0].content)) return jsonResponse({ choices: [{ message: { content: reader } }], usage: { prompt_tokens: 40, completion_tokens: 5 } });
+            seenByModel.push(msgs);
+            const next = calls[turns++];
+            return next
+                ? jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: `c${turns}`, type: "function", function: { name: next.name, arguments: JSON.stringify(next.args) } }] } }] })
+                : jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (_t, msg) => {
+            if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
+            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: approve } });
+            if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
+            if (msg.payload.finish) return { result: "" };
+            if (msg.payload.name === "fetch_url" && !msg.payload.renderOnly) return { result: "FROM THE PAGE" };
+            return {};
+        },
+    });
+    const panel = bg.connect("ml-devtools");
+    panel.send({ type: "ml-devtools-init", tabId: 7 });
+    await bg.context.__mlStartUserRunForTest(7, { task: "read the other site", surface: "hud" });
+    for (let i = 0; i < 400 && turns <= calls.length; i++) await new Promise((r) => setTimeout(r, 0));
+    await flush(30);
+    const toPage = bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE").map(([, m]) => JSON.parse(JSON.stringify(m.payload)));
+    const fetched = bg.calls.filter((c) => c.url.startsWith("https://other.example/")).map((c) => c.url);
+    const toolResults = (seenByModel.at(-1) ?? []).filter((m) => m.role === "tool").map((m) => m.content);
+    const toolResult = toolResults[0] ?? "";
+    const steps = panel.messages.map((m) => m.__mlDebug).filter((e) => e?.kind === "agent-step" && e.tool === "fetch_url" && !e.pending);
+    return { bg, toPage, fetched, toolResult, toolResults, steps };
+}
+
+test("fetch_url of a worker-built run runs in the worker: the other site's content never enters the page", T, async () => {
+    const { toPage, fetched, toolResult, bg } = await fetchRun({ url: "https://other.example/doc" });
+    assert.deepEqual(fetched, ["https://other.example/doc"], "the approved fetch happened");
+    assert.match(toolResult, /MD\(SECRET OTHER SITE\)/, `the model read it as Markdown, converted offscreen; got ${toolResult.slice(0, 200)}`);
+    assert.equal(bg.htmlToMd.length, 1);
+    assert.equal(toPage.filter((p) => p.name === "fetch_url").length, 0, "not even its approval preview went to the page");
+    assert.ok(!JSON.stringify(toPage).includes("SECRET OTHER SITE"), "nothing the page was sent carries the content");
+});
+
+test("a fetch_url the person denies fetches nothing, in the worker or the page", T, async () => {
+    const { toPage, fetched } = await fetchRun({ url: "https://other.example/doc" }, { approve: false });
+    assert.deepEqual(fetched, []);
+    assert.equal(toPage.filter((p) => p.name === "fetch_url" && !p.renderOnly).length, 0);
+});
+
+test("fetch_url's reader runs in the worker as the run's sub-call, and its spend is reported with the step", T, async () => {
+    const { toolResult, steps } = await fetchRun({ url: "https://other.example/doc", ask: "what does it say?" });
+    assert.match(toolResult, /the reader's answer/);
+    assert.deepEqual([steps[0]?.subUsage?.prompt, steps[0]?.subUsage?.completion, steps[0]?.subUsage?.calls], [40, 5, 1], JSON.stringify(steps[0]?.subUsage));
+});
+
+test("a session render of the page the run is on is the page's own: that one fetch_url still runs there", T, async () => {
+    const { toPage, fetched, toolResult } = await fetchRun({ url: SITE.url, credentials: true, rendered: true });
+    assert.equal(toPage.filter((p) => p.name === "fetch_url" && !p.renderOnly).length, 1, "answered by the page, from its live DOM");
+    assert.match(toolResult, /FROM THE PAGE/);
+    assert.deepEqual(fetched, []);
+});
+
+test("a survey re-reading what the run's fetch_url read is answered from the worker's cache: no second fetch, nothing to the page", T, async () => {
+    const { fetched, toPage, toolResults } = await fetchRun({ url: "https://other.example/doc" },
+        { then: [{ name: "exec", args: { js: 'return (await ml.fetch("https://other.example/doc")).markdown' } }] });
+    assert.deepEqual(fetched, ["https://other.example/doc"], "fetched once, by fetch_url");
+    assert.match(toolResults[1] ?? "", /MD\(SECRET OTHER SITE\)/, `the survey read the cached copy; got ${toolResults[1]}`);
+    assert.equal(toPage.filter((p) => p.readonlyTry).length, 0, "the survey never went to the page");
+    assert.ok(!JSON.stringify(toPage).includes("SECRET OTHER SITE"));
+});
+
+// --- WORKER TOOLS: what a page can still get from a fetch_url the worker ran (red team) ---
+
+const OTHER = "https://other.example/private";
+const SECRET = "<h1>SECRET OTHER SITE</h1>";
+/** The run's tab, as the browser describes a script on it messaging the worker through the content-script relay. */
+const RUN_TAB = { tab: { id: 7, url: SITE.url }, url: SITE.url, origin: "https://site.example", frameId: 0, documentId: "doc-site" };
+
+/**
+ * A worker-built run on tab 7 whose model calls fetch_url with `args` (then `then`), every gate approved. The page on
+ * tab 7 is hostile: `atApproval(bg)` runs the instant the person's approval is sent, and `inPage(bg, msg)` whenever the
+ * run sends a tool to the page. `siteGate` applies the real origin gate, so site.example is NOT approved.
+ */
+async function attackRun(args, { then = [], siteGate = true, atApproval, inPage, evictAtFirstGate = false } = {}) {
+    let turns = 0, bg, evicted = false;
+    const calls = [{ name: "fetch_url", args }, ...then];
+    const seenByModel = [];
+    bg = loadBackground({
+        config: { ...config, autoApproveReadonly: true }, openTabs: [SITE], siteGate,
+        onFetch: (call) => {
+            if (call.url.startsWith("https://other.example/")) return { ok: true, status: 200, url: call.url, headers: { get: (h) => (/content-type/i.test(h) ? "text/html; charset=utf-8" : null) }, text: async () => SECRET, arrayBuffer: async () => new TextEncoder().encode(SECRET).buffer, body: null };
+            if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            const msgs = call.body.messages;
+            seenByModel.push(msgs);
+            const next = calls[turns++];
+            return next
+                ? jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: `c${turns}`, type: "function", function: { name: next.name, arguments: JSON.stringify(next.args) } }] } }] })
+                : jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (_t, msg) => {
+            if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
+            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) {
+                if (evictAtFirstGate && !evicted) {
+                    evicted = true;
+                    await bg.context.__mlEvictForTest();
+                    await bg.send({ type: "CONTENT_READY", payload: {} }, RUN_TAB);
+                    void bg.send({ type: "RUN_READOPTED", payload: {} }, RUN_TAB);
+                    return undefined;
+                }
+                void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+                if (atApproval) await atApproval(bg);
+            }
+            if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
+            if (inPage) { const r = await inPage(bg, msg); if (r !== undefined) return r; }
+            if (msg.payload.finish) return { result: "" };
+            if (msg.payload.name === "fetch_url" && !msg.payload.renderOnly) return { result: "FROM THE PAGE" };
+            return {};
+        },
+    });
+    await bg.context.__mlStartUserRunForTest(7, { task: "read my private page on the other site", surface: "hud" });
+    for (let i = 0; i < 400 && turns <= calls.length; i++) await new Promise((r) => setTimeout(r, 0));
+    await flush(30);
+    const toPage = bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE").map(([, m]) => JSON.parse(JSON.stringify(m.payload)));
+    const fetched = bg.calls.filter((c) => c.url.startsWith("https://other.example/")).map((c) => ({ url: c.url, credentials: c.init?.credentials }));
+    const toolResults = (seenByModel.at(-1) ?? []).filter((m) => m.role === "tool").map((m) => m.content);
+    return { bg, toPage, fetched, toolResults, evicted };
+}
+
+test("a page cannot read a URL the person approved for the run's worker-side fetch_url by sending FETCH_URL itself", T, async () => {
+    let stolen;
+    const { fetched, toolResults } = await attackRun({ url: OTHER }, {
+        // A second step that goes to the page, so the page runs code while the run is live on its tab. Not an approved
+        // exec: that opens the tab's fetches for its duration (`fetchOpen`), which is its own test below.
+        then: [{ name: "findByText", args: { text: "x" } }],
+        inPage: async (bg, msg) => {
+            if (msg.payload.name !== "findByText" || msg.payload.renderOnly || msg.payload.readonlyTry || msg.payload.precheck) return undefined;
+            stolen = await bg.send({ type: "FETCH_URL", payload: { url: OTHER } }, RUN_TAB);
+            return undefined;
+        },
+    });
+    // Positive control: the run's own fetch happened in the worker and the model read it.
+    assert.match(toolResults[0] ?? "", /SECRET OTHER SITE/, `the run's fetch_url read the site; got ${toolResults[0]}`);
+    assert.ok(stolen !== undefined, "the page's attempt was made while the run was live");
+    assert.ok(!JSON.stringify(stolen ?? {}).includes("SECRET OTHER SITE"), `the page read what the run fetched: ${JSON.stringify(stolen).slice(0, 160)}`);
+    assert.equal(fetched.length, 1, `only the run fetched; got ${JSON.stringify(fetched)}`);
+});
+
+test("a page cannot spend the one-time as-you grant the person minted for the run's worker-side fetch_url", T, async () => {
+    let stolen;
+    const { fetched, toolResults } = await attackRun({ url: OTHER, credentials: true }, {
+        // The page polls FETCH_URL as-you; here, one attempt in the same tick as the approval.
+        atApproval: async (bg) => { stolen = await bg.send({ type: "FETCH_URL", payload: { url: OTHER, credentials: true } }, RUN_TAB); },
+    });
+    assert.ok(stolen !== undefined, "the page's attempt was made");
+    assert.ok(!JSON.stringify(stolen ?? {}).includes("SECRET OTHER SITE"), `the page read the private page as the person: ${JSON.stringify(stolen).slice(0, 160)}`);
+    // Positive control: the person's approved fetch is the one that ran, in the worker, and the model got it.
+    assert.match(toolResults[0] ?? "", /SECRET OTHER SITE/, `the run's own as-you fetch was answered; got ${(toolResults[0] ?? "").slice(0, 200)}`);
+    assert.equal(fetched.length, 1);
+});
+
+test("OPEN — while an approved exec runs, the page cannot fetch a URL the exec never named", { ...T, todo: "an approved exec opens uncredentialed fetching for the whole TAB (pendingGrants fetchOpen), and the page shares the tab; part 4 isolates exec" }, async () => {
+    let stolen;
+    const { toolResults } = await attackRun({ url: OTHER }, {
+        then: [{ name: "exec", args: { js: "document.title = 'x'; return 1" } }],
+        inPage: async (bg, msg) => {
+            if (msg.payload.name !== "exec" || msg.payload.renderOnly || msg.payload.readonlyTry || msg.payload.precheck) return undefined;
+            stolen = await bg.send({ type: "FETCH_URL", payload: { url: "https://other.example/never-approved" } }, RUN_TAB);
+            return undefined;
+        },
+    });
+    assert.match(toolResults[0] ?? "", /SECRET OTHER SITE/, "positive control: the run's own fetch ran");
+    assert.ok(stolen !== undefined, "positive control: the page's request was answered");
+    assert.ok(!stolen?.data, `the page fetched a URL no one approved while the exec ran: ${JSON.stringify(stolen).slice(0, 160)}`);
+});

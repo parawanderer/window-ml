@@ -123,6 +123,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const tabsCreated = [];     // chrome.tabs.create props, for the PDF-print tab flow
     const tabsRemoved = [];     // chrome.tabs.remove ids
     const pyRuns = [];          // PY_RUN payloads relayed to the offscreen doc (for python_exec tests)
+    const htmlToMd = [];        // HTML the worker asked the offscreen document to convert to Markdown
     const debuggerCalls = [];   // chrome.debugger attach/sendCommand/detach, for CDP_CLICK tests
     const debuggerEventListeners = new Set();   // chrome.debugger.onEvent listeners (CDP streaming)
     let permsHeld = new Set(debuggerPermission ? ["debugger"] : []);
@@ -156,6 +157,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         URL,
         TextDecoder,
         TextEncoder,
+        structuredClone,   // every service worker has it; a fetch cache keeps a frozen copy made with it
         // WebCrypto, which every MV3 service worker has: the worker mints each request's id (`hint.request`) with it.
         crypto: globalThis.crypto,
         // SW-realm navigator: ml.fetch's browser-identity headers read userAgent/languages; the HUD-invocation
@@ -235,11 +237,13 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                     if (msg?.type === "PY_PREWARM") { pyRuns.push(msg); return onPyRun ? onPyRun(msg) : { ok: true, prewarm: "started" }; }
                     // The session archive's worker, behind the offscreen document: `onArchiveOp(msg)` answers for it.
                     if (msg?.type === "ARCHIVE_OP" && onArchiveOp) return onArchiveOp(msg);
+                    // HTML→Markdown for a fetch the worker made: a stand-in for the offscreen document's converter.
+                    if (msg?.type === "HTML_TO_MD") { htmlToMd.push(msg.html); return { markdown: `MD(${String(msg.html).replace(/<[^>]*>/g, "").trim()})` }; }
                     return undefined;
                 },
             },
             offscreen: {
-                Reason: { WORKERS: "WORKERS" },
+                Reason: { WORKERS: "WORKERS", DOM_PARSER: "DOM_PARSER" },
                 hasDocument: async () => offscreenDoc,
                 createDocument: async () => { offscreenDoc = true; },
             },
@@ -315,6 +319,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         tabsCreated,
         tabsRemoved,
         pyRuns,
+        htmlToMd,
         debuggerCalls,
         debuggerEventListeners,
         /** Fire a CDP event at every listener the SW registered (e.g. Runtime.bindingCalled). */

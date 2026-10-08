@@ -381,7 +381,7 @@ function oneCapture(value = '{"rows":[1,2,3]}') {
 test("WORKER ML: only reads; nothing that spends, mutates, egresses or reads the page", async () => {
     const { workerReadonlyMl } = await import("../src/sw/worker-readonly-ml.ts");
     const without = Object.keys(workerReadonlyMl("https://a.example/")).sort();
-    assert.deepEqual(without, ["capabilities", "config", "getModel", "info", "jsonPath", "models", "pipe", "ps", "range", "schema", "serverTools"]);
+    assert.deepEqual(without, ["_fetchCached", "capabilities", "config", "getModel", "info", "jsonPath", "models", "pipe", "ps", "range", "schema", "serverTools"]);
     assert.deepEqual(Object.keys(workerReadonlyMl("https://a.example/", oneCapture().deref)).sort(), [...without, "dereference"].sort(),
         "dereference exists only when the host hands over the run's store");
 });
@@ -491,6 +491,48 @@ test("FAILURE: a survey that reads ml.current.debug and then falls out of dialec
     await assert.rejects(inWorkerRealm("const n = ml.current.debug.userWatches.length; document.title", snap), (e) => e instanceof NeedsPage || outOfDialect(e));
     assert.equal(snap.debug.userWatches.length, 3);
     assert.equal(snap.debug.userWatches[0].value, 2);
+});
+
+// --- the worker's fetch cache: re-reads of what the run's fetch_url read in the worker (slice 2 part 2) ---
+
+/** A worker `ml` whose cache holds one result for `url`, as the run's fetch_url would have left it. */
+async function cachedWorkerMl(url = "https://other.example/doc", r = { url: "https://other.example/doc", ok: true, status: 200, type: "html", text: "<h1>X</h1>", markdown: "# X", json: { a: [1] } }) {
+    const { cacheCopy } = await import("../src/ml/fetch-result.ts");
+    const cache = new Map([[url, cacheCopy(r)]]);   // what the real caches hold
+    return { r, ml: { _fetchCached: (u, mode) => (mode?.credentials || mode?.rendered || mode?.format === "html" ? undefined : cache.get(String(u))) } };
+}
+
+test("WORKER FETCH: a re-read of the run's own fetch is answered in the worker, from its cache, and never egresses", async () => {
+    const { ml } = await cachedWorkerMl();
+    const a = await evalReadonlyInWorker({ js: `return (await ml.fetch("https://other.example/doc")).markdown` }, { ml });
+    assert.deepEqual([a.kind, a.result], ["answered", "# X"]);
+});
+
+test("WORKER FETCH ADVERSARIAL: a miss or another mode defers to the page; fresh is refused; nothing reaches a realm or writes back", async () => {
+    const { ml, r } = await cachedWorkerMl();
+    for (const js of [`ml.fetch("https://never.example/")`, `ml.fetch("https://other.example/doc", { credentials: true })`,
+        `ml.fetch("https://other.example/doc", { rendered: true })`, `ml.fetch("https://other.example/doc", { format: "html" })`])
+        assert.equal((await evalReadonlyInWorker({ js }, { ml })).kind, "needs-page", js);
+    assert.equal((await evalReadonlyInWorker({ js: `ml.fetch("https://other.example/doc", { fresh: true })` }, { ml })).kind, "refused", "fresh is a live fetch");
+    for (const js of [`(await ml.fetch("https://other.example/doc")).constructor`, `ml.fetch.constructor("return this")()`,
+        `(await ml.fetch("https://other.example/doc")).__proto__`, `ml._fetchCached("https://other.example/doc")`])
+        assert.notEqual((await evalReadonlyInWorker({ js }, { ml })).kind, "answered", js);
+    for (const js of [`const v = await ml.fetch("https://other.example/doc"); v.markdown = "forged"; return 1`,
+        `const v = await ml.fetch("https://other.example/doc"); v.json.a.push(2); return 1`]) {
+        const w = await evalReadonlyInWorker({ js }, { ml });
+        assert.ok(w.kind === "refused" || /^Error: .*(read.only|frozen|not extensible|Cannot assign)/i.test(w.result), `${js}: ${JSON.stringify(w)}`);
+    }
+    const again = await evalReadonlyInWorker({ js: `const v = await ml.fetch("https://other.example/doc"); return [v.markdown, v.json.a.length]` }, { ml });
+    assert.equal(again.result, '["# X",1]', "a later re-read sees what was fetched");
+    assert.equal(r.markdown, "# X", "and the fetch's own result is untouched");
+    // A page-realm facade over the same member refuses a miss as before (it is the page's cache there).
+    await assert.rejects(evalReadonly(`ml.fetch("https://never.example/")`, doc(), ml), (e) => e instanceof Denied && !(e instanceof NeedsPage));
+});
+
+test("WORKER FETCH HALTING: a survey re-reading the cache forever is stopped by the step budget", { timeout: 10_000 }, async () => {
+    const { ml } = await cachedWorkerMl();
+    const r = await evalReadonlyInWorker({ js: `let n = 0; while (true) { await ml.fetch("https://other.example/doc"); n++ } return n` }, { ml });
+    assert.ok(r.kind === "refused" || /^Error:/.test(r.result), JSON.stringify(r));
 });
 
 // --- HALTING and FAILURE ----------------------------------------------------------------------------------------------

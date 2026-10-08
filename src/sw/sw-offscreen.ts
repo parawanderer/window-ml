@@ -1,7 +1,7 @@
 // sw-offscreen.ts — the extension's ONE offscreen document, created lazily and reused. A service worker cannot run
-// WASM or start a dedicated worker, so both things that need one live there: the Python sandbox (python_exec) and the
-// session archive's SQLite. Chrome allows one offscreen document per extension, so they share it rather than each
-// creating its own.
+// WASM, start a dedicated worker or parse HTML, so what needs one of those lives there: the Python sandbox
+// (python_exec), the session archive's SQLite, and HTML→Markdown for a fetch the worker makes. Chrome allows one
+// offscreen document per extension, so they share it rather than each creating its own.
 
 let offscreenReady: Promise<void> | null = null;
 
@@ -18,8 +18,8 @@ export function ensureOffscreen(): Promise<void> {
         try {
             await chrome.offscreen.createDocument({
                 url: "offscreen.html",
-                reasons: [chrome.offscreen.Reason.WORKERS],
-                justification: "Runs the sandboxed Python (Pyodide/WASM) for python_exec, and the SQLite session archive.",
+                reasons: [chrome.offscreen.Reason.WORKERS, chrome.offscreen.Reason.DOM_PARSER],
+                justification: "Runs the sandboxed Python (Pyodide/WASM) for python_exec and the SQLite session archive, and converts fetched HTML to Markdown.",
             });
         } catch (e) {
             if (!(await chrome.offscreen.hasDocument?.())) throw e;   // tolerate a concurrent create
@@ -27,4 +27,16 @@ export function ensureOffscreen(): Promise<void> {
     })();
     offscreenReady.catch(() => { offscreenReady = null; });   // let a failed create be retried
     return offscreenReady;
+}
+
+/**
+ * A fetched HTML body as Markdown, converted in the offscreen document (the converter needs a DOM, which a worker has
+ * not). The same converter the page uses, so a fetch the worker makes reads like one the page made.
+ * @param html the raw HTML
+ * @returns the Markdown, or undefined when it could not be converted (callers fall back to the text)
+ */
+export async function htmlToMarkdownOffscreen(html: string): Promise<string | undefined> {
+    // Any failure (no offscreen document, a converter error) leaves `.markdown` unset, as on the page.
+    const r = await ensureOffscreen().then(() => chrome.runtime.sendMessage({ type: "HTML_TO_MD", html })).catch(() => null) as { markdown?: unknown } | null;
+    return typeof r?.markdown === "string" ? r.markdown : undefined;
 }

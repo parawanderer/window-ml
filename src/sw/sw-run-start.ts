@@ -17,9 +17,10 @@ import { assembleRun, rebuildFor, startPayload, userRunOptions, withPageContext,
 import { relayDebugEvent } from "./sw-debug";
 import { getConfig } from "./sw-llm";
 import { dropLocalTools, registerLocalTools } from "./sw-local-tools";
+import { buildWorkerTools } from "./worker-tools";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { delegateSend, hostRun } from "./sw-run-host";
-import { bgRuns, bufferReplay, isWorkerRun, makeWorkerRun, runControllers, runInboxes, workerRunsStarting } from "./sw-runs";
+import { bgRuns, bufferReplay, isWorkerRun, makeWorkerRun, runControllers, runInboxes, tabPageUrl, workerRunsStarting } from "./sw-runs";
 import { originOf } from "../site-access";
 import { siteDecision } from "./sw-site-access";
 import { ingestSessionEvent, keepSession } from "./sw-sessions";
@@ -74,8 +75,11 @@ export async function startUserRun(tabId: number, req: UserRunRequest, opts: { k
     const asm = await assembleRun(ml, recipe.task, recipe.options);
     const runId = shortHash();
     const rebuild = rebuildFor(asm, true, "worker");
-    // Remote tools run HERE (sw-local-tools.ts); everything else is registered in the page by the adopt below.
-    registerLocalTools(runId, asm.toolset.filter((t) => !!t.remote), { model: asm.runModel, driverSees: asm.driverSees, visionModel: asm.runVisionModel });
+    // Remote tools, and the builtins that never read the page, run HERE (sw-local-tools.ts, worker-tools.ts); everything
+    // else is registered in the page by the adopt below.
+    const names = asm.toolset.map((t) => t.name);
+    registerLocalTools(runId, [...asm.toolset.filter((t) => !!t.remote), ...buildWorkerTools(runId, tabId, () => tabPageUrl.get(tabId) || url, names)],
+        { model: asm.runModel, driverSees: asm.driverSees, visionModel: asm.runVisionModel });
     // Marked worker-built BEFORE its id reaches the page (the push below carries it): from then on a page's own
     // START_RUN, RESUME_RUN or INJECT_MESSAGE naming it is refused, so the page cannot host its own run under the hash
     // the person's UI is about to be given.

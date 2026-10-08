@@ -377,6 +377,15 @@ Recorded as each slice lands, with the reason.
   and a model has no business computing them). `VALUE_COLUMNS` answers a worker-hosted run only for a key sent with
   its in-flight call. Attack 14 is closed. The values a script names still enter the page's world while it runs; that
   is part 4's (exec isolation).
+- **Slice 2 part 2 (first tool): `fetch_url` of a worker-built run runs in the worker.** Its body is the page's own tool
+  given a worker `ml`, and its fetch passes the same consent checks a page's would, so no new trust. The page's copy of
+  another site's content, and of a credentialed read, is gone; so is that content in the page's fetch cache (item 5 of
+  ml-current's survey). Found while building it: a read-only survey could write into a cached fetch result and change
+  what later re-reads show; both caches now keep frozen copies. Found by the red-team pass on it: the approval of a
+  `fetch_url` minted its consent, and its one-time as-you grant, on the TAB, so a page on that tab could read the
+  approved URL through its own `FETCH_URL`, or spend the as-you grant first and read the private page with the
+  person's cookies. A worker-built run's approvals are now the run's. Still open, and part 4's: while an APPROVED exec
+  runs, the tab may fetch any URL uncredentialed (`pendingGrants.fetchOpen`), the page included.
 - **Owner decisions for exec on a page that is not approved (part 4):** run it isolated, through
   `chrome.userScripts.execute`, else a CDP isolated world, else refuse, with `ml.*` bound to the worker. Where the
   isolated run is known not to behave as the page's world would, the tool result carries one terse note naming the

@@ -30,8 +30,9 @@ import { grantsFor, serverToolKey, pendingGrants, pendingApprovals, grantCredFet
 import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
 import { noteRunMechanic } from "./sw-runs";
-import { ensureLocalTools, runLocalTool } from "./sw-local-tools";
+import { ensureLocalTools, runLocalTool, runsInWorker } from "./sw-local-tools";
 import { withUserWatches } from "./sw-shared-watches";
+import { grantRunFetch, runFetchConsented } from "./worker-tools";
 import { navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue } from "./sw-values";
@@ -225,14 +226,20 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
         ...(subByModel.size ? { byModel: [...subByModel.entries()].map(([model, u]) => ({ model, ...u })) } : {}),
     });
     // Every tool send that names a tool goes through here. A run the worker built (sw-run-start.ts) runs its REMOTE tools
-    // itself (sw-local-tools.ts); everything else, and every run a page built, goes to the page as before.
+    // and the builtins that never read the page itself (sw-local-tools.ts, worker-tools.ts); everything else, and every
+    // run a page built, goes to the page as before.
     const sendTool = async (payload: { runId: string; name: string; args: Record<string, unknown>; stream?: boolean; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; reads?: PreRead[] }, onStream?: (chunk: string, ts?: number) => void): Promise<unknown> => {
         // A worker-built run's REMOTE tool never goes to the page, which has no such tool. If this worker does not hold
         // it (rehydrated after an eviction, or a resumed session), it is rebuilt first.
-        if (p.builtBy === "worker" && p.tools.some((t) => t.name === payload.name && t.remote)) {
-            await ensureLocalTools(runId, p, tabPageUrl.get(tabId) || p.pageUrl || "").catch(() => { /* answered below */ });
-            return (await runLocalTool(payload, onStream))
-                ?? { result: `Error: the server tool "${payload.name}" is not available any more (the server no longer lists it).` };
+        const tabUrl = (): string => tabPageUrl.get(tabId) || p.pageUrl || "";
+        if (p.builtBy === "worker" && runsInWorker(p, payload.name)) {
+            await ensureLocalTools(runId, p, tabId, tabUrl).catch(() => { /* answered below */ });
+            const local = await runLocalTool({ ...payload, tabUrl: tabUrl() }, onStream);
+            if (local) return local;
+            // A remote tool has nowhere else to run; a builtin declined here (fetch_url's render of this very page) does.
+            if (p.tools.some((t) => t.name === payload.name && t.remote))
+                return { result: `Error: the server tool "${payload.name}" is not available any more (the server no longer lists it).` };
+            return delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload });
         }
         return (await runLocalTool(payload, onStream)) ?? delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload });
     };
@@ -744,6 +751,9 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 // ml.fetch literals) ONCE, background-side. The SAME list feeds the descriptor/step the
                 // human reviews AND the persistence below, so what's shown IS what's remembered.
                 const grants = extractGrants(tool, args);
+                // A worker tool's approval is granted to the run's state in this worker (worker-tools.ts), rebuilt here
+                // if an eviction took it, so the decision below has somewhere to put it.
+                if (p.builtBy === "worker" && runsInWorker(p, tool)) await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "").catch(() => { /* nothing granted: fails closed */ });
                 return new Promise<ApprovalDecision>((resolve) => {
                     pendingApprovals.set(key, {
                         resolve: (decision) => {
@@ -759,7 +769,13 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                             // the session (repeat fetches auto-approve — the rememberable path).
                             if (ok && tool === "fetch_url") {
                                 const u = String((args as { url?: unknown }).url ?? "");
-                                if (u) { if ((args as { credentials?: unknown }).credentials) grantCredFetch(tabId, u); else consentFetch(tabId, u); }
+                                const cred = !!(args as { credentials?: unknown }).credentials;
+                                // A worker-built run's fetch_url runs in the worker: its approval is the RUN's, so no
+                                // script on the tab can use it (worker-tools.ts `grantRunFetch`), and it is NEVER minted
+                                // on the tab, even when this worker lost the run's state (an eviction): then nothing is
+                                // granted and the call is refused, rather than lent to the page. Else the tab's.
+                                if (u && p.builtBy === "worker" && runsInWorker(p, "fetch_url")) grantRunFetch(runId, u, cred);
+                                else if (u) { if (cred) grantCredFetch(tabId, u); else consentFetch(tabId, u); }
                             }
                             // button #3: "Approve + remember" — also persist the exec's static ml.fetch
                             // literals for the session (a positive `persist` decision only).
@@ -793,7 +809,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             },
             isSheetApproved: (id) => approvedSheets.has(id),
             navNeedsConsent,   // cross-origin nav → gate; same-site / already-consented → auto (see consentedOrigins)
-            fetchNeedsConsent: (url) => !fetchConsent.get(tabId)?.has(url),   // a NEW url → gate; an already-approved one → auto
+            fetchNeedsConsent: (url) => !(runFetchConsented(runId, url) ?? fetchConsent.get(tabId)?.has(url)),   // a NEW url → gate; an already-approved one → auto
             // An UNCREDENTIALED fetch to an origin the run is at / has been consented to (relative, or in
             // consentedOrigins — seeded with the start origin) is FREE: the page can already fetch its own
             // origin, so it's no escalation. Used by the auto-approve (no prompt), like a same-origin navigate.
