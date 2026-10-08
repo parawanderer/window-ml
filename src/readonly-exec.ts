@@ -52,9 +52,12 @@ export type { PrintSwap } from "./readonly-exec/print";
  *   through `answerFacade`. Called when the survey fails, so a fall-back to approval starts from where it began.
  * @param opts.stepBudget Overrides {@link STEP_BUDGET} — for tests, which exercise the same mechanism at a size that
  *   does not cost seconds per case.
+ * @param opts.onLog Called with each console line as it is printed, the SAME string that goes into `logs` (abridged by
+ *   the print boundary), so a live view shows what the model will be given. A survey that is then refused has
+ *   streamed lines from a run that did not happen: the caller must discard them (agent-loop.ts, `LiveOutput`).
  */
 export async function evalReadonly(code: string, doc: Document | null, ml?: unknown, answerFacade?: unknown,
-    opts: { checkpoint?: () => () => void; stepBudget?: number; realm?: ReadonlyRealm; current?: CurrentSnapshot } = {}): Promise<{ value: unknown; logs: string[]; reused: string[]; prints: { console: PrintSwap[]; value: PrintSwap[] } }> {
+    opts: { checkpoint?: () => () => void; stepBudget?: number; realm?: ReadonlyRealm; current?: CurrentSnapshot; onLog?: (line: string) => void } = {}): Promise<{ value: unknown; logs: string[]; reused: string[]; prints: { console: PrintSwap[]; value: PrintSwap[] } }> {
     const realm: ReadonlyRealm = opts.realm ?? "page";
     const logs: string[] = [];
     // Printed through the evaluator's print boundary once it exists (it abridges `ml.current.messages` rows).
@@ -65,10 +68,12 @@ export async function evalReadonly(code: string, doc: Document | null, ml?: unkn
     // A statement, not an expression: it returned `logs.push`'s count, so a survey ending in `console.log(…)` had the
     // VALUE 1 (seen in the ml.current demo) where JavaScript gives `undefined`.
     const rec = (...a: unknown[]): void => {
-        logs.push(a.map((x, i) => {
+        const line = a.map((x, i) => {
             if (typeof x === "string") return x;
             return safeStr(printable(x, prints.console, a.length > 1 ? `console.log argument ${i + 1}` : "console.log"));
-        }).join(" "));
+        }).join(" ");
+        logs.push(line);
+        opts.onLog?.(line);
     };
     const reused: string[] = [];   // ml.fetch cache hits — URLs this survey re-read from a prior approval
     // The pipe charges the step budget, which lives on the evaluator built below: the meter forwards to it once it exists.

@@ -199,7 +199,10 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
             // store lives. Without either, every pointer read in a survey went to the approval gate.
             const { code } = expandPointers((args as { js: string }).js);
             const ro = await withRunDeref((ref, pipe) => derefViaBackground(runId, ref, pipe), () => evalReadonly(code, document,
-                typeof window !== "undefined" ? window.ml : null, makeAnswerFacade(set, elLine), { checkpoint: () => set.checkpoint() }));
+                typeof window !== "undefined" ? window.ml : null, makeAnswerFacade(set, elLine), { checkpoint: () => set.checkpoint(),
+                // Each line as it prints, stamped here (the executor) like an approved exec's. A refused try's lines
+                // are discarded by the loop, which owns the stream.
+                onLog: opts.onStream ? (line) => opts.onStream!(line + "\n", Date.now()) : undefined }));
             const { result, elements, render } = formatReadonlyExec(ro.value, ro.logs);
             const { in: renderIn, out: renderOut } = descriptorFor(tool, { result, elements, render }, args);
             const urls = [...new Set(ro.reused)];   // cached ml.fetch URLs this survey reused → the "reused a grant" note

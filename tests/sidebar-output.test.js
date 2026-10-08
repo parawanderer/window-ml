@@ -92,6 +92,21 @@ test("live tool output (sidebar): a stream delta fills the running step's Out; t
     assert.equal(w.shadow.querySelector(".astep-streaming"), null, "the live block clears once the result lands");
 });
 
+// A read-only try refused part way through printed lines from a run that did not happen: the loop's discard sends an
+// EMPTY output, and the row goes back to having streamed nothing while the human is asked.
+test("live tool output (sidebar): an EMPTY delta (a refused read-only try's discard) takes back what streamed", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("discard", "survey"));
+    await w.dispatch(agentStep("discard", 1, { seq: 1, pending: true, tool: "exec", arguments: { js: "survey()" } }));
+    await w.dispatch(agentStep("discard", 1, { seq: 1, streamOutput: "from the refused try\n", streamMarks: [[0, 1]] }));
+    await w.dispatch(agentStep("discard", 1, { seq: 1, streamOutput: "", streamMarks: [] }));
+    await openRun(w);
+    assert.match(w.shadow.querySelector(".astep-preview").textContent, /running/, "back to 'running…'");
+    w.shadow.querySelector(".astep-head").click(); await w.tick();
+    assert.equal(w.shadow.querySelector(".astep-streaming"), null, "no live block");
+    assert.doesNotMatch(w.shadow.querySelector(".astep.tool").textContent, /refused try/);
+});
+
 // The shared tool OUTPUT CELL: python_exec and exec BOTH render their Out into it, so it caps + scrolls +
 // offers a resize grip identically — and any future code-ish tool (a bash_exec, say) inherits that by
 // wrapping its own sections in the same component. Also pins the per-tool section labels (stdout vs console).

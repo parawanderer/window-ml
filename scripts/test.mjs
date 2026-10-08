@@ -51,7 +51,8 @@ const GENRES = {
     // (adversarial + halting + failure tests on every extension) is in AGENTS.md.
     readonly: {
         about: "the read-only exec dialect (src/readonly-exec.ts) and the free members a survey calls",
-        files: ["readonly-exec.test.mjs", "readonly-pipe.test.mjs", "readonly-jsonpath.test.mjs", "readonly-current.test.mjs"],
+        files: ["readonly-exec.test.mjs", "readonly-pipe.test.mjs", "readonly-jsonpath.test.mjs", "readonly-current.test.mjs",
+            "readonly-stream.test.mjs"],
     },
     ext: {
         about: "the extension's own worlds — background, relay, CDP, the page loop",

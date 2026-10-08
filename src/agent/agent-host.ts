@@ -15,7 +15,7 @@ import type { NeutralMessage, ToolCall } from "../contract/contract-chat";
 import type { AgentResult, ApprovalDecision } from "../contract/contract-agent";
 import type { DerefRead } from "../pointers/token-pipe";
 import { runAgentLoop, shotTurnMessage } from "./agent-loop";
-import type { ToolMeta, AgentLoopDeps, ToolRunResult } from "./agent-loop";
+import type { ToolMeta, AgentLoopDeps, ToolRunResult, LiveOutput } from "./agent-loop";
 import { autoApprovePython } from "./auto-approve";
 import { externalSheetIds } from "../dom/dom";
 import { isSelfSourceUrl } from "./self-source";
@@ -65,7 +65,7 @@ export interface RunAgentHostDeps {
     subcallTokens?: AgentLoopDeps["subcallTokens"];
     // Read-only try (exec only): page-delegated attempt via the mediated interpreter. A non-null result
     // means it ran safely (no mutation) → skip the gate. Wired only when autoApproveReadonly is on.
-    tryReadonly?(name: string, args: Record<string, unknown>): Promise<ToolRunResult | null>;
+    tryReadonly?(name: string, args: Record<string, unknown>, live?: LiveOutput): Promise<ToolRunResult | null>;
     /** Receives this run's pointer resolver at start, so the host can answer a page-side `ml.dereference`
      *  (the loop, and the store, live here; the tool runs in the page). See background's derefByRun. */
     tokenSink?(resolve: (ref: string, pipe?: string | string[]) => DerefRead): void;

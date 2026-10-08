@@ -188,12 +188,14 @@ as in AGENTS.md — they are all under `src/`.
   for the links section.
 - **`stream-demo.mjs`** — a **narrated demo, not a test** of LIVE tool-output streaming: `npm run build &&
   node --import tsx tests/e2e/stream-demo.mjs` opens a headful browser, slides the overlay open on a real
-  (background-hosted) run, and drives a deliberately SLOW `exec` (paced `console.log`) and `python_exec`
-  (paced `print`) so you can watch each Out fill in Jupyter-style. It also captures the two adjacent
+  (background-hosted) run, and drives a deliberately SLOW `exec` (paced `console.log`), a read-only `exec` survey
+  (no approval, paced by awaiting a slow `ml.ps()`) and `python_exec` (paced `print`) so you can watch each Out fill
+  in Jupyter-style. It also captures the two adjacent
   behaviours: the "captured, but NOT sent to the model" marking, and the in-cell Ctrl+F find bar.
   Screenshots land in `tests/e2e/artifacts/stream-demo/`; `HOLD=0` exits instead of holding the browser
   open. Deterministic (fake-LLM, approvals resolved via the SW `__mlApprovals` channel). The automated
-  assertions are `python-stream.spec.mjs` (the reverse channel) and `output-scroll.spec.mjs` (tail-follow).
+  assertions are `python-stream.spec.mjs` (the reverse channel), `readonly-stream.spec.mjs` (a read-only survey
+  streams as an approved `exec` does, and a refused one is discarded) and `output-scroll.spec.mjs` (tail-follow).
 - **`code-theme-demo.mjs`** — a **narrated demo, not a test** of Settings → Code blocks → Colour theme:
   `npm run build && node --import tsx tests/e2e/code-theme-demo.mjs`. An agent step's JavaScript and a bench script
   side by side, walked through the default, GitHub (a pair, in a light panel), Nord (dark-only, keeping its own

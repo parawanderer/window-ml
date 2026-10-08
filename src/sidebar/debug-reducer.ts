@@ -163,7 +163,8 @@ export function onDebug(ev: MlDebugEvent, runtime?: string): void {
         if (ev.streamOutput != null && ev.tool == null && ev.seq != null) {
             const steps0 = s.steps || [];
             const j = steps0.findIndex(x => x.seq === ev.seq);
-            if (j >= 0) { s.steps = steps0.map((x, k) => k === j ? { ...x, streamOutput: ev.streamOutput, streamMarks: ev.streamMarks } : x); s.lastTs = ev.ts; rev.value++; }
+            // An EMPTY output is the fan's discard (a refused read-only try): the row goes back to having streamed nothing.
+            if (j >= 0) { s.steps = steps0.map((x, k) => k === j ? { ...x, streamOutput: ev.streamOutput || undefined, streamMarks: ev.streamOutput ? ev.streamMarks : undefined } : x); s.lastTs = ev.ts; rev.value++; }
             return;
         }
         // `ts` is kept because a step is a point on the machine's TIMELINE as well as a row in a transcript: the

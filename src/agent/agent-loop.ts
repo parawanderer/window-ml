@@ -61,8 +61,9 @@ export interface AgentLoopDeps {
     // side-effect-free (it can't mutate) — so it BOTH decides "auto-approve" AND returns the result. A
     // non-null result skips the gate AND runTool (the interpreter already ran it). null → gate as normal.
     // Page-delegated on the background path; safe to delegate BECAUSE it can't do anything a mutation
-    // could. Reached before autoApprove/the gate for a requiresApproval tool.
-    tryReadonly?(name: string, args: Record<string, unknown>): Promise<ToolRunResult | null>;
+    // could. Reached before autoApprove/the gate for a requiresApproval tool. `live` (opt-in streaming) takes the
+    // survey's console lines as they print; on null the loop discards whatever it streamed.
+    tryReadonly?(name: string, args: Record<string, unknown>, live?: LiveOutput): Promise<ToolRunResult | null>;
     // PRE-RUN In render for the pending step (the tool's `render(input,args)` — exec's beautified JS,
     // python's code cell), so a step shows a pretty In instead of raw JSON args from the moment it starts.
     // Async because the BACKGROUND must ask the page to compute it; page-side it is a direct call. Optional —
@@ -298,9 +299,18 @@ const STREAM_EMIT_MS = 90;
 // Same budget the finished render keeps (UI_OUT_CAP), so the live view and the settled one agree — output
 // never visibly shrinks (or jumps) when the step lands. Past it, a running "[+N chars]" note counts up.
 const STREAM_OUTPUT_CAP = UI_OUT_CAP;
+/** One tool call's live-output sink, as a host sees it. `discard` takes back everything pushed so far: a read-only
+ *  try refused part way through printed lines from a run that did not happen, and the approved run, if any, streams
+ *  into the same sink from empty. */
+export interface LiveOutput {
+    push(text: string, ts?: number): void;
+    discard(): void;
+}
+
 /** Build the per-tool-call streaming fan (or null when streaming is off). `push` accumulates + throttled-emits
- *  the running output; `done` stops any pending trailing emit (the DONE supersedes it). */
-function makeStreamFan(on: boolean | undefined, emit: (out: string, marks: [number, number][]) => void): { push: (text: string, ts?: number) => void; done: () => void } | null {
+ *  the running output; `done` stops any pending trailing emit (the DONE supersedes it); `discard` empties it and,
+ *  if anything had been shown, emits the empty output, which the reducer reads as "nothing streamed". */
+function makeStreamFan(on: boolean | undefined, emit: (out: string, marks: [number, number][]) => void): (LiveOutput & { done: () => void }) | null {
     if (!on) return null;
     let acc = "", dropped = 0, last = 0, timer: ReturnType<typeof setTimeout> | null = null;
     const marks: [number, number][] = [];   // [offset in acc, when the producer emitted it]
@@ -320,6 +330,12 @@ function makeStreamFan(on: boolean | undefined, emit: (out: string, marks: [numb
             else if (!timer) timer = setTimeout(() => { timer = null; send(); }, STREAM_EMIT_MS);                    // trailing, coalesced
         },
         done(): void { if (timer) { clearTimeout(timer); timer = null; } },   // the DONE result supersedes the live view
+        discard(): void {
+            if (timer) { clearTimeout(timer); timer = null; }
+            const shown = last > 0;
+            acc = ""; dropped = 0; last = 0; marks.length = 0;
+            if (shown) emit("", []);
+        },
     };
 }
 
@@ -757,7 +773,9 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             } else if (meta.requiresApproval) {
                 // Read-only try FIRST: the mediated interpreter can't mutate, so if the call is in its
                 // dialect it's already run safely — auto-approve with its result, no gate, no runTool.
-                const ro = deps.tryReadonly ? await deps.tryReadonly(call.name, args) : null;
+                const ro = deps.tryReadonly ? await deps.tryReadonly(call.name, args, fan ?? undefined) : null;
+                // A refused try leaves nothing behind, and lines it streamed are something (docs/dev/readonly-exec.md).
+                if (!ro) fan?.discard();
                 const autoRaw = ro ? null : (deps.autoApprove?.(call.name, args) || null);
                 // autoApprove may return the bare provenance OR { approval, reused } (grants it reused).
                 const auto = autoRaw ? (typeof autoRaw === "string" ? { approval: autoRaw, reused: undefined } : autoRaw) : null;
