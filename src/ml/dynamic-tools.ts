@@ -15,7 +15,7 @@
 // humans to read would drift from the one that checks the arguments, and the drift would be invisible.
 import type { MlApi, JsonSchema } from "../contract";
 import type { ServerTool, ServerToolFunction, ServerToolResult } from "../contract/contract-server";
-import { validateArgs } from "../validate";
+import { validateArgs } from "../tools/validate";
 
 /** One function of a bundle, callable, with its own contract hanging off it. */
 export interface DynamicTool {

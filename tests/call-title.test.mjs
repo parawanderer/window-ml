@@ -7,8 +7,8 @@
 "use strict";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CALL_TITLE, callTitleParam, withCallTitle, takeCallTitle } from "../src/tool-params.ts";
-import { validateArgs } from "../src/validate.ts";
+import { CALL_TITLE, callTitleParam, withCallTitle, takeCallTitle } from "../src/tools/tool-params.ts";
+import { validateArgs } from "../src/tools/validate.ts";
 
 const schema = (props) => ({ type: "object", properties: props, required: [] });
 

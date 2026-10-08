@@ -13,7 +13,7 @@
 // CORS taints the canvas, so pixel readback fails even for something already rendered on screen.
 
 import { makeBackgroundTaskPromise, hideSidebarForShot } from "../bridge";
-import { VIEWS_PARAM, targetRender, lookViews, BOX_OVER_TEXT_TIP, legendFor } from "../builtin-tools";
+import { VIEWS_PARAM, targetRender, lookViews, BOX_OVER_TEXT_TIP, legendFor } from "../tools/builtin-tools";
 import type { MlApi } from "../contract";
 import type { MlPublicConfig } from "../contract/contract-config";
 import type { MlTool, ToolResult } from "../contract/contract-agent";

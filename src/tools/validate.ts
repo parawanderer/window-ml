@@ -3,8 +3,8 @@
  * view) and the `extend` profile guard. Extracted from injected.ts; no closure state.
  */
 
-import type { JsonSchema } from "./contract";
-import type { ExtendProfile } from "./contract/contract-chat";
+import type { JsonSchema } from "../contract";
+import type { ExtendProfile } from "../contract/contract-chat";
 
 /**
  * Minimal JSON-Schema check of a tool call's args vs the tool's `parameters`

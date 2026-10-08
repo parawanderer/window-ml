@@ -11,7 +11,7 @@
 import { resolveOutputs } from "../pointers/answer-set";
 import { renderArgs } from "../agent/approval";
 import { makeBackgroundTaskPromise } from "../bridge";
-import { setCdpEnabled } from "../builtin-tools";
+import { setCdpEnabled } from "../tools/builtin-tools";
 import { handleRegistry, agentRegistry, enterAgentRun, emitDebug, exitAgentRun } from "../bus";
 import type { MlApi, AgentOptions, MlAgentHandle, ApprovalRequest, RebuildConfig, MlTool, VisionMemory, AgentResult } from "../contract";
 import { setPierceClosedShadow } from "../dom/dom";

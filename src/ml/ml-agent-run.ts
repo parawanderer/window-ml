@@ -22,23 +22,23 @@ import { defaultApprove, logStep, normalizeApproval, formatReadonlyExec, readonl
 import { autoApprovePython } from "../agent/auto-approve";
 import { makeBackgroundTaskPromise } from "../bridge";
 import { BUILD_INFO } from "../build-info.gen";
-import { setCdpEnabled } from "../builtin-tools";
+import { setCdpEnabled } from "../tools/builtin-tools";
 import { agentRegistry, resetSubcallUsage, handleRegistry, emitDebug, enterAgentRun, exitAgentRun, subcallUsage } from "../bus";
 import { type MlApi, type MlTool, type ApprovalRequest, type ApprovalDecision, type AgentResult, shortHash, type MlAgentHandle, type NeutralMessage, type RenderDescriptor, type ToolFeedback, type TokenUsage, hintSession, type DerefRead, type ToolRenderInput, outputCapEscalated } from "../contract";
 import { setPierceClosedShadow, externalSheetIds, isCurrentPage, elLine, errText } from "../dom/dom";
 import { type AgentControl, sameOriginNav, sameOriginFetch } from "./ml-agent";
 import { TokenStore } from "../pointers/token-pipe";
-import { columnsViaBackground } from "../deref-read";
+import { columnsViaBackground } from "../tools/deref-read";
 import { expandPointers } from "../pointers/pointer-macro";
 import { evalReadonly } from "../readonly-exec";
-import { descriptorFor } from "../render-descriptor";
+import { descriptorFor } from "../tools/render-descriptor";
 import { parseInfo } from "../resource/resource-capacity";
 import { registerRun, endRun, runAnswer } from "../agent/run-delegation";
 import { isSelfSourceUrl } from "../agent/self-source";
-import { toolContext, executeTool, withRunDeref } from "../tool-exec";
+import { toolContext, executeTool, withRunDeref } from "../tools/tool-exec";
 import { pageContext } from "../util";
 import { assembleRun, withPageContext, startPayload, type AssemblyMl } from "../agent/run-assembly";
-import { validateArgs } from "../validate";
+import { validateArgs } from "../tools/validate";
 
 /**
  * Run a full agent loop over a tool registry: the model calls tools, we

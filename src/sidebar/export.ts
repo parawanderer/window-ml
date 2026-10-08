@@ -11,7 +11,7 @@
 // deflated). Extracted from app.tsx.
 import atomOneLight from "highlight.js/styles/atom-one-light.css";
 import { ladderLines } from "./fetch-ladder";
-import { CALL_TITLE } from "../tool-params";
+import { CALL_TITLE } from "../tools/tool-params";
 import katexCss from "katex/dist/katex.min.css";
 import { sessionMap, turnsRun, config } from "./store";
 import { serializeSessionJson } from "./export-json";

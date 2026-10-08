@@ -3,13 +3,13 @@
 // today, and design A's RUN_TOOL_IN_PAGE handler (the background delegating page-context execution to
 // the page) will call the SAME function — so the two paths can't drift. Page-side (a tool's run()
 // touches the DOM and may return real Nodes); the delegation layer reduces `elements` to a count.
-import type { MlTool, ToolResult, ToolContext, DocsMemory } from "./contract/contract-agent";
-import type { RenderDescriptor, ToolFeedback } from "./contract/contract-render";
-import type { DerefRead } from "./pointers/token-pipe";
-import { AnswerSet } from "./pointers/answer-set";
+import type { MlTool, ToolResult, ToolContext, DocsMemory } from "../contract/contract-agent";
+import type { RenderDescriptor, ToolFeedback } from "../contract/contract-render";
+import type { DerefRead } from "../pointers/token-pipe";
+import { AnswerSet } from "../pointers/answer-set";
 import { validateArgs } from "./validate";
 import { takeCallTitle } from "./tool-params";
-import { errText } from "./dom/dom";
+import { errText } from "../dom/dom";
 
 // `agent_api_docs`'s within-burst dedup memory is per RUN, but `toolContext` is rebuilt on every
 // background-delegated call (run-delegation.ts) — so it can't be created here per call. Keyed off the run's
@@ -107,7 +107,7 @@ export interface ToolEnvelope {
     result: string;
     elements?: Node[];
     /** answer's serialized element visuals → the HUD completion card (never the model / debug sidebar) */
-    answerMedia?: import("./contract").AnswerMedia[];
+    answerMedia?: import("../contract").AnswerMedia[];
     image?: string;
     imageLabel?: string;
     /** multiple inline-vision images from one call (look's overlay + no-overlay) → pushed as separate turns */
@@ -125,7 +125,7 @@ export interface ToolEnvelope {
     /** what the tool fed into the model's context (locate's snap-inject) → surfaced in the debug render + export */
     feedback?: ToolFeedback;
     /** A remote executor's own timing — see ToolResult.remoteMs. Rides to the timeline, not to the model. */
-    remoteMs?: import("./contract").RemoteTiming;
+    remoteMs?: import("../contract").RemoteTiming;
     /** the built-in `answer` tool already added these to the run's answer set — the loop must not re-add them */
     answerManaged?: boolean;
 }

@@ -29,7 +29,7 @@ import {
 } from "./ui-kit";
 import { FeedbackBlock, ReusedBlock } from "./answer-render";
 import { foldStreaks, StepStreak } from "./step-streak";
-import { CALL_TITLE } from "../tool-params";
+import { CALL_TITLE } from "../tools/tool-params";
 import { justArrived } from "./just-arrived";
 import { deepestUserLine } from "../python/py-format";
 import { JsonNode, type JsonSchemaNode } from "./json-tree";

@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { boxIntersectsText } from "../src/dom/dom.ts";
-import { lookViews } from "../src/builtin-tools.ts";
+import { lookViews } from "../src/tools/builtin-tools.ts";
 
 // A minimal fake document: elementFromPoint + caret* + createRange, enough to drive the hit-test.
 function fakeDoc({ textRect, tag = "SPAN", caretText = "hello", el = null }) {

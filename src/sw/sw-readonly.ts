@@ -20,7 +20,7 @@
 import { evalReadonly, NeedsPage, NotInDialect, Denied } from "../readonly-exec";
 import { expandPointers, execCodeIn } from "../pointers/pointer-macro";
 import { formatReadonlyExec } from "../agent/approval";
-import { descriptorFor } from "../render-descriptor";
+import { descriptorFor } from "../tools/render-descriptor";
 import { outputCapEscalated } from "../contract/contract-pointers";
 import { errText } from "../dom/dom";
 import type { CurrentSnapshot } from "../agent/current-context";

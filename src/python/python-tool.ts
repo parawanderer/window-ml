@@ -10,7 +10,7 @@ import { googleSheetCsvUrl, nonEmptyTables, clipOut, clipValue } from "../dom/do
 import type { Box } from "../dom/locate";
 import { pyValueParts } from "./py-render";
 import { PY_PACKAGE_LABELS } from "./python-env";
-import { outputCapParams, retryParams } from "../tool-params";
+import { outputCapParams, retryParams } from "../tools/tool-params";
 import { POINT_RE, BOX_RE, projectShotPoint, mintPoint, projectShotBox, mintBox } from "../util";
 
 // --- python_exec: a sandboxed Python (Pyodide/WASM) tool for pixel/array work ---

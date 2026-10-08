@@ -60,7 +60,7 @@ test("every place that STATES a cap reads it from OUTPUT_CAP, so changing the ta
     // The cap was written down four times: this table, a literal 500 in the read-only formatter (the path most surveys
     // take), "~500" in the exec description, and `outputCapParams(500, 8000, …)`. Changing the table alone would
     // have moved approved runs and left read-only surveys, and the model's instructions, on the old number.
-    const { outputCapParams } = await import("../src/tool-params.ts");
+    const { outputCapParams } = await import("../src/tools/tool-params.ts");
     for (const tool of ["exec", "python_exec"]) {
         const { default: d, ceiling: c } = OUTPUT_CAP[tool];
         const p = outputCapParams(tool, "x");

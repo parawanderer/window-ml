@@ -15,7 +15,7 @@ import { defineTool, lookTool, locateTool, navigateTool, fetchTool, clickTool, t
 import { _resolveVisionModel, _modelSees, _nativeLookTool, ocrRequest } from "../ml/ml-vision";
 import { getConfig, modelCapabilities, listAvailableModels, listServerTools, fetchLLM } from "./sw-llm";
 import { executeServerTool, serverToolResult } from "./sw-tools";
-import { makeDomTools } from "../tools";
+import { makeDomTools } from "../tools/tools";
 
 /**
  * Build the worker's `ml` for assembling one run on a tab.

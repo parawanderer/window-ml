@@ -13,7 +13,7 @@
 // They take an explicit `this: MlApi` and are still invoked as `ml.fetchTool()`, so `this` is the live object and
 // a tool built here can reach the rest of the API. The annotation is how TypeScript is told that; it is not a bind.
 
-import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from "../builtin-tools";
+import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from "../tools/builtin-tools";
 import { subcallUsage } from "../bus";
 import type { MlApi, JsonSchema } from "../contract";
 import type { MlTool, ToolResult } from "../contract/contract-agent";
@@ -24,8 +24,8 @@ import { buildPythonTool } from "../python/python-tool";
 import { tableShape, asTable, tableFromDelimited, tablePreview, RENDER_TABLE_ROWS } from "../table/table-data";
 import { PIPE_REF, runPipe, pipeHint } from "../pointers/text-pipe";
 import { toolNameError } from "../pointers/token-id";
-import { CALL_TITLE, type NoReservedParams } from "../tool-params";
-import { currentHasTool } from "../tool-exec";
+import { CALL_TITLE, type NoReservedParams } from "../tools/tool-params";
+import { currentHasTool } from "../tools/tool-exec";
 
 /**
  * Build one agent tool: a JSON-schema function signature the model sees,

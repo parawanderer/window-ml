@@ -4,9 +4,9 @@
 // `ml`/bus state), so the whole set lifts out cleanly. `makeDomTools` takes the
 // (detached, `this`-free) `defineTool` and returns the array.
 
-import type { MlPublicConfig } from "./contract/contract-config";
-import type { MlTool, ToolResult, ToolContext } from "./contract/contract-agent";
-import type { AnswerMedia } from "./contract/contract-render";
+import type { MlPublicConfig } from "../contract/contract-config";
+import type { MlTool, ToolResult, ToolContext } from "../contract/contract-agent";
+import type { AnswerMedia } from "../contract/contract-render";
 import type { VerifyArea } from "./builtin-tools";
 /** Serialize a screenshot-crop of each designated `answer` element for the HUD completion card. ml-backed
  *  (built in injected.ts), so the pure domTools stay pure — the answer tool just calls it when present. */
@@ -16,32 +16,32 @@ export type CaptureAnswer = (els: Element[], note?: string, show?: "inline" | "h
 // the debugger is off / nothing resolved. ml-backed (round-trips to the background), injected so the pure
 // domTools stay ml-free. Used by describeElement to reveal content a page selector can't enter.
 export type ShadowResolve = (selector: string) => Promise<{ line: string }[] | null>;
-import { truncate, clipOut, clipValue, errText, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError, isCspEvalBlocked, firstHopSealed, isSealedHost } from "./dom/dom";
-import { expandPointers, execCodeIn } from "./pointers/pointer-macro";   // `@tool:` fantasy syntax → a real dereference call
+import { truncate, clipOut, clipValue, errText, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError, isCspEvalBlocked, firstHopSealed, isSealedHost } from "../dom/dom";
+import { expandPointers, execCodeIn } from "../pointers/pointer-macro";   // `@tool:` fantasy syntax → a real dereference call
 import { execErrorLine } from "./exec-trace";       // a stack frame → the model's own line number
-import { runPipe, pipeHint, PIPE_SYNTAX, PIPE_REF } from "./pointers/text-pipe";
+import { runPipe, pipeHint, PIPE_SYNTAX, PIPE_REF } from "../pointers/text-pipe";
 import { outputCapParams, retryParams } from "./tool-params";
-import { DEREF_TOOL, type DerefRead } from "./pointers/token-pipe";
+import { DEREF_TOOL, type DerefRead } from "../pointers/token-pipe";
 import { DerefText } from "./deref-read";
-import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "./dom/a11y";
-import { pageContext, browserInfo, agentState } from "./util";
-import { makeBackgroundTaskPromise } from "./bridge";
-import type { InvocationInfo } from "./contract/contract-server";
-import { ML_READONLY_METHODS } from "./readonly-exec";
+import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "../dom/a11y";
+import { pageContext, browserInfo, agentState } from "../util";
+import { makeBackgroundTaskPromise } from "../bridge";
+import type { InvocationInfo } from "../contract/contract-server";
+import { ML_READONLY_METHODS } from "../readonly-exec";
 // Generated from contract.ts at build time (scripts/gen-api-docs.mjs) — the public MlApi
 // surface, so the doc the model reads can never drift from the interface it describes.
-import { resolveOutputCap, outputCapPrecheck, OUTPUT_CAP } from "./contract/contract-pointers";
-import { UI_OUT_CAP } from "./contract/contract-chat";
-import { ML_API_PARTS } from "./api-docs.gen";
+import { resolveOutputCap, outputCapPrecheck, OUTPUT_CAP } from "../contract/contract-pointers";
+import { UI_OUT_CAP } from "../contract/contract-chat";
+import { ML_API_PARTS } from "../api-docs.gen";
 import { queryApiDocs, isDefaultQuery, type ApiDocsQuery } from "./api-docs-query";
-import { answerItemFromString, type AnswerSet } from "./pointers/answer-set";
+import { answerItemFromString, type AnswerSet } from "../pointers/answer-set";
 
 /** A compact, model-facing echo of the current answer set (indexed, clamped previews — never the
  *  heavy media/nodes). Shown after every `answer` op so the model can see what it's curating. */
 const answerEcho = (set: AnswerSet): string =>
     set.length ? set.dump().map(d => `  [${d.i}] ${d.kind}: ${d.preview}`).join("\n") : "  (empty)";
-import { BUILD_INFO } from "./build-info.gen";
-import { BUILD_DIFF } from "./build-diff.gen";
+import { BUILD_INFO } from "../build-info.gen";
+import { BUILD_DIFF } from "../build-diff.gen";
 
 /**
  * Wrap a pre-resolved pointer read as the SAME value the asynchronous `ml.dereference` returns.
@@ -575,7 +575,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
             // A raise of maxChars beyond the default with no justification is DOOMED (it will just ask for one) —
             // skip the gate and steer the model to supply `maxCharsReason` (then the human sees it on the card).
             precheck: (args) => outputCapPrecheck("exec", args as Record<string, unknown>),
-            run: async ({ js: source, maxChars, maxCharsReason }: { js: string; maxChars?: number; maxCharsReason?: string }, ctx?: import("./contract").ToolContext): Promise<string | ToolResult> => {
+            run: async ({ js: source, maxChars, maxCharsReason }: { js: string; maxChars?: number; maxCharsReason?: string }, ctx?: import("../contract").ToolContext): Promise<string | ToolResult> => {
                 // Timed so the step can say where its time went. An exec call is not all "running the code":
                 // resolving the pointers it mentions happens first, and on a background-hosted run that is a
                 // message round trip PER HANDLE. Unmeasured, it was invisible — the event lane draws a phase
@@ -737,7 +737,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 // The UI's RENDERED Out — parity with python_exec's cell (console / value / error sections +
                 // a rendered⇄raw toggle) instead of one raw blob. Carries exactly the same data the raw
                 // `content` string does, so the model-facing result is byte-identical (the raw-view rule).
-                const execRender = (value?: string, error?: string, errorLine?: number | null, valueSeen?: number): import("./contract").RenderDescriptor => {
+                const execRender = (value?: string, error?: string, errorLine?: number | null, valueSeen?: number): import("../contract").RenderDescriptor => {
                     const joined = logs.join("\n");
                     return {
                         type: "exec-out",

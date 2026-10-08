@@ -154,7 +154,7 @@ render-panel.tsx, handed from the In block ACROSS to the Out by the step, since 
 descriptors that cannot see each other and three copies of that arithmetic would be three chances to
 disagree about which line a failure was on.
 
-**JS reports its line too (`src/exec-trace.ts`).** `exec` returned `e.message` and dropped the stack, so a JS
+**JS reports its line too (`src/tools/exec-trace.ts`).** `exec` returned `e.message` and dropped the stack, so a JS
 failure said WHAT and never WHERE — half the answer, for the reader and for the model about to retry it.
 There is no traceback worth rendering (an evaluated script's stack is almost entirely the wrapper), so it
 reports ONE line, which then travels the identical route a python frame does: through the derived map, into

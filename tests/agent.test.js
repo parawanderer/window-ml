@@ -437,7 +437,7 @@ test("same-origin iframe: the DOM tools cross it via `>>>` (findByText / describ
 });
 
 test("render descriptor: an iframe element renders its `>>>` selector, not the bare TAG (cross-realm instanceof)", () => {
-    const { descriptorFor } = require("../src/render-descriptor.ts");
+    const { descriptorFor } = require("../src/tools/render-descriptor.ts");
     const { document, window } = loadDomWorld('<iframe id="f"></iframe>');
     const frame = document.getElementById("f");
     if (!frame.contentDocument) { console.log("(skipped: jsdom has no iframe contentDocument)"); return; }
@@ -3929,7 +3929,7 @@ test("exec: a COMPUTED handle still works — it just stays asynchronous", async
 test("server tools: `token` is a SIBLING of the server's own properties, never a wrapper", async () => {
     // A wrapper (`{args: {...}, token}`) would nest every remote tool's arguments to add one optional field
     // — the same opaque-object problem that made this one tool per FUNCTION rather than one dispatcher.
-    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const { buildServerTools } = await import("../src/tools/builtin-tools.ts");
     const [tool] = buildServerTools({}, [{
         id: "srv1", name: "Search", description: "", kind: "local",
         functions: [{ name: "search_web", description: "", parameters: { type: "object", properties: { q: { type: "string" } }, required: ["q"] } }],
@@ -3942,7 +3942,7 @@ test("server tools: `token` is a SIBLING of the server's own properties, never a
 
 test("server tools: a function that ALREADY has `token` keeps its own", async () => {
     // Shadowing a real parameter to add a convenience is worse than the model reaching for the name alias.
-    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const { buildServerTools } = await import("../src/tools/builtin-tools.ts");
     const [tool] = buildServerTools({}, [{
         id: "srv1", name: "S", description: "", kind: "local",
         functions: [{ name: "f", description: "", parameters: { type: "object", properties: { token: { type: "number", description: "theirs" } } } }],
@@ -3953,7 +3953,7 @@ test("server tools: a function that ALREADY has `token` keeps its own", async ()
 test("server tools: `token` is stripped before the call leaves the machine", async () => {
     // It is ours, added to their schema. The server never declared it and must not receive it.
     let sent = null;
-    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const { buildServerTools } = await import("../src/tools/builtin-tools.ts");
     const ml = { execServerTool: async (id, name, args) => { sent = args; return { ok: true, result: { result: "x", durationMs: 1 }, output: "", marks: [], events: [] }; } };
     const [tool] = buildServerTools(ml, [{
         id: "srv1", name: "S", description: "", kind: "local",
@@ -3968,7 +3968,7 @@ test("server tools: `token` is stripped before the call leaves the machine", asy
 // remote tool borrowing the field for emphasis made a web-search call warn about a debugger click into an
 // iframe that was never involved.
 test("server tools: the approval says the ARGUMENTS leave, not that a frame is being clicked", async () => {
-    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const { buildServerTools } = await import("../src/tools/builtin-tools.ts");
     const [tool] = buildServerTools({}, [{
         id: "srv1", name: "SearXNG", description: "", kind: "local",
         functions: [{ name: "search_web", description: "", parameters: { type: "object", properties: { q: { type: "string" } } } }],
@@ -3985,7 +3985,7 @@ test("server tools: the approval says the ARGUMENTS leave, not that a frame is b
 // Curation is what makes a forty-tool backend usable: a tool the model can SEE is a tool it will try, so a
 // disabled function must not be built at all rather than built and hidden.
 test("server tools: a curated-out function is never built, while its siblings still are", async () => {
-    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const { buildServerTools } = await import("../src/tools/builtin-tools.ts");
     const bundle = {
         id: "srv1", name: "Search", description: "", kind: "local",
         functions: [

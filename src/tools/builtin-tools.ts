@@ -4,20 +4,20 @@
 // window.ml keeps thin delegating method wrappers. Not in the default read-only
 // domTools; opt in via extraTools, gated by the approval flow.
 
-import type { MlApi, JsonSchema } from "./contract";
-import type { MlTool, ToolResult, ToolContext } from "./contract/contract-agent";
-import type { LocateSubstep, RenderDescriptor, VisionMemory } from "./contract/contract-render";
-import type { ServerTool } from "./contract/contract-server";
-import { DEFAULT_GROUNDING_RANGE } from "./contract/contract-render";
-import { truncate, errText, elLine, queryAll, selectorError, capturedClosedRoot, isElement, viewportRect, boxIntersectsText, firstHopSealed, clickSelector } from "./dom/dom";
-import { accessibleName } from "./dom/a11y";
-import { regionLegend, formatLegend, type Box as LegendBox } from "./dom/legend";
+import type { MlApi, JsonSchema } from "../contract";
+import type { MlTool, ToolResult, ToolContext } from "../contract/contract-agent";
+import type { LocateSubstep, RenderDescriptor, VisionMemory } from "../contract/contract-render";
+import type { ServerTool } from "../contract/contract-server";
+import { DEFAULT_GROUNDING_RANGE } from "../contract/contract-render";
+import { truncate, errText, elLine, queryAll, selectorError, capturedClosedRoot, isElement, viewportRect, boxIntersectsText, firstHopSealed, clickSelector } from "../dom/dom";
+import { accessibleName } from "../dom/a11y";
+import { regionLegend, formatLegend, type Box as LegendBox } from "../dom/legend";
 import { citeParam } from "./tool-params";
 
 // python_exec output (stdout / value / error) fed to the model is capped per slot — default bigger than
 // exec's 500 (data output legitimately runs longer), the model can raise it per-call (gated). See run().
-import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, PT_LOOK_RADIUS, mintPoint, resolvePoint, nearbyPoint, markSeen, seenNearby, BOX_RE, mintBox, resolveBox } from "./util";
-import { collectCandidates, buildMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, collectInBox, elementAtPoint, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, withHiddenSidebar, regionBox, REGION_NAMES, adjacentCells, type RegionName, type MarkFilter, type Box, type Mark } from "./dom/locate";
+import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, PT_LOOK_RADIUS, mintPoint, resolvePoint, nearbyPoint, markSeen, seenNearby, BOX_RE, mintBox, resolveBox } from "../util";
+import { collectCandidates, buildMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, collectInBox, elementAtPoint, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, withHiddenSidebar, regionBox, REGION_NAMES, adjacentCells, type RegionName, type MarkFilter, type Box, type Mark } from "../dom/locate";
 
 // CDP-trusted-input flag, set per run from config (like setPierceClosedShadow, threaded in injected.ts). When
 // ON, click/type route canvas / @pt / @focus / sealed targets through the debugger for REAL (isTrusted) events

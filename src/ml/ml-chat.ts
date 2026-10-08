@@ -12,8 +12,8 @@
 import { makeStreamingTaskPromise, makeChatRequest, makeBackgroundTaskPromise } from "../bridge";
 import { debugId, emitDebug, sessionRegistry } from "../bus";
 import { type MlApi, type ChatOptions, type MlHistory, shortHash, type RequestUse, type ExtendProfile, type JsonSchema, type NeutralMessage, type RequestHint, hintSession, type FetchLlmPayload, type SessionRef, type DebugSessionConfig, type StoredSession, type ToolCall, type TokenUsage } from "../contract";
-import { currentRunSession } from "../tool-exec";
-import { validateExtend } from "../validate";
+import { currentRunSession } from "../tools/tool-exec";
+import { validateExtend } from "../tools/validate";
 
 /** Histories `ml.chat` made for a single call. They have no conversation behind them, so their requests carry no
  *  hint session — a new session per call is the "per message" case, from which the server learns nothing. */

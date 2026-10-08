@@ -178,7 +178,7 @@ test("the console namespace does NOT gain the agent's `token` argument", async (
     assert.deepEqual(Object.keys(fn.schema.properties).sort(), ["limit", "q"], "the server's schema, verbatim");
     assert.ok(!("token" in fn.schema.properties));
 
-    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const { buildServerTools } = await import("../src/tools/builtin-tools.ts");
     const [agentTool] = buildServerTools(ml, [SEARCH], ["searxng_web_search"]);
     assert.ok("token" in agentTool.parameters.properties, "…while the AGENT's does have it");
 });

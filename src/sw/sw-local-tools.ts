@@ -7,10 +7,10 @@
 // `executeTool` and envelope the page's delegation uses (run-delegation.ts).
 
 import type { MlApi, MlTool, PageToolEnvelope, StartRunPayload } from "../contract";
-import { buildServerTools } from "../builtin-tools";
-import { descriptorFor } from "../render-descriptor";
+import { buildServerTools } from "../tools/builtin-tools";
+import { descriptorFor } from "../tools/render-descriptor";
 import { envelopeFrom } from "../agent/run-delegation";
-import { executeTool, toolContext } from "../tool-exec";
+import { executeTool, toolContext } from "../tools/tool-exec";
 import { listServerTools } from "./sw-llm";
 import { workerMl } from "./worker-ml";
 

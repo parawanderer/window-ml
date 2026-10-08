@@ -7,7 +7,7 @@
 // tool is broken rather than that the number was.
 import { test } from "node:test";
 import assert from "node:assert";
-import { rawEvalLine, evalLineOffset, execErrorLine } from "../src/exec-trace.ts";
+import { rawEvalLine, evalLineOffset, execErrorLine } from "../src/tools/exec-trace.ts";
 
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
 // The two wrappers exactly as tools.ts builds them.
