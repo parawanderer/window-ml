@@ -74,11 +74,16 @@ export interface MessageMeta {
 
 /** Which run this is. */
 export interface CurrentRun {
-    /** The run's session hash. */
+    /** The run's session hash: the same in every turn of the conversation. */
     id: string;
     model: string | null;
+    /** Model calls so far in THIS TURN. It restarts when a new message starts a turn, so it is not a session-wide count:
+     *  a real model read 2, then 1 after the next message, and took the watch it was reading for a stale snapshot. */
     step: number;
+    /** THIS TURN's step budget. */
     maxSteps: number;
+    /** When THIS TURN started, epoch ms. A message whose `meta[i].ts` is earlier (or null, carried in) is from an
+     *  earlier turn: this is where the boundary between turns is visible from inside one read. */
     startedTs: number;
 }
 

@@ -657,6 +657,10 @@ test("UPGRADE: a stored config from before the flag reads as ON: the prompt show
     const { system, toPage, results, log } = await surveyRun(["ml.current.run.step"]);
     assert.ok(system.includes(`\`ml.current\` in a read-only \`exec\` is \`${CURRENT_SIGNATURE}\``), "the generated signature, verbatim");
     assert.match(system, /agent_api_docs` has every type/);
+    // What two real models got wrong from the shape alone (converse sessions, 2026-10-08): a per-turn step read as
+    // session-wide, and a shared watch read as a snapshot from when it was shared.
+    assert.match(system, /`run\.step`, `maxSteps` and `startedTs` are THIS turn's/);
+    assert.match(system, /a shared watch is re-evaluated on every read, so its value is now/);
     assert.deepEqual(toPage, [], "answered in the worker");
     assert.equal(results[0], "1", JSON.stringify({ results, log }));
 });
