@@ -11,7 +11,7 @@
 
 import { signal } from "@preact/signals";
 import { Fragment, type ComponentChildren } from "preact";
-import { FoldBadges, type Fold, type FoldItem } from "../fold-badges";
+import { FoldBadges, type Fold, type FoldItem } from "./fold-badges";
 import type { RunStats } from "../../contract";
 import { fmtCtx } from "../../contract/contract-config";
 import type { LoadedModel } from "../../contract/contract-server";

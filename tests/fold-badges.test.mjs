@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { foldPlan } = await import("../src/sidebar/fold-badges.tsx");
+const { foldPlan } = await import("../src/sidebar/resource/fold-badges.tsx");
 
 // The row from the report: kind, quant, ctx, fill, expected rate, RAM cache, phase, deadline.
 const ROW = [
