@@ -6,7 +6,7 @@
 import katexCss from "katex/dist/katex.min.css";
 import { signal } from "@preact/signals";
 import { config, fontScale, codeWrap, codeLineNumbers, focusMode, BASE_FS, codeTheme, codeThemeCustom, codeThemeUi } from "./store";
-import { activeCodeTheme, convertStored } from "./code-theme-css";
+import { activeCodeTheme, convertStored } from "./code/code-theme-css";
 import { PANEL_TOKENS, VSCODE_THEME_ID, type ConvertedTheme } from "../code-themes";
 
 /** The uploaded VS Code theme when it is colouring the whole panel — chosen, loaded, converting, and the panel

@@ -275,7 +275,7 @@ earlier call, in any of its three forms) and **`changed`** (a one-line account o
   costs more than the line and makes the reader wonder what was hidden.
 
 
-**A code block's `explain` (`src/sidebar/annotate.ts`).** A utility model is shown the code AND what it
+**A code block's `explain` (`src/sidebar/code/annotate.ts`).** A utility model is shown the code AND what it
 produced, and answers under a JSON **schema** with a note per interesting line. Never automatic — it spends
 tokens, and unlike the approval gloss nobody is waiting on it to decide anything — and asked at CLICK time
 only, once: a second click while in flight is a no-op, and once notes land the button becomes show/hide

@@ -304,7 +304,7 @@ a line wraps because each source line is its own flex row.
 **The code COLOUR THEME** (Settings → Code blocks → Colour theme; `ml_code_theme`, and the uploaded file in
 `ml_code_theme_vscode` as `{name, text}`). ONE stylesheet colours every code block AND the bench editor, because
 CodeMirror's tags are mapped onto highlight.js's `hljs-*` classes (`HLJS_STYLE` in cm-editor.ts) rather than given
-a palette of their own. Presets are highlight.js's own stylesheets, bundled as text (`src/sidebar/code-theme-css.ts`);
+a palette of their own. Presets are highlight.js's own stylesheets, bundled as text (`src/sidebar/code/code-theme-css.ts`);
 the list, the VS Code converter and the `.hljs` colour reader are pure in `src/code-themes.ts`. Four things matter:
 - **Surface colours.** Any theme but the default sets `--code-bg`/`--code-fg` on the root (`applyCodeTheme`, prefs.ts),
   read by `.code` blocks and the editor. Without them a dark theme in a light panel drew light tokens on white. The

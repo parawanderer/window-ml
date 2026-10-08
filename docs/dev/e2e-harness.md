@@ -292,7 +292,7 @@ as in AGENTS.md — they are all under `src/`.
   sandbox. `PACE` sets the keystroke delay, `HOLD=0` exits instead of holding the window open, and
   `HEADLESS=1` captures the screenshots (`tests/e2e/artifacts/bench-editor-demo/`) without a window.
   Deterministic — nothing here calls a model. The automated assertions are `bench-editor.spec.mjs`.
-  Three things about the editor (`CodeEditor`, `src/sidebar/code-editor.tsx`) are easy to break:
+  Three things about the editor (`CodeEditor`, `src/sidebar/code/code-editor.tsx`) are easy to break:
   - **The run chord is ALWAYS claimed, whoever acts on it.** CodeMirror's default keymap reads `Mod-Enter`
     as "insert a blank line", so an editor that leaves it unbound adds a line to the script AND lets it
     bubble to whatever runs it. With `onRun` the editor runs it and STOPS it; without, it swallows it and

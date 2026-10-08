@@ -24,7 +24,7 @@ import { truncate } from "../format";
 import { ToolDefsView } from "../transcript/agent-detail";   // the SAME viewer an agent run uses for its local toolset
 import { applyTheme, applyFont, applyCodePrefs, panelThemeActive } from "../prefs";
 import { CODE_THEME_PRESETS, DEFAULT_CODE_THEME, VSCODE_THEME_ID, convertVscodeTheme, parseJsonc, type CodeThemePreset, type ConvertedTheme } from "../../code-themes";
-import { convertStored } from "../code-theme-css";
+import { convertStored } from "../code/code-theme-css";
 import { IconCheck } from "../icons";
 import { Disclosure } from "../ui-kit";
 

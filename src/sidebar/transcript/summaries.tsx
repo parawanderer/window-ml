@@ -8,7 +8,7 @@ import type { AgentStep } from "../store";
 import { stepKey } from "../ui-kit";
 import { truncate } from "../format";
 import { IconWarn } from "../icons";
-import { NOTES_SCHEMA, notesMessages, parseNotes, type LineNote } from "../annotate";
+import { NOTES_SCHEMA, notesMessages, parseNotes, type LineNote } from "../code/annotate";
 
 // Utility-model auto-summaries (card title, code/action approval summaries) are gated on BOTH the host being able
 // to make a side call about the session AND the "summarise with the utility model" toggle (config.autoTitles).

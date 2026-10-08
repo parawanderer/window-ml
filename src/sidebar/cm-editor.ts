@@ -14,7 +14,7 @@ import { HighlightStyle, bracketMatching, indentUnit, syntaxHighlighting, syntax
 import { Compartment, EditorState, RangeSet, StateEffect, type StateEffectType, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, GutterMarker, drawSelection, gutterLineClass, highlightActiveLine, keymap, lineNumbers, placeholder, rectangularSelection } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
-import type { CodeEditorHandle, CodeEditorOptions } from "./code-editor-api";
+import type { CodeEditorHandle, CodeEditorOptions } from "./code/code-editor-api";
 
 // Token colours come from the Atom One stylesheet the sidebar already swaps on theme change
 // (prefs.ts), by emitting the same `hljs-*` class names highlight.js does instead of colours of our

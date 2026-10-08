@@ -25,7 +25,7 @@ import { codeNotes, notesState, notesHidden, fetchLineNotes, toggleLineNotes } f
 import { Prose } from "./prose";
 import { JsonNode, JT_CUT, JT_SEEN } from "./json-tree";
 import { parseLooseJson } from "../../json-repair";
-import { notesByLine } from "../annotate";
+import { notesByLine } from "../code/annotate";
 import { followDrag } from "../drag";
 import {
     openCtxMenu, copyText, ClickableImg, Code, CopyBtn, SheetChip, inlineText, stepKey, displaySource, cursorTipOn, PointerChip, TipText,

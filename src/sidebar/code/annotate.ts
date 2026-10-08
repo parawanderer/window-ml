@@ -8,7 +8,7 @@
 // shift every line below it, which invalidates `py-format`'s line map and stops a traceback resolving
 // (see src/line-map.ts). The annotation is drawn BESIDE the line and the source is byte-identical, so the
 // code you read is still the code that ran.
-import type { JsonSchema } from "../contract";
+import type { JsonSchema } from "../../contract";
 
 /** One margin note: which displayed line it is about, and the gloss. */
 export interface LineNote { line: number; note: string; }

@@ -4,7 +4,7 @@
 // is about refusing to draw one.
 import { test } from "node:test";
 import assert from "node:assert";
-import { numberLines, notesMessages, parseNotes, notesByLine, MAX_NOTES, MAX_NOTE_CHARS, NOTES_SCHEMA } from "../src/sidebar/annotate.ts";
+import { numberLines, notesMessages, parseNotes, notesByLine, MAX_NOTES, MAX_NOTE_CHARS, NOTES_SCHEMA } from "../src/sidebar/code/annotate.ts";
 
 const wrap = (notes) => JSON.stringify({ notes });
 

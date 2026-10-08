@@ -31,7 +31,7 @@ import css_night_owl from "highlight.js/styles/night-owl.css";
 import css_base16_material_darker from "highlight.js/styles/base16/material-darker.css";
 import css_xcode from "highlight.js/styles/xcode.css";
 import css_intellij_light from "highlight.js/styles/intellij-light.css";
-import { CODE_THEME_PRESETS, DEFAULT_CODE_THEME, VSCODE_THEME_ID, presetFile, hljsBaseColors, convertVscodeTheme, parseJsonc, type ConvertedTheme } from "../code-themes";
+import { CODE_THEME_PRESETS, DEFAULT_CODE_THEME, VSCODE_THEME_ID, presetFile, hljsBaseColors, convertVscodeTheme, parseJsonc, type ConvertedTheme } from "../../code-themes";
 
 const CSS: Record<string, string> = {
     "atom-one-dark": css_atom_one_dark,
