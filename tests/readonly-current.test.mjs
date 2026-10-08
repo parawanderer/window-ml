@@ -450,8 +450,10 @@ function ensureWorker() {
         const { parentPort, workerData } = require("node:worker_threads");
         const ready = import(workerData.tsxCjs).then((cjs) => { cjs.register(); return import(workerData.tsx); })
             .then((tsx) => { tsx.register(); return Promise.all([import(workerData.ro), import(workerData.cc)]); });
-        parentPort.on("message", ({ id, src, n }) => ready
+        const big = Array.from({ length: 3000 }, (_, i) => ({ i }));
+        parentPort.on("message", ({ id, src, n, bound }) => ready
             .then(([ro, cc]) => ro.evalReadonly(src, null, {}, undefined, { realm: "worker", stepBudget: 200000,
+                ...(bound ? { globals: { inspector: { big, n: 1 } } } : {}),
                 current: cc.snapshotCurrent({ run: { id: "r", model: null, step: 1, maxSteps: 5, startedTs: 0 },
                     messages: Array.from({ length: n }, (_, i) => ({ role: "user", content: "m" + i })), recorded: [], now: 1 }) }))
             .then((r) => parentPort.postMessage({ id, value: r.value }),
@@ -462,12 +464,12 @@ function ensureWorker() {
     return worker;
 }
 after(() => worker?.terminate());
-function inThread(src, n = 3, ms = 5000) {
+function inThread(src, n = 3, ms = 5000, bound = false) {
     return new Promise((resolve) => {
         const id = nextId++, w = ensureWorker();
         const timer = setTimeout(() => { pending.delete(id); w.terminate(); if (worker === w) worker = null; resolve({ hung: true }); }, ms);
         pending.set(id, (r) => { clearTimeout(timer); resolve(r); });
-        w.postMessage({ id, src, n });
+        w.postMessage({ id, src, n, bound });
     });
 }
 
@@ -488,6 +490,20 @@ test("HALTING: a survey over a large context is bounded by the step budget, not 
     assert.ok(!r.hung, "still running after 5 s");
     assert.equal(r.threw, "NotInDialect", "4 million pairs: over budget, so it goes to the human");
     assert.match(r.message, /too much work/);
+});
+
+test("HALTING: a watch that loops, recurses or multiplies over caller-bound data (`globals`) is stopped by the step budget", async () => {
+    for (const src of [
+        "while (true) { inspector.n }",
+        "inspector.big.map(a => inspector.big.map(b => a.i + b.i).length).length",
+        "const f = () => f() + inspector.n; f()",
+        "for (const x of inspector.big) inspector.big.push(x); 0",
+    ]) {
+        const r = await inThread(src, 3, 5000, true);
+        assert.ok(!r.hung, `${src}: still running after 5 s`);
+        assert.ok(r.threw, `${src}: should not complete`);
+    }
+    assert.equal((await inThread("inspector.big.length", 3, 5000, true)).value, 3000, "and a cheap read of the same data answers");
 });
 
 test("FAILURE: a survey that reads ml.current and then falls out of dialect leaves the snapshot as it was", async () => {

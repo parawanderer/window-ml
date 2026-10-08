@@ -648,6 +648,13 @@ test("the run state panel shows the LIVE turn: what it was asked, the gate it wa
         await watchInput.press("Enter");
         const watch = panel.locator('[data-watch="$.inspector.run.mailbox[*].text"]');
         await expect(watch).toContainText("no match");
+        // A JS watch: any read-only expression, with ml.current the model's own live snapshot.
+        for (const expr of ["ml.current.messages.length > 0", "inspector.grants.turn.origins.length"]) {
+            await watchInput.fill(expr);
+            await watchInput.press("Enter");
+        }
+        await expect(panel.locator('[data-watch="ml.current.messages.length > 0"]')).toContainText("true");
+        await expect(panel.locator('[data-watch="inspector.grants.turn.origins.length"]')).toContainText("1");
         await chat.getByPlaceholder(/Steer this run/).fill("also check the totals");
         await chat.getByPlaceholder(/Steer this run/).press("Enter");
         await expect(mailbox.locator(".jt-preview")).toHaveText("[ 1 item ]", { timeout: 10_000 });

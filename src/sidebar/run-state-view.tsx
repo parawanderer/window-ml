@@ -171,7 +171,15 @@ function WatchRow({ expr, r }: { expr: string; r: WatchResult | undefined }) {
     // on the watch's own line, so the list keeps its shape.
     if (!r) return <div class="rstate-member rstate-watch" data-watch={expr}><div class="jt-row">{spacer}{label}<span class="rstate-none">…</span>{trail}</div></div>;
     if (r.error) return <div class="rstate-member rstate-watch" data-watch={expr}><div class="jt-row">{spacer}{label}<span class="rstate-watch-err">{r.error}</span>{trail}</div></div>;
-    const nodes = r.nodes ?? [];
+    // A JS watch answers with one value, at its own path when it is a plain path (`inspector.run.init.task`), so its rows
+    // copy and watch like a member's; a computed one (`….length`) has no path, so its rows copy values only.
+    if (!r.nodes) return <div class="rstate-member rstate-watch" data-watch={expr}>
+        {r.value === undefined
+            ? <div class="jt-row">{spacer}{label}<span class="rstate-none">undefined</span>{trail}</div>
+            : <JsonNode v={r.value} defaultOpen={false} label={label} trail={trail} times
+                {...(r.at ? { path: r.at, menuExtra: watchItem } : {})} />}
+    </div>;
+    const nodes = r.nodes;
     if (!nodes.length) return <div class="rstate-member rstate-watch rstate-empty" data-watch={expr}><div class="jt-row">{spacer}{label}<span class="rstate-none">no match</span>{trail}</div></div>;
     // One match is that value, at the path it was found at, so its rows copy and watch like any member's. Several are a
     // list of what matched; a list of matches has no single path, so its rows copy values only.
@@ -203,7 +211,7 @@ function WatchGroup({ results }: { results: WatchResult[] | undefined }) {
                 <div class="jt-row rstate-watch-add">
                     <span class="tri jt-tri-space" aria-hidden="true"><IconChevron /></span>
                     <input class="rstate-watch-input" type="text" spellcheck={false} aria-label="Add a watch" value={draft}
-                        placeholder={watches.value.length ? "add a watch" : "add a watch: a path from a right-click, or JSONPath ($..)"}
+                        placeholder={watches.value.length ? "add a watch" : "add a watch: a JS expression (inspector.…, ml.current.…) or JSONPath ($..)"}
                         onInput={(e) => setDraft((e.target as HTMLInputElement).value)}
                         onKeyDown={(e) => { if (e.key === "Enter") add(); if (e.key === "Escape") setDraft(""); }} />
                 </div>

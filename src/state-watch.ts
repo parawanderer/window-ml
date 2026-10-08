@@ -18,12 +18,23 @@ export const MAX_WATCH_CHARS = 1024;
 /** Nodes one watch may visit before it is stopped. A path visits a handful; `$..*` over a big context visits them all. */
 export const WATCH_NODE_BUDGET = 200_000;
 
-/** One watch's answer: what it matched (each with its normalized path), or why it could not be read. */
+/** One watch's answer. A JSONPath watch has `nodes` (each with its normalized path); a JS watch has `value`, and `at`
+ *  when the expression is a plain path (so its rows copy and watch in turn); either may instead have an `error`. */
 export interface WatchResult {
     expr: string;
     nodes?: JsonPathNode[];
+    value?: unknown;
+    /** The expression itself, when it is a plain path to the value: what the value's rows extend. */
+    at?: string;
     error?: string;
 }
+
+/** Evaluates a JS watch: the read-only dialect, with `inspector` bound and `ml.current` the live snapshot. Injected, so
+ *  this module stays pure and the worker supplies the evaluator. */
+export type WatchJs = (code: string, inspector: unknown) => Promise<unknown>;
+
+/** A plain path from a watch root: dots, indexes and quoted keys only. Its value's rows can be named by extending it. */
+const PLAIN_PATH = /^(?:ml\.current|inspector)(?:\.[A-Za-z_$][\w$]*|\[\d+\]|\["(?:[^"\\]|\\.)*"\])*$/;
 
 /** The roots a watch may start from. Anything else is a typo, said as one rather than evaluated as "no match". */
 const ROOTS = /^(?:ml\.current|inspector)(?:$|[.[])/;
@@ -43,18 +54,20 @@ export function watchQuery(expr: string): { query: string } | { error: string } 
 }
 
 /**
- * The one tree every watch reads: each member's value placed at its expression's path. A member's id is dotted
- * (`run.init`), so it nests (`inspector.run.init`); one the model reads sits under `ml.current` instead.
+ * The one tree every watch reads. `inspector` holds each member the model does not read, at its id (dotted, so it nests:
+ * `inspector.run.init`). `ml.current` is the LIVE SNAPSHOT the model reads, exactly, and is absent between turns, when
+ * the model has none: a watch is about what is true now, so it never reads the panel's previews in its place.
  * @param members the members to place
  * @param entries what they hold
+ * @param current the live turn's `ml.current`, when a turn is running
  */
-export function stateTree(members: readonly StateMember[], entries: readonly StateEntry[]): Record<string, unknown> {
-    const tree: Record<string, unknown> = { ml: { current: {} }, inspector: {} };
+export function stateTree(members: readonly StateMember[], entries: readonly StateEntry[], current?: unknown): Record<string, unknown> {
+    const tree: Record<string, unknown> = { ...(current !== undefined ? { ml: { current } } : {}), inspector: {} };
     const byId = new Map(entries.map((e) => [e.id, e]));
     for (const m of members) {
         const e = byId.get(m.id);
-        if (!e || e.error) continue;
-        const keys = (m.exposedAs ?? `inspector.${m.id}`).split(".");
+        if (!e || e.error || m.exposedAs) continue;
+        const keys = `inspector.${m.id}`.split(".");
         let at = tree;
         for (const k of keys.slice(0, -1)) at = (at[k] ??= {}) as Record<string, unknown>;
         at[keys[keys.length - 1]] = e.value;
@@ -65,12 +78,26 @@ export function stateTree(members: readonly StateMember[], entries: readonly Sta
 }
 
 /**
- * Evaluate one watch over the tree, bounded as the dialect bounds a model's `ml.jsonPath`.
+ * Evaluate one watch. `$…` is JSONPath over the tree, bounded as the dialect bounds a model's `ml.jsonPath`; anything
+ * else is a JS expression through `js` (the read-only dialect). With no `js`, a panel path is read as JSONPath, which
+ * answers the same for a path.
  * @param tree from {@link stateTree}
  * @param expr the watch
+ * @param js the JS evaluator, in the worker
  */
-export function evalWatch(tree: Record<string, unknown>, expr: string): WatchResult {
-    const q = watchQuery(expr);
+export async function evalWatch(tree: Record<string, unknown>, expr: string, js?: WatchJs): Promise<WatchResult> {
+    const e = expr.trim();
+    if (!e) return { expr, error: "an empty watch" };
+    if (e.length > MAX_WATCH_CHARS) return { expr, error: `longer than ${MAX_WATCH_CHARS} characters` };
+    if (js && !e.startsWith("$")) {
+        try {
+            const value = await js(e, tree.inspector);
+            return { expr, value, ...(PLAIN_PATH.test(e) ? { at: e } : {}) };
+        } catch (err) {
+            return { expr, error: err instanceof Error ? err.message : String(err) };
+        }
+    }
+    const q = watchQuery(e);
     if ("error" in q) return { expr, error: q.error };
     let spent = 0;
     try {
@@ -79,8 +106,8 @@ export function evalWatch(tree: Record<string, unknown>, expr: string): WatchRes
             onPattern: (src) => { const why = riskyRegex(src); if (why) throw new Error(`the pattern ${JSON.stringify(src)} has ${why}, which can run for hours`); },
         }) as JsonPathNode[];
         return { expr, nodes };
-    } catch (e) {
-        return { expr, error: e instanceof Error ? e.message : String(e) };
+    } catch (err) {
+        return { expr, error: err instanceof Error ? err.message : String(err) };
     }
 }
 
