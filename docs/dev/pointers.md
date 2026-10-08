@@ -62,9 +62,12 @@ background-hosted paths with no page round-trip and no approval.
   (`pipeStages` vs `displayPipe`). The array had to be widened along the whole path, and `DEREF_TOKEN` in the
   background did `String(pipe || "")`, which comma-joins an array into something that is not the dialect. Run-bound exactly like `ml.answer`: `tool-exec` binds a resolver
   for the duration of a tool call and restores it after, so it is live inside an approved `exec` and throws
-  from a page's own console. The BACKGROUND path rings back over the same reverse channel the output stream
-  uses (`DEREF_TOKEN`, keyed by runId) — a page-only binding would have worked in off-mode and silently
-  returned nothing whenever a debug surface was open. `dereference` and `info` are both in the read-only exec
+  from a page's own console. On the BACKGROUND path the page is SENT the reads the approved script names
+  (`src/pointers/named-reads.ts`: the worker resolves each literal `ml.dereference("…"[, { pipe }])` after the macro
+  has expanded, and sends them with `RUN_TOOL_IN_PAGE`), and the bound resolver answers only those. A pointer or pipe
+  computed at run time is refused with a sentence asking for the literal form: ids are random handles, so a script
+  has one only because the model read it and wrote it down. The old ring-back (`DEREF_TOKEN`) let anything sharing
+  the page's world read every pointer the run held while a call was in flight (docs/spec/SITE_ACCESS.md, attack 14). `dereference` and `info` are both in the read-only exec
   dialect (pure reads that spend nothing), with the adversarial tests the dialect rule requires.
 - **THREE DISJOINT REFERENCE FORMS, told apart by SHAPE** — dispatched, never tried in order, so each
   spelling has exactly one meaning and nothing can shadow anything:
@@ -167,8 +170,9 @@ Nothing READS a stored value yet: `python_exec` opening one is slice 5. Until th
 budget, and that reading it then fails with the reason.
 
 **Reading a stored table from JavaScript (slice 7).** A pointer read of a background-hosted run carries the key
-(`DerefMeta.value`, only from a host that claims values). `derefViaBackground` attaches a PAGE-SIDE `readColumns`
-to the read, bound to the runId, and `DerefText` hands it to `asTable`, which makes a STORED facade
+(`DerefMeta.value`, only from a host that claims values). The page-side resolver (`run-delegation.ts`) attaches a `readColumns` to
+the read, bound to the runId (`VALUE_COLUMNS`, answered for a worker-hosted run only for a key sent with its in-flight
+call; in a survey the worker reads the value store itself), and `DerefText` hands it to `asTable`, which makes a STORED facade
 (`brandStored`):
 
 - `col`, `select`, `records`, and a `head` longer than the preview, read every row and return promises. `rows` stays

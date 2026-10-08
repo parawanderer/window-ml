@@ -156,7 +156,7 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
         return true;
     }
     if (!message || message.type !== "RUN_TOOL_IN_PAGE") return undefined;
-    const { runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, stream, finish: finishTurn, summary } = (message.payload || {}) as { runId: string; name: string; args: unknown; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean; summary?: string };
+    const { runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, stream, finish: finishTurn, summary, reads } = (message.payload || {}) as { runId: string; name: string; args: unknown; reads?: unknown[]; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean; summary?: string };
     // window.ml's script was fetch-refused by CSP (script-src 'none') — nothing will ever answer. Fail fast.
     if (injectedBlocked) { sendResponse({ result: CSP_BLOCK_MSG(name) }); return true; }
     const callId = Math.random().toString(36).slice(2);
@@ -189,7 +189,7 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
         finish({ result: `Error: the page didn't respond while running "${name}" (timed out). It may be mid-navigation. Re-check the page (look / pageInfo) and retry, or navigate to a different page.` }, false);
     }, TOOL_RELAY_TIMEOUT_MS);
     window.addEventListener("message", onResult);
-    window.postMessage({ type: "PAGE_TOOL_RUN", callId, runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, stream, finish: finishTurn, summary }, "*");
+    window.postMessage({ type: "PAGE_TOOL_RUN", callId, runId, name, args, reads, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, stream, finish: finishTurn, summary }, "*");
     return true;   // async sendResponse (the window round-trip completes later)
 });
 
@@ -245,18 +245,8 @@ window.addEventListener("message", (event: MessageEvent) => {
     // A LIVE output chunk from a DELEGATED tool (its ctx.stream, posted by run-delegation) → forward to the
     // background, which routes it to the in-flight call's sink by runId (→ the loop's fan → a streamOutput
     // delta on every surface). Fire-and-forget; a dropped chunk only costs a frame of live output.
-    // `ml.dereference` from inside a delegated tool of a BACKGROUND-hosted run: the pointer store lives in the
-    // service worker, so relay the read and post the answer back to the page. Request/response, id-matched.
-    if (data.type === "PAGE_DEREF") {
-        const d = data as { id?: string; runId?: string; ref?: string; pipe?: string | string[] };
-        chrome.runtime.sendMessage({ type: "DEREF_TOKEN", runId: d.runId, ref: d.ref, pipe: d.pipe }, (resp: { value?: string; warning?: string; meta?: unknown; error?: string } = {}) => {
-            const err = chrome.runtime.lastError?.message || resp?.error;
-            window.postMessage({ type: "PAGE_DEREF_RESULT", id: d.id, ...(err ? { error: err } : { value: resp?.value ?? "", ...(resp?.warning ? { warning: resp.warning } : {}), ...(resp?.meta ? { meta: resp.meta } : {}) }) }, "*");
-        });
-        return;
-    }
-    // A stored table's columns, read for a background-hosted run (`t.col(…)` on a stored table's facade). Id-matched like
-    // PAGE_DEREF; the worker checks the run is hosted on this tab and holds the value.
+    // A stored table's columns, read for a background-hosted run (`t.col(…)` on a stored table's facade). Id-matched; the
+    // worker checks the run is hosted on this tab and that the key was sent with its in-flight call.
     if (data.type === "PAGE_VALUE_COLUMNS") {
         const d = data as { id?: string; runId?: string; key?: string; names?: string[]; delimiter?: string; headerless?: boolean };
         chrome.runtime.sendMessage({ type: "VALUE_COLUMNS", runId: d.runId, key: d.key, names: d.names, delimiter: d.delimiter, headerless: d.headerless }, (resp: { rowCount?: number; columns?: unknown; error?: string } = {}) => {

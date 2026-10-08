@@ -388,7 +388,7 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
         const read = pageDeref(ref, pipe);
         // The store lives page-side for this run, but a STORED table's bytes never do — they are in the
         // worker's value store, so its columns are read there, the same round trip a background-hosted run
-        // makes (derefViaBackground binds the identical reader). The worker answers on the TAB's entitlement,
+        // makes (run-delegation.ts binds the identical reader). The worker answers on the TAB's entitlement,
         // so the run hash below only labels the request.
         const key = read.meta?.table ? read.meta.value : undefined;
         const table = read.meta?.table;

@@ -3131,24 +3131,15 @@ test("PDF print: GET_PRINT_DOC for an unknown key returns null (no crash)", asyn
     assert.deepEqual(resp, { html: null });
 });
 
-// DEREF_TOKEN: a page-side tool of a BACKGROUND-hosted run reading a `@tool:` pointer. The pointer store lives
-// in the service worker (the loop owns it), so the SW answers — but only for a run it is actually hosting.
-test("DEREF_TOKEN answers only for a run this worker hosts, and forgets it when the run ends", async () => {
+// DEREF_TOKEN is gone: a page-side tool of a worker-hosted run is SENT the reads its approved script names
+// (named-reads.ts), and a page that names a run id and a pointer is answered by nothing (attack 14).
+test("DEREF_TOKEN is not answered for anyone, a page on the run's own tab included", async () => {
     const bg = loadBackground({ config: baseConfig() });
-    // No such run → an actionable error, never a silent empty value the tool would treat as data.
-    const missing = await bg.send({ type: "DEREF_TOKEN", runId: "nope", ref: "@tool:a1b2c3f" }, {});
-    assert.match(missing.error, /No active background run "nope"/);
-    assert.equal(missing.value, undefined, "nothing is returned for a run we don't host");
-    // From a PAGE, a run that is not on that page is not even looked up: the run id reaches pages in debug events, so
-    // knowing it proves nothing (docs/spec/SITE_ACCESS.md, attack 14).
-    const fromPage = await bg.send({ type: "DEREF_TOKEN", runId: "nope", ref: "@tool:a1b2c3f" }, { tab: { id: 9 } });
-    assert.match(fromPage.error, /No run on this page holds those pointers/);
-
-    // A run this worker never hosted can't be read by naming it either — the resolver map is populated ONLY by
-    // the loop's tokenSink at run start, so a page cannot conjure a pointer store for an arbitrary runId.
-    const forged = await bg.send({ type: "DEREF_TOKEN", runId: "../../etc", ref: "@tool:a1b2c3f" }, {});
-    assert.match(forged.error, /No active background run/);
-    assert.equal(forged.value, undefined);
+    for (const sender of [{}, { tab: { id: 9 } }]) {
+        // No handler answers it, so the send never settles: race it against a beat, and nothing may carry a value.
+        const r = await Promise.race([bg.send({ type: "DEREF_TOKEN", runId: "anything", ref: "@tool:a1b2c3f" }, sender), new Promise((res) => setTimeout(() => res("no answer"), 50))]);
+        assert.ok(r === "no answer" || r?.value === undefined, `${JSON.stringify(sender)}: ${JSON.stringify(r)}`);
+    }
 });
 
 // OLLAMA_INFO: the machine's CAPACITY (per-device VRAM, system RAM) — the denominator ml.ps() never had.

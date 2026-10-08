@@ -425,3 +425,39 @@ test("a survey that needs the page AND the run's pointers reaches the person: th
     assert.equal(toPage.filter((p) => p.readonlyTry).length, 2);
     assert.deepEqual(log.map((r) => [r.kind, r.reason]), [["readonly-page", "reads-page"], ["readonly-page", "refused-in-page"]]);
 });
+
+// --- the pointer values an approved exec is sent (slice 2 part 1c) ---
+
+test("an approved exec is sent the values of the pointers its script names, and no others", T, async () => {
+    // Two approved scripts (each writes a global, so neither is a survey). The second names the first's output by
+    // pointer; the page is sent that value with the call and nothing it would have to ask the worker for.
+    const scripts = ["window.a = 1; return 'FIRST OUTPUT'", "window.b = 1; return @tool:exec.length + ml.dereference(String.fromCharCode(64) + 'tool:exec').length"];
+    let n = 0, bg;
+    bg = loadBackground({
+        config: { ...config, autoApproveReadonly: false }, openTabs: [SITE],
+        onFetch: (call) => {
+            if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            const js = scripts[n++];
+            return js === undefined
+                ? jsonResponse({ choices: [{ message: { content: "done" } }] })
+                : jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: `c${n}`, type: "function", function: { name: "exec", arguments: JSON.stringify({ js }) } }] } }] });
+        },
+        onTabMessage: async (_t, msg) => {
+            if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
+            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+            if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
+            if (msg.payload.finish) return { result: "" };
+            if (msg.payload.renderOnly || msg.payload.precheck || msg.payload.readonlyTry) return {};
+            return { result: n === 1 ? "value: \"FIRST OUTPUT\"" : "value: 0" };
+        },
+    });
+    await bg.context.__mlStartUserRunForTest(7, { task: "two scripts", surface: "hud" });
+    for (let i = 0; i < 300 && n <= scripts.length; i++) await new Promise((r) => setTimeout(r, 0));
+    await flush(30);
+    const runs = bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE" && m.payload.name === "exec" && !m.payload.renderOnly && !m.payload.precheck && !m.payload.readonlyTry).map(([, m]) => JSON.parse(JSON.stringify(m.payload)));   // out of the vm's realm
+    assert.equal(runs.length, 2, "both approved scripts ran on the page");
+    assert.deepEqual(runs[0].reads, [], "the first names no pointer, so it is sent none");
+    assert.deepEqual(runs[1].reads.map((r) => [r.ref, r.pipe]), [["@tool:exec", []]], "only the literal read; the computed one is not resolved");
+    assert.match(runs[1].reads[0].value, /FIRST OUTPUT/);
+    assert.equal(runs[1].reads[0].meta.tool, "exec");
+});

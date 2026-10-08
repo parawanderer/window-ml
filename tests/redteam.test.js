@@ -253,7 +253,7 @@ test("an approval that comes from the self-approval whitelist says so, so the po
 });
 
 // ── UNGATED: what the content script sends OUTSIDE PAGE_STARTED_TYPES, on a page's word ─────────────────────────
-// The origin gate (sw-site-access.ts) passes any type that is not in PAGE_STARTED_TYPES. The content script sends five
+// The origin gate (sw-site-access.ts) passes any type that is not in PAGE_STARTED_TYPES. The content script sends four
 // more, each triggered by a window message the page can post: those handlers must check the sender themselves, and
 // nothing enumerates them. The OPEN tests below are attacks that work on main: each is a `todo` asserting the defended
 // behaviour, so it reports its failure without failing the suite, and loses the `todo` when the defence lands.
@@ -267,10 +267,9 @@ test("the content script's ungated sends are exactly the reviewed list, each bou
     // page cannot use it for a run it does not host, or move it under the gate (page-relay.ts PAGE_RELAYED_EXTRA).
     assert.deepEqual(ungated, [
         "CONTENT_READY",      // answers with the rebuild of runs on the SENDER's tab; triggers resume + history replay
-        "DEREF_TOKEN",        // attack 14 (part 1b in progress)
         "PAGE_TOOL_STREAM",   // NO sender check: see the OPEN test below
         "RUN_READOPTED",      // keyed by the sender's tab, not its document: see the OPEN test below
-        "VALUE_COLUMNS",      // attack 14
+        "VALUE_COLUMNS",      // a worker-hosted run's in-flight call, for a key sent with it (named-reads.ts)
     ]);
 });
 

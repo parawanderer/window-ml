@@ -230,6 +230,37 @@ test("readonlyTry: a pointer read in a survey on the PAGE is refused, so it reac
     } finally { [globalThis.document, globalThis.Element, globalThis.window, globalThis.chrome] = prev; }
 });
 
+// --- an approved exec reads only the pointers it was sent (slice 2 part 1c, attack 14) ---
+
+test("an approved exec's ml.dereference answers the reads sent with it; the page, mid-call, gets no other", async () => {
+    const { currentDeref } = await import("../src/tools/tool-exec.ts");
+    let release, pageRead;
+    const held = new Promise((r) => { release = r; });
+    registerRun("ro1c", [tool({ name: "exec", requiresApproval: true, run: async (_args, ctx) => {
+        const mine = (await ctx.deref("@tool:abc1234")).value;
+        // While the call is in flight a page script shares the realm, and the binding it would read is this one.
+        pageRead = currentDeref()?.("@tool:fffffff").then((r) => r.value, (e) => `refused: ${e.message}`);
+        await held;
+        return `mine=${mine}`;
+    } })]);
+    const reads = [{ ref: "@tool:abc1234", pipe: [], value: "SENT", meta: { id: "abc1234", tool: "fetch_url", kind: "text", step: 1 } }];
+    const done = runDelegatedTool("ro1c", "exec", { js: "return @tool:abc1234" }, { reads });
+    await new Promise((r) => setTimeout(r, 0));
+    release();
+    const env = await done;
+    assert.match(env.result, /mine=SENT/);
+    assert.match(await pageRead, /^refused: .*was not named in the script/, "a pointer the script did not name is not readable by anyone");
+    assert.equal(currentDeref(), null, "nothing stays bound");
+    endRun("ro1c");
+});
+
+test("an approved exec sent no reads can read no pointer at all", async () => {
+    registerRun("ro1d", [tool({ name: "exec", requiresApproval: true, run: async (_a, ctx) => ctx.deref("@tool:abc1234").then((r) => r.value, (e) => `refused: ${e.message}`) })]);
+    const env = await runDelegatedTool("ro1d", "exec", { js: "x" }, {});
+    assert.match(env.result, /refused: .*was not named/);
+    endRun("ro1d");
+});
+
 test("an unknown tool name → a clean error envelope (never a throw)", async () => {
     registerRun("r5", [tool()]);
     const env = await runDelegatedTool("r5", "nope", {});

@@ -74,7 +74,7 @@ only the buffered events of sessions it is not shut out of.
 
 ## What the content script sends outside the gate
 
-Five types the content script sends on a page's word are not in `PAGE_STARTED_TYPES`, so the origin gate passes them
+Four types the content script sends on a page's word are not in `PAGE_STARTED_TYPES`, so the origin gate passes them
 and each handler checks the sender itself. `tests/redteam.test.js` (section "UNGATED") pins the list.
 
 - `CONTENT_READY`: answers with the rebuild of runs on the sender's tab, and replays a run's history to the tab once per
@@ -86,14 +86,17 @@ and each handler checks the sender itself. `tests/redteam.test.js` (section "UNG
   with its document, and the call that navigated drops it if it came from the document the call went to
   (`documentOn` in sw-run-host.ts, which asks `webNavigation.getFrame` after an eviction).
 - `PAGE_TOOL_STREAM`: only from the run's own tab, frame 0.
-- `DEREF_TOKEN`, `VALUE_COLUMNS`: the run's own tab; removed in slice 2 part 1c (attack 14).
+- `VALUE_COLUMNS`: the run's own tab, and for a worker-hosted run only a key sent with its in-flight call (part 1c).
+  `DEREF_TOKEN` is gone.
 
 ## Read-only surveys of a run the worker hosts
 
 A survey is evaluated in the worker first (`tryReadonly` in `sw-run-host.ts`), where the run's pointers and
 `ml.current` live and no page exists. Only a survey that reaches for the page goes there, and the page leg refuses
-every pointer read (`run-delegation.ts`), so a survey needing both reaches the person. An approved `exec` still reads
-pointers from the page through `DEREF_TOKEN` until part 1c sends it its values with the call. Where each survey went
+every pointer read (`run-delegation.ts`), so a survey needing both reaches the person. An approved `exec` is sent the
+values of the pointers its script names, resolved in the worker (`named-reads.ts`), and its page-side resolver
+answers only those; `DEREF_TOKEN` is gone. `VALUE_COLUMNS` reads a stored table for a worker-hosted run only for a key
+sent with its in-flight call. Where each survey went
 is in the execution log (`routing`, `readonly-worker`/`readonly-page`). `docs/dev/readonly-exec.md`, "Where it is
 called".
 
