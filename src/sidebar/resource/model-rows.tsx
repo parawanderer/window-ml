@@ -3,15 +3,15 @@
 // are the chart's legend, so hovering one lights that model on the plot.
 
 import { signal } from "@preact/signals";
-import type { LoadedModel } from "../contract/contract-server";
-import { type ResourceSample, formatBytes, placementOf, isSplit } from "../resource/resource-model";
+import type { LoadedModel } from "../../contract/contract-server";
+import { type ResourceSample, formatBytes, placementOf, isSplit } from "../../resource/resource-model";
 import { poolHover } from "./chart-interaction";
 import { modelKindLabel } from "./model-status";
 import { rowTipSuppressed, ModelFacts, CostFacts } from "./panel-facts";
 import { hiddenModels, toggleHidden, poolFacts } from "./panel-state";
-import { colorFor } from "./palette";
-import { hhmmss } from "./timestamps";
-import { useTipPlacement } from "./use-tip";
+import { colorFor } from "../palette";
+import { hhmmss } from "../timestamps";
+import { useTipPlacement } from "../use-tip";
 import { hoverModel } from "./vram-focus";
 
 /** A model NAMED BUT NOT LOADED — evicted inside the window the chart still covers, or one that only ever

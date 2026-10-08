@@ -23,14 +23,14 @@ import { installTooltipLayer } from "./sidebar/tooltip-layer";
 import { installViewPrefs } from "./chat/view-mode";
 import { installPageTheme } from "./chat/page-theme";
 import { pickFolder, regrantCount, regrantFolder } from "./archive/archive-folder";
-import { VRAM_POLL_MS } from "./sidebar/panel-state";
-import { VramPanel } from "./sidebar/vram";
-import { BACKEND_HEALTH_MS, connectResourceStream, fetchModels, loadedAt, pollBackendHealth, readPs } from "./sidebar/resource-feed";
+import { VRAM_POLL_MS } from "./sidebar/resource/panel-state";
+import { VramPanel } from "./sidebar/resource/vram";
+import { BACKEND_HEALTH_MS, connectResourceStream, fetchModels, loadedAt, pollBackendHealth, readPs } from "./sidebar/resource/resource-feed";
 import { PythonBench } from "./sidebar/vram-bench";
 import type { RuntimeId } from "./session/session-host";
 import { Settings } from "./sidebar/settings";
 import { config, psError } from "./sidebar/store";
-import { residentNow } from "./sidebar/panel-facts";
+import { residentNow } from "./sidebar/resource/panel-facts";
 import { residentReader } from "./sidebar/resident-reader";
 import { DEFAULT_CONFIG, type MlConfig } from "./contract";
 

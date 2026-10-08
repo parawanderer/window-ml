@@ -6,8 +6,8 @@ description: Lift a range of statements inside one file into its own named funct
 # Extracting a function out of a body
 
 ```bash
-node scripts/extract-function.mjs --file src/sidebar/vram.tsx --lines 1839-1842 --name latestSampleOf --dry-run --diff
-node scripts/extract-function.mjs --file src/sidebar/vram.tsx --lines 1839-1842 --name latestSampleOf
+node scripts/extract-function.mjs --file src/sidebar/resource/vram.tsx --lines 1839-1842 --name latestSampleOf --dry-run --diff
+node scripts/extract-function.mjs --file src/sidebar/resource/vram.tsx --lines 1839-1842 --name latestSampleOf
 ```
 
 `--lines` is 1-based and inclusive, the numbers the editor shows. Exit 0 = extracted or a clean dry run,

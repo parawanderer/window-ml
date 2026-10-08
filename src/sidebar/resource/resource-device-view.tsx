@@ -5,13 +5,13 @@
 // resource-box-views.tsx, and resource-chart.tsx picks between them.
 
 import { useMemo } from "preact/hooks";
-import { segments } from "../resource/resource-axis";
-import { type Band, OTHER_BAND_NOTE } from "../resource/resource-bands";
-import { ribbonSpans } from "../resource/resource-gens";
-import { formatBytes, type ResourceSample, formatShare } from "../resource/resource-model";
-import { type ResourceEvent } from "../resource/resource-timeline";
-import { type DeviceCapacity } from "../resource/resource-capacity";
-import { linkBetween, isBridge, linkPhrase } from "../resource/resource-topology";
+import { segments } from "../../resource/resource-axis";
+import { type Band, OTHER_BAND_NOTE } from "../../resource/resource-bands";
+import { ribbonSpans } from "../../resource/resource-gens";
+import { formatBytes, type ResourceSample, formatShare } from "../../resource/resource-model";
+import { type ResourceEvent } from "../../resource/resource-timeline";
+import { type DeviceCapacity } from "../../resource/resource-capacity";
+import { linkBetween, isBridge, linkPhrase } from "../../resource/resource-topology";
 import { noteRuns, eventHover, trackCursor, hoverAt, snapUnder } from "./chart-interaction";
 import { bandFill } from "./chart-paint";
 import { capacity, sampleGapMs, streamLive } from "./panel-state";
@@ -19,7 +19,7 @@ import { StackedArea, KvFill } from "./resource-area";
 import { startBrush, BrushOverlay, EventTip } from "./resource-lane-ui";
 import { useInstants, PhaseStrip, trackCrosshair, TimeGrid, onAxis, PredictLines, InstantRules, HoverSpan, Crosshair } from "./resource-overlays";
 import { hoveredSample, BandTip, PlotTip, GapTip } from "./resource-tips";
-import { crosshair, predictView } from "./store";
+import { crosshair, predictView } from "../store";
 import { kbFocus, hoverModel } from "./vram-focus";
 
 /** The device name, with the card's own facts behind a hover.

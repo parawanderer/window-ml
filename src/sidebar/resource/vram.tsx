@@ -5,36 +5,36 @@
 // the chart is resource-chart.tsx, the rows are model-rows.tsx, a model's load state is model-status.tsx, and the
 // panel's height is panel-size.ts. Extracted from app.tsx, and split on 2026-10-04.
 
-import { PanelHead } from "./panel-head";
+import { PanelHead } from "../panel-head";
 import { useState, useEffect, useRef } from "preact/hooks";
 import { signal, effect } from "@preact/signals";
 import {
     loadedModels, psError, rev, sessionMap,
     crosshair, VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, zoomRange, laneScoped, LANE_HIDDEN_KEY, showModels, lsGet, asides,
     scopedHash,
-} from "./store";
-import { truncate } from "./format";
+} from "../store";
+import { truncate } from "../format";
 // The ONE predicate for "this runs somewhere else": affirmatively not a model of this server. Shared with the
 // composer rather than re-derived here, so the panel and the picker cannot disagree about what is local.
-import { isCloudModel } from "./model";
-import { IconWarn, IconVram, IconEye, IconEyeOff, IconBench, IconGear, IconEvictAll } from "./icons";
-import { Disclosure } from "./ui-kit";
-import { fmtAge, hhmmss } from "./timestamps";
+import { isCloudModel } from "../model";
+import { IconWarn, IconVram, IconEye, IconEyeOff, IconBench, IconGear, IconEvictAll } from "../icons";
+import { Disclosure } from "../ui-kit";
+import { fmtAge, hhmmss } from "../timestamps";
 // lsGet/lsSet live in store.ts, not here: a rendered code block hands the bench a script, and render-panel
 // cannot import this module (it would be a cycle — this one imports RenderPanel).
-export { lsGet, lsSet } from "./store";
+export { lsGet, lsSet } from "../store";
 import { eventsFrom, laneEvents, type UsageSource } from "./model-stats";
-import { formatBytes, boxSignature } from "../resource/resource-model";
-import { residencyEvents, type ResourceEvent } from "../resource/resource-timeline";
-import { isGpuFault, gpuFaultNote } from "../resource/resource-capacity";
-import { presetsFor } from "../resource/resource-presets";
-import { chartWindow, windowSamples } from "../resource/resource-axis";
-import { sessionWindow } from "../resource/resource-lane";
+import { formatBytes, boxSignature } from "../../resource/resource-model";
+import { residencyEvents, type ResourceEvent } from "../../resource/resource-timeline";
+import { isGpuFault, gpuFaultNote } from "../../resource/resource-capacity";
+import { presetsFor } from "../../resource/resource-presets";
+import { chartWindow, windowSamples } from "../../resource/resource-axis";
+import { sessionWindow } from "../../resource/resource-lane";
 import { ResourceTracks, muteTip } from "./resource-chart";
 import { stepPool, readingIsOverlay } from "./chart-interaction";
 import { ScopeSwitch } from "./resource-lane-ui";
 
-import { RenderPanel } from "./render-panel";
+import { RenderPanel } from "../render-panel";
 import { hoverModel, kbFocus, stepFocus, stepDepth, noteFocusOrder } from "./vram-focus";
 import { capacity, resourceHistory, layout, streamLive, frameFocused, VRAM_HISTORY, sessionModels, choosePreset, customTracks, presetId, restoreLayout, hiddenModels } from "./panel-state";
 import { loadSeenCards, unavailableGpus, seenCards, machineEvents, servingSince, pollPs, fetchCapacity, loadingModels, psLoading, capacityAsked } from "./resource-feed";

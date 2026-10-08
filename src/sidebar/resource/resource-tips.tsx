@@ -5,19 +5,19 @@
 // chart-interaction (`cursorOn`), so a tip here never has to know about the others.
 
 import { useLayoutEffect } from "preact/hooks";
-import { sampleAtFraction } from "../resource/resource-axis";
-import { type Band, OUTSIDE_VIEW_LABEL } from "../resource/resource-bands";
-import { type ResourceSample, type MemoryBreakdown, memoryParts, formatBytes, percentOf, type LayerPlacement, layersOnCard } from "../resource/resource-model";
-import { utilOf, type DeviceCapacity } from "../resource/resource-capacity";
+import { sampleAtFraction } from "../../resource/resource-axis";
+import { type Band, OUTSIDE_VIEW_LABEL } from "../../resource/resource-bands";
+import { type ResourceSample, type MemoryBreakdown, memoryParts, formatBytes, percentOf, type LayerPlacement, layersOnCard } from "../../resource/resource-model";
+import { utilOf, type DeviceCapacity } from "../../resource/resource-capacity";
 import { cursorOn, live, poolHover, gapHover, cursorAt, eventHover } from "./chart-interaction";
 import { partFill, bandFill } from "./chart-paint";
 import { ModelFacts, CostFacts } from "./panel-facts";
 import { sampleGraceMs, hiddenPools, poolFacts, keysReach } from "./panel-state";
-import { colorFor } from "./palette";
-import { crosshair, loadedModels } from "./store";
-import { hhmmssms, fmtAge, fmtDur, hhmmss } from "./timestamps";
-import { tileOffsets } from "./tip";
-import { useTipPlacement } from "./use-tip";
+import { colorFor } from "../palette";
+import { crosshair, loadedModels } from "../store";
+import { hhmmssms, fmtAge, fmtDur, hhmmss } from "../timestamps";
+import { tileOffsets } from "../tip";
+import { useTipPlacement } from "../use-tip";
 import { kbFocus, hoverModel, focusDepth } from "./vram-focus";
 
 /** The sample under the pointer, or null when the pointer is not over this plot. The fraction comes from the

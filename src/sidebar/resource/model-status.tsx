@@ -2,9 +2,9 @@
 // loading, unavailable or cloud (`modelLoadState`, `ModelStatusDot`), when its keep-alive runs out (`expiresIn`),
 // and its capability probe. The model picker, the HUD card and the resource panel all read it from here.
 
-import { formatBytes } from "../resource/resource-model";
+import { formatBytes } from "../../resource/resource-model";
 import { NO_EXPIRY_MS, modelCaps, isEmbedding, isChatModel } from "./panel-facts";
-import { loadedModels, psError, models, ollamaIds } from "./store";
+import { loadedModels, psError, models, ollamaIds } from "../store";
 
 // "expires in Xs/Xm" from an /api/ps expires_at ISO stamp (Ollama's TTL). A BUSY runner has no deadline to
 // report: the server rewrites it when the request finishes, so the stamp we hold is the one from last time.

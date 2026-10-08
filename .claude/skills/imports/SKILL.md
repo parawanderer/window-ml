@@ -6,7 +6,7 @@ description: Ask what a file imports, who imports it, and exactly which names cr
 # Reading the import graph
 
 ```bash
-node scripts/imports.mjs src/sidebar/vram.tsx                 # out-edges and in-edges, with names
+node scripts/imports.mjs src/sidebar/resource/vram.tsx                 # out-edges and in-edges, with names
 node scripts/imports.mjs src/a.ts src/b.ts                    # the coupling between two files, both ways
 node scripts/imports.mjs --cycles                             # every import cycle in the project
 ```

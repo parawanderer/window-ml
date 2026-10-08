@@ -24,14 +24,14 @@ import { installServices } from "./services";
 import { extensionServices } from "./services-ext";
 import { ProfileBadge, SessionRow, AgentBadge } from "./reply";
 import { Composer } from "./composer";
-import { chartKey, VramPanel } from "./vram";
-import { keyRelay, VRAM_POLL_MS } from "./panel-state";
+import { chartKey, VramPanel } from "./resource/vram";
+import { keyRelay, VRAM_POLL_MS } from "./resource/panel-state";
 import { VRAM_PALETTE_KEY, VRAM_PALETTES, vramPalette } from "./palette";
-import { ModelStatusDot } from "./model-status";
-import { fetchModels, pollPs, connectResourceStream, pollBackendHealth, BACKEND_HEALTH_MS } from "./resource-feed";
+import { ModelStatusDot } from "./resource/model-status";
+import { fetchModels, pollPs, connectResourceStream, pollBackendHealth, BACKEND_HEALTH_MS } from "./resource/resource-feed";
 import { PythonBench, BenchDrawer, BenchVer } from "./vram-bench";
 import { CardApp, endActiveCardDrag } from "./hud-card";
-import { releaseAxisHold } from "./chart-interaction";
+import { releaseAxisHold } from "./resource/chart-interaction";
 import {
     composerOpen, composerElement, composerTarget, selectedRun, cardSteerHash, setCardCollapsed,
 } from "./card-state";

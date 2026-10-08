@@ -3,7 +3,7 @@
 // recorded, so the panel's second half needs no new collection.
 import { test } from "node:test";
 import assert from "node:assert";
-const M = await import("../src/sidebar/model-stats.ts");
+const M = await import("../src/sidebar/resource/model-stats.ts");
 
 const usage = (p, c, extra = {}) => ({ promptTokens: p, completionTokens: c, totalTokens: p + c, ...extra });
 
@@ -651,7 +651,7 @@ test("eventsFrom: steps after the last answer are a run STILL GOING, and a singl
 // describe the same load, and the lane drew it twice: one bar under another, with the kind-filter counting
 // "loads 5" for three real loads.
 test("dropInferredLoads: a load the server reported is not also drawn from load_duration", async () => {
-    const { dropInferredLoads } = await import("../src/sidebar/model-stats.ts");
+    const { dropInferredLoads } = await import("../src/sidebar/resource/model-stats.ts");
     const inferred = [
         { t: 1000, until: 3000, kind: "load", label: "loading qwen", model: "qwen" },
         { t: 3000, until: 9000, kind: "gen", label: "qwen", model: "qwen" },

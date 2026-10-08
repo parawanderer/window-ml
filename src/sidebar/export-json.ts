@@ -18,7 +18,7 @@ import type {
     ExportEvent, ExportEventCost,
 } from "../export-schema";
 import { EXPORT_SCHEMA_VERSION, schemaUrl } from "../export-schema";
-import { eventsFrom } from "./model-stats";
+import { eventsFrom } from "./resource/model-stats";
 import type { ResourceEvent } from "../resource/resource-timeline";
 
 /** Epoch ms → ISO 8601. Invalid/absent stamps are dropped rather than exported as an

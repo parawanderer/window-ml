@@ -6,17 +6,17 @@
 // them. It lived in vram.tsx beside the panel component, which made the component file the data layer too.
 
 import { signal } from "@preact/signals";
-import { type LoadedModel, isBackendUnreachable } from "../contract/contract-server";
-import type { WireFrame } from "../resource/events-wire";
-import { genTimingsFrom, predictedDecodeFrom, genSpan, hintFrom } from "../resource/resource-gens";
-import { addMachineEvent } from "../resource/resource-lane";
-import { type ModelResidency, memorySplit, type MemoryBreakdown, placementFrom, boxChange, sameBoxOnly, type LoadEstimate, normModel, estimateFrom, type ResourceSample } from "../resource/resource-model";
-import { type ResourceEvent } from "../resource/resource-timeline";
-import { activityFrom, rooflineFrom, expectedDecodeFrom } from "../resource/resource-decode";
-import { type SeenCards, type Capacity, noteSeenCards, type UnavailableGpu, unavailableFrom, holdCapacity, parseInfo } from "../resource/resource-capacity";
-import { seenContext } from "./model";
+import { type LoadedModel, isBackendUnreachable } from "../../contract/contract-server";
+import type { WireFrame } from "../../resource/events-wire";
+import { genTimingsFrom, predictedDecodeFrom, genSpan, hintFrom } from "../../resource/resource-gens";
+import { addMachineEvent } from "../../resource/resource-lane";
+import { type ModelResidency, memorySplit, type MemoryBreakdown, placementFrom, boxChange, sameBoxOnly, type LoadEstimate, normModel, estimateFrom, type ResourceSample } from "../../resource/resource-model";
+import { type ResourceEvent } from "../../resource/resource-timeline";
+import { activityFrom, rooflineFrom, expectedDecodeFrom } from "../../resource/resource-decode";
+import { type SeenCards, type Capacity, noteSeenCards, type UnavailableGpu, unavailableFrom, holdCapacity, parseInfo } from "../../resource/resource-capacity";
+import { seenContext } from "../model";
 import { capacity, resourceHistory, layout, streamLive } from "./panel-state";
-import { models, ollamaIds, modelKinds, config, psError, backendAliveAt, loadedModels, backendLoading, sidebarOpen, vramOpen, view, backendError, unreachableIfNothingSaysOtherwise } from "./store";
+import { models, ollamaIds, modelKinds, config, psError, backendAliveAt, loadedModels, backendLoading, sidebarOpen, vramOpen, view, backendError, unreachableIfNothingSaysOtherwise } from "../store";
 
 /** A LoadedModel (the ps relay's shape) → the residency the chart works in. Bytes, never the rounded GB: the
  *  bands subtract these from exact capacity figures. `gpus` absent means CPU-resident, and that absence is

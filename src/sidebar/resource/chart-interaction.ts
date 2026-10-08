@@ -13,12 +13,12 @@
 // Likewise the registry of which POOLS each surface drew (`notePools`), which the arrow keys step through.
 
 import { signal } from "@preact/signals";
-import type { Band } from "../resource/resource-bands";
-import type { ResourceSample } from "../resource/resource-model";
-import type { EventPlacement, ResourceEvent } from "../resource/resource-timeline";
-import { snapFraction, type Axis, type RunGap } from "../resource/resource-axis";
-import { lineageOf } from "../resource/resource-lane";
-import { zoomRange, resWindowS, laneScoped, scopedHash, crosshair, snapDot } from "./store";
+import type { Band } from "../../resource/resource-bands";
+import type { ResourceSample } from "../../resource/resource-model";
+import type { EventPlacement, ResourceEvent } from "../../resource/resource-timeline";
+import { snapFraction, type Axis, type RunGap } from "../../resource/resource-axis";
+import { lineageOf } from "../../resource/resource-lane";
+import { zoomRange, resWindowS, laneScoped, scopedHash, crosshair, snapDot } from "../store";
 import { releaseFocus, kbPool } from "./vram-focus";
 import { hiddenPools, sampleGraceMs } from "./panel-state";
 

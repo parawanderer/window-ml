@@ -5,15 +5,15 @@
 // is the drawing. Every track view that shows memory draws through here.
 
 import { useMemo } from "preact/hooks";
-import { runFrac } from "../resource/resource-axis";
-import { type Band, bandOrder, pendingAllocation, stepBands, bandEdge } from "../resource/resource-bands";
-import { kvFill } from "../resource/resource-gens";
-import { type ResourceSample, type MemoryBreakdown, memoryParts, MEMORY_PARTS } from "../resource/resource-model";
-import { type ResourceEvent } from "../resource/resource-timeline";
+import { runFrac } from "../../resource/resource-axis";
+import { type Band, bandOrder, pendingAllocation, stepBands, bandEdge } from "../../resource/resource-bands";
+import { kvFill } from "../../resource/resource-gens";
+import { type ResourceSample, type MemoryBreakdown, memoryParts, MEMORY_PARTS } from "../../resource/resource-model";
+import { type ResourceEvent } from "../../resource/resource-timeline";
 import { trackCursor, hoverAt } from "./chart-interaction";
 import { bandIdentity, bandTint, W, H, partFill, bandFill } from "./chart-paint";
 import { sampleGraceMs } from "./panel-state";
-import { colorFor } from "./palette";
+import { colorFor } from "../palette";
 import { hoverModel, kbFocus } from "./vram-focus";
 
 /**

@@ -6,12 +6,12 @@
 
 import { signal } from "@preact/signals";
 import { useRef, useState, useLayoutEffect } from "preact/hooks";
-import { scrubIntent, TAIL_SLACK_MS, scrubExtent, segments, scrubZone, scrubResize, scrubTo, scrubPinch, wheelScrubFraction, scrubNudge } from "../resource/resource-axis";
-import type { ResourceSample } from "../resource/resource-model";
-import type { ResourceEvent } from "../resource/resource-timeline";
+import { scrubIntent, TAIL_SLACK_MS, scrubExtent, segments, scrubZone, scrubResize, scrubTo, scrubPinch, wheelScrubFraction, scrubNudge } from "../../resource/resource-axis";
+import type { ResourceSample } from "../../resource/resource-model";
+import type { ResourceEvent } from "../../resource/resource-timeline";
 import { sampleGapMs } from "./panel-state";
-import { colorFor } from "./palette";
-import { zoomRange, resWindowS, RESWIN_KEY, laneEnabled, showLane } from "./store";
+import { colorFor } from "../palette";
+import { zoomRange, resWindowS, RESWIN_KEY, laneEnabled, showLane } from "../store";
 
 /** Which part of the scrub window the pointer is over, so the cursor can say a handle is there before you
  *  try to use it. A resize affordance you can only discover by failing to pan is not an affordance. */

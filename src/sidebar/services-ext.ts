@@ -6,7 +6,7 @@
 import { hintSession } from "../contract/contract-run";
 import { config } from "./store";
 import { bareHash, type SidebarServices, type SideCallRequest, type SideCallResult } from "./services";
-import { residentNow } from "./panel-facts";
+import { residentNow } from "./resource/panel-facts";
 import { downloadBlob } from "./download";
 import { printInFrame } from "./print-frame";
 

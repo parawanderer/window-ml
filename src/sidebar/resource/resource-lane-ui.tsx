@@ -15,22 +15,22 @@
 
 import { signal } from "@preact/signals";
 import { useMemo, useState, useEffect } from "preact/hooks";
-import { snapFraction, timeAtFraction, clampWindow, segments } from "../resource/resource-axis";
-import { SPILL_FLOOR } from "../resource/resource-bands";
-import { filterEvents, countByKind, placeEvents, MIN_EV_SPAN, laneRows, lineageOf, scopeAround } from "../resource/resource-lane";
-import { type ResourceSample, percentOf, loadTrace, formatBytes } from "../resource/resource-model";
-import { type ResourceEvent, type PhaseKind, eventsIn } from "../resource/resource-timeline";
-import { decodeCeiling } from "../resource/resource-decode";
-import { kvFill, predictionLine, serverGenNote } from "../resource/resource-gens";
-import { scrollToAnswer } from "./answer-render";
+import { snapFraction, timeAtFraction, clampWindow, segments } from "../../resource/resource-axis";
+import { SPILL_FLOOR } from "../../resource/resource-bands";
+import { filterEvents, countByKind, placeEvents, MIN_EV_SPAN, laneRows, lineageOf, scopeAround } from "../../resource/resource-lane";
+import { type ResourceSample, percentOf, loadTrace, formatBytes } from "../../resource/resource-model";
+import { type ResourceEvent, type PhaseKind, eventsIn } from "../../resource/resource-timeline";
+import { decodeCeiling } from "../../resource/resource-decode";
+import { kvFill, predictionLine, serverGenNote } from "../../resource/resource-gens";
+import { scrollToAnswer } from "../answer-render";
 import { live, eventHover, cursorAt, noteRuns, litBy, holdAxis, hoverAt, releaseAxis, trackCursor, barKey } from "./chart-interaction";
 import { sampleGraceMs, resourceHistory, laneFilter, sampleGapMs, streamLive } from "./panel-state";
-import { colorFor } from "./palette";
-import { scrollToStepSeq } from "./step-scroll";
-import { brush, snapDot, zoomRange, ollamaIds, models, laneScoped, predictView, sessionMap, view, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, showLane, laneHidden, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showModels, LANE_SCOPE_KEY } from "./store";
-import { fmtDur, hhmmssms } from "./timestamps";
-import { Disclosure } from "./ui-kit";
-import { useTipPlacement } from "./use-tip";
+import { colorFor } from "../palette";
+import { scrollToStepSeq } from "../step-scroll";
+import { brush, snapDot, zoomRange, ollamaIds, models, laneScoped, predictView, sessionMap, view, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, showLane, laneHidden, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showModels, LANE_SCOPE_KEY } from "../store";
+import { fmtDur, hhmmssms } from "../timestamps";
+import { Disclosure } from "../ui-kit";
+import { useTipPlacement } from "../use-tip";
 import { hoverModel } from "./vram-focus";
 
 /** The panel's tracks, from the chosen LAYOUT. A layout is just `TrackDef[]`; a preset is a named starting

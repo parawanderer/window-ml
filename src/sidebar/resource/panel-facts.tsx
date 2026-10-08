@@ -10,15 +10,15 @@
 // honest rather than as a blank.
 
 import { signal } from "@preact/signals";
-import type { RunStats } from "../contract";
-import { fmtCtx } from "../contract/contract-config";
-import type { LoadedModel } from "../contract/contract-server";
-import { quantPlain, formatBytes, normModel } from "../resource/resource-model";
-import { activityFrom, kvOccupancy, fmtOccupancy, expectedDecodeFrom, expectedPhrase } from "../resource/resource-decode";
-import { type Capacity } from "../resource/resource-capacity";
+import type { RunStats } from "../../contract";
+import { fmtCtx } from "../../contract/contract-config";
+import type { LoadedModel } from "../../contract/contract-server";
+import { quantPlain, formatBytes, normModel } from "../../resource/resource-model";
+import { activityFrom, kvOccupancy, fmtOccupancy, expectedDecodeFrom, expectedPhrase } from "../../resource/resource-decode";
+import { type Capacity } from "../../resource/resource-capacity";
 import { usageByModel, type UsageSource } from "./model-stats";
 import { capacity } from "./panel-state";
-import { loadedModels, rev, sessionMap } from "./store";
+import { loadedModels, rev, sessionMap } from "../store";
 
 /** BEYOND THIS, THE DEADLINE IS NOT A DEADLINE. `keep_alive: -1` pins a model in memory, and Ollama expresses
  *  that as an `expires_at` about a century out — so a countdown rendered from it reads "36159d 12h", which is

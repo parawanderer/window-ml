@@ -17,16 +17,16 @@
 
 import { Fragment } from "preact";
 import { useMemo, useState, useEffect } from "preact/hooks";
-import { ceilingsFor, isCpuResident, type ResourceSample } from "../resource/resource-model";
-import { type ResourceEvent } from "../resource/resource-timeline";
-import { type Capacity } from "../resource/resource-capacity";
-import { presetsFor, type TrackDef } from "../resource/resource-presets";
-import { chartWindow, axisOf, scrubExtent, scrubPinch, windowSamples, scrubNudge, wheelScrubFraction, runWeight, runGap } from "../resource/resource-axis";
-import { scopeToSpan, filterEvents, sessionWindow } from "../resource/resource-lane";
-import { deviceBands, hostBands, residualRank } from "../resource/resource-bands";
+import { ceilingsFor, isCpuResident, type ResourceSample } from "../../resource/resource-model";
+import { type ResourceEvent } from "../../resource/resource-timeline";
+import { type Capacity } from "../../resource/resource-capacity";
+import { presetsFor, type TrackDef } from "../../resource/resource-presets";
+import { chartWindow, axisOf, scrubExtent, scrubPinch, windowSamples, scrubNudge, wheelScrubFraction, runWeight, runGap } from "../../resource/resource-axis";
+import { scopeToSpan, filterEvents, sessionWindow } from "../../resource/resource-lane";
+import { deviceBands, hostBands, residualRank } from "../../resource/resource-bands";
 import { editLayout, VRAM_POLL_MS, laneFilter, layout } from "./panel-state";
 import { chartHeld, HOLD_LAPSE_MS, holdAxis, holdKey, hoverAt, lastPointerAt, live, releaseAxis, tipMuted } from "./chart-interaction";
-import { scopedHash, resWindowS, zoomRange, laneScoped, laneEnabled } from "./store";
+import { scopedHash, resWindowS, zoomRange, laneScoped, laneEnabled } from "../store";
 import { EventLane } from "./resource-lane-ui";
 import { AXIS_TICK_MS } from "./resource-overlays";
 import { settleScrub, ScrubStrip } from "./resource-scrub";

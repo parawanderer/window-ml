@@ -2,7 +2,7 @@
 // own overflow, the layout key that floor is remembered under, and the eased height change when the layout moves.
 
 import { signal } from "@preact/signals";
-import { vramH } from "./store";
+import { vramH } from "../store";
 
 // The smallest the panel may be dragged is LEARNED, not computed. Summing the parts is a guess about which
 // parts exist and how tall they are — it goes stale the moment a track grows a row, the font scale changes, or
