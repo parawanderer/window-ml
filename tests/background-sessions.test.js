@@ -562,6 +562,40 @@ test("the runtime titles a session it keeps, once, never one it does not, and a 
     assert.equal(page.rows().get("abcd0001").renamed, undefined);
 });
 
+test("a session's title has one owner: every surface asking gets the worker's one name, from one model call", T, async () => {
+    let titleCalls = 0;
+    const bg = loadBackground({
+        config: { ...config, utilityModel: "tiny", autoTitles: true },
+        onFetch: (call) => {
+            if ((call.body?.messages ?? []).some((m) => /titles for a request/.test(m.content ?? ""))) { titleCalls++; return jsonResponse({ choices: [{ message: { content: `"Lamp hunt ${titleCalls}."` } }] }); }
+            return jsonResponse({ choices: [{ message: { content: "ok" } }] });
+        },
+    });
+    const page = openPage(bg);
+    await flush();
+    // Not kept: the runtime would never title it on its own, but the sidebar shows unsaved runs too.
+    void bg.send({ type: "ML_DEBUG_EVENT", event: start("abcd0003") }, tab(9));
+    await flush();
+    const messages = [{ role: "system", content: "You write short titles for a request." }, { role: "user", content: "look it up" }];
+    const ext = { url: "chrome-extension://test/sidebar/sidebar.html" };
+    // The overlay sidebar, the DevTools panel and the chat page, all at once.
+    page.port.send({ type: "cmd", id: 1, command: { type: "side.call", runtime: "local", purpose: "title", session: { runtime: "local", hash: "abcd0003" }, messages, maxTokens: 32 } });
+    const [a, b] = await Promise.all([
+        bg.send({ type: "SESSION_TITLE", payload: { hash: "abcd0003", messages } }, ext),
+        bg.send({ type: "SESSION_TITLE", payload: { hash: "abcd0003", messages } }, { url: "chrome-extension://test/sidebar/devtools.html" }),
+    ]);
+    let reply;
+    for (let i = 0; i < 100 && !reply; i++) { await new Promise((r) => setTimeout(r, 10)); reply = page.port.messages.find((m) => m.type === "result" && m.id === 1); }
+    assert.equal(titleCalls, 1, "asked once, however many surfaces asked");
+    assert.deepEqual([a.data, b.data, reply.result.data.content], ["Lamp hunt 1", "Lamp hunt 1", "Lamp hunt 1"]);
+    assert.equal(page.rows().get("abcd0003").title, "Lamp hunt 1", "kept in the index, so the chat page shows the same name");
+    // Asked again later: the kept one, with no second call.
+    assert.equal((await bg.send({ type: "SESSION_TITLE", payload: { hash: "abcd0003", messages } }, ext)).data, "Lamp hunt 1");
+    assert.equal(titleCalls, 1);
+    // A page may not spend utility calls naming sessions.
+    assert.match((await bg.send({ type: "SESSION_TITLE", payload: { hash: "abcd0003", messages } }, tab(9))).error, /Refused/);
+});
+
 test("models.list answers what the whitelist allows, with kinds and the default marked", T, async () => {
     const bg = loadBackground({
         config: { ...config, chatUrl: "http://host/api/chat/completions", model: "qwen3:14b", modelFilter: "^qwen" },

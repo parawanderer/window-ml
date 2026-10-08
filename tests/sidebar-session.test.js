@@ -610,20 +610,24 @@ test("provenance: a default-resolved reply is tagged (default)", async () => {
 });
 
 test("agent run: its session auto-titles via the utility model, from the task (parity with chat)", async () => {
+    const asked = [];
     const w = await loadSidebarWorld({
         sync: { utilityModel: "u", autoTitles: true },
-        fetchLlm: (payload) => ({ data: payload && payload.extend === "utility" ? "Find Login Button" : "OK" }),
+        sessionTitle: (payload) => { asked.push(payload); return { data: "Find Login Button" }; },
     });
     await w.raw({ __mlSidebarOpen: true });     // titles only generate while the panel is open (like chat)
     await w.dispatch(agentStart("agt", "find the login button somewhere on this page", "m"));
     await w.dispatch(agentResult("agt", "top-right", 1));
     await w.flush();
     assert.match(w.shadow.querySelector(".row .row-title").textContent, /Find Login Button/, "the agent session got a utility-model title, not the raw task");
+    // Asked of the WORKER, which owns the one title every surface shows, with the task as the prompt.
+    assert.equal(asked[0].hash, "agt");
+    assert.match(asked[0].messages.at(-1).content, /find the login button/);
 });
 
 test("agent run: no utility model → the session keeps the raw task as its title (no phantom call)", async () => {
     let called = false;
-    const w = await loadSidebarWorld({ sync: { utilityModel: "", autoTitles: true }, fetchLlm: () => { called = true; return { data: "X" }; } });
+    const w = await loadSidebarWorld({ sync: { utilityModel: "", autoTitles: true }, fetchLlm: () => { called = true; return { data: "X" }; }, sessionTitle: () => { called = true; return { data: "X" }; } });
     await w.raw({ __mlSidebarOpen: true });
     await w.dispatch(agentStart("agt2", "read the invoice total", "m"));
     await w.dispatch(agentResult("agt2", "$42", 1));
@@ -634,21 +638,19 @@ test("agent run: no utility model → the session keeps the raw task as its titl
 
 test("session titles: summarises the first prompt via the utility model when the panel is open", async () => {
     const calls = [];
-    const w = await loadSidebarWorld({ sync: { utilityModel: "qwen3:0.5b" }, fetchLlm: (p) => { calls.push(p); return { data: '"Reverse a linked list."' }; } });
+    const w = await loadSidebarWorld({ sync: { utilityModel: "qwen3:0.5b" }, sessionTitle: (p) => { calls.push(p); return { data: "Reverse a linked list" }; } });
     await w.raw({ __mlSidebarOpen: true });                          // panel slid open → titles allowed
     await w.dispatch(chatStart("t1", 0, "how do I reverse a linked list in rust"));
     await w.dispatch(chatResult("t1", 0, "Here's how…"));
     await w.flush();
 
-    const titleCall = calls.find(c => c.extend === "utility");
-    assert.ok(titleCall, "title generated through extend:'utility'");
-    // cleanTitle strips the wrapping quotes + trailing period the model returned.
+    assert.equal(calls.length, 1, "the title is asked of the worker, once");
     assert.equal(w.shadow.querySelector(".row-title").textContent, "Reverse a linked list");
 });
 
 test("session titles: no summary while the panel is slid closed (falls back to the prompt)", async () => {
     const calls = [];
-    const w = await loadSidebarWorld({ sync: { utilityModel: "qwen3:0.5b" }, fetchLlm: (p) => { calls.push(p); return { data: "Should not be used" }; } });
+    const w = await loadSidebarWorld({ sync: { utilityModel: "qwen3:0.5b" }, fetchLlm: (p) => { calls.push(p); return { data: "Should not be used" }; }, sessionTitle: (p) => { calls.push({ extend: "utility", ...p }); return { data: "Should not be used" }; } });
     // no __mlSidebarOpen received → closed → titles must not generate
     await w.dispatch(chatStart("t2", 0, "some request text here"));
     await w.dispatch(chatResult("t2", 0, "reply"));

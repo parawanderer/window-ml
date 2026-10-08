@@ -102,6 +102,9 @@ export interface CommandDeps {
     utilityConfigured(): boolean;
     /** a small model call on the utility profile */
     sideCall(req: { messages: NeutralMessage[]; schema?: object; maxTokens: number; session?: string }): Promise<{ content: string; usage?: unknown }>;
+    /** The session's ONE title: the runtime's own, or asked for once and kept. A `title` side call goes here so every
+     *  client shows the same name; absent, it is an ordinary side call. */
+    title?(hash: string, messages: NeutralMessage[]): Promise<string | null>;
     /** capture a window's visible tab as a data URL */
     captureVisible(windowId: number, opts: { format: "png" | "jpeg"; quality?: number }): Promise<string>;
     now(): number;
@@ -605,6 +608,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
             if (!deps.utilityConfigured()) return fail("unsupported", "no utility model is set on this browser");
             const sessionHash = isSessionId(c.session) && c.session.runtime === deps.runtime ? c.session.hash : undefined;
             try {
+                if (c.purpose === "title" && sessionHash && deps.title) return ok({ content: (await deps.title(sessionHash, c.messages)) ?? "", usage: null });
                 const r = await deps.sideCall({ messages: c.messages, ...(c.schema ? { schema: c.schema } : {}), maxTokens: Math.min(Math.floor(c.maxTokens), SIDE_CALL_MAX_TOKENS), ...(sessionHash ? { session: sessionHash } : {}) });
                 let structured: unknown;
                 if (c.schema) { try { structured = JSON.parse(r.content); } catch { /* the content is still returned */ } }

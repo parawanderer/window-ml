@@ -22,7 +22,7 @@ import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { isExtensionSender } from "./sw-consent";
 import { fetchLLM, getConfig, listAvailableModels, modelCapabilitiesBatch } from "./sw-llm";
 import { pythonBundlePresent } from "./sw-python";
-import { recordHousekeeping } from "./sw-housekeeping";
+import { recordHousekeeping, senderOrigin } from "./sw-housekeeping";
 import { archiveCall, lastFolderReport, onFolderChange, scheduleFolderSync } from "./sw-archive";
 import { attentionCodes, recomputeAttention, refreshBackendAttention, watchAttention } from "./sw-attention";
 import { appendSnapshot, measureEvents, summarizeStore, type StorageReport, type StorageSnapshot, type StoreBytes } from "../session/session-storage-stats";
@@ -442,6 +442,7 @@ export function configureSessionCommands(run: RunDeps): void {
         hostsChat: (hash) => isBackgroundChat(hash),
         utilityConfigured: () => utilityModelSet,
         sideCall: utilityCall,
+        title: titleSession,
         captureVisible: async (windowId, opts) => {
             for (let attempt = 0; ; attempt++) {
                 try { return await chrome.tabs.captureVisibleTab(windowId, opts); }
@@ -710,14 +711,49 @@ export function maybeTitle(hash: string): void {
     if (!utilityModelSet || !autoTitles || titleAsked.has(hash)) return;
     if (titleAsked.size >= MAX_TITLE_ASKED) titleAsked.delete(titleAsked.values().next().value as string);
     titleAsked.add(hash);
-    void utilityCall({ messages: titleMessages(row.task), maxTokens: 32, session: hash }).then((r) => {
-        const title = cleanTitle(r.content);
+    void titleSession(hash, titleMessages(row.task)).catch(() => { /* no title: the list shows the task */ });
+}
+
+/** Titles being asked for right now, so a second asker waits for the same answer instead of asking again. */
+const titling = new Map<string, Promise<string | null>>(); // state: plumbing
+
+/**
+ * THE session's title, which this worker owns: the one it already has, or one asked of the utility model ONCE and
+ * kept in the index (so the chat page, the sidebar, the corner card and a phone all show the same name). Every
+ * surface that wants a title asks here (`SESSION_TITLE`, and `side.call` with purpose `title`) rather than calling
+ * the model itself, which is how three surfaces came to show three titles for one run.
+ * @param hash the session
+ * @param messages the asker's title prompt (titleMessages over the task or the first chat turn)
+ * @returns the title, or null when the model gave none
+ */
+export function titleSession(hash: string, messages: NeutralMessage[]): Promise<string | null> {
+    const row = sessionServer.index.get(hash);
+    if (row?.title) return Promise.resolve(row.title);
+    const asked = titling.get(hash);
+    if (asked) return asked;
+    const p = utilityCall({ messages, maxTokens: 32, session: hash }).then((r) => {
         const now = sessionServer.index.get(hash);
-        // Renamed, titled or deleted while the model was asked: that answer wins.
-        if (!title || !now || now.title || now.renamed) return;
+        // Renamed or titled while the model was asked: that answer wins.
+        if (now?.title) return now.title;
+        const title = cleanTitle(r.content);
+        if (!title) return null;
+        if (now?.renamed) return null;   // a person cleared the name on purpose
         const changed = sessionServer.retitle(hash, title);
-        if (changed) sessionStore?.putSummary(changed);
-    }).catch(() => { /* no title: the list shows the task */ });
+        if (changed?.saved) sessionStore?.putSummary(changed);
+        return title;
+    }).finally(() => { titling.delete(hash); });
+    titling.set(hash, p);
+    return p;
+}
+
+/** SESSION_TITLE: the session's one title (see {@link titleSession}). Extension pages only: a page could otherwise
+ *  spend utility calls and name sessions it does not own. */
+export async function handleSessionTitle(payload: unknown, sender: chrome.runtime.MessageSender): Promise<{ data?: string | null; error?: string }> {
+    if (senderOrigin(sender) === "page") return { error: "Refused: titles are asked for by extension pages." };
+    const p = (payload || {}) as { hash?: unknown; messages?: unknown };
+    if (typeof p.hash !== "string" || !p.hash || !Array.isArray(p.messages) || !p.messages.length) return { error: "SESSION_TITLE needs a hash and messages" };
+    if (!utilityModelSet) return { error: "no utility model is set" };
+    return { data: await titleSession(p.hash, p.messages as NeutralMessage[]) };
 }
 
 /**
