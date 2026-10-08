@@ -25,7 +25,7 @@ import { clipOut, elLine, errText } from "../dom/dom";
 import { makeAnswerFacade, finalizeAnswer } from "../pointers/answer-set";
 import { runPipe, pipeHint } from "../pointers/text-pipe";
 import { descriptorFor } from "../tools/render-descriptor";
-import { evalReadonly } from "../readonly-exec";
+import { evalReadonly, Denied } from "../readonly-exec";
 import { makeStreamSender } from "./stream-sender";
 import { formatReadonlyExec, readonlyRefused } from "./approval";
 import { subcallUsage } from "../bus";
@@ -206,11 +206,13 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
         if (outputCapEscalated("exec", args)) return { result: "", readonly: false };   // a raised output cap must hit the human gate
         try {
             const set = answerSetFor(run.byName);
-            // The same two steps as the page path: expand `@tool:` first (it is not JavaScript, so the tokenizer
-            // would refuse it), and bind this run's resolver, which rings the service worker where the pointer
-            // store lives. Without either, every pointer read in a survey went to the approval gate.
+            // Expand `@tool:` first (it is not JavaScript, so the tokenizer would refuse it), then REFUSE every pointer
+            // read: the worker answered every survey it could (sw-readonly.ts) and sent this one here because it reads
+            // the page. Reading the run's pointers here too would put another site's content into a realm the page
+            // owns, with no person asked, so a survey that needs both goes to the approval gate instead
+            // (docs/spec/SITE_ACCESS.md slice 2, attack 14).
             const { code } = expandPointers((args as { js: string }).js);
-            const ro = await withRunDeref((ref, pipe) => derefViaBackground(runId, ref, pipe), () => evalReadonly(code, document,
+            const ro = await withRunDeref(() => { throw new Denied("a survey that reads both the page and the run's pointers needs approval"); }, () => evalReadonly(code, document,
                 typeof window !== "undefined" ? window.ml : null, makeAnswerFacade(set, elLine), { checkpoint: () => set.checkpoint(),
                 // Each line as it prints, stamped here (the executor) like an approved exec's. A refused try's lines
                 // are discarded by the loop, which owns the stream.

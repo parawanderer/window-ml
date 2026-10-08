@@ -4,6 +4,12 @@
 // over and keeps the channel open until the run finishes.
 
 import { runBackgroundAgent } from "../agent/agent-host";
+import { evalReadonlyInWorker } from "./sw-readonly";
+import { workerReadonlyMl } from "./worker-readonly-ml";
+import { recordRunLog, runLog } from "./sw-run-log";
+import { eventsForRun, type RunLogEvent } from "../log/run-log";
+import { execCodeIn } from "../pointers/pointer-macro";
+import type { CurrentSnapshot } from "../agent/current-context";
 import { watchWhileWaiting, PageUnreachable } from "./page-reachable";
 import type { TabState } from "./page-reachable";
 import type { ToolMeta } from "../agent/agent-loop";
@@ -370,6 +376,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     // against the old number and the next Continue would offer the old budget back. `agent-cap` is the same event
     // a handle's setter fans page-side, and the reducer already folds it into the session.
     else if (capRaised) fanEvent({ kind: "agent-cap", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, maxSteps: p.maxSteps });
+    /** The run's context snapshot (`contextSink`), for `ml.current` in a survey the worker evaluates. */
     runBackgroundAgent(
         { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSameOriginAuth: p.autoApproveSameOriginAuth, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, ...(p.origin ? { origin: p.origin } : {}), runId, seqBase, tokenStore: sessionTokens(runId), labelMatch: p.labelMatch, resumeMessages, images: p.images,
           // A resumed turn follows a PERSON (a follow-up, Continue, Retry) — except a run resurrected after the
@@ -637,6 +644,10 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             // In descriptor without running it, so a step you watch stream shows exec's beautified JS /
             // python's code cell from the start instead of raw JSON args. Best-effort — raw args on failure.
             renderFor: async (name, args) => {
+                // exec's In is pure (the page draws it with the same function), so the worker draws it: the script is
+                // the model's text and may carry what it read elsewhere, which a step that never runs there should not
+                // lend the page (docs/spec/SITE_ACCESS.md slice 2).
+                if (name === "exec" && typeof args.js === "string") return execCodeIn(args.js);
                 const env = await sendTool({ runId, name, args, renderOnly: true })
                     .catch(() => null) as { renderIn?: import("../contract").RenderDescriptor } | null;
                 return env?.renderIn;
@@ -653,6 +664,22 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             claimValue: (key) => claimValue(key, runId),
             tryReadonly: p.autoApproveReadonly ? async (name, args, live) => {
                 if (name !== "exec") return null;
+                // The WORKER first (docs/spec/SITE_ACCESS.md slice 2): a survey that reads only the run and the box is
+                // answered here, where the run's context and pointers live, and never enters the page. One that reaches
+                // for the page comes back `needs-page` and goes there, where pointer reads are refused, so a survey that
+                // needs both reaches the person.
+                const snap = contextByRun.get(runId);
+                const wantsLog = typeof args.js === "string" && /\bcurrent\b/.test(args.js);
+                const log = snap && wantsLog ? eventsForRun(await runLog.all(), runId) : [];
+                const w = await evalReadonlyInWorker(args, {
+                    ...(snap ? { current: () => snap({ model: modelNow(), log }) } : {}),
+                    ml: workerReadonlyMl(tabPageUrl.get(tabId) ?? "", derefByRun.get(runId)),
+                    live,
+                });
+                if (w.kind !== "needs-page") {
+                    recordRunLog(runId, { subsystem: "routing", kind: "readonly-worker", reason: w.kind === "answered" ? "no-page-reads" : "out-of-dialect", detail: { tool: name } });
+                    return w.kind === "answered" ? { result: w.result, renderIn: w.renderIn, renderOut: w.renderOut } : null;
+                }
                 // Live console lines reach the loop's fan the way a delegated tool's do (delegateStreams). Dropped
                 // BEFORE returning, so a chunk still in flight from a refused try cannot land after the loop's
                 // discard: it finds no sink.
@@ -660,6 +687,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 try {
                     const env = await sendTool({ runId, name, args, readonlyTry: true, stream: !!live }, live?.push)
                         .catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
+                    recordRunLog(runId, { subsystem: "routing", kind: "readonly-page", reason: env?.readonly ? "reads-page" : "refused-in-page", detail: { tool: name } });
                     return env && env.readonly ? { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut, reused: env.reused } : null;
                 } finally {
                     if (live) delegateStreams.delete(runId);
@@ -678,8 +706,8 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 // Ask the page to compute the In render for THIS call (without running the tool) so the
                 // blocking approval shows a pretty In — exec's beautified JS, python's code cell — not
                 // raw args. Best-effort: raw args on any failure. (Out has nothing to render pre-run.)
-                let renderIn: unknown;
-                try {
+                let renderIn: unknown = tool === "exec" && typeof args.js === "string" ? execCodeIn(args.js) : undefined;
+                if (!renderIn) try {
                     const env = await sendTool({ runId, name: tool, args, renderOnly: true }) as { renderIn?: unknown };
                     renderIn = env?.renderIn;
                 } catch { /* page gone → no preview, fall back to raw args */ }

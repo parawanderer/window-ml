@@ -384,8 +384,13 @@ Tests: the `stored table` block in `tests/readonly-exec.test.mjs`.
 - **Page-hosted runs**: `tryReadonly` in `ml-agent-run.ts` expands pointers, binds the run's resolver, calls
   `evalReadonly`, and returns the result as the tool's; on any throw it returns null and the loop goes to the
   approval gate.
-- **Background-hosted runs**: `readonlyTry` in `run-delegation.ts` does the same inside the page for a loop that
-  lives in the service worker; its resolver rings the worker, where the pointer store lives.
+- **Background-hosted runs**: `tryReadonly` in `sw-run-host.ts` evaluates the survey in the WORKER first
+  (`sw-readonly.ts`, with the `ml` of `worker-readonly-ml.ts`, which reads the run's pointers in-process). Only one
+  that reaches for the page is sent there, to `readonlyTry` in `run-delegation.ts`, which REFUSES every pointer read:
+  a survey needing both the page and the run's pointers goes to the approval gate. Each decision is an execution-log
+  record, subsystem `routing`: `readonly-worker` (`no-page-reads` or `out-of-dialect`) or `readonly-page`
+  (`reads-page` or `refused-in-page`). The step's In is drawn in the worker too (`execCodeIn`), so a survey the
+  worker answers never sends its script to the page.
 - **After approval**: the real `exec` tool (`tools.ts`) expands pointers, resolves them, and runs the code with
   `eval`, or through CDP on a page whose CSP forbids `eval`.
 
@@ -465,9 +470,12 @@ does, through the debug stream relayed through the page's window, in every `debu
 `demo/ml-current-e2e` demo). The realms keep the snapshot from being evaluated in the page; closing that channel is the
 site-access work's.
 
-The worker realm is not wired yet: `tryReadonly` in `sw-run-host.ts` is where it goes, and that is the site-access
-work's slice 2, which will also give the worker's `ml` a `dereference`. Until then a survey naming `@tool:` defers to
-the page exactly as before. Tests: `tests/readonly-current.test.mjs`.
+The worker realm is wired for background-hosted runs (`tryReadonly` in `sw-run-host.ts`, above). Its `ml` carries
+`dereference` when the host has the run's pointer store, answered in-process; `.pipe()` on the value stays out of
+dialect, as on the page. A page-hosted run still evaluates on the page, where its loop and its own pointers live.
+Tests: `tests/readonly-current.test.mjs` (the realm, the worker's `ml`, its adversarial and halting cases),
+`tests/delegation.test.mjs` (the page leg refuses pointer reads) and `tests/run-start.test.mjs` (the routing, against
+the bundle).
 
 ## Extending the dialect
 

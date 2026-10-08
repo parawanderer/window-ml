@@ -371,7 +371,7 @@ export const derefByRun = new Map<string, (ref: string, pipe?: string | string[]
 /** The live turn's context snapshot per background-hosted run (the loop's `contextSink`): what `ml.current` and the
  *  state inspector read while a turn runs. A per-TURN closure like `derefByRun`, dropped with it in `untrackRun`;
  *  between turns `run.messages` reads the history `bgRuns` kept instead. */
-export const contextByRun = new Map<string, (extra?: { model?: string | null }) => CurrentSnapshot>();
+export const contextByRun = new Map<string, (extra?: { model?: string | null; log?: readonly import("../log/run-log").RunLogEvent[] }) => CurrentSnapshot>();
 
 /** What the live TURN holds that lives only in `hostRun`'s closure: what it was asked, and what it was allowed this
  *  turn without asking again. Set at the turn's start and dropped with it in `untrackRun`, like `contextByRun`. */

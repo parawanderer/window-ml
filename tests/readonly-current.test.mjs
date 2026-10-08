@@ -16,6 +16,7 @@ import { evalReadonly, NotInDialect, Denied, NeedsPage, ABRIDGE_OVER, describeSw
 import { evalReadonlyInWorker } from "../src/sw/sw-readonly.ts";
 import { mlPipe } from "../src/pointers/text-pipe.ts";
 import { toolToken } from "../src/util.ts";
+import { execCodeIn } from "../src/pointers/pointer-macro.ts";
 
 const outOfDialect = (e) => e instanceof NotInDialect || e instanceof Denied;
 const LONG_SYSTEM = "You are an agent. ".repeat(200);   // 3,600 chars, like the real one: what the print boundary is for
@@ -366,6 +367,70 @@ test("evalReadonlyInWorker answers, defers, refuses, and reports a script's own 
     assert.equal(snaps, 0);
     // `@tool:` defers until the host gives the worker a `dereference` (the site-access slice 2's).
     assert.equal((await evalReadonlyInWorker({ js: "return @tool:abc1234.length" }, deps)).kind, "needs-page");
+});
+
+// --- the worker's own `ml` (worker-readonly-ml.ts): what a survey reads there, pointers included ----------------------
+
+/** A pointer store of one capture, recording every read the survey makes of it. */
+function oneCapture(value = '{"rows":[1,2,3]}') {
+    const reads = [];
+    const meta = { tool: "fetch_url", seq: 1 };
+    return { reads, meta, deref: (ref, stages) => { reads.push([ref, stages]); return { value: stages?.length ? "piped:" + stages.join("|") : value, meta }; } };
+}
+
+test("WORKER ML: only reads; nothing that spends, mutates, egresses or reads the page", async () => {
+    const { workerReadonlyMl } = await import("../src/sw/worker-readonly-ml.ts");
+    const without = Object.keys(workerReadonlyMl("https://a.example/")).sort();
+    assert.deepEqual(without, ["capabilities", "config", "getModel", "info", "jsonPath", "models", "pipe", "ps", "range", "schema", "serverTools"]);
+    assert.deepEqual(Object.keys(workerReadonlyMl("https://a.example/", oneCapture().deref)).sort(), [...without, "dereference"].sort(),
+        "dereference exists only when the host hands over the run's store");
+});
+
+test("WORKER ML: a pointer read is answered in the worker from the run's store, pipe stages included", async () => {
+    const { workerReadonlyMl } = await import("../src/sw/worker-readonly-ml.ts");
+    const c = oneCapture();
+    const ml = workerReadonlyMl("https://a.example/", c.deref);
+    const run = (js) => evalReadonlyInWorker({ js }, { ml });
+    const a = await run("return @tool:abc1234.json.rows.length");
+    assert.deepEqual([a.kind, a.result], ["answered", "3"]);
+    assert.deepEqual(a.renderIn, execCodeIn("return @tool:abc1234.json.rows.length"), "drawn as the page draws it, macro marks included");
+    assert.equal((await run(`return (await ml.dereference("abc1234", { pipe: "head 1" })).text`)).result, 'piped:head 1');
+    assert.equal((await run(`const v = await ml.dereference("abc1234"); return v.pipe(["head 1"])`)).kind, "refused", "a value's own re-read is out of dialect here as on the page");
+    assert.ok(c.reads.every(([ref]) => ref === "abc1234" || ref === "@tool:abc1234"), JSON.stringify(c.reads));
+});
+
+test("WORKER ML ADVERSARIAL: a pointer's value is data; no realm, no constructor, no write back into the store", async () => {
+    const { workerReadonlyMl } = await import("../src/sw/worker-readonly-ml.ts");
+    const c = oneCapture();
+    const ml = workerReadonlyMl("https://a.example/", c.deref);
+    for (const js of [
+        `(await ml.dereference("x")).constructor`, `(await ml.dereference("x")).pipe.constructor("return this")()`,
+        `ml.dereference.constructor("return this")()`, `(await ml.dereference("x"))["__proto__"]`,
+        `ml.dereference.call(null, "x")`, `(await ml.dereference("x")).meta.constructor`,
+    ]) assert.equal((await evalReadonlyInWorker({ js }, { ml })).kind, "refused", js);
+    await evalReadonlyInWorker({ js: `const v = await ml.dereference("x"); v.meta.tool = "forged"; return 1` }, { ml });
+    assert.equal(c.meta.tool, "fetch_url", "the store's meta is untouched");
+});
+
+test("WORKER ML ADVERSARIAL: what the worker does not carry defers to the page, where it is refused; a read then a page reach returns nothing", async () => {
+    const { workerReadonlyMl } = await import("../src/sw/worker-readonly-ml.ts");
+    const ml = workerReadonlyMl("https://a.example/", oneCapture().deref);
+    for (const js of [`ml.chat("x")`, `ml.setModel("m")`, `ml.fetch("https://b.example/")`, `ml.agent("x")`, `ml.pythonExec("1")`, `ml._fetchCached("u")`, `ml.unload()`]) {
+        assert.equal((await evalReadonlyInWorker({ js }, { ml })).kind, "needs-page", `worker: ${js}`);
+        await assert.rejects(evalReadonly(js, doc(), ml), (e) => outOfDialect(e) && !(e instanceof NeedsPage), `page: ${js}`);
+    }
+    const both = await evalReadonlyInWorker({ js: `const v = await ml.dereference("x"); return v + document.title` }, { ml });
+    assert.deepEqual(both, { kind: "needs-page" }, "the value read before the page reach goes nowhere");
+});
+
+test("WORKER ML HALTING: a survey that re-reads a pointer forever is stopped by the step budget", { timeout: 10_000 }, async () => {
+    const { workerReadonlyMl } = await import("../src/sw/worker-readonly-ml.ts");
+    const c = oneCapture();
+    const ml = workerReadonlyMl("https://a.example/", c.deref);
+    const r = await evalReadonlyInWorker({ js: `let n = 0; while (true) { await ml.dereference("x"); n++ } return n` }, { ml });
+    assert.notEqual(r.kind, "needs-page");
+    assert.ok(r.kind === "refused" || /^Error:/.test(r.result), JSON.stringify(r));
+    assert.ok(c.reads.length < 100_000, `bounded (${c.reads.length} reads)`);
 });
 
 // --- HALTING and FAILURE ----------------------------------------------------------------------------------------------

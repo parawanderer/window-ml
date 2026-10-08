@@ -88,12 +88,23 @@ and each handler checks the sender itself. `tests/redteam.test.js` (section "UNG
 - `PAGE_TOOL_STREAM`: only from the run's own tab, frame 0.
 - `DEREF_TOKEN`, `VALUE_COLUMNS`: the run's own tab; removed in slice 2 part 1c (attack 14).
 
+## Read-only surveys of a run the worker hosts
+
+A survey is evaluated in the worker first (`tryReadonly` in `sw-run-host.ts`), where the run's pointers and
+`ml.current` live and no page exists. Only a survey that reaches for the page goes there, and the page leg refuses
+every pointer read (`run-delegation.ts`), so a survey needing both reaches the person. An approved `exec` still reads
+pointers from the page through `DEREF_TOKEN` until part 1c sends it its values with the call. Where each survey went
+is in the execution log (`routing`, `readonly-worker`/`readonly-page`). `docs/dev/readonly-exec.md`, "Where it is
+called".
+
 ## Tests
 
 - `tests/site-access.test.mjs`: the pure rules.
 - `tests/event-admission.test.mjs`: `pageMayWrite` over every event kind the contract defines, for each claim.
 - `tests/run-start.test.mjs`, section "what a page may add to a run the worker built": the worker's half, against the
   bundle.
+- `tests/run-start.test.mjs`, section "where a read-only survey of a worker-built run is evaluated": the routing and
+  its log, against the bundle.
 - `tests/redteam.test.js`, section "(f)": every page-started type refused from an unapproved origin with nothing
   reaching the backend, a tab or the screen; run control refused on a tab hosting a run while the rest is allowed; a
   sender that can never be granted refused even when its host is approved; revoke and deny without reload; a page

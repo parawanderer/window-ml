@@ -14,8 +14,8 @@
 // refused there, so it reaches the human whatever order it touches things in, and no lexical guess about the script
 // decides anything: an alias (`const m = ml; m.current`) cannot add a capability a realm does not have.
 //
-// Not wired in this change: the call site is the host's `tryReadonly` (sw-run-host.ts), which the site-access work
-// owns and wires in its slice 2.
+// The call site is the host's `tryReadonly` (sw-run-host.ts), which hands it the run's `ml.current` and a read-only `ml`
+// with the run's pointers (worker-readonly-ml.ts), and records where each survey went in the execution log.
 
 import { evalReadonly, NeedsPage, NotInDialect, Denied } from "../readonly-exec";
 import { expandPointers, execCodeIn } from "../pointers/pointer-macro";
@@ -34,9 +34,9 @@ export interface WorkerReadonlyDeps {
      *  so a survey that never reads it copies nothing. */
     current?: () => CurrentSnapshot;
     /** The read-only `ml` members the worker can answer (`config`, `models`, `ps`, `info`, `pipe`, …). A member it
-     *  does not carry defers the survey to the page rather than failing it. That includes `dereference` until the
-     *  host gives it one: pointer reads in the worker are the site-access slice 2's, and until then a survey naming
-     *  `@tool:` goes to the page exactly as it did before. */
+     *  does not carry defers the survey to the page rather than failing it. That includes `dereference` when the
+     *  host has no pointer store for the run, and the page leg refuses pointer reads, so such a survey reaches the
+     *  human. */
     ml?: Record<string, unknown>;
     /** The run's `exec` tool, whose `render` draws the step's In. Absent: the same code view the page's `exec` draws
      *  (`execCodeIn`), so a step answered here looks like one answered there. */
@@ -59,8 +59,7 @@ export async function evalReadonlyInWorker(args: Record<string, unknown>, deps: 
     const codeIn = execCodeIn(args.js);
     // A raised output cap is a request the human has to grant, wherever the script would run.
     if (outputCapEscalated("exec", args)) return { kind: "refused" };
-    // `@tool:` is not JavaScript, so the macro expands it to `ml.dereference(…)` before the tokenizer sees it. Without a
-    // `dereference` on the worker's `ml` that read defers to the page, as it did before this module existed.
+    // `@tool:` is not JavaScript, so the macro expands it to `ml.dereference(…)` before the tokenizer sees it.
     const { code } = expandPointers(args.js);
     // The snapshot is a copy of the whole context, so it is made only for a script that says `current`. A cost
     // decision, never a security one: a script that reaches `current` without the word (a computed key) finds no
