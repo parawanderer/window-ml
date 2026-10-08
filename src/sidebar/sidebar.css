@@ -2147,6 +2147,10 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
    so it reads as chosen rather than pointed at. */
 .ctx-target { background: color-mix(in srgb, var(--fg) 14%, transparent); border-radius: 4px; }
 .jt-row .tri { align-self: center; margin-left: -2px; }
+/* A chevron's width with no chevron: a row that cannot open, lined up with one that can. */
+.jt-row .tri.jt-tri-space { visibility: hidden; }
+/* A time drawn as a clock time and an age; the exact value is on hover. */
+.jt-time { cursor: help; }
 .jt-key { color: var(--j-key); }
 .jt-brace { color: var(--j-base); }
 .jt-preview { color: var(--fg-faint); font-style: italic; }

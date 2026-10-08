@@ -97,3 +97,41 @@ test("label replaces the key and trail ends the line, on the ROOT row only, for 
     assert.equal(leaf.querySelectorAll(".jt-row").length, 1);
     assert.match(leaf.textContent, /inspector\.y:"a string"chip/);
 });
+
+// --- times, drawn as a reader wants them, only where a caller asked ---
+
+test("a time is a time's key AND epoch milliseconds: neither alone is enough", () => {
+    const now = 1_791_465_928_631;
+    for (const k of ["ts", "t", "since", "startedTs", "createdAt", "lastReadAt"]) assert.ok(T.isTimeField(k, now), k);
+    for (const [k, v, why] of [["count", now, "not a time's key"], ["ts", 42, "a time's key holding a small number"], ["t", 3.5, "a fraction"],
+        ["createdAt", "2026-10-08", "a string"], ["ts", 5e12, "past 2100"], ["ts", Infinity, "not finite"], [undefined, now, "an array item"]])
+        assert.equal(T.isTimeField(k, v), false, why);
+    const label = T.timeLabel(now - 125_000, now);
+    assert.match(label, / · 2m 5s ago$|· 2m ago$/);
+    assert.match(T.timeLabel(now + 5000, now), /· ahead$/);
+});
+
+test("with `times` a time shows as a clock time and an age, the exact value on hover; without it, the number", async () => {
+    const v = { since: Date.now() - 60_000, step: 3, nested: [{ ts: Date.now() }] };
+    let host = show({ v, allOpen: true, times: true, path: "$" });
+    const since = rowWith(host, "since:");
+    assert.ok(since.querySelector(".jt-time"), "drawn as a time");
+    assert.match(since.textContent, /ago/);
+    assert.ok(rowWith(host, "ts:").querySelector(".jt-time"), "and in every member below");
+    assert.equal(rowWith(host, "step:").querySelector(".jt-time"), null, "a plain number stays a number");
+    rightClick(since);
+    await run("Copy value");
+    assert.deepEqual(copied, [String(v.since)], "copying copies the number, not the label");
+    host = show({ v, allOpen: true });
+    assert.equal(host.querySelector(".jt-time"), null, "no `times`, no change");
+    assert.match(rowWith(host, "since:").textContent, new RegExp(String(v.since)));
+});
+
+test("a labelled root with nothing to open keeps the chevron's width, so its name lines up with a branch's", () => {
+    const leaf = show({ v: 7, label: h("span", { class: "L" }, "x:") });
+    const space = leaf.querySelector(".jt-tri-space");
+    assert.ok(space, "a spacer");
+    assert.equal(space.nextElementSibling.className, "L", "before the label");
+    const plain = show({ v: { a: 7 }, allOpen: true });
+    assert.equal(plain.querySelector(".jt-tri-space"), null, "only for a caller's labelled root");
+});
