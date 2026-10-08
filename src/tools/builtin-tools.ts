@@ -444,7 +444,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 },
                 verify: {
                     type: "boolean",
-                    description: "This is an 'inline look()' option that saves you a turn. For a grounding result that resolves to a DOM element or an `@box:…` region: also return the marked crop for confirmation — structurally the same as calling look() on the result right after locating, but folded into THIS call (one turn, one screenshot; no extra round-trip). A point/`@pt:…` result ALWAYS returns one (you always verify a coordinate). Default false: a DOM element selector usually needs no visual check. Set true to eyeball a grounded element/region before acting."
+                    description: "For a result that is a DOM element or an `@box:…` region, also return its marked crop in THIS call, instead of a separate look(). A point/`@pt:…` result ALWAYS returns one. Default false: a DOM element selector usually needs no visual check."
                 },
             },
             required: ["description"],
@@ -1183,7 +1183,7 @@ export const buildClickTool = (ml: MlApi): MlTool => {
             properties: {
                 selector: { type: "string", description: "CSS selector of the element to click, or an `@pt:…` point token from locate (canvas targets)." },
                 index: { type: "integer", description: "Which match to click (0-based); default 0." },
-                verify: { type: "boolean", description: "This is an 'inline look()' option that saves you a turn. Set true if you'd call look() right after — it returns a screenshot of the AREA around where you clicked in THIS call (a menu that opened, a nav, whatever changed), so you skip the separate look and see the result immediately. If the clicked element vanished (the page changed), you get the area where it was, flagged." }
+                verify: { type: "boolean", description: "Return a screenshot of the AREA around the click in THIS call (a menu that opened, whatever changed), instead of a separate look(). If the element vanished, you get the area where it was, flagged." }
             },
             required: ["selector"]
         },
@@ -1304,7 +1304,7 @@ export const buildTypeTool = (ml: MlApi): MlTool => {
                 index: { type: "integer", description: "Which match (0-based); default 0." },
                 append: { type: "boolean", description: "Append instead of replacing the value." },
                 submit: { type: "boolean", description: "Press Enter afterwards (submit)." },
-                verify: { type: "boolean", description: "This is an 'inline look()' option that saves you a turn. Set true if you'd call look() right after — it returns a screenshot of the AREA around the field in THIS call (autocomplete/suggestions that appeared, a validation message, or — with submit — the result), so you skip the separate look. If the field vanished after submit (navigation), you get the area where it was, flagged." }
+                verify: { type: "boolean", description: "Return a screenshot of the AREA around the field in THIS call (suggestions, a validation message, or with submit the result), instead of a separate look(). If the field vanished after submit, you get the area where it was, flagged." }
             },
             required: ["selector", "text"]
         },
