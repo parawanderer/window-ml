@@ -35,6 +35,16 @@ descriptors carry **`seen`**: how many characters the model actually received. E
 ("captured, but NOT sent to the model" — dimmed, dashed rail), so the fuller human view is never mistaken for
 what the model read (the raw view still shows the model-facing text verbatim).
 
+*Past the panel's cap: the start and the LATEST.* Output longer than `UI_OUT_CAP` keeps its first part and its newest
+part, like a terminal's scrollback, with one line between them counting what was dropped (`… [N chars dropped here]
+…`). The head is the model's cut (`panelHead(seen)`, at most half the cap), so what the model read stays on screen;
+the rest of the cap is the latest output, from a line start. One module does this, `src/agent/output-clip.ts`:
+`clipHeadTail` for every finished view (`exec`, the read-only survey, `python_exec`, CDP exec), and the stream fan
+(`makeStreamFan`, agent-loop.ts) builds the same text a chunk at a time, keeping a fixed head and a sliding window,
+so the output keeps its shape when the step lands. Line stamps are remapped across the gap: a dropped line's stamp
+moves to the tail's first line, which began in the gap. It used to keep only the start, so a long-running loop's live
+view froze on its first lines while a "[+N chars]" count ticked up beside it.
+
 *The output cell.* `python_exec` and `exec` render their Out through ONE shared **`OutputCell`**
 (src/sidebar/transcript/render-panel.tsx) — a future code-ish tool (a `bash_exec`, say) wraps its own sections in it and
 inherits everything: a height cap (Settings → Appearance, per-cell drag-to-resize), scrolling, **tail-follow**

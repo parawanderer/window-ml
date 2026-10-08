@@ -6,6 +6,7 @@
 import type { ApprovalRequest, ApprovalDecision } from "../contract/contract-agent";
 import type { RenderDescriptor } from "../contract/contract-render";
 import { UI_OUT_CAP } from "../contract/contract-chat";
+import { clipHeadTail, panelHead } from "./output-clip";
 import { OUTPUT_CAP } from "../contract/contract-pointers";
 import { NotInDialect, Denied, describeSwaps, type PrintSwap } from "../readonly-exec";
 import { clipOut, clipValue, elPath } from "../dom/dom";
@@ -146,7 +147,7 @@ export function formatReadonlyExec(result: unknown, logs: string[],
     // The panel keeps more of the value than the model's 500 characters, and marks where the model's copy ended.
     const render = (v: { ui: string; seen?: number; notes: string[] }): RenderDescriptor => ({
         type: "exec-out",
-        ...(logs.length ? { stdout: clipOut(joined, UI_OUT_CAP), seen: Math.min(joined.length, MODEL_CAP) } : {}),
+        ...(logs.length ? { stdout: clipHeadTail(joined, UI_OUT_CAP, panelHead(MODEL_CAP)), seen: Math.min(joined.length, MODEL_CAP) } : {}),
         value: v.ui,
         ...(v.seen != null ? { valueSeen: v.seen } : {}),
         ...(consoleNotes.length ? { stdoutNotes: consoleNotes } : {}),

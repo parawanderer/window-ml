@@ -3811,6 +3811,29 @@ test("exec Out: the UI keeps MORE than the model got, and records where the mode
     assert.doesNotMatch(out.render.stdout, /… \[first \d+ of \d+ chars\]/, "the UI copy isn't clipped at the model's cap");
 });
 
+// Past the PANEL's cap too, the newest output stays: the copy keeps the part the model read and the LATEST lines, like
+// a terminal, with the gap counted (src/agent/output-clip.ts). It used to keep only the start.
+test("exec Out: past the panel's cap the UI keeps the model's part AND the latest lines, with the gap counted", async () => {
+    const { ml } = loadDomWorld();
+    const exec = ml.domTools.find(t => t.name === "exec");
+    const out = await exec.run({ js: "for (let i=0;i<400;i++) console.log('line ' + String(i).padStart(4, '0') + ' ' + 'x'.repeat(40)); 1" }, {});
+    const { stdout, seen } = out.render;
+    assert.equal(seen, 500);
+    assert.match(stdout, /^line 0000 /, "the start the model read is there");
+    assert.match(stdout, /line 0399 x+$/, "and so is the newest line");
+    assert.match(stdout, /\n… \[\d+ chars dropped here\] …\nline \d{4} /, "the gap is counted, and the tail opens on a whole line");
+});
+
+test("python_exec Out: past the panel's cap the stdout keeps the latest prints", async () => {
+    const { ml } = loadDomWorld();
+    const printed = Array.from({ length: 400 }, (_, i) => `print ${String(i).padStart(4, "0")} ${"y".repeat(40)}`).join("\n");
+    ml.pythonExec = async () => ({ ok: true, value: "None", stdout: printed });
+    const out = await ml.pythonTool().run({ code: "x" });
+    assert.match(out.render.stdout, /^print 0000 /);
+    assert.match(out.render.stdout, /print 0399 y+$/, "the newest print is kept");
+    assert.match(out.render.stdout, /chars dropped here/);
+});
+
 test("exec's description tells the model the cap the code applies, read from the one table", async () => {
     // It said "~500", typed by hand beside a table that also said 500 — true until the table changes.
     const { OUTPUT_CAP } = await import("../src/contract/contract-pointers.ts");
