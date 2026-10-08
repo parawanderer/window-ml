@@ -102,7 +102,7 @@ and stay safe.
   punctuators. Comments are skipped.
 - Expressions, by precedence climbing (the `BP` table): literals, identifiers, member access (`.x`, `?.x`, `[e]`,
   `?.[e]`), calls (`f(a)`, `?.(a)`, spread arguments), arrows and function expressions, array and object literals
-  (with spread and shorthand), `new Ctor(…)` for a bare name, unary `! - typeof`, binary arithmetic and comparison,
+  (with spread and shorthand), `new Ctor(…)` for a bare name, unary `! - + typeof`, binary arithmetic and comparison,
   `**` (tighter than `*`, right-associative; an unparenthesised unary operand on its left — `-2 ** 2`, `await x ** 2`
   — is refused, as JavaScript refuses it; a BigInt operand is refused because its cost grows with the exponent inside
   one operation), `&& || ??`, the ternary, `await`, assignment (`=` and `+= -= *= /= %=`) and `++`/`--`, prefix or
@@ -173,6 +173,11 @@ becomes a real array.
 - a name in `CALLABLE_ROOTS` (`String(x)`, `Number(x)`, `parseInt`, `Array(n)`, `getComputedStyle`, …);
 - `new` on a name in `SAFE_CONSTRUCTORS` (`Set`, `Map`, `Array`, `Date`, `RegExp`, …), resolved by name so it
   cannot be rebound;
+- a Date's reads and formatting (`getTime`, `toISOString`, `toLocaleString`, the `get*`s), never a `set*`, and the
+  statics `Date.now`/`Date.parse`/`Date.UTC`; a number's `toFixed`/`toPrecision`/`toLocaleString`. Added 2026-10-08
+  after gemma4 and qwen3.8 wrote exactly these reading `ml.current` and fell out of the dialect each time. A Date is
+  recognised by BRAND (`Date.prototype.getTime.call` throws on anything else), not by its `toString` tag, which a
+  page object can claim; `tests/readonly-dates.test.mjs`;
 - one of the script's own arrows, called directly or handed to a host method as a callback.
 
 ### The method gate is scoped by receiver

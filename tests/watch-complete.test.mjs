@@ -53,7 +53,7 @@ test("an array: `length` and the dialect's read methods; indexes reach its first
 
 test("a key that is not a name is offered in brackets, replacing the dot", () => {
     assert.equal(take("inspector.run.od", "odd key"), `inspector.run["odd key"]`);
-    assert.deepEqual(labels(`inspector.run["odd key"].`), ["toFixed"], "and the chain goes on through it");
+    assert.deepEqual(labels(`inspector.run["odd key"].`), ["toFixed", "toPrecision", "toLocaleString"], "and the chain goes on through it: a number's methods");
 });
 
 // --- the dialect's own lists, never more ---

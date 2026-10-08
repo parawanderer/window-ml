@@ -55,7 +55,7 @@ export const isDomCollection = (x: any): boolean =>
 type MethodKind =
     | "array" | "string" | "number" | "date" | "regexp" | "set" | "map" | "promise"
     | "element" | "document" | "collection" | "style" | "console" | "table"
-    | "Math" | "JSON" | "ObjectCtor" | "ArrayCtor" | "PromiseCtor";
+    | "Math" | "JSON" | "ObjectCtor" | "ArrayCtor" | "PromiseCtor" | "DateCtor";
 
 const BY_KIND: Record<MethodKind | "*", readonly string[]> = {
     // Harmless on anything. `then` is here because the dialect APPLIES a callback to a non-thenable (the shape
@@ -75,8 +75,14 @@ const BY_KIND: Record<MethodKind | "*", readonly string[]> = {
         "split", "startsWith", "endsWith", "replace", "replaceAll", "padStart", "padEnd",
         "repeat", "charAt", "charCodeAt", "codePointAt", "normalize", "localeCompare",
         "match", "matchAll", "search", "includes", "indexOf", "lastIndexOf", "slice", "concat", "at"],
-    number: ["toFixed"],
-    date: [],                       // `new Date()` is the clock; reading it is a property/coercion, not a call
+    number: ["toFixed", "toPrecision", "toLocaleString"],
+    // A Date's READS and FORMATTING (what models write: `new Date(ts).toISOString()`, `.getTime()`), never a `set*`,
+    // which changes the Date in place. Each is O(1) and returns a number or a string.
+    date: ["getTime", "valueOf", "getTimezoneOffset", "toISOString", "toJSON", "toString", "toDateString", "toTimeString",
+        "toUTCString", "toLocaleString", "toLocaleDateString", "toLocaleTimeString",
+        "getFullYear", "getMonth", "getDate", "getDay", "getHours", "getMinutes", "getSeconds", "getMilliseconds",
+        "getUTCFullYear", "getUTCMonth", "getUTCDate", "getUTCDay", "getUTCHours", "getUTCMinutes", "getUTCSeconds",
+        "getUTCMilliseconds"],
     regexp: ["test", "exec"],
     // Set / Map — reads (has/get; size is a property, read via readMember) PLUS the mutators, which the
     // `owned` gate confines to containers the script created. Scoping them here is what stops the same names
@@ -108,6 +114,9 @@ const BY_KIND: Record<MethodKind | "*", readonly string[]> = {
     // Promise combinators. `Promise` itself is never callable (not a CALLABLE_ROOT, and `new` isn't in the
     // dialect), so this cannot mint a promise around anything the gates did not already allow.
     PromiseCtor: ["all", "allSettled"],
+    // The clock and two pure parsers. `Date` itself is not a CALLABLE_ROOT, so `Date()` stays refused; `new Date(…)`
+    // is a SAFE_CONSTRUCTOR as before.
+    DateCtor: ["now", "parse", "UTC"],
 };
 
 const KIND_SETS = new Map<string, Set<string>>(Object.entries(BY_KIND).map(([k, v]) => [k, new Set(v)]));
@@ -140,6 +149,7 @@ export function kindOf(obj: unknown): MethodKind | null {
         if (obj === (Object as unknown)) return "ObjectCtor";
         if (obj === (Array as unknown)) return "ArrayCtor";
         if (obj === (Promise as unknown)) return "PromiseCtor";
+        if (obj === (Date as unknown)) return "DateCtor";
         return null;
     }
     if (obj === (JSON as unknown)) return "JSON";
@@ -159,7 +169,10 @@ export function kindOf(obj: unknown): MethodKind | null {
     if (isSet(o)) return "set";
     if (isMap(o)) return "map";
     if (typeof (o as { then?: unknown }).then === "function") return "promise";
-    if (o instanceof Date || Object.prototype.toString.call(o) === "[object Date]") return "date";
+    // By BRAND, not by `toString` tag: a page object can claim `Symbol.toStringTag = "Date"`, and since a date now has
+    // methods, a claimed one would have its OWN `getTime` called. The borrowed getter throws on anything without a
+    // Date's internal slot, across realms too.
+    if (isDate(o)) return "date";
     if (Object.prototype.toString.call(o) === "[object RegExp]") return "regexp";
     // A DOCUMENT before an element: it answers `getElementById`, which an element does not.
     if (typeof (o as { createElement?: unknown }).createElement === "function" && typeof (o as { getElementById?: unknown }).getElementById === "function") return "document";
@@ -183,6 +196,10 @@ const brandCheck = (proto: object, prop: string) => {
 const isSet = brandCheck(Set.prototype, "size");
 
 const isMap = brandCheck(Map.prototype, "size");
+
+/** Is this a real Date, from any realm? Its own getter cannot be faked: `Date.prototype.getTime` throws on anything
+ *  else, whatever it claims to be. */
+const isDate = (o: object): boolean => { try { Date.prototype.getTime.call(o); return true; } catch { return false; } };
 
 /** May `key` be CALLED on `obj`? The whole method gate, in one place: the receiver's kind decides, an
  *  unrecognised receiver gets nothing, and "*" holds only what is harmless everywhere. */

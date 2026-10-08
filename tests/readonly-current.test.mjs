@@ -649,6 +649,18 @@ test("HALTING: a loop over ml.current.debug cannot grow it, and multiplying over
     assert.equal((await inThread("ml.current.debug.userWatches.length", 3, 5000, false, true)).value, 3000);
 });
 
+test("HALTING: dates, the clock and number formatting in a long map are stopped by the step budget", async () => {
+    for (const src of [
+        "Array.from({ length: 10000000 }, () => new Date(0).toLocaleString('en-GB'))",
+        "Array.from({ length: 10000000 }, (_, i) => Date.now() + (i).toFixed(2))",
+        "Array.from({ length: 10000000 }, () => +new Date()).length",
+    ]) {
+        const r = await inThread(src);
+        assert.ok(!r.hung, `${src}: still running after 5 s`);
+        assert.equal(r.threw, "NotInDialect", src);
+    }
+});
+
 test("FAILURE: a survey that reads ml.current and then falls out of dialect leaves the snapshot as it was", async () => {
     const snap = sampleSnapshot();
     await assert.rejects(inWorkerRealm(`const m = ml.current.meta; m[0].tokens = 0; m.length = 0; window.x`, snap), outOfDialect);

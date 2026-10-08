@@ -166,7 +166,8 @@ export class Parser {
         // `await X` — the evaluator yields X to its driver. Only reachable at the top level
         // (or inside a directly-invoked arrow); inside a host callback the sync driver rejects it.
         if (t.t === "name" && t.v === "await") { this.i++; return { type: "Await", arg: this.parseUnary() }; }
-        if (t.t === "punct" && (t.v === "!" || t.v === "-") || (t.t === "name" && t.v === "typeof")) {
+        // Unary `+` is `Number(x)`, the idiom models write for a timestamp (`+new Date()`); it coerces exactly as `-` does.
+        if (t.t === "punct" && (t.v === "!" || t.v === "-" || t.v === "+") || (t.t === "name" && t.v === "typeof")) {
             this.i++;
             return { type: "Unary", op: t.v, arg: this.parseUnary() };
         }

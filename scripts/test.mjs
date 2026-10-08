@@ -53,7 +53,7 @@ const GENRES = {
     readonly: {
         about: "the read-only exec dialect (src/readonly-exec.ts) and the free members a survey calls",
         files: ["readonly-exec.test.mjs", "readonly-pipe.test.mjs", "readonly-jsonpath.test.mjs", "readonly-current.test.mjs",
-            "readonly-stream.test.mjs", "readonly-globals.test.mjs"],
+            "readonly-stream.test.mjs", "readonly-globals.test.mjs", "readonly-dates.test.mjs"],
     },
     ext: {
         about: "the extension's own worlds — background, relay, CDP, the page loop",

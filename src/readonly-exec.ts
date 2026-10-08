@@ -90,7 +90,7 @@ export async function evalReadonly(code: string, doc: Document | null, ml?: unkn
     if (!facade && opts.current) facade = Object.create(null);
     const root: Record<string, unknown> = Object.create(null);
     Object.assign(root, {
-        Array, Object, JSON, Math, String, Number, Boolean, Promise,
+        Array, Object, JSON, Math, String, Number, Boolean, Promise, Date,
         parseInt, parseFloat, isNaN, isFinite, undefined, NaN, Infinity,
         console: { log: rec, info: rec, warn: rec, error: rec, debug: rec },
     });
