@@ -833,3 +833,17 @@ test("the published empty page is an ordinary https page, not an extension or br
     assert.ok(!/^chrome|^about|^data/.test(AGENT_START_PAGE), "must not be a browser or extension page");
     assert.ok(u.pathname.endsWith("/agent-start.html"), "the service worker exempts it by this name");
 });
+
+// --- side calls that are the session's, not the asker's ---
+
+test("side.call: a TITLE goes to the runtime's one title for the session, a summary is an ordinary side call", async () => {
+    const w = world({
+        sideCall: async (req) => { w.calls.push(["sideCall", req]); return { content: "a gloss", usage: null }; },
+        title: async (hash, messages) => { w.calls.push(["title", hash, messages]); return "Prices"; },
+    });
+    const base = { type: "side.call", runtime: "local", session: sid("aaaa0001"), messages: [{ role: "user", content: "name this" }], maxTokens: 32 };
+    assert.deepEqual(await w.run({ ...base, purpose: "title" }), { ok: true, data: { content: "Prices", usage: null } });
+    assert.deepEqual(w.named("title"), [["title", "aaaa0001", base.messages]]);
+    assert.deepEqual(await w.run({ ...base, purpose: "summary" }), { ok: true, data: { content: "a gloss", usage: null } });
+    assert.equal(w.named("sideCall").length, 1);
+});

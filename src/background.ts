@@ -16,7 +16,7 @@ import { fetchUrlContent, fetchRenderedContent, fetchSheetCsv, SHEET_URL_OK, she
 import { executeServerTool, serverToolResult } from "./sw/sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw/sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw/sw-events";
-import { configureSessionCommands, ingestSessionEvent, keepSession, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw/sw-sessions";   // the cross-tab session index the chat page reads
+import { configureSessionCommands, handleSessionTitle, ingestSessionEvent, keepSession, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw/sw-sessions";   // the cross-tab session index the chat page reads
 import { folderAction } from "./sw/sw-archive";   // the session archive's folder, for Settings
 import { ensureHubRuntime, hubDevices, hubLog, hubState, revokeHubDevice, stopHubRuntime } from "./sw/sw-hub";   // this browser as a runtime on a hub
 import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, senderOrigin } from "./sw/sw-housekeeping";
@@ -934,6 +934,10 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         handleHousekeepingDump(message.payload, sender).then(sendResponse, (e) => sendResponse({ error: String((e as Error)?.message || e) }));
         return true;
 
+    } else if (message.type === "SESSION_TITLE") {
+        // The session's one title, owned by the worker (sw-sessions.ts titleSession). Extension pages only.
+        handleSessionTitle(message.payload, sender).then(sendResponse, (e) => sendResponse({ error: String((e as Error)?.message || e) }));
+        return true;
     } else if (message.type === "DUMP_RUN_LOG") {
         // The chat page's Execution log panel. Extension pages only: the ring holds every run's records, and a
         // record's key can be another tab's URL (sw-run-log.ts says why the model's own read waits for a gate).

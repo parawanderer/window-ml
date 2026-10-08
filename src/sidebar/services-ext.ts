@@ -14,6 +14,19 @@ import { toHost } from "./parent-channel";
 
 /** A utility-model call through the background's `FETCH_LLM`, tagged as a side task about the session. */
 function sideCall(req: SideCallRequest): Promise<SideCallResult> {
+    // A TITLE is the session's, not this frame's: the worker answers with the one it keeps, so the sidebar, the
+    // DevTools panel, the corner card and the chat page cannot each name the same run differently.
+    if (req.purpose === "title") return new Promise((resolve) => {
+        try {
+            chrome.runtime.sendMessage({ type: "SESSION_TITLE", payload: { hash: bareHash(req.session), messages: req.messages } },
+                (resp: { data?: string | null; error?: string } | undefined) => {
+                    if (chrome.runtime.lastError || !resp || resp.error) resolve({ ok: false, error: resp?.error || chrome.runtime.lastError?.message || "no response" });
+                    else resolve({ ok: true, content: resp.data ?? "" });
+                });
+        } catch (e) {
+            resolve({ ok: false, error: String((e as Error)?.message || e) });
+        }
+    });
     return new Promise((resolve) => {
         try {
             chrome.runtime.sendMessage(
