@@ -252,7 +252,17 @@ export interface CtxItem {
 export const ctxMenu = signal<{ x: number; y: number; items: CtxItem[] } | null>(null);
 /** Open the panel's own right-click menu at the pointer, suppressing the browser's — the useful actions
  *  here are ours (copy a selector, copy a pointer) and the native menu offers none of them. */
-export const openCtxMenu = (e: MouseEvent, items: CtxItem[]): void => { e.preventDefault(); ctxMenu.value = { x: e.clientX, y: e.clientY, items }; };
+export const openCtxMenu = (e: MouseEvent, items: CtxItem[], opts?: { mark?: Element | null }): void => {
+    e.preventDefault();
+    const menu = { x: e.clientX, y: e.clientY, items };
+    ctxMenu.value = menu;
+    // THE THING THE MENU IS ABOUT, marked while it is open (`.ctx-target`): in a tree of rows, which one you
+    // right-clicked is otherwise a guess. Cleared when this menu closes or another replaces it.
+    const el = opts?.mark;
+    if (!el) return;
+    el.classList.add("ctx-target");
+    const stop = ctxMenu.subscribe((v) => { if (v !== menu) { el.classList.remove("ctx-target"); stop(); } });
+};
 /** The panel's right-click MENU, mounted once per surface and driven by the `ctxMenu` signal. A menu
  *  rather than the browser's: the useful actions here are ours (copy a `document.querySelector(…)` for an
  *  element, copy a pointer) and the native one offers none of them. */

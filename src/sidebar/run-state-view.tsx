@@ -16,13 +16,22 @@ import type { StateEntry, StateLoss } from "../state-registry";
 /** How often an open panel re-reads. A read is a message to the worker and a walk over a dozen maps: cheap. */
 export const RUN_STATE_POLL_MS = 2000;
 
+/** What empties a member, as a short phrase for the tooltip's "lost when" row. */
 const LOSS: Record<StateLoss, string> = {
-    "worker-eviction": "the service worker being stopped (it is, after ~30 s idle)",
-    navigation: "the tab navigating",
-    "offscreen-close": "the Python sandbox closing",
-    "browser-restart": "the browser restarting",
-    "turn-end": "the turn ending",
+    "worker-eviction": "the service worker stops (after ~30 s idle)",
+    navigation: "the tab navigates",
+    "offscreen-close": "the Python sandbox closes",
+    "browser-restart": "the browser restarts",
+    "turn-end": "the turn ends",
 };
+
+/** How long a member lives, by its scope, for the tooltip's "lives for" row. */
+const SCOPE: Record<RunStateMember["scope"], string> = {
+    run: "this run", session: "this session, every turn", tab: "this tab", page: "this page, until it navigates", browser: "this browser",
+};
+
+/** Which bundle holds a member, for the tooltip's "held by" row. */
+const REALM: Record<RunStateMember["realm"], string> = { worker: "the service worker", page: "the page", offscreen: "the Python sandbox" };
 
 /** Who reads a member, in a sentence: the model at a path it really has, the model not yet, or only you. */
 function readerOf(m: RunStateMember): string {
@@ -30,10 +39,20 @@ function readerOf(m: RunStateMember): string {
     return m.exposedAs ? `The model reads this as ${m.exposedAs}.` : "Meant for the model, and not given to it yet: no ml.current path reaches it.";
 }
 
-/** The tooltip on a member's name: what it holds, who reads it, and what empties it. */
+/** The tooltip on a member's name: what it holds, then under a rule, one fact per row (who reads it, how long it
+ *  lives, what holds it, what loses it, and its path), laid out like the resource panel's tips. */
 function memberTip(m: RunStateMember) {
-    const lost = m.lostOn.length ? `Lost on ${m.lostOn.map((l) => LOSS[l]).join(", or ")}.` : "Kept in storage.";
-    return <>{m.describe}<span class="tt-note">{readerOf(m)} Scope: {m.scope}. {lost}</span></>;
+    const reader = m.audience === "human" ? "only you" : m.exposedAs ? "the model" : "meant for the model, not yet";
+    return <span class="rstate-tip">
+        <span class="rstate-tip-desc">{m.describe}</span>
+        <span class="rstate-tip-sect">
+            <span class="rc-tip-line"><span class="rstate-tip-k">read by</span><span>{reader}</span></span>
+            <span class="rc-tip-line"><span class="rstate-tip-k">lives for</span><span>{SCOPE[m.scope]}</span></span>
+            <span class="rc-tip-line"><span class="rstate-tip-k">held by</span><span>{REALM[m.realm]}</span></span>
+            <span class="rc-tip-line"><span class="rstate-tip-k">lost when</span><span>{m.lostOn.length ? m.lostOn.map((l) => LOSS[l]).join(", or ") : "kept in storage"}</span></span>
+            <span class="rc-tip-line"><span class="rstate-tip-k">path</span><code>{memberPath(m)}</code></span>
+        </span>
+    </span>;
 }
 
 /** The root of every member the model does not read: `inspector.<id>`. A prefix that is plainly not the model's, so the

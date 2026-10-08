@@ -555,6 +555,16 @@ test("the run state panel lists every declared member of the open run, what each
         await expect(firstRow("run.mailbox").locator(".rstate-key")).toHaveText("inspector.run.mailbox:");
         await expect(panel.locator('[data-member="run.mailbox"] .rstate-aud')).toHaveText("you only");
         await expect(panel.locator('[data-member="grants.fetch"] .rstate-aud')).toHaveText("you only");
+        // The name's tooltip: the sentence, then one fact per row, the path among them.
+        // Two moves: the tip follows the pointer, so it opens on a movement over the name, not on arriving there.
+        const keyBox = await firstRow("run.mailbox").locator(".rstate-key").boundingBox();
+        await chat.mouse.move(keyBox.x + 4, keyBox.y + keyBox.height / 2);
+        await chat.mouse.move(keyBox.x + 6, keyBox.y + keyBox.height / 2);
+        const tip = chat.locator(".cursor-tip .rstate-tip");
+        await expect(tip.locator(".rc-tip-line", { hasText: "read by" })).toContainText("only you");
+        await expect(tip.locator(".rc-tip-line", { hasText: "lost when" })).toContainText("the turn ends");
+        await expect(tip.locator(".rc-tip-line", { hasText: "path" })).toContainText("inspector.run.mailbox");
+        await chat.mouse.move(0, 0);
         await expect(panel.locator('[data-member="run.pointers"] .rstate-aud')).toHaveCount(0);
         // The title is the session's, read from the one place that owns it (the worker's index): no utility model
         // is set here, so it holds no title yet, but the member is filled, not empty, and the model may read it.
@@ -778,7 +788,10 @@ test("the run state panel folds a group to a count, and copies a member's value,
         await init.locator(".jt-clickable").first().click();
         const task = init.locator(".jt-row", { hasText: "task:" });
         await task.click({ button: "right" });
+        // The row the menu is about is marked while the menu is open, and only then.
+        await expect(task).toHaveClass(/ctx-target/);
         await chat.getByRole("button", { name: "Copy path" }).click();
+        await expect(task).not.toHaveClass(/ctx-target/);
         await expect.poll(clip).toBe("inspector.run.init.task");
         await task.click({ button: "right" });
         await chat.getByRole("button", { name: "Copy value" }).click();
