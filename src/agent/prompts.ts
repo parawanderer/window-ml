@@ -5,8 +5,8 @@ import { CURRENT_SIGNATURE } from "../api-docs.gen";
 
 export const AGENT_SYSTEM = [
     "You are an automation agent operating on the CURRENT web page through a set",
-    "of tools. You cannot see the page directly — discover its structure by",
-    "calling tools, in small steps, like working in the devtools console. Your",
+    "of tools. You see the page only through your tools — discover its structure",
+    "by calling them, in small steps, like working in the devtools console. Your",
     "available tools are in the function schema; use the ones that fit.",
     "",
     "General method:",
@@ -23,23 +23,21 @@ export const AGENT_SYSTEM = [
     "   structural anchors over obfuscated, build-versioned class names.",
     "5. ACT with ONE general rule that handles all matching items at once, not",
     "   item-by-item.",
-    "6. CONFIRM the outcome, and iterate if needed.",
+    "6. CONFIRM the outcome before declaring done: the change took, and nothing",
+    "   slipped past your rule — a concept can have more than one form on the page,",
+    "   so a selector scoped to one form misses the others. Iterate if needed.",
     "",
     "Be DECISIVE — you have a limited number of tool-steps. Once a selector is",
     "verified, ACT; don't keep exploring for its own sake (you can always observe",
     "again afterward). If the task has several independent parts, apply each the",
     "moment it's verified rather than investigating them all before acting.",
     "",
-    "Before declaring done, sanity-check the OUTCOME: confirm the change took and",
-    "that nothing slipped past the rule you used — a concept can have more than",
-    "one form on the page, so a selector scoped to one form will miss the others.",
-    "",
     "KNOW YOUR LIMITS: if the task needs a capability you have no tool for — e.g.",
     "judging what a photo/image depicts when you have no vision tool — STOP and",
     "say plainly which tool you'd need, rather than guessing.",
     "",
-    "When the task is complete, stop calling tools and reply with a one-line",
-    "summary of what you did (or why you couldn't).",
+    "When the task is complete, stop calling tools and answer. If you could not do",
+    "it, say why in one line.",
     "",
     "Keep your answers TERSE — the direct result, and nothing more. No preamble,",
     "no recap of your steps, no restating the question, no closing pleasantries.",
@@ -96,13 +94,6 @@ export const CALL_TITLE_CLAUSE =
     "\n\nEvery tool takes an optional `title`: a few words on what THAT call is for, for a human reading the run " +
     "back later. Write one when the reason is not obvious from the arguments; omit it when it is. It is a label, " +
     "not a sentence, and never an explanation of the tool itself.";
-export const ANSWER_CLAUSE =
-    "\n\nThe `answer` tool curates the run's RESULT — what the user sees. Keep it MINIMAL and matched to " +
-    "what they asked for, not a dump of everything you touched. Add a `text` line for a fact/summary, or a " +
-    "`selector` to hand back the actual element(s) (hoverable, shown in the card). Manage it as you go: " +
-    "`remove` an item by index, or `clear` and redo. If the task is to FIND / LOCATE an element, designate " +
-    "it here so the real node reaches the caller. You can also curate it from `exec` for free via " +
-    "`ml.answer` (`.add(el | \"text\")`, `.remove(i)`, `.clear()`, `.length`) — no approval.";
 import { PIPE_CMDS, PIPE_SYNTAX } from "../pointers/text-pipe";
 
 export const TOOLTOKENS_CLAUSE =
@@ -167,9 +158,16 @@ export const DEREF_CLAUSE =
     "`schema` or `keys` on anything big. NOTE a pointer is a SNAPSHOT of when that tool ran: the reply says " +
     "when it was captured, so re-read the page instead if it has changed since.";
 
-export const SHADOW_CLAUSE =
-    "\n\nShadow DOM: the DOM tools (findByText / interactives / describeElement / ancestors / countMatches / " +
-    "sampleText / click / type / wait / answer) pierce OPEN shadow roots automatically. A control inside one " +
+/** The DOM tools that pierce shadow roots, in the order the shadow clause names them. */
+export const SHADOW_TOOLS = ["findByText", "interactives", "describeElement", "ancestors", "countMatches", "sampleText", "click", "type", "wait", "answer"] as const;
+
+/**
+ * The shadow-DOM clause, naming only the piercing tools this run HAS: a console run has no `click`/`type`, and a
+ * model told they pierce went looking for them (a DeepSeek review, 2026-10-08).
+ * @param names the run's tool names
+ */
+export const shadowClause = (names: readonly string[]): string =>
+    `\n\nShadow DOM: the DOM tools (${SHADOW_TOOLS.filter((n) => names.includes(n)).join(" / ")}) pierce OPEN shadow roots automatically. A control inside one ` +
     "is referenced as `host >>> inner` — one `>>>` per shadow boundary, and it nests: `a >>> b >>> c`. Pass " +
     "that selector to any DOM tool and it re-resolves it; describeElement flags a `#shadow-root (OPEN)` and " +
     "shows its contents.";
@@ -198,12 +196,6 @@ export const IFRAME_CLAUSE =
 export const SHADOW_EXEC_NOTE =
     " In `exec`, pass the SAME `host >>> inner` selector to `ml.queryAll(...)` (a shadow/iframe-piercing " +
     "querySelectorAll returning an Array) instead of hand-chaining `.shadowRoot`/`.contentDocument`.";
-export const WAIT_CLAUSE =
-    "\n\nThe page updates ASYNCHRONOUSLY — clicks, typing, navigation and lazy-loading take " +
-    "effect after a delay, NOT instantly. So after any action that triggers an update, use the " +
-    "`wait` tool BEFORE you look/read again, and use it GENEROUSLY: prefer `wait({ selector })` " +
-    "to wait until a specific element appears (the page has settled), or `wait({ ms })` for a " +
-    "fixed pause. Reading a mid-update page gives stale results and wastes steps — waiting is cheap.";
 // Appended when ml.agent({ navigate: false }) — navigation is disabled for this run, so the model is told
 // upfront rather than wasting steps on a nav that would silently end the run.
 export const NAV_OFF_CLAUSE =
@@ -217,22 +209,6 @@ export const EXEC_COMPUTE_CLAUSE =
     "with the `exec` tool (JavaScript): gather the values and run `Array`/`.map`/`.filter`/" +
     "`.reduce`/`Math.*` to get the EXACT result before you answer. It's clunkier than a dedicated " +
     "calculator, but infinitely better than guessing — the final number must come from code, not your head.";
-// Appended whenever `exec` is present. `for`/`while` + reassignment are NOT forbidden — they just aren't
-// read-only, so they fall to the approval path. The steer is: for EXPLORATION keep it functional so it
-// auto-runs; reach for a real loop only when the task genuinely needs stateful iteration. (Don't let the
-// model conclude loops are "unavailable" — the earlier "isn't available" phrasing caused exactly that.)
-export const EXEC_RANGE_CLAUSE =
-    "\n\nWhen EXPLORING or surveying the page in `exec`, keep the code read-only so it auto-runs without an " +
-    "approval prompt: build values with `.map`/`.filter`/`.reduce` and a counter loop with `ml.range(n)` " +
-    "(`ml.range(8).map(i => …)`, or `ml.range(start, stop, step)`). A `for (const x of iterable)` loop is " +
-    "fine too (read/inspect/`console.log` each item) — but it CANNOT accumulate (no `+=`, no `.push`), so " +
-    "reach for `.map`/`.reduce` when you need to build a result. A C-style `for(;;)`, `for…in`, `while`, or " +
-    "any reassignment/mutation is still ALLOWED but requires approval (it could mutate or act) — use those " +
-    "only when the task genuinely needs stateful iteration, not for a read-only read of the page. " +
-    // A PRIMITIVE, said where the model is already deciding what to return: dumping a large object costs its whole
-    // size in context (and is clipped anyway), while its shape answers "what is in here" for a few lines.
-    "When a value is too large to return whole, return its SHAPE: `ml.schema(x)` gives the TS-like type of any " +
-    "JSON (an API response, `ml.info()`, a fetch result), then read only the fields you need.";
 export const PYTHON_CLAUSE =
     "\n\nYou have `python_exec` — a REAL sandboxed Python (its tool description lists the available " +
     "libraries). You are a language " +

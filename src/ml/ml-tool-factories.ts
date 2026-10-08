@@ -207,7 +207,7 @@ export const fetchTool = function(this: MlApi): MlTool {
             "pre-parsed, a code file names its language. The type is a HEURISTIC " +
             "(resolved from the Content-Type header, a content sniff, and the URL extension — a server can " +
             "mislabel), not authoritative. GET only (no headers/body/auth). Each NEW url is approved once by " +
-            "the user, then remembered for the session. Prefer this over `navigate` when you only need to READ a URL. " +
+            "the user, then remembered for the session. Prefer this over `navigate` when only YOU need to read a URL; when the user should see the page, see the NOTE below. " +
             "**TABLES (csv/tsv/parquet/arrow) come back PARSED, as a pandas-shaped object** — you do not need to split " +
             "the text, and you must not guess the separator: it is discovered (`,` `\\t` `;` `|`), quoted fields and " +
             "embedded newlines are handled, and numeric columns are cast. You get a `df.head()`: the header, the " +
@@ -215,8 +215,8 @@ export const fetchTool = function(this: MlApi): MlTool {
             "(`int64`, `float64`, `bool`, `str`, `object`), with pandas 3's rules, so text is `str` and a whole-number column holding one " +
             "blank is `float64` (NaN forces the float) and a Parquet file's dtypes are READ from its schema " +
             "rather than inferred. The row count is the FILE\'s, not the preview\'s — 5 rows shown out of " +
-            "`[50,000 rows x 4 columns]` means there are 50,000. To work on ALL of them, pass the SAME URL to " +
-            "python_exec\'s `tables` (e.g. `tables: { df: \"<the url>\" }`): it loads the already-parsed table " +
+            "`[50,000 rows x 4 columns]` means there are 50,000. To work on ALL of them, if you have `python_exec`, pass the " +
+            "SAME URL to its `tables` (e.g. `tables: { df: \"<the url>\" }`): it loads the already-parsed table " +
             "from the cache as a real DataFrame — no second request, and never `read_csv` (the sandbox has no " +
             "network). `schema: true` on a table returns just its shape + dtypes. Set `pipe` instead if you want " +
             "to scan the RAW text yourself — that skips the parsed preview and gives you the lines your scan selected. " +
