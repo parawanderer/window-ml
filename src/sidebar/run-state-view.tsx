@@ -39,6 +39,9 @@ function readerOf(m: RunStateMember): string {
     return m.exposedAs ? `The model reads this as ${m.exposedAs}.` : "Meant for the model, and not given to it yet: no ml.current path reaches it.";
 }
 
+/** A short tooltip from this pane, marked so it is drawn at the docked panels' size like the rest of the pane's tips. */
+const paneTip = (text: string) => <span class="rstate-tip">{text}</span>;
+
 /** The tooltip on a member's name: what it holds, then under a rule, one fact per row (who reads it, how long it
  *  lives, what holds it, what loses it, and its path), laid out like the resource panel's tips. */
 function memberTip(m: RunStateMember) {
@@ -73,7 +76,7 @@ function MemberName({ m }: { m: RunStateMember }) {
 function CopyValue({ v }: { v: unknown }) {
     const { copied, copy } = useCopy();
     return <button class="rstate-copy" aria-label="Copy the value" onClick={(e) => { e.stopPropagation(); copy(copyableValue(v)); }}
-        {...cursorTipOn("Copy the value. Right-click any row for its value or its path.")}>{copied ? <IconCheck /> : <IconCopy />}</button>;
+        {...cursorTipOn(paneTip("Copy the value. Right-click any row for its value or its path."))}>{copied ? <IconCheck /> : <IconCopy />}</button>;
 }
 
 /** One member, on ONE LINE until it is opened: its name, what it holds folded to a preview, and who sees it. */
@@ -82,9 +85,9 @@ function Member({ m, e }: { m: RunStateMember; e: StateEntry | undefined }) {
     const chips = <span class="rstate-trail">
         {/* Only the person's own state is marked: that is a decision. A model member not given to the model yet is a
             gap that closes member by member, and its dimmed `inspector.` root and its tooltip already say so. */}
-        {m.audience === "human" ? <span class="rstate-aud" {...cursorTipOn(readerOf(m))}>you only</span> : null}
+        {m.audience === "human" ? <span class="rstate-aud" {...cursorTipOn(paneTip(readerOf(m)))}>you only</span> : null}
         {/* The PAGE answered for this one, and a hostile page answers whatever it likes: said, not hidden. */}
-        {m.realm === "page" || e?.realm === "page" ? <span class="rstate-aud rstate-page" {...cursorTipOn("Reported by the page the run is on. A page can put anything here, so read it as the page's word.")}>from the page</span> : null}
+        {m.realm === "page" || e?.realm === "page" ? <span class="rstate-aud rstate-page" {...cursorTipOn(paneTip("Reported by the page the run is on. A page can put anything here, so read it as the page's word."))}>from the page</span> : null}
         {e && !e.error ? <CopyValue v={e.value} /> : null}
     </span>;
     return (
@@ -181,7 +184,7 @@ export function RunStateView({ run }: { run: string | null }) {
     return (
         <div class="rstate">
             <PanelHead>
-                {dump ? <span class="rstate-asof" {...cursorTipOn(`Read from the service worker, and from the page the run is on, every ${RUN_STATE_POLL_MS / 1000} s while this panel is open.`)}>
+                {dump ? <span class="rstate-asof" {...cursorTipOn(paneTip(`Read from the service worker, and from the page the run is on, every ${RUN_STATE_POLL_MS / 1000} s while this panel is open.`))}>
                     as of {new Date(dump.ts).toLocaleTimeString()}</span> : <span />}
             </PanelHead>
             {error ? <div class="hint err">could not read the run's state: {error}</div>

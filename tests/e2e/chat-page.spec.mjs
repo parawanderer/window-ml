@@ -563,7 +563,12 @@ test("the run state panel lists every declared member of the open run, what each
         const tip = chat.locator(".cursor-tip .rstate-tip");
         await expect(tip.locator(".rc-tip-line", { hasText: "read by" })).toContainText("only you");
         await expect(tip.locator(".rc-tip-line", { hasText: "lost when" })).toContainText("the turn ends");
-        await expect(tip.locator(".rc-tip-line", { hasText: "path" })).toContainText("inspector.run.mailbox");
+        await expect(tip.locator(".rc-tip-line", { hasText: "path" }).locator("code")).toHaveText("inspector.run.mailbox");
+        expect(await tip.locator("code").evaluate((el) => getComputedStyle(el).fontFamily), "the path reads as code").toMatch(/mono|Menlo|Courier/i);
+        // At the docked panels' tip size, as the resource panel's tips are, not the page's reading size.
+        const [tipPx, panelPx] = await chat.evaluate(() => [parseFloat(getComputedStyle(document.querySelector(".cursor-tip")).fontSize),
+            parseFloat(getComputedStyle(document.querySelector(".chat")).getPropertyValue("--panel-fs")) || 12]);
+        expect(tipPx).toBeCloseTo(panelPx * 0.83, 0);
         await chat.mouse.move(0, 0);
         await expect(panel.locator('[data-member="run.pointers"] .rstate-aud')).toHaveCount(0);
         // The title is the session's, read from the one place that owns it (the worker's index): no utility model
