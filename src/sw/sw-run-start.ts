@@ -60,11 +60,13 @@ const DEFAULT_MAX_STEPS = 10;
  * session events like any other.
  * @param tabId the tab the run acts on
  * @param req what the person asked for
- * @param opts `keep`: this browser's own UI keeps its sessions past the worker's life (`config.persistUiRuns`)
+ * @param opts `keep`: this browser's own UI keeps its sessions past the worker's life (`config.persistUiRuns`).
+ *   `approvalRouting`: TEST-ONLY, set by `__mlStartUserRunForTest` alone (the SW realm, which no page reaches), so a
+ *   harness can rule on the gates through `__mlApprovals` as it does for a console run; every real route leaves it "ui"
  * @returns the run's session hash
  * @throws when the tab is not an ordinary web page, there is nothing to do, or the page cannot host the run
  */
-export async function startUserRun(tabId: number, req: UserRunRequest, opts: { keep?: boolean } = {}): Promise<{ hash: string }> {
+export async function startUserRun(tabId: number, req: UserRunRequest, opts: { keep?: boolean; approvalRouting?: "both" } = {}): Promise<{ hash: string }> {
     // The URL and title are the BROWSER's, never something the page said about itself.
     const tab = await chrome.tabs.get(tabId);
     const url = tab.url || "";
@@ -100,7 +102,7 @@ export async function startUserRun(tabId: number, req: UserRunRequest, opts: { k
         ...startPayload(asm, {
             runId, systemPrompt: withPageContext(asm.systemPrompt, adopted.pageInfo), think: null,
             maxSteps: recipe.maxSteps ?? DEFAULT_MAX_STEPS, surface, stream: recipe.stream, toolTokens: true, origin: recipe.origin,
-            navigate: true, crossOrigin: true, approvalRouting: "ui",
+            navigate: true, crossOrigin: true, approvalRouting: opts.approvalRouting ?? "ui",
             page: { origin: new URL(url).origin, url, title: tab.title || undefined },
             builtBy: "worker",
         }),

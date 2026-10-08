@@ -73,6 +73,8 @@ const r = await runOnce({
     sharedWatches: process.env.SHARED_WATCHES ? JSON.parse(process.env.SHARED_WATCHES) : [],
     // WATCH_NOTES='{\"ml.current.run.step\":\"is it moving?\"}' → the person's note on a shared watch, by expression.
     watchNotes: process.env.WATCH_NOTES ? JSON.parse(process.env.WATCH_NOTES) : {},
+    // SURFACE=hud|overlay|chat → a run started as a person does from that UI (click, type, python_exec), not a console ml.agent.
+    surface: process.env.SURFACE || null,
     backend: await resolveBackendFromEnv(),
     warm: process.env.WARM !== "0",
     artDir: DIR,
