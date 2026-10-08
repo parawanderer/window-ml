@@ -491,6 +491,8 @@ test("FAILURE: a survey that reads ml.current.debug and then falls out of dialec
     await assert.rejects(inWorkerRealm("const n = ml.current.debug.userWatches.length; document.title", snap), (e) => e instanceof NeedsPage || outOfDialect(e));
     assert.equal(snap.debug.userWatches.length, 3);
     assert.equal(snap.debug.userWatches[0].value, 2);
+});
+
 // --- the worker's fetch cache: re-reads of what the run's fetch_url read in the worker (slice 2 part 2) ---
 
 /** A worker `ml` whose cache holds one result for `url`, as the run's fetch_url would have left it. */
