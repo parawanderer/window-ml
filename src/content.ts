@@ -248,7 +248,7 @@ window.addEventListener("message", (event: MessageEvent) => {
         return;
     }
     if (data.type === "PAGE_TOOL_STREAM") {
-        chrome.runtime.sendMessage({ type: "PAGE_TOOL_STREAM", runId: (data as { runId?: string }).runId, chunk: (data as { chunk?: string }).chunk, ts: (data as { ts?: number }).ts });
+        chrome.runtime.sendMessage({ type: "PAGE_TOOL_STREAM", runId: (data as { runId?: string }).runId, chunk: (data as { chunk?: string }).chunk, ts: (data as { ts?: number }).ts, skipped: (data as { skipped?: number }).skipped });
         return;
     }
     // 3. Forward to the background worker (to bypass CORS).

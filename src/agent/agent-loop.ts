@@ -303,7 +303,8 @@ const STREAM_OUTPUT_CAP = UI_OUT_CAP;
  *  try refused part way through printed lines from a run that did not happen, and the approved run, if any, streams
  *  into the same sink from empty. */
 export interface LiveOutput {
-    push(text: string, ts?: number): void;
+    /** `skipped`: characters the producer left out just before `text` (stream-sender.ts), counted as dropped. */
+    push(text: string, ts?: number, skipped?: number): void;
     discard(): void;
 }
 
@@ -318,8 +319,9 @@ function makeStreamFan(on: boolean | undefined, emit: (out: string, marks: [numb
     // flush — so a runaway loop shows a truncation figure that ticks up instead of silently freezing.
     const send = (): void => { last = Date.now(); emit(dropped ? `${acc}… [+${dropped} chars]` : acc, marks.slice()); };
     return {
-        push(text: string, ts?: number): void {
+        push(text: string, ts?: number, skipped?: number): void {
             const s = String(text), room = STREAM_OUTPUT_CAP - acc.length;
+            if (skipped) dropped += skipped;   // the producer's sender only skips past the first cap, which `acc` already holds
             // The EXECUTOR's timestamp wins (it may have crossed a worker/network hop); fall back to now only
             // when the producer is this realm. One mark per push — the UI maps a line back to the mark at or
             // before its offset.

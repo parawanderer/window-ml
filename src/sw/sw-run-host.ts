@@ -106,7 +106,7 @@ export const delegateSend = async (tabId: number, msg: unknown): Promise<any> =>
 // LIVE tool-output streaming on the BACKGROUND path: the in-flight delegated tool's onStream, keyed by runId.
 // The loop delegates tool calls SEQUENTIALLY (one in flight per run), so runId alone correlates a page-posted
 // PAGE_TOOL_STREAM chunk to the right callback. Set in delegateTool while a streaming call runs, deleted after.
-export const delegateStreams = new Map<string, (chunk: string, ts?: number) => void>();
+export const delegateStreams = new Map<string, (chunk: string, ts?: number, skipped?: number) => void>();
 
 /** Host one background agent run for a tab: START_RUN begins one, RESUME_RUN continues a stored one with a
  *  follow-up. The loop runs here (extension origin) and delegates every tool back to the page that built the

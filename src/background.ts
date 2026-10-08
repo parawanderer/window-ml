@@ -542,7 +542,9 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // sink, which is the loop's throttled fan → an agent-step `streamOutput` delta on every surface.
         // Keyed by runId: the loop delegates tool calls sequentially, so one is in flight per run.
         const sink = delegateStreams.get(message.runId);
-        if (sink) { try { sink(String(message.chunk ?? ""), typeof message.ts === "number" ? message.ts : undefined); } catch { /* a bad sink must not break the run */ } }
+        // `skipped`: characters the page's sender left out before this chunk (stream-sender.ts), which the fan counts.
+        const skipped = typeof message.skipped === "number" && message.skipped > 0 ? message.skipped : undefined;
+        if (sink) { try { sink(String(message.chunk ?? ""), typeof message.ts === "number" ? message.ts : undefined, skipped); } catch { /* a bad sink must not break the run */ } }
         return false;
     }
     if (message.type === "PY_STDOUT") { relayPyStdout(message); return false; }
