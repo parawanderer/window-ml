@@ -24,12 +24,12 @@ import { fmtAge, hhmmss } from "./timestamps";
 // cannot import this module (it would be a cycle — this one imports RenderPanel).
 export { lsGet, lsSet } from "./store";
 import { eventsFrom, laneEvents, type UsageSource } from "./model-stats";
-import { formatBytes, boxSignature } from "../resource-model";
-import { residencyEvents, type ResourceEvent } from "../resource-timeline";
-import { isGpuFault, gpuFaultNote } from "../resource-capacity";
-import { presetsFor } from "../resource-presets";
-import { chartWindow, windowSamples } from "../resource-axis";
-import { sessionWindow } from "../resource-lane";
+import { formatBytes, boxSignature } from "../resource/resource-model";
+import { residencyEvents, type ResourceEvent } from "../resource/resource-timeline";
+import { isGpuFault, gpuFaultNote } from "../resource/resource-capacity";
+import { presetsFor } from "../resource/resource-presets";
+import { chartWindow, windowSamples } from "../resource/resource-axis";
+import { sessionWindow } from "../resource/resource-lane";
 import { ResourceTracks, muteTip } from "./resource-chart";
 import { stepPool, readingIsOverlay } from "./chart-interaction";
 import { ScopeSwitch } from "./resource-lane-ui";

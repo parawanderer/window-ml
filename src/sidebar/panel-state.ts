@@ -10,14 +10,14 @@
 // Everything here is state or a pure reading of it — no JSX — so it can sit underneath both.
 
 import { signal } from "@preact/signals";
-import { STREAM_MAX_GAP_MS, MAX_SAMPLE_GAP_MS, STREAM_SAMPLE_MS } from "../resource-axis";
-import type { LaneFilter } from "../resource-lane";
-import { type ResourceSample, normModel } from "../resource-model";
-import { type Capacity } from "../resource-capacity";
-import { type TrackDef, presetRefusal, presetsFor } from "../resource-presets";
+import { STREAM_MAX_GAP_MS, MAX_SAMPLE_GAP_MS, STREAM_SAMPLE_MS } from "../resource/resource-axis";
+import type { LaneFilter } from "../resource/resource-lane";
+import { type ResourceSample, normModel } from "../resource/resource-model";
+import { type Capacity } from "../resource/resource-capacity";
+import { type TrackDef, presetRefusal, presetsFor } from "../resource/resource-presets";
 import { usageByModel, type UsageSource } from "./model-stats";
 import { scopedHash, laneScoped, laneHidden, sessionMap } from "./store";
-import type { Band } from "../resource-bands";
+import type { Band } from "../resource/resource-bands";
 
 export const VRAM_HISTORY = 45, VRAM_POLL_MS = 2000;   // samples kept, and how often we ask — polling is gated on the panel being open, so gaps are real gaps
 

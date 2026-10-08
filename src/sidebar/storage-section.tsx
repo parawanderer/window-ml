@@ -3,7 +3,7 @@
 // history is worth making smaller is real use over months, so this draws the history the worker records daily
 // (session-storage-stats.ts) rather than one measurement.
 import { useEffect, useState } from "preact/hooks";
-import { formatBytes } from "../resource-model";
+import { formatBytes } from "../resource/resource-model";
 import type { StorageReport, StorageSnapshot, StoreBytes } from "../session-storage-stats";
 import { TimeChart } from "./time-chart";
 

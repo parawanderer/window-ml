@@ -15,13 +15,13 @@
 
 import { signal } from "@preact/signals";
 import { useMemo, useState, useEffect } from "preact/hooks";
-import { snapFraction, timeAtFraction, clampWindow, segments } from "../resource-axis";
-import { SPILL_FLOOR } from "../resource-bands";
-import { filterEvents, countByKind, placeEvents, MIN_EV_SPAN, laneRows, lineageOf, scopeAround } from "../resource-lane";
-import { type ResourceSample, percentOf, loadTrace, formatBytes } from "../resource-model";
-import { type ResourceEvent, type PhaseKind, eventsIn } from "../resource-timeline";
-import { decodeCeiling } from "../resource-decode";
-import { kvFill, predictionLine, serverGenNote } from "../resource-gens";
+import { snapFraction, timeAtFraction, clampWindow, segments } from "../resource/resource-axis";
+import { SPILL_FLOOR } from "../resource/resource-bands";
+import { filterEvents, countByKind, placeEvents, MIN_EV_SPAN, laneRows, lineageOf, scopeAround } from "../resource/resource-lane";
+import { type ResourceSample, percentOf, loadTrace, formatBytes } from "../resource/resource-model";
+import { type ResourceEvent, type PhaseKind, eventsIn } from "../resource/resource-timeline";
+import { decodeCeiling } from "../resource/resource-decode";
+import { kvFill, predictionLine, serverGenNote } from "../resource/resource-gens";
 import { scrollToAnswer } from "./answer-render";
 import { live, eventHover, cursorAt, noteRuns, litBy, holdAxis, hoverAt, releaseAxis, trackCursor, barKey } from "./chart-interaction";
 import { sampleGraceMs, resourceHistory, laneFilter, sampleGapMs, streamLive } from "./panel-state";

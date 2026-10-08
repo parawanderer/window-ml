@@ -3,8 +3,8 @@
 // Shared by the stacked area, the track views and the reading tooltips, which is why it sits below all three
 // rather than in resource-chart.tsx: a tooltip that names a band's colour and the plot that fills it must agree.
 
-import type { Band } from "../resource-bands";
-import type { MemoryBreakdown } from "../resource-model";
+import type { Band } from "../resource/resource-bands";
+import type { MemoryBreakdown } from "../resource/resource-model";
 import { colorFor } from "./palette";
 
 /** The plot's SVG viewBox, width and height; every plot is stretched to its track, so these are units, not pixels. */

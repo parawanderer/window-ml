@@ -2,7 +2,7 @@
 // loading, unavailable or cloud (`modelLoadState`, `ModelStatusDot`), when its keep-alive runs out (`expiresIn`),
 // and its capability probe. The model picker, the HUD card and the resource panel all read it from here.
 
-import { formatBytes } from "../resource-model";
+import { formatBytes } from "../resource/resource-model";
 import { NO_EXPIRY_MS, modelCaps, isEmbedding, isChatModel } from "./panel-facts";
 import { loadedModels, psError, models, ollamaIds } from "./store";
 

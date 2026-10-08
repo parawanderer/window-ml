@@ -6,9 +6,9 @@
 
 import { signal } from "@preact/signals";
 import { useRef, useState, useLayoutEffect } from "preact/hooks";
-import { scrubIntent, TAIL_SLACK_MS, scrubExtent, segments, scrubZone, scrubResize, scrubTo, scrubPinch, wheelScrubFraction, scrubNudge } from "../resource-axis";
-import type { ResourceSample } from "../resource-model";
-import type { ResourceEvent } from "../resource-timeline";
+import { scrubIntent, TAIL_SLACK_MS, scrubExtent, segments, scrubZone, scrubResize, scrubTo, scrubPinch, wheelScrubFraction, scrubNudge } from "../resource/resource-axis";
+import type { ResourceSample } from "../resource/resource-model";
+import type { ResourceEvent } from "../resource/resource-timeline";
 import { sampleGapMs } from "./panel-state";
 import { colorFor } from "./palette";
 import { zoomRange, resWindowS, RESWIN_KEY, laneEnabled, showLane } from "./store";

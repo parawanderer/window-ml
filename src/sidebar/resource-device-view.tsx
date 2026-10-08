@@ -5,13 +5,13 @@
 // resource-box-views.tsx, and resource-chart.tsx picks between them.
 
 import { useMemo } from "preact/hooks";
-import { segments } from "../resource-axis";
-import { type Band, OTHER_BAND_NOTE } from "../resource-bands";
-import { ribbonSpans } from "../resource-gens";
-import { formatBytes, type ResourceSample, formatShare } from "../resource-model";
-import { type ResourceEvent } from "../resource-timeline";
-import { type DeviceCapacity } from "../resource-capacity";
-import { linkBetween, isBridge, linkPhrase } from "../resource-topology";
+import { segments } from "../resource/resource-axis";
+import { type Band, OTHER_BAND_NOTE } from "../resource/resource-bands";
+import { ribbonSpans } from "../resource/resource-gens";
+import { formatBytes, type ResourceSample, formatShare } from "../resource/resource-model";
+import { type ResourceEvent } from "../resource/resource-timeline";
+import { type DeviceCapacity } from "../resource/resource-capacity";
+import { linkBetween, isBridge, linkPhrase } from "../resource/resource-topology";
 import { noteRuns, eventHover, trackCursor, hoverAt, snapUnder } from "./chart-interaction";
 import { bandFill } from "./chart-paint";
 import { capacity, sampleGapMs, streamLive } from "./panel-state";

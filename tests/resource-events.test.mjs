@@ -7,7 +7,7 @@
 // interpolation lands on the movement the chart exists to show.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { lostSince, parseFrame, readFrames } from "../src/resource-events.ts";
+import { lostSince, parseFrame, readFrames } from "../src/resource/resource-events.ts";
 
 const f = (kind, dropped) => ({ kind, t: 0, ...(dropped === undefined ? {} : { dropped }) });
 

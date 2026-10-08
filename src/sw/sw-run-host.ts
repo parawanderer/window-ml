@@ -16,7 +16,7 @@ import type { StartRunPayload, ResumeRunPayload } from "../contract/contract-mes
 import { type RequestHint, hintSession } from "../contract/contract-run";
 import { externalSheetIds, clipOut, isCurrentPage } from "../dom";
 import { extractGrants } from "./grant-extract";
-import { parseInfo } from "../resource-capacity";
+import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
 import { grantsFor, serverToolKey, pendingGrants, pendingApprovals, grantCredFetch, consentFetch, persistGrants, fetchConsent } from "./sw-consent";
 import { relayDebugEvent } from "./sw-debug";

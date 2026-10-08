@@ -3,7 +3,7 @@
 // via chrome.runtime for privileged work.
 import type { MlConfig, Theme } from "./contract/contract-config";
 import type { LoadedModel } from "./contract/contract-server";
-import { formatBytes } from "./resource-model";
+import { formatBytes } from "./resource/resource-model";
 import { DEFAULT_CONFIG, fmtCtx } from "./contract/contract-config";
 import { generatesText } from "./contract/contract-server";
 import { browserInfo, extensionDetailsUrl } from "./util";

@@ -5,7 +5,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { OutputCell, TimedOutput } from "./render-panel";
 import { downloadBlob } from "./download";
-import { formatBytes } from "../resource-model";
+import { formatBytes } from "../resource/resource-model";
 import { fmtDelta } from "./timestamps";
 import { LOG_CAP, LOG_KEY, type HousekeepingEvent } from "../housekeeping";
 

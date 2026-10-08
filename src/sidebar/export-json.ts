@@ -19,7 +19,7 @@ import type {
 } from "../export-schema";
 import { EXPORT_SCHEMA_VERSION, schemaUrl } from "../export-schema";
 import { eventsFrom } from "./model-stats";
-import type { ResourceEvent } from "../resource-timeline";
+import type { ResourceEvent } from "../resource/resource-timeline";
 
 /** Epoch ms → ISO 8601. Invalid/absent stamps are dropped rather than exported as an
  *  epoch-zero date, which would read as a real 1970 timestamp to a consumer. */

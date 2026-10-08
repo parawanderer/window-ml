@@ -4,11 +4,11 @@
 // Every track view draws the same overlays, which is why they are shared here: an overlay written into one view
 // is how the Overview preset once ended up with no event rules while the per-pool tracks had them.
 
-import { type RunGap, axisGaps, axisFrac, timeAtFraction, runFrac, gridStep, gridTimes } from "../resource-axis";
-import type { RibbonSpan } from "../resource-gens";
-import { placeEvents } from "../resource-lane";
-import { type ResourceSample, loadTrace } from "../resource-model";
-import { type ResourceEvent, type EventPlacement, loadEdges, eventsIn } from "../resource-timeline";
+import { type RunGap, axisGaps, axisFrac, timeAtFraction, runFrac, gridStep, gridTimes } from "../resource/resource-axis";
+import type { RibbonSpan } from "../resource/resource-gens";
+import { placeEvents } from "../resource/resource-lane";
+import { type ResourceSample, loadTrace } from "../resource/resource-model";
+import { type ResourceEvent, type EventPlacement, loadEdges, eventsIn } from "../resource/resource-timeline";
 import { live, eventKey, hotEvent, barKey, eventHover, trackCursor, gapHover, snapUnder, litBy, hoverAt } from "./chart-interaction";
 import { resourceHistory } from "./panel-state";
 import { colorFor } from "./palette";

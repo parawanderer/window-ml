@@ -3,7 +3,7 @@
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
 import { dropAllLocalTools } from "./sw/sw-local-tools";
-import { LOAD_RECORDS_KEY } from "./load-records";
+import { LOAD_RECORDS_KEY } from "./resource/load-records";
 import type { ApprovalDecision } from "./contract/contract-agent";
 import type { StartRunPayload, SetApprovalPayload, CancelRunPayload, InjectMessagePayload } from "./contract/contract-messages";
 import { modelFilterAllows, publicConfig } from "./contract/contract-config";

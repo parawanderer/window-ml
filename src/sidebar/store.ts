@@ -218,7 +218,7 @@ export function scopedHash(): string | null {
     return v.name === "detail" ? v.hash : null;
 }
 
-export { PREDICT_KEY } from "../load-records";   // storage.local: show the VRAM predictor's figures on loads
+export { PREDICT_KEY } from "../resource/load-records";   // storage.local: show the VRAM predictor's figures on loads
 /** Show, on each model load, what the server's VRAM PREDICTOR expected against what the load took — its peak,
  *  where it settled, weights and KV term by term — and a dashed line where it predicted the card would land.
  *  OFF by default: it is for tuning the predictor, and a user loading a model has no decision it informs. */

@@ -10,7 +10,7 @@ import { readFileSync, readdirSync, rmSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkPin, protocVersion, generate } from "../scripts/gen-proto.mjs";
-import { parseFrame } from "../src/resource-events.ts";
+import { parseFrame } from "../src/resource/resource-events.ts";
 
 const PROTO = readFileSync(new URL("../src/proto/events.proto", import.meta.url), "utf8");
 

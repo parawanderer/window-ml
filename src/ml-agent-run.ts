@@ -32,7 +32,7 @@ import { columnsViaBackground } from "./deref-read";
 import { expandPointers } from "./pointer-macro";
 import { evalReadonly } from "./readonly-exec";
 import { descriptorFor } from "./render-descriptor";
-import { parseInfo } from "./resource-capacity";
+import { parseInfo } from "./resource/resource-capacity";
 import { registerRun, endRun, runAnswer } from "./run-delegation";
 import { isSelfSourceUrl } from "./self-source";
 import { toolContext, executeTool, withRunDeref } from "./tool-exec";
@@ -557,7 +557,7 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
             try { toolJson = JSON.stringify(toolset.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }))); } catch { /* skip */ }
             // The machine: devices and memory, from /api/info (null on a server that does not serve it).
             // Asked only for a LOCAL model: a cloud model's hardware is not this box's.
-            let capacity: import("./resource-capacity").Capacity | null | undefined;
+            let capacity: import("./resource/resource-capacity").Capacity | null | undefined;
             if (local === true) { try { const raw = await mlApi.info(); capacity = raw ? parseInfo(raw) : null; } catch { capacity = null; } }
             // Where the user is, from the worker (only it sees the browser's focus), relative to THIS tab.
             let userFocus: string | null = null;

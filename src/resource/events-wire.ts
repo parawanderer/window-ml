@@ -13,9 +13,9 @@
 // schema marks `optional` is written whenever the server has something to say, zero included, so ABSENT means "not
 // reported" (`activity`, `context_length`, `memory.kv_cache`, `slots_busy`). Every other field is omitted at zero, so
 // absent means "zero, or not measured". The generated interface tells the two apart: `field?:` is the first kind.
-import type * as Gen from "./proto/events.gen";
+import type * as Gen from "../proto/events.gen";
 
-export type * from "./proto/events.gen";
+export type * from "../proto/events.gen";
 
 /** A value as `JSON.parse` hands it over: every key optional, any value possibly null, all the way down. */
 export type Wire<T> = T extends readonly (infer U)[] ? Wire<U>[]

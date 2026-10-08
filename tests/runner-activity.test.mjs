@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { activityFrom, kvOccupancy, fmtOccupancy } from "../src/resource-decode.js";
-import { loadedFrom } from "../src/resource-events.ts";
+import { loadedFrom } from "../src/resource/resource-events.ts";
 
 const CAP = JSON.parse(readFileSync(fileURLToPath(new URL("./e2e/fixtures/runner-activity.json", import.meta.url)), "utf8"));
 const at = (t) => CAP.ps_samples.find((s) => s.t >= t);

@@ -3,7 +3,7 @@
 // without a WebView, and the app never re-derives a grant or a status on its own (docs/spec/NATIVE_SHELL.md).
 
 import type { AgentTarget, Principal, RuntimeInfo, SessionKey, SessionSummary, StorageReport } from "../session-host";
-import { formatBytes } from "../resource-model";
+import { formatBytes } from "../resource/resource-model";
 import { mayCommand, mayStart, resumableHere } from "../chat/grants";
 import type { AttentionRow, RuntimeStorageView, SessionChrome } from "./bridge";
 import { attentionCount, attentionItems, certItems, revokerItems, type CertState, type RevokerState } from "../chat/attention";

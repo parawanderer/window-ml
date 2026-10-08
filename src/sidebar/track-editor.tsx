@@ -1,9 +1,9 @@
 // track-editor.tsx — the resource panel's track editor: which series each chart track shows, the presets that
 // start a layout, and the panel's own settings (palette, lane, crosshair, grid), which live beside the tracks.
 
-import { PREDICT_KEY } from "../load-records";
-import type { ResourceSample } from "../resource-model";
-import { seriesCatalog, type TrackDef, stackRefusal, kindRefusal } from "../resource-presets";
+import { PREDICT_KEY } from "../resource/load-records";
+import type { ResourceSample } from "../resource/resource-model";
+import { seriesCatalog, type TrackDef, stackRefusal, kindRefusal } from "../resource/resource-presets";
 import { layout, editLayout } from "./panel-state";
 import { vramPalette, VRAM_PALETTE_KEY, VRAM_PALETTES } from "./palette";
 import { LANE_KINDS, toggleLaneKind } from "./resource-lane-ui";

@@ -12,7 +12,7 @@ import type { FetchLlmPayload } from "../contract/contract-messages";
 import { wireHint } from "../contract/contract-run";
 import { DEFAULT_CONFIG, modelFilterAllows, protoMode } from "../contract/contract-config";
 import { generatesText, producesEmbeddings } from "../contract/contract-server";
-import { loadedFrom } from "../resource-events";
+import { loadedFrom } from "../resource/resource-events";
 import { createFrameReader } from "../protostream";
 import { Frame } from "../proto/chat.gen";
 

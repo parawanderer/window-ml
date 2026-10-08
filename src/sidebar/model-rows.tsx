@@ -4,7 +4,7 @@
 
 import { signal } from "@preact/signals";
 import type { LoadedModel } from "../contract/contract-server";
-import { type ResourceSample, formatBytes, placementOf, isSplit } from "../resource-model";
+import { type ResourceSample, formatBytes, placementOf, isSplit } from "../resource/resource-model";
 import { poolHover } from "./chart-interaction";
 import { modelKindLabel } from "./model-status";
 import { rowTipSuppressed, ModelFacts, CostFacts } from "./panel-facts";

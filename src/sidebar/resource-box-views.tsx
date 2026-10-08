@@ -4,13 +4,13 @@
 // They share the per-pool view's pieces (resource-device-view, resource-area, the overlays and tips) and publish
 // the pools they draw (`notePools`) so the arrow keys can step through them.
 
-import { segments, runFrac } from "../resource-axis";
-import { hostBands, deviceBands, type Band } from "../resource-bands";
-import { type ResourceSample, ceilingsFor, formatBytes, formatShare } from "../resource-model";
-import { type ResourceEvent } from "../resource-timeline";
-import { type DeviceCapacity, utilOf } from "../resource-capacity";
-import { type TrackDef, boxAxis } from "../resource-presets";
-import { bridgeOrder, bridgeWalls, linkPhrase } from "../resource-topology";
+import { segments, runFrac } from "../resource/resource-axis";
+import { hostBands, deviceBands, type Band } from "../resource/resource-bands";
+import { type ResourceSample, ceilingsFor, formatBytes, formatShare } from "../resource/resource-model";
+import { type ResourceEvent } from "../resource/resource-timeline";
+import { type DeviceCapacity, utilOf } from "../resource/resource-capacity";
+import { type TrackDef, boxAxis } from "../resource/resource-presets";
+import { bridgeOrder, bridgeWalls, linkPhrase } from "../resource/resource-topology";
 import { noteRuns, notePools, trackCursor, hoverAt, hoverPool, enterPool, leavePool, snapUnder, poolHover } from "./chart-interaction";
 import { W, H } from "./chart-paint";
 import { hiddenPools, sampleGapMs, togglePool } from "./panel-state";

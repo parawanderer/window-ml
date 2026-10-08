@@ -9,8 +9,8 @@
 // rather than fatal BECAUSE the server retains a ring: a reconnect asks `?since=<the gap>` and the
 // backfill closes it, so an eviction costs latency and not history. `sinceFor` is where that is decided.
 import { getConfig, authHeaders, findOllamaBase } from "./sw-llm";
-import { readFrames, sinceFor, loadedFrom, lostSince, type ResourceFrame } from "../resource-events";
-import { LoadRecorder, addRecords, PREDICT_KEY, LOAD_RECORDS_KEY, type LoadRecord } from "../load-records";
+import { readFrames, sinceFor, loadedFrom, lostSince, type ResourceFrame } from "../resource/resource-events";
+import { LoadRecorder, addRecords, PREDICT_KEY, LOAD_RECORDS_KEY, type LoadRecord } from "../resource/load-records";
 
 /** What a subscriber receives. `at` is the frame's own wall clock, resolved from this connection's hello,
  *  so nothing downstream ever sees a relative offset. `loaded` is filled for a `sample` frame — the panel
