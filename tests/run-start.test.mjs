@@ -645,6 +645,7 @@ test("OPEN — while an approved exec runs, the page cannot fetch a URL the exec
     assert.match(toolResults[0] ?? "", /SECRET OTHER SITE/, "positive control: the run's own fetch ran");
     assert.ok(stolen !== undefined, "positive control: the page's request was answered");
     assert.ok(!stolen?.data, `the page fetched a URL no one approved while the exec ran: ${JSON.stringify(stolen).slice(0, 160)}`);
+});
 
 // --- the agent reading its own run (`selfIntrospection`, default on) ---
 

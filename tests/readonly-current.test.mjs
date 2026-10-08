@@ -535,6 +535,33 @@ test("WORKER FETCH HALTING: a survey re-reading the cache forever is stopped by 
     assert.ok(r.kind === "refused" || /^Error:/.test(r.result), JSON.stringify(r));
 });
 
+// --- what an approved exec is sent (currentForExec), for the isolated exec of SITE_ACCESS.md part 4 ---
+
+test("an approved exec's ml.current survives the JSON crossing whole, log.text included, and comes back as the snapshot", async () => {
+    const { currentForExec, currentFromExec } = await import("../src/agent/current-context.ts");
+    const snap = { ...sampleSnapshot(), debug: { userWatches: [{ expression: "ml.current.run.step", value: 2, at: 5 }] } };
+    const sent = currentForExec(snap, true);
+    const crossed = JSON.parse(JSON.stringify(sent.value));   // what chrome.tabs.sendMessage does to it
+    const back = currentFromExec(crossed);
+    assert.equal(back.log.text, snap.log.text);
+    assert.deepEqual([...back.log], [...snap.log]);
+    assert.deepEqual({ ...back, log: null }, JSON.parse(JSON.stringify({ ...snap, log: null })));
+    sent.value.current.messages.push({ role: "user", content: "x" });
+    assert.equal(snap.messages.length, 4, "what is sent is a copy");
+});
+
+test("nothing is sent with selfIntrospection off or without a snapshot; an over-cap context is a sentence, not a cut", async () => {
+    const { currentForExec, EXEC_CURRENT_CHARS } = await import("../src/agent/current-context.ts");
+    assert.equal(currentForExec(sampleSnapshot(), false), undefined);
+    assert.equal(currentForExec(undefined, true), undefined);
+    const big = snapshotCurrent({ run: { id: "r", model: null, step: 1, maxSteps: 5, startedTs: 0 },
+        messages: [{ role: "user", content: "x".repeat(EXEC_CURRENT_CHARS) }], recorded: [], now: 1 });
+    const r = currentForExec(big, true);
+    assert.equal(r.value, undefined);
+    assert.match(r.error, new RegExp(`over the ${EXEC_CURRENT_CHARS} an approved exec is sent`));
+    assert.match(r.error, /read-only exec/);
+});
+
 // --- HALTING and FAILURE ----------------------------------------------------------------------------------------------
 // The halting argument for a loop over `messages` is that the array cannot grow. That argument dies with the write half
 // (`for (const m of ml.current.messages) ml.current.drop(m)` is the Set/Map mutator bug again), so it is tested NOW,
