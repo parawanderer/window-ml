@@ -1,4 +1,4 @@
-// fold-badges.test.mjs — which badges a short row folds into its "+N" chip (src/sidebar/fold-badges.tsx): the rule is
+// fold-badges.test.mjs — which badges a short row folds into its "+N" chip (src/sidebar/resource/fold-badges.tsx): the rule is
 // pure, so every case is a list of widths and a room. What a real row does with it is in resource-panel.spec.mjs.
 import { test } from "node:test";
 import assert from "node:assert/strict";
