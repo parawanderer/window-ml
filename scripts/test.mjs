@@ -38,7 +38,8 @@ const GENRES = {
             "sidebar-export.test.js", "sidebar-output.test.js", "sidebar-resource.test.js",
             "sidebar-session.test.js", "sidebar-settings.test.js", "sidebar-vram.test.js",
             "output-cell.test.mjs", "pointer-gone.test.mjs", "code-tools.test.mjs", "legend.test.mjs",
-            "context-container.test.mjs", "fold-badges.test.mjs", "tooltip-layer.test.mjs", "tip.test.mjs", "views.test.mjs"],
+            "context-container.test.mjs", "fold-badges.test.mjs", "tooltip-layer.test.mjs", "tip.test.mjs", "views.test.mjs",
+            "json-tree.test.mjs", "run-state-view.test.mjs", "run-log-view.test.mjs"],
     },
     // The session archive: the SQL both surfaces run (src/archive/db.ts), the same statements proven under a second
     // SQLite build, the bridge the phone keeps its copy over, and the Settings section that manages the folder.

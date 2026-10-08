@@ -8,7 +8,7 @@ import { signal } from "@preact/signals";
 import { useEffect, useState } from "preact/hooks";
 import { JsonNode, copyableValue } from "./transcript/json-tree";
 import { PanelHead } from "./panel-head";
-import { cursorTipOn, useCopy } from "./ui-kit";
+import { TipText, cursorTipOn, useCopy } from "./ui-kit";
 import { IconCheck, IconChevron, IconCopy } from "./icons";
 import type { RunStateDump, RunStateMember } from "../sw/sw-run-state";
 import type { StateEntry, StateLoss } from "../state-registry";
@@ -47,7 +47,8 @@ const paneTip = (text: string) => <span class="rstate-tip">{text}</span>;
 function memberTip(m: RunStateMember) {
     const reader = m.audience === "human" ? "only you" : m.exposedAs ? "the model" : "meant for the model, not yet";
     return <span class="rstate-tip">
-        <span class="rstate-tip-desc">{m.describe}</span>
+        {/* A declaration's sentence is written in markdown (backticked names), so it is drawn as markdown. */}
+        <span class="rstate-tip-desc"><TipText md={m.describe} /></span>
         <span class="rstate-tip-sect">
             <span class="rc-tip-line"><span class="rstate-tip-k">read by</span><span>{reader}</span></span>
             <span class="rc-tip-line"><span class="rstate-tip-k">lives for</span><span>{SCOPE[m.scope]}</span></span>
