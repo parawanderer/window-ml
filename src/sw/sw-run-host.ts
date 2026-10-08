@@ -250,7 +250,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     // Fan a run's step events to the page. overlay AND off both stream to the page window
     // (ML_DEBUG_TO_PAGE → the shell → the iframe app) — off renders them in the corner CARD, a
     // curated view of the same data; devtools fans to the panel. The card mounts itself lazily on the
-    // first of these (tagged `__mlFromBg` by content.ts) and self-reveals for a pending gate / the
+    // first of these (which reach the shell over chrome.runtime, never the page) and self-reveals for a pending gate / the
     // final answer, so a no-approval off run streams to a hidden, cheap-to-mount card.
     const emitStep = (ev: Record<string, unknown>): void => {
         // Once the run is aborted (CANCEL_RUN), stop fanning steps: an in-flight tool's DONE resolves
@@ -278,7 +278,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
         // shell drops the page copy when no card is mounted, and never loops it back to the panel.
         chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => { /* tab gone / no receiver */ });
         // ALWAYS feed a connected DevTools panel (no-op if none). A background-hosted run is the SOLE source
-        // of its events — the shell tags them __mlFromBg and never re-forwards them as ML_DEBUG_EVENT, so
+        // of its events — the shell receives them over chrome.runtime and never re-forwards them as ML_DEBUG_EVENT, so
         // this can't double-relay. Gating on `surface === "devtools"` left an off/card run's panel (if the
         // user also has one open) stuck on the connect-time replay — the "panel stopped updating" bug.
         relayDebugEvent(tabId, event);

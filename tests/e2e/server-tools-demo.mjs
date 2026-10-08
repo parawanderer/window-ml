@@ -18,7 +18,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdirSync } from "node:fs";
-import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, watchRunEvents } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 
@@ -117,6 +117,7 @@ try {
     await page.evaluate(() => window.addEventListener("message", (m) => {
         if (m.data?.__mlDebug) window.__demoEvent(m.data.__mlDebug);
     }));
+    await watchRunEvents(ext, page, (e) => { events.push(e); });   // the worker's events, which never reach the page
 
     // A console-first look at the namespace BEFORE the run: the schema is on the callable, and it is the
     // same object the call is validated against.
@@ -150,7 +151,7 @@ try {
         const panel = root.getElementById("ml-sb-host");
         panel.style.width = `${Math.round(window.innerWidth / 2)}px`;
         panel.classList.add("open");
-        root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+        (root.getElementById("ml-sb-host").classList.remove("open"), root.getElementById("ml-sb-tab").click());
     });
     const frame = await (async () => {
         for (let i = 0; i < 60; i++) {

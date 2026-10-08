@@ -33,6 +33,7 @@ import { originOf, type SiteEdit } from "./site-access";
 import { editSiteAccess, pageRefusal, readSiteLists, siteDecision } from "./sw/sw-site-access";
 import { pythonPrewarm, pythonExec, relayPyStdout } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
+import { eventSession, pageMayWrite, type WorkerClaim } from "./event-admission";   // what a page may add to a session the worker speaks for
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -179,13 +180,32 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     return true;
 });
 
+/**
+ * What the worker knows about its part in a page-sent event's session, for `pageMayWrite` (event-admission.ts). A run
+ * the worker built is its alone; a run it hosts for a page that built it takes the page's lifecycle events and nothing
+ * else; a background session the worker no longer holds the run of (it ended, or the worker restarted) is treated as
+ * its alone, since the page that built it, if one did, has nothing left to report.
+ * @param ev the event a page sent
+ * @returns the worker's claim on its session
+ */
+function workerClaimOf(ev: unknown): WorkerClaim {
+    const h = eventSession(ev);
+    if (!h) return "none";
+    if (isWorkerRun(h)) return "owns";
+    if (bgRuns.has(h) || runControllers.has(h)) return "hosts";
+    return sessionServer.index.binding(h)?.hostedBy === "background" ? "owns" : "none";
+}
+
 /** The message router: every handler, behind the origin gate above. */
 function route(message: any, sender: chrome.runtime.MessageSender, sendResponse: (response?: any) => void): boolean | undefined {
     // The content-script shell forwards each __mlDebug event here so a DevTools panel
     // (which can't see page window-messages) can mirror the overlay's stream. Fire-and-
     // forget — no response. RESET clears a tab's buffer on navigation (fresh page).
+    // Both are the PAGE's events, so neither may write into a run the worker hosts beyond what `pageMayWrite` allows: a
+    // page that could would draw steps the run never took, or end a run that is waiting (docs/spec/SITE_ACCESS.md,
+    // attack 16).
     if (message.type === "ML_DEBUG_EVENT") {
-        if (sender.tab?.id != null) {
+        if (sender.tab?.id != null && pageMayWrite(message.event?.kind, workerClaimOf(message.event))) {
             relayDebugEvent(sender.tab.id, message.event);
             ingestSessionEvent(message.event, { tabId: sender.tab.id, trusted: false, page: senderPage(sender.tab) });
         }
@@ -195,7 +215,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     // otherwise never leave the page, and off mode with `listPageSessions`). Bound to the sending tab: the index
     // refuses a page writing into a session another tab owns.
     if (message.type === "ML_SESSION_EVENT") {
-        if (sender.tab?.id != null) ingestSessionEvent(message.event, { tabId: sender.tab.id, trusted: false, page: senderPage(sender.tab) });
+        if (sender.tab?.id != null && pageMayWrite(message.event?.kind, workerClaimOf(message.event))) ingestSessionEvent(message.event, { tabId: sender.tab.id, trusted: false, page: senderPage(sender.tab) });
         return;
     }
     // Await the startup rehydrate before deciding whether to wipe: right after an SW respawn (e.g. a site-access
@@ -317,7 +337,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             }
             // Overlay/off HUD replay-across-nav: stream the run's buffered history so the fresh card/overlay
             // rebuilds MID-run (start + every step so far), not just post-nav events. The shell buffers these
-            // __mlFromBg events while its iframe mounts, absorbing an ordering race against the handshake.
+            // events while its iframe mounts, absorbing an ordering race against the handshake.
             // Fires for a LIVE run (every nav) AND — the on-click/late-injection fix — for a page that loads
             // AFTER the run finished: a completed run re-adopted from bgRuns replays its history ONCE so the
             // destination page still gets its card + final answer (else the corner card is blank there).
@@ -884,14 +904,15 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // draws something impossible can be reproduced instead of described. Deliberately the raw INPUTS
         // rather than the drawn events: the derivation (`eventsFrom` + `machineEventFrom`) is pure and
         // shared, so a fixture built from these exercises the real thing rather than a snapshot of its
-        // output. Exposes nothing the page cannot already see — the debug stream is what the page itself
-        // emitted, and the frames are machine capacity, no URL and no key.
+        // output. The frames are machine capacity, no URL and no key. The tab's debug buffer also holds the worker's
+        // events for every run on the tab, so a page gets only the ones of sessions it took part in: a run the worker
+        // built may have read another site before it came here (docs/spec/SITE_ACCESS.md, attack 15).
         (async () => {
             const tabId = sender.tab?.id;
             sendResponse({ data: {
                 capturedAt: Date.now(),
                 tabId: tabId ?? null,
-                debug: tabId != null ? (debugBuffer.get(tabId) || []) : [],
+                debug: tabId != null ? (debugBuffer.get(tabId) || []).filter((ev) => workerClaimOf(ev) !== "owns") : [],
                 frames: recentFrames(),
                 stream: resourceStreamStatus(),
                 ps: await listLoadedModels().catch(() => null),

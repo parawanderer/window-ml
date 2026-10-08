@@ -27,6 +27,7 @@ import {
 import { ApprovalBody } from "./card-approval";
 import { ShowWork } from "./card-showwork";
 import { ComposerCard } from "./card-composer";
+import { toHost } from "../parent-channel";
 
 /* ------------------------------ off-mode card ----------------------------
  * The "card" surface. When debug is OFF but a privileged ml.agent run must be
@@ -48,7 +49,7 @@ export const cardCtxMenu = (e: any) => {
     e.preventDefault();
     const run = selectedRun();
     const live = !!run && run.summary == null && !run.error;
-    window.parent.postMessage({ __mlSidebarCornerMenu: { x: e.clientX, y: e.clientY, hash: run?.hash || "", live } }, "*");
+    toHost({ __mlSidebarCornerMenu: { x: e.clientX, y: e.clientY, hash: run?.hash || "", live } });
     armMenuDismiss();
 };
 // Grab-drag the HUD: stream movement DELTAS to the shell, which moves the container and snaps to the
@@ -121,15 +122,15 @@ export const startCardDrag = (e: any) => {
             // Send WHERE in the card the grab landed (iframe-local ≈ offset from the card's top-left, since
             // the iframe fills the wrap). The shell keeps that fractional point under the cursor across a
             // mid-drag size change (pill→orb) so the collapsed orb lands UNDER the cursor, not at the edge.
-            window.parent.postMessage({ __mlSidebarCardGrab: { gx: ev.clientX, gy: ev.clientY } }, "*");
+            toHost({ __mlSidebarCardGrab: { gx: ev.clientX, gy: ev.clientY } });
         }
-        window.parent.postMessage({ __mlSidebarCardMove: { dx: ev.movementX, dy: ev.movementY } }, "*");
+        toHost({ __mlSidebarCardMove: { dx: ev.movementX, dy: ev.movementY } });
     };
     const up = () => {
         const wasDragging = dragging;
         cleanup();
         if (!wasDragging) return;
-        window.parent.postMessage({ __mlSidebarCardDrop: true }, "*");
+        toHost({ __mlSidebarCardDrop: true });
         // A drag must CANCEL the click that fires after pointerup — otherwise dropping a dragged toast
         // also triggers its onClick (expand). Swallow the next click in the CAPTURE phase (before the
         // element's handler); a timeout clears it if no click follows (some engines skip it after capture).
@@ -154,7 +155,7 @@ export function armMenuDismiss(): void {
     menuDismissArmed = true;
     window.addEventListener("pointerdown", () => {
         menuDismissArmed = false;
-        window.parent.postMessage({ __mlSidebarCornerMenuDismiss: true }, "*");
+        toHost({ __mlSidebarCornerMenuDismiss: true });
     }, { once: true, capture: true });
 }
 
@@ -313,7 +314,7 @@ export function CardApp() {
     // No reset effect needed — show-work is keyed by hash, so a new run is collapsed by default (its hash
     // isn't the open one). "Show work" open → ask the shell to slide the card to the drag limit (room for the
     // whole trace); closed → release it (snap back to fit). Driven by the ACTIVE run's derived open state.
-    useEffect(() => { window.parent.postMessage({ __mlSidebarCardExpand: showWork }, "*"); }, [showWork]);
+    useEffect(() => { toHost({ __mlSidebarCardExpand: showWork }); }, [showWork]);
     // Report our natural CONTENT height so the shell can FIT the card (a cross-origin iframe can't
     // auto-size). We sum the card's children — head + body(scrollHeight = full content) + foot — NOT
     // documentElement.scrollHeight: the app fills the iframe (height:100%), so measuring the container
@@ -322,7 +323,7 @@ export function CardApp() {
     useEffect(() => {
         const post = () => {
             const app = document.querySelector(".card-app") as HTMLElement | null;
-            if (!app) { window.parent.postMessage({ __mlSidebarCardH: Math.ceil(document.documentElement.scrollHeight) }, "*"); return; }
+            if (!app) { toHost({ __mlSidebarCardH: Math.ceil(document.documentElement.scrollHeight) }); return; }
             // Sum each child's TRUE height. `.card-body` is flex:1, so a user drag inflates its clientHeight
             // (and thus scrollHeight) to fill the taller container — measuring that would report the dragged
             // size as "content" and the shell would snap-back-glitch (the drag looks like a content change).
@@ -343,7 +344,7 @@ export function CardApp() {
             }
             // +2px slack: sub-pixel rounding of each child's height can still leave card-body ~1px short of its
             // content (a faint scrollbar). The pad is invisible but guarantees the content never overflows.
-            window.parent.postMessage({ __mlSidebarCardH: Math.ceil(h) + 6 }, "*");
+            toHost({ __mlSidebarCardH: Math.ceil(h) + 6 });
             // Caption pill: report its NATURAL width so the shell fits the pill to the text (up to a max, then
             // the label ellipsizes). Measure the label's real glyph extent with a Range — the label has
             // overflow:hidden + a flex width, so its offsetWidth/scrollWidth is clamped to the CURRENT pill and
@@ -369,7 +370,7 @@ export function CardApp() {
                 const gap = parseFloat(cs.columnGap || cs.gap) || 9;
                 const chrome = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight)
                     + gap + (ic?.offsetWidth || 20) + (live ? gap + live.offsetWidth : 0);
-                if (textW > 0) window.parent.postMessage({ __mlSidebarCardW: Math.ceil(chrome + textW) + 4 }, "*");
+                if (textW > 0) toHost({ __mlSidebarCardW: Math.ceil(chrome + textW) + 4 });
             } catch { /* no layout available (jsdom) → shell uses the fixed orbprose width */ }
         };
         post();
@@ -386,7 +387,7 @@ export function CardApp() {
     // fixed size), then applies "expanded" with the fresh cardAutoH. Posting state first made it lay out the
     // expanded card at the STALE height (the previous run's, or the 200px default) → it opened 2-3× too tall
     // then snapped down — the "elastic jump". Height-then-state removes the overshoot.
-    useEffect(() => { window.parent.postMessage({ __mlSidebarCard: state }, "*"); }, [state]);
+    useEffect(() => { toHost({ __mlSidebarCard: state }); }, [state]);
     // Keyboard: Enter approves, Esc denies — but ONLY from a real keydown INSIDE this trusted iframe (a
     // page-side global hotkey routed in would reopen the forgery hole, so we deliberately don't do that).
     // We ask the shell to focus the card frame when an approval appears, so the keys work without a click.
@@ -394,7 +395,7 @@ export function CardApp() {
         if (!run || !pendingStep || pendingStep.seq == null) return;
         const h = run.hash, seq = pendingStep.seq;
         const canKeep = hasPersistGrants(pendingStep.grants);
-        window.parent.postMessage({ __mlSidebarCardFocus: true }, "*");
+        toHost({ __mlSidebarCardFocus: true });
         const decideKey = (ok: boolean, persist = false) => { decidedSteps.add(stepKey(h, seq)); clearHighlight(); void decideGate(pendingStep, h, seq, ok, persist); rev.value++; };
         const onKey = (e: KeyboardEvent) => {
             // Enter approves; Esc denies; KEEP is a deliberate two-key combo (⌘/Ctrl+K) — intentionally NOT
@@ -563,7 +564,7 @@ export function CardApp() {
                                 a follow-up in the composer). Not shown for a cancel/error. */}
                             {run.hitCap && !run.cancelled
                                 ? <ContinueRun steps={run.maxSteps || 20}
-                                    go={(n) => window.parent.postMessage({ __mlSidebarApp: "continueRun", hash: run.hash, ...(n ? { maxSteps: n } : {}) }, "*")} />
+                                    go={(n) => toHost({ __mlSidebarApp: "continueRun", hash: run.hash, ...(n ? { maxSteps: n } : {}) })} />
                                 : null}
                             {/* A FAILED run gets the same resume, as Retry — parity with the sidebar's failed-run
                                 bubble, since a surface that offers the way forward in one place and a dead end in
@@ -571,7 +572,7 @@ export function CardApp() {
                                 turn that failed without adding a message; a call that errored produced nothing, so
                                 the worst case is that it fails again. */}
                             {run.error && !run.cancelled
-                                ? <button class="continue-run" onClick={() => window.parent.postMessage({ __mlSidebarApp: "continueRun", hash: run.hash }, "*")}
+                                ? <button class="continue-run" onClick={() => toHost({ __mlSidebarApp: "continueRun", hash: run.hash })}
                                     {...cursorTipOn("Try this turn again, from where the run stopped. Nothing is re-typed and no new message is added — the same request goes out again.")}>
                                     Retry
                                   </button>
@@ -611,7 +612,7 @@ export function CardSteer({ hash, onClose }: { hash: string; onClose: () => void
     const send = () => {
         const t = text.trim();
         if (!t) return;
-        window.parent.postMessage({ __mlSidebarApp: "sessionSend", hash, text: t }, "*");
+        toHost({ __mlSidebarApp: "sessionSend", hash, text: t });
         setText(""); inputRef.current?.focus();   // keep steering — a run often needs more than one nudge
     };
     const onKey = (e: KeyboardEvent) => {
@@ -648,7 +649,7 @@ export function CardReply({ hash }: { hash: string }) {
     const send = () => {
         const t = text.trim();
         if (!t && !att.imgs.length) return;
-        window.parent.postMessage({ __mlSidebarApp: "sessionSend", hash, text: t, images: att.imgs }, "*");
+        toHost({ __mlSidebarApp: "sessionSend", hash, text: t, images: att.imgs });
         // Optimistic: flip the session to WORKING now so the card morphs to the orb the instant you hit
         // Enter, instead of showing the stale answer until the follow-up's first event lands (in off/card
         // mode the page's agent-say bridge is dormant, so there'd otherwise be a visible lag).

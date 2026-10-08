@@ -169,6 +169,9 @@ learned by shipping the wrong version first.
   goes on a lock screen, and `expo-notifications` stays out of `app.json`'s plugins. → chat-page.md
 - **Sidebar.** One app, two surfaces: a new app→parent message is also handled in `panel.ts`; shared session views
   call `services()`, never `chrome.*`; a session key is `runtime:hash`, split on the LAST `:`. → sidebar.md
+- **A run's events never reach the page's window**, and the sidebar app talks to its host only through
+  `parent-channel.ts`: an e2e watches a background run with `watchRunEvents` and opens the sidebar by clicking its
+  tab, never by posting into its iframe. → sidebar.md
 - **Transcript.** A long session is WINDOWED; a jump to a step goes through `reveal`; the window is a plain Map
   bumped through `rev`, NEVER a signal read during render. → sidebar.md
 - **A delegated tool has a THIRD outcome:** a send to a sleeping tab neither answers nor rejects. Every send goes

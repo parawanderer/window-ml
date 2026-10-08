@@ -244,7 +244,7 @@ async function main() {
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = "460px";
             panel.classList.add("open");
-            root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+            (root.getElementById("ml-sb-host").classList.remove("open"), root.getElementById("ml-sb-tab").click());
         });
         // The iframe is replaced on every page load, so hold it in a variable the reload can refresh.
         const findFrame = async () => {

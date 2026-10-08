@@ -65,7 +65,7 @@ test("output cell: tail-follows at the bottom, holds still when scrolled up", as
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = `${Math.round(window.innerWidth / 2)}px`;
             panel.classList.add("open");
-            root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+            (root.getElementById("ml-sb-host").classList.remove("open"), root.getElementById("ml-sb-tab").click());
         });
         const frame = await (async () => {
             for (let i = 0; i < 80; i++) {
@@ -194,7 +194,7 @@ test("output cell: the Out content does not shift when streaming stops", async (
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = `${Math.round(window.innerWidth / 2)}px`;
             panel.classList.add("open");
-            root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+            (root.getElementById("ml-sb-host").classList.remove("open"), root.getElementById("ml-sb-tab").click());
         });
         const frame = await (async () => {
             for (let i = 0; i < 80; i++) {
@@ -270,7 +270,7 @@ test("output cell (real layout): cap clips, grip drags to resize, matches actual
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = `${Math.round(window.innerWidth / 2)}px`;
             panel.classList.add("open");
-            root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+            (root.getElementById("ml-sb-host").classList.remove("open"), root.getElementById("ml-sb-tab").click());
         });
         const frame = await (async () => {
             for (let i = 0; i < 80; i++) {
@@ -379,7 +379,7 @@ test("output cell (real layout): the find scrolls SIDEWAYS to a match past the f
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = `${Math.round(window.innerWidth / 2)}px`;
             panel.classList.add("open");
-            root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+            (root.getElementById("ml-sb-host").classList.remove("open"), root.getElementById("ml-sb-tab").click());
         });
         const frame = await (async () => {
             for (let i = 0; i < 80; i++) {

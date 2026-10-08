@@ -6,7 +6,7 @@
 
 import { test, expect } from "@playwright/test";
 import { createServer } from "node:http";
-import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, watchRunEvents } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 
@@ -346,6 +346,7 @@ test("continue: a step-capped run resumes with a fresh budget via __mlContinueRu
     });
     await page.goto(site.url + "/");
     await waitForMl(page);
+    await watchRunEvents(ext, page, (d) => { if (d.kind === "agent-result") results.push({ summary: d.summary, hitCap: !!d.hitCap }); });   // the worker's events, which never reach the page
     // maxSteps:1 → step 1 is the tool call, then the loop exceeds the cap → hitCap. After continue, the next
     // turn's first call is the final answer → the run completes.
     fake.setScript([
@@ -377,6 +378,7 @@ test("continue: a chosen step budget reaches the loop, not just the message", as
     });
     await page.goto(site.url + "/");
     await waitForMl(page);
+    await watchRunEvents(ext, page, (d) => { if (d.kind === "agent-result") results.push({ summary: d.summary, hitCap: !!d.hitCap, steps: d.steps }); });   // the worker's events, which never reach the page
     fake.setScript([
         { tool: "findByText", args: { text: "Step" } },
         { tool: "findByText", args: { text: "Step" } },
@@ -409,6 +411,7 @@ test("streaming: a stream:true run streams reasoning deltas AND accumulates a st
     });
     await page.goto(site.url + "/step3");
     await waitForMl(page);
+    await watchRunEvents(ext, page, (d) => { if (d.kind === "agent-stream" || d.kind === "agent-result") streams.push({ kind: d.kind, reasoning: d.reasoning || "", content: d.content || "", summary: d.summary || "" }); });   // the worker's events, which never reach the page
     fake.setScript([
         { reasoning: "Let me search the page for the code before I answer the question properly.", tool: "findByText", args: { text: "CROSSPAGE" } },
         (req) => {
@@ -444,6 +447,7 @@ test("approval: resolving a gate clears the approve/deny box on other surfaces i
     });
     await page.goto(site.url + "/");
     await waitForMl(page);
+    await watchRunEvents(ext, page, (d) => { if (d.kind === "agent-step") steps.push({ seq: d.seq, awaitingApproval: !!d.awaitingApproval, approval: d.approval || null, hasResult: d.result != null }); });   // the worker's events, which never reach the page
     fake.setScript([
         { tool: "exec", args: { js: "window.__gate = 1; 'mutated'" } },   // a MUTATING exec -> out of the readonly dialect -> gates
         { content: "done" },
@@ -525,20 +529,12 @@ test("cross-page: a background run survives a same-origin navigation and reads t
     await page.close();
 });
 
-// Overlay/off HUD replay-across-nav: the destination page must receive the run's PRE-nav history (start +
-// early steps), so a fresh card can rebuild mid-run instead of only showing the tail. We tag each debug
-// event with the URL it arrived on; a `kind:"agent"` / step-1 event landing on /step3 can ONLY be the
-// background replay (the fresh /step3 document never emits the run start itself — it's background-hosted).
+// Overlay/off HUD replay-across-nav: the destination page's card must get the run's PRE-nav history (start + early
+// steps), so it rebuilds mid-run instead of only showing the tail. The replay goes to the shell, never to the page's
+// window (docs/spec/SITE_ACCESS.md, attack 15), so it is read where it lands: the card on /step3 counts every step,
+// and the two taken on the earlier pages can only have reached it by the worker's replay.
 test("cross-page: the destination page replays the run's pre-nav history", async () => {
     const page = await ext.context.newPage();
-    const events = [];
-    await page.exposeFunction("__cpEvent", (e) => events.push(e));
-    await page.addInitScript(() => {
-        if (window.top !== window) return;   // top frame only (avoid an overlay iframe double-capture)
-        window.addEventListener("message", (e) => {
-            if (e.data && e.data.__mlDebug) window.__cpEvent({ url: location.pathname, kind: e.data.__mlDebug.kind, step: e.data.__mlDebug.step ?? null, fromBg: !!e.data.__mlFromBg });
-        });
-    });
     await page.goto(site.url + "/");
     await waitForMl(page);
 
@@ -555,13 +551,13 @@ test("cross-page: the destination page replays the run's pre-nav history", async
     ]);
     await page.evaluate(() => { window.ml.agent("Go to step 2, then step 3, and read the code.", { env: false }); return true; });
     await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(4);
-    await expect.poll(() => events.some((e) => e.url.includes("/step3") && e.kind === "agent-result"), { timeout: 10000 }).toBe(true);
-
-    const onStep3 = events.filter((e) => e.url.includes("/step3"));
-    // The run START replayed onto /step3 (fresh doc → could only come from the background buffer)…
-    expect(onStep3.some((e) => e.kind === "agent" && e.fromBg)).toBe(true);
-    // …and an EARLY step (the step-1 navigate, emitted while on "/") replayed too.
-    expect(onStep3.some((e) => e.kind === "agent-step" && e.step === 1)).toBe(true);
+    expect(new URL(page.url()).pathname).toBe("/step3");
+    // The card on /step3 shows the answer (the run START and result reached it) and all three steps, the two navigates
+    // taken on the earlier pages included.
+    const card = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();
+    const text = async () => { const f = card(); try { return f ? ((await f.locator("body").textContent()) || "") : ""; } catch { return ""; } };
+    await expect.poll(text, { timeout: 20000 }).toContain("CROSSPAGE-");
+    await expect.poll(() => card()?.locator(".card-work-n").textContent().catch(() => ""), { timeout: 10000 }).toBe("3 steps");
     await page.close();
 });
 
@@ -573,14 +569,8 @@ test("cross-page: the destination page replays the run's pre-nav history", async
 // history (start + result) so the card can rebuild. Before the fix this replays nothing.
 test("cross-page: a page loading AFTER the run finished still replays its HUD history (on-click / late-injection)", async () => {
     const page = await ext.context.newPage();
-    const events = [];
-    await page.exposeFunction("__cpLate", (e) => events.push(e));
-    await page.addInitScript(() => {
-        if (window.top !== window) return;
-        window.addEventListener("message", (e) => {
-            if (e.data && e.data.__mlDebug) window.__cpLate({ url: location.pathname, kind: e.data.__mlDebug.kind, fromBg: !!e.data.__mlFromBg });
-        });
-    });
+    const card = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();
+    const text = async () => { const f = card(); try { return f ? ((await f.locator("body").textContent()) || "") : ""; } catch { return ""; } };
     await page.goto(site.url + "/");
     await waitForMl(page);
 
@@ -593,14 +583,14 @@ test("cross-page: a page loading AFTER the run finished still replays its HUD hi
     ]);
     await page.evaluate(() => { window.ml.agent("Go to step 2 and finish.", { env: false }); return true; });
     await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(2);
-    await expect.poll(() => events.some((e) => e.kind === "agent-result"), { timeout: 10000 }).toBe(true);
+    await expect.poll(text, { timeout: 15000 }).toContain("the answer is 42");
 
-    // A FRESH page loads on the tab AFTER the run completed → it must still get the run's history replayed.
-    events.length = 0;
+    // A FRESH page loads on the tab AFTER the run completed → its card must still be rebuilt from the replay (the run's
+    // start and its result), which goes to the shell and never to the page's window.
     await page.reload();
     await waitForMl(page);
-    await expect.poll(() => events.some((e) => e.kind === "agent" && e.fromBg), { timeout: 10000 }).toBe(true);
-    expect(events.some((e) => e.kind === "agent-result" && e.fromBg)).toBe(true);
+    await expect.poll(() => !!card(), { timeout: 10000 }).toBe(true);
+    await expect.poll(text, { timeout: 15000 }).toContain("the answer is 42");
     await page.close();
 });
 
@@ -883,6 +873,7 @@ test("cross-page: a HUD composer follow-up reaches the run after it navigated aw
     });
     await page.goto(site.url + "/");
     await waitForMl(page);
+    await watchRunEvents(ext, page, (d) => { events.push({ kind: d.kind, id: d.id }); });   // the worker's events, which never reach the page
 
     const before = fake.calls().length;
     fake.setScript([
@@ -921,6 +912,7 @@ test("cross-page (HUD card): a resume that navigates still shows the card on the
     await page.exposeFunction("__cpResume", (e) => events.push(e));
     await page.addInitScript(() => { if (window.top === window) window.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) window.__cpResume({ kind: e.data.__mlDebug.kind, id: e.data.__mlDebug.id }); }); });
     await page.reload(); await waitForMl(page);   // re-add the init listener on a fresh load
+    await watchRunEvents(ext, page, (d) => { events.push({ kind: d.kind, id: d.id }); });   // the worker's events, which never reach the page
     const before = fake.calls().length;
     fake.setScript([{ content: "Turn one done." }]);
     await page.evaluate(() => { window.ml.createAgent({ env: false }).run("Say turn one."); return true; });
@@ -973,6 +965,7 @@ test("cross-page: a HUD composer follow-up after a nav offsets its steps past th
     });
     await page.goto(site.url + "/");
     await waitForMl(page);
+    await watchRunEvents(ext, page, (d) => { if (d.kind === "agent") evs.push({ agentId: d.id }); else if (d.kind === "agent-step") evs.push({ step: d.step, seq: d.seq ?? null, tool: d.tool || null }); });   // the worker's events, which never reach the page
 
     const before = fake.calls().length;
     fake.setScript([

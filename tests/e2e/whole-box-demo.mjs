@@ -93,7 +93,7 @@ const main = async () => {
                 const root = document.getElementById("ml-sb-root").shadowRoot;
                 const panel = root.getElementById("ml-sb-host");
                 panel.style.width = "720px"; panel.classList.add("open");
-                root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+                (root.getElementById("ml-sb-host").classList.remove("open"), root.getElementById("ml-sb-tab").click());
             });
             let frame = null;
             for (let i = 0; i < 80 && !frame; i++) { frame = page.frames().find((fr) => /sidebar\.html/.test(fr.url())) || null; if (!frame) await sleep(100); }

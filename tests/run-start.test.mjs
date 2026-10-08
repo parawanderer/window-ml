@@ -300,3 +300,64 @@ test("a run a page built, followed up from a tab now on an unapproved site, is d
     assert.equal(chats.length, 2);
     assert.deepEqual(chats[1].body.messages.filter((m) => m.role === "user").map((m) => m.content), ["first", "and then this"]);
 });
+
+// --- what a page may add to a run the worker built (attack 16) ---
+
+/** The index as an extension page reads it, row by hash. */
+function indexRows(bg) {
+    const port = bg.connect("ml-sessions", { url: "chrome-extension://test/chat.html" });
+    port.send({ type: "sessions" });
+    return () => {
+        const map = new Map();
+        for (const m of port.messages) {
+            if (m.type !== "index") continue;
+            const u = m.update;
+            if (u.type === "snapshot") { map.clear(); for (const s of u.sessions) map.set(s.id.hash, s); }
+            else if (u.type === "upsert") map.set(u.session.id.hash, u.session);
+        }
+        return map;
+    };
+}
+
+test("a page's events for a run the worker built reach neither the index nor a DevTools panel; its own still do", T, async () => {
+    // The run's owner in the index is the tab it runs on, so the index's own tab check let that tab's page in. The page
+    // knows the run's hash: the worker hands it over with the toolset push.
+    const { bg } = world({ reply: "the real answer" });
+    const rows = indexRows(bg);
+    const panel = bg.connect("ml-devtools");
+    panel.send({ type: "ml-devtools-init", tabId: 7 });
+    const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "first", surface: "hud" });
+    await flush(30);
+    assert.equal(rows().get(hash)?.status, "done");
+    const page = { tab: { id: 7, url: SITE.url, title: "Site" }, url: SITE.url };
+    const forged = (kind, over) => ({ kind, id: hash, ts: Date.now() + 1000, save: false, session: { hash, turn: 1 }, ...over });
+    for (const type of ["ML_DEBUG_EVENT", "ML_SESSION_EVENT"]) {
+        await bg.send({ type, event: forged("agent-step", { step: 9, seq: 9, tool: "exec", result: "FORGED STEP" }) }, page);
+        await bg.send({ type, event: forged("agent-result", { summary: "FORGED ANSWER", steps: 9, hitCap: false }) }, page);
+    }
+    await flush(10);
+    assert.ok(!JSON.stringify(panel.messages).includes("FORGED"), "the panel drew the page's events");
+    assert.equal(rows().get(hash).status, "done");
+    const events = await bg.send({ type: "DUMP_EVENTS" }, page);
+    assert.ok(!JSON.stringify(events).includes("FORGED"));
+    // The control: the page's OWN session, one the worker has no part in, still goes in.
+    await bg.send({ type: "ML_DEBUG_EVENT", event: { kind: "agent", id: "page0001", ts: 1, save: false, session: { hash: "page0001", turn: 0 }, task: "the page's own", model: "m", maxSteps: 5, config: null } }, page);
+    await flush(5);
+    assert.equal(rows().get("page0001")?.task, "the page's own");
+    assert.ok(JSON.stringify(panel.messages).includes("the page's own"));
+});
+
+test("the debug dump a page asks for leaves out the events of a run the worker built", T, async () => {
+    // `ml.__events()` reads the tab's debug buffer, which holds the worker's events for every run on the tab: a run that
+    // read another site before it came here would hand that site's content to this page.
+    const { bg } = world({ reply: "SECRET FROM THE RUN" });
+    const panel = bg.connect("ml-devtools");   // the buffer fills only for a tab a panel watches
+    panel.send({ type: "ml-devtools-init", tabId: 7 });
+    await bg.context.__mlStartUserRunForTest(7, { task: "first", surface: "hud" });
+    await flush(30);
+    assert.ok(JSON.stringify(panel.messages).includes("SECRET FROM THE RUN"), "the run's events are in the tab's buffer");
+    const page = { tab: { id: 7, url: SITE.url, title: "Site" }, url: SITE.url };
+    const dump = await bg.send({ type: "DUMP_EVENTS" }, page);
+    assert.ok(Array.isArray(dump.data.debug));
+    assert.ok(!JSON.stringify(dump.data.debug).includes("SECRET FROM THE RUN"));
+});

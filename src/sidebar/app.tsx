@@ -19,7 +19,7 @@ import {
     vramOpen, sidebarOpen, backendError, backendLoading, surface, atBottom, resWindowS, vramH } from "./store";
 import { installTooltipLayer } from "./tooltip-layer";
 import { ContextMenu, CursorTipLayer, Hash, highlightPos } from "./ui-kit";
-import { onDebug, maybeGenerateTitles, titleTried } from "./debug-reducer";
+import { forgetSessionReduced, onDebug, maybeGenerateTitles, titleTried } from "./debug-reducer";
 import { installServices } from "./services";
 import { extensionServices } from "./services-ext";
 import { ProfileBadge, SessionRow, AgentBadge } from "./transcript/reply";
@@ -43,6 +43,7 @@ import { IconWarn, IconTimer, IconGear, IconExport, IconVram, IconBench, IconToo
 import { HousekeepingView } from "./housekeeping-log";
 import { Settings, openSettingsAt } from "./settings/settings";
 import { DetailView } from "./transcript/session-detail";
+import { onHostMessage, toHost } from "./parent-channel";
 
 
 /* ------------------------------ components ------------------------------- */
@@ -448,10 +449,10 @@ function App() {
  * This runs INSIDE the sidebar iframe (an extension page — sidebar.html), which
  * the host web page can't read across the origin boundary. The content-script
  * shell (sidebar/shell.ts) hosts the iframe, relays each `__mlDebug` event in
- * via postMessage, and owns the slide-out container/tab/resize.
+ * over parent-channel.ts, and owns the slide-out container/tab/resize.
  */
-// Debug events are relayed in from the shell (the parent window); a bare page
-// can't reach this iframe's message bus across the extension-origin boundary.
+// Debug events are relayed in from the host, over parent-channel.ts: on a web page the parent window IS the page,
+// which can post into this frame, so there the host's messages arrive over a private port instead.
 // Drop all session state. The DevTools panel reuses one long-lived app across page
 // reloads (the overlay gets a fresh iframe each load), so it must be told to clear —
 // on a page navigation (ML_DEBUG_RESET) and before a reconnect's authoritative replay.
@@ -462,12 +463,12 @@ function resetSessions(): void {
     rev.value++;
 }
 
-function onMessage(e: MessageEvent): void {
-    const d = e.data as any;
-    if (e.source !== window.parent || !d) return;
+function onMessage(d: any): void {
     if (d.__mlDebug) onDebug(d.__mlDebug as MlDebugEvent);
     else if (typeof d.__mlHighlightPos === "string") highlightPos.value = d.__mlHighlightPos;   // where the approval target sits on the page
     else if (d.__mlDebugReset) resetSessions();
+    // The shell drops what the page wrote to a session the worker has since started (shell.ts dropPageSession).
+    else if (typeof d.__mlForgetSession === "string") { forgetSessionReduced(d.__mlForgetSession); rev.value++; }
     // The chart's keys, RELAYED from the page by the overlay's shell while the pointer is on a plot (see `chartKey`):
     // hovering does not move focus, so the page's document is the one receiving them.
     else if (typeof d.__mlSidebarChartKey === "string") chartKey(d.__mlSidebarChartKey);
@@ -501,7 +502,7 @@ function onMessage(e: MessageEvent): void {
         // (a collapsed toast can't hold the input) and ask the shell to focus the frame so typing lands.
         cardSteerHash.value = d.__mlSteerRun.hash;
         setCardCollapsed(d.__mlSteerRun.hash, false);
-        window.parent.postMessage({ __mlSidebarCardFocus: true }, "*");
+        toHost({ __mlSidebarCardFocus: true });
     }
 }
 
@@ -568,7 +569,7 @@ function mount(): void {
     fetchModels();
     render(<Root />, root);
 
-    window.addEventListener("message", onMessage);
+    onHostMessage(onMessage);
     // Live-sync config edits made elsewhere (e.g. the popup) into the settings form.
     chrome.storage.onChanged.addListener((changes, area) => {
         // The code theme, changed on another surface (the overlay, the DevTools panel and the HUD card are three
@@ -587,7 +588,7 @@ function mount(): void {
         if (changes.theme) applyTheme();
     });
     // Tell the shell we're listening; it then handshakes injected.js on the page.
-    window.parent.postMessage({ __mlSidebarApp: "ready" }, "*");
+    toHost({ __mlSidebarApp: "ready" });
 }
 
 mount();

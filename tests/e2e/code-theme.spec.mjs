@@ -25,7 +25,7 @@ async function openSidebar(fake, ext) {
         const host = root.getElementById("ml-sb-host");
         host.style.width = "600px";
         host.classList.add("open");
-        root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+        (root.getElementById("ml-sb-host").classList.remove("open"), root.getElementById("ml-sb-tab").click());
     });
     let frame = null;
     for (let i = 0; i < 80 && !frame; i++) {

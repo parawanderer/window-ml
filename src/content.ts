@@ -95,15 +95,10 @@ interface PageMessage { type?: string; requestId?: string; payload?: unknown; }
 // PAGE_TOOL_RESULT (correlated by a locally-minted callId), and hand the envelope back via
 // sendResponse. Returning true keeps the message channel open for that async reply.
 chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }, _sender, sendResponse) => {
-    // A debug event from a background-hosted run → re-post it on the page window as __mlDebug, so the
-    // overlay shell (which reads page window-messages) relays it into the sidebar app. Tagged
-    // `__mlFromBg` so the shell can tell background-origin events (this stream) apart from the page's
-    // OWN injected events (bus.ts ring + replay) — the off-mode card buffers only the former while its
-    // lazily-mounted iframe loads, so the two sources never double up. Fire-and-forget.
-    if (message && message.type === "ML_DEBUG_TO_PAGE") {
-        window.postMessage({ __mlDebug: message.event, __mlFromBg: true }, "*");
-        return undefined;
-    }
+    // A debug event from a background-hosted run is the SHELL's (sidebar/shell.ts receives ML_DEBUG_TO_PAGE itself). It
+    // is not re-posted on the page window: this used to, and the page read every step of every run that reached the
+    // tab, and posted its own as the worker's (docs/spec/SITE_ACCESS.md, attack 15).
+    if (message && message.type === "ML_DEBUG_TO_PAGE") return undefined;
     // A LIVE python_exec stdout chunk (opt-in streaming) → re-post on the page window so ml.pythonExec's
     // in-flight promise (keyed by requestId) resolves it as a progress event to the tool's ctx.stream.
     if (message && message.type === "SERVER_TOOL_STREAM") {

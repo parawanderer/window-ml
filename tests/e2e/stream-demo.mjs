@@ -105,7 +105,7 @@ const main = async () => {
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = `${Math.round(window.innerWidth / 2)}px`;
             panel.classList.add("open");
-            root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+            (root.getElementById("ml-sb-host").classList.remove("open"), root.getElementById("ml-sb-tab").click());
         });
         const frame = await (async () => {
             for (let i = 0; i < 60; i++) {

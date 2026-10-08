@@ -59,16 +59,14 @@ test("the card returns focus to the page element after an approval resolves", as
     await expect.poll(() => activeId(page), { timeout: 15000 }).not.toBe("field");
     expect(await activeId(page)).toBe("ml-sb-card");   // the corner card host now holds focus
 
-    // Resolve through the UI PATH (the card posts its decision to the shell) — NOT the SW channel, because the
-    // focus-restore lives in the shell's approval handler. Post it from INSIDE the card iframe so the shell's
-    // `e.source === frame.contentWindow` origin check passes (exactly what a human's Approve click does).
+    // Resolve through the UI PATH (the card sends its decision to the shell) — NOT the SW channel, because the
+    // focus-restore lives in the shell's approval handler. Click the card's own Approve, as a person does: the card
+    // reaches the shell only over its private port, so nothing posted from a test (or a page) stands in for it.
     const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
     expect(gate.tool).toBe("exec");
     const cardFrame = page.frames().find(f => f.url().includes("sidebar.html"));
     expect(cardFrame, "the card iframe is present").toBeTruthy();
-    await cardFrame.evaluate(({ hash, seq }) => {
-        window.parent.postMessage({ __mlSidebarApp: "approval", hash, seq, decision: true }, "*");
-    }, { hash: gate.runId, seq: gate.seq });
+    await cardFrame.locator(".appr-btn.yes:not(.remember)").click();
 
     // THE ASSERTION: focus is handed back to #field, so the run's next @focus/type would target the page.
     await expect.poll(() => activeId(page), { timeout: 15000 }).toBe("field");

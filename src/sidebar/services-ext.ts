@@ -9,8 +9,8 @@ import { bareHash, type SidebarServices, type SideCallRequest, type SideCallResu
 import { residentNow } from "./resource/panel-facts";
 import { downloadBlob } from "./export/download";
 import { printInFrame } from "./export/print-frame";
+import { toHost } from "./parent-channel";
 
-const toParent = (msg: unknown): void => window.parent.postMessage(msg, "*");
 
 /** A utility-model call through the background's `FETCH_LLM`, tagged as a side task about the session. */
 function sideCall(req: SideCallRequest): Promise<SideCallResult> {
@@ -44,19 +44,19 @@ export const extensionServices: SidebarServices = {
     sideCalls: () => !!config.value.utilityModel.trim(),
     bench: true,
     // The shell forwards it to the background as SET_APPROVAL, having checked it came from this iframe.
-    answerApproval: (hash, seq, decision, persist, feedback) => toParent({ __mlSidebarApp: "approval", hash, seq, decision, persist, feedback }),
+    answerApproval: (hash, seq, decision, persist, feedback) => toHost({ __mlSidebarApp: "approval", hash, seq, decision, persist, feedback }),
     // A post to the page, which answers nothing: what goes wrong from there shows in the run itself.
-    sendToSession: async (hash, text, images) => { toParent({ __mlSidebarApp: "sessionSend", hash, text, images }); return { ok: true }; },
-    cancelSession: (hash) => toParent({ __mlSidebarApp: "sessionCancel", hash }),
-    continueSession: (hash, maxSteps) => toParent({ __mlSidebarApp: "continueRun", hash, ...(maxSteps ? { maxSteps } : {}) }),
+    sendToSession: async (hash, text, images) => { toHost({ __mlSidebarApp: "sessionSend", hash, text, images }); return { ok: true }; },
+    cancelSession: (hash) => toHost({ __mlSidebarApp: "sessionCancel", hash }),
+    continueSession: (hash, maxSteps) => toHost({ __mlSidebarApp: "continueRun", hash, ...(maxSteps ? { maxSteps } : {}) }),
     // This frame is attached to the tab the run is in: if it were gone, so would this panel be.
     canContinue: () => true,
     stillLive: () => true,   // this panel is attached to the tab that holds the run; its reduction IS the runtime's
     // This panel polls the box itself, so it has the reading; `residentNow` answers `undefined` until the
     // first /api/ps lands, which is the right answer rather than "cold".
     modelResident: (_session, model) => residentNow(model),
-    highlight: (ref) => toParent({ __mlHighlight: ref }),
-    openLightbox: (src) => toParent({ __mlLightbox: src }),
+    highlight: (ref) => toHost({ __mlHighlight: ref }),
+    openLightbox: (src) => toHost({ __mlLightbox: src }),
     // `noopener` is not politeness here: without it the opened page gets a handle on this one, and this one is the
     // extension's own surface.
     openLink: (url) => { window.open(url, "_blank", "noopener,noreferrer"); },
