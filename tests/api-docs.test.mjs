@@ -200,3 +200,19 @@ test("parseDecls captures whole declarations, including multi-line type aliases"
     assert.equal(config.get("MlPublicConfig").kind, "type");
     assert.ok(config.get("MlPublicConfig").body.join("\n").includes("apiFormat"));
 });
+
+// --- the one-line signature of `ml.current` the system prompt carries ---
+
+test("ml.current's prompt signature names every top-level member and, after each type, that type's own fields", async () => {
+    const { currentSignature, makeResolver } = await import("../scripts/gen-api-docs.mjs");
+    const { join, dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const sig = currentSignature(makeResolver(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "contract.ts")));
+    for (const m of ["run:", "messages:", "meta:", "log:", "debug?:"]) assert.ok(sig.includes(m), m);
+    // The field lists come from the declarations: a field added to MessageMeta shows up here without anyone editing it.
+    const meta = /meta: MessageMeta\[\] \(([^)]*)\)/.exec(sig)?.[1].split(", ");
+    for (const f of ["id", "tokens", "tokensBasis", "tool", "truncated"]) assert.ok(meta?.includes(f), `meta lists ${f}`);
+    assert.match(sig, /log: CurrentLog \([^)]*\btext\b[^)]*\)/, "an alias's inline key (`text`) is listed with its records' fields");
+    assert.match(sig, /UserWatch\[\] \(expression, value, error\)/);
+    assert.doesNotMatch(sig, /\/\*|\*\/|import\(/, "no comment or module path leaks into the line");
+});

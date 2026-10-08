@@ -247,7 +247,10 @@ export function stripPrivateMembers(body, extraHidden = new Set()) {
 // Only touches `//` comments + leading indentation (JSDoc `*` lines' text is untouched); a `//` inside a
 // string never has a 2-space run before it, so string literals are safe. NOTE: (3) means the emitted MlApi
 // block is TAB-indented — api-docs-query.ts's `splitMembers` accepts a tab OR 4 spaces at the member level.
+// (4) An inline type import (`import("./agent/current-context").CurrentSnapshot`) is written as its NAME: the module
+// path is ours, not the model's, and the name is what it looks the type up by.
 const deAlign = line => line
+    .replace(/\bimport\((["'])[^"']+\1\)\./g, "")
     .replace(/(\S)[ \t]{2,}(\/\/)/, "$1 $2")
     .replace(/^ {5,}(\/\/)/, "    $1")
     .replace(/^ +/, sp => "\t".repeat(Math.floor(sp.length / 4)) + " ".repeat(sp.length % 4));
@@ -428,28 +431,50 @@ export function generateApiParts() {
     return { preamble: PREAMBLE, mlApi, types: Object.fromEntries(found) };
 }
 
-/**
- * `ml.current`'s top-level members as one line, lifted from `CurrentSnapshot` itself, so the system prompt's
- * self-introspection clause (CURRENT_CLAUSE, prompts.ts) can never describe a shape the code no longer has.
- * Member names and their types only; the types themselves are what `agent_api_docs` expands.
- * @param resolve from {@link makeResolver}
- * @returns {string} `{ run: CurrentRun; messages: NeutralMessage[]; … }`
- */
-export function currentSignature(resolve) {
-    const d = resolve.get("CurrentSnapshot");
-    if (!d) throw new Error("gen-api-docs: no `CurrentSnapshot` reachable from contract.ts");
+/** The member lines of an interface body at its own level, JSDoc and line comments skipped (a brace in prose must not
+ *  move the depth). Each as written, without its trailing `;`. */
+function memberLines(body) {
     const members = [];
     let depth = 0, inDoc = false;
-    for (const raw of d.body.slice(1, -1)) {
+    for (const raw of body.slice(1, -1)) {
         const l = raw.trim();
-        // JSDoc and line comments are skipped whole: a brace in prose must not move the depth.
         if (inDoc || l.startsWith("/*")) { inDoc = !l.includes("*/"); continue; }
         if (l.startsWith("//")) continue;
         const code = stripLineComment(raw).trim();
         if (depth === 0 && /^\w+\??:/.test(code)) members.push(code.replace(/;$/, ""));
         depth += depthDelta(code);
     }
-    return `{ ${members.join("; ")} }`;
+    return members;
+}
+
+/**
+ * `ml.current`'s top-level members as one line, lifted from `CurrentSnapshot` itself, so the system prompt's
+ * self-introspection clause (`currentClause`, prompts.ts) can never describe a shape the code no longer has. Each type it
+ * names is followed by its FIELD NAMES (`MessageMeta[] (id, ts, tokens, …)`), from that type's declaration: the real
+ * models this was tried on looked for `tokens` on the messages, because a bare type name says nothing about what is in
+ * it. The types themselves are what `agent_api_docs` expands.
+ * @param resolve from {@link makeResolver}
+ * @returns {string} `{ run: CurrentRun (id, model, …); messages: NeutralMessage[] (role, content, …); … }`
+ */
+export function currentSignature(resolve) {
+    const d = resolve.get("CurrentSnapshot");
+    if (!d) throw new Error("gen-api-docs: no `CurrentSnapshot` reachable from contract.ts");
+    // A type's field names: an interface's members; an alias's, through the interfaces it names plus its inline keys.
+    const fieldsOf = (name, seen = new Set()) => {
+        const t = resolve.get(name, d.file) ?? resolve.get(name);
+        if (!t || seen.has(name)) return [];
+        seen.add(name);
+        if (t.kind === "interface") return memberLines(t.body).map((m) => m.match(/^\w+/)[0]);
+        const text = t.body.join(" ");
+        const named = [...text.matchAll(/\b([A-Z]\w+)\b/g)].flatMap(([, n]) => n === name ? [] : fieldsOf(n, seen));
+        const inline = [...text.matchAll(/[{;,]\s*(\w+)\??:/g)].map(([, k]) => k);
+        return [...named, ...inline];
+    };
+    const annotate = (member) => member.replace(/\b([A-Z]\w+)(\[\])?/g, (all, n, arr) => {
+        const f = fieldsOf(n);
+        return f.length ? `${n}${arr ?? ""} (${f.join(", ")})` : all;
+    });
+    return `{ ${memberLines(d.body).map(annotate).join("; ")} }`;
 }
 
 /** Join the parts back into the single flat reference (the shape older callers/tests expect). */

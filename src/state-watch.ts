@@ -174,20 +174,19 @@ export function shareable(expr: string): boolean {
  * @param current the snapshot the model reads, without `debug`
  * @param exprs the shared expressions
  * @param js the JS evaluator, binding nothing but `ml.current`
- * @param now the time to stamp them with
  */
-export async function evalShared(current: unknown, exprs: readonly string[], js: WatchJs | undefined, now: number): Promise<UserWatch[]> {
+export async function evalShared(current: unknown, exprs: readonly string[], js: WatchJs | undefined): Promise<UserWatch[]> {
     const tree = JSON.parse(JSON.stringify({ ml: { current } })) as Record<string, unknown>;
     const out: UserWatch[] = [];
     for (const expression of exprs.slice(0, MAX_SHARED_WATCHES)) {
-        if (!shareable(expression)) { out.push({ expression, error: "reads inspector., which the model does not have", at: now }); continue; }
+        if (!shareable(expression)) { out.push({ expression, error: "reads inspector., which the model does not have" }); continue; }
         const r = await evalWatch(tree, expression, js);
-        if (r.error) { out.push({ expression, error: r.error, at: now }); continue; }
+        if (r.error) { out.push({ expression, error: r.error }); continue; }
         const value = r.nodes ? r.nodes.map((n) => n.value) : r.value;
         const chars = value === undefined ? 0 : JSON.stringify(value)?.length ?? 0;
         out.push(chars > SHARED_VALUE_CHARS
-            ? { expression, error: `its value is ${chars} characters, over the ${SHARED_VALUE_CHARS} a shared watch may carry`, at: now }
-            : { expression, ...(value === undefined ? {} : { value }), at: now });
+            ? { expression, error: `its value is ${chars} characters, over the ${SHARED_VALUE_CHARS} a shared watch may carry` }
+            : { expression, ...(value === undefined ? {} : { value }) });
     }
     return out;
 }

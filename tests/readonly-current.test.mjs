@@ -436,9 +436,9 @@ test("WORKER ML HALTING: a survey that re-reads a pointer forever is stopped by 
 // --- ml.current.debug: what the person shared (sw-shared-watches.ts), read-only ---------------------------------------
 
 const withShared = (snap = sampleSnapshot()) => ({ ...snap, debug: { userWatches: [
-    { expression: "ml.current.run.step", value: 2, at: 5 },
-    { expression: "$.ml.current.meta[*].tool", value: [null, null, null, "exec"], at: 5 },
-    { expression: "inspector.grants", error: "reads inspector., which the model does not have", at: 5 },
+    { expression: "ml.current.run.step", value: 2 },
+    { expression: "$.ml.current.meta[*].tool", value: [null, null, null, "exec"] },
+    { expression: "inspector.grants", error: "reads inspector., which the model does not have" },
 ] } });
 
 test("ml.current.debug reads as plain data where the host added it, and is absent where it did not", async () => {
@@ -539,7 +539,7 @@ test("WORKER FETCH HALTING: a survey re-reading the cache forever is stopped by 
 
 test("an approved exec's ml.current survives the JSON crossing whole, log.text included, and comes back as the snapshot", async () => {
     const { currentForExec, currentFromExec } = await import("../src/agent/current-context.ts");
-    const snap = { ...sampleSnapshot(), debug: { userWatches: [{ expression: "ml.current.run.step", value: 2, at: 5 }] } };
+    const snap = { ...sampleSnapshot(), debug: { userWatches: [{ expression: "ml.current.run.step", value: 2 }] } };
     const sent = currentForExec(snap, true);
     const crossed = JSON.parse(JSON.stringify(sent.value));   // what chrome.tabs.sendMessage does to it
     const back = currentFromExec(crossed);
@@ -585,7 +585,7 @@ function ensureWorker() {
                 ...(bound ? { globals: { inspector: { big, n: 1 } } } : {}),
                 current: Object.assign(cc.snapshotCurrent({ run: { id: "r", model: null, step: 1, maxSteps: 5, startedTs: 0 },
                     messages: Array.from({ length: n }, (_, i) => ({ role: "user", content: "m" + i })), recorded: [], now: 1 }),
-                    shared ? { debug: { userWatches: big.map((b) => ({ expression: "x", value: b, at: 1 })) } } : {}) }))
+                    shared ? { debug: { userWatches: big.map((b) => ({ expression: "x", value: b })) } } : {}) }))
             .then((r) => parentPort.postMessage({ id, value: r.value }),
                   (e) => parentPort.postMessage({ id, threw: e.constructor.name, message: e.message })));`,
         { eval: true, workerData: { ro: RO_URL, cc: CC_URL, tsx: TSX_API, tsxCjs: TSX_CJS_API } });

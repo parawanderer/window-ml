@@ -20,16 +20,16 @@ const snap = () => snapshotCurrent({ run: { id: "r", model: null, step: 3, maxSt
 
 // --- what the model is given ---
 
-test("each shared watch over ml.current, with its value and when it was read; JSONPath gives what it matched", async () => {
+test("each shared watch over ml.current, with its value now; JSONPath gives what it matched", async () => {
     store.ml_runstate_shared = ["ml.current.run.step", "ml.current.messages.map(m => m.role)", "$.ml.current.messages[*].content", "ml.current.nope"];
     const { debug } = await S.withUserWatches(snap());
-    assert.deepEqual(debug.userWatches.map(({ at, ...w }) => w), [
+    assert.deepEqual(debug.userWatches, [
         { expression: "ml.current.run.step", value: 3 },
         { expression: "ml.current.messages.map(m => m.role)", value: ["user", "assistant"] },
         { expression: "$.ml.current.messages[*].content", value: ["count the widgets", "on it"] },
         { expression: "ml.current.nope" },
     ]);
-    assert.ok(debug.userWatches.every((w) => typeof w.at === "number"));
+    assert.ok(debug.userWatches.every((w) => !("at" in w)), "no time: a watch is re-evaluated for every read, so it is always now");
 });
 
 test("nothing shared: `debug.userWatches` is there and empty, so a script never guards for it", async () => {
