@@ -37,11 +37,11 @@ function holeOpen(slice, what) {
 const backendHits = (fake) => fake.requests().map((r) => `${r.method} ${r.path}`);
 
 /** One browser, one fake backend and the hostile site, configured the way a user would have it. */
-async function setup({ debugMode = "off" } = {}) {
+async function setup({ debugMode = "off", ...config } = {}) {
     const fake = await startFakeLlm({ model: "fake-model" });
     const site = await startHostileSite();
     const ext = await launchExtension({ args: HOSTILE_RESOLVER_ARGS });
-    await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", modelFilter: "", debugMode });
+    await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", modelFilter: "", debugMode, ...config });
     const close = async () => { await ext.context.close(); await fake.stop(); await site.stop(); };
     return { fake, site, ext, close };
 }
@@ -367,6 +367,42 @@ test.describe("@security attack 15: the run's event stream and the page", () => 
             await expect.poll(cardText, { timeout: 15000 }).toContain("click the link");
             expect(await cardText(), "the page's rewritten step changed the card").not.toContain("#totally-harmless");
         } finally { await close(); }   // abandons the still-gated run (nothing is pending server-side)
+    });
+
+    // Twice: in off mode the card takes only the worker's events, so the window route is shut before any rule is asked;
+    // with the card beside the DevTools panel it takes the page's own events too, and the shell's `pageMayWrite` is
+    // all that keeps a guessed step of the worker's run out of it.
+    for (const [surface, config] of [["off", {}], ["the DevTools card", { debugMode: "devtools", agentHudInDevtools: true }]])
+    test(`15d (${surface}): a page cannot forge a step of a real run it never saw, guessing the id from the tool traffic`, async () => {
+        // 15c proves the page cannot rewrite a step it SEES, because it no longer sees one. That leaves the rewrite
+        // refused rather than merely unattempted: a run still hands this page ADOPT_RUN / PAGE_TOOL_RUN to host its
+        // tools, and those carry the run's real id, so the page can post a guessed step of that run — onto its own
+        // window (the route 15b/15c used) and straight into the card's iframe (the route 16b used) — while the real
+        // gate is open, with no knowledge beyond the id and the first step's seq. The secure outcome is 15c's: the
+        // card keeps describing the call the gate actually holds.
+        const { fake, site, ext, close } = await setup(config);
+        try {
+            const page = await open(ext, site.url("evil.test", "/?blind=1"));
+            const idx = await sessions(ext);
+            fake.setScript([{ tool: "click", args: { selector: "#next" } }, { content: "done" }]);
+            const hash = await userStartsRun(ext, idx, page, "click the Next link");
+            await expect.poll(() => page.evaluate(() => window.__blind.runId), { timeout: 15000 }).toBe(hash);   // the attack found the real id
+            await expect.poll(() => idx.status(hash), { timeout: 15000 }).toBe("waiting");                        // the run holds the real gate
+            await expect.poll(() => page.evaluate(() => window.__blind.posts.length), { timeout: 15000 }).toBeGreaterThan(0);   // and posted at least one round
+            const cardText = async () => {
+                const card = page.frames().find((f) => f.url().includes("sidebar.html"));
+                return card ? await card.locator("body").innerText().catch(() => "") : "";
+            };
+            // The card drawing the REAL call, after the forgeries started, is the control that it is mounted and
+            // drawing — had any guess landed, this same string check is where it would show.
+            await expect.poll(cardText, { timeout: 15000 }).toContain("click the link");
+            // Stop the attacker now, so a guess accepted late could not overwrite the card after its moment; then the
+            // settled card must carry no trace of either forgery — neither the rewritten call nor the guessed task.
+            await page.evaluate(() => { window.__blind = "stop"; });
+            const text = await cardText();
+            expect(text, text).not.toContain("#totally-harmless");
+            expect(text, text).not.toContain("BLIND");
+        } finally { await close(); }   // abandons the still-gated run
     });
 });
 
