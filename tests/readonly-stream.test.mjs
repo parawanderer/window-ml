@@ -12,6 +12,9 @@ import { snapshotCurrent, UNRECORDED } from "../src/agent/current-context.ts";
 import { evalReadonly, NotInDialect, Denied } from "../src/readonly-exec.ts";
 import { evalReadonlyInWorker } from "../src/sw/sw-readonly.ts";
 import { registerRun, runDelegatedTool, endRun } from "../src/agent/run-delegation.ts";
+import { formatReadonlyExec } from "../src/agent/approval.ts";
+import { OUTPUT_CAP } from "../src/contract/contract-pointers.ts";
+import { UI_OUT_CAP } from "../src/contract/contract-chat.ts";
 
 const outOfDialect = (e) => e instanceof NotInDialect || e instanceof Denied;
 const doc = () => new JSDOM("<!doctype html><body><p id='p'>hi</p></body>").window.document;
@@ -167,4 +170,56 @@ test("FAILURE (worker realm): a survey that streams and then needs the page, or 
     const refused = live();
     assert.equal((await evalReadonlyInWorker({ js: `console.log("w"); [].constructor` }, { live: refused })).kind, "refused");
     assert.equal(refused.discarded, 1);
+});
+
+// --- the character limit: the stream is the panel's, the cut is the model's -----------------------------------------
+
+test("a survey printing past the model's limit streams EVERY line; only the result is cut, at the same offset the stream marks", async () => {
+    const seen = [];
+    const ro = await evalReadonly(`for (const i of ml.range(30)) console.log("line " + i + " " + "x".repeat(40))`, null,
+        { range: (n) => Array.from({ length: n }, (_, i) => i) }, undefined, { onLog: (l) => seen.push(l) });
+    const streamed = seen.map((l) => l + "\n").join("");
+    const joined = ro.logs.join("\n");
+    assert.ok(streamed.length > OUTPUT_CAP.exec.default * 2, `the stream is not cut at the model's limit (${streamed.length})`);
+    const { result, render } = formatReadonlyExec(ro.value, ro.logs);
+    assert.equal(render.seen, OUTPUT_CAP.exec.default, "the settled view marks the model's cut at the default limit");
+    // The live view greys from the same offset (liveCutoff reads the same default), so the boundary must fall on the
+    // same character in the streamed text as in the settled one.
+    assert.equal(streamed.slice(0, render.seen), joined.slice(0, render.seen));
+    assert.ok(result.includes(joined.slice(0, OUTPUT_CAP.exec.default)), "the model got the head");
+    assert.ok(!result.includes("line 29"), "and not the tail");
+});
+
+test("a survey printing past the STREAM's cap keeps the head and counts what it dropped; the model's result is unaffected", async () => {
+    const lines = 400, width = 50;   // 400 x 51 chars, past UI_OUT_CAP
+    // Then a slow read, so the throttled emit lands before the step's DONE supersedes the live view.
+    const js = `for (const i of ml.range(${lines})) console.log("${"y".repeat(width - 4)}" + String(i).padStart(4, "0")); await ml.ps()`;
+    const ml = { range: (n) => Array.from({ length: n }, (_, i) => i), ps: () => tick(150) };
+    const { deps, emits } = loopDeps(async (_n, args, live) => {
+        const ro = await evalReadonly(args.js, null, ml, undefined, { onLog: (l) => live?.push(l + "\n") });
+        return { result: formatReadonlyExec(ro.value, ro.logs).result };
+    });
+    deps.callModel = (() => { let i = 0; const t = [{ content: "", tool_calls: [{ id: "c1", name: "exec", arguments: { js } }] }, { content: "done", tool_calls: [] }]; return async () => t[i++]; })();
+    const res = await runAgentLoop("x", { tools: [{ name: "exec", requiresApproval: true }], stream: true }, deps);
+    const last = deltas(emits).at(-1).streamOutput;
+    const total = lines * (width + 1);
+    assert.ok(total > UI_OUT_CAP);
+    assert.ok(last.startsWith("y".repeat(width - 4) + "0000\n"), "the HEAD is kept, as the settled clip keeps it");
+    assert.match(last, new RegExp(`… \\[\\+${total - UI_OUT_CAP} chars\\]$`), "and the note counts exactly what was dropped");
+    assert.ok(res.transcript[0].result.length < 1000, "the model's result is cut at its own limit, not the stream's");
+});
+
+test("a survey that RAISES its limit is not tried, so nothing streams from a try: the approved run streams it", async () => {
+    const d = new JSDOM("<p>x</p>");
+    const [prevDoc, prevEl] = [globalThis.document, globalThis.Element];
+    globalThis.document = d.window.document; globalThis.Element = d.window.Element;
+    try {
+        registerRun("roRaise", [{ name: "exec", description: "", parameters: { type: "object", properties: {} }, requiresApproval: true, capabilities: [], run: () => "never" }]);
+        const chunks = [];
+        const env = await runDelegatedTool("roRaise", "exec", { js: `console.log("z".repeat(900))`, maxChars: 2000, maxCharsReason: "need it whole" },
+            { readonlyTry: true, onStream: (c) => chunks.push(c) });
+        assert.equal(env.readonly, false, "a raised limit is the human's to grant");
+        assert.deepEqual(chunks, [], "and the try printed nothing");
+        endRun("roRaise");
+    } finally { globalThis.document = prevDoc; globalThis.Element = prevEl; }
 });

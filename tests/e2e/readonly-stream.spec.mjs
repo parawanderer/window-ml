@@ -23,14 +23,14 @@ const collect = (page) => page.evaluate(() => {
 });
 
 /** Run SURVEY with `ml.ps` held open, and return what streamed while it waited and how the step settled. */
-async function streamSurvey({ readonly }) {
+async function streamSurvey({ readonly, js = SURVEY, held = "before the wait\n" }) {
     const fake = await startFakeLlm({ model: "fake-model" });
     const site = await startPageServer({});
     const ext = await launchExtension();
     try {
         await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model",
             debugMode: "off", autoApproveReadonly: readonly });
-        fake.setScript([{ tool: "exec", args: { js: SURVEY } }, { content: "Done." }]);
+        fake.setScript([{ tool: "exec", args: { js } }, { content: "Done." }]);
         const page = await ext.context.newPage();
         await page.goto(site.url + "/");
         await waitForMl(page);
@@ -48,7 +48,7 @@ async function streamSurvey({ readonly }) {
 
         // WHILE `ml.ps` is held: the first line is out, the second is not, and the step has not finished.
         await expect.poll(() => page.evaluate(() => window.__deltas.at(-1) || ""), { timeout: 20000,
-            message: "the line printed before the await streams while the survey waits" }).toBe("before the wait\n");
+            message: "the line printed before the await streams while the survey waits" }).toBe(held);
         const whileHeld = await page.evaluate(() => ({ deltas: window.__deltas.slice(), done: window.__done.length }));
         fake.releasePs();
 
@@ -119,4 +119,26 @@ test("a survey that streams and THEN falls out of dialect leaves nothing behind:
         await site.stop();
         await fake.stop();
     }
+});
+
+// The model's limit cuts the RESULT, never the stream: past it, both paths stream every line, the panel greys the
+// tail (sidebar-output.test.js), and the model is sent the same clipped console either way.
+const LONG = `for (const i of ml.range(20)) console.log("line " + String(i).padStart(2, "0") + " " + "x".repeat(40)); const ps = await ml.ps(); console.log("after the wait"); return "done"`;
+const LONG_HELD = Array.from({ length: 20 }, (_, i) => `line ${String(i).padStart(2, "0")} ${"x".repeat(40)}\n`).join("");
+
+test("past the model's character limit, a read-only survey streams every line and is cut exactly as an approved exec is", async () => {
+    test.setTimeout(90_000);
+    const ro = await streamSurvey({ readonly: true, js: LONG, held: LONG_HELD });
+    const approved = await streamSurvey({ readonly: false, js: LONG, held: LONG_HELD });
+    for (const [name, r] of [["read-only", ro], ["approved", approved]]) {
+        expect(r.whileHeld.deltas.at(-1).length, `${name}: the stream is not cut at the model's 500`).toBeGreaterThan(900);
+        const consoleSent = r.after.done[0].result.split("\n\nvalue:")[0];
+        expect(consoleSent, `${name}: the model got the head`).toContain("line 00");
+        expect(consoleSent, `${name}: and not the tail`).not.toContain("line 19");
+        expect(consoleSent.length, `${name}: cut near the limit`).toBeLessThan(700);
+    }
+    expect(ro.after.done[0].approval).toBe("readonly");
+    expect(ro.whileHeld.deltas).toEqual(approved.whileHeld.deltas);
+    // The model is sent the same console both ways.
+    expect(ro.after.done[0].result.split("\n\nvalue:")[0]).toBe(approved.after.done[0].result.split("\n\nvalue:")[0]);
 });

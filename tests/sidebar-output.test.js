@@ -257,6 +257,21 @@ test("live output: the doomed tail is marked AS IT STREAMS, at the call's own ra
     assert.ok(tail && tail.textContent.trim().length >= 100, "exactly the text past the RAISED 600-char cap is marked");
 });
 
+// At the DEFAULT limit too: a read-only survey never raises it (a raise goes to the human), so this is the cut every
+// streamed survey is greyed at, and it is the same one an approved exec without `maxChars` gets.
+test("live output: with no raised limit, the doomed tail is marked at exec's default", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("livecut0", "survey"));
+    await w.dispatch(agentStep("livecut0", 1, { seq: 1, pending: true, tool: "exec", arguments: { js: "survey()" } }));
+    await w.dispatch(agentStep("livecut0", 1, { seq: 1, streamOutput: "S".repeat(500) + "U".repeat(200) }));
+    await openRun(w);
+    w.shadow.querySelector(".astep.tool .astep-head").click(); await w.tick();
+    assert.ok(w.shadow.querySelector(".r-unseen-lbl.live"), "the streaming view marks the model's cut");
+    const tail = w.shadow.querySelector(".r-unseen");
+    assert.match(tail.textContent, /^U+$/m, "exactly the text past 500 chars is marked");
+    assert.doesNotMatch(tail.textContent, /S/, "and none of the part the model will get");
+});
+
 // The executor's per-line timestamps must SURVIVE the step settling: the finished Out renders the same
 // captured text the stream produced, so the gutter shouldn't vanish the moment the tool returns.
 test("streamed timestamps survive the DONE and time the settled output", async () => {
