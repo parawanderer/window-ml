@@ -186,11 +186,12 @@ jobs:
       - run: npm test
 
   test:
+    name: test (node ${{ matrix.node }})
     # Its work is skipped only when `changes` PROVED nothing but prose changed: no test reads a markdown file from
     # the repo (checked when this gate was added), and `tools` still runs the format and index checks over it.
     #
-    # THE STEPS ARE GATED, NOT THE JOB. The required checks name each leg (`test (22)`, `test (24)`,
-    # `test (26)`), and a matrix job skipped by a job-level `if` reports once, as plain `test`, so the three
+    # THE STEPS ARE GATED, NOT THE JOB. The required checks name each leg (`test (node 22)`, `test (node 24)`,
+    # `test (node 26)`), and a matrix job skipped by a job-level `if` reports once, as plain `test`, so the three
     # required names never arrive and the PR stays blocked. Gating every step keeps the three legs: each starts,
     # does nothing for a prose-only change, and reports success under its own name.
     needs: changes
