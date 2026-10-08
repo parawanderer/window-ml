@@ -210,6 +210,34 @@ test("event lane: hovering a sub-call lights its lineage and dims the rest", asy
 
 // The lane's tooltip names a model, so it carries that model's own dot — the same colour its row and its
 // bands use, so the tip is identifiable at a glance from the list below it.
+// Off a bar, its tip goes. The bars had an enter and no leave, so moving onto empty lane left the last bar's tip
+// following the cursor (and its model lit) until the pointer left the whole lane.
+test("event lane: moving off a bar onto empty lane takes its tip down", async () => {
+    const w = await loadSidebarWorld({
+        local: { ml_lane_scope: false },
+        vram: [{ model: "gemma4:31b", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
+                 gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
+        info: INFO_2CARD,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    for (let i = 0; i < 25 && w.shadow.querySelectorAll(".rc-seg").length < 1; i++) {
+        await w.flush(); await new Promise((r) => setTimeout(r, 150));
+    }
+    await w.dispatch(agentStart("off", "go", "gemma4:31b"));
+    await w.dispatch({ ...agentStep("off", 1, { seq: 1, tool: "exec", toolMs: 80,
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, genMs: 60 } }), ts: Date.now() });
+    await w.flush();
+    await w.flush();
+    const bar = w.shadow.querySelector(".rc-ev-tool");
+    bar.dispatchEvent(new w.window.MouseEvent("pointerenter", { bubbles: true }));
+    await w.flush();
+    assert.ok(w.shadow.querySelector(".rc-tip-event"), "the bar's tip is up");
+    bar.dispatchEvent(new w.window.MouseEvent("pointerleave"));
+    await w.flush();
+    assert.equal(w.shadow.querySelector(".rc-tip-event"), null, "off the bar, still in the lane: gone");
+});
+
 test("event lane: the tooltip's model line carries the model's colour", async () => {
     const w = await loadSidebarWorld({
         // The lane scopes to the OPEN session by default, and these render it in the list view — so they ask

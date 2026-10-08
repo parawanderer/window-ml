@@ -167,3 +167,20 @@ never picks up the explanation of it.
   Not yet swept: `settings.tsx`, `hud-card.tsx`, `card-composer.tsx`, `resource-scrub.tsx` and
   `resource-device-view.tsx` still hold native `title`s. New code follows the rule; those are a follow-up, not a
   licence.
+
+  **A TIP MUST GO WHEN THE POINTER DOES, and three ways of going raise no leave** (`pointer-gone.ts`).
+  - **Off the overlay's iframe onto the page.** The frame is told NOTHING (measured: no trusted pointerout,
+    pointerleave, mouseout or blur, in one move or ten), so every tip that hides on a leave stayed up. The app says
+    when the pointer comes in (`__mlSidebarApp: "pointerIn"`, once per crossing), the shell answers
+    `__mlSidebarPointerOut` at the page's next pointer move, and `pointerGone` REPLAYS the missing `pointerout` and
+    `pointerleave`s on whatever the pointer was last over. Every tip's own hide path then runs, so a new tip needs
+    nothing for this case. The DevTools panel is not covered: the app fills it, and nothing of ours sees the pointer
+    arrive in DevTools' own chrome.
+  - **A scroll or a window blur** moves the content, or the focus, without moving the pointer. The anchored layer
+    always handled both; the cursor-following tips use `useGoneOnScrollOrBlur`.
+  - **A control that unmounts under the pointer** (the ✕ that evicts a model) never sends its leave. Whatever a
+    control's enter switched on must be re-derived from where the pointer is on the next move, as the model row does
+    for `rowTipSuppressed`, rather than trusted to be switched off by the matching leave.
+  `tests/pointer-gone.test.mjs` covers the replay and the scroll and blur cases; `tooltips.spec.mjs` covers the
+  real iframe ("moving straight off the panel…"), and asserts the browser sent nothing, so it cannot pass for the
+  wrong reason.

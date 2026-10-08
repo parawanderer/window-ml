@@ -206,6 +206,7 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
         root.removeEventListener("pointerdown", down, true);
         root.removeEventListener("scroll", onScroll, true);
         root.removeEventListener("keydown", onKey, true);
+        doc.defaultView?.removeEventListener("blur", hide);
         watcher?.disconnect();
         unwatch?.();
         layer.remove();

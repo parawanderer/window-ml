@@ -894,6 +894,9 @@ function fromApp(d: any): void {
     // to the background as SET_APPROVAL — but ONLY because it came over the app's private port, which the page
     // cannot reach (`openHostPort`). THIS is what makes the approval unforgeable: a page-set window.confirm or a
     // spoofed window-message can't reach here.
+    // The pointer came into the panel: the next move the page sees is the way out (relayPointerOut). Over the private
+    // port like every app message, so a page cannot fake one.
+    if (d.__mlSidebarApp === "pointerIn" && frame) { pointerInPanel = true; return; }
     if (d.__mlSidebarApp === "approval" && frame
         && typeof d.hash === "string" && typeof d.seq === "number") {
         try {
@@ -1166,16 +1169,16 @@ function relayChartKey(e: KeyboardEvent): void {
     toApp({ __mlSidebarChartKey: e.key });
 }
 
-/** The pointer is on the PAGE, so it is not on the panel: events over the panel's iframe go to the iframe. Relayed so a
- *  chart holding its axis still under the pointer lets go (`chartHeld`, resource-chart.tsx): the iframe itself is told
- *  nothing when the pointer leaves it, not a `pointerleave` and not even a change of `:hover` (measured). Throttled:
- *  one message a half second is plenty to release a hold, and a page's mouse traffic is not the panel's business. */
-let lastPointerRelay = 0;
+/** The pointer is on the PAGE, so it is not on the panel: events over the panel's iframe go to the iframe. Relayed so
+ *  the panel lets go of what it was hovering — a chart holding its axis (`chartHeld`, resource-chart.tsx) and every
+ *  tooltip (pointer-gone.ts): the iframe itself is told nothing when the pointer leaves it, not a `pointerleave` and
+ *  not even a change of `:hover` (measured). ONE message per crossing: the panel says when the pointer came in
+ *  (`pointerIn`, over the private port), and the first page move after that is the way out. A time throttle here lost the exit that came
+ *  within half a second of the previous one, and that tip then stayed up for good. */
+let pointerInPanel = false;
 function relayPointerOut(): void {
-    if (!frame) return;
-    const now = Date.now();
-    if (now - lastPointerRelay < 500) return;
-    lastPointerRelay = now;
+    if (!frame || !pointerInPanel) return;
+    pointerInPanel = false;
     toApp({ __mlSidebarPointerOut: true });
 }
 

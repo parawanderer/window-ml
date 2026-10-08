@@ -18,6 +18,7 @@ import {
     sessionMap, rev, view, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes, config,
     vramOpen, sidebarOpen, backendError, backendLoading, surface, atBottom, resWindowS, vramH } from "./store";
 import { installTooltipLayer } from "./tooltip-layer";
+import { trackPointer, pointerGone } from "./pointer-gone";
 import { ContextMenu, CursorTipLayer, Hash, highlightPos } from "./ui-kit";
 import { forgetSessionReduced, onDebug, maybeGenerateTitles, titleTried } from "./debug-reducer";
 import { installServices } from "./services";
@@ -473,7 +474,8 @@ function onMessage(d: any): void {
     // hovering does not move focus, so the page's document is the one receiving them.
     else if (typeof d.__mlSidebarChartKey === "string") chartKey(d.__mlSidebarChartKey);
     else if (d.__mlSidebarKeyRelay === true) keyRelay.value = true;
-    else if (d.__mlSidebarPointerOut === true) releaseAxisHold();   // the pointer is on the page (shell.ts relayPointerOut)
+    // The pointer is on the page (shell.ts relayPointerOut): let go of the axis, and replay the leaves it never sent.
+    else if (d.__mlSidebarPointerOut === true) { releaseAxisHold(); pointerGone(); }
     else if (typeof d.__mlSidebarSurface === "string") {
         // The shell tells us which surface we are. The off-mode card renders a transparent, curated
         // view — flag <html> so the CSS drops the opaque canvas and the acrylic shows through.
@@ -516,6 +518,11 @@ function mount(): void {
     // ONE floating tooltip layer for the whole surface (see tooltip-layer.ts): nothing clips it, it opens
     // whichever way there is room, and the source nodes stay display:none so their prose is never copied.
     try { installTooltipLayer(document); } catch { /* no DOM in a test harness */ }
+    // The pointer leaving this frame for the page raises NOTHING here, so the shell watches for it: told when the
+    // pointer comes in, it answers `__mlSidebarPointerOut` once the page sees it again (pointer-gone.ts).
+    // Over parent-channel.ts like every message to the host: on a web page a plain `window.parent.postMessage` would
+    // tell the PAGE where the pointer is.
+    if (window.parent !== window) trackPointer(document, () => toHost({ __mlSidebarApp: "pointerIn" }));
     chrome.storage.local.get({ [FONT_KEY]: 1, [WRAP_KEY]: true, [LINES_KEY]: false, [STATS_TOKENS_KEY]: true, [STATS_TPS_KEY]: false, [OUTMAX_KEY]: OUTMAX_DEFAULT, [OUTTS_KEY]: true, [RESWIN_KEY]: 0, [RESWIN_PREF_KEY]: RESWIN_DEFAULT, [VRAMH_KEY]: 0, [LANE_HIDDEN_KEY]: [], [LANE_SCOPE_KEY]: true, [SECTIONS_KEY]: null, [LANEH_KEY]: LANE_H_DEFAULT, [SNAPDOT_KEY]: false, [PREDICT_KEY]: false, [TIMEGRID_KEY]: false, [VRAM_PALETTE_KEY]: "", [FOCUS_KEY]: false, [BENCH_OPEN_KEY]: false, [BENCH_DOCK_KEY]: "drawer", [BENCH_H_KEY]: 280, [BENCH_SPLIT_KEY]: 0, [CODE_THEME_KEY]: DEFAULT_CODE_THEME, [CODE_THEME_VSCODE_KEY]: null, [CODE_THEME_UI_KEY]: true }, (d: any) => {
         if (d[FONT_KEY]) fontScale.value = d[FONT_KEY]; applyFont();
         codeWrap.value = d[WRAP_KEY] !== false; codeLineNumbers.value = !!d[LINES_KEY]; applyCodePrefs();

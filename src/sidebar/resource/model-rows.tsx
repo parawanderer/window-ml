@@ -12,6 +12,7 @@ import { hiddenModels, toggleHidden, poolFacts } from "./panel-state";
 import { colorFor } from "../palette";
 import { hhmmss } from "../timestamps";
 import { useTipPlacement } from "../use-tip";
+import { useGoneOnScrollOrBlur } from "../pointer-gone";
 import { hoverModel } from "./vram-focus";
 
 /** A model NAMED BUT NOT LOADED — evicted inside the window the chart still covers, or one that only ever
@@ -64,7 +65,13 @@ export function ModelRow({ m, hidden, latestSample, evict }: { m: LoadedModel; h
     return (
         <div class={`vram-row${off ? " off" : ""}${hoverModel.value === m.model ? " hot" : ""}${poolHover.value && latestSample && !poolFacts(poolHover.value.bandsOf(latestSample)).consumers.some((c) => c.label === m.model) ? " away" : ""}`}
             onPointerEnter={() => (hoverModel.value = m.model)}
-            onPointerMove={(e: PointerEvent) => (rowTipAt.value = { x: e.clientX, y: e.clientY })}
+            onPointerMove={(e: PointerEvent) => {
+                rowTipAt.value = { x: e.clientX, y: e.clientY };
+                // Whether the row's tip stands aside is read from WHERE THE POINTER IS on every move, not only from
+                // the controls' own enter and leave: the ✕ that evicts a model takes its row away under the pointer,
+                // its leave never comes, and every row's tip then stayed suppressed until some other leave.
+                rowTipSuppressed.value = !!(e.target as Element | null)?.closest?.(ROW_TIP_YIELDS);
+            }}
             onPointerLeave={() => { hoverModel.value = null; rowTipAt.value = null; rowTipSuppressed.value = false; }}>
             {/* THE ROW'S CURSOR TIP STANDS DOWN under anything with a tooltip of its OWN — the same rule
                 `ModelFacts` follows for its badges (`yieldTip`), applied to the two controls that were
@@ -87,6 +94,10 @@ export function ModelRow({ m, hidden, latestSample, evict }: { m: LoadedModel; h
     );
 }
 
+/** What the row's tip stands aside for: anything in the row with a tooltip or a name of its own — a badge, the
+ *  dot, the ✕, the "+N" chip and its popover. */
+const ROW_TIP_YIELDS = ".tt, .vram-dot, .fold-chip, .fold-pop";
+
 /** Pointer position for the model-row tip, in viewport coords (the row is not inside the plot). */
 export const rowTipAt = signal<{ x: number; y: number } | null>(null);
 
@@ -98,6 +109,7 @@ export const sparkAt = signal<{ i: number; x: number; y: number } | null>(null);
  *  refuse. The absolute figure and the instant are what this view genuinely knows. */
 export function SparkTip({ series, history }: { series: number[]; history: { t: number; models: Record<string, number> }[] }) {
     const at = sparkAt.value;
+    useGoneOnScrollOrBlur(!!at, () => { sparkAt.value = null; });
     if (!at || !series.length) return null;
     const i = Math.min(series.length - 1, Math.max(0, at.i));
     const t = history[i]?.t;
@@ -118,6 +130,7 @@ export function SparkTip({ series, history }: { series: number[]; history: { t: 
  *  system RAM, and that last one is why a "GPU" model can still be slow. */
 export function RowTip({ sample }: { sample: ResourceSample | null }) {
     const name = hoverModel.value, at = rowTipAt.value;
+    useGoneOnScrollOrBlur(!!(name && at), () => { rowTipAt.value = null; });
     if (!name || !at || !sample || rowTipSuppressed.value) return null;
     const m = sample.models.find((x) => x.model === name);
     if (!m) return null;

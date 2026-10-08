@@ -3,6 +3,7 @@
 // These carry no run/session logic: syntax-highlighted code, copy-to-clipboard,
 // the custom context menu, the page-highlight bridge, approval posting, and the
 // small click-to-copy chips (Hash / CopyBtn / Stamp / TagBadge / SheetChip / …).
+import { useGoneOnScrollOrBlur } from "./pointer-gone";
 import type { ComponentChildren } from "preact";
 import { useState, useEffect, useMemo } from "preact/hooks";
 import { signal } from "@preact/signals";
@@ -508,6 +509,7 @@ export function CursorTipLayer() {
     const { ref, style } = useTipPlacement(t ? { x: t.x, y: t.y, w: typeof window !== "undefined" ? window.innerWidth : 1e4 } : null);
     // Esc dismisses it without moving the pointer, as it does the anchored layer's.
     const up = !!t;
+    useGoneOnScrollOrBlur(up, clearCursorTip);
     useEffect(() => {
         if (!up) return;
         const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") clearCursorTip(); };
