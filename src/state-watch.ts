@@ -77,6 +77,42 @@ export function stateTree(members: readonly StateMember[], entries: readonly Sta
     return JSON.parse(JSON.stringify(tree)) as Record<string, unknown>;
 }
 
+/** The SHAPE of a watch tree: its keys and kinds without its values, which is what completing a watch needs and all a
+ *  panel is sent of the live `ml.current`. An array is described by its first element. */
+export type WatchShape =
+    | { t: "object"; keys: Record<string, WatchShape>; more?: number }
+    | { t: "array"; n: number; item?: WatchShape }
+    | { t: "string" | "number" | "boolean" | "null" };
+
+/** Keys described per object; the rest are counted in `more`. */
+const SHAPE_KEYS = 100;
+/** Nodes described in all: past it an object or array is cut to its kind. A context of hundreds of messages is
+ *  described by its first one, so this is a guard, not a number a real tree reaches. */
+const SHAPE_NODES = 4000;
+/** How deep a shape goes. */
+const SHAPE_DEPTH = 10;
+
+/**
+ * The shape of a tree from {@link stateTree}, bounded in keys, nodes and depth.
+ * @param v the tree, or any JSON value in it
+ */
+export function treeShape(v: unknown): WatchShape {
+    let budget = SHAPE_NODES;
+    const walk = (x: unknown, depth: number): WatchShape => {
+        budget--;
+        if (x === null || x === undefined) return { t: "null" };
+        if (typeof x === "string" || typeof x === "number" || typeof x === "boolean") return { t: typeof x as "string" | "number" | "boolean" };
+        const deeper = depth < SHAPE_DEPTH && budget > 0;
+        if (Array.isArray(x)) return { t: "array", n: x.length, ...(deeper && x.length ? { item: walk(x[0], depth + 1) } : {}) };
+        const keys: Record<string, WatchShape> = {};
+        const all = Object.keys(x as object);
+        if (deeper) for (const k of all.slice(0, SHAPE_KEYS)) { if (budget <= 0) break; keys[k] = walk((x as Record<string, unknown>)[k], depth + 1); }
+        const more = all.length - Object.keys(keys).length;
+        return { t: "object", keys, ...(more ? { more } : {}) };
+    };
+    return walk(v, 0);
+}
+
 /**
  * Evaluate one watch. `$…` is JSONPath over the tree, bounded as the dialect bounds a model's `ml.jsonPath`; anything
  * else is a JS expression through `js` (the read-only dialect). With no `js`, a panel path is read as JSONPath, which

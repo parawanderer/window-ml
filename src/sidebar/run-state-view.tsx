@@ -9,7 +9,8 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { JsonNode, copyableValue } from "./transcript/json-tree";
 import { PanelHead } from "./panel-head";
 import { TipText, cursorTipOn, useCopy, type CtxItem } from "./ui-kit";
-import { MAX_WATCHES, panelPath, type WatchResult } from "../state-watch";
+import { MAX_WATCHES, panelPath, type WatchResult, type WatchShape } from "../state-watch";
+import { completeWatch, type WatchCompletion } from "../watch-complete";
 import { IconCheck, IconChevron, IconCopy, IconEye, IconClose } from "./icons";
 import type { RunStateDump, RunStateMember } from "../sw/sw-run-state";
 import type { StateEntry, StateLoss } from "../state-registry";
@@ -192,11 +193,40 @@ function WatchRow({ expr, r }: { expr: string; r: WatchResult | undefined }) {
 
 /** The watch group: every watch over this run's snapshot, then a line to add one. Shown first, since a watch is what
  *  you pinned because you came back for it. */
-function WatchGroup({ results }: { results: WatchResult[] | undefined }) {
+function WatchGroup({ results, shape }: { results: WatchResult[] | undefined; shape: WatchShape | undefined }) {
     const [draft, setDraft] = useState("");
+    const [caret, setCaret] = useState(0);
+    // The list is open while typing, shut by Escape, a blur or a pick; `hot` is the highlighted row and `chosen` says the
+    // arrows were used, which is what lets Enter take a row rather than add the watch as typed.
+    const [listing, setListing] = useState(false);
+    const [hot, setHot] = useState(0);
+    const [chosen, setChosen] = useState(false);
+    const input = useRef<HTMLInputElement>(null);
     const shut = folded.value.has("watch");
     const byExpr = new Map((results ?? []).map((r) => [r.expr, r]));
-    const add = () => { addWatch(draft); setDraft(""); };
+    const items = listing ? completeWatch(draft, caret, shape) : [];
+    const edit = (v: string, at: number) => { setDraft(v); setCaret(at); setHot(0); setChosen(false); };
+    const add = () => { addWatch(draft); edit("", 0); setListing(false); };
+    const take = (c: WatchCompletion) => {
+        // A method is taken with its parenthesis open: what comes next is its arguments.
+        const ins = c.insert + (c.kind === "method" ? "(" : "");
+        const v = draft.slice(0, c.from) + ins + draft.slice(caret), at = c.from + ins.length;
+        edit(v, at);
+        setListing(c.kind !== "method");
+        requestAnimationFrame(() => input.current?.setSelectionRange(at, at));
+    };
+    const onKey = (e: KeyboardEvent) => {
+        const el = e.target as HTMLInputElement;
+        if (items.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+            e.preventDefault();
+            setHot((hot + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length);
+            setChosen(true);
+        } else if (items.length && (e.key === "Tab" || (e.key === "Enter" && chosen))) { e.preventDefault(); take(items[Math.min(hot, items.length - 1)]); }
+        else if (e.key === "Enter") add();
+        else if (e.key === "Escape") { if (items.length) setListing(false); else edit("", 0); }
+        else if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Home" || e.key === "End")
+            requestAnimationFrame(() => setCaret(el.selectionStart ?? el.value.length));
+    };
     return (
         <section class={`rstate-group rstate-watches${shut ? " shut" : ""}`} data-group="watch">
             <button class="rstate-group-head" aria-expanded={!shut} onClick={() => toggleGroup("watch")}>
@@ -210,10 +240,25 @@ function WatchGroup({ results }: { results: WatchResult[] | undefined }) {
                 {watches.value.map((w) => <WatchRow key={w} expr={w} r={byExpr.get(w)} />)}
                 <div class="jt-row rstate-watch-add">
                     <span class="tri jt-tri-space" aria-hidden="true"><IconChevron /></span>
-                    <input class="rstate-watch-input" type="text" spellcheck={false} aria-label="Add a watch" value={draft}
+                    <input ref={input} class="rstate-watch-input" type="text" spellcheck={false} aria-label="Add a watch" value={draft}
+                        role="combobox" aria-autocomplete="list" aria-expanded={items.length > 0} aria-controls="rstate-complete"
+                        aria-activedescendant={items.length ? `rstate-complete-${Math.min(hot, items.length - 1)}` : undefined}
                         placeholder={watches.value.length ? "add a watch" : "add a watch: a JS expression (inspector.…, ml.current.…) or JSONPath ($..)"}
-                        onInput={(e) => setDraft((e.target as HTMLInputElement).value)}
-                        onKeyDown={(e) => { if (e.key === "Enter") add(); if (e.key === "Escape") setDraft(""); }} />
+                        onInput={(e) => { const el = e.target as HTMLInputElement; edit(el.value, el.selectionStart ?? el.value.length); setListing(true); }}
+                        onClick={(e) => setCaret((e.target as HTMLInputElement).selectionStart ?? 0)}
+                        onBlur={() => setListing(false)}
+                        onKeyDown={onKey} />
+                    {items.length ? (
+                        <ul class="rstate-complete" id="rstate-complete" role="listbox" aria-label="Completions">
+                            {items.map((c, i) => (
+                                <li key={c.label} id={`rstate-complete-${i}`} role="option" aria-selected={i === Math.min(hot, items.length - 1)}
+                                    class={`rstate-complete-row ${c.kind}`}
+                                    // pointerdown, not click: a click lands after the input's blur has closed the list.
+                                    onPointerDown={(e) => { e.preventDefault(); take(c); }}>
+                                    <span class="rstate-complete-label">{c.label}</span>
+                                    {c.detail ? <span class="rstate-complete-detail">{c.detail}</span> : null}
+                                </li>))}
+                        </ul>) : null}
                 </div>
             </>}
         </section>
@@ -295,7 +340,7 @@ export function RunStateView({ run }: { run: string | null }) {
                             ...(nothingLive ? [<div class="hint rstate-idle" key="idle">This browser holds nothing live for this session. Its run has
                                 ended and the service worker has restarted since, or it was a chat rather than an agent run. What the session kept is
                                 its transcript and its execution log.</div>] : []),
-                            <WatchGroup key="watch" results={dump.watches} />,
+                            <WatchGroup key="watch" results={dump.watches} shape={dump.shape} />,
                             ...[...groups].map(([g, ms]) => <Group key={g} g={g} ms={ms} byId={byId} />)]}
         </div>
     );

@@ -114,6 +114,14 @@ const KIND_SETS = new Map<string, Set<string>>(Object.entries(BY_KIND).map(([k, 
 
 const ANY_KIND = KIND_SETS.get("*")!;
 
+/** The methods a completion may OFFER on a receiver of `kind` (a watch's input, the read-only console): the kind's own
+ *  allowlist, without the mutators, since what a completion is offered is state the script did not build and may only
+ *  read. Empty for a kind with none, and for a name that is no kind. */
+export function offeredMethods(kind: string): readonly string[] {
+    // OWN keys only: `BY_KIND.constructor` is Object's, and a typed name is not to reach it.
+    return Object.hasOwn(BY_KIND, kind) ? BY_KIND[kind as MethodKind].filter((m) => !MUTATING_METHODS.has(m)) : [];
+}
+
 /** What KIND of receiver is this, for the purpose of deciding which method names are callable on it?
  *
  *  Structural throughout, because `instanceof` is realm-bound and the dialect can hold a value from an
