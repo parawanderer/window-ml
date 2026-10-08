@@ -513,6 +513,36 @@ test("many GPUs: a lab node draws a track per card, and a split model is attribu
     assert.match(tip, /RAM/, "…and the part that didn't fit on any card");
 });
 
+// A control in the row (the ✕, the dot, a badge) stands the row's tip down while the pointer is on it. The ✕ EVICTS:
+// its row goes away under the pointer, its leave never comes, and every row's tip stayed suppressed afterwards. Here
+// the leave is withheld the same way, and the next row still has its tip.
+test("resource rows: a control whose leave never comes does not keep the rows' tips down", async () => {
+    const GB = 1024 ** 3;
+    const w = await loadSidebarWorld({
+        vram: [
+            { model: "gemma4:31b", vramGB: 19, vramBytes: 19 * GB, sizeBytes: 19 * GB, gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * GB }], expiresAt: null },
+            { model: "qwen3.5:35b", vramGB: 22, vramBytes: 22 * GB, sizeBytes: 22 * GB, gpus: [{ id: "1", runner: "CUDA", vramBytes: 22 * GB }], expiresAt: null },
+        ],
+        info: INFO_2CARD,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    for (let i = 0; i < 20 && w.shadow.querySelectorAll(".vram-row").length < 2; i++) { await w.flush(); await new Promise((r) => setTimeout(r, 120)); }
+    const [a, b] = [...w.shadow.querySelectorAll(".vram-row")];
+    // Onto A's ✕: the row tip stands aside…
+    a.dispatchEvent(new w.window.MouseEvent("pointerenter", {}));
+    const x = a.querySelector(".vram-x");
+    x.dispatchEvent(new w.window.MouseEvent("pointerenter", {}));
+    x.dispatchEvent(new w.window.MouseEvent("pointermove", { bubbles: true, clientX: 300, clientY: 40 }));
+    await w.flush();
+    assert.equal(w.shadow.querySelector(".vram-rowtip"), null, "over the ✕, the row's tip stands aside");
+    // …and the ✕ and its row are gone without a leave (what an evict does). The pointer is now on B.
+    b.dispatchEvent(new w.window.MouseEvent("pointerenter", {}));
+    b.querySelector(".vram-name").dispatchEvent(new w.window.MouseEvent("pointermove", { bubbles: true, clientX: 40, clientY: 60 }));
+    await w.flush();
+    assert.match(w.shadow.querySelector(".vram-rowtip")?.textContent ?? "", /qwen3\.5:35b/, "B's tip shows");
+});
+
 // --- the overview track: pools of different sizes compared as a share of each ----------------------------
 
 test("overview: pools of DIFFERENT sizes are compared as a share of each, not on one denominator", async () => {

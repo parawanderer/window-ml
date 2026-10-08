@@ -37,7 +37,7 @@ const GENRES = {
             "sidebar-approval.test.js", "sidebar-card.test.js", "sidebar-event-lane.test.js",
             "sidebar-export.test.js", "sidebar-output.test.js", "sidebar-resource.test.js",
             "sidebar-session.test.js", "sidebar-settings.test.js", "sidebar-vram.test.js",
-            "output-cell.test.mjs", "code-tools.test.mjs", "legend.test.mjs",
+            "output-cell.test.mjs", "pointer-gone.test.mjs", "code-tools.test.mjs", "legend.test.mjs",
             "context-container.test.mjs", "fold-badges.test.mjs", "tooltip-layer.test.mjs", "tip.test.mjs", "views.test.mjs"],
     },
     // The session archive: the SQL both surfaces run (src/archive/db.ts), the same statements proven under a second

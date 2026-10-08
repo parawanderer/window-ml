@@ -831,6 +831,11 @@ export function EventLane({ samples, events: all, session }: { samples: Resource
                                         // title and a code annotation) are otherwise told apart only by hovering.
                                         data-label={e.label}
                                         onPointerEnter={(ev: PointerEvent) => { eventHover.value = { p, scope: "lane" }; hoverModel.value = e.model ?? null; trackCursor("lane")(ev); }}
+                                        // Off the bar, its tip goes: moving onto empty lane left the tip of the
+                                        // last bar following the cursor until the pointer left the whole lane. Only
+                                        // if it is still this bar's (by `barKey`: the event is re-derived each render),
+                                        // so entering the next bar first is not undone.
+                                        onPointerLeave={() => { if (eventHover.value && barKey(eventHover.value.p.event) === barKey(e)) { eventHover.value = null; if (hoverModel.value === (e.model ?? null)) hoverModel.value = null; } }}
                                         onClick={() => open(e)}
                                         onDblClick={() => scope(e)}>
                                         {/* A person at the approval gate is the step's wall time but none of

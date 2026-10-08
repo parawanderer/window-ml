@@ -98,6 +98,8 @@ window.addEventListener("message", (e: MessageEvent) => {
     // DevTools pane has focus never reach an extension panel at all. Deliberately not announcing a relay, so the
     // chart's hints say "click the chart" in DevTools rather than promising keys that go elsewhere.
     if (d.__mlSidebarApp === "chartKeys") return;
+    // The app filling this panel has nowhere of ours around it to see the pointer leave to (pointer-gone.ts).
+    if (d.__mlSidebarApp === "pointerIn") return;
     if (d.__mlSidebarApp === "ready") {
         ready = true;
         frame.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");   // the panel is always "open"

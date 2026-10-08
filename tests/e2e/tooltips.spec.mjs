@@ -237,13 +237,8 @@ test("cursor tooltips: one at a time, never under the pointer, never clipped", a
             expect(tip.y + tip.h, `${sel}: clipped at the bottom`).toBeLessThanOrEqual(view.height + 1);
         }
 
-        // Moving away clears them: a stuck tooltip is worse than none. AWAY INSIDE THE PANEL first: a move that
-        // leaves the sidebar's frame in one step reaches the frame as no pointer event at all here (measured: the row
-        // that was hovered saw its enter and never a leave), so nothing in the panel could clear a tip on it. That
-        // only showed once the hover landed on the model's name rather than on a badge whose own tip stands the row's
-        // down.
-        const panelBox = await frame.locator("body").boundingBox();
-        await page.mouse.move(panelBox.x + 4, panelBox.y + panelBox.height - 4, { steps: 4 });
+        // Moving away clears them: a stuck tooltip is worse than none. Straight off the panel onto the page, which the
+        // frame is never told about (pointer-gone.ts does it).
         await page.mouse.move(20, 400);
         await sleep(300);
         expect(await frame.locator(".rc-tip, .vram-rowtip").count()).toBe(0);
@@ -676,6 +671,72 @@ test("tooltips: a tip whose trigger disappears under a still pointer disappears 
         await expect(frame.locator(".cursor-tip"), "…and its tooltip went with it").toHaveCount(0);
     } finally {
         await ext.context.close();
+        await fake.stop();
+    }
+});
+
+// LEAVING THE PANEL FOR THE PAGE, in one move, takes every tip down. The sidebar's iframe is told NOTHING when the
+// pointer leaves it (asserted here, so this test cannot pass for the wrong reason): no trusted pointerout, pointerleave,
+// mouseout or blur. Every tip that hides on a leave stayed up until the pointer came back. The shell sees the pointer
+// arrive on the page and says so, and the panel replays the leaves (pointer-gone.ts). One target per kind of tip: the
+// model row's cursor tip, the anchored layer's (a badge), and the chart's.
+test("tooltips: moving straight off the panel onto the page takes every kind of tip down", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(BOX);
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        // The model list and the lane are sections that can be folded; this test needs the rows, so it says so rather
+        // than leaning on a default (the resource-panel specs do the same).
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_sections: { lane: true, models: true } }));
+        const page = await ext.context.newPage();
+        await page.setViewportSize({ width: 1100, height: 800 });
+        await page.goto(`${fake.url}/api/version`);
+        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
+        await page.evaluate(() => {
+            const root = document.getElementById("ml-sb-root").shadowRoot;
+            const panel = root.getElementById("ml-sb-host");
+            panel.style.width = "420px";
+            // Opened through its own tab, as a person does: a message posted into the frame from the page no longer
+            // reaches the app (parent-channel.ts), so the old `__mlSidebarOpen` post left it believing it was closed.
+            root.getElementById("ml-sb-tab").click();
+        });
+        let frame;
+        for (let i = 0; i < 80 && !frame; i++) { frame = page.frames().find((f) => /sidebar\.html/.test(f.url())); if (!frame) await sleep(100); }
+        for (let i = 0; i < 5; i++) {
+            if (await frame.locator(".vram").count()) break;
+            await frame.locator('[aria-label="VRAM monitor"]').click().catch(() => {});
+            await sleep(400);
+        }
+        await expect.poll(() => frame.locator(".vram-row").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await expect.poll(() => frame.locator(".rc-plot").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await frame.evaluate(() => {
+            window.__trusted = [];
+            for (const t of ["pointerout", "pointerleave", "mouseout", "mouseleave", "blur"]) {
+                window.addEventListener(t, (e) => { if (e.isTrusted) window.__trusted.push(t); }, true);
+            }
+        });
+        const shown = {
+            "the model row's cursor tip": [".vram-name", ".vram-rowtip"],
+            "the anchored layer (a badge)": [".vram-ctx", ".tt-layer:not([hidden])"],
+            "the chart's tip": [".rc-plot", ".rc-tip"],
+        };
+        for (const [what, [target, tip]] of Object.entries(shown)) {
+            const b = await frame.locator(target).first().boundingBox();
+            await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 3 });
+            await expect(frame.locator(tip).first(), `${what} shows`).toBeVisible({ timeout: 5000 });
+            await frame.evaluate(() => (window.__trusted = []));
+            // ONE move, from over the tip's target straight onto the page.
+            await page.mouse.move(20, 400);
+            await expect(frame.locator(tip), `${what} goes when the pointer is on the page`).toHaveCount(0, { timeout: 3000 });
+            expect(await frame.evaluate(() => window.__trusted), "and the browser told the frame nothing: the shell did").toEqual([]);
+        }
+    } finally {
+        await ext.close();
         await fake.stop();
     }
 });
