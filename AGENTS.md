@@ -316,6 +316,7 @@ every demo: `docs/dev/e2e-harness.md`.
 - **RULE — a demo about what happens INSIDE a run calls `openRunInSidebar(page)`**: the panel opens on the
   sessions list, not the run.
 - **The self-tools**, each with a skill in `.claude/skills/`: `observe.mjs` (one agent run → `run.md`/`run.json`),
+  `converse.mjs` (a run you talk to turn by turn through files: answer, steer, rule on gates),
   `run-once.mjs`, `bench/`, the live probes (`server-tool-live`, `md-ladder-live`, `proto-stream-live`,
   `capture-frames`), `chat-shots.mjs` + `window.__chatFake` (chat-web), `scripts/probe.mjs` (one look at a page),
   `scripts/android.mjs`/`scripts/ios.mjs` (phone), `scripts/hub-root.mjs` + `dev-hub-pair.html` (hub-pairing),
