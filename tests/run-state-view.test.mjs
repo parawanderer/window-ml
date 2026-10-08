@@ -136,7 +136,7 @@ test("with nothing open the panel says so, and asks the worker for no run", asyn
         const host = doc.getElementById("root");
         await act(async () => { render(h(V.RunStateView, { run: null }), host); });
         assert.match(host.textContent, /Open a session to see what its run holds/);
-        assert.deepEqual(sent, [{}]);
+        assert.deepEqual(sent, [{ watches: [] }], "ONE read on mount, naming no run");
     } finally { chrome.runtime.sendMessage = was; }
 });
 
@@ -167,4 +167,68 @@ test("every member's name starts in the same column: an empty one keeps the chev
     assert.ok(row(host, "run.model").querySelector(".jt-tri-space"), "empty: blank");
     assert.ok(row(host, "run.sub").querySelector(".jt-tri-space"), "a single value: blank");
     assert.equal(row(host, "run.init").querySelector(".jt-tri-space"), null, "a branch: its real chevron");
+});
+
+// --- watches: pinned expressions, evaluated by the worker with each read ---
+
+/** Answer each read as the worker would: the dump, plus a result for every watch the panel sent. */
+function withWatches(dump, results) {
+    const sent = [];
+    chrome.runtime.sendMessage = (msg, cb) => {
+        sent.push(msg.payload);
+        cb({ data: { ts: 0, ...dump, watches: (msg.payload.watches ?? []).map((w) => results[w] ?? { expr: w, nodes: [] }) } });
+    };
+    return sent;
+}
+const watchRow = (host, expr) => host.querySelector(`[data-watch="${CSS.escape(expr)}"]`);
+globalThis.CSS ??= { escape: (s) => s.replace(/["\\]/g, "\\$&") };
+
+test("a watch typed in is sent with the next read at once, and drawn by what it matched: one value, nothing, or a refusal", async () => {
+    V.watches.value = [];
+    const init = member("run.init");
+    const sent = withWatches({ members: [init], entries: [entry(init, { task: "count" })] }, {
+        "inspector.run.init.task": { expr: "inspector.run.init.task", nodes: [{ path: "$['inspector']['run']['init']['task']", value: "count" }] },
+        "inspector.run.nope": { expr: "inspector.run.nope", nodes: [] },
+        "run.init": { expr: "run.init", error: "a watch starts at inspector. or ml.current." },
+    });
+    const host = await show({ members: [init], entries: [] });
+    const input = host.querySelector(".rstate-watch-input");
+    for (const w of ["inspector.run.init.task", "inspector.run.nope", "run.init", "inspector.run.init.task"]) {
+        await act(async () => { input.value = w; input.dispatchEvent(new win.Event("input", { bubbles: true })); });
+        await act(async () => { input.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+    }
+    assert.deepEqual(V.watches.value, ["inspector.run.init.task", "inspector.run.nope", "run.init"], "a watch already there is not added twice");
+    assert.deepEqual(sent.at(-1).watches, V.watches.value, "the latest read carried the whole list");
+    assert.match(watchRow(host, "inspector.run.init.task").textContent, /inspector\.run\.init\.task:"count"/);
+    assert.match(watchRow(host, "inspector.run.nope").textContent, /no match/);
+    assert.match(watchRow(host, "run.init").querySelector(".rstate-watch-err").textContent, /starts at inspector/);
+    assert.equal(input.value, "", "the line clears for the next one");
+});
+
+test("a watch's ✕ stops watching it, and the list is kept on this device", async () => {
+    V.watches.value = ["inspector.a", "inspector.b"];
+    const stored = [];
+    const was = chrome.storage.local.set;
+    chrome.storage.local.set = (o) => stored.push(o);
+    try {
+        withWatches({ members: [], entries: [] }, {});
+        const host = await show({ members: [], entries: [] });
+        await act(async () => { watchRow(host, "inspector.a").querySelector(".rstate-unwatch").click(); });
+        assert.deepEqual(V.watches.value, ["inspector.b"]);
+        assert.deepEqual(stored.at(-1), { ml_runstate_watches: ["inspector.b"] });
+        assert.equal(watchRow(host, "inspector.a"), null);
+    } finally { chrome.storage.local.set = was; }
+});
+
+test("\"Watch this\" on any row of a member watches that row's path", async () => {
+    V.watches.value = [];
+    const init = member("run.init");
+    withWatches({ members: [init], entries: [entry(init, { task: "count", tools: ["exec"] })] }, {});
+    const host = await show({ members: [init], entries: [entry(init, { task: "count", tools: ["exec"] })] });
+    const first = row(host, "run.init").querySelector(".jt-row");
+    first.dispatchEvent(new win.MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    assert.deepEqual(ui.ctxMenu.value.items.map((i) => i.label), ["Copy value", "Copy path", "Watch this"]);
+    await act(async () => { ui.ctxMenu.value.items.find((i) => i.label === "Watch this").run(); });
+    assert.deepEqual(V.watches.value, ["inspector.run.init"]);
+    ui.ctxMenu.value = null;
 });
