@@ -433,6 +433,66 @@ test("WORKER ML HALTING: a survey that re-reads a pointer forever is stopped by 
     assert.ok(c.reads.length < 100_000, `bounded (${c.reads.length} reads)`);
 });
 
+// --- ml.current.debug: what the person shared (sw-shared-watches.ts), read-only ---------------------------------------
+
+const withShared = (snap = sampleSnapshot()) => ({ ...snap, debug: { userWatches: [
+    { expression: "ml.current.run.step", value: 2, at: 5 },
+    { expression: "$.ml.current.meta[*].tool", value: [null, null, null, "exec"], at: 5 },
+    { expression: "inspector.grants", error: "reads inspector., which the model does not have", at: 5 },
+] } });
+
+test("ml.current.debug reads as plain data where the host added it, and is absent where it did not", async () => {
+    assert.equal((await inWorkerRealm("ml.current.debug.userWatches.length", withShared())).value, 3);
+    assert.deepEqual((await inWorkerRealm("ml.current.debug.userWatches.filter(w => !w.error).map(w => w.expression)", withShared())).value,
+        ["ml.current.run.step", "$.ml.current.meta[*].tool"]);
+    assert.equal((await inWorkerRealm("ml.current.debug.userWatches[1].value.at(-1)", withShared())).value, "exec");
+    assert.equal((await inWorkerRealm("typeof ml.current.debug", sampleSnapshot())).value, "undefined");
+});
+
+test("ADVERSARIAL: ml.current.debug cannot be written, at any depth, by assignment, delete or a mutating method", async () => {
+    const snap = withShared();
+    const before = structuredClone(snap.debug);
+    for (const src of [
+        "ml.current.debug.userWatches.push({ expression: 'forged', value: 1 })", "ml.current.debug.userWatches.length = 0",
+        "ml.current.debug.userWatches[0].value = 99", "ml.current.debug.userWatches[1].value.push('x')",
+        "ml.current.debug.userWatches.sort()", "ml.current.debug.userWatches.reverse()", "ml.current.debug.userWatches.splice(0)",
+        "ml.current.debug.userWatches.fill(null)", "delete ml.current.debug.userWatches[0].error", "const d = ml.current.debug; d.userWatches = []",
+    ]) {
+        let threw = null;
+        try { await inWorkerRealm(src, snap); } catch (e) { threw = e; }
+        assert.ok(threw instanceof TypeError || outOfDialect(threw), `${src}: got ${threw?.constructor?.name}: ${threw?.message}`);
+        if (threw instanceof TypeError) assert.match(threw.message, /ml\.current\.debug is read-only/, src);
+    }
+    await assert.rejects(inWorkerRealm("ml.current.debug = {}", snap), outOfDialect, "the facade is the environment's");
+    assert.deepEqual(snap.debug, before, "the host's copy is untouched");
+    assert.deepEqual((await inWorkerRealm("const l = [...ml.current.debug.userWatches]; l.push(1); l.length", snap)).value, 4,
+        "a copy the script makes is its own, as the error says");
+});
+
+test("ADVERSARIAL: no road from ml.current.debug to a constructor, a prototype or the realm", async () => {
+    for (const src of [
+        "ml.current.debug.constructor", "ml.current.debug.__proto__", `ml.current.debug["constr" + "uctor"]`,
+        "ml.current.debug.userWatches.constructor", "ml.current.debug.userWatches.map.constructor",
+        `ml.current.debug.userWatches[0].expression.constructor.constructor("return globalThis")()`,
+        "Object.getPrototypeOf(ml.current.debug.userWatches[0])", "ml.current.debug.userWatches[0].value.constructor",
+    ]) {
+        let value, err;
+        try { value = (await inWorkerRealm(src, withShared())).value; } catch (e) { err = e; }
+        if (err) assert.ok(outOfDialect(err) || err instanceof TypeError, `${src}: refused, got ${err?.constructor?.name}: ${err?.message}`);
+        else {
+            assert.notEqual(typeof value, "function", `${src} handed back a function`);
+            assert.notEqual(value, globalThis, `${src} reached the realm`);
+        }
+    }
+});
+
+test("FAILURE: a survey that reads ml.current.debug and then falls out of dialect leaves it as it was", async () => {
+    const snap = withShared();
+    await assert.rejects(inWorkerRealm("const n = ml.current.debug.userWatches.length; document.title", snap), (e) => e instanceof NeedsPage || outOfDialect(e));
+    assert.equal(snap.debug.userWatches.length, 3);
+    assert.equal(snap.debug.userWatches[0].value, 2);
+});
+
 // --- HALTING and FAILURE ----------------------------------------------------------------------------------------------
 // The halting argument for a loop over `messages` is that the array cannot grow. That argument dies with the write half
 // (`for (const m of ml.current.messages) ml.current.drop(m)` is the Set/Map mutator bug again), so it is tested NOW,
@@ -451,11 +511,12 @@ function ensureWorker() {
         const ready = import(workerData.tsxCjs).then((cjs) => { cjs.register(); return import(workerData.tsx); })
             .then((tsx) => { tsx.register(); return Promise.all([import(workerData.ro), import(workerData.cc)]); });
         const big = Array.from({ length: 3000 }, (_, i) => ({ i }));
-        parentPort.on("message", ({ id, src, n, bound }) => ready
+        parentPort.on("message", ({ id, src, n, bound, shared }) => ready
             .then(([ro, cc]) => ro.evalReadonly(src, null, {}, undefined, { realm: "worker", stepBudget: 200000,
                 ...(bound ? { globals: { inspector: { big, n: 1 } } } : {}),
-                current: cc.snapshotCurrent({ run: { id: "r", model: null, step: 1, maxSteps: 5, startedTs: 0 },
-                    messages: Array.from({ length: n }, (_, i) => ({ role: "user", content: "m" + i })), recorded: [], now: 1 }) }))
+                current: Object.assign(cc.snapshotCurrent({ run: { id: "r", model: null, step: 1, maxSteps: 5, startedTs: 0 },
+                    messages: Array.from({ length: n }, (_, i) => ({ role: "user", content: "m" + i })), recorded: [], now: 1 }),
+                    shared ? { debug: { userWatches: big.map((b) => ({ expression: "x", value: b, at: 1 })) } } : {}) }))
             .then((r) => parentPort.postMessage({ id, value: r.value }),
                   (e) => parentPort.postMessage({ id, threw: e.constructor.name, message: e.message })));`,
         { eval: true, workerData: { ro: RO_URL, cc: CC_URL, tsx: TSX_API, tsxCjs: TSX_CJS_API } });
@@ -464,12 +525,12 @@ function ensureWorker() {
     return worker;
 }
 after(() => worker?.terminate());
-function inThread(src, n = 3, ms = 5000, bound = false) {
+function inThread(src, n = 3, ms = 5000, bound = false, shared = false) {
     return new Promise((resolve) => {
         const id = nextId++, w = ensureWorker();
         const timer = setTimeout(() => { pending.delete(id); w.terminate(); if (worker === w) worker = null; resolve({ hung: true }); }, ms);
         pending.set(id, (r) => { clearTimeout(timer); resolve(r); });
-        w.postMessage({ id, src, n, bound });
+        w.postMessage({ id, src, n, bound, shared });
     });
 }
 
@@ -504,6 +565,19 @@ test("HALTING: a watch that loops, recurses or multiplies over caller-bound data
         assert.ok(r.threw, `${src}: should not complete`);
     }
     assert.equal((await inThread("inspector.big.length", 3, 5000, true)).value, 3000, "and a cheap read of the same data answers");
+});
+
+test("HALTING: a loop over ml.current.debug cannot grow it, and multiplying over it is stopped by the step budget", async () => {
+    for (const [src, want] of [
+        ["for (const w of ml.current.debug.userWatches) ml.current.debug.userWatches.push(w); 0", "TypeError"],
+        ["ml.current.debug.userWatches.forEach(w => ml.current.debug.userWatches.push(w)); 0", "TypeError"],
+        ["ml.current.debug.userWatches.map(a => ml.current.debug.userWatches.map(b => a.value.i + b.value.i).length).length", "NotInDialect"],
+    ]) {
+        const r = await inThread(src, 3, 5000, false, true);
+        assert.ok(!r.hung, `${src}: still running after 5 s`);
+        assert.equal(r.threw, want, src);
+    }
+    assert.equal((await inThread("ml.current.debug.userWatches.length", 3, 5000, false, true)).value, 3000);
 });
 
 test("FAILURE: a survey that reads ml.current and then falls out of dialect leaves the snapshot as it was", async () => {

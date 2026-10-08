@@ -31,6 +31,7 @@ import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
 import { noteRunMechanic } from "./sw-runs";
 import { ensureLocalTools, runLocalTool } from "./sw-local-tools";
+import { withUserWatches } from "./sw-shared-watches";
 import { navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue } from "./sw-values";
@@ -690,8 +691,11 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 const snap = contextByRun.get(runId);
                 const wantsLog = typeof args.js === "string" && /\bcurrent\b/.test(args.js);
                 const log = snap && wantsLog ? eventsForRun(await runLog.all(), runId) : [];
+                // Made once, here, only for a script that names `current`: the person's shared watches are evaluated
+                // into it (sw-shared-watches.ts), which is async, and the evaluator asks for the snapshot synchronously.
+                const current = snap && wantsLog ? await withUserWatches(snap({ model: modelNow(), log })) : undefined;
                 const w = await evalReadonlyInWorker(args, {
-                    ...(snap ? { current: () => snap({ model: modelNow(), log }) } : {}),
+                    ...(snap ? { current: () => current ?? snap({ model: modelNow(), log }) } : {}),
                     ml: workerReadonlyMl(tabPageUrl.get(tabId) ?? "", derefByRun.get(runId), runId),
                     live,
                 });

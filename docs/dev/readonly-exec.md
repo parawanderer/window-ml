@@ -457,6 +457,10 @@ promise.
 - **`ml.current.messages` is protected**: a write, a mutator or a nested write throws a `TypeError` the model reads,
   never a refusal, because the human gate would then run the script on the page where there is no `ml.current`. `run`,
   `meta` and `log` are copies the script owns.
+- **`ml.current.debug`** (`{ userWatches }`, the watches the person shared from the Run state panel) is there only when
+  the host adds it, which a worker-hosted run's does (`sw-shared-watches.ts`). It is protected the same way, with its
+  own `TypeError` ("ml.current.debug is read-only"), since it is the person's words. Its values are computed before the
+  survey, each over `{ ml: { current } }` alone, so nothing the model may not read gets into it.
 - **The print boundary** abridges a large message row (over `ABRIDGE_OVER` characters) into its role, size, a preview
   and the expression that prints it whole, in `console.log` and in a returned value. The VALUE is untouched.
 - **Every substitution says so, and the sentence is generated.** `printable` is the one place a print may differ from

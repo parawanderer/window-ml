@@ -10,6 +10,7 @@
 import { mlJsonPath, type JsonPathNode } from "./json-path";
 import { riskyRegex } from "./readonly-exec/limits";
 import type { StateEntry, StateMember } from "./state-registry";
+import type { UserWatch } from "./agent/current-context";
 
 /** How many watches a panel may ask for at once: a list a person keeps, not a script. */
 export const MAX_WATCHES = 32;
@@ -147,6 +148,50 @@ export async function evalWatch(tree: Record<string, unknown>, expr: string, js?
     }
 }
 
+/** Where the panel keeps the expressions it shares with the model, a subset of its watches; read by the worker
+ *  (sw-shared-watches.ts). Written only by an extension page. */
+export const SHARED_WATCHES_KEY = "ml_runstate_shared";
+/** How many watches may be shared with the model at once. Each is evaluated for every survey that reads `ml.current`. */
+export const MAX_SHARED_WATCHES = 8;
+/** The largest shared value, as JSON characters. A watch on `ml.current.messages` would otherwise hand the model its
+ *  whole context a second time. */
+export const SHARED_VALUE_CHARS = 4000;
+
+/**
+ * May this watch be shared with the model? Only one that reads nothing but `ml.current`: `inspector` is the person's
+ * half of the state, which the audience rule keeps from the model. A string that merely contains the word is refused too,
+ * which is the safe way to be wrong. The worker does not rely on this: a shared watch is evaluated over a tree that has
+ * no `inspector` in it at all ({@link evalShared}).
+ * @param expr the watch
+ */
+export function shareable(expr: string): boolean {
+    return !/\binspector\b/.test(expr);
+}
+
+/**
+ * The shared watches, as the model is given them: each over the MODEL's half of the state alone (`{ ml: { current } }`),
+ * so a watch cannot carry a member the model may not read into its context, whatever it says.
+ * @param current the snapshot the model reads, without `debug`
+ * @param exprs the shared expressions
+ * @param js the JS evaluator, binding nothing but `ml.current`
+ * @param now the time to stamp them with
+ */
+export async function evalShared(current: unknown, exprs: readonly string[], js: WatchJs | undefined, now: number): Promise<UserWatch[]> {
+    const tree = JSON.parse(JSON.stringify({ ml: { current } })) as Record<string, unknown>;
+    const out: UserWatch[] = [];
+    for (const expression of exprs.slice(0, MAX_SHARED_WATCHES)) {
+        if (!shareable(expression)) { out.push({ expression, error: "reads inspector., which the model does not have", at: now }); continue; }
+        const r = await evalWatch(tree, expression, js);
+        if (r.error) { out.push({ expression, error: r.error, at: now }); continue; }
+        const value = r.nodes ? r.nodes.map((n) => n.value) : r.value;
+        const chars = value === undefined ? 0 : JSON.stringify(value)?.length ?? 0;
+        out.push(chars > SHARED_VALUE_CHARS
+            ? { expression, error: `its value is ${chars} characters, over the ${SHARED_VALUE_CHARS} a shared watch may carry`, at: now }
+            : { expression, ...(value === undefined ? {} : { value }), at: now });
+    }
+    return out;
+}
+
 /**
  * The watches a panel sent, made safe to evaluate: strings only, at most {@link MAX_WATCHES}, duplicates dropped.
  * @param raw the payload's `watches`
@@ -172,3 +217,6 @@ export function panelPath(normalized: string): string {
     }
     return out;
 }
+
+/** Steps one JS watch may take: a fraction of a survey's, since a panel re-reads every watch every two seconds. */
+export const WATCH_STEPS = 20_000;

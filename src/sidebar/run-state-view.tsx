@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { JsonNode, copyableValue } from "./transcript/json-tree";
 import { PanelHead } from "./panel-head";
 import { TipText, cursorTipOn, useCopy, type CtxItem } from "./ui-kit";
-import { MAX_WATCHES, panelPath, type WatchResult, type WatchShape } from "../state-watch";
+import { MAX_SHARED_WATCHES, MAX_WATCHES, SHARED_WATCHES_KEY, panelPath, shareable, type WatchResult, type WatchShape } from "../state-watch";
 import { completeWatch, type WatchCompletion } from "../watch-complete";
 import { IconCheck, IconChevron, IconCopy, IconEye, IconClose } from "./icons";
 import type { RunStateDump, RunStateMember } from "../sw/sw-run-state";
@@ -149,8 +149,34 @@ export function addWatch(expr: string): void {
     setWatches([...watches.value, e]);
 }
 
-/** Stop watching one expression. */
-function removeWatch(expr: string): void { setWatches(watches.value.filter((w) => w !== expr)); }
+/** Stop watching one expression, and stop sharing it. */
+function removeWatch(expr: string): void {
+    setWatches(watches.value.filter((w) => w !== expr));
+    if (shared.value.includes(expr)) setShared(shared.value.filter((w) => w !== expr));
+}
+
+/** The watches SHARED with the model (`ml.current.debug.userWatches`), a subset of {@link watches}, kept beside them. */
+export const shared = signal<readonly string[]>([]);
+
+/** Share a watch with the model, or stop sharing it. A watch over `inspector.` is never shared, and past
+ *  {@link MAX_SHARED_WATCHES} nothing more is. */
+export function toggleShared(expr: string): void {
+    if (shared.value.includes(expr)) return setShared(shared.value.filter((w) => w !== expr));
+    if (shareable(expr) && shared.value.length < MAX_SHARED_WATCHES) setShared([...shared.value, expr]);
+}
+
+function setShared(next: readonly string[]): void {
+    shared.value = next;
+    try { chrome.storage.local.set({ [SHARED_WATCHES_KEY]: [...next] }); } catch { /* no storage: the worker sees no shares */ }
+}
+
+/** The share toggle's tooltip: what sharing does, or why this watch cannot be shared. */
+function shareTip(expr: string, on: boolean): string {
+    if (on) return "Shared with the model: it reads this watch's value at `ml.current.debug.userWatches`. Click to stop sharing.";
+    if (!shareable(expr)) return "Only a watch over `ml.current` can be shared: `inspector.` is your half of the state, which the model does not read.";
+    if (shared.value.length >= MAX_SHARED_WATCHES) return `${MAX_SHARED_WATCHES} watches are shared already, the most the model is given.`;
+    return "Share with the model: it reads this watch's value at `ml.current.debug.userWatches`, while a turn runs.";
+}
 
 function setWatches(next: readonly string[]): void {
     watches.value = next;
@@ -163,7 +189,11 @@ const watchItem = (path: string): CtxItem[] => [{ label: "Watch this", icon: <Ic
 /** One watch, on one line until opened: its expression, what it matched, and the ✕ that stops watching it. */
 function WatchRow({ expr, r }: { expr: string; r: WatchResult | undefined }) {
     const label = <span class="rstate-key rstate-watch-key" {...cursorTipOn(paneTip(expr))}>{expr}:</span>;
+    const on = shared.value.includes(expr);
     const trail = <span class="rstate-trail">
+        <button class={`rstate-share${on ? " on" : ""}`} aria-pressed={on} aria-label={on ? `Stop sharing ${expr} with the model` : `Share ${expr} with the model`}
+            disabled={!on && (!shareable(expr) || shared.value.length >= MAX_SHARED_WATCHES)}
+            onClick={(e) => { e.stopPropagation(); toggleShared(expr); }} {...cursorTipOn(paneTip(shareTip(expr, on)))}><IconEye /></button>
         <button class="rstate-unwatch" aria-label={`Stop watching ${expr}`} onClick={(e) => { e.stopPropagation(); removeWatch(expr); }}
             {...cursorTipOn(paneTip("Stop watching this"))}><IconClose /></button>
     </span>;
@@ -306,11 +336,13 @@ export function RunStateView({ run }: { run: string | null }) {
         if (foldedRead) return;
         foldedRead = true;
         try {
-            chrome.storage.local.get([FOLDED_KEY, WATCHES_KEY], (d: Record<string, unknown>) => {
+            chrome.storage.local.get([FOLDED_KEY, WATCHES_KEY, SHARED_WATCHES_KEY], (d: Record<string, unknown>) => {
                 const v = d?.[FOLDED_KEY];
                 if (Array.isArray(v)) folded.value = new Set(v.filter((x): x is string => typeof x === "string"));
                 const w = d?.[WATCHES_KEY];
                 if (Array.isArray(w)) watches.value = w.filter((x): x is string => typeof x === "string").slice(0, MAX_WATCHES);
+                const sh = d?.[SHARED_WATCHES_KEY];
+                if (Array.isArray(sh)) shared.value = sh.filter((x): x is string => typeof x === "string" && watches.value.includes(x)).slice(0, MAX_SHARED_WATCHES);
             });
         } catch { /* no storage here: nothing is folded */ }
     }, []);
