@@ -13,7 +13,7 @@ let answer = null;
 before(async () => {
     const dom = new JSDOM("<!doctype html><html><body><div id='root'></div><div id='tip'></div></body></html>", { pretendToBeVisual: true, url: "https://extension.test/" });
     win = dom.window;
-    for (const k of ["window", "document", "Node", "HTMLElement", "MutationObserver", "getComputedStyle"]) globalThis[k] = k === "window" ? win : win[k];
+    for (const k of ["window", "document", "Node", "HTMLElement", "MutationObserver", "getComputedStyle", "requestAnimationFrame"]) globalThis[k] = k === "window" ? win : win[k];
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: { clipboard: { writeText: async () => {} }, platform: "Test" } });
     globalThis.chrome = {
         runtime: { sendMessage: (_msg, cb) => cb(answer), lastError: undefined },
@@ -251,4 +251,78 @@ test("a JS watch is drawn by its value: a plain path's rows offer \"Watch this\"
     };
     assert.deepEqual(menuOf("inspector.run.init"), ["Copy value", "Copy path", "Watch this"]);
     assert.equal(menuOf("inspector.run.init.tools.length"), null, "no path to name, so no path menu");
+});
+
+// --- completion in the watch input: over the shape the worker sends with each read ---
+
+const SHAPE = { t: "object", keys: { inspector: { t: "object", keys: { run: { t: "object", keys: {
+    init: { t: "object", keys: { task: { t: "string" }, tools: { t: "array", n: 2, item: { t: "string" } } } } } } } } } };
+async function typeInto(input, v) {
+    await act(async () => { input.value = v; input.setSelectionRange(v.length, v.length); input.dispatchEvent(new win.Event("input", { bubbles: true })); });
+}
+const key = (input, k) => act(async () => { input.dispatchEvent(new win.KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })); });
+const offered = (host) => [...host.querySelectorAll(".rstate-complete-row")].map((r) => r.querySelector(".rstate-complete-label").textContent);
+const hotRow = (host) => host.querySelector('.rstate-complete-row[aria-selected="true"] .rstate-complete-label')?.textContent ?? null;
+
+test("typing a chain lists what may follow it, with what each holds; Tab takes the highlighted one", async () => {
+    V.watches.value = [];
+    withWatches({ members: [], entries: [], shape: SHAPE }, {});
+    const host = await show({ members: [], entries: [], shape: SHAPE });
+    const input = host.querySelector(".rstate-watch-input");
+    await typeInto(input, "inspector.run.init.");
+    assert.deepEqual(offered(host), ["task", "tools"]);
+    assert.equal(host.querySelector(".rstate-complete-row:nth-child(2) .rstate-complete-detail").textContent, "[2]");
+    assert.equal(input.getAttribute("aria-expanded"), "true");
+    assert.equal(hotRow(host), "task", "the first row is highlighted");
+    await key(input, "Tab");
+    assert.equal(input.value, "inspector.run.init.task");
+    assert.deepEqual(offered(host), [], "a name typed in full has nothing more after it");
+    assert.deepEqual(V.watches.value, [], "taking a completion does not add the watch");
+});
+
+test("the arrows move the highlight and Enter then takes it; Enter without the arrows adds the watch as typed", async () => {
+    V.watches.value = [];
+    withWatches({ members: [], entries: [], shape: SHAPE }, {});
+    const host = await show({ members: [], entries: [], shape: SHAPE });
+    const input = host.querySelector(".rstate-watch-input");
+    await typeInto(input, "inspector.run.init.t");
+    await key(input, "ArrowDown");
+    assert.equal(hotRow(host), "tools");
+    await key(input, "ArrowDown");
+    assert.equal(hotRow(host), "task", "it wraps");
+    await key(input, "ArrowUp");
+    await key(input, "Enter");
+    assert.equal(input.value, "inspector.run.init.tools");
+    assert.deepEqual(V.watches.value, []);
+    await typeInto(input, "inspector.run.init.tools.j");
+    assert.deepEqual(offered(host), ["join"]);
+    await key(input, "Enter");
+    assert.deepEqual(V.watches.value, ["inspector.run.init.tools.j"], "the list did not take Enter from a person who never went into it");
+});
+
+test("a method is taken with its parenthesis open; Escape shuts the list first and clears the line second", async () => {
+    V.watches.value = [];
+    withWatches({ members: [], entries: [], shape: SHAPE }, {});
+    const host = await show({ members: [], entries: [], shape: SHAPE });
+    const input = host.querySelector(".rstate-watch-input");
+    await typeInto(input, "inspector.run.init.tools.fil");
+    assert.deepEqual(offered(host), ["filter"]);
+    await key(input, "Tab");
+    assert.equal(input.value, "inspector.run.init.tools.filter(");
+    await typeInto(input, "inspector.run.init.");
+    await key(input, "Escape");
+    assert.deepEqual(offered(host), []);
+    assert.equal(input.value, "inspector.run.init.", "the first Escape only shut the list");
+    await key(input, "Escape");
+    assert.equal(input.value, "");
+});
+
+test("a row is taken by pointer, before the input's blur can shut the list", async () => {
+    V.watches.value = [];
+    withWatches({ members: [], entries: [], shape: SHAPE }, {});
+    const host = await show({ members: [], entries: [], shape: SHAPE });
+    const input = host.querySelector(".rstate-watch-input");
+    await typeInto(input, "inspector.");
+    await act(async () => { host.querySelector(".rstate-complete-row").dispatchEvent(new win.PointerEvent("pointerdown", { bubbles: true, cancelable: true })); });
+    assert.equal(input.value, "inspector.run");
 });

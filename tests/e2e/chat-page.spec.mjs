@@ -655,6 +655,12 @@ test("the run state panel shows the LIVE turn: what it was asked, the gate it wa
         }
         await expect(panel.locator('[data-watch="ml.current.messages.length > 0"]')).toContainText("true");
         await expect(panel.locator('[data-watch="inspector.grants.turn.origins.length"]')).toContainText("1");
+        // COMPLETION, from the shape the worker sent with this read: the live context's keys, taken with Tab.
+        await watchInput.pressSequentially("ml.current.mes");
+        await expect(panel.locator(".rstate-complete-row")).toHaveText([/^messages\[\d+\]$/]);
+        await watchInput.press("Tab");
+        await expect(watchInput).toHaveValue("ml.current.messages");
+        await watchInput.press("Escape");
         await chat.getByPlaceholder(/Steer this run/).fill("also check the totals");
         await chat.getByPlaceholder(/Steer this run/).press("Enter");
         await expect(mailbox.locator(".jt-preview")).toHaveText("[ 1 item ]", { timeout: 10_000 });

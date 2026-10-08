@@ -3319,6 +3319,17 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
     border-bottom: 1px dashed transparent; padding: 0; outline: none; }
 .rstate-watch-input::placeholder { color: var(--fg-faint); font-style: italic; }
 .rstate-watch-input:focus { border-bottom-color: var(--border); }
+/* A watch's COMPLETION LIST: hung under the input row, over the members below it, one name per line with what it
+   holds (`[12]`, `{4}`, `()`) dimmed at the end. */
+.rstate-watch-add { position: relative; }
+.rstate-complete { position: absolute; left: 18px; top: 100%; z-index: 20; min-width: 180px; max-width: calc(100% - 24px);
+    max-height: 220px; overflow-y: auto; margin: 2px 0 0; padding: 3px; list-style: none; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 7px; box-shadow: 0 8px 28px rgba(0,0,0,.5); }
+.rstate-complete-row { display: flex; gap: 12px; justify-content: space-between; padding: 1px 6px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+.rstate-complete-row[aria-selected="true"] { background: color-mix(in srgb, var(--fg) 14%, transparent); }
+.rstate-complete-row.method .rstate-complete-label { color: var(--kind); }
+.rstate-complete-label { overflow: hidden; text-overflow: ellipsis; }
+.rstate-complete-detail { color: var(--fg-faint); flex: none; }
 /* The sentence a session with nothing live gets, above its (empty) members. */
 .rstate-idle { color: var(--fg-dim); }
 /* The states that are not a log — nothing open, nothing recorded, unreadable — do want the margin back. */

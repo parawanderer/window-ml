@@ -266,8 +266,12 @@ exactly the model half of the registry and `inspector` the rest.
    or, starting with `$`, a JSONPath, evaluated in the worker with each read (`src/state-watch.ts`). `inspector` is the
    panel's tree of the run's state; `ml.current` is the LIVE snapshot the model reads, absent between turns. Both kinds
    carry the dialect's bounds (a step or node budget; a backtracking regex refused before it runs), and a watch that
-   reaches for the page says so. The list is per device, for every run. Still to come: the share toggle, which waits on `ml.current` being
-   reachable (#410).
+   reaches for the page says so. The list is per device, for every run. The input COMPLETES as you type
+   (`src/watch-complete.ts`): after `chain.` it lists the keys of what the chain names and the methods the dialect
+   allows on its kind (never a mutator), and at a bare name the roots. It reads a shape of the tree, keys and kinds
+   without values, that the worker sends with each read, so `ml.current.` completes against the live context. Tab
+   takes the highlighted row, and Enter takes it only after the arrows were used, so Enter still adds what was typed.
+   The console reuses it. Still to come: the share toggle (`ml.current` is reachable since #410).
 3. **The read-only console.**
 4. **Python per-run state**: the investigation above, then the design, then the Python group.
 5. **The slots** fill in as the features behind them land: `mailbox` (once its audience is settled for subagent
