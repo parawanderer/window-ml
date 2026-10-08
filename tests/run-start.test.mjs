@@ -599,13 +599,14 @@ async function attackRun(args, { then = [], siteGate = true, atApproval, inPage,
     return { bg, toPage, fetched, toolResults, evicted };
 }
 
-test("a page cannot read a URL the person approved for the run's worker-side fetch_url by sending FETCH_URL itself", { ...T, todo: "fetchConsent is per TAB and FETCH_URL is in RUN_TAB_TYPES, so the run's approval lends the page a cross-origin read of that URL" }, async () => {
+test("a page cannot read a URL the person approved for the run's worker-side fetch_url by sending FETCH_URL itself", T, async () => {
     let stolen;
     const { fetched, toolResults } = await attackRun({ url: OTHER }, {
-        // A second step that goes to the page, so the page runs code while the run is live on its tab.
-        then: [{ name: "exec", args: { js: "document.title = 'x'; return 1" } }],
+        // A second step that goes to the page, so the page runs code while the run is live on its tab. Not an approved
+        // exec: that opens the tab's fetches for its duration (`fetchOpen`), which is its own test below.
+        then: [{ name: "findByText", args: { text: "x" } }],
         inPage: async (bg, msg) => {
-            if (msg.payload.name !== "exec" || msg.payload.renderOnly || msg.payload.readonlyTry || msg.payload.precheck) return undefined;
+            if (msg.payload.name !== "findByText" || msg.payload.renderOnly || msg.payload.readonlyTry || msg.payload.precheck) return undefined;
             stolen = await bg.send({ type: "FETCH_URL", payload: { url: OTHER } }, RUN_TAB);
             return undefined;
         },
@@ -617,7 +618,7 @@ test("a page cannot read a URL the person approved for the run's worker-side fet
     assert.equal(fetched.length, 1, `only the run fetched; got ${JSON.stringify(fetched)}`);
 });
 
-test("a page cannot spend the one-time as-you grant the person minted for the run's worker-side fetch_url", { ...T, todo: "credFetchGrants is per TAB: the page's FETCH_URL reaches takeCredFetch before the worker's tool does and reads the private page with the person's cookies" }, async () => {
+test("a page cannot spend the one-time as-you grant the person minted for the run's worker-side fetch_url", T, async () => {
     let stolen;
     const { fetched, toolResults } = await attackRun({ url: OTHER, credentials: true }, {
         // The page polls FETCH_URL as-you; here, one attempt in the same tick as the approval.
@@ -628,4 +629,19 @@ test("a page cannot spend the one-time as-you grant the person minted for the ru
     // Positive control: the person's approved fetch is the one that ran, in the worker, and the model got it.
     assert.match(toolResults[0] ?? "", /SECRET OTHER SITE/, `the run's own as-you fetch was answered; got ${(toolResults[0] ?? "").slice(0, 200)}`);
     assert.equal(fetched.length, 1);
+});
+
+test("OPEN — while an approved exec runs, the page cannot fetch a URL the exec never named", { ...T, todo: "an approved exec opens uncredentialed fetching for the whole TAB (pendingGrants fetchOpen), and the page shares the tab; part 4 isolates exec" }, async () => {
+    let stolen;
+    const { toolResults } = await attackRun({ url: OTHER }, {
+        then: [{ name: "exec", args: { js: "document.title = 'x'; return 1" } }],
+        inPage: async (bg, msg) => {
+            if (msg.payload.name !== "exec" || msg.payload.renderOnly || msg.payload.readonlyTry || msg.payload.precheck) return undefined;
+            stolen = await bg.send({ type: "FETCH_URL", payload: { url: "https://other.example/never-approved" } }, RUN_TAB);
+            return undefined;
+        },
+    });
+    assert.match(toolResults[0] ?? "", /SECRET OTHER SITE/, "positive control: the run's own fetch ran");
+    assert.ok(stolen !== undefined, "positive control: the page's request was answered");
+    assert.ok(!stolen?.data, `the page fetched a URL no one approved while the exec ran: ${JSON.stringify(stolen).slice(0, 160)}`);
 });

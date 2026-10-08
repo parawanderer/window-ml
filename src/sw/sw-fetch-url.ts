@@ -20,6 +20,10 @@ export interface FetchCaller {
     tabUrl?: string;
     /** Not a trusted surface: it needs a grant or a consent for anything but its own origin. */
     untrusted: boolean;
+    /** The approvals this caller may use, when they are not the tab's: whether `url` was consented to, and spending a
+     *  one-time as-you grant for it. Absent: the tab's (`fetchConsent`, `takeCredFetch`), as for a page. */
+    consented?: (url: string) => boolean;
+    takeCred?: (url: string) => boolean;
     /** Record a stored table's key as disclosed to the tab (`pageValueSession`), which entitles a page-hosted run there
      *  to read it. False for a run's own fetch in the worker: the key never reaches the page. */
     disclose: boolean;
@@ -88,7 +92,7 @@ export async function fetchUrlFor(payload: unknown, caller: FetchCaller): Promis
             // second tab of the page (re-running its scripts), which the page side never asks for — it
             // answers a session render of itself from its live DOM.
             const ownPage = !rendered && !!caller.frameUrl && isCurrentPage(url, caller.frameUrl);
-            if (untrusted && !sameOriginAuthOk && !ownPage && !takeCredFetch(tabId, url)) {
+            if (untrusted && !sameOriginAuthOk && !ownPage && !(caller.takeCred ? caller.takeCred(url) : takeCredFetch(tabId, url))) {
                 return { error: `Refused: an as-you fetch of "${url}" wasn't approved. A fetch AS THE USER (${rendered ? "rendered in your session" : "cookies"}) must be approved per-URL via the fetch_url tool; it can't run inline in exec or reuse a prior grant.` };
             }
         } else {
@@ -103,7 +107,7 @@ export async function fetchUrlFor(payload: unknown, caller: FetchCaller): Promis
             // flag. Enforced HERE, trusted-side (the client autoApprove only skips the prompt; the background is
             // the authority — a forged "self-source" can't make this true for a non-self URL). See self-source.ts.
             const selfSrc = !!cfg.autoApproveSelfSource && !rendered && isSelfSourceUrl(url, BUILD_INFO.repoUrl);
-            if (untrusted && !sameOriginAsSender && !execOpen && !selfSrc && !(tabId != null && fetchConsent.get(tabId)?.has(url))) {
+            if (untrusted && !sameOriginAsSender && !execOpen && !selfSrc && !(caller.consented ? caller.consented(url) : tabId != null && !!fetchConsent.get(tabId)?.has(url))) {
                 return { error: `Refused: "${url}" hasn't been approved for fetching on this page. Use the fetch_url tool (each new URL is approved once, then remembered for the session), or call ml.fetch inside an approved exec.` };
             }
         }
@@ -124,7 +128,7 @@ export async function fetchUrlFor(payload: unknown, caller: FetchCaller): Promis
             if (untrusted && !execOpen) {
                 let sameOrigin = true;
                 try { sameOrigin = new URL(data.url).origin === new URL(url).origin; } catch { /* keep true */ }
-                if (!sameOrigin && !fetchConsent.get(tabId!)?.has(data.url)) {
+                if (!sameOrigin && !(caller.consented ? caller.consented(data.url) : !!fetchConsent.get(tabId!)?.has(data.url))) {
                     return { error: `"${url}" redirected to a different origin (${(() => { try { return new URL(data.url).origin; } catch { return data.url; } })()}), which hasn't been approved. Fetch that URL directly to approve it.` };
                 }
             }

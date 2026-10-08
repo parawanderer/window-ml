@@ -19,7 +19,13 @@ import { fetchLLM } from "./sw-llm";
 export const WORKER_TOOL_NAMES: ReadonlySet<string> = new Set(["fetch_url"]);
 
 /** What one run's worker tools share: the tab they act for, its fetch cache, and the spend of their model calls. */
-interface RunCtx { runId: string; tabId: number; tabUrl: () => string; python: boolean; cache: Map<string, FetchResult>; spent: SubcallUsage }
+interface RunCtx {
+    runId: string; tabId: number; tabUrl: () => string; python: boolean; cache: Map<string, FetchResult>; spent: SubcallUsage;
+    /** URLs the person approved this run's fetch_url to read, remembered for the run (a repeat auto-approves). */
+    consented: Set<string>;
+    /** As-you (credentialed) fetches the person approved, each spent by the one call it was approved for. */
+    credOnce: Set<string>;
+}
 
 const runs = new Map<string, RunCtx>();   // state: plumbing — per run, dropped with its local tools
 
@@ -32,6 +38,27 @@ export function workerSpend(runId: string): SubcallUsage | undefined {
 /** A successful default-mode fetch this run already made, for a read-only survey's `ml.fetch` (never egresses). */
 export function workerFetchCached(runId: string, url: string): FetchResult | undefined {
     return runs.get(runId)?.cache.get(url);
+}
+
+/**
+ * Record the person's approval of this run's worker-side `fetch_url`. The RUN's, never the tab's: a grant on the tab is
+ * one any script on it could spend through its own `FETCH_URL` while the run is there (it is in `RUN_TAB_TYPES`), or
+ * spend first, racing the worker's call for a one-time as-you read.
+ * @param runId the run
+ * @param url the approved URL
+ * @param credentials an as-you fetch: one call, never remembered
+ * @returns false when this worker holds no state for the run, and nothing was granted
+ */
+export function grantRunFetch(runId: string, url: string, credentials: boolean): boolean {
+    const ctx = runs.get(runId);
+    if (!ctx) return false;
+    (credentials ? ctx.credOnce : ctx.consented).add(url);
+    return true;
+}
+
+/** Whether this run's worker-side fetch_url was already approved for `url` (a new one goes to the gate). */
+export function runFetchConsented(runId: string, url: string): boolean | undefined {
+    return runs.get(runId)?.consented.has(url);
 }
 
 /** Forget a run's worker-tool state, with its local tools. */
@@ -56,8 +83,12 @@ function runMl(ctx: RunCtx): MlApi {
             const format = opts.format === "html" ? "html" : "markdown";
             const tabUrl = ctx.tabUrl();
             const trust = await senderTrust({ tab: { id: ctx.tabId, url: tabUrl } as chrome.tabs.Tab, url: tabUrl });
-            const r = await fetchUrlFor({ url: String(url), credentials, rendered, format },
-                { tabId: ctx.tabId, frameUrl: tabUrl, tabUrl, untrusted: trust === "untrusted", disclose: false });
+            const r = await fetchUrlFor({ url: String(url), credentials, rendered, format }, {
+                tabId: ctx.tabId, frameUrl: tabUrl, tabUrl, untrusted: trust === "untrusted", disclose: false,
+                // The run's own approvals, which no page can reach (grantRunFetch).
+                consented: (u) => ctx.consented.has(u),
+                takeCred: (u) => ctx.credOnce.delete(u),
+            });
             if (r.error || !r.data) throw new Error(r.error || `the fetch of "${url}" returned nothing`);
             const data = r.data;
             const md = data.type === "html" && typeof data.text === "string" && data.markdown === undefined ? await htmlToMarkdownOffscreen(data.text) : undefined;
@@ -93,7 +124,7 @@ function runMl(ctx: RunCtx): MlApi {
 export function buildWorkerTools(runId: string, tabId: number, tabUrl: () => string, names: readonly string[]): MlTool[] {
     const wanted = names.filter((n) => WORKER_TOOL_NAMES.has(n));
     if (!wanted.length) return [];
-    const ctx: RunCtx = runs.get(runId) ?? { runId, tabId, tabUrl, python: names.includes("python_exec"), cache: new Map(), spent: { prompt: 0, completion: 0, calls: 0 } };
+    const ctx: RunCtx = runs.get(runId) ?? { runId, tabId, tabUrl, python: names.includes("python_exec"), cache: new Map(), spent: { prompt: 0, completion: 0, calls: 0 }, consented: new Set(), credOnce: new Set() };
     ctx.tabId = tabId; ctx.tabUrl = tabUrl;
     runs.set(runId, ctx);
     const ml = runMl(ctx);

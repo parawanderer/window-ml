@@ -79,7 +79,9 @@ only the buffered events of sessions it is not shut out of.
 A builtin tool that never reads the page runs in the worker for a run the worker built (`WORKER_TOOL_NAMES` in
 `src/sw/worker-tools.ts`), so what it reads never enters the page's world: the same tool from the same factory, given
 an `ml` the worker answers. Today: `fetch_url`, through `fetchUrlFor` (`sw-fetch-url.ts`) with the run's tab as an
-untrusted caller, so the run's approval mints exactly the consent a page's call would have needed; its Markdown comes
+untrusted caller. Its approvals are the RUN's (`grantRunFetch`: the consent and the one-time as-you grant live in the
+run's worker state, never on the tab), so no script on the tab can spend them through its own `FETCH_URL`, which it
+may still send (`RUN_TAB_TYPES`); after an eviction they are rebuilt empty, and a call then asks again. Its Markdown comes
 from the offscreen document (`HTML_TO_MD`) and its reader's model call is metered as the call's `subUsage`. The one
 `fetch_url` still answered by the page is a session render of the page the run is on, from its own live DOM. A
 read-only survey re-reads the run's fetches from the worker's cache (`_fetchCached` in `worker-readonly-ml.ts`), and a
