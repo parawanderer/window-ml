@@ -3269,7 +3269,7 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 /* A folded group's count: how many members, and how many hold something. */
 .rstate-count { font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--fg-faint); font-variant-numeric: tabular-nums; }
 /* One member: ONE LINE until opened, like a debug console's variables. Dimmed when it holds nothing for this run. */
-.rstate-member { border-top: 1px solid var(--border); }
+.rstate-member { }
 /* Its first row stays ONE line however long the preview: the name and the chips keep their width, the preview is cut. */
 .rstate-member > .jt-row, .rstate-member > .jt-node > .jt-row:first-child { white-space: nowrap; }
 .rstate-member > .jt-row > :is(.jt-preview, .jt-val, .rstate-none),
