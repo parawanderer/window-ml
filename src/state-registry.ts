@@ -36,6 +36,9 @@ export interface StateDecl {
     lostOn: StateLoss[];
     /** One sentence saying what it holds, in words the person reading the inspector would use. */
     describe: string;
+    /** Where the MODEL actually reads it (`ml.current.messages`), once it does. Absent for a `model` member means meant
+     *  for the model and not given to it yet: the inspector says so rather than claim a path that does not exist. */
+    exposedAs?: string;
     /** Plain data for one run, or undefined when the store holds nothing for it. Never a live reference: the result is
      *  handed to a reader that must not be able to reach the store through it. A store kept in storage reads async. */
     read?: (key: StateKey) => unknown;
@@ -62,14 +65,17 @@ const registry = new Map<string, StateDecl>(); // state: fixed
  * @returns the same declaration
  */
 export function defineState(decl: StateDecl): StateDecl {
-    if (registry.has(decl.id)) throw new Error(`state ${decl.id} is declared twice`);
+    // Keyed by REALM and id: a page-hosted run's messages are the same member as a background run's, held by the other
+    // host, and a bundle may load both declarations (the worker bundles page modules it never runs).
+    const key = `${decl.realm}:${decl.id}`;
+    if (registry.has(key)) throw new Error(`state ${decl.id} is declared twice in the ${decl.realm}`);
     if (decl.audience === "never" && decl.read) throw new Error(`state ${decl.id} is a secret and may not have a read`);
-    registry.set(decl.id, decl);
+    registry.set(key, decl);
     return decl;
 }
 
-/** Every declaration in this realm, in id order. */
-export const declaredState = (): StateDecl[] => [...registry.values()].sort((a, b) => a.id.localeCompare(b.id));
+/** Every declaration this bundle holds, in id order (one per realm for a member both hosts declare). */
+export const declaredState = (): StateDecl[] => [...registry.values()].sort((a, b) => a.id.localeCompare(b.id) || a.realm.localeCompare(b.realm));
 
 /**
  * What every readable store holds for one run. A member whose read returns undefined is left out (it holds nothing
@@ -104,12 +110,15 @@ export interface StateMember {
     audience: "model" | "human";
     lostOn: StateLoss[];
     describe: string;
+    /** See {@link StateDecl.exposedAs}. */
+    exposedAs?: string;
 }
 
 /** Every readable member one realm declares, in id order. */
 export const readableMembers = (realm: StateRealm): StateMember[] => declaredState()
     .filter((d) => d.read && d.audience !== "never" && d.realm === realm)
-    .map((d) => ({ id: d.id, realm: d.realm, scope: d.scope, audience: d.audience as "model" | "human", lostOn: [...d.lostOn], describe: d.describe }));
+    .map((d) => ({ id: d.id, realm: d.realm, scope: d.scope, audience: d.audience as "model" | "human", lostOn: [...d.lostOn], describe: d.describe,
+        ...(d.exposedAs ? { exposedAs: d.exposedAs } : {}) }));
 
 /** Forget every declaration. Tests only: a module's declarations run once per load. */
 export function resetStateRegistry(): void { registry.clear(); }
@@ -151,4 +160,25 @@ export function pageStateFrom(raw: unknown, taken: ReadonlySet<string>): { membe
         entries.push({ ...m, value: e.value, ...(typeof e.error === "string" ? { error: e.error.slice(0, 300) } : {}) });
     }
     return { members, entries };
+}
+
+/**
+ * The worker's snapshot of a run with what the run's page answered folded in. A page member the worker does not declare
+ * is added as the page's. One the worker DOES declare is the worker's, and the page's entry for it is taken only for a
+ * run the page hosts (the session index's word, never the page's) and only where the worker holds nothing for the run:
+ * a page-hosted run's messages, pointers and mailbox live in the page. For a background-hosted run, the page may not
+ * answer for any member the worker declares.
+ * @param worker the worker's members and entries
+ * @param raw the page's reply
+ * @param pageHosts whether the session index says the page hosts this run's loop
+ * @returns the merged snapshot, or null when the reply is not one
+ */
+export function withPageState(worker: { members: StateMember[]; entries: StateEntry[] }, raw: unknown, pageHosts: boolean): { members: StateMember[]; entries: StateEntry[] } | null {
+    const workerIds = new Set(worker.members.map((m) => m.id));
+    const page = pageStateFrom(raw, pageHosts ? new Set(worker.entries.map((e) => e.id)) : workerIds);
+    if (!page) return null;
+    return {
+        members: [...worker.members, ...page.members.filter((m) => !workerIds.has(m.id))],
+        entries: [...worker.entries, ...page.entries],
+    };
 }

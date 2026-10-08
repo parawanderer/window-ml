@@ -30,11 +30,20 @@ test("the model's snapshot leaves out human-only stores; the person's has both",
     assert.deepEqual((await R.readState({}, "human")).map((e) => e.id), ["run.mailbox", "run.pointers"]);
 });
 
-test("a secret cannot be given a read, and an id cannot be declared twice", () => {
+test("a secret cannot be given a read, and an id cannot be declared twice in one realm", () => {
     R.resetStateRegistry();
     assert.throws(() => R.defineState(decl({ id: "config.apiKey", audience: "never", read: () => "sk" })), /secret/);
     R.defineState(decl({ id: "config.apiKey", audience: "never" }));
     assert.throws(() => R.defineState(decl({ id: "config.apiKey", audience: "never" })), /twice/);
+});
+
+test("the same id in two realms is two declarations: a bundle can load both and each realm reads its own", async () => {
+    R.resetStateRegistry();
+    R.defineState(decl({ id: "run.messages", read: () => "the worker's" }));
+    R.defineState(decl({ id: "run.messages", realm: "page", read: () => "the page's" }));
+    assert.deepEqual((await R.readState({}, "model", "worker")).map((e) => e.value), ["the worker's"]);
+    assert.deepEqual((await R.readState({}, "model", "page")).map((e) => e.value), ["the page's"]);
+    assert.deepEqual(R.readableMembers("page").map((m) => m.id), ["run.messages"]);
 });
 
 test("a read hands back a copy, so a reader cannot reach the store through it", async () => {
@@ -118,6 +127,46 @@ test("a page cannot flood the pane: at most 32 members are read", () => {
     assert.equal(R.pageStateFrom({ members, entries: [] }, WORKER_IDS).members.length, 32);
 });
 
+// --- folding the page's answer into the worker's snapshot: who may answer for which member ---
+
+const wm = (id, over) => ({ id, realm: "worker", scope: "session", audience: "model", lostOn: ["worker-eviction"], describe: id, ...over });
+const WORKER = {
+    members: [wm("run.init"), wm("run.messages"), wm("run.pointers"), wm("run.mailbox", { audience: "human" })],
+    entries: [{ ...wm("run.init"), value: { task: "the real task" } }],
+};
+const PAGE_REPLY = {
+    members: [pageMember({ id: "run.messages" }), pageMember({ id: "run.mailbox", audience: "human" }), pageMember({ id: "run.init" }), pageMember({ id: "run.answer" })],
+    entries: [
+        { id: "run.messages", value: [{ role: "user", text: "from the page loop" }] },
+        { id: "run.mailbox", value: [{ text: "steer" }] },
+        { id: "run.init", value: { task: "forged" } },
+        { id: "run.answer", value: [] },
+    ],
+};
+
+test("for a BACKGROUND-hosted run the page answers only for members the worker does not declare", () => {
+    const got = R.withPageState(WORKER, PAGE_REPLY, false);
+    assert.deepEqual(got.members.map((m) => [m.id, m.realm]),
+        [["run.init", "worker"], ["run.messages", "worker"], ["run.pointers", "worker"], ["run.mailbox", "worker"], ["run.answer", "page"]]);
+    assert.deepEqual(got.entries.map((e) => [e.id, e.realm]), [["run.init", "worker"], ["run.answer", "page"]],
+        "the page's messages and mailbox are not taken for a run the worker hosts, even where the worker holds nothing");
+});
+
+test("for a PAGE-hosted run the page fills the worker's members the worker holds nothing for, labelled as the page's", () => {
+    const got = R.withPageState(WORKER, PAGE_REPLY, true);
+    assert.deepEqual(got.members.map((m) => m.id), ["run.init", "run.messages", "run.pointers", "run.mailbox", "run.answer"],
+        "each member listed once, as the worker declares it");
+    assert.equal(got.members.find((m) => m.id === "run.mailbox").audience, "human", "the worker's declaration, not the page's");
+    assert.deepEqual(got.entries.map((e) => [e.id, e.realm]),
+        [["run.init", "worker"], ["run.messages", "page"], ["run.mailbox", "page"], ["run.answer", "page"]]);
+    assert.deepEqual(got.entries.find((e) => e.id === "run.init").value, { task: "the real task" },
+        "a member the worker DOES hold for the run is never the page's to answer, hosted or not");
+});
+
+test("a reply that is not a snapshot is reported, not merged", () => {
+    for (const pageHosts of [false, true]) assert.equal(R.withPageState(WORKER, { members: "x" }, pageHosts), null);
+});
+
 // --- what the ratchet asks about ---
 
 test("module-level Maps, Sets, signals, empty literals and lets are stores; indented ones and SCREAMING_CASE tables are not", () => {
@@ -167,16 +216,21 @@ test("a declared name must appear as a whole identifier, not inside a longer one
     assert.deepEqual(C.undeclared(files).map((h) => h.name), ["runs"]);
 });
 
-test("every defineState id under src/ is declared once", () => {
+test("every defineState id under src/ is declared once per realm: the same member of a run may be held by either host", () => {
     const ids = [];
     const walk = (dir) => {
         for (const e of readdirSync(dir, { withFileTypes: true })) {
             const full = path.join(dir, e.name);
             if (e.isDirectory()) walk(full);
-            else if (/\.tsx?$/.test(e.name)) ids.push(...C.declarationsIn(readFileSync(full, "utf8")).ids);
+            else if (/\.tsx?$/.test(e.name)) {
+                const d = C.declarationsIn(readFileSync(full, "utf8"));
+                ids.push(...d.ids.map((id, i) => `${d.realms[i]}:${id}`));
+            }
         }
     };
     walk(path.join(import.meta.dirname, "..", "src"));
-    assert.ok(ids.includes("run.pointers"), "the worker's pointer store is declared");
+    assert.ok(ids.includes("worker:run.pointers"), "the worker's pointer store is declared");
+    assert.ok(ids.includes("page:run.pointers"), "and a page-hosted run's, in the page");
+    assert.ok(!ids.some((k) => k.startsWith("null:")), "every declaration names its realm as a literal");
     assert.deepEqual(ids.filter((id, i) => ids.indexOf(id) !== i), []);
 });

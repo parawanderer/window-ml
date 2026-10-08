@@ -26,7 +26,8 @@ import { createNavBarrier } from "./nav-barrier";
 import { releaseSessionValues } from "./sw-values";
 import { TokenStore } from "../pointers/token-pipe";
 import { defineState } from "../state-registry";
-import { CHARS_PER_TOKEN, type CurrentSnapshot, type MessageMeta } from "../agent/current-context";
+import { CHARS_PER_TOKEN, type CurrentSnapshot } from "../agent/current-context";
+import { contextTextOf, pickMeta, pointerRow, preview } from "../agent/state-rows";
 
 // Design A: the AbortController for each live background run, keyed by runId, so a CANCEL_RUN message
 // (the HUD's "Cancel agent run") stops the loop at the next boundary AND kills a slow in-flight model
@@ -43,7 +44,8 @@ defineState({
     id: "run.init", scope: "session", realm: "worker", audience: "model", lostOn: ["worker-eviction"],
     describe: "What the run was started with: the task, model, step budget, tool names and what it may do without asking.",
     read: ({ runId }) => {
-        const p = runId ? bgRuns.get(runId)?.p : undefined;
+        // `bgRuns` holds a run once a turn has settled; during the FIRST turn the payload is only the live turn's.
+        const p = runId ? bgRuns.get(runId)?.p ?? turnByRun.get(runId)?.().payload : undefined;
         return p && {
             task: p.task, model: p.model, think: p.think, maxSteps: p.maxSteps, tools: p.tools.map((t) => t.name),
             images: p.images?.length ?? 0, surface: p.surface, unattended: !!p.unattended, toolTokens: !!p.toolTokens,
@@ -370,6 +372,8 @@ export const contextByRun = new Map<string, (extra?: { model?: string | null }) 
  *  turn without asking again. Set at the turn's start and dropped with it in `untrackRun`, like `contextByRun`. */
 export const turnByRun = new Map<string, () => {
     task: string; images: number; origin: import("../contract/contract-run").PromptOrigin | null; startedTs: number; origins: string[]; sheets: string[];
+    /** The payload the turn was hosted with: on a first turn, the only copy of the start payload (`bgRuns` has none yet). */
+    payload: StartRunPayload;
 }>();
 defineState({
     id: "run.input", scope: "run", realm: "worker", audience: "model", lostOn: ["worker-eviction", "turn-end"],
@@ -388,14 +392,6 @@ defineState({
     },
 });
 
-/** How much of each message's text the inspector is handed: enough to recognise it, never the whole context. */
-const MESSAGE_PREVIEW = 160;
-const preview = (m: NeutralMessage): string => {
-    const t = typeof m.content === "string" ? m.content : "";
-    const calls = m.tool_calls?.map((c) => c.name).join(", ");
-    const text = t || (calls ? `→ ${calls}` : "");
-    return text.length > MESSAGE_PREVIEW ? `${text.slice(0, MESSAGE_PREVIEW)}…` : text;
-};
 defineState({
     id: "run.messages", scope: "session", realm: "worker", audience: "model", lostOn: ["worker-eviction"],
     describe: "The context the run's next model call gets, one row per message: who wrote it, its size, when, and from which step.",
@@ -407,7 +403,6 @@ defineState({
         return bgRuns.get(runId)?.messages.map((m) => ({ role: m.role, text: preview(m), tokens: Math.ceil(((typeof m.content === "string" ? m.content.length : 0) + JSON.stringify(m.tool_calls ?? "").length) / CHARS_PER_TOKEN), tokensBasis: "estimated", images: m.images?.length ?? 0 }));
     },
 });
-const pickMeta = (x: MessageMeta) => ({ id: x.id, tokens: x.tokens, tokensBasis: x.tokensBasis, images: x.images, ts: x.ts, step: x.step, tool: x.tool, truncated: x.truncated });
 
 // The `@tool:` pointer store per background-hosted run, kept ACROSS the turns of one session so a follow-up
 // ("how did you compute that?") can still dereference the previous turn's output. Deliberately NOT a field on
@@ -426,15 +421,7 @@ defineState({
         const all = runId ? tokensByRun.get(runId)?.all() : undefined;
         if (!all) return undefined;
         const text = contextText(runId!);
-        return all.map((v) => ({
-            id: v.id, tool: v.tool, kind: v.kind, label: v.label ?? null, step: v.step, seq: v.seq ?? null, ts: v.t,
-            chars: (v.full ?? v.out).length, shownChars: v.out.length, rows: v.table?.shape?.[0] ?? null,
-            image: !!v.image,
-            // The value-store key of its whole body, when the pointer holds only a preview (`run.values` has the row).
-            stored: v.value ?? null,
-            // Whether the context the next model call gets still MENTIONS it. Null when that context cannot be read.
-            linked: text == null ? null : text.includes(v.id),
-        }));
+        return all.map((v) => pointerRow(v, text));
     },
 });
 
@@ -442,8 +429,7 @@ defineState({
  *  still mentions. Null when neither is held. */
 function contextText(runId: string): string | null {
     const msgs = contextByRun.get(runId)?.().messages ?? bgRuns.get(runId)?.messages;
-    if (!msgs) return null;
-    return msgs.map((m) => `${typeof m.content === "string" ? m.content : ""}${m.tool_calls ? JSON.stringify(m.tool_calls) : ""}`).join("\n");
+    return msgs ? contextTextOf(msgs) : null;
 }
 
 /** This run's pointer store, created on the first turn and REUSED by every later turn of the same session. */

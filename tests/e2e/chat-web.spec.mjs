@@ -3074,3 +3074,16 @@ test("a streamed THOUGHT also silences the status line, which would otherwise co
     await expect(page.locator(".pending-note")).toBeHidden();
     expect(errors, "no page errors").toEqual([]);
 });
+
+// --- what a remote client is not offered ---
+
+test("the Run state panel is not offered here: it reads this browser's own runs, and a remote client has none", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
+    await page.locator(".chat-gear-btn").first().click();
+    // Panels may be offered for other reasons; whichever it lists, the run's state is not among them.
+    const panels = page.getByRole("menuitem", { name: "Panels" });
+    if (await panels.count()) await panels.click();
+    await expect(page.getByRole("menuitemcheckbox", { name: /Run state/ })).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await page.close();
+});

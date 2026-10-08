@@ -17,6 +17,7 @@
 //     `tests/e2e/session-index.spec.mjs` fails if the call disappears.
 
 import { type AgentLoopDeps, shotTurnMessage, runAgentLoop } from "../agent/agent-loop";
+import { setPageContext, trackPageHosted } from "../agent/page-run-state";
 import { resolveOutputs, makeAnswerFacade, finalizeAnswer } from "../pointers/answer-set";
 import { defaultApprove, logStep, normalizeApproval, formatReadonlyExec, readonlyRefused } from "../agent/approval";
 import { autoApprovePython } from "../agent/auto-approve";
@@ -397,6 +398,8 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
     // The run's curated answer set (created per run on the ToolContext). The `answer` tool mutates it
     // directly — no per-call accumulation here — and the loop reads it at assembly.
     const answerSet = toolCtx.answer!;
+    // The state inspector reads this run from the PAGE's registry, since its loop is here (page-run-state.ts).
+    trackPageHosted(runHash, control, answerSet);
     const runToolDep = async (name: string, args: Record<string, unknown>, onStream?: (text: string) => void) => {
         const tool = byName[name];
         const env = await executeTool(tool, args, toolCtx, onStream);
@@ -578,7 +581,7 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
         answerSet.clear();   // the answer set reflects THIS turn's designations only
         enterAgentRun();   // suppress orphan chat sessions from a tool's internal ml.chat; finally-decremented
         try {
-            const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended, toolTokens, runHash, seqBase: control.seqBase, ...(turnsRun++ > 0 ? { after: "human" as const } : {}), stream, ...(origin ? { origin } : {}), tokenStore: (control.tokens ??= new TokenStore()), labelMatch, tokenSink: (fn) => { pageDeref = fn; } }, deps);
+            const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended, toolTokens, runHash, seqBase: control.seqBase, ...(turnsRun++ > 0 ? { after: "human" as const } : {}), stream, ...(origin ? { origin } : {}), tokenStore: (control.tokens ??= new TokenStore()), labelMatch, tokenSink: (fn) => { pageDeref = fn; }, contextSink: (fn) => setPageContext(runHash, () => fn()) }, deps);
             control.seqBase += turnMaxSeq; turnMaxSeq = 0;   // next turn's step seqs continue past this turn's
             control.stepBase += turnMaxStep; turnMaxStep = 0;   // …and its step numbers, so turn groups stay distinct
             // The bottom-of-answer render: the outputs the model DESIGNATED into the answer set, minus
@@ -594,7 +597,7 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
             // then re-throw so ml.agent() still rejects. (An abort already resolved cleanly inside.)
             if (!signal?.aborted) emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, summary: "", steps: 0, hitCap: false, error: (e as Error)?.message || String(e) });
             throw e;
-        } finally { exitAgentRun(); }
+        } finally { exitAgentRun(); setPageContext(runHash, undefined); }
     };
     // Register the run so ml.agent(task, { resume }) can re-enter this turn's loop (createAgent uses
     // its own control instead). A resume continues control.messages just like a handle's run().
