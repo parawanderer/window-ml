@@ -118,6 +118,12 @@ tokens, loop unbounded) and assert `NotInDialect`/`Denied` or the inert `METHOD_
 contract, not just the new surface: HALTING tests (in a worker with a timeout), FAILURE tests (falling out of
 dialect leaves nothing behind), and an update to the doc. Why, with the `for…of` that broke: the doc's last section.
 
+**RULE — a new agent tool, `ml.*` member or page-started message type gets a RED-TEAM PASS, without being asked.**
+Before the PR, run a separate agent whose only job is to attack it from a hostile page (shares the main world, posts
+any window message, knows every run id), writing tests that fail first in `tests/redteam.test.js` or
+`tests/e2e/site-access.spec.mjs`; the change lands with them passing. What to attack: `docs/dev/site-access.md`,
+"Adding a tool, a member or a message"; how: the `redteam` skill.
+
 ## Where the implementation notes live — read the one you are about to change
 
 This file holds the rules for working in the repo and the traps. How each subsystem works, and why it is built
