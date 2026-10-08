@@ -19,6 +19,7 @@ const PY_TIMEOUT_MS = 15000;
 const PY_START_TIMEOUT_MS = 120000;
 
 import { ValueStore } from "./pointers/value-store";
+import { htmlToMarkdown } from "./dom/html-to-md";
 
 // The value store, reached here rather than in the worker: stored bytes are TRANSFERRED to the worker (no copy), and the
 // one copy is the worker's, into Pyodide's memory. A returned frame's IPC comes back the same way and is written here,
@@ -236,4 +237,15 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
                 .then((r) => storeReturnedTable(r, msg.valueBudget)))
         .then(sendResponse, e => sendResponse({ ok: false, stdout: "", error: String(e) }));
     return true;   // keep the channel open for the async result
+});
+
+// HTML→Markdown for a fetch the WORKER made (sw-offscreen.ts `htmlToMarkdownOffscreen`): the converter needs a DOM. Only
+// the worker asks: a message from a tab (a content script) is not answered.
+chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
+    if (msg?.type !== "HTML_TO_MD") return undefined;
+    if (sender.id !== chrome.runtime.id || sender.tab) return undefined;
+    let markdown: string | undefined;
+    try { markdown = htmlToMarkdown(String(msg.html ?? "")); } catch { /* answered as undefined: the caller keeps the text */ }
+    sendResponse({ markdown });
+    return undefined;
 });

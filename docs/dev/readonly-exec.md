@@ -432,7 +432,7 @@ survey AUTO-APPROVES, so a prompt-injected one would hand it over with no human 
 | realm | has | has not |
 | --- | --- | --- |
 | `page` (default) | `document`, `getComputedStyle`, `ml.queryAll`/`a11y`/`fetch` (cached)/`answer` | the run's context: `ml.current` is a REFUSAL, not `undefined` |
-| `worker` (`sw-readonly.ts`) | `ml.current`, and whatever read-only `ml` the host hands in | the page: every route to it raises `NeedsPage` |
+| `worker` (`sw-readonly.ts`) | `ml.current`, and whatever read-only `ml` the host hands in, `fetch` included (cache-only, over the run's own `fetch_url` reads) | the page: every route to it raises `NeedsPage` |
 
 The host tries the worker first and delegates to the page on `NeedsPage`. A survey needing both trips in the worker
 and is refused on the page, so it reaches the human in either order. Nothing lexical decides it: an alias
@@ -442,6 +442,10 @@ promise.
 - **The worker's `ml` is an ALLOW list.** Built by leaving out what reads the page, and reaching ANY member it does
   not carry (by a read, a call or a destructuring) raises `NeedsPage`, so a page-reading member added later costs an
   extra hop and never a hole. The page roots `document` and `getComputedStyle` are getters that raise it.
+- **`ml.fetch` is cache-only in both realms, each over its own cache.** In the worker a miss, or any mode the cache does
+  not hold, raises `NeedsPage`: the page's cache (an approved exec's inline fetch) or its live document may answer it.
+  On the page a miss is a refusal. Both caches hold frozen copies, so a survey that writes to a re-read result gets a
+  `TypeError` and the next re-read is unchanged.
 - **`NeedsPage` subclasses `NotInDialect`**, so it inherits every refusal guarantee for free: `try/catch` re-raises it,
   the evaluator rolls back on it, and a caller that does not know the class reads it as a refusal and asks the human.
 - **On the page, `ml.current` refuses rather than reading `undefined`.** An absent member has always read as

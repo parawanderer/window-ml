@@ -46,7 +46,8 @@ page-hosted one. Several stores exist once per host.
 | Model switched mid-run | `runModels` | `ml_run_models` (LRU 200) | `run.model` |
 | The run's current tab and URL | `activeRuns`, `tabPageUrl` | `ml_pinned_tabs` (pinned tabs only) | `run` |
 | Interrupted / auto-resumed | `hydratedRuns`, `resurrectedRuns` | derived from `ml_bgrun_*` | `run` |
-| Delegated sub-call spend | `subTally` / `bgRuns.sub`; page: `subUsage` (`bus.ts`) | in `history.sub` if saved | `run` (the model sees it via `chat_metadata`) |
+| Delegated sub-call spend | `subTally` / `bgRuns.sub`; page: `subUsage` (`bus.ts`); a worker-built run's worker tools: `runs[runId].spent` (`worker-tools.ts`), reported per call as the envelope's `subUsage` | in `history.sub` if saved | `run` (the model sees it via `chat_metadata`) |
+| What a worker-built run's `fetch_url` read (the read-only survey's free re-reads) | `runs[runId].cache` (`worker-tools.ts`, worker memory, frozen copies); page-hosted and approved exec: `mlFetchCache` (`injected.ts`, page) | no; the worker's goes with an eviction (a re-read then asks again) | maybe |
 | Execution log | `runLog` (`sw-run-log.ts`) | `ml_run_log` (session storage) | `run.log`, read by the model as `ml.current.log` (no `key`/`tab`/`origin`) |
 | Environment: debugger attached, tab pinned, navigation barrier, hub devices granted this session | `attachedDebuggees`, `ml_pinned_tabs`, `navBarrier`, `SessionPublisher.granted` | partly | `run` (new) |
 | Docs already shown to the model | `docsMemories` (`tool-exec.ts`, page) | no | maybe |
