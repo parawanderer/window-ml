@@ -445,6 +445,20 @@ jobs:
           key: pyodide-wheels-${{ hashFiles('package-lock.json', 'src/python/python-env.ts') }}
       - if: steps.pyocache.outputs.cache-hit != 'true'
         run: npm run fetch-pyodide
+      # The pinned hub release, for the specs that pair a client to this browser through a real `wmlhub`
+      # (chat-pairing, remote-stream). Without it they SKIP, and they did on every run: the `hub` job fetches the
+      # binary but runs `npm test`, not Playwright. Cached by the pin, exactly as the `hub` job caches it, and checked
+      # the same way, so a broken download is a red step rather than a green run of skipped tests.
+      - name: Cache the hub binary
+        id: hubcache
+        uses: actions/cache@v6
+        with:
+          path: ../window-ml-hub-*
+          key: wmlhub-${{ hashFiles('tests/fixtures/hub-harness.mjs') }}
+      - if: steps.hubcache.outputs.cache-hit != 'true'
+        run: npm run fetch-hub
+      - name: The specs can see the hub
+        run: node --import tsx -e "import('./tests/fixtures/hub-harness.mjs').then((h) => { if (!h.HAVE_HUB) { console.error(h.NO_HUB); process.exit(1); } console.log('hub binary:', h.BIN); })"
       # `test:e2e` runs `pretest:e2e` (npm run build) first, so it exercises the built dist/. The harness is
       # headless now (full Chromium in --headless=new); xvfb stays as a safety net for anything that asks
       # for a window (the narrated demos, E2E_HEADFUL=1) so such a run fails on its assertion, not on DISPLAY.

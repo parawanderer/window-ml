@@ -354,7 +354,8 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   run fetch-hub`** downloads the pinned tag's published binaries (`wmlhub` and `wmlbox`), verifies the checksum
   published beside them, runs one to prove it starts here, and puts both where `tests/fixtures/hub-harness.mjs`
   looks. `WMLHUB_BIN` still wins, for a build of your own while changing the hub itself. CI runs them in the `hub`
-  job, on PRs that touch what they cover; before the hub published binaries it could not, which is why a skipped test
+  job, on PRs that touch what they cover, and the e2e shards fetch it too, for the Playwright specs that pair a client
+  through a hub (`chat-pairing`, `remote-stream`), which skipped on every run until they did; before the hub published binaries it could not, which is why a skipped test
   and a passing one looking identical on a green page is worth remembering.
 - **Coverage: `npm run coverage`** — Node's built-in coverage (no dependency), writing
   `coverage/lcov.info` (the **Coverage Gutters** VSCode extension reads it with no configuration) plus a
