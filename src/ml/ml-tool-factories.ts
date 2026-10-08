@@ -206,7 +206,7 @@ export const fetchTool = function(this: MlApi): MlTool {
             "best-effort TYPE (json/csv/parquet/arrow/html/xml/markdown/code/text/binary) so you can chain — JSON comes " +
             "pre-parsed, a code file names its language. The type is a HEURISTIC " +
             "(resolved from the Content-Type header, a content sniff, and the URL extension — a server can " +
-            "mislabel), not authoritative. GET only (no headers/body/auth). Each NEW url is approved once by " +
+            "mislabel), not authoritative. GET only: no request body and no custom request headers; `credentials: true` is the one way to send the user's cookies. Each NEW url is approved once by " +
             "the user, then remembered for the session. Prefer this over `navigate` when only YOU need to read a URL; when the user should see the page, see the NOTE below. " +
             "**TABLES (csv/tsv/parquet/arrow) come back PARSED, as a pandas-shaped object** — you do not need to split " +
             "the text, and you must not guess the separator: it is discovered (`,` `\\t` `;` `|`), quoted fields and " +
