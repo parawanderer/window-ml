@@ -136,6 +136,6 @@ hold live network handles: neither shown nor evaluated).
 Each realm's bundle has its own registry (`src/state-registry.ts`); a snapshot asks the realm that holds the run.
 Declared so far, in the worker: `run.init`, `run.sub`, `run.model`, `run.interrupted`, `run.mailbox`, `run.pointers`,
 `run.page`, `run.messages`, `run.input`, `grants.turn` (`sw-runs.ts`), `run.values` (`sw-values.ts`), `run.approvals`, `grants.call`, `grants.fetch`, `grants.credentialedFetch` (`sw-consent.ts`),
-`run.log` (`sw-run-log.ts`). `node scripts/check-state.mjs` with no arguments lists the stores that predate the ratchet
+`run.log` (`sw-run-log.ts`), `session.title` (`sw-sessions.ts`). `node scripts/check-state.mjs` with no arguments lists the stores that predate the ratchet
 and are neither declared nor marked (134 when it was written). This file shrinks to the scopes, the places and the
 hazards as the declarations take over its rows.
