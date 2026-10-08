@@ -365,7 +365,7 @@ export async function runOnce(cfg = {}) {
         python = false, toolTokens = false, agentOptions = {},
         backend = null, script = DEFAULT_SCRIPT, warm = true, warmAll = false,
         dist = null, artDir = null, approve = "auto", capture = "failure",
-        focusSidebar = true, hold = false, synthetic = true, sharedWatches = [], nextTurn = null, decide = null,
+        focusSidebar = true, hold = false, synthetic = true, sharedWatches = [], watchNotes = {}, nextTurn = null, decide = null,
         timeoutMs = followup ? 240000 : 120000,
         log = () => {}, onEvent = null,
     } = cfg;
@@ -407,7 +407,8 @@ export async function runOnce(cfg = {}) {
         if (synthetic) await ext.sw.evaluate(() => chrome.storage.local.set({ ml_synthetic_traffic: true }));
         // Watches SHARED with the model, as the Run state panel stores them when its eye is clicked: the run's
         // `ml.current.debug.userWatches` then carries them (src/sw/sw-shared-watches.ts).
-        if (sharedWatches.length) await ext.sw.evaluate((w) => chrome.storage.local.set({ ml_runstate_watches: w, ml_runstate_shared: w }), sharedWatches);
+        if (sharedWatches.length) await ext.sw.evaluate(([w, n]) => chrome.storage.local.set({ ml_runstate_watches: w, ml_runstate_shared: w, ml_runstate_watch_notes: n }),
+            [sharedWatches, watchNotes]);
         await configureExtension(ext.sw, {
             ...(seedCfg || realCfg),
             apiFormat: backend?.apiFormat || "openai",

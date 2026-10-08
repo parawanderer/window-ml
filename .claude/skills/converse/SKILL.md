@@ -28,7 +28,7 @@ until grep -q "waiting for inbox\|^done\|^gate" $D/status 2>/dev/null; do sleep 
 ```
 
 Without `TASK`, the first message is the first inbox file. Everything else is observe's env (`START`, `TOOLS`,
-`PYTHON`, `TOOLTOKENS`, `SHARED_WATCHES`, `WATCH`, `HEADFUL`, `WARM`, `APPROVE`). Each turn gets runOnce's
+`PYTHON`, `TOOLTOKENS`, `SHARED_WATCHES`, `WATCH_NOTES`, `WATCH`, `HEADFUL`, `WARM`, `APPROVE`). Each turn gets runOnce's
 `timeoutMs`; a session with no inbox message for `CONVERSE_IDLE_MS` (default 30 min) ends on its own.
 
 ## Gotchas

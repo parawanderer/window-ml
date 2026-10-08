@@ -51,6 +51,8 @@ const main = async () => {
         toolTokens: !!process.env.TOOLTOKENS,
         // SHARED_WATCHES='["ml.current.run.step"]' → watches shared with the model before the run starts.
         sharedWatches: process.env.SHARED_WATCHES ? JSON.parse(process.env.SHARED_WATCHES) : [],
+        // WATCH_NOTES='{\"ml.current.run.step\":\"is it moving?\"}' → the person's note on a shared watch, by expression.
+        watchNotes: process.env.WATCH_NOTES ? JSON.parse(process.env.WATCH_NOTES) : {},
         backend,
         warm: process.env.WARM !== "0",
         warmAll: !!process.env.WARM_ALL,
