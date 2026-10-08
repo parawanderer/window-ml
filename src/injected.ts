@@ -23,20 +23,20 @@ import { makeDomTools } from "./tools";
 import { pipeStages } from "./token-pipe";
 import { DerefText } from "./deref-read";
 import { makeBackgroundTaskPromise } from "./bridge";
-import { makeDynamicTools } from "./dynamic-tools";
-import type { DynamicToolNamespace } from "./dynamic-tools";
+import { makeDynamicTools } from "./ml/dynamic-tools";
+import type { DynamicToolNamespace } from "./ml/dynamic-tools";
 import { renderArgs, logStep } from "./approval";
 import { captureVerify } from "./builtin-tools";
 import { currentAnswer, currentDeref, currentServerAllow, currentHasTool } from "./tool-exec";
 import { installToolDelegation, registerRun, endRun } from "./run-delegation";
-import { models, serverTools, execServerTool, info, capabilities, getModel, embed, config, setModel, ps, unload } from "./ml-server";
-import { defineTool, lookTool, locateTool, clickTool, typeTool, navigateTool, fetchTool, pythonTool, chatMetaTool } from "./ml-tool-factories";
-import { read, screenshot, _shotBox, _stitchFullPage, _resolveVisionModel, _modelSees, _nativeLookTool, _imageToDataUrl, _fetchImageBase64 } from "./ml-vision";
-import { mlFetchCache } from "./ml-fetch-cache";
-import { pythonExec, _loadTable, _resolveTable } from "./ml-python";
-import { createChat, resumeChat, chat, step } from "./ml-chat";
-import { agent } from "./ml-agent-run";
-import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } from "./ml-agent-handle";
+import { models, serverTools, execServerTool, info, capabilities, getModel, embed, config, setModel, ps, unload } from "./ml/ml-server";
+import { defineTool, lookTool, locateTool, clickTool, typeTool, navigateTool, fetchTool, pythonTool, chatMetaTool } from "./ml/ml-tool-factories";
+import { read, screenshot, _shotBox, _stitchFullPage, _resolveVisionModel, _modelSees, _nativeLookTool, _imageToDataUrl, _fetchImageBase64 } from "./ml/ml-vision";
+import { mlFetchCache } from "./ml/ml-fetch-cache";
+import { pythonExec, _loadTable, _resolveTable } from "./ml/ml-python";
+import { createChat, resumeChat, chat, step } from "./ml/ml-chat";
+import { agent } from "./ml/ml-agent-run";
+import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } from "./ml/ml-agent-handle";
 
 // Every family that used to live in the window.ml literal now has a module above; what is left here is the
 // object that binds them together, the small `_`-prefixed introspection helpers, and the page's own window

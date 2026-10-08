@@ -8,16 +8,16 @@
 // The handle is a view, not an authority. It asks the run to do something and the run decides; a transcript
 // still changes only through the session's own events.
 
-import { resolveOutputs } from "./answer-set";
-import { renderArgs } from "./approval";
-import { makeBackgroundTaskPromise } from "./bridge";
-import { setCdpEnabled } from "./builtin-tools";
-import { handleRegistry, agentRegistry, enterAgentRun, emitDebug, exitAgentRun } from "./bus";
-import type { MlApi, AgentOptions, MlAgentHandle, ApprovalRequest, RebuildConfig, MlTool, VisionMemory, AgentResult } from "./contract";
-import { setPierceClosedShadow } from "./dom";
+import { resolveOutputs } from "../answer-set";
+import { renderArgs } from "../approval";
+import { makeBackgroundTaskPromise } from "../bridge";
+import { setCdpEnabled } from "../builtin-tools";
+import { handleRegistry, agentRegistry, enterAgentRun, emitDebug, exitAgentRun } from "../bus";
+import type { MlApi, AgentOptions, MlAgentHandle, ApprovalRequest, RebuildConfig, MlTool, VisionMemory, AgentResult } from "../contract";
+import { setPierceClosedShadow } from "../dom";
 import { AgentHandle } from "./ml-agent";
-import { registerRun, endRun, runAnswer } from "./run-delegation";
-import { suspiciousArgsWarning } from "./security";
+import { registerRun, endRun, runAnswer } from "../run-delegation";
+import { suspiciousArgsWarning } from "../security";
 
 /**
  * A stateful agent session — the agent analogue of {@link module:ml.createChat}. Two primitives:

@@ -12,15 +12,15 @@
 // Images reach the model as data URLs built in the BACKGROUND, not on a canvas: a cross-origin `<img>` without
 // CORS taints the canvas, so pixel readback fails even for something already rendered on screen.
 
-import { makeBackgroundTaskPromise, hideSidebarForShot } from "./bridge";
-import { VIEWS_PARAM, targetRender, lookViews, BOX_OVER_TEXT_TIP, legendFor } from "./builtin-tools";
-import type { MlApi } from "./contract";
-import type { MlPublicConfig } from "./contract/contract-config";
-import type { MlTool, ToolResult } from "./contract/contract-agent";
-import type { ShotBox, VisionMemory } from "./contract/contract-render";
-import { queryAll, isElement, viewportRect, classifyOverlay, errText } from "./dom";
-import { pickAccentColorForTarget, annotate } from "./locate";
-import { POINT_RE, resolvePoint, PT_LOOK_RADIUS, cropDataUrl, BOX_RE, resolveBox, MIN_SHOT_PX, markSeen } from "./util";
+import { makeBackgroundTaskPromise, hideSidebarForShot } from "../bridge";
+import { VIEWS_PARAM, targetRender, lookViews, BOX_OVER_TEXT_TIP, legendFor } from "../builtin-tools";
+import type { MlApi } from "../contract";
+import type { MlPublicConfig } from "../contract/contract-config";
+import type { MlTool, ToolResult } from "../contract/contract-agent";
+import type { ShotBox, VisionMemory } from "../contract/contract-render";
+import { queryAll, isElement, viewportRect, classifyOverlay, errText } from "../dom";
+import { pickAccentColorForTarget, annotate } from "../locate";
+import { POINT_RE, resolvePoint, PT_LOOK_RADIUS, cropDataUrl, BOX_RE, resolveBox, MIN_SHOT_PX, markSeen } from "../util";
 
 /**
  * OCR: transcribe baked-in text from an image to a plain string, using
@@ -53,7 +53,7 @@ export const OCR_INSTRUCTION = "Transcribe all text in this image exactly as it 
  * @param opts the per-call model, instruction and context-size overrides
  * @returns the FETCH_LLM payload
  */
-export function ocrRequest(dataUrl: string, { model = null, prompt = null, numCtx = null }: { model?: string | null; prompt?: string | null; numCtx?: number | null } = {}): import("./contract").FetchLlmPayload {
+export function ocrRequest(dataUrl: string, { model = null, prompt = null, numCtx = null }: { model?: string | null; prompt?: string | null; numCtx?: number | null } = {}): import("../contract").FetchLlmPayload {
     return {
         messages: [{ role: "user", content: prompt || OCR_INSTRUCTION, images: [dataUrl] }],
         think: null,

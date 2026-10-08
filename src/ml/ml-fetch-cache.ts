@@ -5,7 +5,7 @@
 // that names a URL the run already fetched. Holding it in either of those files makes the other import that
 // file, and the two import each other back.
 
-import { makeBackgroundTaskPromise } from "./bridge";
+import { makeBackgroundTaskPromise } from "../bridge";
 import { FetchCache, estimateFetchResultBytes } from "./fetch-cache";
 
 /** The page fetch cache's estimated memory budget. Enough for the table a step just fetched plus a few smaller
@@ -23,6 +23,6 @@ const FETCH_CACHE_BUDGET_BYTES = 64_000_000;
 // reading it is the handoff this cache exists for; evicted URLs are remembered so a miss can say so.
 // Each budget eviction goes to the housekeeping log (docs/dev/housekeeping.md), reported from here because the
 // cache lives in the page: the worker stamps it page-origin, and only this tab reads its key (the URL) back.
-export const mlFetchCache = new FetchCache<import("./contract").FetchResult>(FETCH_CACHE_BUDGET_BYTES, estimateFetchResultBytes, undefined, (key, bytes) => {
+export const mlFetchCache = new FetchCache<import("../contract").FetchResult>(FETCH_CACHE_BUDGET_BYTES, estimateFetchResultBytes, undefined, (key, bytes) => {
     makeBackgroundTaskPromise("HOUSEKEEPING_REPORT_REQUEST", "HOUSEKEEPING_REPORT_RESPONSE", { subsystem: "fetch-cache", kind: "evict", reason: "budget", key, bytes, detail: { budgetBytes: FETCH_CACHE_BUDGET_BYTES } }).catch(() => { /* a log, never worth a failure */ });
 });

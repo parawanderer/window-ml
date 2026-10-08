@@ -34,7 +34,7 @@ import { VisionMemory, ShotBox } from "./contract/contract-render";
 import { LoadedModel, ServerTool, ServerToolResult, OllamaInfo } from "./contract/contract-server";
 
 // Type-only: the unit-vector wrapper `ml.embed` resolves to. embedding.ts imports nothing, so no cycle.
-import type { Embedding } from "./embedding";
+import type { Embedding } from "./ml/embedding";
 import type { JsonPathNode } from "./json-path";
 
 /* ------------------------------- config ------------------------------- */
@@ -291,9 +291,9 @@ export interface MlApi {
     /** The same tools as a callable NAMESPACE — `ml.dynamicTools.<bundle>.<fn>(args)`, with the function's
      *  own `.schema` on the callable and the arguments checked against it before anything is dispatched.
      *  See `dynamic-tools.ts`. */
-    dynamicTools: import("./dynamic-tools").DynamicToolNamespace;
+    dynamicTools: import("./ml/dynamic-tools").DynamicToolNamespace;
     /** @internal memoised namespace behind {@link dynamicTools}. */
-    _dynamicTools?: import("./dynamic-tools").DynamicToolNamespace;
+    _dynamicTools?: import("./ml/dynamic-tools").DynamicToolNamespace;
     /** The machine's memory CAPACITY — per-device VRAM totals/free and system RAM (Ollama `/api/info`).
      *  `ml.ps()` says what is RESIDENT; this says what there is room for. Returns `null` when the route
      *  isn't available (stock Ollama, or an OpenWebUI without the passthrough) — treat that as "capacity

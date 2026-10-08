@@ -1433,7 +1433,7 @@ test("resumeAgent: a PREFIX names a run, several matches is an error, and a shor
     // Against the MODULE rather than the page world: this is entirely about the handle registry, and registering two
     // runs whose hashes share a start is the case that matters — which cannot be arranged by starting real runs,
     // since their hashes are random.
-    const { resumeAgent, RESUME_PREFIX_MIN } = await import("../src/ml-agent-handle.ts");
+    const { resumeAgent, RESUME_PREFIX_MIN } = await import("../src/ml/ml-agent-handle.ts");
     const { handleRegistry } = await import("../src/bus.ts");
     const A = "abcdef0123456789abcdef0123456789";
     const B = "abcdef0199999999abcdef0199999999";   // shares the first ten characters with A

@@ -5,13 +5,13 @@
 // source by its shape (a table by value, a URL the run already fetched, a Google Sheet, a page table) and
 // `_resolveTable` is the DOM half of that. Lifted out of the object literal so they can live here; the
 // members are still on `window.ml`, so `this` inside them is still the API object.
-import { makeBackgroundTaskPromise } from "./bridge";
-import type { TableValue, TableSource, MlApi, TablePreview, ShotBox } from "./contract";
-import { googleSheetCsvUrl, nonEmptyTables, googleSheetId, elPath, queryAll, isElement, extractTable } from "./dom";
+import { makeBackgroundTaskPromise } from "../bridge";
+import type { TableValue, TableSource, MlApi, TablePreview, ShotBox } from "../contract";
+import { googleSheetCsvUrl, nonEmptyTables, googleSheetId, elPath, queryAll, isElement, extractTable } from "../dom";
 import { mlFetchCache } from "./ml-fetch-cache";
-import { pyVarNameError } from "./python/python-env";
-import { isTable } from "./table-brand";
-import { tableFromDelimited, castTableColumns } from "./table-data";
+import { pyVarNameError } from "../python/python-env";
+import { isTable } from "../table-brand";
+import { tableFromDelimited, castTableColumns } from "../table-data";
 
 /** Is this a table handed over BY VALUE (see {@link TableValue})? The `Table` facade throws on keys it does not have, so
  *  it is recognised by its brand before anything probes it. */

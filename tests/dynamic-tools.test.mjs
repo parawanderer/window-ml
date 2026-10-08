@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 
-const { makeDynamicTools, DynamicToolArgumentError } = await import("../src/dynamic-tools.ts");
+const { makeDynamicTools, DynamicToolArgumentError } = await import("../src/ml/dynamic-tools.ts");
 
 const SEARCH = {
     id: "searxng_web_search", name: "SearXNG", description: "Web search.", kind: "local",

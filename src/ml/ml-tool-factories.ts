@@ -13,19 +13,19 @@
 // They take an explicit `this: MlApi` and are still invoked as `ml.fetchTool()`, so `this` is the live object and
 // a tool built here can reach the rest of the API. The annotation is how TypeScript is told that; it is not a bind.
 
-import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from "./builtin-tools";
-import { subcallUsage } from "./bus";
-import type { MlApi, JsonSchema } from "./contract";
-import type { MlTool, ToolResult } from "./contract/contract-agent";
-import type { VisionMemory, RenderDescriptor } from "./contract/contract-render";
-import { navTarget, errText, clipOut, askReaderNumCtx, jsonShape } from "./dom";
-import { htmlToMarkdown } from "./html-to-md";
-import { buildPythonTool } from "./python/python-tool";
-import { tableShape, asTable, tableFromDelimited, tablePreview, RENDER_TABLE_ROWS } from "./table-data";
-import { PIPE_REF, runPipe, pipeHint } from "./text-pipe";
-import { toolNameError } from "./token-id";
-import { CALL_TITLE, type NoReservedParams } from "./tool-params";
-import { currentHasTool } from "./tool-exec";
+import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from "../builtin-tools";
+import { subcallUsage } from "../bus";
+import type { MlApi, JsonSchema } from "../contract";
+import type { MlTool, ToolResult } from "../contract/contract-agent";
+import type { VisionMemory, RenderDescriptor } from "../contract/contract-render";
+import { navTarget, errText, clipOut, askReaderNumCtx, jsonShape } from "../dom";
+import { htmlToMarkdown } from "../html-to-md";
+import { buildPythonTool } from "../python/python-tool";
+import { tableShape, asTable, tableFromDelimited, tablePreview, RENDER_TABLE_ROWS } from "../table-data";
+import { PIPE_REF, runPipe, pipeHint } from "../text-pipe";
+import { toolNameError } from "../token-id";
+import { CALL_TITLE, type NoReservedParams } from "../tool-params";
+import { currentHasTool } from "../tool-exec";
 
 /**
  * Build one agent tool: a JSON-schema function signature the model sees,
@@ -286,9 +286,9 @@ export const fetchTool = function(this: MlApi): MlTool {
             const pipe = (typeof a?.pipe === "string" && a.pipe.trim()) ? a.pipe.trim() : undefined;
             return { type: "action", verb: "fetch", target: String(a?.url ?? ""), ...(note ? { note } : {}), ...(asYou ? { asYou } : {}), ...(ask ? { ask } : {}), ...(pipe ? { pipe } : {}) };
         },
-        run: async ({ url, schema = false, credentials = false, rendered = false, ask = null, format = "markdown", pipe = null, header = undefined }: { url?: unknown; schema?: boolean; credentials?: boolean; rendered?: boolean; ask?: unknown; format?: unknown; pipe?: unknown; header?: boolean } = {}, ctx?: import("./contract").ToolContext): Promise<string | ToolResult> => {
+        run: async ({ url, schema = false, credentials = false, rendered = false, ask = null, format = "markdown", pipe = null, header = undefined }: { url?: unknown; schema?: boolean; credentials?: boolean; rendered?: boolean; ask?: unknown; format?: unknown; pipe?: unknown; header?: boolean } = {}, ctx?: import("../contract").ToolContext): Promise<string | ToolResult> => {
             if (typeof url !== "string" || !url.trim()) return "Error: fetch_url needs a `url`.";
-            let r: import("./contract").FetchResult;
+            let r: import("../contract").FetchResult;
             const wantHtml = format === "html";
             try { r = await ml.fetch(url, { credentials, rendered, format: wantHtml ? "html" : "markdown" }); }
             catch (e) { return `Error: ${errText(e)}`; }

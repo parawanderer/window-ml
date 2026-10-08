@@ -16,29 +16,29 @@
 //     config read, say -- the command times out; moved onto every turn it fires repeatedly.
 //     `tests/e2e/session-index.spec.mjs` fails if the call disappears.
 
-import { type AgentLoopDeps, shotTurnMessage, runAgentLoop } from "./agent-loop";
-import { resolveOutputs, makeAnswerFacade, finalizeAnswer } from "./answer-set";
-import { defaultApprove, logStep, normalizeApproval, formatReadonlyExec, readonlyRefused } from "./approval";
-import { autoApprovePython } from "./auto-approve";
-import { makeBackgroundTaskPromise } from "./bridge";
-import { BUILD_INFO } from "./build-info.gen";
-import { setCdpEnabled } from "./builtin-tools";
-import { agentRegistry, resetSubcallUsage, handleRegistry, emitDebug, enterAgentRun, exitAgentRun, subcallUsage } from "./bus";
-import { type MlApi, type MlTool, type ApprovalRequest, type ApprovalDecision, type AgentResult, shortHash, type MlAgentHandle, type NeutralMessage, type RenderDescriptor, type ToolFeedback, type TokenUsage, hintSession, type DerefRead, type ToolRenderInput, outputCapEscalated } from "./contract";
-import { setPierceClosedShadow, externalSheetIds, isCurrentPage, elLine, errText } from "./dom";
+import { type AgentLoopDeps, shotTurnMessage, runAgentLoop } from "../agent-loop";
+import { resolveOutputs, makeAnswerFacade, finalizeAnswer } from "../answer-set";
+import { defaultApprove, logStep, normalizeApproval, formatReadonlyExec, readonlyRefused } from "../approval";
+import { autoApprovePython } from "../auto-approve";
+import { makeBackgroundTaskPromise } from "../bridge";
+import { BUILD_INFO } from "../build-info.gen";
+import { setCdpEnabled } from "../builtin-tools";
+import { agentRegistry, resetSubcallUsage, handleRegistry, emitDebug, enterAgentRun, exitAgentRun, subcallUsage } from "../bus";
+import { type MlApi, type MlTool, type ApprovalRequest, type ApprovalDecision, type AgentResult, shortHash, type MlAgentHandle, type NeutralMessage, type RenderDescriptor, type ToolFeedback, type TokenUsage, hintSession, type DerefRead, type ToolRenderInput, outputCapEscalated } from "../contract";
+import { setPierceClosedShadow, externalSheetIds, isCurrentPage, elLine, errText } from "../dom";
 import { type AgentControl, sameOriginNav, sameOriginFetch } from "./ml-agent";
-import { TokenStore } from "./token-pipe";
-import { columnsViaBackground } from "./deref-read";
-import { expandPointers } from "./pointer-macro";
-import { evalReadonly } from "./readonly-exec";
-import { descriptorFor } from "./render-descriptor";
-import { parseInfo } from "./resource/resource-capacity";
-import { registerRun, endRun, runAnswer } from "./run-delegation";
-import { isSelfSourceUrl } from "./self-source";
-import { toolContext, executeTool, withRunDeref } from "./tool-exec";
-import { pageContext } from "./util";
-import { assembleRun, withPageContext, startPayload, type AssemblyMl } from "./run-assembly";
-import { validateArgs } from "./validate";
+import { TokenStore } from "../token-pipe";
+import { columnsViaBackground } from "../deref-read";
+import { expandPointers } from "../pointer-macro";
+import { evalReadonly } from "../readonly-exec";
+import { descriptorFor } from "../render-descriptor";
+import { parseInfo } from "../resource/resource-capacity";
+import { registerRun, endRun, runAnswer } from "../run-delegation";
+import { isSelfSourceUrl } from "../self-source";
+import { toolContext, executeTool, withRunDeref } from "../tool-exec";
+import { pageContext } from "../util";
+import { assembleRun, withPageContext, startPayload, type AssemblyMl } from "../run-assembly";
+import { validateArgs } from "../validate";
 
 /**
  * Run a full agent loop over a tool registry: the model calls tools, we
@@ -130,7 +130,7 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
     /** WHERE THIS PROMPT WAS TYPED (contract-run.ts), for `chat_metadata` and the run's provenance clause.
      *  The extension's own surfaces stamp it from the channel the message arrived on; a direct call from a
      *  console or a userscript leaves it unset, which reads as `console`. */
-    origin?: import("./contract/contract-run").PromptOrigin | null;
+    origin?: import("../contract/contract-run").PromptOrigin | null;
     toolTokens?: boolean;   // surface `@tool:<id>` on rich tool results so the model can cite exact outputs. Default false; HUD auto-on.
     images?: (string | HTMLImageElement)[];   // attachments for THIS turn (composer paste/upload)
     _control?: AgentControl | null;   // internal: a handle's persistent session state (ml.createAgent). Absent → a throwaway per-call one.
@@ -336,7 +336,7 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
     // Enrich the loop's event with the page-only bits: argIssues, the element COUNT for the debug
     // event + the real nodes for onStep, and a best-effort In/Out render for a step the executor
     // DIDN'T run (pending START / denied / skipped), preferring the executor's own render when present.
-    const emit = (ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; token?: string; approval?: "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled"; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[]; reused?: import("./contract").ReusedGrant[]; streamOutput?: string }) => {
+    const emit = (ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; token?: string; approval?: "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled"; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[]; reused?: import("../contract").ReusedGrant[]; streamOutput?: string }) => {
         const tool = ev.tool ? byName[ev.tool] : undefined;
         const nodes = ev.elements as Node[] | undefined;
         const argIssues = ev.tool && tool ? validateArgs(tool.parameters, ev.arguments || {}) : undefined;
@@ -557,7 +557,7 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
             try { toolJson = JSON.stringify(toolset.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }))); } catch { /* skip */ }
             // The machine: devices and memory, from /api/info (null on a server that does not serve it).
             // Asked only for a LOCAL model: a cloud model's hardware is not this box's.
-            let capacity: import("./resource/resource-capacity").Capacity | null | undefined;
+            let capacity: import("../resource/resource-capacity").Capacity | null | undefined;
             if (local === true) { try { const raw = await mlApi.info(); capacity = raw ? parseInfo(raw) : null; } catch { capacity = null; } }
             // Where the user is, from the worker (only it sees the browser's focus), relative to THIS tab.
             let userFocus: string | null = null;
