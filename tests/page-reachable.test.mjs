@@ -4,7 +4,7 @@
 "use strict";
 import { test } from "node:test";
 import assert from "node:assert";
-import { watchWhileWaiting, PageUnreachable, reachabilityNote, PAGE_SILENCE_CAP_MS } from "../src/page-reachable.ts";
+import { watchWhileWaiting, PageUnreachable, reachabilityNote, PAGE_SILENCE_CAP_MS } from "../src/sw/page-reachable.ts";
 
 // A sleep that returns immediately but still yields, so a test runs a 4-minute cap in microseconds without
 // pretending the awaits do not happen.

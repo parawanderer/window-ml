@@ -2,7 +2,7 @@
 // extracts replies, and makes the privileged (host-permissioned) fetches. All
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
-import { dropAllLocalTools } from "./sw-local-tools";
+import { dropAllLocalTools } from "./sw/sw-local-tools";
 import { LOAD_RECORDS_KEY } from "./load-records";
 import type { ApprovalDecision } from "./contract/contract-agent";
 import type { StartRunPayload, SetApprovalPayload, CancelRunPayload, InjectMessagePayload } from "./contract/contract-messages";
@@ -11,28 +11,28 @@ import { googleSheetId, isCurrentPage } from "./dom";
 import { isSelfSourceUrl } from "./self-source";   // trusted-side enforcement of the self-source auto-approve (uncredentialed own-repo reads)
 import { BUILD_INFO } from "./build-info.gen";
 import { browserInfo } from "./util";   // the fork's settings scheme (page-context Browser line)
-import { ensureDebuggerAttached, releaseDebugger, cdpClick, cdpScreenshot, cdpShadowResolve } from "./sw-cdp";   // CDP/debugger layer (strict-CSP exec, trusted click/type, host-grant-free screenshot)
-import { fetchUrlContent, fetchRenderedContent, fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw-fetch";   // outbound fetch layer (ml.fetch, rendered fetch, credentialed Google Sheets CSV)
-import { executeServerTool, serverToolResult } from "./sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
-import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
-import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw-events";
-import { configureSessionCommands, ingestSessionEvent, keepSession, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw-sessions";   // the cross-tab session index the chat page reads
-import { folderAction } from "./sw-archive";   // the session archive's folder, for Settings
-import { ensureHubRuntime, hubDevices, hubLog, hubState, revokeHubDevice, stopHubRuntime } from "./sw-hub";   // this browser as a runtime on a hub
-import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, senderOrigin } from "./sw-housekeeping";
-import { handleRunLogDump } from "./sw-run-log";
-import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
-import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, pendingGrants, takeCredFetch, isExtensionSender } from "./sw-consent";
-import { isWorkerRun, makeWorkerRun, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw-runs";
-import { moveTabKey } from "./tab-replaced";
-import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw-debug";   // the DevTools panel's copy of the page debug stream
-import { startBackgroundRun, delegateStreams, hostRun } from "./sw-run-host";
-import { adoptOnTab, startUserRun, userRunAction, steerRun } from "./sw-run-start";
+import { ensureDebuggerAttached, releaseDebugger, cdpClick, cdpScreenshot, cdpShadowResolve } from "./sw/sw-cdp";   // CDP/debugger layer (strict-CSP exec, trusted click/type, host-grant-free screenshot)
+import { fetchUrlContent, fetchRenderedContent, fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw/sw-fetch";   // outbound fetch layer (ml.fetch, rendered fetch, credentialed Google Sheets CSV)
+import { executeServerTool, serverToolResult } from "./sw/sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
+import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw/sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
+import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw/sw-events";
+import { configureSessionCommands, ingestSessionEvent, keepSession, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw/sw-sessions";   // the cross-tab session index the chat page reads
+import { folderAction } from "./sw/sw-archive";   // the session archive's folder, for Settings
+import { ensureHubRuntime, hubDevices, hubLog, hubState, revokeHubDevice, stopHubRuntime } from "./sw/sw-hub";   // this browser as a runtime on a hub
+import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, senderOrigin } from "./sw/sw-housekeeping";
+import { handleRunLogDump } from "./sw/sw-run-log";
+import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw/sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
+import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, pendingGrants, takeCredFetch, isExtensionSender } from "./sw/sw-consent";
+import { isWorkerRun, makeWorkerRun, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
+import { moveTabKey } from "./sw/tab-replaced";
+import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
+import { startBackgroundRun, delegateStreams, hostRun } from "./sw/sw-run-host";
+import { adoptOnTab, startUserRun, userRunAction, steerRun } from "./sw/sw-run-start";
 import { PAGE_STARTED_TYPES } from "./page-relay";
 import { originOf, type SiteEdit } from "./site-access";
-import { editSiteAccess, pageRefusal, readSiteLists, siteDecision } from "./sw-site-access";
-import { pythonPrewarm, pythonExec, relayPyStdout } from "./sw-python";
-import { focusLineFor } from "./sw-focus";
+import { editSiteAccess, pageRefusal, readSiteLists, siteDecision } from "./sw/sw-site-access";
+import { pythonPrewarm, pythonExec, relayPyStdout } from "./sw/sw-python";
+import { focusLineFor } from "./sw/sw-focus";
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -668,7 +668,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
                 // a backgrounded tab's gated loads fire.
                 // A table whose preview is not the whole of it hands back its body; it is stored only once the result is
                 // actually released below.
-                const kept: { body?: import("./sw-fetch").FetchedBody } = {};
+                const kept: { body?: import("./sw/sw-fetch").FetchedBody } = {};
                 const data = rendered ? await fetchRenderedContent(url, !credentials, !!cfg.cdp) : await fetchUrlContent(url, credentials, format, (b) => { kept.body = b; });
                 // Redirect guard: a per-URL-consented fetch (NOT a surface/whitelisted/exec one) that ends on a
                 // DIFFERENT, un-consented origin followed a redirect off the approved resource — withhold the body

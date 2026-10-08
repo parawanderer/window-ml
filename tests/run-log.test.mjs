@@ -146,7 +146,7 @@ async function emittedNames() {
     // One reason is not a literal at its emit site: an unreachable page records `reason: e.state`, whose values
     // are the `TabState` union plus the cap's own "silent". Read them where they ARE declared, so a new state
     // named in a shape the sanitizer refuses still fails this.
-    const reach = await readFile(new URL("../src/page-reachable.ts", import.meta.url), "utf8");
+    const reach = await readFile(new URL("../src/sw/page-reachable.ts", import.meta.url), "utf8");
     const states = reach.match(/^export type TabState = (.*)$/m)[1] + (reach.match(/state: TabState \| "[^"]+"/)?.[0] ?? "");
     for (const lit of states.matchAll(/"([^"]*)"/g)) out.reason.add(lit[1]);
     return out;

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import {
     backgroundChats, cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat,
     sendBackgroundChat, startBackgroundChat, MAX_BG_CHATS,
-} from "../src/sw-chat.ts";
+} from "../src/sw/sw-chat.ts";
 
 // A hung turn would otherwise hang the runner rather than fail the test.
 const T = { timeout: 5000 };

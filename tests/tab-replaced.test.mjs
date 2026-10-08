@@ -4,7 +4,7 @@
 "use strict";
 import { test } from "node:test";
 import assert from "node:assert";
-import { moveTabKey } from "../src/tab-replaced.ts";
+import { moveTabKey } from "../src/sw/tab-replaced.ts";
 
 // --- re-filing per-tab state when the id changes ---
 

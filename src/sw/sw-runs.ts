@@ -16,15 +16,15 @@
 // exact failure the session-scoped store was introduced to fix.
 
 import { dropLocalTools } from "./sw-local-tools";
-import { bgRunResumable, pushReplay } from "./contract/contract-run";
+import { bgRunResumable, pushReplay } from "../contract/contract-run";
 import { moveTabKey } from "./tab-replaced";
 import { recordRunLog } from "./sw-run-log";
-import { type DerefRead } from "./contract/contract-pointers";
-import { type NeutralMessage } from "./contract/contract-chat";
-import { type StartRunPayload } from "./contract/contract-messages";
+import { type DerefRead } from "../contract/contract-pointers";
+import { type NeutralMessage } from "../contract/contract-chat";
+import { type StartRunPayload } from "../contract/contract-messages";
 import { createNavBarrier } from "./nav-barrier";
 import { releaseSessionValues } from "./sw-values";
-import { TokenStore } from "./token-pipe";
+import { TokenStore } from "../token-pipe";
 
 // Design A: the AbortController for each live background run, keyed by runId, so a CANCEL_RUN message
 // (the HUD's "Cancel agent run") stops the loop at the next boundary AND kills a slow in-flight model
@@ -36,7 +36,7 @@ export const runControllers = new Map<string, AbortController>();
 // RESUME_RUN {runId, task} re-enters the loop from this history. In-memory only, so it's subject to
 // MV3 service-worker eviction (~30s idle) — resume works while the SW is warm (the common
 // finish-then-follow-up flow); an evicted run reports an actionable error and the caller starts fresh.
-export const bgRuns = new Map<string, { p: StartRunPayload; tabId: number; messages: NeutralMessage[]; sub?: import("./contract").SubcallUsage }>();
+export const bgRuns = new Map<string, { p: StartRunPayload; tabId: number; messages: NeutralMessage[]; sub?: import("../contract").SubcallUsage }>();
 
 /** Runs the WORKER assembled (sw-run-start.ts) whose first turn has not settled yet: `bgRuns` holds a run only once a
  *  turn has, and a page must not be able to drive one in that window either. */
@@ -72,7 +72,7 @@ export function isWorkerRun(runId: unknown): boolean {
 // ~30s idle) can rehydrate an in-flight run instead of losing it. Storage holds ONLY running runs — deleted
 // the moment a run settles; the in-memory bgRuns above additionally keeps COMPLETED runs for a follow-up
 // RESUME (still eviction-bound, as before). Snapshot shape == a bgRuns entry.
-type BgRunSnap = { p: StartRunPayload; tabId: number; messages: NeutralMessage[]; sub?: import("./contract").SubcallUsage; version?: string; ts?: number };
+type BgRunSnap = { p: StartRunPayload; tabId: number; messages: NeutralMessage[]; sub?: import("../contract").SubcallUsage; version?: string; ts?: number };
 
 const BGRUN_KEY = (runId: string): string => `ml_bgrun_${runId}`;
 
@@ -191,7 +191,7 @@ export const hydrationDone: Promise<void> = (typeof chrome !== "undefined" && ch
 // Per-run steering inbox (a.say() mid-run): the SW-side twin of the page loop's control.inbox. INJECT_MESSAGE
 // pushes here (only the owning tab may); the run's loop drains it at each step boundary (deps.drainInbox).
 // Present only while a run is live (set at start, deleted in finally).
-export const runInboxes = new Map<string, { tabId: number; queue: { id?: string; text: string; origin?: import("./contract/contract-run").PromptOrigin }[] }>();
+export const runInboxes = new Map<string, { tabId: number; queue: { id?: string; text: string; origin?: import("../contract/contract-run").PromptOrigin }[] }>();
 
 // ---- Cross-page persistence (Variant A; design tmp/cross-page-agent.md) ----
 // A background-hosted run delegates each DOM tool to its tab by tabId. When the page NAVIGATES the old
@@ -221,7 +221,7 @@ export const pageValueSession = (tabId: number): string => `page:${tabId}`;
 
 // The rebuild-config for each LIVE cross-page run (runId → RebuildConfig), set at START and cleared in the
 // run's finally. bgRuns only stores a snapshot at run COMPLETION, so a MID-run navigation reads this instead.
-export const runRebuilds = new Map<string, import("./contract").RebuildConfig>();
+export const runRebuilds = new Map<string, import("../contract").RebuildConfig>();
 
 // Overlay/off REPLAY buffer (cross-page): a background-hosted, cross-page-capable run's FULL debug-event
 // stream per tab, so a FRESH page after a same-site navigation can rebuild the run's card MID-run (with its
@@ -277,7 +277,7 @@ export const reconcileTabPins = async (): Promise<void> => {
 
 /** Register a run against its tab so the navigation sensor watches it, and decide what that tab's replay buffer
  *  keeps: a fresh run wipes it, a RESUME of the same run must not (a resume never re-emits the `agent` start). */
-export const trackRun = (tabId: number, runId: string, rebuild?: import("./contract").RebuildConfig): void => {
+export const trackRun = (tabId: number, runId: string, rebuild?: import("../contract").RebuildConfig): void => {
     const s = activeRuns.get(tabId) ?? new Set<string>();
     // A fresh run on an IDLE tab starts a clean replay buffer — drop a prior COMPLETED run's retained history
     // (see untrackRun) so a new run's replay isn't polluted by the last one's. But a RESUME of a run still in

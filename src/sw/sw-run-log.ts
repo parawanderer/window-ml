@@ -5,9 +5,9 @@
 // identifies anyone but the reporter; this ring holds every run's records, and a record's `key` can be another
 // tab's URL. Letting the MODEL read its own run's mechanics is a deliberate later step behind its own approval
 // (idea-right-dock-run-panels), and the records come first so the surface is shaped around real ones.
-import { RunLog, eventsForRun, runsInLog, type RunLogEvent } from "./run-log";
+import { RunLog, eventsForRun, runsInLog, type RunLogEvent } from "../run-log";
 import { sessionArea, senderOrigin } from "./sw-housekeeping";
-import type { HousekeepingReport } from "./housekeeping";
+import type { HousekeepingReport } from "../housekeeping";
 
 /** This worker's one execution log: every run's mechanics in one ring, in storage.session so an evicted worker
  *  does not take a run's history with it (the eviction is itself one of the things worth knowing about). */

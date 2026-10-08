@@ -4,7 +4,7 @@
 // merely short would pass against the broken version too.
 import test from "node:test";
 import assert from "node:assert";
-import { readCapped, decodeCapped, binaryKind } from "../src/body-read.ts";
+import { readCapped, decodeCapped, binaryKind } from "../src/sw/body-read.ts";
 
 /** A Response whose body is produced on demand, one chunk per pull, recording how many chunks were asked for. */
 function countingResponse(chunkBytes, totalChunks) {

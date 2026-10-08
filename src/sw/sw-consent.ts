@@ -15,7 +15,7 @@
 // A hostile page reaches the background directly through the content-script relay, so a privileged or credentialed
 // operation must be authorized HERE, at the choke point, against `sender` — which Chrome sets and a page cannot forge.
 
-import type { ApprovalDecision } from "./contract/contract-agent";
+import type { ApprovalDecision } from "../contract/contract-agent";
 import { getConfig } from "./sw-llm";
 
 // Design A: pending background-run approvals, keyed by `${runId}:${seq}`, resolved by a SET_APPROVAL
@@ -100,7 +100,7 @@ export const takeCredFetch = (tabId: number | undefined, url: string): boolean =
 // `kind` so a new egress kind is one case here + one extractor in grant-extract.ts + one UI branch. Called
 // ONLY from a run's approval `resolve` on a positive persist decision (unforgeable — grants are re-derived
 // background-side from the call, never trusted from the message).
-export const persistGrants = (tabId: number, grants: import("./contract").PersistGrant[]): void => {
+export const persistGrants = (tabId: number, grants: import("../contract").PersistGrant[]): void => {
     for (const g of grants) {
         if (g.kind === "fetch-url") for (const u of g.urls) consentFetch(tabId, u);
     }

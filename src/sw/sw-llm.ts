@@ -4,17 +4,17 @@
 // server-tool-mode handback probe. Also the model-list/server-tool/setModel/unload plumbing. Extracted from
 // background.ts verbatim; it depends only on the shared contract (types + DEFAULT_CONFIG/modelFilterAllows)
 // and chrome/fetch. All server JSON is genuinely opaque, so it's typed `any`; our own data uses the contract.
-import type { JsonSchema } from "./contract";
-import type { MlConfig, ApiFormat, ProtoMode } from "./contract/contract-config";
-import type { NeutralMessage, ToolCall, LlmResult, TokenUsage, GenPhase } from "./contract/contract-chat";
-import type { LoadedModel, ServerTool } from "./contract/contract-server";
-import type { FetchLlmPayload } from "./contract/contract-messages";
-import { wireHint } from "./contract/contract-run";
-import { DEFAULT_CONFIG, modelFilterAllows, protoMode } from "./contract/contract-config";
-import { generatesText, producesEmbeddings } from "./contract/contract-server";
-import { loadedFrom } from "./resource-events";
-import { createFrameReader } from "./protostream";
-import { Frame } from "./proto/chat.gen";
+import type { JsonSchema } from "../contract";
+import type { MlConfig, ApiFormat, ProtoMode } from "../contract/contract-config";
+import type { NeutralMessage, ToolCall, LlmResult, TokenUsage, GenPhase } from "../contract/contract-chat";
+import type { LoadedModel, ServerTool } from "../contract/contract-server";
+import type { FetchLlmPayload } from "../contract/contract-messages";
+import { wireHint } from "../contract/contract-run";
+import { DEFAULT_CONFIG, modelFilterAllows, protoMode } from "../contract/contract-config";
+import { generatesText, producesEmbeddings } from "../contract/contract-server";
+import { loadedFrom } from "../resource-events";
+import { createFrameReader } from "../protostream";
+import { Frame } from "../proto/chat.gen";
 
 // The wire body we assemble for a chat request (grows per format/options).
 interface ChatBody {
@@ -1278,7 +1278,7 @@ export async function listLoadedModels(): Promise<LoadedModel[]> {
  *  discovery `/api/ps` uses. Only a patched Ollama behind an OpenWebUI with the passthrough serves this;
  *  everything else answers with the SPA's HTML. Returns **null** rather than throwing in that case — the same
  *  convention as `modelCapabilities` and `listServerTools`: unknown, never "no". */
-export async function fetchOllamaInfo(): Promise<import("./contract").OllamaInfo | null> {
+export async function fetchOllamaInfo(): Promise<import("../contract").OllamaInfo | null> {
     const config = await getConfig();
     const origin = new URL(config.chatUrl).origin;
     for (const base of [`${origin}/ollama`, origin]) {

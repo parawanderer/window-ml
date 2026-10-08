@@ -13,7 +13,7 @@ import { Worker } from "node:worker_threads";
 import { runAgentLoop } from "../src/agent-loop.ts";
 import { snapshotCurrent, logText, messageId, UNRECORDED } from "../src/current-context.ts";
 import { evalReadonly, NotInDialect, Denied, NeedsPage, ABRIDGE_OVER, describeSwaps } from "../src/readonly-exec.ts";
-import { evalReadonlyInWorker } from "../src/sw-readonly.ts";
+import { evalReadonlyInWorker } from "../src/sw/sw-readonly.ts";
 import { mlPipe } from "../src/text-pipe.ts";
 import { toolToken } from "../src/util.ts";
 

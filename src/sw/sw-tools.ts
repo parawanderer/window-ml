@@ -8,7 +8,7 @@
 //
 // Contract: docs/spec/REMOTE_TOOL_EXECUTION.md. Endpoint: parawanderer/open-webui, ml/tool-execute-api.
 import { getConfig, authHeaders } from "./sw-llm";
-import { createToolStream, type ToolFrame, type ToolStreamEnd } from "./tool-protocol";
+import { createToolStream, type ToolFrame, type ToolStreamEnd } from "../tool-protocol";
 
 export interface ServerToolCall {
     /** The tool BUNDLE's id, as `ml.serverTools()` lists it. */
@@ -98,8 +98,8 @@ export async function executeServerTool({ toolId, name, args, onFrame, signal }:
  * @param end the stream's end, from `executeServerTool`
  * @returns the `ServerToolResult` shape
  */
-export function serverToolResult(end: ToolStreamEnd): import("./contract").ServerToolResult {
+export function serverToolResult(end: ToolStreamEnd): import("../contract").ServerToolResult {
     return (end.ok
         ? { ok: true, result: end.result, output: end.state.output, marks: end.state.marks, events: end.state.events }
-        : { ok: false, transportError: end.transportError, output: end.state.output, marks: end.state.marks, events: end.state.events }) as import("./contract").ServerToolResult;
+        : { ok: false, transportError: end.transportError, output: end.state.output, marks: end.state.marks, events: end.state.events }) as import("../contract").ServerToolResult;
 }

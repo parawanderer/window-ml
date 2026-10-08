@@ -8,14 +8,14 @@
 // never called here: the page that hosts the run executes it, under the toolset `_adoptRun` registers there. The one
 // exception is a REMOTE tool, whose `run` calls the backend and so runs in the worker (sw-local-tools.ts).
 
-import type { AssemblyMl } from "./run-assembly";
-import { modelFilterAllows, publicConfig } from "./contract/contract-config";
-import type { MlApi } from "./contract";
-import { defineTool, lookTool, locateTool, navigateTool, fetchTool, clickTool, typeTool, pythonTool, chatMetaTool } from "./ml-tool-factories";
-import { _resolveVisionModel, _modelSees, _nativeLookTool, ocrRequest } from "./ml-vision";
+import type { AssemblyMl } from "../run-assembly";
+import { modelFilterAllows, publicConfig } from "../contract/contract-config";
+import type { MlApi } from "../contract";
+import { defineTool, lookTool, locateTool, navigateTool, fetchTool, clickTool, typeTool, pythonTool, chatMetaTool } from "../ml-tool-factories";
+import { _resolveVisionModel, _modelSees, _nativeLookTool, ocrRequest } from "../ml-vision";
 import { getConfig, modelCapabilities, listAvailableModels, listServerTools, fetchLLM } from "./sw-llm";
 import { executeServerTool, serverToolResult } from "./sw-tools";
-import { makeDomTools } from "./tools";
+import { makeDomTools } from "../tools";
 
 /**
  * Build the worker's `ml` for assembling one run on a tab.

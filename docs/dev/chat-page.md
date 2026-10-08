@@ -27,7 +27,7 @@ Background side, outside `src/chat/` because the extension bundles it:
 | --- | --- |
 | `src/session-index.ts` | The cross-tab session index: one row and one event ring per session, with the contract's epoch and cursor. Pure. |
 | `src/session-server.ts` | The `ml-sessions` port protocol over the index, and the command hand-off. Pure over a port-like object. |
-| `src/sw-sessions.ts` | The worker's index and server, and the sender check on the port. |
+| `src/sw/sw-sessions.ts` | The worker's index and server, and the sender check on the port. |
 
 ## One reducer, one transcript
 
@@ -307,7 +307,7 @@ puts the debugging banner on someone's screen for a look they did not start.
 
 ## Chats the worker hosts
 
-`chat.start` makes a conversation with no page behind it (`src/sw-chat.ts`). Every other session in the index belongs
+`chat.start` makes a conversation with no page behind it (`src/sw/sw-chat.ts`). Every other session in the index belongs
 to a tab: a console `ml.chat`, a page script, a background-hosted run delegating its tools back to the page it started
 on. This one does not, because the person typed it into `chat.html`, and closing that page must not end the
 conversation the phone will open later through the hub.
@@ -578,7 +578,7 @@ so a `HubHost` runtime arriving later gets nothing without a line changing here.
 
 **Both are asked twice**, which is the rule the rest of the page follows in a second place:
 
-- the RUNTIME reports the capability (`resourcePanel`, `pythonBench` in `src/sw-sessions.ts`), and
+- the RUNTIME reports the capability (`resourcePanel`, `pythonBench` in `src/sw/sw-sessions.ts`), and
 - this DEVICE holds something to draw it with.
 
 A phone reaching the same runtime over the hub reports the same capabilities and draws neither, not because it is a

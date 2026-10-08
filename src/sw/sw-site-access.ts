@@ -6,8 +6,8 @@
 // may this sender start this message? The sender's origin comes from `sender`, which the browser sets. Nothing the
 // page says is read.
 
-import { type SiteEdit, type SiteLists, SITE_ACCESS_KEYS, applyEdit, decide, grantableOrigin } from "./site-access";
-import { PAGE_STARTED_TYPES, RUN_CONTROL_TYPES } from "./page-relay";
+import { type SiteEdit, type SiteLists, SITE_ACCESS_KEYS, applyEdit, decide, grantableOrigin } from "../site-access";
+import { PAGE_STARTED_TYPES, RUN_CONTROL_TYPES } from "../page-relay";
 import { isExtensionSender } from "./sw-consent";
 import { getConfig } from "./sw-llm";
 import { activeRuns } from "./sw-runs";

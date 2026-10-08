@@ -2,21 +2,21 @@
 // served over the `ml-sessions` port to extension pages (session-server.ts). background.ts feeds it from the same
 // places that feed the DevTools panel, so the index holds what a panel would show for every tab at once
 // (docs/dev/chat-page.md §The local index).
-import { hintSession } from "./contract/contract-run";
-import { type MlDebugEvent } from "./contract/contract-debug";
-import { createCommandHandler, type CommandDeps, type PageOutcome } from "./session-commands";
+import { hintSession } from "../contract/contract-run";
+import { type MlDebugEvent } from "../contract/contract-debug";
+import { createCommandHandler, type CommandDeps, type PageOutcome } from "../session-commands";
 import { cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat, sendBackgroundChat, setBackgroundChatModel, startBackgroundChat } from "./sw-chat";
-import { type StoredSession } from "./contract/contract-messages";
-import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type ArchiveCapability, type BlankStartCapability, type RuntimeInfo, type SessionSummary, type TabGroupInfo, type TabInfo } from "./session-host";
+import { type StoredSession } from "../contract/contract-messages";
+import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type ArchiveCapability, type BlankStartCapability, type RuntimeInfo, type SessionSummary, type TabGroupInfo, type TabInfo } from "../session-host";
 import { FaviconCache, stripOrder } from "./tab-favicons";
 import { tabReadyFailure } from "./tab-ready";
-import { browserInfo } from "./util";
-import { SessionIndex, type IngestSource } from "./session-index";
-import { SESSIONS_PORT, SessionServer } from "./session-server";
-import { STORE_MAX_SESSIONS, SessionStore, indexedDbBackend, type SessionHistory } from "./session-store";
-import { AGENT_START_PAGE, DEFAULT_CONFIG, modelFilterAllows } from "./contract/contract-config";
-import type { NeutralMessage } from "./contract/contract-chat";
-import { cleanTitle, titleMessages } from "./session-title";
+import { browserInfo } from "../util";
+import { SessionIndex, type IngestSource } from "../session-index";
+import { SESSIONS_PORT, SessionServer } from "../session-server";
+import { STORE_MAX_SESSIONS, SessionStore, indexedDbBackend, type SessionHistory } from "../session-store";
+import { AGENT_START_PAGE, DEFAULT_CONFIG, modelFilterAllows } from "../contract/contract-config";
+import type { NeutralMessage } from "../contract/contract-chat";
+import { cleanTitle, titleMessages } from "../session-title";
 import { bgRuns, makeWorkerRun, trackRun, untrackRun } from "./sw-runs";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { isExtensionSender } from "./sw-consent";
@@ -25,7 +25,7 @@ import { pythonBundlePresent } from "./sw-python";
 import { recordHousekeeping } from "./sw-housekeeping";
 import { archiveCall, lastFolderReport, onFolderChange, scheduleFolderSync } from "./sw-archive";
 import { attentionCodes, recomputeAttention, refreshBackendAttention, watchAttention } from "./sw-attention";
-import { appendSnapshot, measureEvents, summarizeStore, type StorageReport, type StorageSnapshot, type StoreBytes } from "./session-storage-stats";
+import { appendSnapshot, measureEvents, summarizeStore, type StorageReport, type StorageSnapshot, type StoreBytes } from "../session-storage-stats";
 
 /**
  * Ask a tab's page something, PUTTING THE CONTENT SCRIPT BACK if it is not there.
@@ -199,11 +199,11 @@ export type RunDeps = Pick<CommandDeps, "steer" | "cancelRun" | "resolveApproval
     /** drop a finished run's resumable snapshot and pointer store */
     forgetRun(hash: string): void;
     /** start a run the user asked for, assembled in the worker (sw-run-start.ts) */
-    startUserRun(tabId: number, req: import("./run-assembly").UserRunRequest): Promise<{ hash: string }>;
+    startUserRun(tabId: number, req: import("../run-assembly").UserRunRequest): Promise<{ hash: string }>;
     /** a message or Continue for a run the worker built; null when the run is not the worker's (sw-run-start.ts) */
     userRunAction(hash: string, action: "send" | "continue", body: Record<string, unknown>, fromTabId?: number): Promise<PageOutcome | null>;
     /** register a run's builtin toolset in a tab's page and hear its context (the ADOPT_RUN_NOW push) */
-    adoptOnTab(tabId: number, runId: string, rebuild: import("./contract").RebuildConfig): Promise<{ pageInfo?: string; error?: string; unanswered?: true }>;
+    adoptOnTab(tabId: number, runId: string, rebuild: import("../contract").RebuildConfig): Promise<{ pageInfo?: string; error?: string; unanswered?: true }>;
 };
 
 let handler: ((command: Command) => Promise<CommandResult<CommandType>>) | null = null;
@@ -270,7 +270,7 @@ export function configureSessionCommands(run: RunDeps): void {
     // says why that is not the double-feed AGENTS.md warns about).
     configureBackgroundChats({
         emit: (event) => ingestSessionEvent(event, { trusted: true }),
-        call: async (req, signal) => await fetchLLM(req, signal) as import("./contract").LlmResult,
+        call: async (req, signal) => await fetchLLM(req, signal) as import("../contract").LlmResult,
         load: async (hash) => {
             const key = `ml_session_${hash}`;
             try { return ((await chrome.storage.local.get(key)) as Record<string, never>)[key] ?? null; } catch { return null; }

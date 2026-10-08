@@ -5,14 +5,14 @@
 // reachable, so without it it's a cookie-authenticated read-any-URL exfil primitive), and only a safelisted,
 // non-auth subset of response headers is ever surfaced. Callers gate approval upstream (injected.ts); these
 // functions assume the decision was already made.
-import type { FetchResult, FetchFormat, FetchAttempt } from "./contract/contract-fetch";
-import { acceptLanguageFrom } from "./contract/contract-fetch";
-import { classifyContent, jsonShape, markdownAlternateHref, resolveMarkdownAlternate, markdownSiblingUrl, isMarkdownResponse, typeFromExtension, typeFromHeader } from "./dom";
-import { looksParquet, tableFromParquet, looksArrowFile, tableFromArrow, MAX_TABLE_ROWS } from "./table-data";
-import type { ValueFormat } from "./value-store";
+import type { FetchResult, FetchFormat, FetchAttempt } from "../contract/contract-fetch";
+import { acceptLanguageFrom } from "../contract/contract-fetch";
+import { classifyContent, jsonShape, markdownAlternateHref, resolveMarkdownAlternate, markdownSiblingUrl, isMarkdownResponse, typeFromExtension, typeFromHeader } from "../dom";
+import { looksParquet, tableFromParquet, looksArrowFile, tableFromArrow, MAX_TABLE_ROWS } from "../table-data";
+import type { ValueFormat } from "../value-store";
 import { readCapped, decodeCapped, binaryKind } from "./body-read";
 import { ensureDebuggerAttached, releaseDebugger } from "./sw-cdp";
-import { incognitoEnableSteps } from "./util";
+import { incognitoEnableSteps } from "../util";
 
 // ---- Google Sheets CSV fetch (python_exec `sheet`) ----
 // Fetch the sheet's CSV export with the user's own cookies (credentials:"include"), so a

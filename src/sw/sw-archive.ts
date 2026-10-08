@@ -2,7 +2,7 @@
 // to the archive worker (archive-worker.ts), which holds the SQLite. The worker cannot run WASM, so everything the
 // archive does happens there; this is the messenger.
 import { ensureOffscreen, forgetOffscreen } from "./sw-offscreen";
-import type { ArchiveOp, FolderReport } from "./archive-worker";
+import type { ArchiveOp, FolderReport } from "../archive-worker";
 
 /** Run one archive operation. Rejects with the archive's own message when it fails (no OPFS, a newer schema). */
 export async function archiveCall<T>(op: ArchiveOp["op"], args?: ArchiveOp["args"]): Promise<T> {

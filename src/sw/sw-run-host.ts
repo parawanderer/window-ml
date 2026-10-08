@@ -3,20 +3,20 @@
 // This is design A, and it is the whole of it: the router in background.ts only hands a START_RUN / RESUME_RUN
 // over and keeps the channel open until the run finishes.
 
-import { runBackgroundAgent } from "./agent-host";
+import { runBackgroundAgent } from "../agent-host";
 import { watchWhileWaiting, PageUnreachable } from "./page-reachable";
 import type { TabState } from "./page-reachable";
-import type { ToolMeta } from "./agent-loop";
-import type { HousekeepingReport } from "./housekeeping";
-import type { NeutralMessage, ToolCall, TokenUsage } from "./contract/contract-chat";
-import { UI_OUT_CAP } from "./contract/contract-chat";
-import type { ApprovalDecision } from "./contract/contract-agent";
-import { stepBudget } from "./step-budget";
-import type { StartRunPayload, ResumeRunPayload } from "./contract/contract-messages";
-import { type RequestHint, hintSession } from "./contract/contract-run";
-import { externalSheetIds, clipOut, isCurrentPage } from "./dom";
+import type { ToolMeta } from "../agent-loop";
+import type { HousekeepingReport } from "../housekeeping";
+import type { NeutralMessage, ToolCall, TokenUsage } from "../contract/contract-chat";
+import { UI_OUT_CAP } from "../contract/contract-chat";
+import type { ApprovalDecision } from "../contract/contract-agent";
+import { stepBudget } from "../step-budget";
+import type { StartRunPayload, ResumeRunPayload } from "../contract/contract-messages";
+import { type RequestHint, hintSession } from "../contract/contract-run";
+import { externalSheetIds, clipOut, isCurrentPage } from "../dom";
 import { extractGrants } from "./grant-extract";
-import { parseInfo } from "./resource-capacity";
+import { parseInfo } from "../resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
 import { grantsFor, serverToolKey, pendingGrants, pendingApprovals, grantCredFetch, consentFetch, persistGrants, fetchConsent } from "./sw-consent";
 import { relayDebugEvent } from "./sw-debug";
@@ -129,7 +129,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     // accumulated history, overriding only the task with the follow-up. Only the owning tab may resume.
     let p: StartRunPayload;
     let resumeMessages: NeutralMessage[] | undefined;
-    let priorSub: import("./contract").SubcallUsage | undefined;   // a resumed session's accumulated sub-call spend
+    let priorSub: import("../contract").SubcallUsage | undefined;   // a resumed session's accumulated sub-call spend
     let resumeOriginalTask: string | undefined;   // the run's ORIGINAL task (rp.task is the follow-up; empty on an auto-resume)
     let capRaised = false;                        // this resume changed the step budget → say so, since no start event will
     if (message.type === "RESUME_RUN") {
@@ -177,7 +177,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     // merge; snapSub() flattens it to a plain SubcallUsage for events/storage (deep — no shared refs).
     const subByModel = new Map<string, { prompt: number; completion: number; calls: number }>();
     for (const bm of priorSub?.byModel || []) subByModel.set(bm.model, { prompt: bm.prompt, completion: bm.completion, calls: bm.calls });
-    const addSub = (s: import("./contract").SubcallUsage | undefined): void => {
+    const addSub = (s: import("../contract").SubcallUsage | undefined): void => {
         if (!s || !s.calls) return;
         subTally.prompt += s.prompt; subTally.completion += s.completion; subTally.calls += s.calls;
         for (const bm of s.byModel || []) {
@@ -187,9 +187,9 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     };
     // Serialized visuals of `answer`-designated elements (data URLs), accumulated from each delegated
     // answer envelope → attached to the run's result + agent-result for the HUD completion card.
-    const runAnswerMedia: import("./contract").AnswerMedia[] = [];
+    const runAnswerMedia: import("../contract").AnswerMedia[] = [];
     // Flatten the tally to a serializable SubcallUsage (fresh objects → safe to store/emit repeatedly).
-    const snapSub = (): import("./contract").SubcallUsage => ({
+    const snapSub = (): import("../contract").SubcallUsage => ({
         ...subTally,
         ...(subByModel.size ? { byModel: [...subByModel.entries()].map(([model, u]) => ({ model, ...u })) } : {}),
     });
@@ -298,7 +298,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     /** "A model call is underway" — the one stamp for it, since the pending step START fires only once a
      *  TOOL is about to run (i.e. after the generation) and a turn that emits nothing but a tool call
      *  produces no stream deltas at all. Re-fired on each phase change with the marks so far. */
-    const emitTurn = (rawStep: number, phases?: import("./contract").GenPhase[]): void => {
+    const emitTurn = (rawStep: number, phases?: import("../contract").GenPhase[]): void => {
         const step = stepBase + rawStep;
         fanEvent({ kind: "agent-turn", id: runId, ts: Date.now(), save: false,
                    session: { hash: runId, turn: step }, step, localStep: rawStep, ...(phases?.length ? { phases: phases.slice() } : {}) });
@@ -432,9 +432,9 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     // it as a navigation: wait for the new document to settle (re-adopt) and hand back the new
                     // page's context — actionable, and safe (no blind retry that could double-submit a form).
                     const CHANNEL_GONE = /message channel closed|Receiving end does not exist|No tab with id/i;
-                    let env: Partial<import("./contract").PageToolEnvelope>;
+                    let env: Partial<import("../contract").PageToolEnvelope>;
                     try {
-                        env = await sendTool({ runId, name, args, stream: !!onStream }, onStream) as Partial<import("./contract").PageToolEnvelope>;
+                        env = await sendTool({ runId, name, args, stream: !!onStream }, onStream) as Partial<import("../contract").PageToolEnvelope>;
                     } catch (e) {
                         const emsg = (e as Error)?.message || String(e);
                         if (!CHANNEL_GONE.test(emsg)) {
@@ -480,7 +480,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                                 const payload = verify === "text" ? { runId, verifyText: "strip" as const, verifyPipe: navPipe }
                                     : verify === "text-all" ? { runId, verifyText: "all" as const, verifyPipe: navPipe }
                                     : { runId, verifyViewport: true };
-                                const v = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload }).catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
+                                const v = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload }).catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
                                 if (v && (v.image || v.feedback || v.result)) {
                                     if (v.result) env.result = `${env.result || ""}\n\n${v.result}`;
                                     env.image = v.image; env.imageLabel = v.imageLabel; env.feedback = v.feedback;
@@ -506,10 +506,10 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                         // The click succeeded. If `verify` was asked, ring the PAGE back to capture the area at
                         // the click point NOW (it couldn't run inline — the click was deferred to us). Merge its
                         // image/description/feedback so the model gets the result in THIS step, not a stray look().
-                        let vres = "", vimg: string | undefined, vimgLabel: string | undefined, vfeedback: import("./contract").ToolFeedback | undefined;
+                        let vres = "", vimg: string | undefined, vimgLabel: string | undefined, vfeedback: import("../contract").ToolFeedback | undefined;
                         if (env.cdpClick.verify) {
                             const venv = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, verifyAt: { x: env.cdpClick.x, y: env.cdpClick.y } } })
-                                .catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
+                                .catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
                             if (venv) { vres = venv.result || ""; vimg = venv.image; vimgLabel = venv.imageLabel; vfeedback = venv.feedback; addSub(venv.subUsage); }
                         }
                         // Append the page-side stuck-loop re-snap nudge (a repeat @pt click) to the SUCCESS result.
@@ -530,10 +530,10 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                         if (!m) return { result: `${env.result || ""}\n\nThe debugger couldn't reach "${env.cdpShadowClick.selector}" inside the sealed shadow root (no match). Check the selector, or fall back to locate/@pt.`, renderIn: env.renderIn, renderOut: env.renderOut };
                         const r = await cdpClick(tabId, m.cx, m.cy);
                         if (!("ok" in r)) return { result: (r as { error: string }).error, renderIn: env.renderIn, renderOut: env.renderOut };
-                        let vres = "", vimg: string | undefined, vimgLabel: string | undefined, vfeedback: import("./contract").ToolFeedback | undefined;
+                        let vres = "", vimg: string | undefined, vimgLabel: string | undefined, vfeedback: import("../contract").ToolFeedback | undefined;
                         if (env.cdpShadowClick.verify) {
                             const venv = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, verifyAt: { x: m.cx, y: m.cy } } })
-                                .catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
+                                .catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
                             if (venv) { vres = venv.result || ""; vimg = venv.image; vimgLabel = venv.imageLabel; vfeedback = venv.feedback; addSub(venv.subUsage); }
                         }
                         const tail = env.cdpShadowClick.verify ? "" : " Re-run look to see the result.";
@@ -562,7 +562,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                         }
                         const typed = await cdpKeyType(tabId, t.text, t.submit);
                         if (!("ok" in typed)) return { result: (typed as { error: string }).error, renderIn: env.renderIn, renderOut: env.renderOut };
-                        let vres = "", vimg: string | undefined, vimgLabel: string | undefined, vfeedback: import("./contract").ToolFeedback | undefined;
+                        let vres = "", vimg: string | undefined, vimgLabel: string | undefined, vfeedback: import("../contract").ToolFeedback | undefined;
                         if (t.verify) {
                             // The verify PICTURE: the whole element (selector/canvas → verifyElement), the focused
                             // element (@focus → verifyFocus), else the point crop (an @pt / sealed field, by coords).
@@ -570,7 +570,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                                 : t.verifyFocus ? { runId, verifyFocus: true }
                                 : typeof fx === "number" && typeof fy === "number" ? { runId, verifyAt: { x: fx, y: fy } }
                                 : { runId, verifyViewport: true };
-                            const venv = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload }).catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
+                            const venv = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload }).catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
                             if (venv) { vres = venv.result || ""; vimg = venv.image; vimgLabel = venv.imageLabel; vfeedback = venv.feedback; addSub(venv.subUsage); }
                         }
                         const shown = t.text.length > 60 ? t.text.slice(0, 60) + "…" : t.text;
@@ -614,7 +614,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             // python's code cell from the start instead of raw JSON args. Best-effort — raw args on failure.
             renderFor: async (name, args) => {
                 const env = await sendTool({ runId, name, args, renderOnly: true })
-                    .catch(() => null) as { renderIn?: import("./contract").RenderDescriptor } | null;
+                    .catch(() => null) as { renderIn?: import("../contract").RenderDescriptor } | null;
                 return env?.renderIn;
             },
             // Read-only try (exec only, and only when the user enabled autoApproveReadonly): ask the
@@ -628,7 +628,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             tryReadonly: p.autoApproveReadonly ? async (name, args) => {
                 if (name !== "exec") return null;
                 const env = await sendTool({ runId, name, args, readonlyTry: true })
-                    .catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
+                    .catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
                 return env && env.readonly ? { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut, reused: env.reused } : null;
             } : undefined,
             // Doomed-action precheck (click/type): ask the page to resolve the target side-effect-free.
@@ -637,7 +637,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             precheck: async (name, args) => {
                 if (!p.tools.some((t) => t.name === name && t.precheck)) return null;
                 const env = await sendTool({ runId, name, args, precheck: true })
-                    .catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
+                    .catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
                 return env && env.precheckFailed ? (env.result || "") : null;
             },
             approve: async ({ tool, arguments: args, seq, step }) => {
@@ -799,7 +799,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             // steer into an inbox nothing reads any more (it reads as "busy", and the person sends it again).
             runInboxes.delete(runId);
             const fin = p.builtBy === "worker"
-                ? await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, finish: true, summary: res.summary } }).catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null
+                ? await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, finish: true, summary: res.summary } }).catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null
                 : null;
             const answer = typeof fin?.answer === "string" && fin.answer ? fin.answer : undefined;
             emitLifecycle({

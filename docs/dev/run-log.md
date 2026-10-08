@@ -8,7 +8,7 @@ registered and simply not running. From the loop's point of view nothing had gon
 That is the shape of everything in this log — work that happens, matters, and is invisible.
 
 - **The store and the records**: `src/run-log.ts` (and `src/storage-ring.ts` underneath it)
-- **The worker's copy and its one message**: `src/sw-run-log.ts`
+- **The worker's copy and its one message**: `src/sw/sw-run-log.ts`
 - **The panel**: `src/sidebar/run-log-view.tsx`, docked by `src/chat/dock.tsx`
 - **The published export**: `docs/spec/run-log.schema.json`, generated from `run-log.ts`
 - **A demo of the whole thing**: `node tests/e2e/run-log-demo.mjs`

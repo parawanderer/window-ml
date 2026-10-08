@@ -7,20 +7,20 @@
 // page context and runs the tools. It never supplies the task, the model, the prompt, the toolset or the approval
 // flags.
 
-import type { ElementContext } from "./contract";
-import type { StartRunPayload, RebuildConfig } from "./contract/contract-messages";
-import { shortHash, type PromptOrigin } from "./contract/contract-run";
-import { askAboutTask } from "./prompts";
-import { promptSurfaceOf } from "./prompt-surface";
-import { stepBudget } from "./step-budget";
-import { assembleRun, rebuildFor, startPayload, userRunOptions, withPageContext, type UserRunRequest } from "./run-assembly";
+import type { ElementContext } from "../contract";
+import type { StartRunPayload, RebuildConfig } from "../contract/contract-messages";
+import { shortHash, type PromptOrigin } from "../contract/contract-run";
+import { askAboutTask } from "../prompts";
+import { promptSurfaceOf } from "../prompt-surface";
+import { stepBudget } from "../step-budget";
+import { assembleRun, rebuildFor, startPayload, userRunOptions, withPageContext, type UserRunRequest } from "../run-assembly";
 import { relayDebugEvent } from "./sw-debug";
 import { getConfig } from "./sw-llm";
 import { dropLocalTools, registerLocalTools } from "./sw-local-tools";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { delegateSend, hostRun } from "./sw-run-host";
 import { bgRuns, bufferReplay, isWorkerRun, makeWorkerRun, runControllers, runInboxes, workerRunsStarting } from "./sw-runs";
-import { originOf } from "./site-access";
+import { originOf } from "../site-access";
 import { siteDecision } from "./sw-site-access";
 import { ingestSessionEvent, keepSession } from "./sw-sessions";
 import { workerMl } from "./worker-ml";

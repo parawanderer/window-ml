@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { runStats, fmtTokPerSec, runStatsProvenance } from "../src/contract-chat.js";
-import { normalizeUsage } from "../src/sw-llm.ts";
+import { normalizeUsage } from "../src/sw/sw-llm.ts";
 
 const u = (promptTokens, completionTokens, extra = {}) => ({ promptTokens, completionTokens, totalTokens: promptTokens + completionTokens, ...extra });
 

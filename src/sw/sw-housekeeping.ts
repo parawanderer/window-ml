@@ -1,8 +1,8 @@
 // sw-housekeeping.ts — the service worker's one housekeeping log (see housekeeping.ts) and its two messages:
 // HOUSEKEEPING_REPORT (another context says what it decided) and DUMP_HOUSEKEEPING (`ml.__housekeeping()`, the
 // DevTools panel). Kept out of background.ts, which only routes to it.
-import { HousekeepingLog, eventsForReader, type HousekeepingOrigin, type HousekeepingReport } from "./housekeeping";
-import { type SessionArea } from "./storage-ring";
+import { HousekeepingLog, eventsForReader, type HousekeepingOrigin, type HousekeepingReport } from "../housekeeping";
+import { type SessionArea } from "../storage-ring";
 
 /** storage.session when the browser has it; an in-memory stand-in otherwise (a test harness without it), which
  *  still logs but cannot outlive the worker. Shared with the execution log (sw-run-log.ts), which keeps its own

@@ -5,14 +5,14 @@
 //
 // The connection keeps the worker alive while it is up: the hub pings every 20 s, and a websocket's traffic extends a
 // service worker's life. When the browser stops the worker anyway, the alarm below starts it again within a minute.
-import { CertificateBody } from "./proto/wmlhub/v1/identity.gen";
-import { HubClient } from "./hub/client";
-import { bytes } from "./hub/hpke";
-import { Keyring } from "./hub/keyring";
-import { Role } from "./hub/wire";
-import { HubRuntime, type HubRuntimeStatus } from "./hub-runtime";
-import { DeviceRegistry, type DeviceState } from "./hub-devices";
-import type { DeviceInfo } from "./session-host";
+import { CertificateBody } from "../proto/wmlhub/v1/identity.gen";
+import { HubClient } from "../hub/client";
+import { bytes } from "../hub/hpke";
+import { Keyring } from "../hub/keyring";
+import { Role } from "../hub/wire";
+import { HubRuntime, type HubRuntimeStatus } from "../hub-runtime";
+import { DeviceRegistry, type DeviceState } from "../hub-devices";
+import type { DeviceInfo } from "../session-host";
 import { LOCAL_RUNTIME, localRuntimeId, runSessionCommand, sessionServer } from "./sw-sessions";
 
 /** Where this browser stands with a hub, for Settings. `unpaired` is the usual state and not an error. */

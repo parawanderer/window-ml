@@ -6,11 +6,11 @@
 // So they are registered here at start and every send of one of them is answered here, through the same
 // `executeTool` and envelope the page's delegation uses (run-delegation.ts).
 
-import type { MlApi, MlTool, PageToolEnvelope, StartRunPayload } from "./contract";
-import { buildServerTools } from "./builtin-tools";
-import { descriptorFor } from "./render-descriptor";
-import { envelopeFrom } from "./run-delegation";
-import { executeTool, toolContext } from "./tool-exec";
+import type { MlApi, MlTool, PageToolEnvelope, StartRunPayload } from "../contract";
+import { buildServerTools } from "../builtin-tools";
+import { descriptorFor } from "../render-descriptor";
+import { envelopeFrom } from "../run-delegation";
+import { executeTool, toolContext } from "../tool-exec";
 import { listServerTools } from "./sw-llm";
 import { workerMl } from "./worker-ml";
 
