@@ -53,8 +53,10 @@ async function streamSurvey({ readonly, js = SURVEY, held = "before the wait\n" 
         const whileHeld = { deltas: ev.deltas.slice(), done: ev.done.length };
         fake.releasePs();
 
-        // Wait for the RUN, not for a body element of a collapsed step.
+        // Wait for the RUN, not for a body element of a collapsed step; then for its DONE, which reaches the DevTools
+        // port on its own schedule and may land after the run's promise settles.
         await page.evaluate(() => window.__run);
+        await expect.poll(() => ev.done.length, { timeout: 10000, message: "the step's DONE arrived" }).toBe(1);
         const after = { deltas: ev.deltas.slice(), done: ev.done.slice() };
         return { whileHeld, after };
     } finally {
@@ -108,7 +110,7 @@ test("a survey that streams and THEN falls out of dialect leaves nothing behind:
         const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
         await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
         await page.evaluate(() => window.__run);
-
+        await expect.poll(() => ev.done.length, { timeout: 10000, message: "the step's DONE arrived" }).toBe(1);
         const { deltas, done } = ev;
         expect(done).toHaveLength(1);
         expect(done[0].approval).toBe("user");
