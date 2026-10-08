@@ -19,7 +19,7 @@ import {
     vramOpen, sidebarOpen, backendError, backendLoading, surface, atBottom, resWindowS, vramH } from "./store";
 import { installTooltipLayer } from "./tooltip-layer";
 import { ContextMenu, CursorTipLayer, Hash, highlightPos } from "./ui-kit";
-import { onDebug, maybeGenerateTitles, titleTried } from "./debug-reducer";
+import { forgetSessionReduced, onDebug, maybeGenerateTitles, titleTried } from "./debug-reducer";
 import { installServices } from "./services";
 import { extensionServices } from "./services-ext";
 import { ProfileBadge, SessionRow, AgentBadge } from "./transcript/reply";
@@ -467,6 +467,8 @@ function onMessage(d: any): void {
     if (d.__mlDebug) onDebug(d.__mlDebug as MlDebugEvent);
     else if (typeof d.__mlHighlightPos === "string") highlightPos.value = d.__mlHighlightPos;   // where the approval target sits on the page
     else if (d.__mlDebugReset) resetSessions();
+    // The shell drops what the page wrote to a session the worker has since started (shell.ts dropPageSession).
+    else if (typeof d.__mlForgetSession === "string") { forgetSessionReduced(d.__mlForgetSession); rev.value++; }
     // The chart's keys, RELAYED from the page by the overlay's shell while the pointer is on a plot (see `chartKey`):
     // hovering does not move focus, so the page's document is the one receiving them.
     else if (typeof d.__mlSidebarChartKey === "string") chartKey(d.__mlSidebarChartKey);

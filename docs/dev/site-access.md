@@ -66,7 +66,10 @@ is `pageMayWrite(kind, claim)` (`src/event-admission.ts`): nothing for a run the
 `agent-say` and `agent-result` for a run the page built that the worker hosts (`hosts`), anything for a session the
 worker has no part in. The shell answers `claim` from the worker's events it has seen on the tab; the worker, before
 the index or a DevTools panel (`workerClaimOf` in background.ts), from `isWorkerRun`, `bgRuns` and the index. A
-background session whose run the worker no longer holds counts as `owns`. `DUMP_EVENTS` (`ml.__events()`) gives a page
+background session whose run the worker no longer holds counts as `owns`. The shell claims a run before its id reaches the
+page: `ADOPT_RUN_NOW` and `RUN_TOOL_IN_PAGE`, which content.ts relays to the page with the id, reach the shell in the
+same dispatch first (`claimForWorker`). And if the page still wrote to a session before the worker's start arrived,
+the shell has the app drop that session when it does (`dropPageSession`, `__mlForgetSession`). Attack 15d is the race. `DUMP_EVENTS` (`ml.__events()`) gives a page
 only the buffered events of sessions it is not shut out of.
 
 ## Tests

@@ -787,8 +787,31 @@ function onWindowMessage(e: MessageEvent): void {
 }
 
 /** Sessions the worker has spoken for on this tab, from its own stream: a start (`started`) means it emits the whole
- *  lifecycle itself; any event (`spoken`) that it hosts the run. What the page may add to each is `pageMayWrite`'s. */
-const workerSessions = { started: new Set<string>(), spoken: new Set<string>() };
+ *  lifecycle itself; any event (`spoken`) that it hosts the run. What the page may add to each is `pageMayWrite`'s.
+ *  `page` holds the sessions the page wrote to while the worker had not yet spoken for them. */
+const workerSessions = { started: new Set<string>(), spoken: new Set<string>(), page: new Set<string>() };
+
+/**
+ * Mark a run as the worker's before its id reaches the page. The messages that hand the page a run's id (the adopt
+ * push, a delegated tool call) reach this content script in the same dispatch that relays them, ahead of the page, so
+ * a page that takes the id from them finds the run already claimed. An adopted run's lifecycle is the worker's; a run
+ * that only delegates a tool is hosted, its page-built start and result still the page's.
+ * @param runId the run
+ * @param owns whether the worker emits its whole lifecycle
+ */
+function claimForWorker(runId: unknown, owns: boolean): void {
+    if (typeof runId !== "string" || !runId) return;
+    workerSessions.spoken.add(runId);
+    if (owns) workerSessions.started.add(runId);
+}
+
+/** Drop what the page wrote to a session the worker has now started: the card or sidebar rebuilds it from the
+ *  worker's events alone. Covers a page that posted under a run's id before the worker's start reached this shell. */
+function dropPageSession(h: string): void {
+    workerSessions.page.delete(h);
+    for (let i = bgRing.length - 1; i >= 0; i--) if (eventSession(bgRing[i]?.__mlDebug) === h) bgRing.splice(i, 1);
+    toApp({ __mlForgetSession: h });
+}
 
 /** What this shell knows about the worker's part in `ev`'s session. */
 function workerClaim(ev: unknown): WorkerClaim {
@@ -805,10 +828,17 @@ function workerClaim(ev: unknown): WorkerClaim {
  */
 function feedDebug(ev: any, fromWorker: boolean): void {
     if (!ev || typeof ev !== "object") return;
+    const h = eventSession(ev);
     if (fromWorker) {
-        const h = eventSession(ev);
-        if (h) { workerSessions.spoken.add(h); if (ev.kind === "agent") workerSessions.started.add(h); }
-    } else if (!pageMayWrite(ev.kind, workerClaim(ev))) return;
+        if (h) {
+            if (ev.kind === "agent" && workerSessions.page.has(h)) dropPageSession(h);
+            workerSessions.spoken.add(h);
+            if (ev.kind === "agent") workerSessions.started.add(h);
+        }
+    } else {
+        if (!pageMayWrite(ev.kind, workerClaim(ev))) return;
+        if (h) workerSessions.page.add(h);
+    }
     const d = { __mlDebug: ev };
     // Feed the corner HUD card, when it's active: OFF mode always, DEVTOOLS when the coexist toggle
     // (agentHudInDevtools) is on. The card mounts lazily on a run START (`kind: "agent"`), then
@@ -1427,6 +1457,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // A run's event from the worker, for the card or the overlay. It comes this way, and never over the page's window,
     // so the page neither reads it nor can pass one off as the worker's (docs/spec/SITE_ACCESS.md, attack 15).
     if (msg?.type === "ML_DEBUG_TO_PAGE") { if (startupQueue) workerStartup.push(msg.event); else feedDebug(msg.event, true); return; }
+    // Not ours to answer (content.ts relays them to the page), but they carry a run's id to the page: claim it first.
+    if (msg?.type === "ADOPT_RUN_NOW") claimForWorker(msg.payload?.runId, true);
+    else if (msg?.type === "RUN_TOOL_IN_PAGE") claimForWorker(msg.payload?.runId, false);
     // The sidebar app's hello: it wants its private port (parent-channel.ts).
     if (msg?.type === "ML_HOST_HELLO" && typeof msg.nonce === "string") { openHostPort(msg.nonce, sender); return; }
     // `anyMode`: the chat page highlights on the tab a session runs on, whatever this tab's debug surface is.
