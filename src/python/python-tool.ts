@@ -6,8 +6,8 @@ import { outputCapPrecheck, resolveOutputCap } from "../contract/contract-pointe
 import { UI_OUT_CAP } from "../contract/contract-chat";
 import { type MlTool, type ToolResult } from "../contract/contract-agent";
 import { type RenderDescriptor } from "../contract/contract-render";
-import { googleSheetCsvUrl, nonEmptyTables, clipOut, clipValue } from "../dom";
-import type { Box } from "../locate";
+import { googleSheetCsvUrl, nonEmptyTables, clipOut, clipValue } from "../dom/dom";
+import type { Box } from "../dom/locate";
 import { pyValueParts } from "./py-render";
 import { PY_PACKAGE_LABELS } from "./python-env";
 import { outputCapParams, retryParams } from "../tool-params";

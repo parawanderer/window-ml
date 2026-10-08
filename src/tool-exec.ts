@@ -9,7 +9,7 @@ import type { DerefRead } from "./pointers/token-pipe";
 import { AnswerSet } from "./pointers/answer-set";
 import { validateArgs } from "./validate";
 import { takeCallTitle } from "./tool-params";
-import { errText } from "./dom";
+import { errText } from "./dom/dom";
 
 // `agent_api_docs`'s within-burst dedup memory is per RUN, but `toolContext` is rebuilt on every
 // background-delegated call (run-delegation.ts) — so it can't be created here per call. Keyed off the run's

@@ -8,7 +8,7 @@ import type { RenderDescriptor } from "../contract/contract-render";
 import { UI_OUT_CAP } from "../contract/contract-chat";
 import { OUTPUT_CAP } from "../contract/contract-pointers";
 import { NotInDialect, Denied, describeSwaps, type PrintSwap } from "../readonly-exec";
-import { clipOut, clipValue, elPath } from "../dom";
+import { clipOut, clipValue, elPath } from "../dom/dom";
 import { suspiciousArgsWarning } from "./security";
 
 // In an approval prompt the DATA SOURCE (which sheet/table/image/url this call touches) is what

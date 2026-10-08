@@ -7,7 +7,7 @@
 // members are still on `window.ml`, so `this` inside them is still the API object.
 import { makeBackgroundTaskPromise } from "../bridge";
 import type { TableValue, TableSource, MlApi, TablePreview, ShotBox } from "../contract";
-import { googleSheetCsvUrl, nonEmptyTables, googleSheetId, elPath, queryAll, isElement, extractTable } from "../dom";
+import { googleSheetCsvUrl, nonEmptyTables, googleSheetId, elPath, queryAll, isElement, extractTable } from "../dom/dom";
 import { mlFetchCache } from "./ml-fetch-cache";
 import { pyVarNameError } from "../python/python-env";
 import { isTable } from "../table/table-brand";

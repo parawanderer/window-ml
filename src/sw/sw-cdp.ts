@@ -3,7 +3,7 @@
 // cross-origin iframes / declarative-closed shadow roots, and a host-grant-free screenshot. Extracted from
 // background.ts verbatim; it owns its own attach lifecycle and shares no state with the rest of the worker.
 // Gated at the call sites behind the off-by-default `cdp` setting + the `debugger` permission (checked here).
-import { clipOut } from "../dom";
+import { clipOut } from "../dom/dom";
 import { noteRunMechanic } from "./sw-runs";
 
 /** Is the `debugger` permission held? It's declared at INSTALL time (in `permissions`, not optional) —

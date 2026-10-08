@@ -20,8 +20,8 @@ import { executeTool, toolContext, answerSetFor, withRunSession, withRunDeref } 
 import { expandPointers } from "../pointers/pointer-macro";
 import { derefViaBackground } from "../deref-read";
 import { captureVerify, captureVerifyElement } from "../builtin-tools";
-import { htmlToMarkdown } from "../html-to-md";
-import { clipOut, elLine, errText } from "../dom";
+import { htmlToMarkdown } from "../dom/html-to-md";
+import { clipOut, elLine, errText } from "../dom/dom";
 import { makeAnswerFacade, finalizeAnswer } from "../pointers/answer-set";
 import { runPipe, pipeHint } from "../pointers/text-pipe";
 import { descriptorFor } from "../render-descriptor";

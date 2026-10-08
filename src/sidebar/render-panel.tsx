@@ -12,7 +12,7 @@ import type { RenderDescriptor, LocateSubstep, CodeRevision } from "../contract/
 import type { TableSource } from "../contract/contract-fetch";
 import { codeDiff, diffStat } from "../diff";
 import { downloadBlob } from "./download";   // a table too large for the clipboard is saved as a file
-import { elementReference } from "../dom";
+import { elementReference } from "../dom/dom";
 import { pyFormat, lineChanged } from "../python/py-format";
 import { lineMapBetween } from "../line-map";
 import { services, type StoredTableRead } from "./services";

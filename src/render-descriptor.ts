@@ -10,8 +10,8 @@
 // Either may be undefined → the sidebar renders that block's raw view. Page-side (touches Element/DOM).
 import type { MlTool } from "./contract/contract-agent";
 import type { RenderDescriptor, ToolRenderInput } from "./contract/contract-render";
-import { clickSelector, truncate, isElement } from "./dom";
-import { accessibleName, placeholderText } from "./a11y";
+import { clickSelector, truncate, isElement } from "./dom/dom";
+import { accessibleName, placeholderText } from "./dom/a11y";
 
 export function descriptorFor(
     tool: MlTool | undefined,

@@ -14,7 +14,7 @@ import { makeBackgroundTaskPromise } from "../bridge";
 import { setCdpEnabled } from "../builtin-tools";
 import { handleRegistry, agentRegistry, enterAgentRun, emitDebug, exitAgentRun } from "../bus";
 import type { MlApi, AgentOptions, MlAgentHandle, ApprovalRequest, RebuildConfig, MlTool, VisionMemory, AgentResult } from "../contract";
-import { setPierceClosedShadow } from "../dom";
+import { setPierceClosedShadow } from "../dom/dom";
 import { AgentHandle } from "./ml-agent";
 import { registerRun, endRun, runAnswer } from "../agent/run-delegation";
 import { suspiciousArgsWarning } from "../agent/security";

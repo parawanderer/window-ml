@@ -9,7 +9,7 @@
 
 import { clickSelector } from "./dom";
 import { styleHidden, roleOf, accessibleName } from "./a11y";
-import { SB_ROOT, SB_CARD } from "./ids";
+import { SB_ROOT, SB_CARD } from "../ids";
 
 export type MarkFilter = "clickables" | "inputs" | "images" | "all";
 

@@ -12,7 +12,7 @@ import type { RenderDescriptor } from "../contract/contract-render";
 import type { DebugAgentConfig } from "../contract/contract-debug";
 import { resolveOutputCap } from "../contract/contract-pointers";
 import { runStats, fmtTokPerSec, runStatsProvenance } from "../contract/contract-chat";
-import { externalSheetIds } from "../dom";
+import { externalSheetIds } from "../dom/dom";
 import { surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, showStatsTps, laneLitSeqs, focusMode, groupAllTools } from "./store";
 import type { Session, AgentStep, Status } from "./store";
 import { pretty, truncate, markdown, collapsedPreview, toolFailed } from "./format";

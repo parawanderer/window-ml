@@ -25,7 +25,7 @@ import { BUILD_INFO } from "../build-info.gen";
 import { setCdpEnabled } from "../builtin-tools";
 import { agentRegistry, resetSubcallUsage, handleRegistry, emitDebug, enterAgentRun, exitAgentRun, subcallUsage } from "../bus";
 import { type MlApi, type MlTool, type ApprovalRequest, type ApprovalDecision, type AgentResult, shortHash, type MlAgentHandle, type NeutralMessage, type RenderDescriptor, type ToolFeedback, type TokenUsage, hintSession, type DerefRead, type ToolRenderInput, outputCapEscalated } from "../contract";
-import { setPierceClosedShadow, externalSheetIds, isCurrentPage, elLine, errText } from "../dom";
+import { setPierceClosedShadow, externalSheetIds, isCurrentPage, elLine, errText } from "../dom/dom";
 import { type AgentControl, sameOriginNav, sameOriginFetch } from "./ml-agent";
 import { TokenStore } from "../pointers/token-pipe";
 import { columnsViaBackground } from "../deref-read";

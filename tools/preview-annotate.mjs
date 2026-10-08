@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 export async function generatePreview() {
 // Real locate.ts → IIFE exposing `window.locate` (same code the extension + tests run).
 const { outputFiles } = await esbuild.build({
-    entryPoints: ["src/locate.ts"],
+    entryPoints: ["src/dom/locate.ts"],
     bundle: true,
     write: false,
     format: "iife",

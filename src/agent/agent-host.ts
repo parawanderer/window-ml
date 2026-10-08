@@ -17,7 +17,7 @@ import type { DerefRead } from "../pointers/token-pipe";
 import { runAgentLoop, shotTurnMessage } from "./agent-loop";
 import type { ToolMeta, AgentLoopDeps, ToolRunResult } from "./agent-loop";
 import { autoApprovePython } from "./auto-approve";
-import { externalSheetIds } from "../dom";
+import { externalSheetIds } from "../dom/dom";
 import { isSelfSourceUrl } from "./self-source";
 import { BUILD_INFO } from "../build-info.gen";
 

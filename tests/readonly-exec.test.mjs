@@ -1141,7 +1141,7 @@ test("ADVERSARIAL: the info RESPONSE is inert data, not a route to anything", as
 
 const SCHEMA_ML = {
     ...ML,
-    schema: async (...vs) => { ML_CALLS.push(["schema", vs.length]); const { joinShapes, jsonValue } = await import("../src/dom.ts"); return joinShapes(vs.map((v, i) => jsonValue(v, `argument ${i + 1}`))); },
+    schema: async (...vs) => { ML_CALLS.push(["schema", vs.length]); const { joinShapes, jsonValue } = await import("../src/dom/dom.ts"); return joinShapes(vs.map((v, i) => jsonValue(v, `argument ${i + 1}`))); },
     dereference: async (ref) => {
         const { DerefText } = await import("../src/deref-read.ts");
         return new DerefText('{"id":1,"name":"a"}', { id: "a1b2c3f", tool: "fetch_url", kind: "json", step: 2 },

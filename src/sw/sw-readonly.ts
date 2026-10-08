@@ -22,7 +22,7 @@ import { expandPointers, execCodeIn } from "../pointers/pointer-macro";
 import { formatReadonlyExec } from "../agent/approval";
 import { descriptorFor } from "../render-descriptor";
 import { outputCapEscalated } from "../contract/contract-pointers";
-import { errText } from "../dom";
+import { errText } from "../dom/dom";
 import type { CurrentSnapshot } from "../agent/current-context";
 import type { MlTool } from "../contract/contract-agent";
 import type { RenderDescriptor } from "../contract/contract-render";

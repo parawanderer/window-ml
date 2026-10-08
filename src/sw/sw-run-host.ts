@@ -14,7 +14,7 @@ import type { ApprovalDecision } from "../contract/contract-agent";
 import { stepBudget } from "../agent/step-budget";
 import type { StartRunPayload, ResumeRunPayload } from "../contract/contract-messages";
 import { type RequestHint, hintSession } from "../contract/contract-run";
-import { externalSheetIds, clipOut, isCurrentPage } from "../dom";
+import { externalSheetIds, clipOut, isCurrentPage } from "../dom/dom";
 import { extractGrants } from "./grant-extract";
 import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";

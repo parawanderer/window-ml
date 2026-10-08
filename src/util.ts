@@ -2,7 +2,7 @@
 // and element-rect screenshot cropping. Pure-ish (args + browser globals); bundled
 // into injected.js.
 
-import { truncate, shadowRootStats, iframeStats, markdownTwin } from "./dom";
+import { truncate, shadowRootStats, iframeStats, markdownTwin } from "./dom/dom";
 import { TOKEN_PAYLOAD_LEN, checkChar, formatToken } from "./pointers/token-id";
 import type { ShotBox, VisionMemory } from "./contract/contract-render";
 

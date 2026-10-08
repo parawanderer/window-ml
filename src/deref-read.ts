@@ -5,7 +5,7 @@
 import type { Table } from "./contract/contract-fetch";
 import type { DerefValue, DerefMeta, DerefRead } from "./contract/contract-pointers";
 import type { TokenKind } from "./contract/contract-render";
-import { jsonShape, jsonValue } from "./dom";
+import { jsonShape, jsonValue } from "./dom/dom";
 import { type StoredColumnReader, asTable, tableShape } from "./table/table-data";
 import { currentHasTool } from "./tool-exec";
 

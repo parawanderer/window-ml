@@ -9,7 +9,7 @@
 // a hostile page nothing — its readonly-dialect check can stay page-side/delegated.)
 
 import { suspiciousChars } from "./security";
-import { externalSheetIds } from "../dom";
+import { externalSheetIds } from "../dom/dom";
 import { outputCapEscalated } from "../contract/contract-pointers";
 
 export interface AutoApproveConfig { autoApprovePython?: boolean }

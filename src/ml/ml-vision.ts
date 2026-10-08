@@ -18,8 +18,8 @@ import type { MlApi } from "../contract";
 import type { MlPublicConfig } from "../contract/contract-config";
 import type { MlTool, ToolResult } from "../contract/contract-agent";
 import type { ShotBox, VisionMemory } from "../contract/contract-render";
-import { queryAll, isElement, viewportRect, classifyOverlay, errText } from "../dom";
-import { pickAccentColorForTarget, annotate } from "../locate";
+import { queryAll, isElement, viewportRect, classifyOverlay, errText } from "../dom/dom";
+import { pickAccentColorForTarget, annotate } from "../dom/locate";
 import { POINT_RE, resolvePoint, PT_LOOK_RADIUS, cropDataUrl, BOX_RE, resolveBox, MIN_SHOT_PX, markSeen } from "../util";
 
 /**

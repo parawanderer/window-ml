@@ -3,7 +3,7 @@
 // documents), and the DerefText wrapper ml.dereference resolves to.
 import { test } from "node:test";
 import assert from "node:assert";
-const { jsonShape, joinShapes, jsonValue } = await import("../src/dom.ts");
+const { jsonShape, joinShapes, jsonValue } = await import("../src/dom/dom.ts");
 const { DerefText } = await import("../src/deref-read.ts");
 
 // --- the merge is recursive, which is what the string-union version could not do ---

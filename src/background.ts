@@ -7,7 +7,7 @@ import { LOAD_RECORDS_KEY } from "./resource/load-records";
 import type { ApprovalDecision } from "./contract/contract-agent";
 import type { StartRunPayload, SetApprovalPayload, CancelRunPayload, InjectMessagePayload } from "./contract/contract-messages";
 import { modelFilterAllows, publicConfig } from "./contract/contract-config";
-import { googleSheetId, isCurrentPage } from "./dom";
+import { googleSheetId, isCurrentPage } from "./dom/dom";
 import { isSelfSourceUrl } from "./agent/self-source";   // trusted-side enforcement of the self-source auto-approve (uncredentialed own-repo reads)
 import { BUILD_INFO } from "./build-info.gen";
 import { browserInfo } from "./util";   // the fork's settings scheme (page-context Browser line)
