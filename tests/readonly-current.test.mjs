@@ -496,3 +496,25 @@ test("FAILURE: a survey that reads ml.current and then falls out of dialect leav
     assert.equal(snap.meta.length, 4);
     assert.notEqual(snap.meta[0].tokens, 0);
 });
+
+// --- the state inspector's view of the same snapshot ---
+
+test("the inspector's message rows use ml.current's own field names and nothing else, so a copied path is real", async () => {
+    const { messageRow } = await import("../src/agent/state-rows.ts");
+    const long = "x".repeat(500);
+    const msgs = [
+        { role: "user", content: "hi" },
+        { role: "assistant", content: "", tool_calls: [{ id: "c1", name: "exec", arguments: { js: "1" } }] },
+        { role: "tool", content: long, tool_call_id: "c1" },
+    ];
+    for (const m of msgs) for (const k of Object.keys(messageRow(m))) assert.ok(k in m, `${k} is a field of the message itself`);
+    assert.deepEqual(messageRow(msgs[1]).tool_calls, [{ name: "exec" }]);
+    const cut = messageRow(msgs[2]).content;
+    assert.ok(cut.length < long.length && cut.endsWith("…"), "a long content is cut, and says so");
+});
+
+test("run.log in the inspector is the model's view of the log: no key, no tab, no origin", async () => {
+    const { currentLogRecords } = await import("../src/agent/current-context.ts");
+    const [r] = currentLogRecords([{ t: 5, run: "r", subsystem: "page", kind: "discarded", origin: "worker", tab: 3, key: "https://secret/", level: "warn", detail: { tab: 3 } }]);
+    assert.deepEqual(r, { ts: 5, level: "warn", subsystem: "page", kind: "discarded", reason: null, detail: { tab: 3 } });
+});

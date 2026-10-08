@@ -8,7 +8,7 @@
 import { defineState } from "../state-registry";
 import type { AgentControl } from "../ml/ml-agent";
 import type { CurrentSnapshot } from "./current-context";
-import { contextTextOf, pickMeta, pointerRow, preview } from "./state-rows";
+import { contextTextOf, messageRow, pointerRow } from "./state-rows";
 import type { AnswerSet } from "../pointers/answer-set";
 
 /** What the page keeps for one page-hosted run: its control (history, inbox, pointer store) and, while a turn runs, the
@@ -51,15 +51,22 @@ export const pageHostedAnswer = (runId: string): AnswerSet | undefined => {
 };
 
 defineState({
-    id: "run.messages", scope: "session", realm: "page", audience: "model", lostOn: ["navigation"],
-    describe: "The context the run's next model call gets, one row per message: who wrote it, its size, when, and from which step.",
+    id: "run.messages", scope: "session", realm: "page", audience: "model", lostOn: ["navigation"], exposedAs: "ml.current.messages",
+    describe: "The context the run's next model call gets, one row per message, each cut to a preview. Between turns, the history the run kept for a follow-up.",
     read: ({ runId }) => {
         const r = runId ? pageHosted.get(runId) : undefined;
-        if (!r) return undefined;
-        const live = r.context?.();
-        if (live) return live.messages.map((m, i) => ({ role: m.role, text: preview(m), ...pickMeta(live.meta[i]) }));
-        return r.control.messages.map((m) => ({ role: m.role, text: preview(m) }));
+        return r ? (r.context?.().messages ?? r.control.messages).map(messageRow) : undefined;
     },
+});
+defineState({
+    id: "run.meta", scope: "run", realm: "page", audience: "model", lostOn: ["navigation", "turn-end"], exposedAs: "ml.current.meta",
+    describe: "What is known about each message of the live context, in the same order: its id, size in tokens, when it arrived, from which step and tool.",
+    read: ({ runId }) => (runId ? pageHosted.get(runId)?.context?.().meta : undefined),
+});
+defineState({
+    id: "run.current", scope: "run", realm: "page", audience: "model", lostOn: ["navigation", "turn-end"], exposedAs: "ml.current.run",
+    describe: "The live turn as the model sees it: the run's id, its model, the step it is on, its step budget, and when it started.",
+    read: ({ runId }) => (runId ? pageHosted.get(runId)?.context?.().run : undefined),
 });
 defineState({
     id: "run.pointers", scope: "session", realm: "page", audience: "model", lostOn: ["navigation"],

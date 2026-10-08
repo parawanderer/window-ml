@@ -177,22 +177,21 @@ re-filed under a new tab, which is exactly when it is worth reading. The records
   "which artifact to reach for" table. A fifth artifact that was almost that file is how that table
   stops working.
 
-## Still open: letting the model read its own run's log
+## The model reads its own run's log: `ml.current.log`
 
-Agreed in principle, deliberately not built yet, and the order matters: **records first, surface after**,
-or the API gets shaped around a speculative reader. Two hazards, in order:
+Decided (Shane, 2026-10-08) once `ml.current` became reachable from a read-only survey (#410): the model may read its
+own run's records, with no approval of their own. What holds the two hazards this was waiting on:
 
-1. **Prompt injection**, which is the real one. A record's `key` can be page-derived (a URL, a title),
-   and feeding that back through a channel the model asked for is an injection surface — the same
-   reasoning behind `PROSE_SEGMENTS` and `suspiciousChars`. The model-facing view is enums and numbers
-   only, with any free string withheld or marked untrusted. This falls out of the records being
-   structured, which is an argument for it.
-2. **Acting on transient infrastructure noise.** "CDP not enabled" invites a model to route around
-   something only a person can fix. Keep it PULL-only (a tool it calls), never injected, behind an
-   "allow the model to inspect run logs" approval, gated at the BACKGROUND — the worker filters to this
-   run and applies the withholding. A page-side check is not the boundary.
+1. **Prompt injection.** The model's view (`currentLogRecords`, `current-context.ts`) is `ts`, `level`, `subsystem`,
+   `kind`, `reason` and `detail`, and never `key` (a URL, an error message: the free text a page can influence),
+   `tab` or `origin`. Subsystems, kinds and reasons are lowercase slugs by construction (`sanitizeReport`), and a
+   `detail` string is capped at 200 characters. `detail` is the residual surface: an emitter that puts page text in
+   it hands that text to the model.
+2. **Acting on transient infrastructure noise.** It is PULL-only: the model reads it by writing `ml.current.log` in
+   a survey, it is never injected into the context, and the worker filters it to this run.
 
-`DUMP_RUN_LOG` is extension pages only until that exists: the ring holds every run's records.
+The state inspector shows `run.log` as the model reads it (`ml.current.log`); the Execution log panel is the person's
+full view, `key` included. `DUMP_RUN_LOG` stays extension pages only: the ring holds every run's records.
 
 ## The trap this log exists for
 

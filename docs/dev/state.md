@@ -47,7 +47,7 @@ page-hosted one. Several stores exist once per host.
 | The run's current tab and URL | `activeRuns`, `tabPageUrl` | `ml_pinned_tabs` (pinned tabs only) | `run` |
 | Interrupted / auto-resumed | `hydratedRuns`, `resurrectedRuns` | derived from `ml_bgrun_*` | `run` |
 | Delegated sub-call spend | `subTally` / `bgRuns.sub`; page: `subUsage` (`bus.ts`) | in `history.sub` if saved | `run` (the model sees it via `chat_metadata`) |
-| Execution log | `runLog` (`sw-run-log.ts`) | `ml_run_log` (session storage) | `log`, audience `human` until the model is given it |
+| Execution log | `runLog` (`sw-run-log.ts`) | `ml_run_log` (session storage) | `run.log`, read by the model as `ml.current.log` (no `key`/`tab`/`origin`) |
 | Environment: debugger attached, tab pinned, navigation barrier, hub devices granted this session | `attachedDebuggees`, `ml_pinned_tabs`, `navBarrier`, `SessionPublisher.granted` | partly | `run` (new) |
 | Docs already shown to the model | `docsMemories` (`tool-exec.ts`, page) | no | maybe |
 | Crops already seen (vision) | `VisionMemory`, made FRESH on every re-adopt | no | maybe |
@@ -136,7 +136,7 @@ hold live network handles: neither shown nor evaluated).
 Each realm's bundle has its own registry (`src/state-registry.ts`); a snapshot asks the realm that holds the run.
 Declared so far, in the worker: `run.init`, `run.sub`, `run.model`, `run.interrupted`, `run.mailbox`, `run.pointers`,
 `run.page`, `run.messages`, `run.input`, `grants.turn` (`sw-runs.ts`), `run.values` (`sw-values.ts`), `run.approvals`, `grants.call`, `grants.fetch`, `grants.credentialedFetch` (`sw-consent.ts`),
-`run.log` (`sw-run-log.ts`), `session.title` (`sw-sessions.ts`). In the page: `run.answer` (`run-delegation.ts`),
+`run.log` (`sw-run-log.ts`), `session.title` (`sw-sessions.ts`), `run.meta` and `run.current` (`sw-runs.ts`). In the page: `run.answer` (`run-delegation.ts`),
 `page.points`, `page.boxes` (`util.ts`), and for a page-hosted run `run.messages`, `run.pointers`, `run.mailbox`
 (`page-run-state.ts`), asked of the run's tab with `RUN_STATE_IN_PAGE` (`sw-run-state.ts`). An id is unique per realm,
 not overall: both hosts declare the same member of a run. Each realm

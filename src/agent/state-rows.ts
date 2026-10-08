@@ -3,22 +3,26 @@
 // background one.
 
 import type { NeutralMessage } from "../contract";
-import type { MessageMeta } from "./current-context";
 import type { TokenValue } from "../pointers/token-pipe";
 
 /** How much of each message's text the inspector is handed: enough to recognise it, never the whole context. */
 const MESSAGE_PREVIEW = 160;
 
-/** A message as one short line: its text, or the tools it called. */
-export const preview = (m: NeutralMessage): string => {
-    const t = typeof m.content === "string" ? m.content : "";
-    const calls = m.tool_calls?.map((c) => c.name).join(", ");
-    const text = t || (calls ? `→ ${calls}` : "");
-    return text.length > MESSAGE_PREVIEW ? `${text.slice(0, MESSAGE_PREVIEW)}…` : text;
+/**
+ * A message as `ml.current.messages` holds it, with its text cut to a preview (`…` where it was cut). The SAME field
+ * names and nothing added, so a path copied from the panel names what the model reads. A tool call keeps its name; its
+ * arguments are in the transcript.
+ * @param m the message
+ */
+export const messageRow = (m: NeutralMessage) => {
+    const c = typeof m.content === "string" ? m.content : "";
+    return {
+        role: m.role,
+        content: c.length > MESSAGE_PREVIEW ? `${c.slice(0, MESSAGE_PREVIEW)}…` : c,
+        ...(m.tool_calls?.length ? { tool_calls: m.tool_calls.map((t) => ({ name: t.name })) } : {}),
+        ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
+    };
 };
-
-/** The facts about a message the inspector shows beside it. */
-export const pickMeta = (x: MessageMeta) => ({ id: x.id, tokens: x.tokens, tokensBasis: x.tokensBasis, images: x.images, ts: x.ts, step: x.step, tool: x.tool, truncated: x.truncated });
 
 /**
  * One `@tool:` value as the inspector lists it: what it is and how big, never the value itself.

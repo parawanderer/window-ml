@@ -26,8 +26,8 @@ import { createNavBarrier } from "./nav-barrier";
 import { releaseSessionValues } from "./sw-values";
 import { TokenStore } from "../pointers/token-pipe";
 import { defineState } from "../state-registry";
-import { CHARS_PER_TOKEN, type CurrentSnapshot } from "../agent/current-context";
-import { contextTextOf, pickMeta, pointerRow, preview } from "../agent/state-rows";
+import { type CurrentSnapshot } from "../agent/current-context";
+import { contextTextOf, messageRow, pointerRow } from "../agent/state-rows";
 
 // Design A: the AbortController for each live background run, keyed by runId, so a CANCEL_RUN message
 // (the HUD's "Cancel agent run") stops the loop at the next boundary AND kills a slow in-flight model
@@ -398,15 +398,23 @@ defineState({
 });
 
 defineState({
-    id: "run.messages", scope: "session", realm: "worker", audience: "model", lostOn: ["worker-eviction"],
-    describe: "The context the run's next model call gets, one row per message: who wrote it, its size, when, and from which step.",
+    id: "run.messages", scope: "session", realm: "worker", audience: "model", lostOn: ["worker-eviction"], exposedAs: "ml.current.messages",
+    describe: "The context the run's next model call gets, one row per message, each cut to a preview. Between turns, the history the run kept for a follow-up.",
     read: ({ runId }) => {
         if (!runId) return undefined;
         const live = contextByRun.get(runId)?.();
-        if (live) return live.messages.map((m, i) => ({ role: m.role, text: preview(m), ...pickMeta(live.meta[i]) }));
-        // Between turns: the history the run kept for a follow-up, with nothing known about each message but itself.
-        return bgRuns.get(runId)?.messages.map((m) => ({ role: m.role, text: preview(m), tokens: Math.ceil(((typeof m.content === "string" ? m.content.length : 0) + JSON.stringify(m.tool_calls ?? "").length) / CHARS_PER_TOKEN), tokensBasis: "estimated", images: m.images?.length ?? 0 }));
+        return (live?.messages ?? bgRuns.get(runId)?.messages)?.map(messageRow);
     },
+});
+defineState({
+    id: "run.meta", scope: "run", realm: "worker", audience: "model", lostOn: ["worker-eviction", "turn-end"], exposedAs: "ml.current.meta",
+    describe: "What is known about each message of the live context, in the same order: its id, size in tokens, when it arrived, from which step and tool.",
+    read: ({ runId }) => (runId ? contextByRun.get(runId)?.().meta : undefined),
+});
+defineState({
+    id: "run.current", scope: "run", realm: "worker", audience: "model", lostOn: ["worker-eviction", "turn-end"], exposedAs: "ml.current.run",
+    describe: "The live turn as the model sees it: the run's id, its model, the step it is on, its step budget, and when it started.",
+    read: ({ runId }) => (runId ? contextByRun.get(runId)?.().run : undefined),
 });
 
 // The `@tool:` pointer store per background-hosted run, kept ACROSS the turns of one session so a follow-up
