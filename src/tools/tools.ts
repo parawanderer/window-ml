@@ -32,7 +32,7 @@ import { ML_READONLY_METHODS } from "../readonly-exec";
 // surface, so the doc the model reads can never drift from the interface it describes.
 import { resolveOutputCap, outputCapPrecheck, OUTPUT_CAP } from "../contract/contract-pointers";
 import { UI_OUT_CAP } from "../contract/contract-chat";
-import { clipHeadTail, panelHead } from "../agent/output-clip";
+import { clipHeadTail, panelHead, boundedLines, ceilingNote } from "../agent/output-clip";
 import { ML_API_PARTS } from "../api-docs.gen";
 import { queryApiDocs, isDefaultQuery, type ApiDocsQuery } from "./api-docs-query";
 import { answerItemFromString, type AnswerSet } from "../pointers/answer-set";
@@ -626,7 +626,9 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 // forEach(...) evaluate to undefined — so it often console.logs to
                 // "read" data and gets nothing back. Capture console output during
                 // the eval and return it too, so that pattern still works.
-                const logs: string[] = [];
+                // Bounded (output-clip.ts): past OUTPUT_CEILING a line is counted, not kept, and not streamed.
+                const capture = boundedLines();
+                const logs = capture.lines;
                 const methods = ["log", "info", "warn", "error", "debug"] as const;
                 const saved: Record<string, typeof console.log> = {};
                 for (const m of methods) {
@@ -636,8 +638,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                             if (typeof x === "string") return x;
                             try { return JSON.stringify(x); } catch { return String(x); }
                         }).join(" ");
-                        logs.push(line);
-                        ctx?.stream?.(line + "\n");   // LIVE: stream each console line (Jupyter-style) when streaming is on
+                        if (capture.add(line)) ctx?.stream?.(line + "\n");   // LIVE: stream each console line (Jupyter-style) when streaming is on
                     };
                 }
 
@@ -727,7 +728,9 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 }
 
                 // Prefix any captured console output onto the returned value.
-                const logged = logs.length ? `console:\n${clipOut(logs.join("\n"), cap)}` : "";
+                // A call past the ceiling says so AFTER the clip, where the model reads it, and in the panel's last line.
+                const overNote = capture.dropped ? ceilingNote(capture.dropped) : "";
+                const logged = logs.length ? `console:\n${clipOut(logs.join("\n"), cap)}${overNote ? `\n${overNote}` : ""}` : "";
                 const clampNote = clamped ? `\n\n(output limit clamped to ${cap} chars — the hard ceiling.)` : "";
                 const withLogs = (value: string) => (logged ? `${logged}\n\nvalue: ${value}` : value) + clampNote;
                 // `queuedMs` is the field's own meaning — "elapsed before evaluation began" — which is exactly
@@ -739,12 +742,12 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 // a rendered⇄raw toggle) instead of one raw blob. Carries exactly the same data the raw
                 // `content` string does, so the model-facing result is byte-identical (the raw-view rule).
                 const execRender = (value?: string, error?: string, errorLine?: number | null, valueSeen?: number): import("../contract").RenderDescriptor => {
-                    const joined = logs.join("\n");
+                    const kept = logs.join("\n"), joined = overNote ? `${kept}\n${overNote}` : kept;
                     return {
                         type: "exec-out",
                         // The UI keeps far more than the model's budget, and records where the model's view
                         // ENDED (`seen`) so the surplus renders marked instead of silently passing as "what it read".
-                        ...(logs.length ? { stdout: clipHeadTail(joined, UI_OUT_CAP, panelHead(cap)), seen: Math.min(joined.length, cap) } : {}),
+                        ...(logs.length ? { stdout: clipHeadTail(joined, UI_OUT_CAP, panelHead(cap)), seen: Math.min(kept.length, cap) } : {}),
                         ...(joined.length > UI_OUT_CAP ? { capture: clipOut(joined, UI_OUT_CAP) } : {}),   // what a pointer reads, in one piece
                         ...(error != null ? { error } : {}),
                         ...(errorLine != null ? { errorLine } : {}),

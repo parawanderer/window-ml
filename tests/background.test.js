@@ -1,5 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
+const vm = require("node:vm");
 const { jsonResponse, htmlResponse, streamResponse, binaryStreamResponse, loadBackground } = require("./helpers");
 
 const IMG = "data:image/png;base64,AAA";
@@ -726,7 +727,7 @@ test("CDP_CLICK reports the missing debugger permission (never attaches)", async
 // human approves it (via the fanned gate), the delegated page-side eval is CSP-BLOCKED and hands back a
 // cdpExec signal, and the background re-runs it via the debugger. The page echoes a DECOY source to prove the
 // background runs only the human-APPROVED args.js (unforgeable), never the page's value.
-async function driveCdpExec({ cdp, debuggerPermission = true, pageEcho, approvedJs = "await ml.fetch('https://api.example/x').then(r => r.type)", simulateLogs = [] }) {
+async function driveCdpExec({ cdp, debuggerPermission = true, pageEcho, approvedJs = "await ml.fetch('https://api.example/x').then(r => r.type)", simulateLogs = [], realEval = false }) {
     const evals = [];
     let toolResult = null, n = 0, bg;
     bg = loadBackground({
@@ -734,7 +735,16 @@ async function driveCdpExec({ cdp, debuggerPermission = true, pageEcho, approved
         debuggerPermission,
         // Simulate the page running cdpEval's console-capture WRAPPER: it patches console, runs the source,
         // and returns { __mlWrapped, v, logs } by value — so console output survives the CDP round-trip.
-        onDebuggerCommand: (method, params) => { if (method === "Runtime.evaluate") { evals.push(params.expression); return { result: { value: { __mlWrapped: true, v: "CDP-RAN", logs: simulateLogs } } }; } },
+        onDebuggerCommand: (method, params) => {
+            if (method !== "Runtime.evaluate") return undefined;
+            evals.push(params.expression);
+            if (!realEval) return { result: { value: { __mlWrapped: true, v: "CDP-RAN", logs: simulateLogs } } };
+            // `realEval`: RUN the wrapper, in a context of its own, so its in-page console capture is what is tested.
+            try {
+                const ctx = vm.createContext({ console: { log() {}, info() {}, warn() {}, error() {}, debug() {} } });
+                return Promise.resolve(vm.runInContext(params.expression, ctx)).then((value) => ({ result: { value } }), (e) => ({ exceptionDetails: { exception: { description: String(e) } } }));
+            } catch (e) { return { exceptionDetails: { exception: { description: `${e.name}: ${e.message}` } } }; }
+        },
         onFetch: (call) => {
             n++;
             if (n === 1) return jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "exec", arguments: JSON.stringify({ js: approvedJs }) } }] } }] });
@@ -787,6 +797,14 @@ test("CDP exec: console.log output is captured and prefixed onto the value (not 
     assert.match(toolResult, /console:/, "console output is surfaced");
     assert.match(toolResult, /before: 3/, "the logged lines reach the model");
     assert.match(toolResult, /value: CDP-RAN/, "the completion value is still there, after the logs");
+});
+
+test("CDP exec past the output ceiling: the page-side capture stops at it, and the model is told after its clip", async () => {
+    // The capture runs IN THE PAGE (sw-cdp.ts's wrapper), so this evaluates the wrapper for real.
+    const { toolResult } = await driveCdpExec({ cdp: true, debuggerPermission: true, pageEcho: "x", realEval: true,
+        approvedJs: "const s = 'x'.repeat(9000000); for (let i = 0; i < 10; i++) console.log(s); return 1;" });
+    assert.match(toolResult, /^console:\nx{500}… \[first 500 of 27000002 chars\]\n\[output stopped at the 32000000-char limit: 63000007 more chars were printed and not kept\. Print less/);
+    assert.match(toolResult, /\n\nvalue: 1/);
 });
 
 test("CDP exec: TWO execs in one run share ONE debugger attachment (attach once, detach at run end — the perf fix)", async () => {

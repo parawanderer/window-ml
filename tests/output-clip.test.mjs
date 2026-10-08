@@ -128,3 +128,45 @@ test("a read-only survey's settled console keeps the latest lines too", async ()
     assert.ok(render.stdout.endsWith(all.at(-1)));
     assert.ok(render.capture.startsWith(all.join("\n").slice(0, UI_OUT_CAP)), "a pointer gets the start in ONE piece");
 });
+
+// --- the ceiling: past it a call stops keeping output, counts it, and tells the model -------------------------------
+
+test("boundedLines keeps whole lines up to the ceiling, then only counts, separators included", async () => {
+    const { boundedLines } = await import("../src/agent/output-clip.ts");
+    const c = boundedLines(20);
+    assert.equal(c.add("aaaaaaaaa"), true);   // 9
+    assert.equal(c.add("bbbbbbbbb"), true);   // +1 +9 = 19
+    assert.equal(c.add("cc"), false, "19 + 1 + 2 passes 20: not kept");
+    assert.equal(c.add("d"), false, "and nothing after it is kept, even a line that would fit");
+    assert.deepEqual(c.lines, ["aaaaaaaaa", "bbbbbbbbb"]);
+    assert.equal(c.dropped, 3 + 2, "what a joined copy would have had: '\\ncc' and '\\nd'");
+    assert.equal(c.lines.join("\n").length + c.dropped, ["aaaaaaaaa", "bbbbbbbbb", "cc", "d"].join("\n").length);
+});
+
+test("the ceiling note states the limit, what was not kept, and what to do instead, with single spaces", async () => {
+    const { ceilingNote, OUTPUT_CEILING } = await import("../src/agent/output-clip.ts");
+    const n = ceilingNote(1234);
+    assert.ok(n.includes(String(OUTPUT_CEILING)) && n.includes("1234 more chars"));
+    assert.match(n, /Print less/);
+    assert.doesNotMatch(n, / {2}/, "model-facing text never pads");
+});
+
+test("a read-only survey printing 200 lines of 9 MB answers, cut at the ceiling, and the MODEL is told after its clip", async () => {
+    const { evalReadonly } = await import("../src/readonly-exec.ts");
+    const { formatReadonlyExec } = await import("../src/agent/approval.ts");
+    const { OUTPUT_CEILING } = await import("../src/agent/output-clip.ts");
+    const ml = { range: (n) => Array.from({ length: n }, (_, i) => i) };
+    const t0 = Date.now();
+    const streamed = [];
+    const ro = await evalReadonly(`const s = "x".repeat(9000000); for (const i of ml.range(200)) console.log(s); return 1`, null, ml, undefined,
+        { onLog: (l) => streamed.push(l.length) });
+    assert.ok(ro.logs.join("\n").length <= OUTPUT_CEILING, "kept no more than the ceiling");
+    assert.deepEqual(streamed, ro.logs.map((l) => l.length), "it streams what it keeps, as an approved exec does: the live panel ends where the result does");
+    assert.equal(ro.logs.length, 3, "three whole 9 MB lines fit under 32 million");
+    assert.equal(ro.dropped, 197 * 9_000_001);
+    const { result, render } = formatReadonlyExec(ro.value, ro.logs, undefined, ro.dropped);
+    assert.match(result, /^console:\nx{500}… \[first 500 of 27000002 chars\]\n\[output stopped at the 32000000-char limit: 1773000197 more chars were printed and not kept\. Print less/);
+    assert.match(result, /\n\nvalue: 1$/);
+    assert.match(render.stdout, /\[output stopped at the 32000000-char limit[^\]]*\]$/, "the panel's last line says so too");
+    assert.ok(Date.now() - t0 < 5000, `quickly (${Date.now() - t0}ms)`);
+});

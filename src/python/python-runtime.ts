@@ -5,6 +5,7 @@
 // + hardening) so this drift-prone Python can be exercised against REAL CPython in tests
 // (tests/python.test.js) instead of a re-implementation. Chrome-free (only imports python-env).
 import { PY_PRELUDE_IMPORTS } from "./python-env";
+import { OUTPUT_CEILING } from "../agent/output-clip";
 
 // Standard prelude injected before the model's code: numpy/PIL/pandas in scope, an optional
 // `img` (PIL.Image) + `img_np` (H×W×3 uint8) decoded from the injected screenshot, a `to_base64()`
@@ -227,7 +228,15 @@ _ml_persist = ${persist ? "True" : "False"}
 # the run opted into live streaming) so print() output streams live (Jupyter-style) — while _out still holds
 # the byte-exact full stdout for the final result. No callback set → pure capture, unchanged.
 class _MlTee(io.StringIO):
+    # Bounded (output-clip.ts OUTPUT_CEILING): past it a write is counted, not kept and not teed, so a print in a loop
+    # costs a counter, not the worker's memory.
+    _ml_kept = 0
+    _ml_dropped = 0
     def write(self, _s):
+        if self._ml_dropped or self._ml_kept + len(_s) > ${OUTPUT_CEILING}:
+            self._ml_dropped += len(_s)
+            return len(_s)
+        self._ml_kept += len(_s)
         _n = super().write(_s)
         _cb = globals().get("_ml_stdout_cb")
         if _cb is not None:
@@ -304,6 +313,7 @@ with contextlib.redirect_stdout(_out), contextlib.redirect_stderr(_out):
         _err = traceback.format_exc()
         result = None
 _stdout = _out.getvalue()
+_ml_stdout_dropped = _out._ml_dropped
 import json as _json
 try:
     _json_result = _json.dumps(result, default=lambda o: o.item() if hasattr(o, 'item') else str(o))

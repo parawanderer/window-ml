@@ -6,7 +6,7 @@
 import type { ApprovalRequest, ApprovalDecision } from "../contract/contract-agent";
 import type { RenderDescriptor } from "../contract/contract-render";
 import { UI_OUT_CAP } from "../contract/contract-chat";
-import { clipHeadTail, panelHead } from "./output-clip";
+import { clipHeadTail, panelHead, ceilingNote } from "./output-clip";
 import { OUTPUT_CAP } from "../contract/contract-pointers";
 import { NotInDialect, Denied, describeSwaps, type PrintSwap } from "../readonly-exec";
 import { clipOut, clipValue, elPath } from "../dom/dom";
@@ -122,7 +122,9 @@ export function formatReadonlyExec(result: unknown, logs: string[],
     /** What the evaluator's print boundary changed (`evalReadonly`'s `prints`). Described HERE, because this is where
      *  each part is cut: a reader is told only about substitutions in the part it received, and the note goes AFTER the
      *  cut, so the cut can never remove the sentence saying the part is a view. */
-    prints?: { console?: readonly PrintSwap[]; value?: readonly PrintSwap[] }): { result: string; elements?: Node[]; render?: RenderDescriptor } {
+    prints?: { console?: readonly PrintSwap[]; value?: readonly PrintSwap[] },
+    /** Characters printed past OUTPUT_CEILING and not kept (`evalReadonly`'s `dropped`). */
+    dropped = 0): { result: string; elements?: Node[]; render?: RenderDescriptor } {
     const after = (lines?: string[]) => lines?.length ? `\n${lines.join("\n")}` : "";
     /** The notes for the substitutions that START inside the first `cut` characters of `text`: each is found by its own
      *  JSON, in print order, so the same view printed twice is two places, not one. */
@@ -139,15 +141,18 @@ export function formatReadonlyExec(result: unknown, logs: string[],
     // The SAME default the approved path reads through `resolveOutputCap`: this was its own literal 500, so a change
     // to the table would have moved approved runs and left every read-only survey (the common path) where it was.
     const MODEL_CAP = OUTPUT_CAP.exec.default;
-    const joined = logs.join("\n");
-    const logged = logs.length ? `console:\n${clipOut(joined, MODEL_CAP)}${after(notesWithin(joined, prints?.console, MODEL_CAP))}` : "";
+    const kept = logs.join("\n");
+    // Past the ceiling the model is told AFTER its clip, and the panel's last line says the same (output-clip.ts).
+    const overNote = dropped ? ceilingNote(dropped) : "";
+    const joined = overNote ? `${kept}\n${overNote}` : kept;
+    const logged = logs.length ? `console:\n${clipOut(kept, MODEL_CAP)}${after(notesWithin(kept, prints?.console, MODEL_CAP))}${overNote ? `\n${overNote}` : ""}` : "";
     const withLogs = (value: string) => logged ? `${logged}\n\nvalue: ${value}` : value;
     // The PANEL's notes cover what the panel shows, which is more than the model was sent.
     const consoleNotes = notesWithin(joined, prints?.console, UI_OUT_CAP);
     // The panel keeps more of the value than the model's 500 characters, and marks where the model's copy ended.
     const render = (v: { ui: string; seen?: number; notes: string[] }): RenderDescriptor => ({
         type: "exec-out",
-        ...(logs.length ? { stdout: clipHeadTail(joined, UI_OUT_CAP, panelHead(MODEL_CAP)), seen: Math.min(joined.length, MODEL_CAP) } : {}),
+        ...(logs.length ? { stdout: clipHeadTail(joined, UI_OUT_CAP, panelHead(MODEL_CAP)), seen: Math.min(kept.length, MODEL_CAP) } : {}),
         ...(joined.length > UI_OUT_CAP ? { capture: clipOut(joined, UI_OUT_CAP) } : {}),   // what a pointer reads, in one piece
         value: v.ui,
         ...(v.seen != null ? { valueSeen: v.seen } : {}),

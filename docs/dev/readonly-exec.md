@@ -277,8 +277,11 @@ still take hours: loops nested over large collections, an array doubled forty ti
 | `riskyRegex` | pattern check | A repeated group that contains a quantifier or an alternation (`(a+)+`, `(\w+\s?)*`, `(a\|a)+`) can backtrack exponentially inside one host call, where no budget reaches. Refused before it runs, for regex literals, `new RegExp`, string patterns given to `match`, `matchAll` and `search`, every pattern `ml.pipe`'s `grep`/`sed` stages are about to compile, and every `ml.jsonPath` `match()`/`search()` pattern. |
 | `PIPE_CHARS_PER_STEP` | 64 chars | `ml.pipe` is one host call doing work proportional to its input, which the step count never sees: a pipe inside a `.map` would cost one step per call. So each stage is charged its input and its output at this rate. Calibrated on the slowest stage (`sort`, ~200M chars/s) so a budget spent on pipes is about a second, like everything else. |
 | `ml.jsonPath` | 1 step per node | One query is one host call whose work the step count never sees, and `$..[?@..x]` is quadratic in depth. Every node a descent visits, every member a selector or filter reads, every step of a `==` comparison and every key of a printed Normalized Path is charged to `STEP_BUDGET`. Each `match()`/`search()` pattern passes `riskyRegex` after translation from I-Regexp. Only a sanitized `{ paths }` is forwarded. Data is read as DATA: a getter (on a member or an array index), a `Map` or a DOM node is an error, not a walk, and a cycle under `..` is an error (`tests/readonly-jsonpath.test.mjs`). |
+| `OUTPUT_CEILING` | 32,000,000 chars | The console output one survey KEEPS (output-clip.ts, shared with every tool). `MAX_STRING` bounds one string, not how many are printed: 200 prints of a 9 MB string were 1.8 GB held and then `Invalid string length` when joined. Past it a line is counted, not kept and not streamed. |
 
-Going over any limit throws `NotInDialect`, so the script goes to the human, who sees the code.
+Going over any limit throws `NotInDialect`, so the script goes to the human, who sees the code. The exception is
+`OUTPUT_CEILING`: printing too much is not a reason to ask anyone, so the survey answers, and the model is told after
+its clip what was not kept and to print less.
 
 **`ml.pipe` is the one host call that can GROW its input by more than a constant factor**, so `MAX_STRING` alone does
 not bound it: that check runs after a host call returns, and there the allocation already happened. Two stages are

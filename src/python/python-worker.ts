@@ -18,7 +18,7 @@ type RunMsg = { id: number; code: string; image: string | null; hardened: boolea
 // two never have to be inferred from one another.
 // `prewarm` is on the first run after a pre-warm started the runtime: whether that run found it `warm` or still
 // `starting`.
-type RunResult = { ok: boolean; value?: unknown; stdout: string; error?: string; ipc?: ArrayBuffer; table?: { columns: string[]; rows: (string | number | null)[][]; rowCount?: number }; render?: "latex" | "img"; bootMs?: number; runMs?: number; bench?: BenchSession; prewarm?: "warm" | "starting" };
+type RunResult = { ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; ipc?: ArrayBuffer; table?: { columns: string[]; rows: (string | number | null)[][]; rowCount?: number }; render?: "latex" | "img"; bootMs?: number; runMs?: number; bench?: BenchSession; prewarm?: "warm" | "starting" };
 /** A kept-state bench namespace after a run: which one it is (`id`, new whenever it is created afresh — a
  *  reset, or the worker restarting under it) and the variables the USER has in it, prelude names excluded. */
 type BenchSession = { id: string; vars: { name: string; type: string }[] };
@@ -133,11 +133,14 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         // the exact script is exercised against real CPython in tests). Reads back _stdout/_err/_json_result.
         await py.runPythonAsync(wrapUserCode(code, hardened, persist), { globals: ns });
         const stdout = String(ns.get("_stdout") ?? "");
+        // Characters printed past the ceiling and not kept (python-runtime.ts _MlTee); rides every result below.
+        const dropped = Number(ns.get("_ml_stdout_dropped") ?? 0) || 0;
+        const over = dropped ? { stdoutDropped: dropped } : {};
         const err = ns.get("_err");
         // A kept-state run reports its namespace either way — what you defined before the line that failed
         // is still there, and the bench says so.
         const kept = bench ? { bench: { id: bench.id, vars: benchVars(py, ns) } } : {};
-        if (err) return timed({ ok: false, stdout, error: String(err), ...kept });
+        if (err) return timed({ ok: false, stdout, error: String(err), ...over, ...kept });
         // A DataFrame/Series result also arrives structurally ({columns, rows}) so the UI can draw a real table.
         const tableJson = ns.get("_json_table");
         let table: RunResult["table"];
@@ -151,14 +154,14 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         const render = renderHint === "latex" || renderHint === "img" ? renderHint : undefined;
         if (typeof jsonResult === "string") {
             let value: unknown; try { value = JSON.parse(jsonResult); } catch { value = jsonResult; }
-            return timed({ ok: true, value, stdout, ...(table ? { table } : {}), ...(ipc ? { ipc } : {}), ...(render ? { render } : {}), ...kept });
+            return timed({ ok: true, value, stdout, ...over, ...(table ? { table } : {}), ...(ipc ? { ipc } : {}), ...(render ? { render } : {}), ...kept });
         }
         // Fallback for a non-JSON-serializable return (rare — models return images via
         // to_base64): convert via toJs, then destroy the proxy so it can't leak.
         const r = ns.get("result");
         const value = r && r.toJs ? r.toJs({ dict_converter: Object.fromEntries }) : r;
         if (r && r.destroy) r.destroy();
-        return timed({ ok: true, value: sanitize(value), stdout, ...(ipc ? { ipc } : {}), ...kept });
+        return timed({ ok: true, value: sanitize(value), stdout, ...over, ...(ipc ? { ipc } : {}), ...kept });
     } catch (e: any) {
         return timed({ ok: false, stdout: "", error: String((e && e.message) || e) });   // wrapper didn't run (syntax error)
     } finally {

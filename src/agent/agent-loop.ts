@@ -948,6 +948,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // A PIPED dereference mints its own id (mintView) and has already registered it — carry that one
             // rather than minting a second, so the step the answer resolves to is the step that produced it.
             const mintedView = mintedViews.get(s);
+            let heldChars: number | undefined;   // what the pointer holds past the model's copy, when it holds more
             const tokenId = mintedView
                 ?? ((opts.toolTokens && opts.runHash && citable) ? toolToken(opts.runHash, (opts.seqBase ?? 0) + s) : undefined);
             if (tokenId && !mintedView) tokenRenders.push({ id: tokenId, tool: call.name, render: tr?.renderOut, result });   // → res.outputs (only if CITED)
@@ -981,6 +982,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 // `capture` when the panel's copy dropped a middle part: the pointer keeps one contiguous piece (contract-render.ts).
                 const fuller = (r?.type === "python-out" || r?.type === "exec-out") ? (r.capture ?? r.stdout) : undefined;
                 const full = fuller && fuller.length > result.length ? fuller : undefined;
+                if (full) heldChars = full.length;
                 // Carry the typed PAYLOADS too, not just the kind — an image pointer with no image is what
                 // `look` would resolve to, and a `latex` cast needs the symbolic string.
                 const image = tr?.image
@@ -991,9 +993,15 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // Not for a minted view: mintView appended its own line explaining what the reduction is, and
             // `dereference`'s `token` PARAMETER is the pointer being READ, so `wantsToken` is true for every
             // call — which would staple a second, contradictory citation instruction onto the same result.
-            const forModel = (tokenId && wantsToken && !mintedView)
-                ? `${result}\n\n[output token @tool:${tokenId} — EMBED this exact output in your final answer with image syntax: ![label](@tool:${tokenId}:out) (use ":in" for the call/code). It expands in place; don't retype it.]`
-                : result;
+            const embedLine = (tokenId && wantsToken && !mintedView)
+                ? `\n\n[output token @tool:${tokenId} — EMBED this exact output in your final answer with image syntax: ![label](@tool:${tokenId}:out) (use ":in" for the call/code). It expands in place; don't retype it.]`
+                : "";
+            // A CUT copy says where the rest is and how to read it, on the result itself: the clause in the system prompt
+            // teaches `dereference`, but the moment a model needs it is when it is holding a truncated output.
+            const cutLine = tokenId && !mintedView && heldChars
+                ? `\n[your copy is cut: @tool:${tokenId} holds ${heldChars} chars of this output. Read further with dereference and a pipe (grep, sed -n, tail -n) instead of running it again.]`
+                : "";
+            const forModel = `${result}${cutLine}${embedLine}`;
             // The DONE event carries the clean `result` for the pretty Out AND — when a token line was appended —
             // `modelResult` (what the model ACTUALLY saw), so the log's raw view stays complete (the AGENTS rule).
             // Folded onto the In render — the slot that already shows the code, since a diff of it belongs

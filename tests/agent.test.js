@@ -3835,6 +3835,29 @@ test("exec Out: past the panel's cap the UI keeps the model's part AND the lates
     assert.doesNotMatch(out.render.capture, /dropped here/);
 });
 
+// Past OUTPUT_CEILING (output-clip.ts) a call stops keeping output: it counts what it left out, says so after the
+// model's clip, and its panel's last line says the same. Without it, 200 prints of 9 MB were 1.8 GB held in the page and
+// then "Invalid string length" when joined.
+test("exec past the output ceiling: whole lines up to it, the rest counted, and the model told after its clip", async () => {
+    const { ml } = loadDomWorld();
+    const exec = ml.domTools.find(t => t.name === "exec");
+    const streamed = [];
+    const out = await exec.run({ js: "const s = 'x'.repeat(9000000); for (let i = 0; i < 10; i++) console.log(s); 1" }, { stream: (t) => streamed.push(t.length) });
+    assert.match(out.content, /^console:\nx{500}… \[first 500 of 27000002 chars\]\n\[output stopped at the 32000000-char limit: 63000007 more chars were printed and not kept\. Print less: filter, count or aggregate in the script\.\]\n\nvalue: 1$/);
+    assert.match(out.render.stdout, /\[output stopped at the 32000000-char limit[^\]]*\]$/, "the panel's last line");
+    assert.equal(out.render.seen, 500);
+    assert.equal(streamed.length, 3, "a line past the ceiling is not streamed either");
+});
+
+test("python_exec past the output ceiling: the model is told after its clip, the panel in its last line", async () => {
+    const { ml } = loadDomWorld();
+    ml.pythonExec = async () => ({ ok: true, value: "None", stdout: "y".repeat(3000), stdoutDropped: 4242 });
+    const out = await ml.pythonTool().run({ code: "x" });
+    assert.match(out.content, /stdout:\ny{2000}… \[first 2000 of 3000 chars\]\n\[output stopped at the 32000000-char limit: 4242 more chars were printed and not kept\. Print less/);
+    assert.match(out.render.stdout, /\[output stopped at the 32000000-char limit: 4242 more chars[^\]]*\]$/);
+    assert.equal(out.render.seen, 2000);
+});
+
 test("python_exec Out: past the panel's cap the stdout keeps the latest prints", async () => {
     const { ml } = loadDomWorld();
     const printed = Array.from({ length: 400 }, (_, i) => `print ${String(i).padStart(4, "0")} ${"y".repeat(40)}`).join("\n");

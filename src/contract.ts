@@ -161,7 +161,7 @@ export interface MlApi {
     fetchTool(): MlTool;
     /** Run a sandboxed Python snippet (Pyodide/WASM, numpy + Pillow) with an optional
      *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. */
-    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | TableValue | Record<string, string | Element | TableValue> | null; onStdout?: (chunk: string, ts?: number) => void }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; render?: "latex" | "img"; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] }; bootMs?: number; runMs?: number }>;
+    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | TableValue | Record<string, string | Element | TableValue> | null; onStdout?: (chunk: string, ts?: number) => void }): Promise<{ ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; render?: "latex" | "img"; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] }; bootMs?: number; runMs?: number }>;
     /** Built-in sandboxed-Python tool factory (numpy/Pillow pixel/array work). */
     pythonTool(): MlTool;
     /** Read-only self-introspection tool for ml.agent (pass via `extraTools`): reports the run's model,
