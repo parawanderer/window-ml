@@ -260,6 +260,13 @@ exactly the model half of the registry and `inspector` the rest.
    (`ml.current.run`) and `run.log`. A remote reader is not
    step 1: the inspector is offered only where the run runs (below).
 2. **Watches**, device-local, then the share toggle and `debug.userWatches`.
+   **Device-local watches built** (2026-10-08): a `watch` group at the top of the Run state panel, one line per watch,
+   added by typing or by "Watch this" on any row's right-click. A watch is the panel's own expression for a value
+   (`inspector.run.init.task`, `ml.current.messages[0]`) or any JSONPath, evaluated in the worker with each read
+   (`src/state-watch.ts`) over one tree built from the snapshot (`{ ml: { current }, inspector }`), with the dialect's
+   bounds: a node budget, and a backtracking regex refused before it runs. A typo says so rather than matching
+   nothing. The list is per device, for every run. Still to come: the share toggle, which waits on `ml.current` being
+   reachable (#410).
 3. **The read-only console.**
 4. **Python per-run state**: the investigation above, then the design, then the Python group.
 5. **The slots** fill in as the features behind them land: `mailbox` (once its audience is settled for subagent

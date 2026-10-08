@@ -86,16 +86,18 @@ const copyMenu = (v: unknown, path: string): CtxItem[] => [
  *  non-collapsible at EVERY depth, which is what the raw In view passes so nothing can be folded away
  *  from a Ctrl+F. Keys carry their schema `description` as a tooltip, and one not in the schema is
  *  flagged as a likely hallucinated argument. */
-export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, allOpen, cut, unsent, dim, path, label, trail, times }: { k?: string; v: unknown; depth?: number; defaultOpen?: boolean; schema?: JsonSchemaNode; desc?: string; unknown?: boolean; allOpen?: boolean; cut?: string;
+export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, allOpen, cut, unsent, dim, path, label, trail, times, menuExtra }: { k?: string; v: unknown; depth?: number; defaultOpen?: boolean; schema?: JsonSchemaNode; desc?: string; unknown?: boolean; allOpen?: boolean; cut?: string;
     /** Container → index of its first member the model was NOT sent (see JT_SEEN). */ unsent?: WeakMap<object, number>;
     /** This member was not sent to the model: drawn dimmed. */ dim?: boolean;
     /** This node's JSONPath. Given, every row offers a right-click menu: copy its value, copy its path. */ path?: string;
     /** Drawn instead of the key on THIS row (not its members'): a caller's own name for the root. */ label?: ComponentChildren;
     /** Drawn at the end of THIS row: a caller's chips and buttons, so a root takes one line. */ trail?: ComponentChildren;
     /** Show a TIME (an epoch-ms number under a time's key: {@link isTimeField}) as a clock time and an age, here and in
-     *  every member. The value itself is untouched: hover shows it exact, and copying copies the number. */ times?: boolean }) {
+     *  every member. The value itself is untouched: hover shows it exact, and copying copies the number. */ times?: boolean;
+    /** More right-click items for a row, after the copies (the Run state panel's "Watch this"). Only with `path`. */
+    menuExtra?: (path: string, v: unknown) => CtxItem[] }) {
     const branch = !!v && typeof v === "object";
-    const menu = path != null && v !== JT_CUT && v !== JT_SEEN ? (e: MouseEvent) => { e.stopPropagation(); openCtxMenu(e, copyMenu(v, path), { mark: e.currentTarget as Element }); } : undefined;
+    const menu = path != null && v !== JT_CUT && v !== JT_SEEN ? (e: MouseEvent) => { e.stopPropagation(); openCtxMenu(e, [...copyMenu(v, path), ...(menuExtra?.(path, v) ?? [])], { mark: e.currentTarget as Element }); } : undefined;
     const [open, setOpen] = useState(allOpen || (defaultOpen ?? depth < 1));   // allOpen → expanded at EVERY depth (the raw In view)
     const [shown, setShown] = useState(JT_PAGE);
     const pad = { paddingLeft: `${depth * 13}px` };
@@ -145,7 +147,7 @@ export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, 
                 const mark = ev === JT_CUT || ev === JT_SEEN;
                 return <JsonNode key={ek} k={arr || mark ? undefined : ek} v={ev} depth={depth + 1} schema={childOf(ek)} desc={arr ? undefined : childOf(ek)?.description} unknown={!!props && !mark && !(ek in props)} allOpen={allOpen} cut={cut}
                     // Only at the boundary: opacity compounds, so a dimmed container's own members are not dimmed again.
-                    unsent={unsent} dim={from != null && i >= from} path={path != null && !mark ? childPath(path, ek, arr) : undefined} times={times} />;
+                    unsent={unsent} dim={from != null && i >= from} path={path != null && !mark ? childPath(path, ek, arr) : undefined} times={times} menuExtra={menuExtra} />;
             })}
             {!allOpen && entries.length > shown
                 ? <div class="jt-row" style={{ paddingLeft: `${(depth + 1) * 13}px` }}><button class="jt-more" onClick={() => setShown(n => n + JT_PAGE)}>show {Math.min(JT_PAGE, entries.length - shown)} more of {entries.length - shown}</button></div>

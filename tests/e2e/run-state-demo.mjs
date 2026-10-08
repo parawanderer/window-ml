@@ -101,6 +101,17 @@ try {
     }
     await sleep(BEAT + 1000); await shot("grants-you-only");
 
+    await narrate(chat, "4b · Pin it: a watch", { sub: "right-click any row → Watch this. The watch group at the top re-reads it with the panel, as a debugger's watch pane does" });
+    {
+        const task = member("run.input").locator(".jt-row", { hasText: "task:" });
+        await task.click({ button: "right" }).catch(() => {});
+        await chat.getByRole("button", { name: "Watch this" }).click().catch(() => {});
+        await chat.locator(".rstate-watch-input").fill("$.inspector.run.mailbox[*].text");
+        await chat.locator(".rstate-watch-input").press("Enter");
+        await panel.locator(".rstate-watches").scrollIntoViewIfNeeded();
+    }
+    await sleep(BEAT + 800); await shot("watches");
+
     await narrate(chat, "5 · The page's word", { sub: "the answer set and the @pt/@box tokens live in the PAGE, so the worker asks the tab. A hostile page could answer anything there, so those rows say where they came from" });
     await chat.mouse.move(5, 5);
     await member("run.answer").scrollIntoViewIfNeeded();

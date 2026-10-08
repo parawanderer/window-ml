@@ -5,11 +5,12 @@
 // short interval while open. Every declared member is listed, including one holding nothing for this run: an absent
 // row would read as "this kind of state does not exist", which is the question the panel is for.
 import { signal } from "@preact/signals";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { JsonNode, copyableValue } from "./transcript/json-tree";
 import { PanelHead } from "./panel-head";
-import { TipText, cursorTipOn, useCopy } from "./ui-kit";
-import { IconCheck, IconChevron, IconCopy } from "./icons";
+import { TipText, cursorTipOn, useCopy, type CtxItem } from "./ui-kit";
+import { MAX_WATCHES, panelPath, type WatchResult } from "../state-watch";
+import { IconCheck, IconChevron, IconCopy, IconEye, IconClose } from "./icons";
 import type { RunStateDump, RunStateMember } from "../sw/sw-run-state";
 import type { StateEntry, StateLoss } from "../state-registry";
 
@@ -97,7 +98,7 @@ function Member({ m, e }: { m: RunStateMember; e: StateEntry | undefined }) {
         <div class={`rstate-member${e ? "" : " rstate-empty"}`} data-member={m.id}>
             {!e ? <div class="jt-row">{spacer}{label}<span class="rstate-none">none</span>{chips}</div>
                 : e.error ? <div class="jt-row">{spacer}{label}<span class="hint err">could not read: {e.error}</span>{chips}</div>
-                    : <JsonNode v={e.value} defaultOpen={false} path={memberPath(m)} label={label} trail={chips} times />}
+                    : <JsonNode v={e.value} defaultOpen={false} path={memberPath(m)} label={label} trail={chips} times menuExtra={watchItem} />}
         </div>
     );
 }
@@ -135,6 +136,82 @@ function Group({ g, ms, byId }: { g: string; ms: RunStateMember[]; byId: Map<str
     );
 }
 
+/** The watches, kept on this device for every run (a debugger's watch list is yours, not the program's), in the order
+ *  they were added. A module signal, so they outlive the panel being closed. */
+export const watches = signal<readonly string[]>([]);
+const WATCHES_KEY = "ml_runstate_watches";
+
+/** Add a watch, unless it is already watched; remember the list. */
+export function addWatch(expr: string): void {
+    const e = expr.trim();
+    if (!e || watches.value.includes(e) || watches.value.length >= MAX_WATCHES) return;
+    setWatches([...watches.value, e]);
+}
+
+/** Stop watching one expression. */
+function removeWatch(expr: string): void { setWatches(watches.value.filter((w) => w !== expr)); }
+
+function setWatches(next: readonly string[]): void {
+    watches.value = next;
+    try { chrome.storage.local.set({ [WATCHES_KEY]: [...next] }); } catch { /* no storage: the list lasts until the page closes */ }
+}
+
+/** The right-click item every row with a path gets: pin that path as a watch. */
+const watchItem = (path: string): CtxItem[] => [{ label: "Watch this", icon: <IconEye />, run: () => addWatch(path) }];
+
+/** One watch, on one line until opened: its expression, what it matched, and the ✕ that stops watching it. */
+function WatchRow({ expr, r }: { expr: string; r: WatchResult | undefined }) {
+    const label = <span class="rstate-key rstate-watch-key" {...cursorTipOn(paneTip(expr))}>{expr}:</span>;
+    const trail = <span class="rstate-trail">
+        <button class="rstate-unwatch" aria-label={`Stop watching ${expr}`} onClick={(e) => { e.stopPropagation(); removeWatch(expr); }}
+            {...cursorTipOn(paneTip("Stop watching this"))}><IconClose /></button>
+    </span>;
+    const spacer = <span class="tri jt-tri-space" aria-hidden="true"><IconChevron /></span>;
+    // Not read yet (it was just added, and the next read is under two seconds away), refused, or matching nothing: each
+    // on the watch's own line, so the list keeps its shape.
+    if (!r) return <div class="rstate-member rstate-watch" data-watch={expr}><div class="jt-row">{spacer}{label}<span class="rstate-none">…</span>{trail}</div></div>;
+    if (r.error) return <div class="rstate-member rstate-watch" data-watch={expr}><div class="jt-row">{spacer}{label}<span class="rstate-watch-err">{r.error}</span>{trail}</div></div>;
+    const nodes = r.nodes ?? [];
+    if (!nodes.length) return <div class="rstate-member rstate-watch rstate-empty" data-watch={expr}><div class="jt-row">{spacer}{label}<span class="rstate-none">no match</span>{trail}</div></div>;
+    // One match is that value, at the path it was found at, so its rows copy and watch like any member's. Several are a
+    // list of what matched; a list of matches has no single path, so its rows copy values only.
+    return <div class="rstate-member rstate-watch" data-watch={expr}>
+        {nodes.length === 1
+            ? <JsonNode v={nodes[0].value} defaultOpen={false} path={panelPath(nodes[0].path)} label={label} trail={trail} times menuExtra={watchItem} />
+            : <JsonNode v={nodes.map((n) => n.value)} defaultOpen={false} label={label} trail={trail} times />}
+    </div>;
+}
+
+/** The watch group: every watch over this run's snapshot, then a line to add one. Shown first, since a watch is what
+ *  you pinned because you came back for it. */
+function WatchGroup({ results }: { results: WatchResult[] | undefined }) {
+    const [draft, setDraft] = useState("");
+    const shut = folded.value.has("watch");
+    const byExpr = new Map((results ?? []).map((r) => [r.expr, r]));
+    const add = () => { addWatch(draft); setDraft(""); };
+    return (
+        <section class={`rstate-group rstate-watches${shut ? " shut" : ""}`} data-group="watch">
+            <button class="rstate-group-head" aria-expanded={!shut} onClick={() => toggleGroup("watch")}>
+                watch
+                <span class="rstate-group-end">
+                    {shut ? <span class="rstate-count">{watches.value.length} watch{watches.value.length === 1 ? "" : "es"}</span> : null}
+                    <span class={`tri${shut ? "" : " open"}`} aria-hidden="true"><IconChevron /></span>
+                </span>
+            </button>
+            {shut ? null : <>
+                {watches.value.map((w) => <WatchRow key={w} expr={w} r={byExpr.get(w)} />)}
+                <div class="jt-row rstate-watch-add">
+                    <span class="tri jt-tri-space" aria-hidden="true"><IconChevron /></span>
+                    <input class="rstate-watch-input" type="text" spellcheck={false} aria-label="Add a watch" value={draft}
+                        placeholder={watches.value.length ? "add a watch" : "add a watch: a path from a right-click, or JSONPath ($..)"}
+                        onInput={(e) => setDraft((e.target as HTMLInputElement).value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") add(); if (e.key === "Escape") setDraft(""); }} />
+                </div>
+            </>}
+        </section>
+    );
+}
+
 /**
  * The RUN STATE view for one run. Read through the worker (DUMP_RUN_STATE) on mount and every
  * {@link RUN_STATE_POLL_MS} while open.
@@ -144,12 +221,14 @@ function Group({ g, ms, byId }: { g: string; ms: RunStateMember[]; byId: Map<str
 export function RunStateView({ run }: { run: string | null }) {
     const [dump, setDump] = useState<RunStateDump | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const askNow = useRef<(() => void) | null>(null);
 
     useEffect(() => {
         let live = true;
         setDump(null);
         setError(null);
-        const ask = () => chrome.runtime.sendMessage({ type: "DUMP_RUN_STATE", payload: { ...(run ? { run } : {}) } },
+        // The watch list is read at each ask, not captured: adding one re-asks at once (below) without resetting the dump.
+        const ask = () => chrome.runtime.sendMessage({ type: "DUMP_RUN_STATE", payload: { ...(run ? { run } : {}), watches: [...watches.value] } },
             (r: { data?: RunStateDump; error?: string } | undefined) => {
                 if (!live) return;
                 if (!r) setError(chrome.runtime.lastError?.message || "no answer from the service worker");
@@ -157,17 +236,28 @@ export function RunStateView({ run }: { run: string | null }) {
                 else { setError(null); setDump(r.data ?? null); }
             });
         ask();
+        askNow.current = ask;
         const t = setInterval(() => { if (document.visibilityState === "visible") ask(); }, RUN_STATE_POLL_MS);
-        return () => { live = false; clearInterval(t); };
+        return () => { live = false; clearInterval(t); askNow.current = null; };
     }, [run]);
+    // A watch added or removed is answered now, not at the next tick.
+    const list = watches.value;
+    const asked = useRef(list);
+    useEffect(() => {
+        if (asked.current === list) return;   // the mount's own read already carried this list
+        asked.current = list;
+        askNow.current?.();
+    }, [list]);
 
     useEffect(() => {
         if (foldedRead) return;
         foldedRead = true;
         try {
-            chrome.storage.local.get([FOLDED_KEY], (d: Record<string, unknown>) => {
+            chrome.storage.local.get([FOLDED_KEY, WATCHES_KEY], (d: Record<string, unknown>) => {
                 const v = d?.[FOLDED_KEY];
                 if (Array.isArray(v)) folded.value = new Set(v.filter((x): x is string => typeof x === "string"));
+                const w = d?.[WATCHES_KEY];
+                if (Array.isArray(w)) watches.value = w.filter((x): x is string => typeof x === "string").slice(0, MAX_WATCHES);
             });
         } catch { /* no storage here: nothing is folded */ }
     }, []);
@@ -197,6 +287,7 @@ export function RunStateView({ run }: { run: string | null }) {
                             ...(nothingLive ? [<div class="hint rstate-idle" key="idle">This browser holds nothing live for this session. Its run has
                                 ended and the service worker has restarted since, or it was a chat rather than an agent run. What the session kept is
                                 its transcript and its execution log.</div>] : []),
+                            <WatchGroup key="watch" results={dump.watches} />,
                             ...[...groups].map(([g, ms]) => <Group key={g} g={g} ms={ms} byId={byId} />)]}
         </div>
     );

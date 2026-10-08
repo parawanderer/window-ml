@@ -642,12 +642,19 @@ test("the run state panel shows the LIVE turn: what it was asked, the gate it wa
         // read shows it in the mailbox without anything being reopened.
         const mailbox = panel.locator('[data-member="run.mailbox"]');
         await expect(mailbox.locator(".jt-preview")).toHaveText("[ ]");
+        // A WATCH over the same thing, typed as JSONPath: nothing to match yet, and it fills in on its own below.
+        const watchInput = panel.locator(".rstate-watch-input");
+        await watchInput.fill("$.inspector.run.mailbox[*].text");
+        await watchInput.press("Enter");
+        const watch = panel.locator('[data-watch="$.inspector.run.mailbox[*].text"]');
+        await expect(watch).toContainText("no match");
         await chat.getByPlaceholder(/Steer this run/).fill("also check the totals");
         await chat.getByPlaceholder(/Steer this run/).press("Enter");
         await expect(mailbox.locator(".jt-preview")).toHaveText("[ 1 item ]", { timeout: 10_000 });
         await mailbox.locator(".jt-clickable").first().click();
         await mailbox.locator(".jt-clickable").nth(1).click();
         await expect(mailbox).toContainText("also check the totals");
+        await expect(watch).toContainText('"also check the totals"');
 
         // Approved out of band: the turn finishes, and what lived only in it goes with it.
         const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
@@ -809,6 +816,10 @@ test("the run state panel folds a group to a count, and copies a member's value,
         await task.click({ button: "right" });
         await chat.getByRole("button", { name: "Copy value" }).click();
         await expect.poll(clip).toBe("count the widgets");
+        // ...and "Watch this", which pins the row's path in the watch group at the top.
+        await task.click({ button: "right" });
+        await chat.getByRole("button", { name: "Watch this" }).click();
+        await expect(panel.locator('[data-watch="inspector.run.init.task"]')).toContainText('"count the widgets"');
         expect(errors).toEqual([]);
     } finally { await ext.context.close(); await site.stop(); await fake.stop(); }
 });

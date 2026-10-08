@@ -6,6 +6,7 @@
 import { readState, readableMembers, withPageState, type StateEntry, type StateMember } from "../state-registry";
 import { hydrationDone, stateKeyFor } from "./sw-runs";
 import { senderOrigin } from "./sw-housekeeping";
+import { evalWatch, stateTree, watchList, type WatchResult } from "../state-watch";
 import { sessionServer } from "./sw-sessions";
 
 /** A declared member, whether or not it holds anything for this run, so the pane can show an empty one as empty. */
@@ -25,6 +26,8 @@ export interface RunStateDump {
     entries: StateEntry[];
     /** Why the page's members are missing, when the run has a tab and its page did not answer. */
     pageError?: string;
+    /** The panel's watches, each over this snapshot (state-watch.ts), in the order they were sent. */
+    watches?: WatchResult[];
 }
 
 /** Ask the run's tab what its page holds for the run. Never wakes a discarded tab: reading state must not reload a
@@ -43,14 +46,25 @@ async function askPage(tabId: number, runId: string): Promise<{ raw: unknown } |
     return answer ? { raw: answer } : { error: "the page did not answer" };
 }
 
-/** DUMP_RUN_STATE: every readable member of one run's state, as of now. */
+/** DUMP_RUN_STATE: every readable member of one run's state, as of now, and the panel's watches over it. */
 export async function handleRunStateDump(payload: unknown, sender: chrome.runtime.MessageSender): Promise<{ data?: RunStateDump; error?: string }> {
     if (senderOrigin(sender) === "page") return { error: "Refused: the run's state is for extension pages." };
-    const run = typeof (payload as { run?: unknown } | null)?.run === "string" ? (payload as { run: string }).run : "";
+    const p = (payload ?? {}) as { run?: unknown; watches?: unknown };
+    const run = typeof p.run === "string" ? p.run : "";
     // On a fresh worker the run maps are empty until hydration settles, which would read as "this run holds nothing".
     await hydrationDone;
+    const snap = await snapshot(run);
+    // Evaluated HERE, over exactly what the panel is about to draw: the person's whole snapshot, since the panel is theirs.
+    // A watch shared with the model will be evaluated over the model's members only (spec, "Watches").
+    const watches = watchList(p.watches);
+    const tree = watches.length ? stateTree(snap.members, snap.entries) : null;
+    return { data: { ts: Date.now(), ...snap, ...(tree ? { watches: watches.map((w) => evalWatch(tree, w)) } : {}) } };
+}
+
+/** One run's members and what they hold: the worker's, and the page's when the run has a tab that answers. */
+async function snapshot(run: string): Promise<{ members: StateMember[]; entries: StateEntry[]; pageError?: string }> {
     const members = readableMembers("worker");
-    if (!run) return { data: { ts: Date.now(), members, entries: [] } };
+    if (!run) return { members, entries: [] };
     const key = stateKeyFor(run);
     const entries = await readState(key, "human", "worker");
     // WHO HOSTS THE LOOP is the session index's word, from where each event came from (session-index.ts), never the
@@ -59,9 +73,8 @@ export async function handleRunStateDump(payload: unknown, sender: chrome.runtim
     const binding = sessionServer.index.binding(run);
     const pageHosts = binding?.hostedBy === "page";
     const tabId = key.tabId ?? (pageHosts ? binding?.tabId : undefined);
-    if (tabId == null) return { data: { ts: Date.now(), members, entries } };
+    if (tabId == null) return { members, entries };
     const page = await askPage(tabId, run);
-    if ("error" in page) return { data: { ts: Date.now(), members, entries, pageError: page.error } };
-    const merged = withPageState({ members, entries }, page.raw, pageHosts);
-    return { data: { ts: Date.now(), ...(merged ?? { members, entries, pageError: "the page's answer was not a state snapshot" }) } };
+    if ("error" in page) return { members, entries, pageError: page.error };
+    return withPageState({ members, entries }, page.raw, pageHosts) ?? { members, entries, pageError: "the page's answer was not a state snapshot" };
 }
