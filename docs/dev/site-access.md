@@ -102,6 +102,29 @@ sent with its in-flight call. Where each survey went
 is in the execution log (`routing`, `readonly-worker`/`readonly-page`). `docs/dev/readonly-exec.md`, "Where it is
 called".
 
+## Adding a tool, a member or a message
+
+The red-team pass AGENTS.md requires. Run it as its own agent, told to attack rather than review; every attack it
+finds becomes a test that fails before the fix. The threat is a page that shares the main world with `window.ml` and
+with any tool code run there, posts any window message, reaches the extension's open shadow roots, and knows every run
+id. Cover:
+
+- **Where it runs.** A tool run in the page puts its inputs and results into the page's world. Prefer the worker; if
+  it must run in the page, name what of the run it puts there (another site's content, a pointer's value, the system
+  prompt) and why the page may see it.
+- **What it sends while it runs.** Each page-started type it needs joins `RUN_TAB_TYPES`, which any script on a run's
+  tab may then send whatever its origin. Test that type sent by the page itself, outside the tool.
+- **What the page can forge.** Its result (`PAGE_TOOL_RESULT`) and its live lines: a forged one may misreport only the
+  page's own content, never another site's or the run's.
+- **An `ml.*` member.** Refused from an unapproved origin is automatic (the red-team suite enumerates `HANDLE_MAP`).
+  On an approved page: does it spend tokens, change config, or read across origins, tabs or runs? If it is read-only,
+  it goes in the dialect too, with the dialect rule's tests (`docs/dev/readonly-exec.md`), and is placed in or out of
+  the worker facade on purpose.
+- **A message type.** In `PAGE_STARTED_TYPES`, or sent by the content script outside `HANDLE_MAP`, where its handler
+  must bind it to the sender itself (the run's tab, frame 0, the document) and the UNGATED ratchet lists it.
+- **A blocked attack.** If a safety classifier stops an attack test, stop on that case and hand it to the owner,
+  whose other model writes attack sides; this side writes the defence.
+
 ## Tests
 
 - `tests/site-access.test.mjs`: the pure rules.
