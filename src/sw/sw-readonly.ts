@@ -41,8 +41,9 @@ export interface WorkerReadonlyDeps {
     /** The run's `exec` tool, whose `render` draws the step's In. Absent: the same code view the page's `exec` draws
      *  (`execCodeIn`), so a step answered here looks like one answered there. */
     tool?: MlTool;
-    /** The call's live output (the loop's `LiveOutput`): console lines stream into it as they print. On `needs-page`
-     *  and `refused` it is discarded here, so the page's retry, or the approved run, streams from empty. */
+    /** The call's live output (the loop's `LiveOutput`): console lines stream into it as they print, after a short
+     *  hold (`WORKER_STREAM_HOLD_MS`). On `needs-page` and `refused` it is taken back here, so the page's retry, or the
+     *  approved run, streams from empty. */
     live?: LiveOutput;
 }
 
@@ -52,6 +53,39 @@ export type WorkerReadonlyOutcome =
     | { kind: "answered"; result: string; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor }
     | { kind: "needs-page" }
     | { kind: "refused" };
+
+/** How long the worker holds a survey's first lines before streaming them. A survey that defers to the page does so at
+ *  its first page reach, almost always within this, and the page then prints the same lines again: shown and taken
+ *  back here, they would flicker. A survey still running after it is waiting on something, and streams from then on. */
+export const WORKER_STREAM_HOLD_MS = 120;
+
+/** The call's live output, held for {@link WORKER_STREAM_HOLD_MS} before it streams: `settle` sends what is held,
+ *  `drop` takes back what was shown (nothing, when nothing was). */
+function heldLive(live: LiveOutput | undefined): { push: (line: string) => void; settle: () => void; drop: () => void } | null {
+    if (!live) return null;
+    let held: [string, number][] | null = [];
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const flush = (): void => {
+        if (timer !== undefined) clearTimeout(timer);
+        timer = undefined;
+        if (!held) return;
+        const lines = held; held = null;
+        for (const [text, ts] of lines) live.push(text, ts);
+    };
+    return {
+        push: (line) => {
+            if (!held) { live.push(line + "\n", Date.now()); return; }
+            held.push([line + "\n", Date.now()]);
+            timer ??= setTimeout(flush, WORKER_STREAM_HOLD_MS);
+        },
+        settle: flush,
+        drop: () => {
+            if (timer !== undefined) clearTimeout(timer);
+            if (held) { held = null; return; }   // nothing was shown, so there is nothing to take back
+            live.discard();
+        },
+    };
+}
 
 /** Evaluate one `exec` call's script in the worker. */
 export async function evalReadonlyInWorker(args: Record<string, unknown>, deps: WorkerReadonlyDeps): Promise<WorkerReadonlyOutcome> {
@@ -65,19 +99,22 @@ export async function evalReadonlyInWorker(args: Record<string, unknown>, deps: 
     // decision, never a security one: a script that reaches `current` without the word (a computed key) finds no
     // such member, which in the worker defers to the page, where there is none either, so it reaches the human.
     const current = deps.current && /\bcurrent\b/.test(code) ? deps.current() : undefined;
+    const out = heldLive(deps.live);
     try {
         const ro = await evalReadonly(code, null, deps.ml ?? {}, undefined, { realm: "worker", current,
-            onLog: deps.live ? (line) => deps.live!.push(line + "\n") : undefined });
+            onLog: out ? out.push : undefined });
+        out?.settle();
         const { result, render } = formatReadonlyExec(ro.value, ro.logs, ro.prints, ro.dropped);
         const { in: renderIn, out: renderOut } = descriptorFor(deps.tool, { result, render, ...(deps.tool ? {} : { renderIn: codeIn }) }, args);
         return { kind: "answered", result, renderIn, renderOut };
     } catch (e) {
-        if (e instanceof NeedsPage) { deps.live?.discard(); return { kind: "needs-page" }; }
-        if (e instanceof NotInDialect || e instanceof Denied) { deps.live?.discard(); return { kind: "refused" }; }
+        if (e instanceof NeedsPage) { out?.drop(); return { kind: "needs-page" }; }
+        if (e instanceof NotInDialect || e instanceof Denied) { out?.drop(); return { kind: "refused" }; }
+        out?.settle();
         // A runtime error in the script is the model's to fix, reported with its line, exactly as the page path does.
         const at = (e as { mlLine?: number })?.mlLine ?? null;
         const error = `${errText(e)}${at ? ` (line ${at})` : ""}`;
         const { in: renderIn } = descriptorFor(deps.tool, { result: `Error: ${error}`, ...(deps.tool ? {} : { renderIn: codeIn }) }, args);
-        return { kind: "answered", result: `Error: ${error}`, renderIn, renderOut: { type: "exec-out", error: errText(e), ...(at ? { errorLine: at } : {}) } };
+        return { kind: "answered", result: `Error: ${error}`, renderIn, renderOut: { type: "exec-out", error, ...(at ? { errorLine: at } : {}) } };
     }
 }

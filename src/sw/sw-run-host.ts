@@ -673,7 +673,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 const log = snap && wantsLog ? eventsForRun(await runLog.all(), runId) : [];
                 const w = await evalReadonlyInWorker(args, {
                     ...(snap ? { current: () => snap({ model: modelNow(), log }) } : {}),
-                    ml: workerReadonlyMl(tabPageUrl.get(tabId) ?? "", derefByRun.get(runId)),
+                    ml: workerReadonlyMl(tabPageUrl.get(tabId) ?? "", derefByRun.get(runId), runId),
                     live,
                 });
                 if (w.kind !== "needs-page") {
