@@ -375,3 +375,29 @@ test("no more than MAX_SHARED_WATCHES are shared: past it the other eyes are dis
     V.toggleShared(all.at(-1));
     assert.equal(V.shared.value.length, MAX_SHARED_WATCHES);
 });
+
+// --- the note on a shared watch ---
+
+test("a shared watch has a note line, saved on Enter and kept beside the watches; an unshared one has none", async () => {
+    V.watches.value = ["ml.current.run.step", "ml.current.messages.length"];
+    V.shared.value = ["ml.current.run.step"];
+    V.notes.value = {};
+    const stored = [];
+    const was = chrome.storage.local.set;
+    chrome.storage.local.set = (o) => stored.push(o);
+    try {
+        withWatches({ members: [], entries: [] }, {});
+        const host = await show({ members: [], entries: [] });
+        const line = (e) => host.querySelector(`[data-note-for="${CSS.escape(e)}"]`);
+        assert.ok(line("ml.current.run.step"));
+        assert.equal(line("ml.current.messages.length"), null, "not shared: nothing to say to the model");
+        const input = line("ml.current.run.step").querySelector("input");
+        await act(async () => { input.value = "  is it climbing?  "; input.dispatchEvent(new win.Event("input", { bubbles: true })); });
+        await act(async () => { input.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+        assert.deepEqual({ ...V.notes.value }, { "ml.current.run.step": "is it climbing?" });
+        assert.deepEqual(stored.at(-1), { ml_runstate_watch_notes: { "ml.current.run.step": "is it climbing?" } });
+        // Removing the watch takes its note with it.
+        await act(async () => { watchRow(host, "ml.current.run.step").querySelector(".rstate-unwatch").click(); });
+        assert.deepEqual({ ...V.notes.value }, {});
+    } finally { chrome.storage.local.set = was; }
+});

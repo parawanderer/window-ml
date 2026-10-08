@@ -8,7 +8,7 @@ let S, W, snapshotCurrent, store;
 before(async () => {
     store = {};
     globalThis.chrome = {
-        storage: { local: { get: async (k) => ({ [k]: store[k] }) }, session: { get: async () => ({}), set: async () => {} } },
+        storage: { local: { get: async (k) => Object.fromEntries([k].flat().map((x) => [x, store[x]])) }, session: { get: async () => ({}), set: async () => {} } },
         runtime: { onMessage: { addListener() {} } },
     };
     S = await import("../src/sw/sw-shared-watches.ts");
@@ -111,4 +111,30 @@ test("declared at ml.current.debug.userWatches, for the model, and holding nothi
     assert.equal(d.exposedAs, "ml.current.debug.userWatches");
     store.ml_runstate_shared = ["ml.current.run.step"];
     assert.equal(await d.read({ runId: "no-such-run" }), undefined);
+});
+
+// --- the person's note: why they shared it ---
+
+test("a note travels with its watch, in the person's words; a watch without one has no `note`", async () => {
+    store.ml_runstate_shared = ["ml.current.run.step", "ml.current.messages.length"];
+    store.ml_runstate_watch_notes = { "ml.current.run.step": "  is this climbing faster than it should?  " };
+    const { debug } = await S.withUserWatches(snap());
+    assert.deepEqual(debug.userWatches, [
+        { expression: "ml.current.run.step", note: "is this climbing faster than it should?", value: 3 },
+        { expression: "ml.current.messages.length", value: 2 },
+    ]);
+    delete store.ml_runstate_watch_notes;
+});
+
+test("ADVERSARIAL: notes are cleaned before the model sees them: strings only, capped, and only on a watch that is shared", async () => {
+    const big = "x".repeat(W.MAX_NOTE_CHARS + 50);
+    assert.deepEqual({ ...W.watchNotes({ a: big, b: 5, c: "  ", d: { toString: () => "no" }, e: ["arr"] }) }, { a: "x".repeat(W.MAX_NOTE_CHARS) });
+    for (const raw of [null, undefined, "a note", ["a"], 7]) assert.deepEqual({ ...W.watchNotes(raw) }, {}, JSON.stringify(raw));
+    assert.equal(Object.getPrototypeOf(W.watchNotes({ __proto__: { polluted: "yes" } })), null, "no prototype to pollute or inherit from");
+    store.ml_runstate_shared = ["ml.current.run.step"];
+    store.ml_runstate_watch_notes = { "inspector.grants": "a note on a watch that is not shared", "ml.current.run.step": "why" };
+    const { debug } = await S.withUserWatches(snap());
+    assert.equal(debug.userWatches.length, 1, "a note never adds a watch");
+    assert.equal(debug.userWatches[0].note, "why");
+    delete store.ml_runstate_watch_notes;
 });

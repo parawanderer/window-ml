@@ -213,6 +213,7 @@ test("ml.current's prompt signature names every top-level member and, after each
     const meta = /meta: MessageMeta\[\] \(([^)]*)\)/.exec(sig)?.[1].split(", ");
     for (const f of ["id", "tokens", "tokensBasis", "tool", "truncated"]) assert.ok(meta?.includes(f), `meta lists ${f}`);
     assert.match(sig, /log: CurrentLog \([^)]*\btext\b[^)]*\)/, "an alias's inline key (`text`) is listed with its records' fields");
-    assert.match(sig, /UserWatch\[\] \(expression, value, error\)/);
+    const watch = /UserWatch\[\] \(([^)]*)\)/.exec(sig)?.[1].split(", ");
+    for (const f of ["expression", "value", "error"]) assert.ok(watch?.includes(f), `UserWatch lists ${f}`);
     assert.doesNotMatch(sig, /\/\*|\*\/|import\(/, "no comment or module path leaks into the line");
 });
