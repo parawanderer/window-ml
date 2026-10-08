@@ -1583,9 +1583,9 @@ test("MISSING is not the same refusal as REFUSED — only one of them is worth a
 
 test("an unrecognised receiver gets NOTHING — the default is deny, never a fallback", async () => {
     const doc = kindWorld();
-    // A Date is in the dialect (the clock) but exposes no methods, so even a real one of its own is refused
-    // rather than falling through to some shared list.
-    await assert.rejects(run(`new Date().getFullYear()`, doc), refused);
+    // A Date exposes its reads and formatting, and a name not on that list (a setter) is refused rather than falling
+    // through to some shared list.
+    await assert.rejects(run(`new Date().setFullYear(2000)`, doc), refused);
     // A plain object has no methods of its own at all.
     await assert.rejects(run(`({a:1}).hasOwnProperty("a")`, doc), refused);
 });

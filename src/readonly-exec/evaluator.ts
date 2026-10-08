@@ -500,6 +500,7 @@ export class Evaluator {
                 const a = yield* this.eval(node.arg, scope);
                 if (node.op === "!") return !a;
                 if (node.op === "-") return -(a as number);
+                if (node.op === "+") return +(a as number);
                 return typeof a;
             }
             case "Logical": {

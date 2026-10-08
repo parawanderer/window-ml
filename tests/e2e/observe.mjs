@@ -49,6 +49,8 @@ const main = async () => {
         task, followup, start, tools, approve,
         python: !!process.env.PYTHON,
         toolTokens: !!process.env.TOOLTOKENS,
+        // SHARED_WATCHES='["ml.current.run.step"]' → watches shared with the model before the run starts.
+        sharedWatches: process.env.SHARED_WATCHES ? JSON.parse(process.env.SHARED_WATCHES) : [],
         backend,
         warm: process.env.WARM !== "0",
         warmAll: !!process.env.WARM_ALL,
