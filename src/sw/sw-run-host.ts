@@ -32,7 +32,7 @@ import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels
 import { noteRunMechanic } from "./sw-runs";
 import { ensureLocalTools, runLocalTool, runsInWorker } from "./sw-local-tools";
 import { withUserWatches } from "./sw-shared-watches";
-import { grantRunFetch, runFetchConsented } from "./worker-tools";
+import { grantRunFetch, runFetchConsented, grantRunPython, pageOnlyPython } from "./worker-tools";
 import { navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue } from "./sw-values";
@@ -466,7 +466,15 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 // while the grant authorises another.
                 const remote = p.tools.find(t => t.name === name)?.remote;
                 if (remote) grantsFor(tabId).serverTools.add(serverToolKey(remote.toolId, remote.fn, args as Record<string, unknown>));
-                if (name === "python_exec") {
+                // A python_exec the WORKER runs gets its grants as the RUN's call grant (worker-tools.ts): on the tab
+                // they were a sheet read with the person's cookies, and full-mode Python, that any script on the
+                // page could use while the call ran. One that needs the page (an image, a selector) still mints the
+                // tab's, which that page call sends.
+                const pyInWorker = name === "python_exec" && p.builtBy === "worker" && runsInWorker(p, name) && !pageOnlyPython(args as Record<string, unknown>);
+                if (pyInWorker) {
+                    await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "").catch(() => { /* nothing granted: fails closed */ });
+                    grantRunPython(runId, { sheets: externalSheetIds(args), code: (args as { mode?: string }).mode === "full" ? String((args as { code?: unknown }).code ?? "") : null });
+                } else if (name === "python_exec") {
                     const g = grantsFor(tabId);
                     for (const id of externalSheetIds(args)) g.sheets.add(id);
                     if ((args as { mode?: string }).mode === "full") g.pyCode.add(String((args as { code?: unknown }).code ?? ""));
@@ -663,6 +671,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     return { result: env?.result || `Error: the page returned nothing for tool "${name}".`, renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel, images: env?.images, remoteMs: env?.remoteMs };
                 } finally {
                     pendingGrants.delete(tabId);   // grants were for THIS approved call's sub-ops only
+                    if (pyInWorker) grantRunPython(runId, null);
                     if (reads) execReads.delete(runId);
                     if (onStream) delegateStreams.delete(runId);   // the call is done — stop routing live chunks to it
                 }

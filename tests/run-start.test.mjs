@@ -709,3 +709,73 @@ test("an approved exec may fetch the URLs its code spells out, and a computed on
     assert.equal(literal?.data?.status, 200, `the literal URL was fetched: ${JSON.stringify(literal).slice(0, 120)}`);
     assert.match(computed?.error || "", /not spelled out in the approved script.*string literal/, JSON.stringify(computed));
 });
+
+// --- python_exec of a worker-built run, and the grants its approval mints (slice 2 part 2) ---
+
+const SHEET_ID = "1SecretSheetIdAbcdefgh";
+const SHEET_EDIT = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit#gid=0`;
+const SHEET_EXPORT = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=0`;
+
+/** A worker-built run on tab 7 (site.example, NOT approved) whose model calls python_exec with `args`, approved; the
+ *  page attacks with `attack(bg)` while the sandbox runs the call. Returns what the sandbox was given and the page got. */
+async function pythonRun(args, attack) {
+    let turns = 0, bg, stolen;
+    const runs = [];
+    bg = loadBackground({
+        config, openTabs: [SITE], siteGate: true,
+        onFetch: (call) => {
+            if (call.url.startsWith("https://docs.google.com/")) return { ok: true, status: 200, url: call.url, headers: { get: () => "text/csv" }, text: async () => "name,salary\nAda,999999\n" };
+            if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            return ++turns === 1
+                ? jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "python_exec", arguments: JSON.stringify(args) } }] } }] })
+                : jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onPyRun: async (msg) => {
+            if (msg.type !== "PY_RUN") return { ok: true, prewarm: "started" };
+            runs.push(JSON.parse(JSON.stringify(msg)));
+            // Once, during the run's own call: a page request the sandbox accepts would arrive here too.
+            if (attack && runs.length === 1) stolen = await attack(bg);
+            return { ok: true, value: 1, stdout: "" };
+        },
+        onTabMessage: async (_t, msg) => {
+            if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
+            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+            if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
+            if (msg.payload.finish) return { result: "" };
+            if (msg.payload.name === "python_exec" && !msg.payload.renderOnly) return { result: "FROM THE PAGE" };
+            return {};
+        },
+    });
+    await bg.context.__mlStartUserRunForTest(7, { task: "summarise my sheet", surface: "hud" });
+    for (let i = 0; i < 400 && turns < 2; i++) await new Promise((r) => setTimeout(r, 0));
+    await flush(30);
+    const toPage = bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE" && m.payload.name === "python_exec" && !m.payload.renderOnly).map(([, m]) => m.payload);
+    return { runs, stolen, toPage };
+}
+const PAGE7 = { tab: { id: 7, url: SITE.url }, url: SITE.url, origin: "https://site.example", frameId: 0 };
+
+test("python_exec of a worker-built run loading an external sheet runs in the worker, and the page cannot read the sheet meanwhile", T, async () => {
+    const { runs, stolen, toPage } = await pythonRun({ code: "return len(s)", tables: { s: SHEET_EDIT } },
+        (bg) => bg.send({ type: "FETCH_SHEET", payload: { url: SHEET_EXPORT } }, PAGE7));
+    assert.equal(toPage.length, 0, "the call never went to the page");
+    assert.equal(runs.length, 1, "positive control: the sandbox ran the call");
+    assert.match(JSON.stringify(runs[0].tables), /Ada/, "the run's own call loaded the approved sheet");
+    assert.ok(stolen !== undefined, "positive control: the page's request was answered");
+    assert.ok(!stolen?.data, `the page read the sheet with the person's cookies: ${JSON.stringify(stolen).slice(0, 160)}`);
+});
+
+test("full-mode python_exec run in the worker: the page cannot run that approved code itself while it runs", T, async () => {
+    const code = "import js; return 1";
+    const { runs, stolen } = await pythonRun({ code, mode: "full" },
+        (bg) => bg.send({ type: "PYTHON_EXEC", payload: { code, hardened: false } }, PAGE7));
+    assert.equal(runs.length, 1, "positive control: the approved call ran");
+    assert.equal(runs[0].hardened, false, "in full mode");
+    assert.match(stolen?.error || "", /Refused/, `the page ran full-mode Python on the run's grant: ${JSON.stringify(stolen).slice(0, 160)}`);
+});
+
+test("a python_exec that needs the page (a selector, an image) still runs there", T, async () => {
+    const { runs, toPage } = await pythonRun({ code: "return 1", tables: { t: "table#sales" } });
+    assert.equal(toPage.length, 1);
+    assert.equal(runs.length, 0, "not run in the worker");
+});
+

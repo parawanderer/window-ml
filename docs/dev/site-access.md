@@ -89,6 +89,13 @@ miss defers to the page's. Both caches hold frozen copies (`cacheCopy`), so a su
 re-read shows. `RUN_TAB_TYPES` keeps `FETCH_URL` until approved exec is isolated (part 4): an approved script's inline
 `ml.fetch` and a page-built run still send it.
 
+`python_exec` runs there too, unless it needs the page (`image`, a page table by selector, `current`):
+`pageOnlyPython` sends those to the page as before. In the worker its tables load without a DOM (a table by value, a
+URL the run's fetch_url read, an external sheet), and the call goes through `runPython` (`sw-python.ts`) with the run as
+the caller. Its approval is the run's CALL grant (`grantRunPython`: the external sheet ids, the full-mode code), set
+around the one call and never on the tab, so a page cannot read the sheet with the person's cookies or run the approved
+full-mode code itself while it runs. Live stdout goes straight to the call's output.
+
 ## What the content script sends outside the gate
 
 Four types the content script sends on a page's word are not in `PAGE_STARTED_TYPES`, so the origin gate passes them

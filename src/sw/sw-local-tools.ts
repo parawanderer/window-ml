@@ -14,7 +14,7 @@ import { envelopeFrom } from "../agent/run-delegation";
 import { executeTool, toolContext } from "../tools/tool-exec";
 import { listServerTools } from "./sw-llm";
 import { workerMl } from "./worker-ml";
-import { buildWorkerTools, dropWorkerTools, pageOnlyFetch, workerSpend, WORKER_TOOL_NAMES } from "./worker-tools";
+import { buildWorkerTools, dropWorkerTools, pageOnlySend, workerSpend, WORKER_TOOL_NAMES } from "./worker-tools";
 
 /** What a run's local tools need to run: the tools by name, and the vision facts their ToolContext carries. */
 interface LocalToolset { byName: Record<string, MlTool>; model: string | null; driverSees: boolean; visionModel: string | null; }
@@ -79,8 +79,9 @@ export async function runLocalTool(send: ToolSend, onStream?: (text: string, ts?
     const tool = send.name ? set?.byName[send.name] : undefined;
     if (!set || !tool) return null;
     const args = send.args || {};
-    // The one fetch the page answers itself: a session render of the page the run is on, from its live DOM.
-    if (send.name === "fetch_url" && !send.renderOnly && send.tabUrl !== undefined && pageOnlyFetch(args, send.tabUrl)) return null;
+    // What the page answers itself: a session render of the page the run is on (its live DOM), and a python_exec that
+    // needs a screenshot or a page table. The approval preview is drawn here either way.
+    if (!send.renderOnly && send.tabUrl !== undefined && pageOnlySend(send.name, args, send.tabUrl)) return null;
     if (send.renderOnly) return { result: "", renderIn: descriptorFor(tool, { result: "" }, args).in };
     if (send.precheck) return { result: "", precheckFailed: false };   // a remote tool has no doomed-action precheck
     if (send.readonlyTry) return { result: "", readonly: false };     // only `exec` has a read-only try

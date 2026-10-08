@@ -16,7 +16,7 @@ import { PY_PACKAGE_LOADS } from "../python/python-env";
  *  `ml.pythonExec`, i.e. the agent's tool); NULL means the caller was one of our OWN surfaces — the sidebar's
  *  Python bench — which is not reachable that way and is broadcast to instead. Both callers ask for the same
  *  worker tee; only the last hop differs. */
-const pyStreamTabs = new Map<string, number | null>();
+const pyStreamTabs = new Map<string, number | null | ((chunk: string, ts?: number) => void)>();
 
 /** PYTHON_PREWARM: boot the offscreen Pyodide host ahead of a run that will need it. `sendResponse` reports
  *  whether this call is what actually started it. */
@@ -36,109 +36,112 @@ export function pythonPrewarm(message: any, sendResponse: (r: any) => void): voi
         .catch((e) => sendResponse({ error: String((e as Error)?.message || e) }));
 }
 
-/** PYTHON_EXEC: run one sandboxed-Python call in the offscreen host. THE choke point for `full` mode, which is
- *  network at the extension origin: readonly is safe for any caller, full needs a trusted surface, a
- *  whitelisted domain, or a per-call grant for exactly this code. */
+/** Who a `PYTHON_EXEC` is for: a page or one of our surfaces through the router, or a run's tool answered in the worker. */
+export interface PythonCaller {
+    /** One of the extension's own surfaces (the bench): trusted with everything here. */
+    ownSurface: boolean;
+    /** The tab it is for, when it has one. */
+    tabId?: number;
+    /** Not a trusted surface or a whitelisted domain: `full` mode needs a grant. Asked only when it matters. */
+    untrusted: () => Promise<boolean>;
+    /** Whether `full` mode is approved for exactly this code. Absent: the tab's call grant (`pendingGrants.pyCode`). */
+    pyCodeOk?: (code: string) => boolean;
+    /** Whether this caller may read a stored table held by `holders`. Absent: a run hosted on its tab, or the tab the
+     *  key was disclosed to. */
+    valueOk?: (holders: string[]) => boolean;
+    /** Where live stdout goes: a tab, one of our surfaces (null), or a function (a run's own output, in the worker). */
+    stream?: number | null | ((chunk: string, ts?: number) => void);
+    /** Record a returned frame's key as disclosed to the tab (`pageValueSession`). False for a run in the worker, whose
+     *  loop claims it under the run's own session. */
+    disclose: boolean;
+}
+
+/** PYTHON_EXEC through the router: the caller is read off the sender, which the browser sets. */
 export function pythonExec(message: any, sender: chrome.runtime.MessageSender, sendResponse: (r: any) => void): void {
-    // Route the sandboxed-Python run to the offscreen Pyodide host (the service worker can't run WASM).
-    // CHOKE-POINT: FULL (unhardened) mode is network at the extension origin — gate it. Readonly is a
-    // network-nulled sandbox (safe for any caller); full is allowed only from a trusted surface, a
-    // whitelisted domain, or with a per-call grant for THIS code. An untrusted page without one is
-    // REJECTED (a clear error, not a silent readonly downgrade).
-    (async () => {
-        const ownSurface = isExtensionSender(sender);
-        // A COMPLETION is the bench EDITOR's, and only ours. It never runs the code, but it does load a
-        // package and read the interpreter, so a page gains nothing by reaching it and is refused rather
-        // than handed a new kind of request to the single sandbox. Always HARDENED, whatever it asked for.
-        const rawComplete = message.payload?.complete;
-        if (rawComplete && !ownSurface) {
-            sendResponse({ error: "Refused: code completion is a workbench feature." });
-            return;
+    const ownSurface = isExtensionSender(sender);
+    void runPython(message.payload, message.requestId, {
+        ownSurface, tabId: sender.tab?.id, untrusted: async () => (await senderTrust(sender)) === "untrusted",
+        // The discriminator is the sending FRAME's own url, not `sender.tab`: the overlay sidebar is an extension
+        // iframe INSIDE a tab, and relaying its chunks through that tab's content script would post them to the page
+        // instead of to the bench that asked. `sender.url` is set by Chrome and a page cannot forge it.
+        stream: ownSurface ? null : sender.tab?.id, disclose: true,
+    }).then(sendResponse);
+}
+
+/**
+ * Run one sandboxed-Python call in the offscreen host. THE choke point for `full` mode, which is network at the
+ * extension origin: readonly is safe for any caller, full needs a trusted surface, a whitelisted domain, or a grant for
+ * exactly this code. Rejected with a clear error, never silently downgraded to readonly.
+ * @param payload what `PYTHON_EXEC` carries
+ * @param requestId the caller's request id, which keys its live stdout
+ * @param caller who it is for
+ * @returns the run's result, or the refusal or failure
+ */
+export async function runPython(payload: any, requestId: string | undefined, caller: PythonCaller): Promise<{ data?: unknown; error?: string }> {
+    const { ownSurface } = caller;
+    // A COMPLETION is the bench EDITOR's, and only ours. It never runs the code, but it does load a package and read
+    // the interpreter, so a page gains nothing by reaching it and is refused rather than handed a new kind of request
+    // to the single sandbox. Always HARDENED, whatever it asked for.
+    const rawComplete = payload?.complete;
+    if (rawComplete && !ownSurface) return { error: "Refused: code completion is a workbench feature." };
+    const benchMode = rawComplete?.bench === "full" ? "full" : rawComplete?.bench === "readonly" ? "readonly" : undefined;
+    const complete = rawComplete
+        ? { line: Math.max(1, Number(rawComplete.line) | 0), column: Math.max(0, Number(rawComplete.column) | 0), ...(benchMode ? { bench: benchMode } : {}) }
+        : null;
+    // The bench's KEPT STATE is ours alone: a page's run always executes in the namespace every run resets, and a page
+    // cannot clear a person's variables.
+    if (payload?.benchReset && !ownSurface) return { error: "Refused: the workbench's state is not a page's to reset." };
+    // A STORED table is read only for a caller entitled to it. The key reaches the page (the loop hands the table down
+    // through the delegated tool), so a page may pass one, but only while a run hosted on its own tab holds that value
+    // (or it was disclosed to this tab: a page-hosted run, whose loop we cannot vouch for). A key no longer stored is
+    // let through, so the offscreen read fails with the store's own reason. Our own surfaces are trusted.
+    const stored = (Array.isArray(payload?.tables) ? payload.tables as { data?: { kind?: string; key?: unknown } }[] : [])
+        .filter((t) => t?.data?.kind === "value");
+    if (stored.length && !ownSurface) {
+        const tid = caller.tabId;
+        const running = tid != null ? activeRuns.get(tid) : undefined;
+        const ok = caller.valueOk ?? ((holders: string[]) => holders.some((h) => running?.has(h) || (tid != null && h === pageValueSession(tid))));
+        for (const t of stored) {
+            const holders = await valueHolders(String(t.data?.key));
+            if (holders && !ok(holders)) return { error: "Refused: that stored table belongs to a run that is not running on this page." };
         }
-        const benchMode = rawComplete?.bench === "full" ? "full" : rawComplete?.bench === "readonly" ? "readonly" : undefined;
-        const complete = rawComplete
-            ? { line: Math.max(1, Number(rawComplete.line) | 0), column: Math.max(0, Number(rawComplete.column) | 0), ...(benchMode ? { bench: benchMode } : {}) }
-            : null;
-        // The bench's KEPT STATE is ours alone, on the same unforgeable discriminator as the rest: a page's
-        // run always executes in the namespace every run resets, and a page cannot clear a person's variables.
-        if (message.payload?.benchReset && !ownSurface) {
-            sendResponse({ error: "Refused: the workbench's state is not a page's to reset." });
-            return;
-        }
-        // A STORED table is read only for a run that holds it. The key reaches the page (the loop hands the
-        // table down through the delegated tool), so a page may pass one, but only while a run hosted on its own
-        // tab holds that value: a key from somewhere else reads nothing. A key no longer stored is let through, so
-        // the offscreen read fails with the store's own reason. Our own surfaces are trusted, as for everything here.
-        const stored = (Array.isArray(message.payload?.tables) ? message.payload.tables as { data?: { kind?: string; key?: unknown } }[] : [])
-            .filter((t) => t?.data?.kind === "value");
-        if (stored.length && !ownSurface) {
-            const tid = sender.tab?.id;
-            const running = tid != null ? activeRuns.get(tid) : undefined;
-            // Either the value is held by a run WE host on this tab, or it was disclosed to this tab in the first
-            // place (a page-hosted run, whose loop we cannot vouch for — pageValueSession).
-            const mine = (h: string) => running?.has(h) || (tid != null && h === pageValueSession(tid));
-            for (const t of stored) {
-                const holders = await valueHolders(String(t.data?.key));
-                if (holders && !holders.some(mine)) {
-                    sendResponse({ error: "Refused: that stored table belongs to a run that is not running on this page." });
-                    return;
-                }
-            }
-        }
-        const persist = !!message.payload?.persist && ownSurface;
-        const benchReset = !!message.payload?.benchReset;
-        const wantsFull = !complete && message.payload?.hardened === false;
-        if (wantsFull) {
-            const trust = await senderTrust(sender);
-            if (trust === "untrusted") {
-                const code = String(message.payload?.code ?? "");
-                if (!(sender.tab?.id != null && pendingGrants.get(sender.tab.id)?.pyCode.has(code))) {
-                    sendResponse({ error: "Refused: network-enabled (full) Python needs approval on this page — run it through an agent and approve it, or add this site to the approval whitelist." });
-                    return;
-                }
-            }
-        }
-        // LIVE stdout streaming (opt-in): record where this run's chunks go. The discriminator is the
-        // sending FRAME's own url, not `sender.tab` — the overlay sidebar is an extension iframe INSIDE a
-        // tab, so it has one, and relaying its chunks through that tab's content script would post them
-        // to the page instead of to the bench that asked. `sender.url` is set by Chrome and a page cannot
-        // forge it.
-        const streamId: string | undefined = message.payload?.stream ? message.requestId : undefined;
-        if (streamId) {
-            const fromSurface = isExtensionSender(sender);
-            if (fromSurface) pyStreamTabs.set(streamId, null);
-            else if (sender.tab?.id != null) pyStreamTabs.set(streamId, sender.tab.id);
-        }
-        // NO WATCHDOG is a WORKBENCH-ONLY favour, gated at the same choke point and on the same
-        // unforgeable discriminator as the stream routing above: `sender.url` is set by Chrome, so only
-        // one of OUR OWN surfaces can ask. A page-invoked tool keeps the 15s cap whatever it sends — a
-        // run that never ends holds the single Pyodide instance against every later call, with nobody
-        // watching it; in the bench a person chose it, is sitting in front of it, and can close the panel.
-        const noTimeout = !!message.payload?.noTimeout
-            && isExtensionSender(sender);
-        // A run whose returned frame may become a pointer carries the store's budget; the bench's and a completion's never do.
-        const valueBudget = persist || complete ? 0 : await valueBudgetBytes().catch(() => 0);
-        const payload = { type: "PY_RUN", ...(valueBudget ? { valueBudget } : {}), code: message.payload?.code, image: message.payload?.image ?? null, hardened: complete ? true : message.payload?.hardened !== false, tables: message.payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(message.payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}) };
-        const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(payload));
-        attempt()
-            .catch((err) => {
-                // The offscreen doc can be gone (SW slept and the doc was torn down, or a stale cached-
-                // ready) → "Receiving end does not exist." Drop the cache, recreate, retry ONCE.
-                if (!/Receiving end does not exist|Could not establish connection/.test(String(err?.message || err))) throw err;
-                forgetOffscreen();
-                return attempt();
-            })
-            .then((res) => {
-                // A returned DataFrame past its preview was stored by the offscreen document, and its key is about
-                // to reach the page. Same rule as a fetched body: disclosing the key to a tab is what entitles that
-                // tab's page-hosted run to read it back (pageValueSession).
-                const key = (res as { valueKey?: string } | undefined)?.valueKey;
-                if (key && sender.tab?.id != null) claimValue(key, pageValueSession(sender.tab.id));
-                sendResponse({ data: res });
-            })
-            .catch((err) => sendResponse({ error: err?.message || String(err) }))
-            .finally(() => { if (streamId) pyStreamTabs.delete(streamId); });
-    })();
+    }
+    const persist = !!payload?.persist && ownSurface;
+    const benchReset = !!payload?.benchReset;
+    const wantsFull = !complete && payload?.hardened === false;
+    if (wantsFull && await caller.untrusted()) {
+        const code = String(payload?.code ?? "");
+        const approved = caller.pyCodeOk ? caller.pyCodeOk(code) : caller.tabId != null && !!pendingGrants.get(caller.tabId)?.pyCode.has(code);
+        if (!approved) return { error: "Refused: network-enabled (full) Python needs approval on this page — run it through an agent and approve it, or add this site to the approval whitelist." };
+    }
+    // LIVE stdout streaming (opt-in): record where this run's chunks go.
+    const streamId: string | undefined = payload?.stream ? requestId : undefined;
+    if (streamId && caller.stream !== undefined) pyStreamTabs.set(streamId, caller.stream);
+    // NO WATCHDOG is a WORKBENCH-ONLY favour: only one of OUR OWN surfaces can ask. A page-invoked tool keeps the 15s
+    // cap whatever it sends — a run that never ends holds the single Pyodide instance against every later call.
+    const noTimeout = !!payload?.noTimeout && ownSurface;
+    // A run whose returned frame may become a pointer carries the store's budget; the bench's and a completion's never do.
+    const valueBudget = persist || complete ? 0 : await valueBudgetBytes().catch(() => 0);
+    const run = { type: "PY_RUN", ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened: complete ? true : payload?.hardened !== false, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}) };
+    const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(run));
+    try {
+        const res = await attempt().catch((err) => {
+            // The offscreen doc can be gone (SW slept and the doc was torn down, or a stale cached-ready) → "Receiving
+            // end does not exist." Drop the cache, recreate, retry ONCE.
+            if (!/Receiving end does not exist|Could not establish connection/.test(String(err?.message || err))) throw err;
+            forgetOffscreen();
+            return attempt();
+        });
+        // A returned DataFrame past its preview was stored by the offscreen document, and its key is about to reach the
+        // caller. Same rule as a fetched body: disclosing the key to a tab entitles that tab's page-hosted run to it.
+        const key = (res as { valueKey?: string } | undefined)?.valueKey;
+        if (key && caller.disclose && caller.tabId != null) claimValue(key, pageValueSession(caller.tabId));
+        return { data: res };
+    } catch (err) {
+        return { error: (err as Error)?.message || String(err) };
+    } finally {
+        if (streamId) pyStreamTabs.delete(streamId);
+    }
 }
 
 /** PY_STDOUT: relay one live stdout chunk from the offscreen host to whoever is awaiting that stream — a page
@@ -148,6 +151,8 @@ export function relayPyStdout(message: any): void {
     // resolves it as a PYTHON_EXEC_RESPONSE progress event to the awaiting ml.pythonExec (→ the tool's ctx.stream).
     if (!pyStreamTabs.has(message.streamId)) return;
     const tabId = pyStreamTabs.get(message.streamId);
+    // A run's tool answered in the worker: straight to its output, never through a tab.
+    if (typeof tabId === "function") { try { tabId(String(message.chunk ?? ""), message.ts); } catch { /* a bad sink must not break the relay */ } return; }
     const chunk = { type: "PYTHON_STREAM", requestId: message.streamId, chunk: message.chunk, ts: message.ts };
     // A SURFACE (the bench) is an extension context, so the chunk goes out on the runtime channel every
     // such context hears; it is filtered by requestId at the other end, which is unique per run. A PAGE

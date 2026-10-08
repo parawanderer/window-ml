@@ -390,6 +390,11 @@ Recorded as each slice lands, with the reason.
   person to approve any exec, then read whatever the browser reaches. The grant is now the script's literal
   `ml.fetch("…")` URLs (`fetchUrlLiterals`, parsed in the worker); a computed URL is refused with a sentence asking
   for a literal or `fetch_url`, the rule pointers follow. Part 4 may lift it once `ml.*` is bound to the worker.
+- **Slice 2 part 2: `python_exec` of a worker-built run runs in the worker** when it needs no page (no `image`, no
+  selector, not `current`). Shown failing first: approving a `python_exec` that loads an external Google Sheet minted
+  the sheet grant on the TAB for the call's duration, and `FETCH_SHEET` is in `RUN_TAB_TYPES`, so the page could read
+  the sheet with the person's cookies (and run approved full-mode code itself). The call's grants are now the run's.
+  One that needs the page still mints the tab's: the residue part 4 and the vision split take.
 - **Owner decisions for exec on a page that is not approved (part 4):** run it isolated, through
   `chrome.userScripts.execute`, else a CDP isolated world, else refuse, with `ml.*` bound to the worker. Where the
   isolated run is known not to behave as the page's world would, the tool result carries one terse note naming the

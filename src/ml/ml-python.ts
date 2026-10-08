@@ -15,7 +15,7 @@ import { tableFromDelimited, castTableColumns } from "../table/table-data";
 
 /** Is this a table handed over BY VALUE (see {@link TableValue})? The `Table` facade throws on keys it does not have, so
  *  it is recognised by its brand before anything probes it. */
-const isTableValue = (v: unknown): v is TableValue =>
+export const isTableValue = (v: unknown): v is TableValue =>
     isTable(v) || (!!v && typeof v === "object" && !(typeof Element !== "undefined" && v instanceof Element)
         && Array.isArray((v as { columns?: unknown }).columns) && Array.isArray((v as { rows?: unknown }).rows));
 
