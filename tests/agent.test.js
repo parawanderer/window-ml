@@ -7,7 +7,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
 const { loadDomWorld, loadPageWorld } = require("./helpers");
-const { AnswerSet } = require("../src/answer-set.ts");
+const { AnswerSet } = require("../src/pointers/answer-set.ts");
 
 // ---- truncate ----
 
@@ -240,7 +240,7 @@ test("agent_api_docs: a bad pipe stage is an actionable message, never a lost st
 test("agent_api_docs is CITABLE, so its output can be named by a pointer and read back later", async () => {
     // The other half of the same gap: with a `token` the result mints an @tool:<id>, so `dereference` can pipe
     // it on a LATER step instead of only at the moment of the call.
-    const { CITABLE_TOOLS } = await import("../src/agent-loop.ts");
+    const { CITABLE_TOOLS } = await import("../src/agent/agent-loop.ts");
     assert.ok(CITABLE_TOOLS.has("agent_api_docs"),
         "without this, the reference is the one output no pointer can name");
 });
@@ -437,7 +437,7 @@ test("same-origin iframe: the DOM tools cross it via `>>>` (findByText / describ
 });
 
 test("render descriptor: an iframe element renders its `>>>` selector, not the bare TAG (cross-realm instanceof)", () => {
-    const { descriptorFor } = require("../src/render-descriptor.ts");
+    const { descriptorFor } = require("../src/tools/render-descriptor.ts");
     const { document, window } = loadDomWorld('<iframe id="f"></iframe>');
     const frame = document.getElementById("f");
     if (!frame.contentDocument) { console.log("(skipped: jsdom has no iframe contentDocument)"); return; }
@@ -857,7 +857,7 @@ test("selector tools accept end-position :contains/:has-text and explain mid-sel
 test("answer tool curates the answer set (add element/text, remove, clear)", async () => {
     // `answer` needs a ToolContext carrying the run's AnswerSet (the loop provides it). It screenshots each
     // element for the HUD card — best-effort, absent in jsdom, so only content/elements/set are asserted.
-    const { AnswerSet } = require("../src/answer-set.ts");
+    const { AnswerSet } = require("../src/pointers/answer-set.ts");
     const { ml } = loadDomWorld('<div id="banner">Ad</div><p class="x">a</p><p class="x">b</p>');
     const set = new AnswerSet();
     const ctx = { answer: set, hasTool: () => false, tools: [], model: null, capabilities: null, driverSees: false, visionModel: null };
@@ -1433,7 +1433,7 @@ test("resumeAgent: a PREFIX names a run, several matches is an error, and a shor
     // Against the MODULE rather than the page world: this is entirely about the handle registry, and registering two
     // runs whose hashes share a start is the case that matters — which cannot be arranged by starting real runs,
     // since their hashes are random.
-    const { resumeAgent, RESUME_PREFIX_MIN } = await import("../src/ml-agent-handle.ts");
+    const { resumeAgent, RESUME_PREFIX_MIN } = await import("../src/ml/ml-agent-handle.ts");
     const { handleRegistry } = await import("../src/bus.ts");
     const A = "abcdef0123456789abcdef0123456789";
     const B = "abcdef0199999999abcdef0199999999";   // shares the first ten characters with A
@@ -3813,7 +3813,7 @@ test("exec Out: the UI keeps MORE than the model got, and records where the mode
 
 test("exec's description tells the model the cap the code applies, read from the one table", async () => {
     // It said "~500", typed by hand beside a table that also said 500 — true until the table changes.
-    const { OUTPUT_CAP } = await import("../src/contract-pointers.ts");
+    const { OUTPUT_CAP } = await import("../src/contract/contract-pointers.ts");
     const { ml } = loadDomWorld();
     const exec = ml.domTools.find(t => t.name === "exec");
     const { default: d, ceiling: c } = OUTPUT_CAP.exec;
@@ -3929,7 +3929,7 @@ test("exec: a COMPUTED handle still works — it just stays asynchronous", async
 test("server tools: `token` is a SIBLING of the server's own properties, never a wrapper", async () => {
     // A wrapper (`{args: {...}, token}`) would nest every remote tool's arguments to add one optional field
     // — the same opaque-object problem that made this one tool per FUNCTION rather than one dispatcher.
-    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const { buildServerTools } = await import("../src/tools/builtin-tools.ts");
     const [tool] = buildServerTools({}, [{
         id: "srv1", name: "Search", description: "", kind: "local",
         functions: [{ name: "search_web", description: "", parameters: { type: "object", properties: { q: { type: "string" } }, required: ["q"] } }],
@@ -3942,7 +3942,7 @@ test("server tools: `token` is a SIBLING of the server's own properties, never a
 
 test("server tools: a function that ALREADY has `token` keeps its own", async () => {
     // Shadowing a real parameter to add a convenience is worse than the model reaching for the name alias.
-    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const { buildServerTools } = await import("../src/tools/builtin-tools.ts");
     const [tool] = buildServerTools({}, [{
         id: "srv1", name: "S", description: "", kind: "local",
         functions: [{ name: "f", description: "", parameters: { type: "object", properties: { token: { type: "number", description: "theirs" } } } }],
@@ -3953,7 +3953,7 @@ test("server tools: a function that ALREADY has `token` keeps its own", async ()
 test("server tools: `token` is stripped before the call leaves the machine", async () => {
     // It is ours, added to their schema. The server never declared it and must not receive it.
     let sent = null;
-    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const { buildServerTools } = await import("../src/tools/builtin-tools.ts");
     const ml = { execServerTool: async (id, name, args) => { sent = args; return { ok: true, result: { result: "x", durationMs: 1 }, output: "", marks: [], events: [] }; } };
     const [tool] = buildServerTools(ml, [{
         id: "srv1", name: "S", description: "", kind: "local",
@@ -3968,7 +3968,7 @@ test("server tools: `token` is stripped before the call leaves the machine", asy
 // remote tool borrowing the field for emphasis made a web-search call warn about a debugger click into an
 // iframe that was never involved.
 test("server tools: the approval says the ARGUMENTS leave, not that a frame is being clicked", async () => {
-    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const { buildServerTools } = await import("../src/tools/builtin-tools.ts");
     const [tool] = buildServerTools({}, [{
         id: "srv1", name: "SearXNG", description: "", kind: "local",
         functions: [{ name: "search_web", description: "", parameters: { type: "object", properties: { q: { type: "string" } } } }],
@@ -3985,7 +3985,7 @@ test("server tools: the approval says the ARGUMENTS leave, not that a frame is b
 // Curation is what makes a forty-tool backend usable: a tool the model can SEE is a tool it will try, so a
 // disabled function must not be built at all rather than built and hidden.
 test("server tools: a curated-out function is never built, while its siblings still are", async () => {
-    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const { buildServerTools } = await import("../src/tools/builtin-tools.ts");
     const bundle = {
         id: "srv1", name: "Search", description: "", kind: "local",
         functions: [

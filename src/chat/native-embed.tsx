@@ -8,8 +8,8 @@
 
 import { render } from "preact";
 import { effect, signal } from "@preact/signals";
-import type { SessionHost, SessionKey } from "../session-host";
-import { parseSessionKey } from "../session-host";
+import type { SessionHost, SessionKey } from "../session/session-host";
+import { parseSessionKey } from "../session/session-host";
 import { encode, parseToWeb, type BridgeAccount, type ToNative, type ToWeb } from "../native/bridge";
 import { pairingBridge, pairingInfo } from "../native/pairing-bridge";
 import { bridgeVault } from "../native/vault-bridge";
@@ -30,7 +30,7 @@ import { installServices, services } from "../sidebar/services";
 import { installTooltipLayer } from "../sidebar/tooltip-layer";
 import { applyCodePrefs, applyTheme, initThemeStyle, pageTheme } from "../sidebar/prefs";
 import { rev, sessionMap } from "../sidebar/store";
-import { exportSession, exportSessionJson } from "../sidebar/export";
+import { exportSession, exportSessionJson } from "../sidebar/export/export";
 import { SessionPane } from "./chat-app";
 import { ChatStore } from "./chat-store";
 import { hostServices } from "./host-services";

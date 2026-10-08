@@ -4,7 +4,7 @@
 // pipe chaining, quote-aware parsing, and the actionable errors for the un-modeled cases.
 import { test } from "node:test";
 import assert from "node:assert";
-import { runPipe, mlPipe } from "../src/text-pipe.ts";
+import { runPipe, mlPipe } from "../src/pointers/text-pipe.ts";
 
 const DOC = ["Apple 3", "banana 10", "Cherry 2", "apple 7", "date", "banana 10"].join("\n");
 
@@ -227,8 +227,8 @@ test("count is the structure-aware size (wc -l counts LINES, which a path makes 
 // already happened: DEREF_CLAUSE promised `len` and `slice A B`, leftovers from a discarded dialect. The list
 // is now DERIVED from PIPE_CMDS, so this asserts the two really are one source rather than two that agree today.
 test("DRIFT GUARD: every verb the dialect exports exists, and the prompt names exactly those", async () => {
-    const { PIPE_CMDS } = await import("../src/text-pipe.ts");
-    const { DEREF_CLAUSE } = await import("../src/prompts.ts");
+    const { PIPE_CMDS } = await import("../src/pointers/text-pipe.ts");
+    const { DEREF_CLAUSE } = await import("../src/agent/prompts.ts");
     for (const v of PIPE_CMDS) {
         // Every exported verb must PARSE (a usage error is fine; "not supported" is not).
         const src = v === "grep" ? "grep x" : v === "head" || v === "tail" ? `${v} 2` : v;
@@ -246,7 +246,7 @@ test("DRIFT GUARD: every verb the dialect exports exists, and the prompt names e
 // to a six-verb list while the dialect had twelve. A model told the set is smaller than it is never reaches
 // for `schema` or a `.path` — the same wasted turn the PIPE_CMDS comment describes, on a different surface.
 test("DRIFT GUARD: every model-facing description of the dialect is derived, not hardcoded", async () => {
-    const { PIPE_CMDS, PIPE_HINT, PIPE_SYNTAX } = await import("../src/text-pipe.ts");
+    const { PIPE_CMDS, PIPE_HINT, PIPE_SYNTAX } = await import("../src/pointers/text-pipe.ts");
     for (const v of PIPE_CMDS) {
         assert.ok(PIPE_HINT.includes(v), `the pipe-error hint doesn't name \`${v}\``);
         assert.ok(PIPE_SYNTAX.includes(v), `the pipe parameter description doesn't name \`${v}\``);
@@ -265,10 +265,10 @@ test("DRIFT GUARD: every model-facing description of the dialect is derived, not
     // The sources live under src/. Scanning the old root would find NOTHING and pass silently, which is
     // the exact failure this guard exists to catch — so it asserts it found files before trusting a pass.
     const SRC = new URL("../src/", import.meta.url);
-    const sources = readdirSync(SRC).filter((f) => f.endsWith(".ts"));
+    const sources = readdirSync(SRC, { recursive: true }).filter((f) => f.endsWith(".ts"));   // recursive: sources live in folders
     assert.ok(sources.length > 20, `the scan found ${sources.length} sources — it is looking in the wrong place`);
     for (const f of sources) {
-        if (f === "text-pipe.ts") continue;        // the single source is allowed to name them
+        if (f === "pointers/text-pipe.ts") continue;        // the single source is allowed to name them
         if (f.endsWith(".gen.ts")) continue;      // generated (build-info embeds a diff of the working tree)
         const lines = readFileSync(new URL(f, SRC), "utf8").split("\n");
         lines.forEach((line, i) => {
@@ -352,7 +352,7 @@ test("sed: refuses what it does not model, and says what it does", () => {
 test("sed: named in the dialect's own advertised verb list", async () => {
     // PIPE_CMDS is the single source for every message that names the verbs, so a verb that works but is
     // never advertised costs a model a whole turn to discover.
-    const { PIPE_CMDS, PIPE_SYNTAX } = await import("../src/text-pipe.ts");
+    const { PIPE_CMDS, PIPE_SYNTAX } = await import("../src/pointers/text-pipe.ts");
     assert.ok(PIPE_CMDS.includes("sed"));
     assert.match(PIPE_SYNTAX, /sed s\/PATTERN\/REPLACEMENT\//);
 });

@@ -3,14 +3,14 @@
 // view module imports from here — extracted from app.tsx so the components can
 // live in their own files while still reading one source of truth.
 import { signal } from "@preact/signals";
-import type { MlConfig } from "../contract-config";
-import type { ExtendProfile, TokenUsage, GenPhase } from "../contract-chat";
-import type { PersistGrant, ReusedGrant, RemoteTiming } from "../contract-agent";
-import type { RenderDescriptor, ToolFeedback, AnswerMedia } from "../contract-render";
-import type { LoadedModel } from "../contract-server";
-import type { DebugSessionConfig, DebugAgentConfig, SubcallUsage } from "../contract-debug";
-import { DEFAULT_CONFIG } from "../contract-config";
-import { backendStateFrom } from "../contract-server";
+import type { MlConfig } from "../contract/contract-config";
+import type { ExtendProfile, TokenUsage, GenPhase } from "../contract/contract-chat";
+import type { PersistGrant, ReusedGrant, RemoteTiming } from "../contract/contract-agent";
+import type { RenderDescriptor, ToolFeedback, AnswerMedia } from "../contract/contract-render";
+import type { LoadedModel } from "../contract/contract-server";
+import type { DebugSessionConfig, DebugAgentConfig, SubcallUsage } from "../contract/contract-debug";
+import { DEFAULT_CONFIG } from "../contract/contract-config";
+import { backendStateFrom } from "../contract/contract-server";
 import { services } from "./services";
 
 export const FONT_KEY = "ml_debug_fontscale";   // storage.local: the panel's font scale
@@ -218,7 +218,7 @@ export function scopedHash(): string | null {
     return v.name === "detail" ? v.hash : null;
 }
 
-export { PREDICT_KEY } from "../load-records";   // storage.local: show the VRAM predictor's figures on loads
+export { PREDICT_KEY } from "../resource/load-records";   // storage.local: show the VRAM predictor's figures on loads
 /** Show, on each model load, what the server's VRAM PREDICTOR expected against what the load took — its peak,
  *  where it settled, weights and KV term by term — and a dashed line where it predicted the card would land.
  *  OFF by default: it is for tuning the predictor, and a user loading a model has no decision it informs. */

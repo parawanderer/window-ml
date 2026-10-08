@@ -13,7 +13,7 @@
 // REMOTE one nothing here can grant anything — so the only routes that work are a page it already holds, or one of
 // its open tabs, and failing both, words for the person to carry to that machine.
 
-import type { BlankStartCapability, RuntimeInfo } from "../session-host";
+import type { BlankStartCapability, RuntimeInfo } from "../session/session-host";
 
 /** What state the "new tab" choice is in, and therefore what the page should offer. */
 export type BlankStartState =

@@ -4,8 +4,8 @@
 // nothing to choose between and draws no device picker at all), and a runtime that is offline. The web build opens on
 // it until `HubHost` exists, the
 // e2e specs drive it, and it is the live mockup of both layouts.
-import type { MlDebugEvent } from "../contract-debug";
-import { SESSION_CONTRACT_VERSION, type Grant, type RuntimeInfo, type SessionSummary } from "../session-host";
+import type { MlDebugEvent } from "../contract/contract-debug";
+import { SESSION_CONTRACT_VERSION, type Grant, type RuntimeInfo, type SessionSummary } from "../session/session-host";
 import { FakeHost } from "./fake-host";
 
 const EVERY: Grant[] = [{ scope: "view" }, { scope: "drive" }, { scope: "approve" }, { scope: "screen" }];
@@ -71,7 +71,7 @@ export function demoHost(now = Date.now(), opts: { latencyMs?: number } = {}): F
             thought: "Survey the result cards first, to see what a fare row holds.",
             arguments: { js: EXEC_JS },
             result: "[{\"price\":\"€118\",\"airline\":\"TP\"},{\"price\":\"€96\",\"airline\":\"HV\"},{\"price\":\"€131\",\"airline\":\"KL\"}]",
-            // The render slots the real tools fill (`src/tools.ts`, `src/python-tool.ts`). Without them a step
+            // The render slots the real tools fill (`src/tools/tools.ts`, `src/python/python-tool.ts`). Without them a step
             // falls back to its raw argument tree, which is a JSON string with `\n` in it where a reader expects
             // code — the fallback working exactly as designed, over a fixture that did not match a real run.
             renderIn: { type: "code", text: EXEC_JS, lang: "javascript", format: true },

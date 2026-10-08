@@ -68,26 +68,33 @@ const posix = (p) => p.split(path.sep).join("/");
 function resolveSpec(files, fromDir, spec) {
     const base = posix(path.normalize(path.join(fromDir, spec)));
     for (const ext of EXTS) if (files.has(base + ext)) return { file: base + ext, ext };
+    // TypeScript's ESM spelling: `./x.js` names `x.ts`. Written back with the `.js` it had.
+    const js = /\.(m?js|jsx)$/.exec(base);
+    if (js) {
+        const stem = base.slice(0, -js[0].length);
+        for (const ts of [".ts", ".tsx", ".mts"]) if (files.has(stem + ts)) return { file: stem + ts, ext: ts, alias: js[0] };
+    }
     return null;
 }
 
 /** A relative specifier from `fromDir` to `file`, written the way the old one was: same omitted suffix, and a
  *  leading `./` where the old one had one. @param {string} fromDir @param {string} file @param {string} ext */
-function specFor(fromDir, file, ext) {
+function specFor(fromDir, file, ext, alias = "") {
     let rel = posix(path.relative(fromDir, file));
-    if (ext) rel = rel.slice(0, rel.length - ext.length);
+    if (ext) rel = rel.slice(0, rel.length - ext.length) + alias;
     return rel.startsWith(".") ? rel : `./${rel}`;
 }
 
 /**
  * Plan a move: the new text of every file whose literals change, the moves themselves, and what could only be
  * reported. Pure over the files it is handed, so the tests drive it on a fixture tree.
- * @param {{ files: string[], read: (rel: string) => string, moves: Map<string, string> }} input
- *   `files` every tracked file, `moves` old root-relative path → new.
+ * @param {{ files: string[], read: (rel: string) => string, moves: Map<string, string>, extra?: string[] }} input
+ *   `files` every tracked file, `moves` old root-relative path → new, `extra` files that exist but are not tracked
+ *   (a generated, gitignored `build-info.gen.ts`): a path may NAME one, so it resolves, but it is never rewritten.
  */
-export function planMove({ files, read, moves }) {
-    const before = new Set(files);
-    const after = new Set(files.map((f) => moves.get(f) ?? f));
+export function planMove({ files, read, moves, extra = [] }) {
+    const before = new Set([...files, ...extra]);
+    const after = new Set([...files.map((f) => moves.get(f) ?? f), ...extra]);
     const newPath = (f) => moves.get(f) ?? f;
     /** @type {Map<string, string>} keyed by the file's NEW path */
     const rewritten = new Map();
@@ -130,7 +137,7 @@ export function planMove({ files, read, moves }) {
                 if (!hit) return whole;
                 const target = newPath(hit.file);
                 if (target === hit.file && newDir === oldDir) return whole;
-                return q + specFor(newDir, target, hit.ext) + q;
+                return q + specFor(newDir, target, hit.ext, hit.alias) + q;
             }
             // A ROOT-relative path (`"src/x.ts"` in build.mjs, a script's readFileSync) names one file exactly.
             if (moves.has(spec)) {
@@ -142,6 +149,14 @@ export function planMove({ files, read, moves }) {
             return whole;
         });
         if (out !== text || newDir !== oldDir) rewritten.set(newPath(rel), out);
+        // A path relative to something other than the file or the root (`"sidebar/x.tsx"` joined onto a SRC
+        // constant): it ends a moved path at a segment boundary, and its base is unknowable from here.
+        for (const m of text.matchAll(LITERAL)) {
+            const lit = m[2];
+            if (!lit.includes("/") || lit.startsWith(".") || moves.has(lit)) continue;
+            if (![...moves.keys()].some((f) => f.endsWith("/" + lit))) continue;
+            reports.push({ file: rel, line: text.slice(0, m.index).split("\n").length, kind: "suffix", text: lit });
+        }
         // A path assembled from pieces: `join(ROOT, "src", "x.ts")`. The basename is in a literal on its own.
         text.split("\n").forEach((line, i) => {
             const bases = [...moves.keys()].map((f) => path.posix.basename(f));
@@ -195,7 +210,11 @@ function main() {
     if (dirty && !opts.dryRun) { console.error("move-files: the working tree has uncommitted changes; commit or stash them first, so the move can be undone with a checkout"); process.exit(1); }
 
     const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
-    const plan = planMove({ files, read, moves });
+    // Generated, gitignored sources (`src/*.gen.ts`) are imported like any other module. Without them a moved file's
+    // `./build-info.gen` resolved to nothing, was left alone, and broke; the typecheck caught it on the first big move.
+    const extra = execFileSync("git", ["ls-files", "--others", "--ignored", "--exclude-standard", "--", "src"], { cwd: root, encoding: "utf8" })
+        .split("\n").filter((f) => /\.(m?[jt]sx?)$/.test(f) && !f.includes("node_modules/"));
+    const plan = planMove({ files, read, moves, extra });
     const readAfter = (rel) => {
         if (plan.rewritten.has(rel)) return plan.rewritten.get(rel);
         const old = [...moves].find(([, to]) => to === rel)?.[0] ?? rel;

@@ -10,7 +10,7 @@
 // browser's worker describes THIS browser's box; rendering it beside a session running on someone's lab box would
 // be a lie told confidently. The entry answers for the runtimes it can actually speak for, and null for the rest.
 import type { ComponentChildren } from "preact";
-import type { RuntimeId } from "../session-host";
+import type { RuntimeId } from "../session/session-host";
 
 /** The device's own views, if it has any. Every member is optional: absent means this place cannot draw it. */
 export interface ChatExtras {

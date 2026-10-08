@@ -602,7 +602,7 @@ per device, in bytes.
   band would lose the identity the band exists to carry.
 
 **The event lane (§4.5 of the spec).** Under the tracks, on the SAME axis: what happened, against
-what memory was doing while it did. Nothing new is collected — `src/sidebar/model-stats.ts` derives it from what
+what memory was doing while it did. Nothing new is collected — `src/sidebar/resource/model-stats.ts` derives it from what
 sessions already record. `usageByModel` is the per-model ledger (attributed to the model that RAN, with
 delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
 - **Spans run BACKWARDS from when a call finished** — the timestamp we hold is the end — else every bar sits

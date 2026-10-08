@@ -7,10 +7,10 @@
 
 // Type-only (erased): the curated answer-set class, referenced by ToolContext.answer. answer-set.ts
 // imports AnswerMedia back from here — a type-only cycle, which is fine.
-import { MlAnswer, StepOptions, MlTool, AgentOptions, AgentResult, MlAgentHandle, ApprovalRequest, AgentStepEvent } from "./contract-agent";
-import { ChatOptions, MlHistory, NeutralMessage, ToolCall, TokenUsage } from "./contract-chat";
-import { MlPublicConfig } from "./contract-config";
-import { TablePreview, TableValue, FetchResult, FetchFormat, TableSource } from "./contract-fetch";
+import { MlAnswer, StepOptions, MlTool, AgentOptions, AgentResult, MlAgentHandle, ApprovalRequest, AgentStepEvent } from "./contract/contract-agent";
+import { ChatOptions, MlHistory, NeutralMessage, ToolCall, TokenUsage } from "./contract/contract-chat";
+import { MlPublicConfig } from "./contract/contract-config";
+import { TablePreview, TableValue, FetchResult, FetchFormat, TableSource } from "./contract/contract-fetch";
 
 // THE BARREL. A themed module is where a type LIVES; this file is where every consumer still finds it, and
 // that is not a convenience. Roughly a hundred references across the codebase are written as the inline type
@@ -18,23 +18,23 @@ import { TablePreview, TableValue, FetchResult, FetchFormat, TableSource } from 
 // three generators read this file by path (gen-api-docs, gen-export-schema, and the model-facing API doc the
 // first one builds). Both follow an `export … from` out to the real declaration. Re-exporting is what makes
 // the split invisible to all of them; it is not a deprecation shim.
-export * from "./contract-debug";
-export * from "./contract-messages";
-export * from "./contract-server";
-export * from "./contract-fetch";
-export * from "./contract-render";
-export * from "./contract-agent";
-export * from "./contract-chat";
-export * from "./contract-config";
-export * from "./contract-pointers";
-export * from "./contract-run";
-import { RebuildConfig } from "./contract-messages";
-import { DerefValue } from "./contract-pointers";
-import { VisionMemory, ShotBox } from "./contract-render";
-import { LoadedModel, ServerTool, ServerToolResult, OllamaInfo } from "./contract-server";
+export * from "./contract/contract-debug";
+export * from "./contract/contract-messages";
+export * from "./contract/contract-server";
+export * from "./contract/contract-fetch";
+export * from "./contract/contract-render";
+export * from "./contract/contract-agent";
+export * from "./contract/contract-chat";
+export * from "./contract/contract-config";
+export * from "./contract/contract-pointers";
+export * from "./contract/contract-run";
+import { RebuildConfig } from "./contract/contract-messages";
+import { DerefValue } from "./contract/contract-pointers";
+import { VisionMemory, ShotBox } from "./contract/contract-render";
+import { LoadedModel, ServerTool, ServerToolResult, OllamaInfo } from "./contract/contract-server";
 
 // Type-only: the unit-vector wrapper `ml.embed` resolves to. embedding.ts imports nothing, so no cycle.
-import type { Embedding } from "./embedding";
+import type { Embedding } from "./ml/embedding";
 import type { JsonPathNode } from "./json-path";
 
 /* ------------------------------- config ------------------------------- */
@@ -291,9 +291,9 @@ export interface MlApi {
     /** The same tools as a callable NAMESPACE — `ml.dynamicTools.<bundle>.<fn>(args)`, with the function's
      *  own `.schema` on the callable and the arguments checked against it before anything is dispatched.
      *  See `dynamic-tools.ts`. */
-    dynamicTools: import("./dynamic-tools").DynamicToolNamespace;
+    dynamicTools: import("./ml/dynamic-tools").DynamicToolNamespace;
     /** @internal memoised namespace behind {@link dynamicTools}. */
-    _dynamicTools?: import("./dynamic-tools").DynamicToolNamespace;
+    _dynamicTools?: import("./ml/dynamic-tools").DynamicToolNamespace;
     /** The machine's memory CAPACITY — per-device VRAM totals/free and system RAM (Ollama `/api/info`).
      *  `ml.ps()` says what is RESIDENT; this says what there is room for. Returns `null` when the route
      *  isn't available (stock Ollama, or an OpenWebUI without the passthrough) — treat that as "capacity

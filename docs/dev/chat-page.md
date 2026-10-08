@@ -1,7 +1,7 @@
 # The chat page: implementation notes
 
 The spec is [`docs/spec/CHAT_PAGE.md`](../spec/CHAT_PAGE.md) and the contract it reads is
-[`docs/spec/SESSION_CONTRACT.md`](../spec/SESSION_CONTRACT.md) (`src/session-host.ts`). This file is how the code under
+[`docs/spec/SESSION_CONTRACT.md`](../spec/SESSION_CONTRACT.md) (`src/session/session-host.ts`). This file is how the code under
 `src/chat/` is put together, and why.
 
 ## The pieces
@@ -25,9 +25,9 @@ Background side, outside `src/chat/` because the extension bundles it:
 
 | File | What it is |
 | --- | --- |
-| `src/session-index.ts` | The cross-tab session index: one row and one event ring per session, with the contract's epoch and cursor. Pure. |
-| `src/session-server.ts` | The `ml-sessions` port protocol over the index, and the command hand-off. Pure over a port-like object. |
-| `src/sw-sessions.ts` | The worker's index and server, and the sender check on the port. |
+| `src/session/session-index.ts` | The cross-tab session index: one row and one event ring per session, with the contract's epoch and cursor. Pure. |
+| `src/session/session-server.ts` | The `ml-sessions` port protocol over the index, and the command hand-off. Pure over a port-like object. |
+| `src/sw/sw-sessions.ts` | The worker's index and server, and the sender check on the port. |
 
 ## One reducer, one transcript
 
@@ -239,7 +239,7 @@ wrong reason.
 
 ## The local commands
 
-`src/session-commands.ts` maps each contract command onto a path the extension already has, over injected
+`src/session/session-commands.ts` maps each contract command onto a path the extension already has, over injected
 dependencies (`sw-sessions.ts` supplies the browser's, `background.ts` the runs'), so every decision is tested without a
 browser. Nothing new decides a gate, starts a loop or builds a request.
 
@@ -307,7 +307,7 @@ puts the debugging banner on someone's screen for a look they did not start.
 
 ## Chats the worker hosts
 
-`chat.start` makes a conversation with no page behind it (`src/sw-chat.ts`). Every other session in the index belongs
+`chat.start` makes a conversation with no page behind it (`src/sw/sw-chat.ts`). Every other session in the index belongs
 to a tab: a console `ml.chat`, a page script, a background-hosted run delegating its tools back to the page it started
 on. This one does not, because the person typed it into `chat.html`, and closing that page must not end the
 conversation the phone will open later through the hub.
@@ -443,7 +443,7 @@ running one, and `tabs.list` returns three demo tabs so the picker has something
 
 ## Saved sessions
 
-`src/session-store.ts` keeps a session's DEBUG EVENTS in IndexedDB, and `capabilities.persistence` says whether this
+`src/session/session-store.ts` keeps a session's DEBUG EVENTS in IndexedDB, and `capabilities.persistence` says whether this
 browser can (a worker with no IndexedDB reports `false` rather than hoping).
 
 **Why the events and not a transcript rebuilt from them.** They are what the sidebar, the chat page and both
@@ -578,7 +578,7 @@ so a `HubHost` runtime arriving later gets nothing without a line changing here.
 
 **Both are asked twice**, which is the rule the rest of the page follows in a second place:
 
-- the RUNTIME reports the capability (`resourcePanel`, `pythonBench` in `src/sw-sessions.ts`), and
+- the RUNTIME reports the capability (`resourcePanel`, `pythonBench` in `src/sw/sw-sessions.ts`), and
 - this DEVICE holds something to draw it with.
 
 A phone reaching the same runtime over the hub reports the same capabilities and draws neither, not because it is a
@@ -669,7 +669,7 @@ image in a transcript opens in. Three conditions, and each one is a real case ra
 - The runtime must report `capabilities.screenshots` and this client must hold the `screen` scope.
 - The browser can only capture the tab its window is SHOWING. A run working in a background tab is refused with
   `conflict`, and the store puts the runtime's own sentence on screen. Capturing it anyway would mean attaching the
-  debugger, which puts a banner on someone's display for a remote look; `src/session-commands.ts` refuses on
+  debugger, which puts a banner on someone's display for a remote look; `src/session/session-commands.ts` refuses on
   purpose, and the demo world keeps the rule so the UI is developed against it.
 
 ## Calm view, and the list pane

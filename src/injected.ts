@@ -1,42 +1,42 @@
 // This runs in the "Main World" (same as the page JS)
 
 import type { MlApi } from "./contract";
-import type { DerefValue } from "./contract-pointers";
-import type { MlHistory } from "./contract-chat";
-import type { MlTool, MlAnswer } from "./contract-agent";
-import type { AnswerMedia } from "./contract-render";
-import type { RebuildConfig } from "./contract-messages";
-import { htmlToMarkdown } from "./html-to-md";
-import { mlPipe } from "./text-pipe";
+import type { DerefValue } from "./contract/contract-pointers";
+import type { MlHistory } from "./contract/contract-chat";
+import type { MlTool, MlAnswer } from "./contract/contract-agent";
+import type { AnswerMedia } from "./contract/contract-render";
+import type { RebuildConfig } from "./contract/contract-messages";
+import { htmlToMarkdown } from "./dom/html-to-md";
+import { mlPipe } from "./pointers/text-pipe";
 import { mlJsonPath } from "./json-path";
-import { truncate, elPath, describeSkeleton, queryAll, selectorError, viewportRect, jsonShape, joinShapes, jsonValue, shadowHostReport, clickSelector, elLine, isCurrentPage, typeFromExtension } from "./dom";
-import { tableFromDelimited, tableShape, asTable } from "./table-data";
-import { isTable } from "./table-brand";
-import { makeAnswerFacade } from "./answer-set";
-import { accessibleName, roleOf, ariaState } from "./a11y";
-import { askAboutTask } from "./prompts";
-import { promptSurfaceOf } from "./prompt-surface";
+import { truncate, elPath, describeSkeleton, queryAll, selectorError, viewportRect, jsonShape, joinShapes, jsonValue, shadowHostReport, clickSelector, elLine, isCurrentPage, typeFromExtension } from "./dom/dom";
+import { tableFromDelimited, tableShape, asTable } from "./table/table-data";
+import { isTable } from "./table/table-brand";
+import { makeAnswerFacade } from "./pointers/answer-set";
+import { accessibleName, roleOf, ariaState } from "./dom/a11y";
+import { askAboutTask } from "./agent/prompts";
+import { promptSurfaceOf } from "./agent/prompt-surface";
 import { pageContext, resolvePoint, resolveBox, agentState, mlRange } from "./util";
-import { suspiciousChars } from "./security";
+import { suspiciousChars } from "./agent/security";
 import { emitDebug, sessionRegistry, agentRegistry, handleRegistry } from "./bus";
-import { makeDomTools } from "./tools";
-import { pipeStages } from "./token-pipe";
+import { makeDomTools } from "./tools/tools";
+import { pipeStages } from "./pointers/token-pipe";
+import { DerefText } from "./tools/deref-read";
 import { makeBackgroundTaskPromise } from "./bridge";
-import { makeDynamicTools } from "./dynamic-tools";
-import type { DynamicToolNamespace } from "./dynamic-tools";
-import { renderArgs, logStep } from "./approval";
-import { captureVerify } from "./builtin-tools";
-import { currentAnswer, currentDeref, currentServerAllow, currentHasTool } from "./tool-exec";
-import { installToolDelegation, registerRun, endRun } from "./run-delegation";
-import { DerefText } from "./ml-agent";   // run-control object (createAgent/agent) + page-loop same-origin auto-approve predicates
-import { models, serverTools, execServerTool, info, capabilities, getModel, embed, config, setModel, ps, unload } from "./ml-server";
-import { defineTool, lookTool, locateTool, clickTool, typeTool, navigateTool, fetchTool, pythonTool, chatMetaTool } from "./ml-tool-factories";
-import { read, screenshot, _shotBox, _stitchFullPage, _resolveVisionModel, _modelSees, _nativeLookTool, _imageToDataUrl, _fetchImageBase64 } from "./ml-vision";
-import { mlFetchCache } from "./ml-fetch-cache";
-import { pythonExec, _loadTable, _resolveTable } from "./ml-python";
-import { createChat, resumeChat, chat, step } from "./ml-chat";
-import { agent } from "./ml-agent-run";
-import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } from "./ml-agent-handle";
+import { makeDynamicTools } from "./ml/dynamic-tools";
+import type { DynamicToolNamespace } from "./ml/dynamic-tools";
+import { renderArgs, logStep } from "./agent/approval";
+import { captureVerify } from "./tools/builtin-tools";
+import { currentAnswer, currentDeref, currentServerAllow, currentHasTool } from "./tools/tool-exec";
+import { installToolDelegation, registerRun, endRun } from "./agent/run-delegation";
+import { models, serverTools, execServerTool, info, capabilities, getModel, embed, config, setModel, ps, unload } from "./ml/ml-server";
+import { defineTool, lookTool, locateTool, clickTool, typeTool, navigateTool, fetchTool, pythonTool, chatMetaTool } from "./ml/ml-tool-factories";
+import { read, screenshot, _shotBox, _stitchFullPage, _resolveVisionModel, _modelSees, _nativeLookTool, _imageToDataUrl, _fetchImageBase64 } from "./ml/ml-vision";
+import { mlFetchCache } from "./ml/ml-fetch-cache";
+import { pythonExec, _loadTable, _resolveTable } from "./ml/ml-python";
+import { createChat, resumeChat, chat, step } from "./ml/ml-chat";
+import { agent } from "./ml/ml-agent-run";
+import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } from "./ml/ml-agent-handle";
 
 // Every family that used to live in the window.ml literal now has a module above; what is left here is the
 // object that binds them together, the small `_`-prefixed introspection helpers, and the page's own window

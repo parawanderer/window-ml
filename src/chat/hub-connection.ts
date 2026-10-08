@@ -16,7 +16,7 @@ import type { Grant, Recipient } from "../hub/seal";
 import type { Position } from "../hub/wire";
 import { HubClient, type HubEvent } from "../hub/client";
 import { Role } from "../hub/wire";
-import { COMMAND_SCOPE, type Command, type CommandResult, type CommandType } from "../session-host";
+import { COMMAND_SCOPE, type Command, type CommandResult, type CommandType } from "../session/session-host";
 
 /** How long a sealed command waits for its result before the caller is told the runtime did not answer. */
 export const COMMAND_TIMEOUT_MS = 30_000;

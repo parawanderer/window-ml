@@ -7,8 +7,8 @@
 "use strict";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CALL_TITLE, callTitleParam, withCallTitle, takeCallTitle } from "../src/tool-params.ts";
-import { validateArgs } from "../src/validate.ts";
+import { CALL_TITLE, callTitleParam, withCallTitle, takeCallTitle } from "../src/tools/tool-params.ts";
+import { validateArgs } from "../src/tools/validate.ts";
 
 const schema = (props) => ({ type: "object", properties: props, required: [] });
 
@@ -42,7 +42,7 @@ test("…but writing one THROWS, where the tool is being authored", async () => 
     // A tool that quietly loses a parameter, or quietly shadows ours, is a tool that behaves differently from how
     // it reads — found months later. `defineTool` is where that is fixable, so that is where it fails, like an
     // unusable tool NAME already does. (TypeScript callers are refused earlier still: tests/types/.)
-    const { defineTool } = await import("../src/ml-tool-factories.ts");
+    const { defineTool } = await import("../src/ml/ml-tool-factories.ts");
     assert.throws(
         () => defineTool({ name: "set_title", parameters: schema({ [CALL_TITLE]: { type: "string" } }), run: () => "" }),
         /reserved parameter/,

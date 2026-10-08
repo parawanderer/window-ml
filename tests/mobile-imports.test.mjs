@@ -6,7 +6,7 @@
 // prints as three lines of notes and `** BUILD FAILED **`. It shipped once, on a green PR.
 //
 // TYPE-ONLY imports are exempt and deliberately so: they are erased before Metro sees them, which is why the app can
-// name `SessionSummary` from `src/session-host.ts` without that file having to move.
+// name `SessionSummary` from `src/session/session-host.ts` without that file having to move.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

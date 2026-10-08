@@ -71,7 +71,7 @@ test("a streamed turn is split by channel, and an INTERLEAVED one keeps its orde
         // WHICH record carries the usage is the thing being pinned: the loop emits the turn's usage on the
         // model's own record and the tool call as a separate one, so a derivation that reads `usage` off the
         // tool record finds nothing and silently drops the model's half of the block.
-        const { eventsFrom } = await import("../../src/sidebar/model-stats.ts");
+        const { eventsFrom } = await import("../../src/sidebar/resource/model-stats.ts");
         const stepEvents = events.filter((e) => e.kind === "agent-step" && !e.pending)
             .map((e) => ({ step: e.step, seq: e.seq, ts: e.ts, tool: e.tool, toolMs: e.toolMs, usage: e.usage }));
         const [span] = eventsFrom([{
@@ -259,7 +259,7 @@ test("the OpenAI route reports no model timings at all — and reports that, rat
         expect(u.loadMs).toBeUndefined();
         expect(u.genMs).toBeGreaterThan(0);
 
-        const { eventsFrom } = await import("../../src/sidebar/model-stats.ts");
+        const { eventsFrom } = await import("../../src/sidebar/resource/model-stats.ts");
         const [gen] = eventsFrom([{ hash: "h", model: "fake-model", turns: [{ ts: Date.now(), usage: u }] }]);
         expect(gen.cost.genBasis).toBe("wall", "the only clock is ours, so the rate includes the network");
         expect(gen.cost).not.toHaveProperty("promptEvalMs");

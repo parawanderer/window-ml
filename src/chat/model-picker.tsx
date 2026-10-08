@@ -8,7 +8,7 @@ import { IconCheck, IconPin } from "../sidebar/icons";
 import { truncate } from "../sidebar/format";
 import { cursorTipOn } from "../sidebar/ui-kit";
 import { useState } from "preact/hooks";
-import type { ModelChoice, RuntimeInfo } from "../session-host";
+import type { ModelChoice, RuntimeInfo } from "../session/session-host";
 import type { ChatStore } from "./chat-store";
 import { mayCommand } from "./grants";
 import { usePickerPop } from "./pop-picker";

@@ -8,7 +8,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-const { tabReadyFailure } = await import("../src/tab-ready.ts");
+const { tabReadyFailure } = await import("../src/sw/tab-ready.ts");
 
 // --- which of the two causes it was ---
 

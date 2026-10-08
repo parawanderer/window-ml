@@ -8,7 +8,7 @@
 // "no error" is the normal state of a type. `@ts-expect-error` inverts that: tsc fails when the line it marks
 // STOPS being an error, so this file is the test. tsconfig includes `**/*.ts`, so it is checked by the pre-commit
 // hook and in CI alongside everything else.
-import { defineTool } from "../../src/ml-tool-factories";
+import { defineTool } from "../../src/ml/ml-tool-factories";
 
 // A tool with its own parameters: fine, and `title` is added to it later for the model.
 const ok = defineTool({

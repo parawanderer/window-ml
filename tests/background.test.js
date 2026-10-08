@@ -2177,7 +2177,7 @@ test("RESUME_RUN takes a step budget, keeps it for later turns, and bounds what 
     // Continue offers a budget, and the worker is the last thing between that number and a loop. It must apply it
     // (or the chooser is decoration), keep it (being stopped after 2 steps again, having just granted 50, is the
     // same interruption twice), and bound it (the number crossed a page and possibly a hub to get here).
-    const { MAX_CONTINUE_STEPS } = await import("../src/step-budget.ts");
+    const { MAX_CONTINUE_STEPS } = await import("../src/agent/step-budget.ts");
     const caps = [];
     const bg = loadBackground({
         config: baseConfig(),
@@ -4153,8 +4153,8 @@ test("debug ring: streamed deltas are coalesced per step, so a long streamed run
 
 test("FETCH_URL: a table too large for its preview is stored whole and named by valueKey, and a small one stores nothing", async () => {
     const { IDBFactory } = await import("fake-indexeddb");
-    const { ValueStore } = await import("../src/value-store.ts");
-    const { MAX_TABLE_ROWS } = await import("../src/table-data.ts");
+    const { ValueStore } = await import("../src/pointers/value-store.ts");
+    const { MAX_TABLE_ROWS } = await import("../src/table/table-data.ts");
     const idb = new IDBFactory();
     const big = ["id,v", ...Array.from({ length: MAX_TABLE_ROWS + 1 }, (_, i) => `${i},${i}`)].join("\n");
     const bg = loadBackground({ config: baseConfig(), indexedDB: idb, onFetch: (call) => fetchResponse(call.url.includes("big") ? big : "id,v\n1,2\n", { contentType: "text/csv", url: call.url }) });
@@ -4170,8 +4170,8 @@ test("FETCH_URL: a table too large for its preview is stored whole and named by 
 
 test("FETCH_URL: a body the redirect guard withholds is never stored", async () => {
     const { IDBFactory } = await import("fake-indexeddb");
-    const { ValueStore } = await import("../src/value-store.ts");
-    const { MAX_TABLE_ROWS } = await import("../src/table-data.ts");
+    const { ValueStore } = await import("../src/pointers/value-store.ts");
+    const { MAX_TABLE_ROWS } = await import("../src/table/table-data.ts");
     const idb = new IDBFactory();
     const big = ["id", ...Array.from({ length: MAX_TABLE_ROWS + 1 }, (_, i) => String(i))].join("\n");
     const bg = loadBackground({ config: baseConfig(), indexedDB: idb, onFetch: () => fetchResponse(big, { contentType: "text/csv", url: "https://elsewhere.example/big.csv" }) });
@@ -4182,7 +4182,7 @@ test("FETCH_URL: a body the redirect guard withholds is never stored", async () 
 
 test("FETCH_URL: the value store's budget is the setting, and each eviction or refusal is in the housekeeping log", async () => {
     const { IDBFactory } = await import("fake-indexeddb");
-    const { MAX_TABLE_ROWS } = await import("../src/table-data.ts");
+    const { MAX_TABLE_ROWS } = await import("../src/table/table-data.ts");
     // ~1.3 MB per body: two fit a 3 MB budget only by evicting the first; nothing fits 1 MB.
     const body = ["id", ...Array.from({ length: MAX_TABLE_ROWS + 1 }, (_, i) => String(1_000_000 + i))].join("\n");
     const from = { tab: { id: 1, url: "https://api.example/" }, url: "https://api.example/" };
@@ -4204,7 +4204,7 @@ test("FETCH_URL: the value store's budget is the setting, and each eviction or r
 
 test("SECURITY (PYTHON_EXEC): a page may read a STORED table only while a run on its own tab holds it", async () => {
     const { IDBFactory } = await import("fake-indexeddb");
-    const { ValueStore } = await import("../src/value-store.ts");
+    const { ValueStore } = await import("../src/pointers/value-store.ts");
     const idb = new IDBFactory();
     const seed = new ValueStore({ idb, budgetBytes: () => 1e9 });
     const held = await seed.put(new Blob(["a\n1\n"]), { format: "csv", session: "run-elsewhere" });
@@ -4228,7 +4228,7 @@ test("SECURITY (PYTHON_EXEC): a page may read a STORED table only while a run on
 
 test("SECURITY (VALUE_COLUMNS): a stored table's columns are read only for a background run this worker hosts on the sender's tab", async () => {
     const { IDBFactory } = await import("fake-indexeddb");
-    const { ValueStore } = await import("../src/value-store.ts");
+    const { ValueStore } = await import("../src/pointers/value-store.ts");
     const idb = new IDBFactory();
     const held = await new ValueStore({ idb, budgetBytes: () => 1e9 }).put(new Blob(["a\n1\n2\n"]), { format: "csv", session: "run-1" });
     const bg = loadBackground({ config: baseConfig(), indexedDB: idb });
@@ -4242,7 +4242,7 @@ test("SECURITY (VALUE_COLUMNS): a stored table's columns are read only for a bac
 
 test("SECURITY (page-hosted values): a tab reads a stored value the worker disclosed TO IT, and nothing else", async () => {
     const { IDBFactory } = await import("fake-indexeddb");
-    const { ValueStore } = await import("../src/value-store.ts");
+    const { ValueStore } = await import("../src/pointers/value-store.ts");
     const idb = new IDBFactory();
     const seed = new ValueStore({ idb, budgetBytes: () => 1e9 });
     // Held for tab 9's page-hosted runs (what a disclosure records), and held for ANOTHER tab's.

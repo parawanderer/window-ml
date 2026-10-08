@@ -6,7 +6,7 @@
 // a page that is set up stays as quiet as it was. A fix is offered only where THIS device can apply it (one click,
 // `ChatExtras.fix`, or the extension's Settings it holds); elsewhere the item says on which runtime it is fixed.
 import { useEffect, useState } from "preact/hooks";
-import type { RuntimeInfo } from "../session-host";
+import type { RuntimeInfo } from "../session/session-host";
 import { IconInbox } from "../sidebar/icons";
 import { attentionItems, attentionLabel, certItems, deviceItems, revokerItems, sortAttention, type AttentionFix, type AttentionItem, type CertState } from "./attention";
 import { exportTaskItems, exportTasks } from "./export-tasks";

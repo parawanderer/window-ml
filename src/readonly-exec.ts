@@ -25,7 +25,7 @@
 // This file is the ENTRY (`evalReadonly`) and re-exports the public names; the pieces live in readonly-exec/:
 // limits.ts (refusals + halting bounds), tokenizer.ts, parser.ts, policy.ts (what may be read/called/built + the
 // `ml` facade), print.ts (the print boundary) and evaluator.ts (the evaluator + its two drivers).
-import type { CurrentSnapshot } from "./current-context";   // a TYPE: erased, so it adds nothing at runtime
+import type { CurrentSnapshot } from "./agent/current-context";   // a TYPE: erased, so it adds nothing at runtime
 import { NotInDialect, Denied, NeedsPage } from "./readonly-exec/limits";
 import { tokenize } from "./readonly-exec/tokenizer";
 import { Parser } from "./readonly-exec/parser";

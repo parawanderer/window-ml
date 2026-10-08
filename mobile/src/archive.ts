@@ -34,7 +34,7 @@ import { getRandomBytes } from "expo-crypto";
 import { appendEvents, metaGet, metaSet, migrate, prepareSession, readArchived, removeArchived, writeSession, type ArchiveDb, type SqlValue } from "../../src/archive/db";
 import { CACHE_MAX_BYTES, CACHE_SESSIONS, type EventCache } from "../../src/chat/event-cache";
 import type { FeedSnapshot } from "../../src/chat/session-feed";
-import type { SessionKey } from "../../src/session-host";
+import type { SessionKey } from "../../src/session/session-host";
 import type { CachedSession } from "../../src/chat/event-cache";
 import type { ToNative, ToWeb } from "../../src/native/bridge";
 

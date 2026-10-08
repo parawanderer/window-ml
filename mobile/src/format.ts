@@ -1,7 +1,7 @@
 // format.ts — HOW THE APP WORDS A SESSION: its status in a list, when it last moved, and how the list groups it. The
 // words are the chat page's (src/chat/chat-app.tsx `STATUS_LABEL`, `DOT`), so the phone and the page never disagree.
 
-import type { RuntimeInfo, SessionStatus, SessionSummary } from "../../src/session-host";
+import type { RuntimeInfo, SessionStatus, SessionSummary } from "../../src/session/session-host";
 
 /** What each status says in a list, where the dot alone would not tell a waiting run from a working one. */
 export const STATUS_LABEL: Partial<Record<SessionStatus, string>> = {

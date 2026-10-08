@@ -11,7 +11,7 @@ import { Keyring } from "../hub/keyring";
 import { beginOffer } from "../hub/pair-flow";
 import { PAIRING_WINDOW_MS } from "../hub/pairing";
 import { Role } from "../hub/wire";
-import type { DeviceInfo } from "../session-host";
+import type { DeviceInfo } from "../session/session-host";
 import type { HubConnectionView, HubLogLine, Membership, PairingApi, RevokeOutcome } from "./api";
 import { membershipOf } from "./keyring-view";
 

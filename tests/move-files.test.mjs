@@ -41,15 +41,33 @@ test("a file that names nothing moved is left alone", () => {
 
 test("a moved file's own imports are rewritten for its new directory, including one to a file moving with it", () => {
     const p = plan({
-        "src/zz-a.ts": `import { b } from "./zz-b";\nimport { d } from "./dom";\nimport type { C } from "./contract";\n`,
-        "src/zz-b.ts": "", "src/dom.ts": "", "src/contract.ts": "",
+        "src/zz-a.ts": `import { b } from "./zz-b";\nimport { d } from "./zz-dom";\nimport type { C } from "./contract";\n`,
+        "src/zz-b.ts": "", "src/zz-dom.ts": "", "src/contract.ts": "",
     }, { "src/zz-a.ts": "src/zz/zz-a.ts", "src/zz-b.ts": "src/zz/zz-b.ts" });
-    assert.strictEqual(p.rewritten.get("src/zz/zz-a.ts"), `import { b } from "./zz-b";\nimport { d } from "../dom";\nimport type { C } from "../contract";\n`);
+    assert.strictEqual(p.rewritten.get("src/zz/zz-a.ts"), `import { b } from "./zz-b";\nimport { d } from "../zz-dom";\nimport type { C } from "../contract";\n`);
 });
 
 test("a moved file with no paths in it is still carried, under its new path", () => {
     const p = plan({ "src/zz-a.ts": "export const a = 1;\n" }, { "src/zz-a.ts": "src/zz/zz-a.ts" });
     assert.strictEqual(p.rewritten.get("src/zz/zz-a.ts"), "export const a = 1;\n");
+});
+
+test("a path to a generated, untracked file (`extra`) still follows the move, and the generated file is never rewritten", () => {
+    const tree = { "src/zz-a.ts": `import { B } from "./zz-info.gen";\n` };
+    const p = planMove({ files: Object.keys(tree), extra: ["src/zz-info.gen.ts"], read: (r) => tree[r], moves: new Map([["src/zz-a.ts", "src/zz/zz-a.ts"]]) });
+    assert.strictEqual(p.rewritten.get("src/zz/zz-a.ts"), `import { B } from "../zz-info.gen";\n`);
+    assert.ok(!p.rewritten.has("src/zz-info.gen.ts"));
+});
+
+test("a `.js` specifier that names a `.ts` file (TypeScript's ESM spelling) follows the move and keeps its `.js`", () => {
+    const p = plan({ "tests/a.test.mjs": `import { x } from "../src/zz-a.js";\n`, "src/zz-a.ts": "" }, { "src/zz-a.ts": "src/zz/zz-a.ts" });
+    assert.strictEqual(p.rewritten.get("tests/a.test.mjs"), `import { x } from "../src/zz/zz-a.js";\n`);
+});
+
+test("a literal that is a moved path minus its leading directories is REPORTED as `suffix`: its base is not knowable", () => {
+    const p = plan({ "tests/v.test.mjs": `const ROOTS = ["sidebar/zz-view.tsx"];\n`, "src/sidebar/zz-view.tsx": "" },
+        { "src/sidebar/zz-view.tsx": "src/sidebar/zz/zz-view.tsx" });
+    assert.deepStrictEqual(p.reports.map((r) => [r.file, r.line, r.kind, r.text]), [["tests/v.test.mjs", 1, "suffix", "sidebar/zz-view.tsx"]]);
 });
 
 // --- docs and the paths it can only report ---
@@ -107,7 +125,7 @@ test("dangling() names a relative specifier that resolves to nothing, and accept
 test("after a planned move, nothing that resolved before dangles", () => {
     const tree = {
         "src/background.ts": `import "./zz-a";\n`,
-        "src/zz-a.ts": `import "./dom";\n`, "src/dom.ts": "",
+        "src/zz-a.ts": `import "./zz-dom";\n`, "src/zz-dom.ts": "",
     };
     const p = plan(tree, { "src/zz-a.ts": "src/zz/zz-a.ts" });
     const read = (r) => p.rewritten.get(r) ?? tree[r] ?? null;

@@ -9,8 +9,8 @@
 // every in-flight command with `unavailable`, reconnects with backoff, and re-subscribes: the index again (a fresh
 // snapshot replaces what the page holds), and every open session subscription from the last position it delivered, so
 // the background decides between resuming and resetting by the contract's own rules.
-import type { Command, CommandResult, HostStatus, Principal, RuntimeId, RuntimeInfo, SessionHost, SessionId, SessionIndexUpdate, SessionStreamMessage, StreamPosition, Unsubscribe } from "../session-host";
-import type { PortLike, SessionsClientMessage, SessionsServerMessage } from "../session-server";
+import type { Command, CommandResult, HostStatus, Principal, RuntimeId, RuntimeInfo, SessionHost, SessionId, SessionIndexUpdate, SessionStreamMessage, StreamPosition, Unsubscribe } from "../session/session-host";
+import type { PortLike, SessionsClientMessage, SessionsServerMessage } from "../session/session-server";
 
 /** Reconnect delays in ms; the last repeats. */
 const RETRY_MS = [250, 1000, 3000, 10_000];

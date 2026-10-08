@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 const {
     TOKEN_FORMAT, TOKEN_LEN, TOKEN_PAYLOAD_LEN, checkChar, isTokenShape, isTokenValid,
     toSyllables, fromSyllables, formatToken, toolNameError,
-} = await import("../src/token-id.ts");
+} = await import("../src/pointers/token-id.ts");
 const { toolToken } = await import("../src/util.ts");
 
 const HEX = "0123456789abcdef";

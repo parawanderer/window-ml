@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { registerRun, runDelegatedTool, endRun, getRun, runAnswer } from "../src/run-delegation.ts";
+import { registerRun, runDelegatedTool, endRun, getRun, runAnswer } from "../src/agent/run-delegation.ts";
 import { loadPageWorld } from "./helpers.js";
 
 const tool = (over = {}) => ({
@@ -206,7 +206,7 @@ test("readonlyTry: a pointer read in a survey auto-approves — the macro runs a
     // Two things were missing on this path, and either alone sent every pointer read to the approval gate:
     // `@tool:` was never expanded (so the tokenizer refused it), and nothing bound the run's resolver (the attempt
     // runs before any tool call, outside executeTool's binding, and `ml.dereference` reads whatever is bound).
-    const { currentDeref } = await import("../src/tool-exec.ts");
+    const { currentDeref } = await import("../src/tools/tool-exec.ts");
     const dom = new JSDOM("<p>x</p>");
     const prev = [globalThis.document, globalThis.Element, globalThis.window];
     globalThis.document = dom.window.document; globalThis.Element = dom.window.Element;

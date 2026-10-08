@@ -2,7 +2,7 @@
 // an old Mac with sessions on them. For building and screenshotting the app's screens with no hub. Only a demo build of
 // the app carries it (mobile/scripts/sync-embed.mjs --demo); a release never does.
 
-import type { ModelChoice } from "../session-host";
+import type { ModelChoice } from "../session/session-host";
 import { fakePairing } from "../pairing/fake-pairing";
 import { demoHost } from "./demo-world";
 import { sessionArchive, keepKeysInApp, runEmbed } from "./native-embed";

@@ -10,7 +10,7 @@ import assert from "node:assert";
 import {
     tableFromDelimited, tableOf, tablePreview, sniffDelimiter, looksCsv,
     namedColumns, dtypesOf, castTableColumns, parseCsv, hasHeaderRow, asTable, NotATable, MAX_TABLE_ROWS,
-} from "../src/table-data.ts";
+} from "../src/table/table-data.ts";
 
 test("the delimiter is DISCOVERED, not assumed — comma, semicolon, tab and pipe all parse", () => {
     for (const [delim, body] of [
@@ -348,7 +348,7 @@ test("a table at EXACTLY the cap is complete, with or without a header", () => {
 
 // ---- Arrow IPC: the File and Stream formats, decoded with dtypes READ from the schema ----
 import { tableFromArrays, tableToIPC, vectorFromArray, Utf8, Bool, Float64, Int64, Int32, Dictionary, DateMillisecond } from "apache-arrow";
-import { tableFromArrow, looksArrowFile } from "../src/table-data.ts";
+import { tableFromArrow, looksArrowFile } from "../src/table/table-data.ts";
 
 const arrowBuf = (u8) => u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
 const stock = () => tableFromArrays({
@@ -387,8 +387,8 @@ test("looksArrowFile reads the ARROW1 magic, and bytes that are not Arrow do not
 });
 
 // --- Stored tables (POINTER_VALUES slice 7) ------------------------------------------------------------------------
-import { storedColumns, asTable as asTableS, NotATable as NotATableS, MAX_TABLE_ROWS as MAX_ROWS_S } from "../src/table-data.ts";
-import { isStoredTable } from "../src/table-brand.ts";
+import { storedColumns, asTable as asTableS, NotATable as NotATableS, MAX_TABLE_ROWS as MAX_ROWS_S } from "../src/table/table-data.ts";
+import { isStoredTable } from "../src/table/table-brand.ts";
 
 const enc = (s) => { const u = new TextEncoder().encode(s); return u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength); };
 

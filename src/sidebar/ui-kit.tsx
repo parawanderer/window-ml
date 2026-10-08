@@ -6,8 +6,8 @@
 import type { ComponentChildren } from "preact";
 import { useState, useEffect, useMemo } from "preact/hooks";
 import { signal } from "@preact/signals";
-import type { AnswerMedia } from "../contract-render";
-import { HASH_SHOWN } from "../contract-run";
+import type { AnswerMedia } from "../contract/contract-render";
+import { HASH_SHOWN } from "../contract/contract-run";
 import type { Status, AgentStep } from "./store";
 import { codeLineNumbers } from "./store";
 import { beautifyJs, highlight, htmlLines, shortStamp, fullStamp, pretty, truncate, mdInline } from "./format";

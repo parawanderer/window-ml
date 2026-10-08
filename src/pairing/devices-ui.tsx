@@ -6,7 +6,7 @@
 // ability to remove anything until the root grants it again.
 
 import { useEffect, useState } from "preact/hooks";
-import type { DeviceInfo } from "../session-host";
+import type { DeviceInfo } from "../session/session-host";
 import { Stamp } from "../sidebar/ui-kit";
 import { removalWarning, SCOPES, type HubLogLine, type PairingApi, type RevokeOutcome } from "./api";
 

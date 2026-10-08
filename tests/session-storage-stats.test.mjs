@@ -2,7 +2,7 @@
 // budget counts, and an image inside a tool result is an image, not tool output.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { measureEvents, summarizeStore } from "../src/session-storage-stats.ts";
+import { measureEvents, summarizeStore } from "../src/session/session-storage-stats.ts";
 
 const img = (n, c = "A") => "data:image/png;base64," + c.repeat(n);
 const step = (over) => ({ kind: "agent-step", id: "h", ts: 1, session: { hash: "h", turn: 0 }, step: 1, seq: 1, tool: "exec", ...over });
@@ -32,7 +32,7 @@ test("the dedupe estimate counts each distinct image once, across sessions", () 
     assert.deepEqual(s.top.map((r) => r.hash), ["a", "b"], "biggest first");
 });
 
-import { addBytes, appendSnapshot, emptyBytes, HISTORY_MAX, snapshotRows, topTools } from "../src/session-storage-stats.ts";
+import { addBytes, appendSnapshot, emptyBytes, HISTORY_MAX, snapshotRows, topTools } from "../src/session/session-storage-stats.ts";
 
 test("tool output is split by the tool that produced it, and adding keeps the split", () => {
     const a = measureEvents([step({ tool: "exec", result: "x".repeat(100) }), step({ tool: "python_exec", result: "y".repeat(40) })]);

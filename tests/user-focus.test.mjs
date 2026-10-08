@@ -3,7 +3,7 @@
 // a private window never named, and a page-started run never told which site the user has open elsewhere.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { userFocusLine } from "../src/user-focus.ts";
+import { userFocusLine } from "../src/sw/user-focus.ts";
 
 const CHAT = "chrome-extension://abc/chat.html";
 const at = new Date(2026, 8, 19, 11, 52, 3).getTime();

@@ -15,7 +15,7 @@ import { Directory, File, Paths } from "expo-file-system";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { encode, parseToNative, type AttentionRow, type BridgeAccount, type PairingCall, type PairingInfo, type RuntimeStorageView, type SessionChrome, type ToWeb } from "../../src/native/bridge";
 import { syncReminders, useNotices } from "./notify";
-import type { HostStatus, ListedSession, ModelChoice, RuntimeInfo, SessionSummary, TabGroupInfo, TabInfo } from "../../src/session-host";
+import type { HostStatus, ListedSession, ModelChoice, RuntimeInfo, SessionSummary, TabGroupInfo, TabInfo } from "../../src/session/session-host";
 import { EMBED } from "./generated/embed";
 import { answerStore } from "./store";
 import { answerArchive } from "./archive";

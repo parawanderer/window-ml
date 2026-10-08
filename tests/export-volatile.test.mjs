@@ -13,7 +13,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 const { VOLATILE_FIELDS, VOLATILE_PATTERNS, canonicalizeText } = await import("../src/export-schema.ts");
-const { sessionToJson } = await import("../src/sidebar/export-json.ts");
+const { sessionToJson } = await import("../src/sidebar/export/export-json.ts");
 
 /** Delete a published path (`a.b[].c`) from a document, walking `[]` as "every element". */
 function strip(doc, path) {

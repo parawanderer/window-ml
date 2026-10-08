@@ -1,4 +1,4 @@
-// Places that name a source file as a STRING — `readFileSync("src/sidebar/settings.tsx")`, `join(ROOT, "src",
+// Places that name a source file as a STRING — `readFileSync("src/sidebar/settings/settings.tsx")`, `join(ROOT, "src",
 // "contract.ts")` — which no compiler follows. Moving code out of such a file can leave a generator reading the
 // wrong place, or a test asserting `doesNotMatch` against a file the code no longer lives in, which passes forever.
 import { execFileSync } from "node:child_process";

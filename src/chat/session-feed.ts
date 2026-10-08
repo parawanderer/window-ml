@@ -13,8 +13,8 @@
 // - `backfilled` with `truncated` and no `reset` means the runtime lost older history: keep what is shown, and adopt
 //   its epoch if it is a new one, or every live event after it would be dropped as stale;
 // - `gone` ends the subscription.
-import { SESSION_CONTRACT_VERSION, type SessionId, type SessionStreamMessage, type StreamPosition } from "../session-host";
-import type { MlDebugEvent } from "../contract-debug";
+import { SESSION_CONTRACT_VERSION, type SessionId, type SessionStreamMessage, type StreamPosition } from "../session/session-host";
+import type { MlDebugEvent } from "../contract/contract-debug";
 
 /** What the caller does with one stream message. */
 export type FeedAction =

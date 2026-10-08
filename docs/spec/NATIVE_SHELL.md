@@ -96,7 +96,7 @@ connection lives as long as the app does rather than as long as a screen. When n
 and native covers it.
 
 **The shared types are the contract's.** What the list needs (`SessionSummary`, `RuntimeInfo`, `HostStatus`, the
-attention codes) is plain data in `src/session-host.ts` and friends. The native project imports those TYPES from this
+attention codes) is plain data in `src/session/session-host.ts` and friends. The native project imports those TYPES from this
 repo, so a field added to the contract is a type error in the shell, not a silent gap.
 
 ## The bridge

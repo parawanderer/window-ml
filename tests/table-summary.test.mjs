@@ -1,7 +1,7 @@
 // The table view's column summary (src/table-summary.ts): per-column counts and a kind-appropriate description.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { summarizeColumns, summarizeRows, HIST_BINS } from "../src/table-summary.ts";
+import { summarizeColumns, summarizeRows, HIST_BINS } from "../src/table/table-summary.ts";
 
 test("numeric column: range, mean and a histogram whose counts add up to the non-null values", () => {
     const [s] = summarizeColumns(["n"], [[1, 2, 3, 4, null, 100]], { n: "float64" });

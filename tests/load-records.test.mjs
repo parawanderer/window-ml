@@ -2,7 +2,7 @@
 // order, one record per load once the reading that shows where it settled has arrived.
 import { test } from "node:test";
 import assert from "node:assert";
-import { LoadRecorder, addRecords } from "../src/load-records.ts";
+import { LoadRecorder, addRecords } from "../src/resource/load-records.ts";
 
 const GB = 1e9;
 const info = (used, procs) => ({ compute: { system_compute: { total_memory: 8e9 },

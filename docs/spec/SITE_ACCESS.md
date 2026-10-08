@@ -130,7 +130,7 @@ grants is to the BACKGROUND: permission to send this run's tool calls into that 
   asked. A forged answer can only misreport the page's own content, which the page can already do by changing its
   DOM. That is the prompt-injection problem, which approvals exist for, not a new capability.
 - **The vision tools' model calls move to the background.** `look`, `locate` and `verify` currently call `ml.chat`
-  from inside the page ([builtin-tools.ts](../../src/builtin-tools.ts)). On an unapproved origin those calls are page
+  from inside the page ([builtin-tools.ts](../../src/tools/builtin-tools.ts)). On an unapproved origin those calls are page
   messages and would be refused, and an exception carved out for them is one the page could ride along on. The
   background already takes the screenshots, so the split is: the page does DOM work and returns data, and the
   background makes every model call. This refactor is most of the work in this spec.

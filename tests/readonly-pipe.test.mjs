@@ -13,8 +13,8 @@ import assert from "node:assert";
 import { JSDOM } from "jsdom";
 import { Worker } from "node:worker_threads";
 import { evalReadonly, NotInDialect, Denied } from "../src/readonly-exec.ts";
-import { mlPipe } from "../src/text-pipe.ts";
-import { AnswerSet, makeAnswerFacade } from "../src/answer-set.ts";
+import { mlPipe } from "../src/pointers/text-pipe.ts";
+import { AnswerSet, makeAnswerFacade } from "../src/pointers/answer-set.ts";
 
 const doc = () => new JSDOM("<!doctype html><body><p id='p'>hello</p></body>").window.document;
 const CONFIG = { model: "qwen3.8-flash-next:vision", ocrModel: "qwen3-vl:30b", apiFormat: "openai",
@@ -70,7 +70,7 @@ test("an ordinary substitution still works, including one that puts the match ba
 // interrupt it. These run in a WORKER with a timeout, so a regression fails here instead of hanging the runner.
 
 const RO_URL = new URL("../src/readonly-exec.ts", import.meta.url).href;
-const PIPE_URL = new URL("../src/text-pipe.ts", import.meta.url).href;
+const PIPE_URL = new URL("../src/pointers/text-pipe.ts", import.meta.url).href;
 const TSX_API = import.meta.resolve("tsx/esm/api");
 const TSX_CJS_API = import.meta.resolve("tsx/cjs/api");
 let worker = null, nextId = 0;

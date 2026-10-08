@@ -9,7 +9,7 @@ const { pathKind, commitKind, monthsBetween, monthEnd, commitsByMonth, ciByMonth
 // --- classifying paths and commits ---
 
 test("a path is test, data or generated before it is code", () => {
-    assert.equal(pathKind("src/sw-llm.ts"), "code");
+    assert.equal(pathKind("src/sw/sw-llm.ts"), "code");
     assert.equal(pathKind("tests/agent.test.js"), "test");
     assert.equal(pathKind("crates/hub/tests/auth.rs"), "test");
     assert.equal(pathKind("src/x.test.mjs"), "test");

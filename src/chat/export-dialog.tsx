@@ -1,14 +1,14 @@
 // export-dialog.tsx — "Export chat", as a picker over the three shapes a session is already written out in.
 //
-// The formats and every byte they produce are `src/sidebar/export.ts`, unchanged and shared with the extension's own
+// The formats and every byte they produce are `src/sidebar/export/export.ts`, unchanged and shared with the extension's own
 // export menu: this is the CHOOSING, in the shape the page's other decisions take (a dialog with Cancel and the verb).
 // A menu of formats, which is what the panel has, answers "which one" by making you pick before you have read what
 // they are for; here the three sit together with a line each.
 
 import { signal } from "@preact/signals";
 import { useState } from "preact/hooks";
-import type { SessionKey } from "../session-host";
-import { canPrintSession, exportSession, exportSessionJson, printSession } from "../sidebar/export";
+import type { SessionKey } from "../session/session-host";
+import { canPrintSession, exportSession, exportSessionJson, printSession } from "../sidebar/export/export";
 import { truncate } from "../sidebar/format";
 import { Dialog } from "../sidebar/dialog";
 import { cancelExport, detachExport, exportTask, startExportPull, takeExport } from "./export-tasks";

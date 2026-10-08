@@ -14,7 +14,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { buildSchema, SCHEMAS } from "../scripts/gen-export-schema.mjs";
-const { sessionToJson } = await import("../src/sidebar/export-json.ts");
+const { sessionToJson } = await import("../src/sidebar/export/export-json.ts");
 const { schemaUrl } = await import("../src/export-schema.ts");
 import { validate } from "./helpers-validate.mjs";
 
@@ -182,7 +182,7 @@ test("the log's open registries stay open: a new subsystem or kind must not fail
 });
 
 test("a real execution-log export validates", async () => {
-    const { runLogDocument } = await import("../src/run-log.ts");
+    const { runLogDocument } = await import("../src/log/run-log.ts");
     const doc = runLogDocument([
         { t: 1_700_000_000_000, run: "abc123", subsystem: "tab", kind: "pinned", reason: "hosting", origin: "worker", detail: { tab: 7 } },
         { t: 1_700_000_004_000, run: "abc123", subsystem: "page", kind: "discarded", ms: 4000, origin: "worker", detail: { tab: 7, tool: "wait" } },

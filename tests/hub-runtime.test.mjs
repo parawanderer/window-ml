@@ -12,8 +12,8 @@ const { HubClient } = await import("../src/hub/client.ts");
 const { Role } = await import("../src/hub/wire.ts");
 const { HubConnection } = await import("../src/chat/hub-connection.ts");
 const { HubHost } = await import("../src/chat/hub-host.ts");
-const { SESSION_CONTRACT_VERSION } = await import("../src/session-host.ts");
-const { HubRuntime, rehome } = await import("../src/hub-runtime.ts");
+const { SESSION_CONTRACT_VERSION } = await import("../src/session/session-host.ts");
+const { HubRuntime, rehome } = await import("../src/hub/runtime/hub-runtime.ts");
 
 test("rehome swaps a local runtime id for the principal wherever a `runtime` key holds one, in a copy", () => {
     const before = { type: "upsert", session: { id: { runtime: "local", hash: "a" }, task: "local" }, other: { runtime: "elsewhere" } };
@@ -146,7 +146,7 @@ test("a command whose declared scope is not the one its type needs is refused, t
     } finally { raw?.close(); await w.close(); }
 });
 
-const { DeviceRegistry } = await import("../src/hub-devices.ts");
+const { DeviceRegistry } = await import("../src/hub/runtime/hub-devices.ts");
 const { verifyRevocations } = await import("../src/hub/revocation.ts");
 const { RevocationList } = await import("../src/proto/wmlhub/v1/identity.gen.ts");
 const { Kind } = await import("../src/hub/wire.ts");

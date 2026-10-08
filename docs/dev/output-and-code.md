@@ -33,7 +33,7 @@ descriptors carry **`seen`**: how many characters the model actually received. E
 what the model read (the raw view still shows the model-facing text verbatim).
 
 *The output cell.* `python_exec` and `exec` render their Out through ONE shared **`OutputCell`**
-(src/sidebar/render-panel.tsx) — a future code-ish tool (a `bash_exec`, say) wraps its own sections in it and
+(src/sidebar/transcript/render-panel.tsx) — a future code-ish tool (a `bash_exec`, say) wraps its own sections in it and
 inherits everything: a height cap (Settings → Appearance, per-cell drag-to-resize), scrolling, **tail-follow**
 (new output scrolls into view only while you're parked at the bottom; scroll up and it holds), and an in-cell
 **Ctrl+F find** (substring only — no regex — with a case toggle, match count, ↑/↓ navigation, painted via the
@@ -111,7 +111,7 @@ real `filename` so the frame is identifiable as the user's. The user's frame is 
 anything in `<exec>` is the prelude. Five tests in `tests/python.test.mjs` against real CPython, because an
 off-by-N that is right for one shape of script is not right for the next.
 
-**Python is PRETTY-PRINTED for the human and never for the model (`src/py-format.ts`).** A model writes
+**Python is PRETTY-PRINTED for the human and never for the model (`src/python/py-format.ts`).** A model writes
 dense one-liners on purpose — the right trade for the thing paying per token, the wrong one for the person
 reading the step — so the RENDERED view reflows and the raw view, the export and the model's context all keep
 the original. Two invariants make that safe rather than a second source of truth: **tokens are never
@@ -154,7 +154,7 @@ render-panel.tsx, handed from the In block ACROSS to the Out by the step, since 
 descriptors that cannot see each other and three copies of that arithmetic would be three chances to
 disagree about which line a failure was on.
 
-**JS reports its line too (`src/exec-trace.ts`).** `exec` returned `e.message` and dropped the stack, so a JS
+**JS reports its line too (`src/tools/exec-trace.ts`).** `exec` returned `e.message` and dropped the stack, so a JS
 failure said WHAT and never WHERE — half the answer, for the reader and for the model about to retry it.
 There is no traceback worth rendering (an evaluated script's stack is almost entirely the wrapper), so it
 reports ONE line, which then travels the identical route a python frame does: through the derived map, into
@@ -275,7 +275,7 @@ earlier call, in any of its three forms) and **`changed`** (a one-line account o
   costs more than the line and makes the reader wonder what was hidden.
 
 
-**A code block's `explain` (`src/sidebar/annotate.ts`).** A utility model is shown the code AND what it
+**A code block's `explain` (`src/sidebar/code/annotate.ts`).** A utility model is shown the code AND what it
 produced, and answers under a JSON **schema** with a note per interesting line. Never automatic — it spends
 tokens, and unlike the approval gloss nobody is waiting on it to decide anything — and asked at CLICK time
 only, once: a second click while in flight is a no-op, and once notes land the button becomes show/hide

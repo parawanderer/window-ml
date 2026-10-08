@@ -5,11 +5,11 @@
 import { test, describe } from "node:test";
 import assert from "node:assert";
 import { readFile } from "node:fs/promises";
-const P = await import("../src/token-pipe.ts");
+const P = await import("../src/pointers/token-pipe.ts");
 // editDistance lives beside the lexical matching that uses it; the cycle it made is why it moved.
-const LM = await import("../src/label-match.ts");
-const { PIPE_SYNTAX, PIPE_REF } = await import("../src/text-pipe.ts");
-const { PIPE_CLAUSE } = await import("../src/prompts.ts");
+const LM = await import("../src/pointers/label-match.ts");
+const { PIPE_SYNTAX, PIPE_REF } = await import("../src/pointers/text-pipe.ts");
+const { PIPE_CLAUSE } = await import("../src/agent/prompts.ts");
 
 const tok = (over = {}) => ({ id: "a1b2c3f", tool: "exec", kind: "text", out: "hello", t: 1000, step: 1, ...over });
 const TABLE = tok({ id: "bbb222", tool: "python_exec", kind: "table", step: 3,
@@ -185,7 +185,7 @@ test("a pointer prefers the FULL capture over the model's truncated copy", () =>
 // The primitive is scoped by BINDING, not by a permission check: tool-exec binds a resolver for the duration
 // of a tool call and restores it after, so it is live inside an approved exec and absent from a page's own
 // console. These exercise that contract directly against the real tool-exec + agent-loop wiring.
-const { executeTool, toolContext, currentDeref } = await import("../src/tool-exec.ts");
+const { executeTool, toolContext, currentDeref } = await import("../src/tools/tool-exec.ts");
 
 const fakeTool = (run) => ({ name: "exec", description: "", parameters: { type: "object", properties: {} }, run });
 
@@ -230,7 +230,7 @@ test("the binding is restored after a nested call, and after a throwing one", as
 });
 
 test("the loop hands out a resolver bound to ITS OWN store (the page-hosted path)", async () => {
-    const { runAgentLoop } = await import("../src/agent-loop.ts");
+    const { runAgentLoop } = await import("../src/agent/agent-loop.ts");
     let resolver = null;
     const full = Array.from({ length: 300 }, (_, i) => `row ${i + 1}: v${i + 1}`).join("\n");
 
@@ -436,7 +436,7 @@ test("labels resolve: a quote or a backslash inside the label survives", () => {
 // alone does not give that: `deadbee` is a fine identifier AND a valid token shape. `ml.defineTool` therefore
 // rejects both malformed names and id-shaped ones, at definition time.
 test("tool names: the namespace guarantee is ENFORCED, not assumed", async () => {
-    const { toolNameError, isTokenShape } = await import("../src/token-id.ts");
+    const { toolNameError, isTokenShape } = await import("../src/pointers/token-id.ts");
 
     for (const ok of ["python_exec", "exec", "fetch_url", "look", "_private", "Tool2", "a"]) {
         assert.equal(toolNameError(ok), null, `${ok} should be a legal tool name`);
@@ -550,7 +550,7 @@ test("labels: the similarity metric is swappable, and the guard travels with it"
 // The metric is config, so the benchmark can vary it without a rebuild — and a stale or absent value must
 // degrade to the default rather than breaking pointer resolution.
 test("labelMatch: the configured metric reaches resolution, and a bad value falls back", async () => {
-    const { DEFAULT_CONFIG, LEXICAL_METRICS } = await import("../src/contract-config.ts");
+    const { DEFAULT_CONFIG, LEXICAL_METRICS } = await import("../src/contract/contract-config.ts");
     assert.equal(DEFAULT_CONFIG.labelMatch, "hybrid");
     assert.ok(LEXICAL_METRICS.includes(DEFAULT_CONFIG.labelMatch), "the default must be one of the offered metrics");
 
@@ -570,7 +570,7 @@ describe("the pipe dialect is described once", () => {
     const dialectish = (s) => /grep PATTERN|chained with/.test(s);
 
     test("no tool PARAMETER carries the dialect verbatim any more", async () => {
-        const files = ["../src/tools.ts", "../src/builtin-tools.ts", "../src/python-tool.ts", "../src/injected.ts", "../src/ml-server.ts", "../src/ml-tool-factories.ts", "../src/ml-vision.ts", "../src/ml-python.ts", "../src/ml-chat.ts", "../src/ml-agent-run.ts", "../src/run-assembly.ts", "../src/ml-agent-handle.ts"];
+        const files = ["../src/tools/tools.ts", "../src/tools/builtin-tools.ts", "../src/python/python-tool.ts", "../src/injected.ts", "../src/ml/ml-server.ts", "../src/ml/ml-tool-factories.ts", "../src/ml/ml-vision.ts", "../src/ml/ml-python.ts", "../src/ml/ml-chat.ts", "../src/ml/ml-agent-run.ts", "../src/agent/run-assembly.ts", "../src/ml/ml-agent-handle.ts"];
         for (const f of files) {
             const src = await readFile(new URL(f, import.meta.url), "utf8");
             for (const line of src.split("\n")) {

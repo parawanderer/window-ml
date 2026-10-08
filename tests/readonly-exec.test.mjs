@@ -1,9 +1,9 @@
 "use strict";
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { evalReadonly, NotInDialect, Denied } from "../src/readonly-exec.ts";
-import { expandPointers } from "../src/pointer-macro.ts";
+import { evalReadonly, NotInDialect, Denied, STEP_BUDGET } from "../src/readonly-exec.ts";
+import { expandPointers } from "../src/pointers/pointer-macro.ts";
 
 function world() {
     const dom = new JSDOM(`<!doctype html><body>
@@ -935,7 +935,7 @@ test("blessed primitive: ml.a11y ADVERSARIAL — object can't reach a realm, fac
 /* ---------------------- ml.answer (the curate-only facade) ---------------------- */
 // The FIRST mutating facade member. Per the repo RULE, extending the dialect requires ADVERSARIAL tests:
 // prove the new surface can only curate the run's own answer and can't be abused to reach a node/the realm.
-import { AnswerSet, makeAnswerFacade } from "../src/answer-set.ts";
+import { AnswerSet, makeAnswerFacade } from "../src/pointers/answer-set.ts";
 const runAns = (js, set = new AnswerSet(), doc = world()) =>
     evalReadonly(js, doc, ML, makeAnswerFacade(set, el => el.id || el.tagName));
 
@@ -1141,9 +1141,9 @@ test("ADVERSARIAL: the info RESPONSE is inert data, not a route to anything", as
 
 const SCHEMA_ML = {
     ...ML,
-    schema: async (...vs) => { ML_CALLS.push(["schema", vs.length]); const { joinShapes, jsonValue } = await import("../src/dom.ts"); return joinShapes(vs.map((v, i) => jsonValue(v, `argument ${i + 1}`))); },
+    schema: async (...vs) => { ML_CALLS.push(["schema", vs.length]); const { joinShapes, jsonValue } = await import("../src/dom/dom.ts"); return joinShapes(vs.map((v, i) => jsonValue(v, `argument ${i + 1}`))); },
     dereference: async (ref) => {
-        const { DerefText } = await import("../src/ml-agent.ts");
+        const { DerefText } = await import("../src/tools/deref-read.ts");
         return new DerefText('{"id":1,"name":"a"}', { id: "a1b2c3f", tool: "fetch_url", kind: "json", step: 2 },
             async () => { throw new Error("repipe reached"); });
     },
@@ -1222,7 +1222,7 @@ test("a pointer read stays in-dialect once the macro is expanded", async () => {
     // survey falls through to the approval gate — while `ml.dereference("@tool:abc")` is free, since
     // `dereference` is in ML_READONLY_METHODS. Expanding first is what stops the macro teaching the model
     // the more expensive spelling of a read it may do for nothing.
-    const { expandPointers } = await import("../src/pointer-macro.ts");
+    const { expandPointers } = await import("../src/pointers/pointer-macro.ts");
     const { code } = expandPointers("return @tool:a1b2c3f.length");
     assert.equal(code, 'return ml.dereference("@tool:a1b2c3f").length');
     // The dialect auto-awaits a facade call, so the pointer is a VALUE here too — the same semantics exec
@@ -1232,7 +1232,7 @@ test("a pointer read stays in-dialect once the macro is expanded", async () => {
 
 test("the macro cannot smuggle a non-readonly method past the dialect", async () => {
     // The expansion is a fixed template naming ONE method; nothing in a payload chooses which.
-    const { expandPointers } = await import("../src/pointer-macro.ts");
+    const { expandPointers } = await import("../src/pointers/pointer-macro.ts");
     const { code } = expandPointers(String.raw`return @tool:"x\") ; ml.pythonExec(\"1\") ; ("`);
     // Either it is refused, or it resolves to the harmless read — never the smuggled call.
     let value = null;
@@ -1255,8 +1255,6 @@ test("the macro cannot smuggle a non-readonly method past the dialect", async ()
 // Each case runs in a WORKER with a timeout: the interpreter is synchronous between awaits, so a regression here
 // is an infinite loop, and on the main thread it would hang the whole runner instead of failing one test.
 import { Worker } from "node:worker_threads";
-import { after } from "node:test";
-import { STEP_BUDGET } from "../src/readonly-exec.ts";
 const RO_URL = new URL("../src/readonly-exec.ts", import.meta.url).href;
 // A worker does not inherit the runner's tsx hooks (Node's own type stripping takes the import instead, and it
 // rejects the interpreter's parameter properties), so the worker registers tsx itself before importing.
@@ -1624,7 +1622,7 @@ test("a runtime throw reports the LINE it happened on — an interpreter has no 
 // records / head, branded so the dialect recognises it by identity. That is a new receiver kind with four new
 // methods, so it gets the full AGENTS.md treatment: the intended use, the escapes, the halting/cost argument,
 // and what a failed script leaves behind.
-import { asTable, NotATable } from "../src/table-data.ts";
+import { asTable, NotATable } from "../src/table/table-data.ts";
 
 const FACADE_DATA = () => ({
     columns: ["id", "name", "qty"],

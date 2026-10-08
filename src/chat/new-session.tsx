@@ -11,9 +11,9 @@
 // it can, "new agent run" only where `capabilities.agent` does, and the tab picker only where `capabilities.tabs`
 // does. A phone talking to a headless box gets a chat form and no tabs, without this file knowing what a box is.
 import type { ComponentChildren } from "preact";
-import { STEP_BUDGETS } from "../step-budget";
+import { STEP_BUDGETS } from "../agent/step-budget";
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { AgentTarget, RuntimeInfo, TabGroupInfo, TabInfo } from "../session-host";
+import type { AgentTarget, RuntimeInfo, TabGroupInfo, TabInfo } from "../session/session-host";
 import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
 import { Dialog } from "../sidebar/dialog";

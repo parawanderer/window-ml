@@ -2,7 +2,7 @@
 // from http(s); and tabs in the browser's strip order.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { FAVICON_MAX_BYTES, FaviconCache, stripOrder } from "../src/tab-favicons.ts";
+import { FAVICON_MAX_BYTES, FaviconCache, stripOrder } from "../src/sw/tab-favicons.ts";
 
 const reply = (bytes, type = "image/png", ok = true) => ({ ok, headers: { get: (k) => (k === "content-type" ? type : null) }, arrayBuffer: async () => new Uint8Array(bytes).buffer });
 

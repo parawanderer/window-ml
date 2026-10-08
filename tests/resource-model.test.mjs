@@ -5,23 +5,23 @@
 import { test, describe } from "node:test";
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
-const M = await import("../src/resource-model.ts");
+const M = await import("../src/resource/resource-model.ts");
 // The band arithmetic moved to its own module; the members below are read from there.
-const B = await import("../src/resource-bands.ts");
+const B = await import("../src/resource/resource-bands.ts");
 // The same for the GPU link graph: the topology parse and the bridge/link readings of it.
-const T = await import("../src/resource-topology.ts");
+const T = await import("../src/resource/resource-topology.ts");
 // And the layout side: the series a box offers, the presets built from them, and the rules that judge both.
-const P = await import("../src/resource-presets.ts");
+const P = await import("../src/resource/resource-presets.ts");
 // And capacity: the /api/info parse and the readings of what the box holds.
-const C = await import("../src/resource-capacity.ts");
+const C = await import("../src/resource/resource-capacity.ts");
 // And what a model should decode at and is doing now: expected decode, roofline, activity, KV occupancy.
-const D = await import("../src/resource-decode.ts");
+const D = await import("../src/resource/resource-decode.ts");
 // And the events the lane and the plots draw: what a ResourceEvent is, and the readings that place one.
-const E = await import("../src/resource-timeline.ts");
+const E = await import("../src/resource/resource-timeline.ts");
 // And one generation as the lane draws it: the server's own edges, joined to the calls we made.
-const G = await import("../src/resource-gens.ts");
-const L = await import("../src/resource-lane.ts");
-const X = await import("../src/resource-axis.ts");
+const G = await import("../src/resource/resource-gens.ts");
+const L = await import("../src/resource/resource-lane.ts");
+const X = await import("../src/resource/resource-axis.ts");
 // The machine shapes, shared with resource-demo.mjs — one copy, so a guard and a demo cannot disagree
 // about what a box looks like.
 import { BOXES, TOPOLOGIES, pci } from "./fixtures/boxes.mjs";
@@ -1726,7 +1726,7 @@ test("residencyFrom: a LOADING row carries no occupancy — it must not read as 
 test("sample retention: an age horizon, with the count as the memory ceiling", async () => {
     // No `.catch(() => null)` + early return: a module that stopped importing would have skipped this test
     // silently, and it imports fine under tsx (preact included).
-    const V = await import("../src/sidebar/resource-feed.ts");
+    const V = await import("../src/sidebar/resource/resource-feed.ts");
     assert.ok(V.RESOURCE_RETENTION_MS >= 30 * 60_000,
         "the horizon must outlast the longest window the chart offers, or 'Everything kept' cannot draw it");
     assert.ok(V.RESOURCE_HISTORY >= 900, "the count is a memory ceiling, not the thing deciding what is kept");

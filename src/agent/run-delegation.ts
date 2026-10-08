@@ -1,0 +1,292 @@
+// PAGE-SIDE tool delegation. The agent loop runs in the BACKGROUND (extension origin, so
+// its approval decision is unforgeable by the page), but page-context tools (exec/click/type/look/
+// locate/DOM survey) must run where the DOM is: the page's main world. So the toolset — live MlTool
+// objects, whose run() functions can't cross the window bus — is registered here per RUN, and the
+// background asks the page to run a named tool via RUN_TOOL_IN_PAGE (relayed by content.ts as a
+// PAGE_TOOL_RUN window message; the reply rides back as PAGE_TOOL_RESULT).
+//
+// Only the SERIALIZABLE parts of the result cross back to the background (result string, screenshot
+// data-URL, render descriptors, an element COUNT). The real DOM Nodes an answer-capable tool returns
+// stay page-side, accumulated in the run record so ml.agent can assemble AgentResult.elements once the
+// background reports the run finished. This is the transport half of design A; the loop that drives it
+// is `runAgentLoop` (agent-loop.ts), assembled background-side in a later slice.
+import type { MlTool } from "../contract/contract-agent";
+import type { AnswerMedia } from "../contract/contract-render";
+import type { PageToolEnvelope } from "../contract/contract-messages";
+import type { SubcallUsage } from "../contract/contract-debug";
+import { hintSession } from "../contract/contract-run";
+import { outputCapEscalated } from "../contract/contract-pointers";
+import { executeTool, toolContext, answerSetFor, withRunSession, withRunDeref } from "../tools/tool-exec";
+import { expandPointers } from "../pointers/pointer-macro";
+import { derefViaBackground } from "../tools/deref-read";
+import { captureVerify, captureVerifyElement } from "../tools/builtin-tools";
+import { htmlToMarkdown } from "../dom/html-to-md";
+import { clipOut, elLine, errText } from "../dom/dom";
+import { makeAnswerFacade, finalizeAnswer } from "../pointers/answer-set";
+import { runPipe, pipeHint } from "../pointers/text-pipe";
+import { descriptorFor } from "../tools/render-descriptor";
+import { evalReadonly } from "../readonly-exec";
+import { formatReadonlyExec, readonlyRefused } from "./approval";
+import { subcallUsage } from "../bus";
+
+/** The delegated vision-sub-call tokens `fn` spent, as a DELTA around the page-side meter (bus.ts). The
+ *  background loop can't read the page's accumulator, so each delegated tool call reports its own spend and
+ *  the SW sums them per turn. Undefined when nothing was delegated (keeps the envelope clean). */
+async function withSubUsage<T extends PageToolEnvelope>(fn: () => Promise<T>): Promise<T> {
+    const before = subcallUsage();
+    const env = await fn();
+    const after = subcallUsage();
+    const sub: SubcallUsage = { prompt: after.prompt - before.prompt, completion: after.completion - before.completion, calls: after.calls - before.calls };
+    // Per-model DELTA too, so the background tally can attribute the spend (chat_metadata "which model cost
+    // what") on the delegated path — not just the page loop. after minus before, per model, calls>0 only.
+    const b = new Map((before.byModel || []).map(x => [x.model, x]));
+    const byModel = (after.byModel || []).map(a => {
+        const prev = b.get(a.model);
+        return { model: a.model, prompt: a.prompt - (prev?.prompt || 0), completion: a.completion - (prev?.completion || 0), calls: a.calls - (prev?.calls || 0) };
+    }).filter(d => d.calls > 0);
+    if (byModel.length) sub.byModel = byModel;
+    if (sub.calls > 0) env.subUsage = sub;
+    return env;
+}
+
+/** One active agent run's page-side state: its toolset by name. The designated answer (nodes, media,
+ *  text) lives in the run's AnswerSet, keyed off `byName` (see `runAnswer`) — nodes can't cross the bus. */
+export interface PageRun {
+    byName: Record<string, MlTool>;
+    model?: string | null;         // the run's driver model, for the tools' ToolContext (background-delegated path)
+    driverSees?: boolean;          // does the driver see natively (native vs delegated look/locate feedback)
+    visionModel?: string | null;   // the resolved vision reader — both carried onto the delegated ToolContext
+}
+
+/** Assemble a delegated run's page-side answer, from its (page-side) AnswerSet: the live nodes →
+ *  AgentResult.elements, the captured visuals → the HUD card, the set → markdown for AgentResult.answer.
+ *  `summary` (from the background loop's result) drives finalizeAnswer's dedup of a token already cited
+ *  inline — omitted (a cancel path with no result) → the plain designated set. */
+export function runAnswer(run: PageRun, summary = ""): { elements: Node[]; media: AnswerMedia[]; answer: string } {
+    const set = answerSetFor(run.byName);
+    return { elements: set.elements() as Node[], media: set.media(), answer: finalizeAnswer(set, summary) };
+}
+
+const runs = new Map<string, PageRun>();
+
+/** Register an agent run's live toolset page-side (called by ml.agent's START_RUN shim). `model`/`driverSees`/
+ *  `visionModel` feed the ToolContext a delegated tool's run(args, ctx) receives (the page loop builds its own
+ *  ctx directly, from the SAME values) — so a background-hosted locate reads the same vision facts. */
+export function registerRun(runId: string, tools: MlTool[], model: string | null = null, driverSees = false, visionModel: string | null = null): PageRun {
+    const run: PageRun = { byName: Object.fromEntries(tools.map(t => [t.name, t])), model, driverSees, visionModel };
+    runs.set(runId, run);
+    return run;
+}
+
+/** End a run and return its record (with the accumulated answered nodes), or undefined if unknown. */
+export function endRun(runId: string): PageRun | undefined {
+    const run = runs.get(runId);
+    runs.delete(runId);
+    return run;
+}
+
+export function getRun(runId: string): PageRun | undefined { return runs.get(runId); }
+
+/** Run ONE delegated tool call for a background-hosted run → a serializable envelope for the bus.
+ *  executeTool already validates args + catches errors (never throws), so this only reduces the
+ *  envelope: real nodes → a count, and an answer-capable tool's nodes are stashed page-side. */
+const VERIFY_TEXT_MAX = 8000;   // cap the navigate verify:"text" Markdown so a big page can't flood the turn
+/** A tool of a BACKGROUND-hosted run, executed in the page. Every model call made on its behalf — the tool's
+ *  own, and the verify captures below that call vision directly — is labelled as part of the run that caused it
+ *  (RequestHint: `use: "agent"`, the run's session). */
+export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
+    return withRunSession(hintSession(runId), () => runDelegatedToolIn(runId, name, args, opts));
+}
+
+async function runDelegatedToolIn(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
+    const run = runs.get(runId);
+    if (!run) return { result: `Error: no active agent run "${runId}" on this page (it may have ended).` };
+    // navigate({ verify: "text" / "text-all" }): after the destination page re-adopts, the background rings
+    // back HERE to distil the new page's DOM to Markdown (same HTML→Markdown as fetch_url) — a text-only way to
+    // SEE where you landed without a screenshot (cheaper for a text driver, and no vision needed). "strip" drops
+    // nav/header/footer/aside (the content); "all" keeps them. Same await/merge path as the screenshot verify.
+    if (opts.verifyText) {
+        const html = (typeof document !== "undefined" ? document.documentElement?.outerHTML : "") || "";
+        let md = htmlToMarkdown(html, { stripChrome: opts.verifyText === "strip" });
+        const label = opts.verifyText === "strip" ? "nav/chrome stripped" : "full page";
+        // `pipe`: scan/filter the destination Markdown through the same safe grep/head/tail/… dialect as
+        // fetch_url. Pure text; a bad command → an actionable error (exec hint gated on exec being wired this run).
+        let footer = "";
+        if (opts.verifyPipe && opts.verifyPipe.trim()) {
+            const p = opts.verifyPipe.trim(), src = md;
+            const nlines = (s: string): number => s === "" ? 0 : s.replace(/\n$/, "").split("\n").length;
+            try { md = runPipe(src, p); }
+            catch (e) {
+                const escape = ("exec" in run.byName) ? " For anything more complex, read the page in an exec survey instead." : "";
+                return { result: `Destination page — pipe error: ${errText(e)}${pipeHint(errText(e))}${escape}` };
+            }
+            footer = `\n\n(piped through \`${p}\`: ${nlines(md)} lines, ${md.length.toLocaleString()} chars — filtered from ${nlines(src)} source lines)`;
+        }
+        const clipped = clipOut(md, VERIFY_TEXT_MAX);
+        const cut = clipped.length < md.length;
+        return { result: `Destination page as Markdown (${label}${cut ? ", truncated" : ""}):\n\n${clipped}${footer}` };
+    }
+    // navigate({ verify: true / "viewport" }): after the destination page re-adopts, the background rings back
+    // HERE to capture a WHOLE-VIEWPORT screenshot of the new page (captureVerify, center null) — a vision driver
+    // gets it inline, a text-only driver a delegated description. Merged into the navigate result background-side.
+    if (opts.verifyViewport) {
+        const ctx = toolContext(run.byName, run.model ?? null, null, run.driverSees ?? false, run.visionModel ?? null);
+        const ml = (typeof window !== "undefined" ? window.ml : null) as unknown as import("../contract").MlApi;
+        if (!ml) return { result: "" };
+        return withSubUsage(async () => {
+            const v = await captureVerify(ml, ctx, null, "navigated");
+            return { result: v.content || "", image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };
+        });
+    }
+    // Post-CDP `type` verify — the WHOLE element (verifyElement = a selector) or the FOCUSED element
+    // (verifyFocus). The trusted type ran BACKGROUND-side, so the page captures the picture HERE. A canvas /
+    // sealed / normal selector shows its whole box; @focus shows document.activeElement (viewport if none).
+    if (opts.verifyElement || opts.verifyFocus) {
+        const ctx = toolContext(run.byName, run.model ?? null, null, run.driverSees ?? false, run.visionModel ?? null);
+        const ml = (typeof window !== "undefined" ? window.ml : null) as unknown as import("../contract").MlApi;
+        if (!ml) return { result: "" };
+        return withSubUsage(async () => {
+            if (opts.verifyElement) {
+                const v = await captureVerifyElement(ml, ctx, opts.verifyElement!, "typed");
+                return { result: v.content || "", image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };
+            }
+            const ae = typeof document !== "undefined" ? document.activeElement : null;
+            const focusable = ae && ae !== document.body && ae !== document.documentElement;
+            const v = focusable ? await captureVerifyElement(ml, ctx, ae as Element, "typed", `the focused element ${elLine(ae as Element)}`)
+                : await captureVerify(ml, ctx, null, "typed");
+            return { result: v.content || "", image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };
+        });
+    }
+    // Post-CDP `verify`: the reserved-surface click was done BACKGROUND-side (CDP), so the page-side verify
+    // couldn't run inline — the background rings back HERE, after the click, to capture the general-area crop
+    // at the click point (captureVerify, with this run's driver-sees/reader ctx). Merged into the click result.
+    if (opts.verifyAt) {
+        const ctx = toolContext(run.byName, run.model ?? null, null, run.driverSees ?? false, run.visionModel ?? null);
+        const ml = (typeof window !== "undefined" ? window.ml : null) as unknown as import("../contract").MlApi;
+        if (!ml) return { result: "" };
+        // captureVerify makes a delegated describe sub-call for a text-only driver → meter its spend.
+        return withSubUsage(async () => {
+            const v = await captureVerify(ml, ctx, { x: opts.verifyAt!.x, y: opts.verifyAt!.y }, "clicked");
+            return { result: v.content || "", image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };
+        });
+    }
+    const tool = run.byName[name];
+    if (!tool) return { result: `Error: no tool named "${name}".` };
+    // Approval preview: compute the In render for the CALL without RUNNING the tool (side-effect-free).
+    if (opts.renderOnly) {
+        const { in: renderIn } = descriptorFor(tool, { result: "" }, args);
+        return { result: "", renderIn };
+    }
+    // Doomed-action precheck (click/type): side-effect-free target resolution. A non-null error → the
+    // action can only fail, so the background SKIPS the gate and returns it (no pointless approval).
+    if (opts.precheck) {
+        let pre: string | null = null;
+        try { pre = typeof tool.precheck === "function" ? tool.precheck(args) : null; } catch { pre = null; }
+        return { result: pre || "", precheckFailed: !!pre };
+    }
+    // Read-only try (exec only): run the mediated interpreter (no eval, no mutation). If in-dialect it
+    // BOTH decides auto-approve AND produces the result → the background skips the gate. Out-of-dialect
+    // (any NotInDialect/Denied throw) → readonly:false, so the background falls through to the human gate.
+    // `window.ml` is passed so the dialect can call its read-only slice (ML_READONLY_METHODS) — the
+    // interpreter reduces it to a facade holding nothing else.
+    if (opts.readonlyTry) {
+        if (name !== "exec" || typeof (args as { js?: unknown }).js !== "string") return { result: "", readonly: false };
+        if (outputCapEscalated("exec", args)) return { result: "", readonly: false };   // a raised output cap must hit the human gate
+        try {
+            const set = answerSetFor(run.byName);
+            // The same two steps as the page path: expand `@tool:` first (it is not JavaScript, so the tokenizer
+            // would refuse it), and bind this run's resolver, which rings the service worker where the pointer
+            // store lives. Without either, every pointer read in a survey went to the approval gate.
+            const { code } = expandPointers((args as { js: string }).js);
+            const ro = await withRunDeref((ref, pipe) => derefViaBackground(runId, ref, pipe), () => evalReadonly(code, document,
+                typeof window !== "undefined" ? window.ml : null, makeAnswerFacade(set, elLine), { checkpoint: () => set.checkpoint() }));
+            const { result, elements, render } = formatReadonlyExec(ro.value, ro.logs);
+            const { in: renderIn, out: renderOut } = descriptorFor(tool, { result, elements, render }, args);
+            const urls = [...new Set(ro.reused)];   // cached ml.fetch URLs this survey reused → the "reused a grant" note
+            return { result, elementCount: elements ? elements.length : undefined, renderIn, renderOut, readonly: true, reused: urls.length ? urls.map(u => ({ kind: "fetch-url" as const, detail: u })) : undefined };
+        } catch (e) {
+            // Same split as the page path, through the same predicate: the dialect refusing escalates, the
+            // script throwing is reported. `readonly: true` is what says "this was answered without a gate".
+            if (readonlyRefused(e)) return { result: "", readonly: false };
+            const at = (e as { mlLine?: number })?.mlLine ?? null;
+            const msg = `Error: ${errText(e)}${at ? ` (line ${at})` : ""}`;
+            const { in: renderIn } = descriptorFor(tool, { result: msg }, args);
+            return { result: msg, renderIn, renderOut: { type: "exec-out" as const, error: `${errText(e)}${at ? ` (line ${at})` : ""}`, ...(at ? { errorLine: at } : {}) }, readonly: true };
+        }
+    }
+    // A tool (look/locate, or click/type/wait with verify) may make its own delegated vision sub-calls —
+    // meter their spend as a delta so the background loop can tally it (the page meter it can't read).
+    return withSubUsage(async () => {
+        // The BACKGROUND-hosted path: the loop (and therefore the pointer store) lives in the service worker
+        // while this tool runs in the page, so `ml.dereference` inside an approved exec has to ring back. Same
+        // reverse channel the live-output stream uses, keyed by runId. Binding it here (rather than exposing a
+        // page-reachable store) keeps the primitive scoped to a tool call of THIS run, exactly as on the page
+        // path — a page's own console still has no active run and gets nothing.
+        const ctx = toolContext(run.byName, run.model ?? null, null, run.driverSees ?? false, run.visionModel ?? null);
+        ctx.deref = (ref, pipe) => derefViaBackground(runId, ref, pipe);
+        const env = await executeTool(tool, args, ctx, opts.onStream);
+        // An answer-capable tool's result node(s) go into the run's answer SET (page-side); the live nodes stay
+        // here (they can't cross the bus), only the COUNT crosses. The built-in `answer` tool curates the set
+        // itself (`answerManaged`); a CUSTOM answer tool just returns nodes → accumulate them here. The caller
+        // assembles AgentResult.elements/answer from that set (see `runAnswer`).
+        if (env.elements && env.elements.length && tool.capabilities && tool.capabilities.includes("answer") && !env.answerManaged)
+            answerSetFor(run.byName).add({ kind: "element", nodes: env.elements, preview: `${env.elements.length} element(s)` });
+        return envelopeFrom(tool, args, env);
+    });
+}
+
+/**
+ * The serializable envelope the background reads for one executed tool call: the result, the debug-render slots,
+ * and whatever the background has to act on (a CDP click, an inline image, the executor's own timings). The render
+ * slots are computed HERE, where the tool's render() method and any live nodes are, so a background-hosted run
+ * shows the same In/Out the page loop would. Also used by the service worker for a tool it runs itself (a remote
+ * tool of a run it built, sw-local-tools.ts), which is why it takes the executed envelope rather than running it.
+ * @param tool the tool that ran
+ * @param args the arguments it ran with
+ * @param env what `executeTool` returned
+ * @returns the envelope that crosses to the background
+ */
+export function envelopeFrom(tool: MlTool, args: Record<string, unknown>, env: Awaited<ReturnType<typeof executeTool>>): PageToolEnvelope {
+    const { in: renderIn, out: renderOut } = descriptorFor(tool, env, args);
+    return {
+        result: env.result,
+        elementCount: env.elements ? env.elements.length : undefined,
+        answerMedia: env.answerMedia,   // serialized answer-element visuals (data URLs) → cross to the background → HUD card
+        image: env.image, imageLabel: env.imageLabel, images: env.images,
+        renderIn, renderOut,
+        feedback: env.feedback,   // what locate fed into the model's context → surfaced in the debug render + export
+        cdpClick: env.cdpClick,   // reserved-surface click → the BACKGROUND does the CDP click (trusted)
+        cdpExec: env.cdpExec,     // strict-page exec → the BACKGROUND re-runs the source via CDP eval (CSP-exempt)
+        cdpShadowClick: env.cdpShadowClick,   // sealed-shadow `>>>` click → the BACKGROUND CDP-resolves + clicks it
+        cdpType: env.cdpType,   // trusted-keyboard type (canvas / remote desktop / sealed field) → BACKGROUND types via CDP
+        // THE EXECUTOR'S OWN CLOCK — a sandbox's cold start and script time, a remote tool's evaluate and
+        // queue. It was dropped here, so on the background path (which is EVERY run with a debug surface
+        // open) the timeline had only our wall clock: a first python_exec read as a slow script rather
+        // than as a runtime being downloaded, and a remote tool's net/queue split never drew at all.
+        remoteMs: env.remoteMs,
+    };
+}
+
+/** Install the window-message bridge (once, at injection): content.ts relays the background's
+ *  RUN_TOOL_IN_PAGE here as a PAGE_TOOL_RUN window message; we run the tool and post the serializable
+ *  PAGE_TOOL_RESULT back, correlated by the content-minted callId. */
+export function installToolDelegation(): void {
+    window.addEventListener("message", async (event: MessageEvent) => {
+        if (event.source !== window || !event.data || event.data.type !== "PAGE_TOOL_RUN") return;
+        const { callId, runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, stream, finish, summary } = event.data as { callId: string; runId: string; name: string; args: Record<string, unknown>; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean; summary?: string };
+        // The END of a turn of a run the WORKER built (sw-run-host.ts): no page-side caller exists to assemble its
+        // answer, so the worker asks for it. Ends the run's registration here, as the page path's caller does.
+        if (finish) {
+            const run = endRun(runId);
+            const a = run ? runAnswer(run, typeof summary === "string" ? summary : "") : null;
+            window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope: { result: "", ...(a?.answer ? { answer: a.answer } : {}), ...(a?.media.length ? { answerMedia: a.media } : {}) } }, "*");
+            return;
+        }
+        // LIVE tool output: when the background asked for streaming, hand the tool a ctx.stream that posts each
+        // chunk straight back up the delegation chain (→ content → background → the loop's fan). Keyed by runId,
+        // which is all the background needs (one delegated call is in flight per run).
+        const onStream = stream ? (chunk: string, ts?: number) => { try { window.postMessage({ type: "PAGE_TOOL_STREAM", runId, chunk, ts }, "*"); } catch { /* non-cloneable → drop */ } } : undefined;
+        const envelope = await runDelegatedTool(runId, name, args || {}, { renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt, verifyViewport: !!verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, onStream });
+        window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope }, "*");
+    });
+}

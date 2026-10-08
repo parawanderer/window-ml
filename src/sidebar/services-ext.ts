@@ -3,12 +3,12 @@
 // shared components used to make inline: the background over `chrome.runtime`, and the frame's parent (the
 // content-script shell, or panel.ts) over `postMessage`. The parent can prove a message came from this extension
 // iframe, which is what makes an approval posted this way unforgeable by the page.
-import { hintSession } from "../contract-run";
+import { hintSession } from "../contract/contract-run";
 import { config } from "./store";
 import { bareHash, type SidebarServices, type SideCallRequest, type SideCallResult } from "./services";
-import { residentNow } from "./panel-facts";
-import { downloadBlob } from "./download";
-import { printInFrame } from "./print-frame";
+import { residentNow } from "./resource/panel-facts";
+import { downloadBlob } from "./export/download";
+import { printInFrame } from "./export/print-frame";
 
 const toParent = (msg: unknown): void => window.parent.postMessage(msg, "*");
 
@@ -92,7 +92,7 @@ export const extensionServices: SidebarServices = {
     // Every extension frame is extension-origin, so it opens the same value store the service worker writes, and decodes
     // the bytes with the parsers the preview came from. Reads only: the budget never applies.
     storedTable: typeof indexedDB === "undefined" ? null : async (key, opts) => {
-        const [{ ValueStore }, { storedColumns }] = await Promise.all([import("../value-store"), import("../table-data")]);
+        const [{ ValueStore }, { storedColumns }] = await Promise.all([import("../pointers/value-store"), import("../table/table-data")]);
         const { row, blob } = await new ValueStore({ budgetBytes: () => Number.POSITIVE_INFINITY }).get(key);
         return storedColumns(await blob.arrayBuffer(), row.format, opts.columns, { delimiter: opts.delimiter, headerless: opts.headerless });
     },

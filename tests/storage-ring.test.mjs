@@ -2,7 +2,7 @@
 // each other's, and a subclass gets to write its own keys in the same batch.
 import { test } from "node:test";
 import assert from "node:assert";
-import { StorageRing, FLUSH_DELAY_MS } from "../src/storage-ring.ts";
+import { StorageRing, FLUSH_DELAY_MS } from "../src/log/storage-ring.ts";
 
 function area(seed = {}) {
     const store = { ...seed };

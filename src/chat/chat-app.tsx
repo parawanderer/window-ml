@@ -7,17 +7,17 @@
 // offline one says when it was last seen, and one speaking an unknown contract version is listed but not opened.
 import { signal } from "@preact/signals";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import type { RuntimeInfo, SessionId, SessionKey, SessionSummary } from "../session-host";
-import { parseSessionKey } from "../session-host";
-import { DetailView } from "../sidebar/session-detail";
-import { Composer } from "../sidebar/composer";
-import { RUN_LOG_ABOUT } from "../run-log";
+import type { RuntimeInfo, SessionId, SessionKey, SessionSummary } from "../session/session-host";
+import { parseSessionKey } from "../session/session-host";
+import { DetailView } from "../sidebar/transcript/session-detail";
+import { Composer } from "../sidebar/transcript/composer";
+import { RUN_LOG_ABOUT } from "../log/run-log";
 import { useDismissAt } from "../sidebar/use-dismiss";
 import { IconBack, IconBench, IconBrain, IconCopy, IconCamera, IconClose, IconExport, IconLog, IconMore, IconSave, IconVram } from "../sidebar/icons";
 import { ContextMenu, CursorTipLayer, Hash } from "../sidebar/ui-kit";
 import { benchOpen, openBench, rev, sessionMap, view } from "../sidebar/store";
 import { truncate } from "../sidebar/format";
-import { STEP_JUMP_EVENT, STEP_GONE_EVENT } from "../sidebar/step-scroll";
+import { STEP_JUMP_EVENT, STEP_GONE_EVENT } from "../sidebar/transcript/step-scroll";
 import type { ChatStore } from "./chat-store";
 import { mayCommand, resumableHere } from "./grants";
 import { ResumeSession, startableOn, type StartKind } from "./new-session";

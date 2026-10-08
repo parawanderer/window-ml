@@ -7,11 +7,11 @@ description: Move top-level functions, types or constants from one TypeScript fi
 
 ```bash
 # Plan it. Writes nothing; --diff shows exactly what would change.
-node scripts/move-symbols.mjs --from src/sidebar/render-panel.tsx \
+node scripts/move-symbols.mjs --from src/sidebar/transcript/render-panel.tsx \
     --symbols findMatches,rangesFor,scrollerX --to src/sidebar/output-find.ts --dry-run --diff
 
 # Do it. Same command without --dry-run.
-node scripts/move-symbols.mjs --from src/sidebar/render-panel.tsx \
+node scripts/move-symbols.mjs --from src/sidebar/transcript/render-panel.tsx \
     --symbols findMatches,rangesFor,scrollerX --to src/sidebar/output-find.ts
 ```
 

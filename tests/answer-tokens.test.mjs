@@ -2,7 +2,7 @@
 // surface relies on. Rendering is tested at the surfaces; this locks down what IS and ISN'T a token.
 import { test } from "node:test";
 import assert from "node:assert";
-import { splitAnswer, hasTokens, resolveTokenStep, tokenIdsIn } from "../src/answer-tokens.ts";
+import { splitAnswer, hasTokens, resolveTokenStep, tokenIdsIn } from "../src/pointers/answer-tokens.ts";
 import { toolToken } from "../src/util.ts";
 import { markdown } from "../src/sidebar/format.ts";
 

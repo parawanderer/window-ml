@@ -15,7 +15,7 @@ before(async () => {
     doc = dom.window.document;
     // Through require: tsx compiles the component to CJS, and a second preact instance has no current component.
     ({ h, render } = require_("preact"));
-    ({ StorageBody } = await import("../src/sidebar/storage-section.tsx"));
+    ({ StorageBody } = await import("../src/sidebar/settings/storage-section.tsx"));
 });
 
 /** Until the report has been drawn: effects run after a paint frame, so a fixed sleep is a guess about that frame. */
@@ -115,7 +115,7 @@ test("the largest sessions open when the surface can open one, and are plain row
 });
 
 test("nearestPoint picks by time, so uneven samples are read where they are", async () => {
-    const { nearestPoint } = await import("../src/sidebar/time-chart.tsx");
+    const { nearestPoint } = await import("../src/sidebar/settings/time-chart.tsx");
     const pts = [{ t: 0, values: {} }, { t: 10, values: {} }, { t: 100, values: {} }];
     assert.equal(nearestPoint(pts, 4), 0);
     assert.equal(nearestPoint(pts, 50), 1, "halfway in TIME is nearer the second sample, though it is the middle index");

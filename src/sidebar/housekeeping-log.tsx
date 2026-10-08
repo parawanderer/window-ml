@@ -3,11 +3,11 @@
 // than built as a list because a log IS output: the cell already gives it a timestamp gutter, find (Ctrl+F),
 // a resize grip and tail-follow, and a second list component would have grown half of those, differently.
 import { useEffect, useState } from "preact/hooks";
-import { OutputCell, TimedOutput } from "./render-panel";
-import { downloadBlob } from "./download";
-import { formatBytes } from "../resource-model";
+import { OutputCell, TimedOutput } from "./transcript/render-panel";
+import { downloadBlob } from "./export/download";
+import { formatBytes } from "../resource/resource-model";
 import { fmtDelta } from "./timestamps";
-import { LOG_CAP, LOG_KEY, type HousekeepingEvent } from "../housekeeping";
+import { LOG_CAP, LOG_KEY, type HousekeepingEvent } from "../log/housekeeping";
 
 /** A log rendered as text: the lines, the produced-at marks the timestamp gutter is drawn from, and — for a
  *  surface that wants it — which GROUP each line belongs to and how wide that column is. The last two are extra,

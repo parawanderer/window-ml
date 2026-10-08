@@ -3,7 +3,7 @@
 // exec/python run + the readonly/sandbox gates use).
 import { test } from "node:test";
 import assert from "node:assert";
-import { resolveOutputCap, outputCapEscalated, outputCapPrecheck, OUTPUT_CAP } from "../src/contract-pointers.js";
+import { resolveOutputCap, outputCapEscalated, outputCapPrecheck, OUTPUT_CAP } from "../src/contract/contract-pointers.js";
 
 test("absent maxChars → the tool default, no escalation", () => {
     const e = resolveOutputCap("exec", undefined, undefined);
@@ -60,7 +60,7 @@ test("every place that STATES a cap reads it from OUTPUT_CAP, so changing the ta
     // The cap was written down four times: this table, a literal 500 in the read-only formatter (the path most surveys
     // take), "~500" in the exec description, and `outputCapParams(500, 8000, …)`. Changing the table alone would
     // have moved approved runs and left read-only surveys, and the model's instructions, on the old number.
-    const { outputCapParams } = await import("../src/tool-params.ts");
+    const { outputCapParams } = await import("../src/tools/tool-params.ts");
     for (const tool of ["exec", "python_exec"]) {
         const { default: d, ceiling: c } = OUTPUT_CAP[tool];
         const p = outputCapParams(tool, "x");
@@ -68,7 +68,7 @@ test("every place that STATES a cap reads it from OUTPUT_CAP, so changing the ta
         assert.match(p.maxCharsReason.description, new RegExp(`default ${d} chars`), tool);
     }
     // The read-only path clips at the same default, and its note states it.
-    const { formatReadonlyExec } = await import("../src/approval.ts");
+    const { formatReadonlyExec } = await import("../src/agent/approval.ts");
     const d = OUTPUT_CAP.exec.default;
     assert.match(formatReadonlyExec("x".repeat(d + 100), []).result, new RegExp(`^x{${d}}… \\[first ${d} of ${d + 100} chars\\]$`));
     assert.match(formatReadonlyExec(null, ["y".repeat(d + 7)]).result, new RegExp(`… \\[first ${d} of ${d + 7} chars\\]`));

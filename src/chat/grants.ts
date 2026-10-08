@@ -1,7 +1,7 @@
 // What this client may offer on a runtime, read from its grants (docs/spec/SESSION_CONTRACT.md). Presentation only:
 // the runtime checks every command against its own copy, so a wrong answer here costs a greyed-out button or a
 // `forbidden` result, never access.
-import { COMMAND_SCOPE, SESSION_CONTRACT_VERSION, type CommandType, type Principal, type RuntimeInfo, type Scope, type SessionKey, type SessionSummary } from "../session-host";
+import { COMMAND_SCOPE, SESSION_CONTRACT_VERSION, type CommandType, type Principal, type RuntimeInfo, type Scope, type SessionKey, type SessionSummary } from "../session/session-host";
 
 /** Does `runtime` grant `scope` over this session (or over the runtime as a whole, when `session` is absent)? An
  *  expired grant holds nothing. `started` covers only sessions this client's principal started. */

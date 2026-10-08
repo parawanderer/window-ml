@@ -6,11 +6,11 @@
 // — the core primitive stays dependency-free.
 import { render } from "preact";
 import { useState, useEffect, useRef } from "preact/hooks";
-import type { ElementContext } from "../contract-run";
-import type { MlConfig } from "../contract-config";
-import type { InvocationInfo } from "../contract-server";
-import type { MlDebugEvent } from "../contract-debug";
-import { DEFAULT_CONFIG } from "../contract-config";
+import type { ElementContext } from "../contract/contract-run";
+import type { MlConfig } from "../contract/contract-config";
+import type { InvocationInfo } from "../contract/contract-server";
+import type { MlDebugEvent } from "../contract/contract-debug";
+import { DEFAULT_CONFIG } from "../contract/contract-config";
 import {
     FONT_KEY, WRAP_KEY, LINES_KEY, CODE_THEME_KEY, CODE_THEME_VSCODE_KEY, CODE_THEME_UI_KEY, codeTheme, codeThemeCustom, codeThemeUi, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, resWindowPref, VRAMH_KEY, LANE_HIDDEN_KEY, laneHidden, LANE_SCOPE_KEY, laneScoped, SECTIONS_KEY, laneEnabled, showLane, showModels, LANEH_KEY, laneH, LANE_H_DEFAULT, SNAPDOT_KEY, snapDot, PREDICT_KEY, predictView, TIMEGRID_KEY, timeGrid, FOCUS_KEY, focusMode,
     benchOpen, benchDock, benchH, benchSplit, viewReturn, markReturn, openBench, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY,
@@ -22,27 +22,27 @@ import { ContextMenu, CursorTipLayer, Hash, highlightPos } from "./ui-kit";
 import { onDebug, maybeGenerateTitles, titleTried } from "./debug-reducer";
 import { installServices } from "./services";
 import { extensionServices } from "./services-ext";
-import { ProfileBadge, SessionRow, AgentBadge } from "./reply";
-import { Composer } from "./composer";
-import { chartKey, VramPanel } from "./vram";
-import { keyRelay, VRAM_POLL_MS } from "./panel-state";
+import { ProfileBadge, SessionRow, AgentBadge } from "./transcript/reply";
+import { Composer } from "./transcript/composer";
+import { chartKey, VramPanel } from "./resource/vram";
+import { keyRelay, VRAM_POLL_MS } from "./resource/panel-state";
 import { VRAM_PALETTE_KEY, VRAM_PALETTES, vramPalette } from "./palette";
-import { ModelStatusDot } from "./model-status";
-import { fetchModels, pollPs, connectResourceStream, pollBackendHealth, BACKEND_HEALTH_MS } from "./resource-feed";
+import { ModelStatusDot } from "./resource/model-status";
+import { fetchModels, pollPs, connectResourceStream, pollBackendHealth, BACKEND_HEALTH_MS } from "./resource/resource-feed";
 import { PythonBench, BenchDrawer, BenchVer } from "./vram-bench";
-import { CardApp, endActiveCardDrag } from "./hud-card";
-import { releaseAxisHold } from "./chart-interaction";
+import { CardApp, endActiveCardDrag } from "./card/hud-card";
+import { releaseAxisHold } from "./resource/chart-interaction";
 import {
     composerOpen, composerElement, composerTarget, selectedRun, cardSteerHash, setCardCollapsed,
-} from "./card-state";
+} from "./card/card-state";
 import { shownModel, sessionProfile } from "./model";
-import { exportSession, exportSessionJson, printSession } from "./export";
+import { exportSession, exportSessionJson, printSession } from "./export/export";
 import { applyTheme, applyFont, applyCodePrefs, applyFocus, initThemeStyle } from "./prefs";
 import { DEFAULT_CODE_THEME } from "../code-themes";
 import { IconWarn, IconTimer, IconGear, IconExport, IconVram, IconBench, IconTools, IconBrain, IconClose, IconCollapse, IconMore } from "./icons";
 import { HousekeepingView } from "./housekeeping-log";
-import { Settings, openSettingsAt } from "./settings";
-import { DetailView } from "./session-detail";
+import { Settings, openSettingsAt } from "./settings/settings";
+import { DetailView } from "./transcript/session-detail";
 
 
 /* ------------------------------ components ------------------------------- */

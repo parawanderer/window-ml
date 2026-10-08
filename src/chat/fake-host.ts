@@ -5,13 +5,13 @@
 // the runtime's grants and capabilities, recorded, and answered with plausible events.
 //
 // Development only. It ships in the web build until `HubHost` exists (slice 6) and never in the extension.
-import type { MlDebugEvent } from "../contract-debug";
+import type { MlDebugEvent } from "../contract/contract-debug";
 import {
     COMMAND_SCOPE, SESSION_CONTRACT_VERSION, sessionKey,
     type Command, type CommandResult, type HostStatus, type ModelChoice, type Principal, type RuntimeId, type RuntimeInfo, type SessionHost,
     type SessionId, type SessionIndexUpdate, type SessionKey, type SessionStreamMessage, type SessionSummary, type StreamPosition, type TabGroupInfo, type TabInfo, type Unsubscribe, type ListedSession,
-} from "../session-host";
-import { capTitle } from "../session-title";
+} from "../session/session-host";
+import { capTitle } from "../session/session-title";
 import { holds } from "./grants";
 
 interface Logged { cursor: number; event: MlDebugEvent }

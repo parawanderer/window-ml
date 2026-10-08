@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { ChatStore } from "../src/chat/chat-store.ts";
 import { FakeHost } from "../src/chat/fake-host.ts";
 import { pullAllHistory } from "../src/chat/pull-history.ts";
-import { SESSION_CONTRACT_VERSION } from "../src/session-host.ts";
+import { SESSION_CONTRACT_VERSION } from "../src/session/session-host.ts";
 import { sessionMap } from "../src/sidebar/store.ts";
 
 const flush = async (n = 6) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };

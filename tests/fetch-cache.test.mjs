@@ -2,7 +2,7 @@
 // fetched body — and every parsed CSV's rows — in the user's page.
 import test from "node:test";
 import assert from "node:assert";
-import { FetchCache, estimateFetchResultBytes } from "../src/fetch-cache.ts";
+import { FetchCache, estimateFetchResultBytes } from "../src/ml/fetch-cache.ts";
 
 const sized = (budget) => new FetchCache(budget, (v) => v.bytes, 3);
 

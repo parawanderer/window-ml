@@ -8,7 +8,7 @@ const { SessionFeed } = await import("../src/chat/session-feed.ts");
 const { ChatStore } = await import("../src/chat/chat-store.ts");
 const { FakeHost } = await import("../src/chat/fake-host.ts");
 const { sessionMap } = await import("../src/sidebar/store.ts");
-const { SESSION_CONTRACT_VERSION } = await import("../src/session-host.ts");
+const { SESSION_CONTRACT_VERSION } = await import("../src/session/session-host.ts");
 
 /** An `EventCache` over a Map: what these tests need of one is that it keeps a copy and gives it back, which is all
  *  the store asks. The real implementation is the phone's SQLite archive (mobile/src/archive.ts), reached over the

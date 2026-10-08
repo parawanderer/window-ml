@@ -5,8 +5,8 @@
  * Extracted from injected.ts — these close over only window/document globals.
  */
 
-import type { TokenUsage } from "./contract-chat";
-import type { FetchLlmPayload } from "./contract-messages";
+import type { TokenUsage } from "./contract/contract-chat";
+import type { FetchLlmPayload } from "./contract/contract-messages";
 import { SB_ROOT } from "./ids";
 
 /**

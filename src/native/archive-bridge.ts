@@ -11,7 +11,7 @@
 // highest history position it holds, and the next save carries only what is past it.
 
 import type { CachedSession, EventCache } from "../chat/event-cache";
-import type { SessionKey } from "../session-host";
+import type { SessionKey } from "../session/session-host";
 import type { ToNative, ToWeb } from "./bridge";
 
 type Result = Extract<ToWeb, { type: "archiveResult" }>;

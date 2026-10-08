@@ -13,12 +13,12 @@
 // injected's async <script> is listening — which stranded the devtools panel on Ctrl+R)
 // can't leave it un-live.
 import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X, SB_HIGHLIGHT, SB_CARD } from "../ids";
-import { cleanImages } from "../contract-run";
+import { cleanImages } from "../contract/contract-run";
 import { onSessionDone, relaySessionToPage } from "./shell-session-relay";
-import { stepBudget } from "../step-budget";
-import { resolveContextContainer, domToContext } from "../dom";   // right-click "ask about this" (content script sees the page DOM)
-import type { ElementContext } from "../contract-run";
-import type { DebugMode } from "../contract-config";
+import { stepBudget } from "../agent/step-budget";
+import { resolveContextContainer, domToContext } from "../dom/dom";   // right-click "ask about this" (content script sees the page DOM)
+import type { ElementContext } from "../contract/contract-run";
+import type { DebugMode } from "../contract/contract-config";
 
 const WIDTH_KEY = "ml_debug_width";
 const CARD_W_KEY = "ml_card_width";   // the corner card's dragged width
@@ -344,7 +344,7 @@ const hudActive = (): boolean => mode === "off" || (mode === "devtools" && agent
  *  a value the page could choose would be worth nothing. In `overlay` the composer is the sidebar panel over
  *  the page; in `off` (and in `devtools`, where only the corner card lives in the page) it is the Commander
  *  HUD. The DevTools panel stamps its own, in panel.ts, because its composer is not in this document at all. */
-const promptSurface = (): import("../contract-run").PromptSurface => (mode === "overlay" ? "overlay" : "hud");
+const promptSurface = (): import("../contract/contract-run").PromptSurface => (mode === "overlay" ? "overlay" : "hud");
 // Background-run events buffered while the card iframe loads (off mode feeds the card ONLY from the
 // background stream, tagged __mlFromBg — the page's bus stays dormant — so no cross-source ordering).
 const CARD_RING_MAX = 200;

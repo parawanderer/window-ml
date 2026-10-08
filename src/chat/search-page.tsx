@@ -11,7 +11,7 @@
 // snippet; the snapshot is still filtered here, so a runtime without search still finds by title. An archived row is
 // marked, and opening it sends `session.unarchive` first, which brings it back into the live store.
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { ListedSession, RuntimeId, RuntimeInfo, SessionSummary } from "../session-host";
+import type { ListedSession, RuntimeId, RuntimeInfo, SessionSummary } from "../session/session-host";
 import { IconBack, IconSearch } from "../sidebar/icons";
 import { truncate } from "../sidebar/format";
 import { view } from "../sidebar/store";

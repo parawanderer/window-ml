@@ -18,7 +18,7 @@ const PY_TIMEOUT_MS = 15000;
 // run (an unarmed completion, a boot that never finishes) is still cleared.
 const PY_START_TIMEOUT_MS = 120000;
 
-import { ValueStore } from "./value-store";
+import { ValueStore } from "./pointers/value-store";
 
 // The value store, reached here rather than in the worker: stored bytes are TRANSFERRED to the worker (no copy), and the
 // one copy is the worker's, into Pyodide's memory. A returned frame's IPC comes back the same way and is written here,

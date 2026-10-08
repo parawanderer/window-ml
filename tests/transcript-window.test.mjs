@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const W = await import("../src/sidebar/transcript-window.tsx");
+const W = await import("../src/sidebar/transcript/transcript-window.tsx");
 const { installServices } = await import("../src/sidebar/services.ts");
 
 const items = (n) => Array.from({ length: n }, (_, i) => `item${i}`);

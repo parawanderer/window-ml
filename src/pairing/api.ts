@@ -7,7 +7,7 @@
 // own keys; the person types the code on a device that may pair, which shows the fingerprint IT computes; they compare
 // the two and confirm there, choosing what the new one may do.
 
-import type { DeviceInfo } from "../session-host";
+import type { DeviceInfo } from "../session/session-host";
 
 /** What a principal is on the account. Open on the wire: an unknown role is shown as a generic device. */
 export type PairRole = "runtime" | "client" | "box-connector";

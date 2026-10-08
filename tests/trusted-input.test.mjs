@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { buildTypeTool, buildClickTool, setCdpEnabled } from "../src/builtin-tools.ts";
+import { buildTypeTool, buildClickTool, setCdpEnabled } from "../src/tools/builtin-tools.ts";
 import { mintPoint } from "../src/util.ts";
 
 function mount(html = "") {

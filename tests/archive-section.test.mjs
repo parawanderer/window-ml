@@ -17,7 +17,7 @@ before(async () => {
     globalThis.Node = dom.window.Node;
     doc = dom.window.document;
     ({ h, render } = require_("preact"));
-    ({ ArchiveFolderBody, BRAVE_FLAG } = await import("../src/sidebar/archive-section.tsx"));
+    ({ ArchiveFolderBody, BRAVE_FLAG } = await import("../src/sidebar/settings/archive-section.tsx"));
 });
 
 const clicks = [];

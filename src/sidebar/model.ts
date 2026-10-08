@@ -2,9 +2,9 @@
 // turn/session's model the way the background resolves it (so a pending turn shows
 // the real model, not "default"), and annotates createChat options with which
 // values are defaults. Pure except for reading the live `config` signal.
-import type { ExtendProfile } from "../contract-chat";
-import type { DebugSessionConfig } from "../contract-debug";
-import { config } from "./store";
+import type { ExtendProfile } from "../contract/contract-chat";
+import type { DebugSessionConfig } from "../contract/contract-debug";
+import { config, ollamaIds } from "./store";
 import type { Turn, Session } from "./store";
 
 // createChat defaults — values equal to these get a `// default` annotation in
@@ -55,6 +55,11 @@ export function sessionProfile(s: Session): "utility" | "default" | null {
     return last ? turnProfile(last) : null;
 }
 
+// AFFIRMATIVELY non-Ollama — provenance is loaded (ollamaIds non-null) AND doesn't list it. Used to gate the
+// native-vision toggle: while the list is still loading (null) this is false, so the eye doesn't flash in then
+// out and shove the chip when LIST_MODELS lands. The send() vision override reads the same signal.
+export const isCloudModel = (id: string): boolean => ollamaIds.value != null && !ollamaIds.value.includes(id);
+
 // ONE model, spelled two ways by one server. `/api/ps` reports Ollama's SHORT name (`gemma4:31b`) while the
 // event stream reports the fully-qualified one (`registry.ollama.ai/library/gemma4:31b`) — so without this
 // the panel drew every streamed model a SECOND time, in its own colour, badged "off-box" as though it had
@@ -64,7 +69,7 @@ export function sessionProfile(s: Session): "utility" | "default" | null {
 // last path segment would collide two genuinely different models that happen to share a name.
 // `normModel` lives in resource-model (pure, and needed by the service worker's load records too); re-exported
 // here so the sidebar's imports keep reading it from where they always have.
-export { normModel } from "../resource-model";
+export { normModel } from "../resource/resource-model";
 // The context window we last OBSERVED each model loaded with (from /api/ps). A model's window is a
 // property of the model, not of whether it's resident right now — so the usage gauge keeps measuring
 // occupancy after the model is evicted from VRAM instead of flipping to a different metric. Overwritten

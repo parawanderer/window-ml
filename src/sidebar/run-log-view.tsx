@@ -15,16 +15,16 @@
 // empty panel can be told from a broken one.
 import { signal } from "@preact/signals";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { OutputCell, TimedOutput } from "./render-panel";
+import { OutputCell, TimedOutput } from "./transcript/render-panel";
 import { housekeepingText, subsystemCounts } from "./housekeeping-log";
 import { PanelHead } from "./panel-head";
 import { useDismiss } from "./use-dismiss";
 import { Stepper } from "./ui-kit";
 import { IconFilter, IconGear } from "./icons";
-import { downloadBlob } from "./download";
-import { exportSessionJson } from "./export";
-import { RUN_LOG_KEY, runLogDocument, type RunLogEvent } from "../run-log";
-import type { RunLogDump } from "../sw-run-log";
+import { downloadBlob } from "./export/download";
+import { exportSessionJson } from "./export/export";
+import { RUN_LOG_KEY, runLogDocument, type RunLogEvent } from "../log/run-log";
+import type { RunLogDump } from "../sw/sw-run-log";
 
 // THIS PANEL'S OWN TWO PREFERENCES. Kept in `chrome.storage.local` beside the panel's neighbours (`outMaxH` and
 // the rest of Appearance do the same) rather than in the chat page's device prefs, because the view is drawn from

@@ -22,7 +22,7 @@ test("the clip note says what was SEEN of how much, and the old note a saved ses
 });
 
 test("whatever clipOut writes, parseLooseJson reads: the producer and the parser cannot drift apart", async () => {
-    const { clipOut } = await import("../src/dom.ts");
+    const { clipOut } = await import("../src/dom/dom.ts");
     const whole = JSON.stringify(Array.from({ length: 50 }, (_, i) => ({ id: i, name: `row ${i}` })));
     const r = parseLooseJson(clipOut(whole, 200));
     assert.ok(r, "the clipped value still parses");

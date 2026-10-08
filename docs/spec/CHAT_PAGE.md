@@ -21,7 +21,7 @@ The page consumes session events from two kinds of source and renders them the s
   browser, a phone-driven setup, later a headless runtime.
 
 So the page is written against one store interface from the start: subscribe to a source's events, send it commands.
-That interface is `SessionHost` ([`SESSION_CONTRACT.md`](SESSION_CONTRACT.md), `src/session-host.ts`).
+That interface is `SessionHost` ([`SESSION_CONTRACT.md`](SESSION_CONTRACT.md), `src/session/session-host.ts`).
 Local is the first implementation; the hub transport is a second, not a rewrite. Sessions are keyed by source (a
 runtime) and hash, and what the page offers for a session follows what its runtime can do.
 
@@ -109,7 +109,7 @@ Two more things it needed, both additive to the contract and therefore agreed wi
 - What happens when it is resumed onto a new page?
 - What happens when the agent's system prompt has changed?
 
-The middle one is answered: `RESUME_DROPS` (`src/session-commands.ts`) is written into the transcript where a reader
+The middle one is answered: `RESUME_DROPS` (`src/session/session-commands.ts`) is written into the transcript where a reader
 and the model both see it, and it already names the tools a page script defined, because functions cannot be stored.
 
 The other two are SILENT. A resume rebuilds the toolset and the system prompt from whatever the current build
@@ -400,7 +400,7 @@ Four things it has to get right:
 4. **It is told apart from the conversation at a glance.** It is the one place where what is shown can legitimately
    disagree with the transcript above it, so it must never read as more of the conversation.
 
-What exists already, and what does not: `ValueStore.rows()` (`src/value-store.ts`) already returns the whole pointer
+What exists already, and what does not: `ValueStore.rows()` (`src/pointers/value-store.ts`) already returns the whole pointer
 heap, live, in the worker — key, bytes, format, source, holders, last touched — and nothing exposes it to any client,
 so the heap half is a command away rather than a design problem. The housekeeping log records every eviction, which
 gives the heap's HISTORY and not its contents. The message array itself has no reader at all. It has two sources with

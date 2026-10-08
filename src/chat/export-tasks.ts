@@ -18,7 +18,7 @@
 // that — and partly because a save inside a real click is the one a browser never second-guesses.
 
 import { signal } from "@preact/signals";
-import type { SessionKey } from "../session-host";
+import type { SessionKey } from "../session/session-host";
 import { truncate } from "../sidebar/format";
 import type { AttentionItem } from "./attention";
 import type { ChatStore } from "./chat-store";

@@ -304,7 +304,7 @@ a line wraps because each source line is its own flex row.
 **The code COLOUR THEME** (Settings → Code blocks → Colour theme; `ml_code_theme`, and the uploaded file in
 `ml_code_theme_vscode` as `{name, text}`). ONE stylesheet colours every code block AND the bench editor, because
 CodeMirror's tags are mapped onto highlight.js's `hljs-*` classes (`HLJS_STYLE` in cm-editor.ts) rather than given
-a palette of their own. Presets are highlight.js's own stylesheets, bundled as text (`src/sidebar/code-theme-css.ts`);
+a palette of their own. Presets are highlight.js's own stylesheets, bundled as text (`src/sidebar/code/code-theme-css.ts`);
 the list, the VS Code converter and the `.hljs` colour reader are pure in `src/code-themes.ts`. Four things matter:
 - **Surface colours.** Any theme but the default sets `--code-bg`/`--code-fg` on the root (`applyCodeTheme`, prefs.ts),
   read by `.code` blocks and the editor. Without them a dark theme in a light panel drew light tokens on white. The
@@ -394,8 +394,8 @@ the toolset and re-sent for the length of the run.
 
 `chat_metadata` adds one `user focus:` line when the user is NOT on the agent's own tab, read at the moment of the
 call and stamped with it (`as of 11:52:03`), since focus moves. No line means the user is on the agent's page, and the
-tool's description says so. The rules are `userFocusLine` (`src/user-focus.ts`, pure and tested); the worker reads the
-focused window and its active tab (`src/sw-focus.ts`). Setting: `agentSeesFocus`, default on, in DevTools Settings.
+tool's description says so. The rules are `userFocusLine` (`src/sw/user-focus.ts`, pure and tested); the worker reads the
+focused window and its active tab (`src/sw/sw-focus.ts`). Setting: `agentSeesFocus`, default on, in DevTools Settings.
 
 What it may say depends on who can READ the run's results, and every agent run with a tab executes through that
 page's own `ml.createAgent`, the chat page's and the HUD's included. So every such run is told only COARSE facts: the

@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert";
 
 globalThis.chrome = { debugger: {}, tabs: {}, windows: {}, scripting: {}, runtime: {}, extension: {}, permissions: {}, action: {} };
-const { fetchUrlContent } = await import("../src/sw-fetch.ts");
+const { fetchUrlContent } = await import("../src/sw/sw-fetch.ts");
 
 const MD = "text/markdown; charset=utf-8";
 const HTML = "text/html; charset=utf-8";
@@ -297,7 +297,7 @@ test("a body that CLAIMS to be an Arrow stream but does not decode is described 
 
 // THE VALUE STORE's capture (POINTER_VALUES slice 4): a table whose preview is not the whole of it hands its BODY to
 // `keep`, so the service worker can store it for a later read by pointer. A table the preview already holds keeps nothing.
-const { MAX_TABLE_ROWS } = await import("../src/table-data.ts");
+const { MAX_TABLE_ROWS } = await import("../src/table/table-data.ts");
 const kept = () => { const got = []; return { got, keep: (b) => got.push(b) }; };
 const csvRows = (n) => ["id,v", ...Array.from({ length: n }, (_, i) => `${i},${i * 2}`)].join("\n") + "\n";
 

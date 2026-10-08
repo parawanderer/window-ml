@@ -3,9 +3,9 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
-const feed = await import("../src/sidebar/resource-feed.ts");
+const feed = await import("../src/sidebar/resource/resource-feed.ts");
 const store = await import("../src/sidebar/store.ts");
-const panel = await import("../src/sidebar/panel-state.ts");
+const panel = await import("../src/sidebar/resource/panel-state.ts");
 
 /** A worker that answers OLLAMA_PS with `reply`, counting what it was asked. */
 let sent = [];
