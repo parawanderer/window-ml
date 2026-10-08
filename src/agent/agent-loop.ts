@@ -12,29 +12,29 @@
 // No chrome, no DOM → builds standalone (dist/agent-loop.js) and is unit-tested against a mocked
 // model / executor / gate in tests/agent-loop.test.js.
 
-import type { ToolCall, TokenUsage, RunStats } from "./contract/contract-chat";
-import type { AgentResult, AgentTranscriptEntry, ApprovalDecision } from "./contract/contract-agent";
-import type { RenderDescriptor, ToolFeedback, TokenRender } from "./contract/contract-render";
-import type { SubcallUsage } from "./contract/contract-debug";
-import type { PromptOrigin } from "./contract/contract-run";
+import type { ToolCall, TokenUsage, RunStats } from "../contract/contract-chat";
+import type { AgentResult, AgentTranscriptEntry, ApprovalDecision } from "../contract/contract-agent";
+import type { RenderDescriptor, ToolFeedback, TokenRender } from "../contract/contract-render";
+import type { SubcallUsage } from "../contract/contract-debug";
+import type { PromptOrigin } from "../contract/contract-run";
 import { promptSurfaceNote } from "./prompt-surface";
-import { tableOf } from "./table/table-data";
-import { runStats, fmtTokPerSec, UI_OUT_CAP } from "./contract/contract-chat";
-import { formatBytes } from "./resource/resource-model";
-import { type Capacity } from "./resource/resource-capacity";
+import { tableOf } from "../table/table-data";
+import { runStats, fmtTokPerSec, UI_OUT_CAP } from "../contract/contract-chat";
+import { formatBytes } from "../resource/resource-model";
+import { type Capacity } from "../resource/resource-capacity";
 import { UNATTENDED_REFUSAL } from "./prompts";
-import { toolToken } from "./util";
+import { toolToken } from "../util";
 import { recordAppended, snapshotCurrent, type CurrentSnapshot, type RecordedMeta } from "./current-context";
-import type { RunLogEvent } from "./run-log";
-import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, shortType, isAliasRef, parseLabel, DEREF_TOOL, type TokenKind, type TokenValue, type DerefRead } from "./pointers/token-pipe";
+import type { RunLogEvent } from "../run-log";
+import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, shortType, isAliasRef, parseLabel, DEREF_TOOL, type TokenKind, type TokenValue, type DerefRead } from "../pointers/token-pipe";
 
 export type Approval = "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled";
-export interface ToolMeta { name: string; requiresApproval?: boolean; capabilities?: string[]; remote?: import("./contract").RemoteToolTarget; }
+export interface ToolMeta { name: string; requiresApproval?: boolean; capabilities?: string[]; remote?: import("../contract").RemoteToolTarget; }
 // The tool's serializable result. `renderIn`/`renderOut` are the debug-render slots computed by the
 // executor's world (page-side for the delegated path) so the emitter can show a rendered In/Out.
 // `image` is a screenshot a vision tool (native `look`) captured — INLINE VISION: it's injected into
 // the model's next turn as a user image (via pushToolImages) so the model reasons over the real pixels.
-export interface ToolRunResult { result: string; elements?: unknown[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; image?: string; imageLabel?: string; images?: { image: string; label?: string }[]; feedback?: ToolFeedback; reused?: import("./contract").ReusedGrant[]; remoteMs?: import("./contract").RemoteTiming; }
+export interface ToolRunResult { result: string; elements?: unknown[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; image?: string; imageLabel?: string; images?: { image: string; label?: string }[]; feedback?: ToolFeedback; reused?: import("../contract").ReusedGrant[]; remoteMs?: import("../contract").RemoteTiming; }
 
 export interface AgentLoopDeps {
     // One model turn → the assistant message (content + normalized tool_calls + usage + the separate
@@ -55,7 +55,7 @@ export interface AgentLoopDeps {
     // a forged "it's auto-approved" is exactly the threat design A closes.
     // Returns the provenance to skip the gate, or null to require it — OR an object also naming the prior
     // grants this call REUSED (e.g. an already-approved Google Sheet), surfaced on the step for transparency.
-    autoApprove?(name: string, args: Record<string, unknown>): Approval | { approval: Approval; reused?: import("./contract").ReusedGrant[] } | null;
+    autoApprove?(name: string, args: Record<string, unknown>): Approval | { approval: Approval; reused?: import("../contract").ReusedGrant[] } | null;
     // Read-only try (exec only): attempt the call via the mediated read-only interpreter, which is
     // side-effect-free (it can't mutate) — so it BOTH decides "auto-approve" AND returns the result. A
     // non-null result skips the gate AND runTool (the interpreter already ran it). null → gate as normal.
@@ -88,8 +88,8 @@ export interface AgentLoopDeps {
     /** A model call is UNDERWAY (and, on a streamed run, what it is emitting right now). Fired the instant
      *  the request goes out, so a surface can draw the call while it happens rather than back-dating a
      *  finished block over memory it already drew. Optional: a host that has no live surface omits it. */
-    emitTurn?(ev: { step: number; phases?: import("./contract").GenPhase[] }): void;
-    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; token?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[]; reused?: import("./contract").ReusedGrant[]; streamOutput?: string; streamMarks?: [number, number][]; remoteMs?: import("./contract").RemoteTiming }): void;
+    emitTurn?(ev: { step: number; phases?: import("../contract").GenPhase[] }): void;
+    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; token?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[]; reused?: import("../contract").ReusedGrant[]; streamOutput?: string; streamMarks?: [number, number][]; remoteMs?: import("../contract").RemoteTiming }): void;
     // Mid-run STEERING (a.say()): drained at each step boundary (before the model call) — returns any user
     // messages queued since the last step, injected via pushUser so the model sees them on its next turn.
     // Omit → no steering. The queue lives in the caller's world (page handle / SW inbox).
@@ -272,7 +272,7 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
     contextSink?: (snapshot: (extra?: { model?: string | null; log?: readonly RunLogEvent[] }) => CurrentSnapshot) => void;
     /** Which lexical metric ranks a near-miss on a pointer label (config `labelMatch`). Omitted = the
      *  default; the benchmark varies it. */
-    labelMatch?: import("./contract").LexicalMetric;
+    labelMatch?: import("../contract").LexicalMetric;
     /** The pointer store to use. Pass the SESSION's store so `@tool:` references survive across a handle's
      *  turns; omit for a one-shot run and the loop makes its own. */
     tokenStore?: TokenStore;
@@ -408,7 +408,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     const contextId = opts.runHash ?? `run-${startedTs.toString(36)}`;
     opts.contextSink?.((extra) => snapshotCurrent({
         run: { id: contextId, model: extra?.model ?? null, step: currentStep, maxSteps: maxSteps(), startedTs },
-        messages: messages as import("./contract/contract-chat").NeutralMessage[], recorded, log: extra?.log, now: Date.now(),
+        messages: messages as import("../contract/contract-chat").NeutralMessage[], recorded, log: extra?.log, now: Date.now(),
     }));
     /** Run one of the host's push helpers and record whatever it appended. */
     const pushed = (push: () => void, fact: Partial<RecordedMeta>): void => {
@@ -466,7 +466,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
      *  model's `changed` line rides along as a CLAIM, never instead of the diff: a model asked what it changed
      *  answers from what it MEANT to change, and the two disagree exactly when the diff is worth reading.
      *  An unresolvable pointer yields nothing rather than a fabricated comparison — the run is unaffected. */
-    const revisionOf = (args: Record<string, unknown>): import("./contract").CodeRevision | undefined => {
+    const revisionOf = (args: Record<string, unknown>): import("../contract").CodeRevision | undefined => {
         const ref = typeof args.revises === "string" ? args.revises.trim() : "";
         if (!ref) return undefined;
         const prev = tokenStore.get(ref);

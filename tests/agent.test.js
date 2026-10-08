@@ -240,7 +240,7 @@ test("agent_api_docs: a bad pipe stage is an actionable message, never a lost st
 test("agent_api_docs is CITABLE, so its output can be named by a pointer and read back later", async () => {
     // The other half of the same gap: with a `token` the result mints an @tool:<id>, so `dereference` can pipe
     // it on a LATER step instead of only at the moment of the call.
-    const { CITABLE_TOOLS } = await import("../src/agent-loop.ts");
+    const { CITABLE_TOOLS } = await import("../src/agent/agent-loop.ts");
     assert.ok(CITABLE_TOOLS.has("agent_api_docs"),
         "without this, the reference is the one output no pointer can name");
 });

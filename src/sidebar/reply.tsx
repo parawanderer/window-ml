@@ -13,7 +13,7 @@ import { pretty, truncate, collapsedPreview, markdown } from "./format";
 import { annotatedConfig, turnProfile } from "./model";
 import { IconAgent, IconChevron, IconPlay } from "./icons";
 import { cursorTipOn, openCtxMenu, Dot, Stamp, Hash, TagBadge, CopyBtn, CopyModel, Code } from "./ui-kit";
-import { STEP_BUDGETS } from "../step-budget";
+import { STEP_BUDGETS } from "../agent/step-budget";
 import { aliasOf, AnswerBody, ResultBlock } from "./answer-render";
 import { hasTokens } from "../pointers/answer-tokens";
 

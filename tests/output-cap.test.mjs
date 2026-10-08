@@ -68,7 +68,7 @@ test("every place that STATES a cap reads it from OUTPUT_CAP, so changing the ta
         assert.match(p.maxCharsReason.description, new RegExp(`default ${d} chars`), tool);
     }
     // The read-only path clips at the same default, and its note states it.
-    const { formatReadonlyExec } = await import("../src/approval.ts");
+    const { formatReadonlyExec } = await import("../src/agent/approval.ts");
     const d = OUTPUT_CAP.exec.default;
     assert.match(formatReadonlyExec("x".repeat(d + 100), []).result, new RegExp(`^x{${d}}… \\[first ${d} of ${d + 100} chars\\]$`));
     assert.match(formatReadonlyExec(null, ["y".repeat(d + 7)]).result, new RegExp(`… \\[first ${d} of ${d + 7} chars\\]`));

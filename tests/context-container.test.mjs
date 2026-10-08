@@ -96,7 +96,7 @@ test("domToContext: script/style content is not included in the text", () => {
 });
 
 // ------------------------------------------------------- askAboutTask (right-click task framing) ---
-import { askAboutTask } from "../src/prompts.ts";
+import { askAboutTask } from "../src/agent/prompts.ts";
 
 test("askAboutTask frames the element content + scope selector around the user's question", () => {
     const ctx = {

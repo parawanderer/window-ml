@@ -6,10 +6,10 @@
 // reconstruct it afterwards. This module ASSEMBLES a snapshot from those records on request. The dialect READS it.
 // Nothing here holds state or touches a page, so the worker and the page share it and it is tested directly.
 
-import type { NeutralMessage } from "./contract/contract-chat";
-import type { PromptSurface } from "./contract/contract-run";
-import type { RunLogEvent } from "./run-log";
-import { toolToken } from "./util";
+import type { NeutralMessage } from "../contract/contract-chat";
+import type { PromptSurface } from "../contract/contract-run";
+import type { RunLogEvent } from "../run-log";
+import { toolToken } from "../util";
 
 /** What the loop records about a message at the moment it appends it. Every field is null when not known, which
  *  is the case for history a session carried in from an earlier turn: the turn that appended it is gone. */

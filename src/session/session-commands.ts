@@ -6,7 +6,7 @@
 // Pure over its dependencies (`CommandDeps`), which sw-sessions.ts and background.ts fill in with the real ones, so
 // every command's decisions are tested in Node without a browser (tests/session-commands.test.mjs).
 import type { NeutralMessage } from "../contract/contract-chat";
-import { MAX_CONTINUE_STEPS } from "../step-budget";
+import { MAX_CONTINUE_STEPS } from "../agent/step-budget";
 import { AGENT_START_PAGE } from "../contract/contract-config";
 import type { MlDebugEvent } from "../contract/contract-debug";
 import type { SessionHistory } from "./session-store";

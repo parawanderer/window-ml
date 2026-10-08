@@ -16,10 +16,10 @@
 //     config read, say -- the command times out; moved onto every turn it fires repeatedly.
 //     `tests/e2e/session-index.spec.mjs` fails if the call disappears.
 
-import { type AgentLoopDeps, shotTurnMessage, runAgentLoop } from "../agent-loop";
+import { type AgentLoopDeps, shotTurnMessage, runAgentLoop } from "../agent/agent-loop";
 import { resolveOutputs, makeAnswerFacade, finalizeAnswer } from "../pointers/answer-set";
-import { defaultApprove, logStep, normalizeApproval, formatReadonlyExec, readonlyRefused } from "../approval";
-import { autoApprovePython } from "../auto-approve";
+import { defaultApprove, logStep, normalizeApproval, formatReadonlyExec, readonlyRefused } from "../agent/approval";
+import { autoApprovePython } from "../agent/auto-approve";
 import { makeBackgroundTaskPromise } from "../bridge";
 import { BUILD_INFO } from "../build-info.gen";
 import { setCdpEnabled } from "../builtin-tools";
@@ -33,11 +33,11 @@ import { expandPointers } from "../pointers/pointer-macro";
 import { evalReadonly } from "../readonly-exec";
 import { descriptorFor } from "../render-descriptor";
 import { parseInfo } from "../resource/resource-capacity";
-import { registerRun, endRun, runAnswer } from "../run-delegation";
-import { isSelfSourceUrl } from "../self-source";
+import { registerRun, endRun, runAnswer } from "../agent/run-delegation";
+import { isSelfSourceUrl } from "../agent/self-source";
 import { toolContext, executeTool, withRunDeref } from "../tool-exec";
 import { pageContext } from "../util";
-import { assembleRun, withPageContext, startPayload, type AssemblyMl } from "../run-assembly";
+import { assembleRun, withPageContext, startPayload, type AssemblyMl } from "../agent/run-assembly";
 import { validateArgs } from "../validate";
 
 /**

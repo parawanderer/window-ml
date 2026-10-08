@@ -10,8 +10,8 @@ import { test, after } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
 import { Worker } from "node:worker_threads";
-import { runAgentLoop } from "../src/agent-loop.ts";
-import { snapshotCurrent, logText, messageId, UNRECORDED } from "../src/current-context.ts";
+import { runAgentLoop } from "../src/agent/agent-loop.ts";
+import { snapshotCurrent, logText, messageId, UNRECORDED } from "../src/agent/current-context.ts";
 import { evalReadonly, NotInDialect, Denied, NeedsPage, ABRIDGE_OVER, describeSwaps } from "../src/readonly-exec.ts";
 import { evalReadonlyInWorker } from "../src/sw/sw-readonly.ts";
 import { mlPipe } from "../src/pointers/text-pipe.ts";
@@ -233,7 +233,7 @@ test("THE PRINT BOUNDARY SAYS WHAT IT CHANGED: a note in JSONPath, after the cli
     assert.deepEqual(describeSwaps((await inWorkerRealm(`console.log(ml.current.messages.map(m => ({ m })))`)).prints.console),
         ["[console.log printed a VIEW: $[0,3].m.content REPLACED by virtual $[0,3].m['chars','preview','abridged']; the value is unchanged, so print a path to see it]"]);
     // The formatter puts the notes AFTER the clip, so the cut cannot remove them.
-    const { formatReadonlyExec } = await import("../src/approval.ts");
+    const { formatReadonlyExec } = await import("../src/agent/approval.ts");
     const all = await inWorkerRealm(`console.log(ml.current.messages)`);
     const shown = formatReadonlyExec(undefined, all.logs, all.prints).result;
     assert.match(shown, /… \[first \d+ of \d+ chars\]\n\[console\.log printed a VIEW: /);
@@ -249,7 +249,7 @@ test("A NOTE IS ABOUT WHAT ITS READER RECEIVED: the model is told only of substi
         messages: Array.from({ length: 13 }, (_, i) => ({ role: "user", content: i === 0 || i === 12 ? "x".repeat(400) : "small" })),
         recorded: [], now: 1,
     });
-    const { formatReadonlyExec } = await import("../src/approval.ts");
+    const { formatReadonlyExec } = await import("../src/agent/approval.ts");
     const all = await inWorkerRealm(`console.log(ml.current.messages)`, snap);
     assert.ok(all.logs[0].indexOf('"abridged":"print ml.current.messages[12]') > 500, "the setup: row 12 is past the model's cut");
     const out = formatReadonlyExec(undefined, all.logs, all.prints);
@@ -371,7 +371,7 @@ test("evalReadonlyInWorker answers, defers, refuses, and reports a script's own 
 // against the read-only shape, in a worker with a timeout, so a regression fails instead of hanging the runner.
 
 const RO_URL = new URL("../src/readonly-exec.ts", import.meta.url).href;
-const CC_URL = new URL("../src/current-context.ts", import.meta.url).href;
+const CC_URL = new URL("../src/agent/current-context.ts", import.meta.url).href;
 const TSX_API = import.meta.resolve("tsx/esm/api");
 const TSX_CJS_API = import.meta.resolve("tsx/cjs/api");
 let worker = null, nextId = 0;

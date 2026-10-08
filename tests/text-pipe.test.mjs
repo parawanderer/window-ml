@@ -228,7 +228,7 @@ test("count is the structure-aware size (wc -l counts LINES, which a path makes 
 // is now DERIVED from PIPE_CMDS, so this asserts the two really are one source rather than two that agree today.
 test("DRIFT GUARD: every verb the dialect exports exists, and the prompt names exactly those", async () => {
     const { PIPE_CMDS } = await import("../src/pointers/text-pipe.ts");
-    const { DEREF_CLAUSE } = await import("../src/prompts.ts");
+    const { DEREF_CLAUSE } = await import("../src/agent/prompts.ts");
     for (const v of PIPE_CMDS) {
         // Every exported verb must PARSE (a usage error is fine; "not supported" is not).
         const src = v === "grep" ? "grep x" : v === "head" || v === "tail" ? `${v} 2` : v;

@@ -10,10 +10,10 @@
 import type { ElementContext } from "../contract";
 import type { StartRunPayload, RebuildConfig } from "../contract/contract-messages";
 import { shortHash, type PromptOrigin } from "../contract/contract-run";
-import { askAboutTask } from "../prompts";
-import { promptSurfaceOf } from "../prompt-surface";
-import { stepBudget } from "../step-budget";
-import { assembleRun, rebuildFor, startPayload, userRunOptions, withPageContext, type UserRunRequest } from "../run-assembly";
+import { askAboutTask } from "../agent/prompts";
+import { promptSurfaceOf } from "../agent/prompt-surface";
+import { stepBudget } from "../agent/step-budget";
+import { assembleRun, rebuildFor, startPayload, userRunOptions, withPageContext, type UserRunRequest } from "../agent/run-assembly";
 import { relayDebugEvent } from "./sw-debug";
 import { getConfig } from "./sw-llm";
 import { dropLocalTools, registerLocalTools } from "./sw-local-tools";

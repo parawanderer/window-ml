@@ -4,7 +4,7 @@
 // grants it — the decision never depends on the executor, so a hostile executor can't self-approve.
 import { test } from "node:test";
 import assert from "node:assert";
-import { runAgentLoop } from "../src/agent-loop.ts";
+import { runAgentLoop } from "../src/agent/agent-loop.ts";
 
 // Deps factory: scripted model turns + spies recording the ORDER of approve/runTool calls.
 function makeDeps({ turns = [], approve, autoApprove } = {}) {
@@ -558,7 +558,7 @@ test("after: a gate an ORCHESTRATOR resolved (the external channel) is not a per
 // THE MACHINE in chat_metadata: each device with its memory in GiB, the VRAM total, and system RAM — and "not reported"
 // on a server without /api/info, never zeros.
 test("chat_metadata: capacityLines lists each device, the VRAM total and system RAM in GiB; unknown is said", async () => {
-    const { capacityLines } = await import("../src/agent-loop.ts");
+    const { capacityLines } = await import("../src/agent/agent-loop.ts");
     const { parseInfo } = await import("../src/resource/resource-capacity.ts");
     const GiB = 1024 ** 3;
     const card = (id, total, free) => ({ gpu_id: String(id), name: `CUDA${id}`, description: "NVIDIA RTX PRO 6000", runner: "CUDA", total_memory: total, free_memory: free });

@@ -9,7 +9,7 @@ const P = await import("../src/pointers/token-pipe.ts");
 // editDistance lives beside the lexical matching that uses it; the cycle it made is why it moved.
 const LM = await import("../src/pointers/label-match.ts");
 const { PIPE_SYNTAX, PIPE_REF } = await import("../src/pointers/text-pipe.ts");
-const { PIPE_CLAUSE } = await import("../src/prompts.ts");
+const { PIPE_CLAUSE } = await import("../src/agent/prompts.ts");
 
 const tok = (over = {}) => ({ id: "a1b2c3f", tool: "exec", kind: "text", out: "hello", t: 1000, step: 1, ...over });
 const TABLE = tok({ id: "bbb222", tool: "python_exec", kind: "table", step: 3,
@@ -230,7 +230,7 @@ test("the binding is restored after a nested call, and after a throwing one", as
 });
 
 test("the loop hands out a resolver bound to ITS OWN store (the page-hosted path)", async () => {
-    const { runAgentLoop } = await import("../src/agent-loop.ts");
+    const { runAgentLoop } = await import("../src/agent/agent-loop.ts");
     let resolver = null;
     const full = Array.from({ length: 300 }, (_, i) => `row ${i + 1}: v${i + 1}`).join("\n");
 
@@ -570,7 +570,7 @@ describe("the pipe dialect is described once", () => {
     const dialectish = (s) => /grep PATTERN|chained with/.test(s);
 
     test("no tool PARAMETER carries the dialect verbatim any more", async () => {
-        const files = ["../src/tools.ts", "../src/builtin-tools.ts", "../src/python/python-tool.ts", "../src/injected.ts", "../src/ml/ml-server.ts", "../src/ml/ml-tool-factories.ts", "../src/ml/ml-vision.ts", "../src/ml/ml-python.ts", "../src/ml/ml-chat.ts", "../src/ml/ml-agent-run.ts", "../src/run-assembly.ts", "../src/ml/ml-agent-handle.ts"];
+        const files = ["../src/tools.ts", "../src/builtin-tools.ts", "../src/python/python-tool.ts", "../src/injected.ts", "../src/ml/ml-server.ts", "../src/ml/ml-tool-factories.ts", "../src/ml/ml-vision.ts", "../src/ml/ml-python.ts", "../src/ml/ml-chat.ts", "../src/ml/ml-agent-run.ts", "../src/agent/run-assembly.ts", "../src/ml/ml-agent-handle.ts"];
         for (const f of files) {
             const src = await readFile(new URL(f, import.meta.url), "utf8");
             for (const line of src.split("\n")) {

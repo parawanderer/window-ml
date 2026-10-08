@@ -19,11 +19,11 @@
 
 import { evalReadonly, NeedsPage, NotInDialect, Denied } from "../readonly-exec";
 import { expandPointers, execCodeIn } from "../pointers/pointer-macro";
-import { formatReadonlyExec } from "../approval";
+import { formatReadonlyExec } from "../agent/approval";
 import { descriptorFor } from "../render-descriptor";
 import { outputCapEscalated } from "../contract/contract-pointers";
 import { errText } from "../dom";
-import type { CurrentSnapshot } from "../current-context";
+import type { CurrentSnapshot } from "../agent/current-context";
 import type { MlTool } from "../contract/contract-agent";
 import type { RenderDescriptor } from "../contract/contract-render";
 

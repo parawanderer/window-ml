@@ -12,7 +12,7 @@ import {
     isOllamaModel,
 } from "./card-state";
 import { isCloudModel } from "./model";
-import { STEP_BUDGETS } from "../step-budget";
+import { STEP_BUDGETS } from "../agent/step-budget";
 
 // The composer's model control: a chip showing the run's model (the per-call pick, else the default) that
 // opens a dropdown of the allowed models. Picking a row overrides the model FOR THIS RUN; the ★ persists it

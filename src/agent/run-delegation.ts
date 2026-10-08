@@ -10,24 +10,24 @@
 // stay page-side, accumulated in the run record so ml.agent can assemble AgentResult.elements once the
 // background reports the run finished. This is the transport half of design A; the loop that drives it
 // is `runAgentLoop` (agent-loop.ts), assembled background-side in a later slice.
-import type { MlTool } from "./contract/contract-agent";
-import type { AnswerMedia } from "./contract/contract-render";
-import type { PageToolEnvelope } from "./contract/contract-messages";
-import type { SubcallUsage } from "./contract/contract-debug";
-import { hintSession } from "./contract/contract-run";
-import { outputCapEscalated } from "./contract/contract-pointers";
-import { executeTool, toolContext, answerSetFor, withRunSession, withRunDeref } from "./tool-exec";
-import { expandPointers } from "./pointers/pointer-macro";
-import { derefViaBackground } from "./deref-read";
-import { captureVerify, captureVerifyElement } from "./builtin-tools";
-import { htmlToMarkdown } from "./html-to-md";
-import { clipOut, elLine, errText } from "./dom";
-import { makeAnswerFacade, finalizeAnswer } from "./pointers/answer-set";
-import { runPipe, pipeHint } from "./pointers/text-pipe";
-import { descriptorFor } from "./render-descriptor";
-import { evalReadonly } from "./readonly-exec";
+import type { MlTool } from "../contract/contract-agent";
+import type { AnswerMedia } from "../contract/contract-render";
+import type { PageToolEnvelope } from "../contract/contract-messages";
+import type { SubcallUsage } from "../contract/contract-debug";
+import { hintSession } from "../contract/contract-run";
+import { outputCapEscalated } from "../contract/contract-pointers";
+import { executeTool, toolContext, answerSetFor, withRunSession, withRunDeref } from "../tool-exec";
+import { expandPointers } from "../pointers/pointer-macro";
+import { derefViaBackground } from "../deref-read";
+import { captureVerify, captureVerifyElement } from "../builtin-tools";
+import { htmlToMarkdown } from "../html-to-md";
+import { clipOut, elLine, errText } from "../dom";
+import { makeAnswerFacade, finalizeAnswer } from "../pointers/answer-set";
+import { runPipe, pipeHint } from "../pointers/text-pipe";
+import { descriptorFor } from "../render-descriptor";
+import { evalReadonly } from "../readonly-exec";
 import { formatReadonlyExec, readonlyRefused } from "./approval";
-import { subcallUsage } from "./bus";
+import { subcallUsage } from "../bus";
 
 /** The delegated vision-sub-call tokens `fn` spent, as a DELTA around the page-side meter (bus.ts). The
  *  background loop can't read the page's accumulator, so each delegated tool call reports its own spend and
@@ -131,7 +131,7 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
     // gets it inline, a text-only driver a delegated description. Merged into the navigate result background-side.
     if (opts.verifyViewport) {
         const ctx = toolContext(run.byName, run.model ?? null, null, run.driverSees ?? false, run.visionModel ?? null);
-        const ml = (typeof window !== "undefined" ? window.ml : null) as unknown as import("./contract").MlApi;
+        const ml = (typeof window !== "undefined" ? window.ml : null) as unknown as import("../contract").MlApi;
         if (!ml) return { result: "" };
         return withSubUsage(async () => {
             const v = await captureVerify(ml, ctx, null, "navigated");
@@ -143,7 +143,7 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
     // sealed / normal selector shows its whole box; @focus shows document.activeElement (viewport if none).
     if (opts.verifyElement || opts.verifyFocus) {
         const ctx = toolContext(run.byName, run.model ?? null, null, run.driverSees ?? false, run.visionModel ?? null);
-        const ml = (typeof window !== "undefined" ? window.ml : null) as unknown as import("./contract").MlApi;
+        const ml = (typeof window !== "undefined" ? window.ml : null) as unknown as import("../contract").MlApi;
         if (!ml) return { result: "" };
         return withSubUsage(async () => {
             if (opts.verifyElement) {
@@ -162,7 +162,7 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
     // at the click point (captureVerify, with this run's driver-sees/reader ctx). Merged into the click result.
     if (opts.verifyAt) {
         const ctx = toolContext(run.byName, run.model ?? null, null, run.driverSees ?? false, run.visionModel ?? null);
-        const ml = (typeof window !== "undefined" ? window.ml : null) as unknown as import("./contract").MlApi;
+        const ml = (typeof window !== "undefined" ? window.ml : null) as unknown as import("../contract").MlApi;
         if (!ml) return { result: "" };
         // captureVerify makes a delegated describe sub-call for a text-only driver → meter its spend.
         return withSubUsage(async () => {

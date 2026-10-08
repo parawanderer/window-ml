@@ -5,7 +5,7 @@
 // consequence rather than name the surface, and the LAST instruction's surface is the one that counts.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { PROMPT_SURFACE_LABEL, promptSurfaceClause, promptSurfaceNote } from "../src/prompt-surface.ts";
+import { PROMPT_SURFACE_LABEL, promptSurfaceClause, promptSurfaceNote } from "../src/agent/prompt-surface.ts";
 
 // --- the sentence each surface gets ---
 

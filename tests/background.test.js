@@ -2177,7 +2177,7 @@ test("RESUME_RUN takes a step budget, keeps it for later turns, and bounds what 
     // Continue offers a budget, and the worker is the last thing between that number and a loop. It must apply it
     // (or the chooser is decoration), keep it (being stopped after 2 steps again, having just granted 50, is the
     // same interruption twice), and bound it (the number crossed a page and possibly a hub to get here).
-    const { MAX_CONTINUE_STEPS } = await import("../src/step-budget.ts");
+    const { MAX_CONTINUE_STEPS } = await import("../src/agent/step-budget.ts");
     const caps = [];
     const bg = loadBackground({
         config: baseConfig(),

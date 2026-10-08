@@ -9,7 +9,7 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { jsonResponse, loadBackground, loadDomWorld } = require("./helpers");
-const { userRunOptions } = await import("../src/run-assembly.ts");
+const { userRunOptions } = await import("../src/agent/run-assembly.ts");
 
 const T = { timeout: 10000 };
 const config = { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "default-model", apiFormat: "openai", ocrModel: "", debugMode: "off" };

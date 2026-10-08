@@ -11,15 +11,15 @@
 // what the host already decided to run.  (exec's read-only fast-path is deliberately NOT here — exec is
 // page-context, so a forged "it's read-only" gains nothing the page couldn't already do; it stays a
 // page-side concern of the delegated exec path. See principle-adding-a-privileged-tool.)
-import type { NeutralMessage, ToolCall } from "./contract/contract-chat";
-import type { AgentResult, ApprovalDecision } from "./contract/contract-agent";
-import type { DerefRead } from "./pointers/token-pipe";
+import type { NeutralMessage, ToolCall } from "../contract/contract-chat";
+import type { AgentResult, ApprovalDecision } from "../contract/contract-agent";
+import type { DerefRead } from "../pointers/token-pipe";
 import { runAgentLoop, shotTurnMessage } from "./agent-loop";
 import type { ToolMeta, AgentLoopDeps, ToolRunResult } from "./agent-loop";
 import { autoApprovePython } from "./auto-approve";
-import { externalSheetIds } from "./dom";
+import { externalSheetIds } from "../dom";
 import { isSelfSourceUrl } from "./self-source";
-import { BUILD_INFO } from "./build-info.gen";
+import { BUILD_INFO } from "../build-info.gen";
 
 /** The run's resolved setup, sent from ml.agent's START_RUN shim. The system prompt is built PAGE-SIDE
  *  (it needs page context + the vision/answer/compute clauses + the toolset), so the background receives
@@ -39,8 +39,8 @@ export interface RunAgentConfig {
     stream?: boolean;              // opt-in live streaming: the model's thinking AND each tool's live output (ctx.stream)
     runId?: string;                // the run's hash — seeds the deterministic tool-token ids
     seqBase?: number;              // per-turn seq offset so a multi-turn run mints globally-unique token ids (see AgentLoopOptions.seqBase)
-    tokenStore?: import("./pointers/token-pipe").TokenStore;
-    labelMatch?: import("./contract").LexicalMetric;   // which lexical metric ranks a near-miss on a pointer label   // the SESSION's `@tool:` pointer store, so pointers span a handle's turns
+    tokenStore?: import("../pointers/token-pipe").TokenStore;
+    labelMatch?: import("../contract").LexicalMetric;   // which lexical metric ranks a near-miss on a pointer label   // the SESSION's `@tool:` pointer store, so pointers span a handle's turns
     after?: "human";               // this turn's first request follows a person (a follow-up, Continue, Retry) — see AgentLoopOptions.after
     resumeMessages?: NeutralMessage[];   // RESUME: continue this prior history (+ `task` as a new user turn) instead of a fresh system+task
     images?: string[];   // native-vision composer attachments (data URLs) → attached to THIS turn's user message. The OCR fallback for a text-only driver already folded into `task` page-side.
@@ -71,7 +71,7 @@ export interface RunAgentHostDeps {
     tokenSink?(resolve: (ref: string, pipe?: string | string[]) => DerefRead): void;
     /** Receives the run's context snapshot function (agent-loop.ts `contextSink`), for `ml.current` in a read-only
      *  survey evaluated in the worker (sw-readonly.ts). */
-    contextSink?(snapshot: (extra?: { model?: string | null; log?: readonly import("./run-log").RunLogEvent[] }) => import("./current-context").CurrentSnapshot): void;
+    contextSink?(snapshot: (extra?: { model?: string | null; log?: readonly import("../run-log").RunLogEvent[] }) => import("./current-context").CurrentSnapshot): void;
     /** Hold a stored value for this run's session (the value store; see AgentLoopOptions.claimValue). */
     claimValue?(key: string): void;
     // Pre-run In render for a PENDING step (streaming runs) — the page computes the tool's In descriptor

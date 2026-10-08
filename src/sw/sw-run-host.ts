@@ -3,15 +3,15 @@
 // This is design A, and it is the whole of it: the router in background.ts only hands a START_RUN / RESUME_RUN
 // over and keeps the channel open until the run finishes.
 
-import { runBackgroundAgent } from "../agent-host";
+import { runBackgroundAgent } from "../agent/agent-host";
 import { watchWhileWaiting, PageUnreachable } from "./page-reachable";
 import type { TabState } from "./page-reachable";
-import type { ToolMeta } from "../agent-loop";
+import type { ToolMeta } from "../agent/agent-loop";
 import type { HousekeepingReport } from "../housekeeping";
 import type { NeutralMessage, ToolCall, TokenUsage } from "../contract/contract-chat";
 import { UI_OUT_CAP } from "../contract/contract-chat";
 import type { ApprovalDecision } from "../contract/contract-agent";
-import { stepBudget } from "../step-budget";
+import { stepBudget } from "../agent/step-budget";
 import type { StartRunPayload, ResumeRunPayload } from "../contract/contract-messages";
 import { type RequestHint, hintSession } from "../contract/contract-run";
 import { externalSheetIds, clipOut, isCurrentPage } from "../dom";

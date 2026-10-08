@@ -9,7 +9,7 @@
 import type { MlApi, MlTool, PageToolEnvelope, StartRunPayload } from "../contract";
 import { buildServerTools } from "../builtin-tools";
 import { descriptorFor } from "../render-descriptor";
-import { envelopeFrom } from "../run-delegation";
+import { envelopeFrom } from "../agent/run-delegation";
 import { executeTool, toolContext } from "../tool-exec";
 import { listServerTools } from "./sw-llm";
 import { workerMl } from "./worker-ml";

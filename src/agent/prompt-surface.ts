@@ -10,7 +10,7 @@
 // decides whether to describe what changed on screen. It composes with the `user focus` line (user-focus.ts),
 // which says where the user is now: surface is where they typed, focus is where they are, and neither implies
 // the other.
-import type { PromptOrigin, PromptSurface } from "./contract/contract-run";
+import type { PromptOrigin, PromptSurface } from "../contract/contract-run";
 
 /** A short human name per surface, for a UI that shows provenance. Not model-facing — the model gets the
  *  sentence below, which says what the place means rather than what it is called. */

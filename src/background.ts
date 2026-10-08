@@ -8,7 +8,7 @@ import type { ApprovalDecision } from "./contract/contract-agent";
 import type { StartRunPayload, SetApprovalPayload, CancelRunPayload, InjectMessagePayload } from "./contract/contract-messages";
 import { modelFilterAllows, publicConfig } from "./contract/contract-config";
 import { googleSheetId, isCurrentPage } from "./dom";
-import { isSelfSourceUrl } from "./self-source";   // trusted-side enforcement of the self-source auto-approve (uncredentialed own-repo reads)
+import { isSelfSourceUrl } from "./agent/self-source";   // trusted-side enforcement of the self-source auto-approve (uncredentialed own-repo reads)
 import { BUILD_INFO } from "./build-info.gen";
 import { browserInfo } from "./util";   // the fork's settings scheme (page-context Browser line)
 import { ensureDebuggerAttached, releaseDebugger, cdpClick, cdpScreenshot, cdpShadowResolve } from "./sw/sw-cdp";   // CDP/debugger layer (strict-CSP exec, trusted click/type, host-grant-free screenshot)
@@ -99,7 +99,7 @@ startValueSweeps();
 // TEST-ONLY (SW realm only): start a run as the HUD Commander's Send does (sw-run-start.ts). The real route is the
 // extension's own frame through the content-script shell, which a spec cannot click without driving the whole
 // composer; a page cannot reach this, so it is no way in for one.
-(globalThis as unknown as { __mlStartUserRunForTest?: unknown }).__mlStartUserRunForTest = (tabId: number, req: import("./run-assembly").UserRunRequest, opts?: { keep?: boolean }) => startUserRun(tabId, req, opts);
+(globalThis as unknown as { __mlStartUserRunForTest?: unknown }).__mlStartUserRunForTest = (tabId: number, req: import("./agent/run-assembly").UserRunRequest, opts?: { keep?: boolean }) => startUserRun(tabId, req, opts);
 
 // captureVisibleTab quota backoff: retry a rate-limited screenshot (~2/sec cap) rather than failing the step.
 const CAPTURE_RETRIES = 5;       // ~5 tries…

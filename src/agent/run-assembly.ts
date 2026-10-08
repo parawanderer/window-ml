@@ -9,15 +9,15 @@
 // because on the worker path it is the page's answer to a question asked once the toolset exists.
 
 import { CITABLE_TOOLS } from "./agent-loop";
-import { buildServerTools } from "./builtin-tools";
-import { type MlApi, type MlTool, type MlPublicConfig, DEFAULT_GROUNDING_RANGE, type VisionMemory, detectGroundingModel, type LexicalMetric, type ElementContext } from "./contract";
-import type { PromptOrigin } from "./contract/contract-run";
-import type { StartRunPayload, RebuildConfig } from "./contract/contract-messages";
+import { buildServerTools } from "../builtin-tools";
+import { type MlApi, type MlTool, type MlPublicConfig, DEFAULT_GROUNDING_RANGE, type VisionMemory, detectGroundingModel, type LexicalMetric, type ElementContext } from "../contract";
+import type { PromptOrigin } from "../contract/contract-run";
+import type { StartRunPayload, RebuildConfig } from "../contract/contract-messages";
 import { promptSurfaceClause, promptSurfaceOf } from "./prompt-surface";
 import { stepBudget } from "./step-budget";
 import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_CLOSED_NOTE, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, askAboutTask } from "./prompts";
-import { citeParam, withCallTitle } from "./tool-params";
-import { buildDereferenceTool } from "./tools";
+import { citeParam, withCallTitle } from "../tool-params";
+import { buildDereferenceTool } from "../tools";
 
 /** The part of `window.ml` assembly reads: config and capability probes, the model and server-tool lists, the tool
  *  factories, and the OCR reader for a pasted image. The worker's adapter implements exactly this. */
@@ -129,7 +129,7 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
     const autoSelfSrc = !!(agentCfg && (agentCfg as { autoApproveSelfSource?: boolean }).autoApproveSelfSource);
     // Which lexical metric ranks a near-miss on a pointer LABEL. Undefined = the built-in default;
     // it is a config value so the benchmark can vary it without a rebuild.
-    const labelMatch = (agentCfg as { labelMatch?: import("./contract").LexicalMetric } | null)?.labelMatch;
+    const labelMatch = (agentCfg as { labelMatch?: import("../contract").LexicalMetric } | null)?.labelMatch;
     // Closed-shadow-root piercing (opt-in). Set the dom.ts module flag from THIS run's config before
     // any DOM tool executes — it governs both loop paths (the page loop below AND the background's
     // delegated page-side tool execution, since both call into the same main-world dom.ts). Off →

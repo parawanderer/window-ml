@@ -199,7 +199,7 @@ export type RunDeps = Pick<CommandDeps, "steer" | "cancelRun" | "resolveApproval
     /** drop a finished run's resumable snapshot and pointer store */
     forgetRun(hash: string): void;
     /** start a run the user asked for, assembled in the worker (sw-run-start.ts) */
-    startUserRun(tabId: number, req: import("../run-assembly").UserRunRequest): Promise<{ hash: string }>;
+    startUserRun(tabId: number, req: import("../agent/run-assembly").UserRunRequest): Promise<{ hash: string }>;
     /** a message or Continue for a run the worker built; null when the run is not the worker's (sw-run-start.ts) */
     userRunAction(hash: string, action: "send" | "continue", body: Record<string, unknown>, fromTabId?: number): Promise<PageOutcome | null>;
     /** register a run's builtin toolset in a tab's page and hear its context (the ADOPT_RUN_NOW push) */
