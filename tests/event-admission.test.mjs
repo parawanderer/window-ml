@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 const { pageMayWrite, eventSession } = await import("../src/event-admission.ts");
 
 /** Every event kind the contract defines, read from it, so a kind added later is decided here too rather than missed. */
-const KINDS = [...new Set([...readFileSync(new URL("../src/contract-debug.ts", import.meta.url), "utf8").matchAll(/kind: "([a-z-]+)"/g)].map((m) => m[1]))];
+const KINDS = [...new Set([...readFileSync(new URL("../src/contract/contract-debug.ts", import.meta.url), "utf8").matchAll(/kind: "([a-z-]+)"/g)].map((m) => m[1]))];
 const LIFECYCLE = new Set(["agent", "agent-say", "agent-result"]);
 
 // --- what a page may add ---
