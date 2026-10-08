@@ -10,8 +10,8 @@ import {
     COMMAND_SCOPE, SESSION_CONTRACT_VERSION, sessionKey,
     type Command, type CommandResult, type HostStatus, type ModelChoice, type Principal, type RuntimeId, type RuntimeInfo, type SessionHost,
     type SessionId, type SessionIndexUpdate, type SessionKey, type SessionStreamMessage, type SessionSummary, type StreamPosition, type TabGroupInfo, type TabInfo, type Unsubscribe, type ListedSession,
-} from "../session-host";
-import { capTitle } from "../session-title";
+} from "../session/session-host";
+import { capTitle } from "../session/session-title";
 import { holds } from "./grants";
 
 interface Logged { cursor: number; event: MlDebugEvent }

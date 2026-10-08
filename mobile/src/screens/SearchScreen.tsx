@@ -10,7 +10,7 @@ import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, Text, T
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import { Bot, ChevronLeft, Search as SearchIcon, X } from "lucide-react-native";
-import type { ListedSession } from "../../../src/session-host";
+import type { ListedSession } from "../../../src/session/session-host";
 import { useEmbed } from "../embed";
 import type { Routes } from "../routes";
 import { STATUS_LABEL, STATUS_TONE } from "../format";

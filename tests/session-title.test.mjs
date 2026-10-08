@@ -2,7 +2,7 @@
 // typed name is held to.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { TITLE_MAX, capTitle, cleanTitle, titleMessages } from "../src/session-title.ts";
+import { TITLE_MAX, capTitle, cleanTitle, titleMessages } from "../src/session/session-title.ts";
 
 test("a model's reply becomes a title: first line, no quotes or trailing dot, capped", () => {
     assert.equal(cleanTitle('\n  "Buy a lamp."\nextra'), "Buy a lamp");

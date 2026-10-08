@@ -7,7 +7,7 @@
 // command, and not before.
 import { signal } from "@preact/signals";
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { ArchiveCapability, RuntimeInfo, SessionId, SessionKey, SessionSummary } from "../session-host";
+import type { ArchiveCapability, RuntimeInfo, SessionId, SessionKey, SessionSummary } from "../session/session-host";
 import { IconCamera, IconCompose, IconCopy, IconExport, IconMore, IconPin, IconTrash } from "../sidebar/icons";
 import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";

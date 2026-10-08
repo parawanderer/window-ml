@@ -13,7 +13,7 @@
 import type { ComponentChildren } from "preact";
 import { STEP_BUDGETS } from "../step-budget";
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { AgentTarget, RuntimeInfo, TabGroupInfo, TabInfo } from "../session-host";
+import type { AgentTarget, RuntimeInfo, TabGroupInfo, TabInfo } from "../session/session-host";
 import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
 import { Dialog } from "../sidebar/dialog";

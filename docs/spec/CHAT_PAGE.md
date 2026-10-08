@@ -21,7 +21,7 @@ The page consumes session events from two kinds of source and renders them the s
   browser, a phone-driven setup, later a headless runtime.
 
 So the page is written against one store interface from the start: subscribe to a source's events, send it commands.
-That interface is `SessionHost` ([`SESSION_CONTRACT.md`](SESSION_CONTRACT.md), `src/session-host.ts`).
+That interface is `SessionHost` ([`SESSION_CONTRACT.md`](SESSION_CONTRACT.md), `src/session/session-host.ts`).
 Local is the first implementation; the hub transport is a second, not a rewrite. Sessions are keyed by source (a
 runtime) and hash, and what the page offers for a session follows what its runtime can do.
 
@@ -109,7 +109,7 @@ Two more things it needed, both additive to the contract and therefore agreed wi
 - What happens when it is resumed onto a new page?
 - What happens when the agent's system prompt has changed?
 
-The middle one is answered: `RESUME_DROPS` (`src/session-commands.ts`) is written into the transcript where a reader
+The middle one is answered: `RESUME_DROPS` (`src/session/session-commands.ts`) is written into the transcript where a reader
 and the model both see it, and it already names the tools a page script defined, because functions cannot be stored.
 
 The other two are SILENT. A resume rebuilds the toolset and the system prompt from whatever the current build

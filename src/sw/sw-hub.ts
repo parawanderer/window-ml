@@ -12,7 +12,7 @@ import { Keyring } from "../hub/keyring";
 import { Role } from "../hub/wire";
 import { HubRuntime, type HubRuntimeStatus } from "../hub-runtime";
 import { DeviceRegistry, type DeviceState } from "../hub-devices";
-import type { DeviceInfo } from "../session-host";
+import type { DeviceInfo } from "../session/session-host";
 import { LOCAL_RUNTIME, localRuntimeId, runSessionCommand, sessionServer } from "./sw-sessions";
 
 /** Where this browser stands with a hub, for Settings. `unpaired` is the usual state and not an error. */

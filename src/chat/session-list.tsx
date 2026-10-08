@@ -9,7 +9,7 @@
 
 import { signal } from "@preact/signals";
 import { useRef, useEffect } from "preact/hooks";
-import type { SessionStatus, SessionKey, RuntimeInfo, SessionSummary } from "../session-host";
+import type { SessionStatus, SessionKey, RuntimeInfo, SessionSummary } from "../session/session-host";
 import { truncate } from "../sidebar/format";
 import { IconChevron, IconHistory, IconPin, IconPlus, IconSearch, IconCompose, IconInbox } from "../sidebar/icons";
 import { AgentBadge } from "../sidebar/reply";

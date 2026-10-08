@@ -6,10 +6,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { LocalHost } from "../src/chat/local-host.ts";
 import { ChatStore } from "../src/chat/chat-store.ts";
-import { SessionIndex } from "../src/session-index.ts";
-import { SessionServer } from "../src/session-server.ts";
+import { SessionIndex } from "../src/session/session-index.ts";
+import { SessionServer } from "../src/session/session-server.ts";
 import { sessionMap } from "../src/sidebar/store.ts";
-import { SESSION_CONTRACT_VERSION } from "../src/session-host.ts";
+import { SESSION_CONTRACT_VERSION } from "../src/session/session-host.ts";
 
 /** A regression here tends to leave a promise unresolved; fail it rather than hang the runner. */
 const T = { timeout: 5000 };

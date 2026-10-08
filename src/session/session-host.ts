@@ -6,11 +6,11 @@
 // Types plus two pure helpers, no `chrome.*`, so the sidebar bundle, a plain web page (a phone) and an agent client
 // can all import it. Every value arriving through it is UNTRUSTED input to the client: strings render as escaped
 // text, and an unknown kind, command or version is skipped, never guessed at.
-import type { JsonSchema } from "./contract";
-import type { ElementContext } from "./contract/contract-run";
-import type { NeutralMessage, TokenUsage } from "./contract/contract-chat";
-import type { MlDebugEvent } from "./contract/contract-debug";
-import type { FolderState } from "./archive-folder";
+import type { JsonSchema } from "../contract";
+import type { ElementContext } from "../contract/contract-run";
+import type { NeutralMessage, TokenUsage } from "../contract/contract-chat";
+import type { MlDebugEvent } from "../contract/contract-debug";
+import type { FolderState } from "../archive-folder";
 
 /* ------------------------------ versioning ------------------------------ */
 
@@ -718,7 +718,7 @@ export interface TabGroupInfo {
 }
 
 export type { StorageReport, StorageSnapshot } from "./session-storage-stats";
-export type { FolderState } from "./archive-folder";
+export type { FolderState } from "../archive-folder";
 import type { StorageReport } from "./session-storage-stats";
 
 /** A session as a paged list or a search shows it: its index row, marked when it is in the long-term archive. */

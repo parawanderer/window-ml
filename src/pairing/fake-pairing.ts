@@ -3,7 +3,7 @@
 // unknown code, a scope a delegate may not pass on, a hub that is not a URL), and hands the test the moments a person
 // cannot fake from one screen: the other device answering a join, or the hub giving up on it.
 
-import type { DeviceInfo } from "../session-host";
+import type { DeviceInfo } from "../session/session-host";
 import { accountRevoker, certChanged } from "./pairing-state";
 import type { FoundOffer, Grant, HubLogLine, Membership, OfferHandle, PairingApi, PairRole, RevokeOutcome } from "./api";
 

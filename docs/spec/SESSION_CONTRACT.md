@@ -1,6 +1,6 @@
 # Spec: the session contract, what a session source offers a client
 
-**Status: agreed contract, version 1** (2026-09-17). The types are in [`src/session-host.ts`](../../src/session-host.ts);
+**Status: agreed contract, version 1** (2026-09-17). The types are in [`src/session/session-host.ts`](../../src/session/session-host.ts);
 this document is the prose and the reasons. The user-to-agent surface is final for version 1. The agent-to-agent parts
 are typed and marked RESERVED: their shape is fixed so they can be added without a breaking change, but no runtime
 offers them yet. The rules an agent tree needs that would break if changed later (transitive `started`, open

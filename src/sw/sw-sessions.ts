@@ -4,19 +4,19 @@
 // (docs/dev/chat-page.md §The local index).
 import { hintSession } from "../contract/contract-run";
 import { type MlDebugEvent } from "../contract/contract-debug";
-import { createCommandHandler, type CommandDeps, type PageOutcome } from "../session-commands";
+import { createCommandHandler, type CommandDeps, type PageOutcome } from "../session/session-commands";
 import { cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat, sendBackgroundChat, setBackgroundChatModel, startBackgroundChat } from "./sw-chat";
 import { type StoredSession } from "../contract/contract-messages";
-import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type ArchiveCapability, type BlankStartCapability, type RuntimeInfo, type SessionSummary, type TabGroupInfo, type TabInfo } from "../session-host";
+import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type ArchiveCapability, type BlankStartCapability, type RuntimeInfo, type SessionSummary, type TabGroupInfo, type TabInfo } from "../session/session-host";
 import { FaviconCache, stripOrder } from "./tab-favicons";
 import { tabReadyFailure } from "./tab-ready";
 import { browserInfo } from "../util";
-import { SessionIndex, type IngestSource } from "../session-index";
-import { SESSIONS_PORT, SessionServer } from "../session-server";
-import { STORE_MAX_SESSIONS, SessionStore, indexedDbBackend, type SessionHistory } from "../session-store";
+import { SessionIndex, type IngestSource } from "../session/session-index";
+import { SESSIONS_PORT, SessionServer } from "../session/session-server";
+import { STORE_MAX_SESSIONS, SessionStore, indexedDbBackend, type SessionHistory } from "../session/session-store";
 import { AGENT_START_PAGE, DEFAULT_CONFIG, modelFilterAllows } from "../contract/contract-config";
 import type { NeutralMessage } from "../contract/contract-chat";
-import { cleanTitle, titleMessages } from "../session-title";
+import { cleanTitle, titleMessages } from "../session/session-title";
 import { bgRuns, makeWorkerRun, trackRun, untrackRun } from "./sw-runs";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { isExtensionSender } from "./sw-consent";
@@ -25,7 +25,7 @@ import { pythonBundlePresent } from "./sw-python";
 import { recordHousekeeping } from "./sw-housekeeping";
 import { archiveCall, lastFolderReport, onFolderChange, scheduleFolderSync } from "./sw-archive";
 import { attentionCodes, recomputeAttention, refreshBackendAttention, watchAttention } from "./sw-attention";
-import { appendSnapshot, measureEvents, summarizeStore, type StorageReport, type StorageSnapshot, type StoreBytes } from "../session-storage-stats";
+import { appendSnapshot, measureEvents, summarizeStore, type StorageReport, type StorageSnapshot, type StoreBytes } from "../session/session-storage-stats";
 
 /**
  * Ask a tab's page something, PUTTING THE CONTENT SCRIPT BACK if it is not there.

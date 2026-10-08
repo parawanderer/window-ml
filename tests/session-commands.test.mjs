@@ -3,9 +3,9 @@
 // §Commands).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SessionIndex } from "../src/session-index.ts";
-import { createCommandHandler, imageSize, dataUrlBytes, MAX_PINNED, SIDE_CALL_MAX_TOKENS } from "../src/session-commands.ts";
-import { SESSION_CONTRACT_VERSION } from "../src/session-host.ts";
+import { SessionIndex } from "../src/session/session-index.ts";
+import { createCommandHandler, imageSize, dataUrlBytes, MAX_PINNED, SIDE_CALL_MAX_TOKENS } from "../src/session/session-commands.ts";
+import { SESSION_CONTRACT_VERSION } from "../src/session/session-host.ts";
 
 const TAB = 7;
 const ev = (hash, kind, over = {}) => ({ kind, id: hash, ts: 1, save: false, session: { hash, turn: 0 }, ...over });

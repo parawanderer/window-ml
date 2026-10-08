@@ -6,7 +6,7 @@
 // machine, in its own Settings, and is never a remote command (`localSettings` is local by design). What is here only
 // needs `view`, which is why a watch-only client sees it too.
 import { useEffect, useState } from "preact/hooks";
-import { sessionKey, type ArchiveCapability, type ModelChoice, type RuntimeCapabilities, type RuntimeInfo } from "../session-host";
+import { sessionKey, type ArchiveCapability, type ModelChoice, type RuntimeCapabilities, type RuntimeInfo } from "../session/session-host";
 import { StorageBody } from "../sidebar/storage-section";
 import { Stamp, cursorTipOn } from "../sidebar/ui-kit";
 import type { ChatStore } from "./chat-store";

@@ -8,7 +8,7 @@
 // - `events()` and `send()` go to the host that owns the session's or the command's runtime.
 // - `status()` is online when any host is: the page keeps working on local sessions while the hub is down, and says so
 //   per runtime (`RuntimeInfo.online`) rather than for the whole page.
-import type { Command, CommandResult, HostStatus, Principal, RuntimeId, RuntimeInfo, SessionHost, SessionId, SessionIndexUpdate, SessionStreamMessage, StreamPosition, Unsubscribe } from "../session-host";
+import type { Command, CommandResult, HostStatus, Principal, RuntimeId, RuntimeInfo, SessionHost, SessionId, SessionIndexUpdate, SessionStreamMessage, StreamPosition, Unsubscribe } from "../session/session-host";
 
 /** The runtime a command is for: named directly (`chat.start`, `side.call`, …) or through its session. */
 const runtimeOf = (c: Command): RuntimeId => ("runtime" in c ? c.runtime : c.session.runtime);

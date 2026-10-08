@@ -11,7 +11,7 @@
 // there are to choose from.
 
 import { IconCheck, IconDevice } from "../sidebar/icons";
-import type { RuntimeInfo } from "../session-host";
+import type { RuntimeInfo } from "../session/session-host";
 import { usePickerPop } from "./pop-picker";
 
 /** What a runtime's `kind` is called in the row under its name. An unknown kind is a runtime this client does not

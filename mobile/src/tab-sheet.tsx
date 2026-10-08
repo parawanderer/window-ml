@@ -7,7 +7,7 @@ import { forwardRef, useState } from "react";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 import type { BottomSheetModal } from "@gorhom/bottom-sheet";
 import { Check, Plus } from "lucide-react-native";
-import type { TabGroupInfo, TabInfo } from "../../src/session-host";
+import type { TabGroupInfo, TabInfo } from "../../src/session/session-host";
 import { faviconSrc, tabHost, tabMatches, tabTree } from "../../src/chat/tab-tree";
 import { SIZE, usePalette } from "./theme";
 import { Sheet, SheetFilter } from "./ui";

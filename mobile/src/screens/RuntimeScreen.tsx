@@ -13,7 +13,7 @@ import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRoute, type RouteProp } from "@react-navigation/native";
 import { Cloud, Cpu } from "lucide-react-native";
-import type { ModelChoice, RuntimeCapabilities } from "../../../src/session-host";
+import type { ModelChoice, RuntimeCapabilities } from "../../../src/session/session-host";
 import type { RuntimeStorageView } from "../../../src/native/bridge";
 import { useEmbed } from "../embed";
 import { seen, when } from "../format";

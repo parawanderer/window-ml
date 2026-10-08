@@ -11,7 +11,7 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Bot, Plus } from "lucide-react-native";
 import { IconCompose, IconGear, IconInbox, IconSearch } from "../icons";
 import * as Haptics from "expo-haptics";
-import type { SessionSummary } from "../../../src/session-host";
+import type { SessionSummary } from "../../../src/session/session-host";
 import type { SessionChrome } from "../../../src/native/bridge";
 import { useEmbed } from "../embed";
 import { ago, approvalsPending, needsYou, sections, STATUS_LABEL, STATUS_TONE } from "../format";

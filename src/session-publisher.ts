@@ -9,7 +9,7 @@
 // No `chrome`: it runs in the worker, and nothing it decides depends on being a browser.
 import { StreamKey, sealFrame, wrapKey, type ChannelKey, type Recipient, type Sender } from "./hub/seal";
 import type { Bytes } from "./hub/hpke";
-import type { SessionStreamMessage } from "./session-host";
+import type { SessionStreamMessage } from "./session/session-host";
 import { encodeStreamFrame, eventsChannel, grantees, indexChannel, indexKeysChannel, keysChannel, type Grantee } from "./session-relay";
 
 /** What the publisher needs from a hub connection: to publish a sealed payload on a channel. */

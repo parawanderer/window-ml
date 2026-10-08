@@ -10,7 +10,7 @@
 // refused whole.
 
 import type { Reminder } from "../chat/reminders";
-import type { HostStatus, ListedSession, ModelChoice, RuntimeInfo, SessionKind, SessionStatus, SessionSummary, TabGroupInfo, TabInfo } from "../session-host";
+import type { HostStatus, ListedSession, ModelChoice, RuntimeInfo, SessionKind, SessionStatus, SessionSummary, TabGroupInfo, TabInfo } from "../session/session-host";
 
 /** The bridge's version. Bump it when a message changes shape in a way an older peer would misread. */
 export const BRIDGE_VERSION = 1;

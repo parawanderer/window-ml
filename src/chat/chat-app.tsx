@@ -7,8 +7,8 @@
 // offline one says when it was last seen, and one speaking an unknown contract version is listed but not opened.
 import { signal } from "@preact/signals";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import type { RuntimeInfo, SessionId, SessionKey, SessionSummary } from "../session-host";
-import { parseSessionKey } from "../session-host";
+import type { RuntimeInfo, SessionId, SessionKey, SessionSummary } from "../session/session-host";
+import { parseSessionKey } from "../session/session-host";
 import { DetailView } from "../sidebar/session-detail";
 import { Composer } from "../sidebar/composer";
 import { RUN_LOG_ABOUT } from "../run-log";

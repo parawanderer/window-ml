@@ -11,7 +11,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import type { BottomSheetModal } from "@gorhom/bottom-sheet";
 import { AppWindow, ArrowUp, Bot, ChevronLeft, Cpu, Globe, MessageCircle, MonitorSmartphone, Plus, TriangleAlert } from "lucide-react-native";
-import type { ModelChoice } from "../../../src/session-host";
+import type { ModelChoice } from "../../../src/session/session-host";
 import type { Routes } from "../routes";
 import { draftOf, saveDraft } from "../drafts";
 import { useEmbed } from "../embed";

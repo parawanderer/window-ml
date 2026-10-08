@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import { readFile } from "node:fs/promises";
 import assert from "node:assert/strict";
-import { sessionKey, parseSessionKey, isAbsoluteRuntimeId, isPortableSessionKey, COMMAND_SCOPE } from "../src/session-host.ts";
+import { sessionKey, parseSessionKey, isAbsoluteRuntimeId, isPortableSessionKey, COMMAND_SCOPE } from "../src/session/session-host.ts";
 
 test("a session key round-trips", () => {
     const id = { runtime: "rt_7f3a9c", hash: "0a1b2c3d" };
@@ -32,7 +32,7 @@ test("approving is its own scope, never drive", () => {
 // --- the scope each command needs, and which of them are about the ACCOUNT rather than a session ---
 
 test("administering devices is its own scope, never approve or drive — and renewing yourself is not administering", async () => {
-    const { COMMAND_SCOPE: SCOPES } = await import("../src/session-host.ts");
+    const { COMMAND_SCOPE: SCOPES } = await import("../src/session/session-host.ts");
     // A phone that may approve a click must not thereby be able to pair another phone, so acting ON the account's
     // devices takes `admin` and nothing else does.
     const admin = Object.entries(SCOPES).filter(([, s]) => s === "admin").map(([t]) => t).sort();
@@ -46,8 +46,8 @@ test("administering devices is its own scope, never approve or drive — and ren
 });
 
 test("every command names a scope, so a new one cannot arrive unguarded", async () => {
-    const { COMMAND_SCOPE: SCOPES } = await import("../src/session-host.ts");
-    const src = await readFile(new URL("../src/session-host.ts", import.meta.url), "utf8");
+    const { COMMAND_SCOPE: SCOPES } = await import("../src/session/session-host.ts");
+    const src = await readFile(new URL("../src/session/session-host.ts", import.meta.url), "utf8");
     // The `type:` of each member of the Command union — and ONLY that union, since the index updates and the stream
     // events are unions of the same shape. The scope table must have an entry for each: a command with no scope
     // would be typed as needing one and enforced as needing none.
@@ -58,7 +58,7 @@ test("every command names a scope, so a new one cannot arrive unguarded", async 
 });
 
 test("a principal id compares case-insensitively, though the contract says lowercase", async () => {
-    const { samePrincipal } = await import("../src/session-host.ts");
+    const { samePrincipal } = await import("../src/session/session-host.ts");
     assert.equal(samePrincipal("0a3f9c", "0a3f9c"), true);
     // A runtime that ignores the rule costs nothing: the alternative is a list with no "this device" row and no
     // logout warning, and nothing wrong to see in either value.

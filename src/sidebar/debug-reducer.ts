@@ -9,7 +9,7 @@ import type { MlDebugEvent } from "../contract/contract-debug";
 import { isBackendUnreachable } from "../contract/contract-server";
 import { services } from "./services";
 import { truncate, lastUser, rollupStatus } from "./format";
-import { cleanTitle, titleMessages } from "../session-title";
+import { cleanTitle, titleMessages } from "../session/session-title";
 
 // The highest (cumulative) step number seen so far — the position a say()/answer arriving NOW belongs at,
 // so the chat log interleaves user messages + answers with the turn step-groups in order.

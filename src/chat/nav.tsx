@@ -8,7 +8,7 @@ import { ThemeMenu } from "./theme-pick";
 import { signal } from "@preact/signals";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import type { RuntimeInfo, SessionKey } from "../session-host";
+import type { RuntimeInfo, SessionKey } from "../session/session-host";
 import { IconBrain, IconCompose, IconDock, IconFold, IconGear, IconMenu, IconSearch } from "../sidebar/icons";
 import { MenuGroup, MenuItem } from "./menu";
 import { benchOpen, groupAllTools, openBench, view } from "../sidebar/store";

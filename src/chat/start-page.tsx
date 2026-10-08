@@ -11,7 +11,7 @@
 // Rendered by capability like the rest: only the kinds some runtime offers and this client may start, the "where"
 // only on a runtime with tabs, and nothing at all (the old sentence) when nothing can be started.
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { ModelChoice, RuntimeInfo } from "../session-host";
+import type { ModelChoice, RuntimeInfo } from "../session/session-host";
 import { loadDraft, saveDraft } from "../sidebar/drafts";
 import { IconSend, IconWarn } from "../sidebar/icons";
 import type { ChatStore } from "./chat-store";

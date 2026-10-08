@@ -8,7 +8,7 @@
 // there, so the asker has to be the recipient (docs/spec/SESSION_CONTRACT.md, `device.renew`).
 import { type PairingApi } from "../pairing/api";
 import { certChanged } from "../pairing/pairing-state";
-import type { RuntimeInfo, SessionHost } from "../session-host";
+import type { RuntimeInfo, SessionHost } from "../session/session-host";
 
 /** What came of it, in the words a surface can show without rewording a failure it does not understand. */
 export type RenewOutcome =

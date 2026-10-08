@@ -28,7 +28,7 @@ import { Role } from "../hub/wire";
 import type {
     Command, CommandResult, HostStatus, Principal, RuntimeCapabilities, RuntimeId, RuntimeInfo, SessionHost, SessionId,
     SessionIndexUpdate, SessionStreamMessage, StreamPosition, Unsubscribe,
-} from "../session-host";
+} from "../session/session-host";
 import { IndexReader, decodeStreamFrame, eventsChannel, indexChannel, indexKeysChannel, keysChannel } from "../session-relay";
 import type { Position } from "../hub/wire";
 import type { HubConnection, HubPeer, StreamEvent } from "./hub-connection";

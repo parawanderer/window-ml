@@ -7,7 +7,7 @@
 // remembered until the next search, because an ARCHIVED one must be brought back (`session.unarchive`) before it opens,
 // and the app knows nothing about archives.
 
-import type { ListedSession, RuntimeId, RuntimeInfo, SessionKey } from "../session-host";
+import type { ListedSession, RuntimeId, RuntimeInfo, SessionKey } from "../session/session-host";
 import type { ChatStore } from "../chat/chat-store";
 import { mayCommand } from "../chat/grants";
 import { matches } from "../chat/search-page";

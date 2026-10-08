@@ -7,7 +7,7 @@
 // (`capabilities.attention`, sw-attention.ts in the extension). The archive folder's state is read as a code too, for
 // a runtime that reports the folder but not yet the codes. Codes, not prose: a remote runtime's text is untrusted, and the sentence depends on where it is
 // read (a button on the laptop, "on Work laptop" on a phone). An unknown code is still counted, in general words.
-import type { RuntimeInfo } from "../session-host";
+import type { RuntimeInfo } from "../session/session-host";
 
 /**
  * How much it costs to leave it: nothing works, something is missing, or it would be nicer — and the two levels

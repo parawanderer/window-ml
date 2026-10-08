@@ -9,8 +9,8 @@
 //
 // No `chrome` and no DOM: the local host, the hub host and the fake host all come through here unchanged.
 import { signal, type ReadonlySignal } from "@preact/signals";
-import type { Command, CommandError, CommandResult, HostStatus, RuntimeId, RuntimeInfo, SessionHost, SessionId, SessionIndexUpdate, SessionKey, SessionSummary, Unsubscribe } from "../session-host";
-import { parseSessionKey, sessionKey } from "../session-host";
+import type { Command, CommandError, CommandResult, HostStatus, RuntimeId, RuntimeInfo, SessionHost, SessionId, SessionIndexUpdate, SessionKey, SessionSummary, Unsubscribe } from "../session/session-host";
+import { parseSessionKey, sessionKey } from "../session/session-host";
 import { awaitingStart, batchReduce, forgetSessionReduced, onDebug, titleTried } from "../sidebar/debug-reducer";
 import { rev, sessionMap, view } from "../sidebar/store";
 import { SessionFeed } from "./session-feed";

@@ -10,7 +10,7 @@
 // phone that wakes to a sleeping laptop then backfills a run of upserts with nothing to apply them to — a list that
 // looks complete and is not. So the PUBLISHER re-publishes a whole snapshot every `SNAPSHOT_EVERY` updates, which
 // keeps one inside the ring at all times, and the READER's single job is to know whether it has seen one yet.
-import type { SessionIndexUpdate, SessionStreamMessage, SessionSummary } from "./session-host";
+import type { SessionIndexUpdate, SessionStreamMessage, SessionSummary } from "./session/session-host";
 import type { ChannelKey } from "./hub/seal";
 import type { Bytes } from "./hub/hpke";
 

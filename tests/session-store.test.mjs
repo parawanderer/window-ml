@@ -2,7 +2,7 @@
 // full. The IndexedDB backend is replaced by a map, so the policy is tested without a database.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SessionStore, planEviction, planExpiry, sizeOf, STORE_BUDGET_BYTES } from "../src/session-store.ts";
+import { SessionStore, planEviction, planExpiry, sizeOf, STORE_BUDGET_BYTES } from "../src/session/session-store.ts";
 
 const T = { timeout: 5000 };
 

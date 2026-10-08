@@ -8,7 +8,7 @@
 // Kept apart from the extension entry that wires it, with its inputs injected, so the freshness rule is tested
 // with a fake clock rather than trusted.
 
-import type { RuntimeId } from "../session-host";
+import type { RuntimeId } from "../session/session-host";
 
 /** What the reader is built from. Every input is a function, read at the moment of asking. */
 export interface ResidentSources {

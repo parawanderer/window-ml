@@ -12,7 +12,7 @@ import { holds, mayCommand } from "../src/chat/grants.ts";
 import { resumableHere } from "../src/chat/grants.js";
 import { CALM_KEY, GROUP_ALL_KEY, LIST_KEY, PINNED_KEY, PINNED_MODELS_KEY, calm, dropPin, installViewPrefs, listOpen, pinned, pinnedModels, setCalm, setGroupAll, setListOpen, togglePin, togglePinnedModel } from "../src/chat/view-mode.tsx";
 import { groupAllTools, sessionMap, view } from "../src/sidebar/store.ts";
-import { SESSION_CONTRACT_VERSION } from "../src/session-host.ts";
+import { SESSION_CONTRACT_VERSION } from "../src/session/session-host.ts";
 
 const flush = async (n = 4) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
 

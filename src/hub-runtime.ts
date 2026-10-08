@@ -10,7 +10,7 @@
 // `session.delete` is refused here.
 //
 // chrome-free, over its inputs, so it is tested against the real hub; `sw-hub.ts` plugs it into the worker.
-import { COMMAND_SCOPE, type Command, type CommandResult, type CommandType, type SessionIndexUpdate, type SessionStreamMessage, type SessionSummary } from "./session-host";
+import { COMMAND_SCOPE, type Command, type CommandResult, type CommandType, type SessionIndexUpdate, type SessionStreamMessage, type SessionSummary } from "./session/session-host";
 import { SessionPublisher, hubPublish } from "./session-publisher";
 import { IndexPublisher, LivePreview } from "./session-relay";
 import type { HubClient, HubEvent } from "./hub/client";

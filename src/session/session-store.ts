@@ -9,9 +9,9 @@
 // `planEviction` in `value-store.ts` is the same shape of decision for stored VALUES and deliberately not shared:
 // a value is idle when nothing has READ it and leaves a tombstone so a later dereference can say why it is gone,
 // while a session is evicted whole, by age, and simply stops being listed. The common part is four lines.
-import type { MlDebugEvent, SubcallUsage } from "./contract/contract-debug";
-import type { NeutralMessage } from "./contract/contract-chat";
-import type { StartRunPayload, StoredSession } from "./contract/contract-messages";
+import type { MlDebugEvent, SubcallUsage } from "../contract/contract-debug";
+import type { NeutralMessage } from "../contract/contract-chat";
+import type { StartRunPayload, StoredSession } from "../contract/contract-messages";
 import type { SessionSummary } from "./session-host";
 import { addBytes, emptyBytes, measureEvents, snapshotRows, type SessionBytes, type StorageSnapshot } from "./session-storage-stats";
 

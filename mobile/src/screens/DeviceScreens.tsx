@@ -11,7 +11,7 @@ import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Plus } from "lucide-react-native";
 import { groupFour, profileOf, profilesFor, removalWarning, roleName, SCOPES, type Grant, type Membership } from "../../../src/pairing/api";
-import type { DeviceInfo } from "../../../src/session-host";
+import type { DeviceInfo } from "../../../src/session/session-host";
 import { useEmbed } from "../embed";
 import { seen } from "../format";
 import type { Routes } from "../routes";

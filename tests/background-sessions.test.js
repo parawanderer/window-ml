@@ -322,7 +322,7 @@ test("session.pin keeps an unsaved session, writes the pin, and a restarted work
 test("every command the contract defines reaches the handler through the port", T, async () => {
     // The port kept its own list of known commands, which went stale: slice 5's commands were built and tested in the
     // handler and answered `unsupported` from here, which is the only way the chat page reaches them.
-    const { COMMAND_SCOPE } = await import("../src/session-host.ts");
+    const { COMMAND_SCOPE } = await import("../src/session/session-host.ts");
     const bg = loadBackground({ config });
     const page = openPage(bg);
     const types = Object.keys(COMMAND_SCOPE);
@@ -339,7 +339,7 @@ test("a worker starting with sessions past their retention forgets them before l
     // `require`, not `import`: the harness hands the worker the CommonJS build's IDBKeyRange, and a key range from the
     // other build is refused by this database, which aborts the delete.
     const { IDBFactory } = require("fake-indexeddb");
-    const { indexedDbBackend } = await import("../src/session-store.ts");
+    const { indexedDbBackend } = await import("../src/session/session-store.ts");
     const idb = new IDBFactory();
     const DAY = 24 * 60 * 60 * 1000;
     const be = indexedDbBackend(idb);
@@ -505,7 +505,7 @@ test("session storage stats answer an extension page and refuse a page", T, asyn
 
 test("the store budget: 0 caps nothing, and a lowered budget applies at once", T, async () => {
     const { IDBFactory } = require("fake-indexeddb");
-    const { indexedDbBackend } = await import("../src/session-store.ts");
+    const { indexedDbBackend } = await import("../src/session/session-store.ts");
     const idb = new IDBFactory();
     const be = indexedDbBackend(idb);
     const MB = 1024 * 1024;

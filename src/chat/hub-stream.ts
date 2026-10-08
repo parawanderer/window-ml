@@ -10,7 +10,7 @@
 // the contract's `epoch`/`cursor` are the runtime's, travel inside each sealed frame, and survive the hub entirely. A
 // client's `since` is the contract's, so it is compared against the frames' own cursors and never handed to the hub,
 // where it would name a position in a different sequence.
-import type { SessionId, SessionStreamMessage, StreamPosition } from "../session-host";
+import type { SessionId, SessionStreamMessage, StreamPosition } from "../session/session-host";
 
 type Event = Extract<SessionStreamMessage, { type: "event" }>;
 

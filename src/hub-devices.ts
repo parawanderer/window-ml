@@ -10,7 +10,7 @@
 // chrome-free; persistence is injected (the keyring's records, in the worker).
 import type { Certificate } from "./proto/wmlhub/v1/identity.gen";
 import { CertificateBody } from "./proto/wmlhub/v1/identity.gen";
-import type { DeviceInfo } from "./session-host";
+import type { DeviceInfo } from "./session/session-host";
 import { principalId, type Identity, type Verified } from "./hub/keys";
 import { bytes, type Bytes } from "./hub/hpke";
 import { Revoked, certificateHash, signRevocations } from "./hub/revocation";

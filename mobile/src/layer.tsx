@@ -16,7 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import type { BottomSheetModal } from "@gorhom/bottom-sheet";
 import { ArrowUp, ChevronDown, ChevronLeft, EllipsisVertical, Square } from "lucide-react-native";
-import type { ModelChoice } from "../../src/session-host";
+import type { ModelChoice } from "../../src/session/session-host";
 import { draftOf, onDraftRestored, saveDraft, sendHeld } from "./drafts";
 import { byPinned } from "./format";
 import { togglePinnedModel, usePinnedModels } from "./pinned-models";

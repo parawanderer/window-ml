@@ -12,7 +12,7 @@ const { HubClient } = await import("../src/hub/client.ts");
 const { Role } = await import("../src/hub/wire.ts");
 const { HubConnection } = await import("../src/chat/hub-connection.ts");
 const { HubHost } = await import("../src/chat/hub-host.ts");
-const { SESSION_CONTRACT_VERSION } = await import("../src/session-host.ts");
+const { SESSION_CONTRACT_VERSION } = await import("../src/session/session-host.ts");
 const { HubRuntime, rehome } = await import("../src/hub-runtime.ts");
 
 test("rehome swaps a local runtime id for the principal wherever a `runtime` key holds one, in a copy", () => {

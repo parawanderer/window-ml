@@ -2,7 +2,7 @@
 // composer and waiting bar (`SessionChrome`), in the same words the web page uses. Pure, so the rules are unit-tested
 // without a WebView, and the app never re-derives a grant or a status on its own (docs/spec/NATIVE_SHELL.md).
 
-import type { AgentTarget, Principal, RuntimeInfo, SessionKey, SessionSummary, StorageReport } from "../session-host";
+import type { AgentTarget, Principal, RuntimeInfo, SessionKey, SessionSummary, StorageReport } from "../session/session-host";
 import { formatBytes } from "../resource/resource-model";
 import { mayCommand, mayStart, resumableHere } from "../chat/grants";
 import type { AttentionRow, RuntimeStorageView, SessionChrome } from "./bridge";

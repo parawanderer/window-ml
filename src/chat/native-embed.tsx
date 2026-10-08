@@ -8,8 +8,8 @@
 
 import { render } from "preact";
 import { effect, signal } from "@preact/signals";
-import type { SessionHost, SessionKey } from "../session-host";
-import { parseSessionKey } from "../session-host";
+import type { SessionHost, SessionKey } from "../session/session-host";
+import { parseSessionKey } from "../session/session-host";
 import { encode, parseToWeb, type BridgeAccount, type ToNative, type ToWeb } from "../native/bridge";
 import { pairingBridge, pairingInfo } from "../native/pairing-bridge";
 import { bridgeVault } from "../native/vault-bridge";

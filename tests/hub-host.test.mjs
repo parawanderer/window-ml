@@ -12,7 +12,7 @@ const { SessionPublisher, hubPublish } = await import("../src/session-publisher.
 const { IndexPublisher } = await import("../src/session-relay.ts");
 const { HubConnection } = await import("../src/chat/hub-connection.ts");
 const { HubHost } = await import("../src/chat/hub-host.ts");
-const { SESSION_CONTRACT_VERSION } = await import("../src/session-host.ts");
+const { SESSION_CONTRACT_VERSION } = await import("../src/session/session-host.ts");
 
 const CAPS = { chat: true, agent: true, tabs: true };
 

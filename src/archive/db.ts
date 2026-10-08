@@ -10,9 +10,9 @@
 // - each event's text is copied into an FTS5 table, so a search over years of history is one query.
 import type { Database, Sqlite3Static } from "@sqlite.org/sqlite-wasm";
 import type { MlDebugEvent } from "../contract/contract-debug";
-import type { SessionSummary } from "../session-host";
-import type { SessionHistory } from "../session-store";
-import type { SessionBytes } from "../session-storage-stats";
+import type { SessionSummary } from "../session/session-host";
+import type { SessionHistory } from "../session/session-store";
+import type { SessionBytes } from "../session/session-storage-stats";
 
 /** A value SQLite will store or hand back. */
 export type SqlValue = string | number | null | Uint8Array;

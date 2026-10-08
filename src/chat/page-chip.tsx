@@ -4,7 +4,7 @@
 // itself — and having it live in one of them made the other import from its sibling, which is how the list and the
 // pane came to depend on each other in a circle.
 
-import type { SessionSummary } from "../session-host";
+import type { SessionSummary } from "../session/session-host";
 import { cursorTipOn } from "../sidebar/ui-kit";
 
 /** A page's host, which is what tells two of someone's tabs apart in one line. Falls back to the whole string,

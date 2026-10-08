@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { SessionIndex } from "../src/session-index.ts";
+import { SessionIndex } from "../src/session/session-index.ts";
 
 const TAB_A = 11, TAB_B = 22;
 const bg = (tabId = TAB_A) => ({ tabId, trusted: true });
@@ -358,7 +358,7 @@ test("a resume note that does not say what it dropped never enters the stream", 
 });
 
 test("every event kind the index accepts has been considered for de-duplication", async () => {
-    const src = await readFile(new URL("../src/session-index.ts", import.meta.url), "utf8");
+    const src = await readFile(new URL("../src/session/session-index.ts", import.meta.url), "utf8");
     const known = [...src.slice(src.indexOf("const KNOWN_KINDS"), src.indexOf("\n", src.indexOf("const KNOWN_KINDS"))).matchAll(/"([a-z-]+)"/g)].map((m) => m[1]);
     assert.ok(known.length >= 12, `found ${known.length} kinds`);
 

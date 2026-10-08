@@ -7,7 +7,7 @@
 
 import { signal } from "@preact/signals";
 import { useState } from "preact/hooks";
-import type { SessionKey } from "../session-host";
+import type { SessionKey } from "../session/session-host";
 import { canPrintSession, exportSession, exportSessionJson, printSession } from "../sidebar/export";
 import { truncate } from "../sidebar/format";
 import { Dialog } from "../sidebar/dialog";

@@ -26,7 +26,7 @@
 // optimisation and the wrong one for something a reader relies on.
 
 import type { MlDebugEvent } from "../contract/contract-debug";
-import type { SessionKey, SessionSummary } from "../session-host";
+import type { SessionKey, SessionSummary } from "../session/session-host";
 import type { FeedSnapshot } from "./session-feed";
 
 /** The largest session kept, serialized. A screenshot-heavy agent run passes it quickly and is refetched instead. */

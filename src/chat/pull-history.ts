@@ -9,7 +9,7 @@
 // and a guarantee that it ends.
 
 import type { ChatStore } from "./chat-store";
-import type { SessionKey } from "../session-host";
+import type { SessionKey } from "../session/session-host";
 
 /** How a pull is going: `done` of `total` events, both counted in history positions. */
 export interface PullProgress { done: number; total: number }
