@@ -242,3 +242,40 @@ export function panelPath(normalized: string): string {
 
 /** Steps one JS watch may take: a fraction of a survey's, since a panel re-reads every watch every two seconds. */
 export const WATCH_STEPS = 20_000;
+
+/** The longest console entry: a short program typed by a person, not a module. */
+export const MAX_CONSOLE_CHARS = 8000;
+/** Steps one console entry may take: ten watches' worth, since it runs once when asked, not every two seconds. */
+export const CONSOLE_STEPS = 200_000;
+
+/** One console entry's answer: a watch's, plus what it printed with `console.log`, kept when it then throws. */
+export interface ConsoleResult extends WatchResult {
+    logs?: string[];
+}
+
+/** Runs a console entry: the read-only dialect, with `inspector` bound and `ml.current` the live snapshot, each printed
+ *  line handed to `onLog` as it is printed. Injected for the same reason as {@link WatchJs}. */
+export type ConsoleJs = (code: string, inspector: unknown, onLog: (line: string) => void) => Promise<unknown>;
+
+/**
+ * Run one console entry (STATE_INSPECTOR.md, "A console beside it"). The watch's expression language over the same tree,
+ * as a PROGRAM: statements, `let`, loops and `console.log`, whose value is its last expression or its `return`. `$…` is
+ * a JSONPath, as in a watch.
+ * @param tree from {@link stateTree}
+ * @param code what was typed
+ * @param js the dialect, in the worker
+ */
+export async function evalConsole(tree: Record<string, unknown>, code: string, js: ConsoleJs): Promise<ConsoleResult> {
+    const c = code.trim();
+    if (!c) return { expr: code, error: "nothing to run" };
+    if (c.length > MAX_CONSOLE_CHARS) return { expr: code, error: `longer than ${MAX_CONSOLE_CHARS} characters` };
+    if (c.startsWith("$")) return { ...(await evalWatch(tree, c)), expr: code };
+    const logs: string[] = [];
+    const printed = () => (logs.length ? { logs } : {});
+    try {
+        const value = await js(c, tree.inspector, (line) => { logs.push(line); });
+        return { expr: code, value, ...(PLAIN_PATH.test(c) ? { at: c } : {}), ...printed() };
+    } catch (err) {
+        return { expr: code, error: err instanceof Error ? err.message : String(err), ...printed() };
+    }
+}

@@ -401,3 +401,96 @@ test("a shared watch has a note line, saved on Enter and kept beside the watches
         assert.deepEqual({ ...V.notes.value }, {});
     } finally { chrome.storage.local.set = was; }
 });
+
+// --- the console: the same language as a program, run once on Enter ---
+
+/** Answer reads as the worker would, and a console entry with `answers[code]`; returns what each console send carried. */
+function withConsole(dump, answers) {
+    const sent = [];
+    chrome.runtime.sendMessage = (msg, cb) => {
+        if (msg.payload.console === undefined) return cb({ data: { ts: 0, ...dump } });
+        sent.push(msg.payload);
+        cb({ data: { ts: 0, ...dump, console: answers[msg.payload.console] ?? { expr: msg.payload.console, value: undefined } } });
+    };
+    return sent;
+}
+const consoleInput = (host) => host.querySelector(".rstate-console-input");
+async function typeRun(host, code) {
+    const input = consoleInput(host);
+    await act(async () => { input.value = code; input.dispatchEvent(new win.Event("input", { bubbles: true })); });
+    await act(async () => { input.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+}
+
+test("Enter runs the line once against this run, and the entry shows what it printed and what it answered", async () => {
+    V.consoleEntries.value = [];
+    V.watches.value = [];
+    const sent = withConsole({ members: [], entries: [] }, {
+        "inspector.run.init.tools.length": { expr: "inspector.run.init.tools.length", value: 2 },
+        "for (const t of x) console.log(t)": { expr: "for (const t of x) console.log(t)", logs: ["exec", "look"] },
+        "inspector.n = 1": { expr: "inspector.n = 1", error: "can only assign to an object or array you built", logs: ["before"] },
+    });
+    const host = await show({ members: [], entries: [] });
+    for (const c of ["inspector.run.init.tools.length", "for (const t of x) console.log(t)", "inspector.n = 1", "   "]) await typeRun(host, c);
+    assert.deepEqual(sent, [
+        { run: "r1", console: "inspector.run.init.tools.length" },
+        { run: "r1", console: "for (const t of x) console.log(t)" },
+        { run: "r1", console: "inspector.n = 1" },
+    ], "one send per entry, no watches with it, and a blank line is not sent");
+    const entries = [...host.querySelectorAll(".rstate-console-entry")];
+    assert.equal(entries.length, 3);
+    assert.equal(entries[0].querySelector(".rstate-console-text").textContent, "inspector.run.init.tools.length");
+    assert.match(entries[0].textContent, /‹\s*2/);
+    assert.deepEqual([...entries[1].querySelectorAll(".rstate-console-log")].map((l) => l.textContent), ["exec", "look"]);
+    assert.match(entries[1].textContent, /undefined/, "a loop answers undefined, as JavaScript does");
+    assert.equal(entries[2].querySelector(".rstate-console-log").textContent, "before", "what it printed before it threw");
+    assert.match(entries[2].querySelector(".rstate-watch-err").textContent, /only assign/);
+    assert.equal(consoleInput(host).value, "", "the line is cleared for the next one");
+});
+
+test("the arrows recall what was typed, newest first, and back down to an empty line; history is kept on this device", async () => {
+    V.consoleEntries.value = [];
+    V.consoleHistory.value = [];
+    const stored = [];
+    const was = chrome.storage.local.set;
+    chrome.storage.local.set = (o) => stored.push(o);
+    try {
+        withConsole({ members: [], entries: [] }, {});
+        const host = await show({ members: [], entries: [] });
+        for (const c of ["a.b", "c.d", "a.b"]) await typeRun(host, c);
+        assert.deepEqual([...V.consoleHistory.value], ["c.d", "a.b"], "a repeat moves to the end rather than appearing twice");
+        assert.deepEqual(stored.at(-1), { ml_runstate_console: ["c.d", "a.b"] });
+        const input = consoleInput(host);
+        const key = async (k) => { await act(async () => { input.dispatchEvent(new win.KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })); }); return input.value; };
+        assert.equal(await key("ArrowUp"), "a.b");
+        assert.equal(await key("ArrowUp"), "c.d");
+        assert.equal(await key("ArrowUp"), "c.d", "the oldest stays put");
+        assert.equal(await key("ArrowDown"), "a.b");
+        assert.equal(await key("ArrowDown"), "");
+        assert.equal(await key("ArrowDown"), "", "past the newest is the empty line");
+    } finally { chrome.storage.local.set = was; }
+});
+
+test("each run shows its own entries; an entry can be pinned as a watch, and clear empties this run's only", async () => {
+    V.watches.value = [];
+    V.consoleEntries.value = [{ run: "r1", code: "inspector.x", r: { expr: "inspector.x", value: 1 } }, { run: "r2", code: "inspector.y", r: { expr: "inspector.y", value: 2 } }];
+    withConsole({ members: [], entries: [] }, {});
+    const host = await show({ members: [], entries: [] });
+    const texts = () => [...host.querySelectorAll(".rstate-console-text")].map((t) => t.textContent);
+    assert.deepEqual(texts(), ["inspector.x"]);
+    await act(async () => { host.querySelector('.rstate-console-entry button[aria-label="Watch inspector.x"]').click(); });
+    assert.deepEqual(V.watches.value, ["inspector.x"]);
+    assert.equal(host.querySelector('.rstate-console-entry button[aria-label="Watch inspector.x"]'), null, "already watched: no pin");
+    await act(async () => { host.querySelector(".rstate-console-clear").click(); });
+    assert.deepEqual(texts(), []);
+    assert.deepEqual(V.consoleEntries.value.map((e) => e.run), ["r2"], "another run's entries are left alone");
+});
+
+test("the console input completes like the watch input, over the same shape", async () => {
+    V.consoleEntries.value = [];
+    withConsole({ members: [], entries: [], shape: SHAPE }, {});
+    const host = await show({ members: [], entries: [], shape: SHAPE });
+    const input = consoleInput(host);
+    await act(async () => { input.value = "inspector.run.init.to"; input.setSelectionRange(21, 21); input.dispatchEvent(new win.Event("input", { bubbles: true })); });
+    assert.deepEqual(offered(host), ["tools"]);
+    assert.notEqual(host.querySelector(".rstate-console-add ul").id, host.querySelector(".rstate-watches .rstate-watch-input").getAttribute("aria-controls"), "two inputs, two lists");
+});
