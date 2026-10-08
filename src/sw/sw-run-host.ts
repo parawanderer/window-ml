@@ -448,9 +448,10 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     const CHANNEL_GONE = /message channel closed|Receiving end does not exist|No tab with id/i;
                     let env: Partial<import("../contract").PageToolEnvelope>;
                     // The document this call goes to: if the call navigates, that document stays alive a moment and
-                    // still knows the run id, and its re-adopt must not pass for the destination's.
-                    await navBarrier.whenReady(tabId);
-                    const sentTo = await documentOn(tabId);
+                    // still knows the run id, and its re-adopt must not pass for the destination's. Unknown while a
+                    // navigation is in flight (the call then goes to whichever document re-adopts); never a wait of
+                    // its own, since the barrier's timeout releases a waiter without ending the navigation.
+                    const sentTo = navBarrier.isNavigating(tabId) ? undefined : await documentOn(tabId);
                     /** The destination's pageInfo, unless it came from the document this call left. */
                     const takeInfo = (): string | undefined => {
                         const r = readoptPageInfo.get(tabId); readoptPageInfo.delete(tabId);
