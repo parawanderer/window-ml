@@ -3239,6 +3239,15 @@ test("pythonExec tables:'current' off a Google Sheet (with no table) errors befo
     assert.equal(fetched, false, "no privileged fetch when the page isn't a sheet");
 });
 
+test("pythonExec tables: a URL not in the page's fetch cache says the cache is the page's, never that the run never fetched it", async () => {
+    // The cache does not survive a navigation, so a run that fetched this URL on its previous page was told it never had.
+    const world = loadPageWorld({ onRuntimeMessage: () => ({ data: { ok: true, value: 1, stdout: "" } }) });
+    const err = await world.ml.pythonExec("return 1", { tables: "https://example.com/data.csv" }).catch((e) => e);
+    assert.match(err.message, /not in this page's fetch cache/);
+    assert.match(err.message, /does not survive a navigation/);
+    assert.doesNotMatch(err.message, /in this run/);
+});
+
 // A TABLE BY VALUE (a pointer's table the loop resolved, or one a page script holds): loaded whole, labelled by its pointer,
 // and REFUSED when it is only a preview, because a sum over the first rows of a larger table is a confident wrong answer.
 test("pythonExec tables: a whole table by value loads its rows, labelled by the pointer it came from", async () => {
