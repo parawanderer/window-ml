@@ -37,6 +37,8 @@ function Member({ m, e }: { m: RunStateMember; e: StateEntry | undefined }) {
             <div class="rstate-name">
                 <span class="rstate-key" {...cursorTipOn(memberTip(m))}>{name}</span>
                 {m.audience === "human" ? <span class="rstate-aud" {...cursorTipOn("Only you see this: the model is not given it.")}>you only</span> : null}
+                {/* The PAGE answered for this one, and a hostile page answers whatever it likes: said, not hidden. */}
+                {m.realm === "page" ? <span class="rstate-aud rstate-page" {...cursorTipOn("Reported by the page the run is on. A page can put anything here, so read it as the page's word.")}>from the page</span> : null}
             </div>
             {!e ? <div class="rstate-none">nothing for this run</div>
                 : e.error ? <div class="hint err">could not read: {e.error}</div>
@@ -81,18 +83,19 @@ export function RunStateView({ run }: { run: string | null }) {
     return (
         <div class="rstate">
             <PanelHead>
-                {dump ? <span class="rstate-asof" {...cursorTipOn(`Read from the service worker every ${RUN_STATE_POLL_MS / 1000} s while this panel is open.`)}>
+                {dump ? <span class="rstate-asof" {...cursorTipOn(`Read from the service worker, and from the page the run is on, every ${RUN_STATE_POLL_MS / 1000} s while this panel is open.`)}>
                     as of {new Date(dump.ts).toLocaleTimeString()}</span> : <span />}
             </PanelHead>
             {error ? <div class="hint err">could not read the run's state: {error}</div>
                 : !run ? <div class="hint">Open a session to see what its run holds.</div>
                     : dump == null ? null
-                        : [...groups].map(([g, ms]) => (
+                        : [...(dump.pageError ? [<div class="hint" key="page-error">The page's own state (its answer, its <code>@pt</code>/<code>@box</code> tokens) is not shown: {dump.pageError}.</div>] : []),
+                            ...[...groups].map(([g, ms]) => (
                             <section class="rstate-group" key={g}>
                                 <h4 class="rstate-group-head">{g}</h4>
                                 {ms.map((m) => <Member key={m.id} m={m} e={byId.get(m.id)} />)}
                             </section>
-                        ))}
+                        ))]}
         </div>
     );
 }

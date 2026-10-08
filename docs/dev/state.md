@@ -39,8 +39,8 @@ page-hosted one. Several stores exist once per host.
 | The live context (`messages`) and per-message `meta` | the loop's closure (`agent-loop.ts`) | per-step checkpoint into `bgRuns` / `ml_bgrun_*`, without meta | `messages` / `meta`. **The background host does not pass `contextSink`, so a background run's context cannot be snapshotted yet** |
 | `@tool:` values | `tokensByRun` TokenStore (`sw-runs.ts`, memory, 200 per session); page-hosted: `control.tokens` | no | `pointers` |
 | Large stored values (fetched tables) | `ml-values` IndexedDB (`ValueStore`), claimed per session | yes | `pointers` (the join reads both stores) |
-| `@pt` / `@box` tokens | `pointRegistry`, `boxRegistry` (`util.ts`, page) | no; die on navigation, unannounced | `pointers` (new) |
-| The answer set (what the run hands the person) | `answerSets` (`tool-exec.ts`, page), reset each turn | no | new |
+| `@pt` / `@box` tokens | `pointRegistry`, `boxRegistry` (`util.ts`, page) | no; die on navigation, unannounced | `page.points`, `page.boxes` (page realm) |
+| The answer set (what the run hands the person) | `answerSets` (`tool-exec.ts`, page), reset each turn | no | `run.answer` (page realm, while a turn runs) |
 | Queued steering messages (the mailbox) | background: `runInboxes` (live turn only); page: `AgentControl.inbox` | no | `mailbox` |
 | Open approval gates | `pendingApprovals` (`sw-consent.ts`); client mirrors `AgentStep.awaitingApproval`, `SessionSummary.pendingApprovals` | no | `approvals` (new) |
 | Model switched mid-run | `runModels` | `ml_run_models` (LRU 200) | `run.model` |
@@ -136,6 +136,10 @@ hold live network handles: neither shown nor evaluated).
 Each realm's bundle has its own registry (`src/state-registry.ts`); a snapshot asks the realm that holds the run.
 Declared so far, in the worker: `run.init`, `run.sub`, `run.model`, `run.interrupted`, `run.mailbox`, `run.pointers`,
 `run.page`, `run.messages`, `run.input`, `grants.turn` (`sw-runs.ts`), `run.values` (`sw-values.ts`), `run.approvals`, `grants.call`, `grants.fetch`, `grants.credentialedFetch` (`sw-consent.ts`),
-`run.log` (`sw-run-log.ts`), `session.title` (`sw-sessions.ts`). `node scripts/check-state.mjs` with no arguments lists the stores that predate the ratchet
+`run.log` (`sw-run-log.ts`), `session.title` (`sw-sessions.ts`). In the page: `run.answer` (`run-delegation.ts`),
+`page.points`, `page.boxes` (`util.ts`), asked of the run's tab with `RUN_STATE_IN_PAGE` (`sw-run-state.ts`). Each realm
+answers only for the declarations whose `realm` is its own, since a module both bundles load declares in each. A page's
+answer is the page's word: the worker sanitizes it (`pageStateFrom`), forces its realm, and refuses a member id the
+worker already declares. `node scripts/check-state.mjs` with no arguments lists the stores that predate the ratchet
 and are neither declared nor marked (134 when it was written). This file shrinks to the scopes, the places and the
 hazards as the declarations take over its rows.

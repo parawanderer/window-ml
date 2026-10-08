@@ -5,6 +5,7 @@
 import { truncate, shadowRootStats, iframeStats, markdownTwin } from "./dom/dom";
 import { TOKEN_PAYLOAD_LEN, checkChar, formatToken } from "./pointers/token-id";
 import type { ShotBox, VisionMemory } from "./contract/contract-render";
+import { defineState } from "./state-registry";
 
 /**
  * The agent's persistent JS scratchpad — a plain object injected into every `exec` body as the lexical
@@ -250,6 +251,11 @@ export const cropDataUrl = (dataUrl: string, rect: { left: number; top: number; 
 // injected (screenshot) and builtin-tools (locate/click) use one registry. The token is
 // opaque — the model copies it verbatim, never authoring coordinates. Page-lifetime map.
 const pointRegistry = new Map<string, { x: number; y: number }>();
+defineState({
+    id: "page.points", scope: "page", realm: "page", audience: "model", lostOn: ["navigation"],
+    describe: "The `@pt` tokens `locate` minted on this page, with the viewport point each stands for. Shared by every run in the tab.",
+    read: () => (pointRegistry.size ? [...pointRegistry].map(([id, p]) => ({ token: `@pt:${id}`, ...p })) : undefined),
+});
 export const POINT_RE = /^@pt:([0-9a-f]{1,12})$/;
 // Half-size of the square `look({ @pt })` crops around a point (→ a 2·R box). Shared
 // so `locate({ selector: "@pt:…" })` searches the EXACT box look showed — the model
@@ -301,6 +307,11 @@ export const seenNearby = (mem: VisionMemory | null | undefined, x: number, y: n
 // a pure-canvas UI. Page-lifetime map, shared by injected (look) + builtin-tools (locate).
 export type PtBox = { left: number; top: number; right: number; bottom: number };
 const boxRegistry = new Map<string, PtBox>();
+defineState({
+    id: "page.boxes", scope: "page", realm: "page", audience: "model", lostOn: ["navigation"],
+    describe: "The `@box` tokens `locate` minted on this page, with the viewport box each stands for. Shared by every run in the tab.",
+    read: () => (boxRegistry.size ? [...boxRegistry].map(([id, b]) => ({ token: `@box:${id}`, ...b })) : undefined),
+});
 export const BOX_RE = /^@box:([0-9a-f]{1,12})$/;
 export const mintBox = (b: PtBox): string => {
     const id = Math.random().toString(16).slice(2, 10);

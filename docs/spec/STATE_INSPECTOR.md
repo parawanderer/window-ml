@@ -235,9 +235,12 @@ The Python bench is the Python half of this already. The two are the same kind o
    `grants.call`, `grants.fetch`, `grants.credentialedFetch`, and for the live turn `run.input` and `grants.turn`
    (the consented origins and approved sheets in `hostRun`'s closure, through `turnByRun`), `run.values` (the
    `ValueStore` rows the session holds), joined to `run.pointers` by each pointer's `stored` key, with `linked` saying
-   whether the context still mentions a pointer, and `session.title` (the worker's index, which owns it). Still to
-   come in step 1: `answer`, the page's `@pt`/`@box` tokens (page realm), page-hosted runs, and `session.context` for
-   a remote reader.
+   whether the context still mentions a pointer, and `session.title` (the worker's index, which owns it). The PAGE's
+   members are asked of the run's tab (`RUN_STATE_IN_PAGE`, relayed by the content script; never a discarded tab,
+   which a read must not wake): `run.answer` (the answer set, while a turn runs), `page.points` and `page.boxes` (the
+   `@pt`/`@box` registries, page-wide). A page answers this itself, so what it says is sanitized in the worker and
+   labelled "from the page", and may not shadow a worker member. Still to come in step 1:
+   page-hosted runs, and `session.context` for a remote reader.
 2. **Watches**, device-local, then the share toggle and `debug.userWatches`.
 3. **The read-only console.**
 4. **Python per-run state**: the investigation above, then the design, then the Python group.
