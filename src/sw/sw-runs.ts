@@ -268,9 +268,14 @@ export const runReplayBuffer = new Map<number, unknown[]>();
 
 const REPLAY_CAP = 400;   // drop-oldest (screenshots are big)
 
+// The document each tab's replay was last sent to. A page sends CONTENT_READY whenever it likes (PAGE_ADOPT_HELLO), and
+// each one replayed the whole history into the card again, which repeats every unsequenced row the person reads.
+export const replayedTo = new Map<number, string>();   // state: plumbing
+
 // The destination page's pageInfo, captured on re-adopt (RUN_READOPTED) and consumed ONCE by the navigate
-// tool call awaiting it — so a nav's result carries the new page's context (orient-on-nav). Keyed by tab.
-export const readoptPageInfo = new Map<number, string>();
+// tool call awaiting it — so a nav's result carries the new page's context (orient-on-nav). Keyed by tab, with the
+// document that sent it, so a caller can refuse the one its navigation left.
+export const readoptPageInfo = new Map<number, { info: string; doc?: string }>();
 
 /** Keep one event in a tab's replay ring, so a page that loads LATE can rebuild the run's corner card. */
 export const bufferReplay = (tabId: number, event: unknown): void => {

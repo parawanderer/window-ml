@@ -58,6 +58,15 @@ const sendDetail = (tabId: number, msg: unknown): Record<string, string | number
     return { tab: tabId, ...(typeof name === "string" && name ? { tool: name } : {}) };
 };
 
+/** The tab's main-frame document: the barrier's record of the last commit, else the browser's answer (a worker that was
+ *  evicted has no record). Undefined where neither knows, and then a re-adopt is judged on the navigation alone. */
+async function documentOn(tabId: number): Promise<string | undefined> {
+    const known = navBarrier.currentDocument(tabId);
+    if (known) return known;
+    const frame = await Promise.resolve(chrome.webNavigation?.getFrame?.({ tabId, frameId: 0 })).catch(() => null) as { documentId?: string } | null;
+    return typeof frame?.documentId === "string" ? frame.documentId : undefined;
+}
+
 /** Send a message into a run's tab and wait for the page's answer, the way every delegated tool call is sent: held
  *  while the tab navigates, and watched while it waits, so a discarded tab is rebuilt and a frozen one is bounded
  *  (see above). Also how the worker pushes a run's toolset into a tab (sw-run-start.ts `adoptOnTab`). */
@@ -438,6 +447,16 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     // page's context — actionable, and safe (no blind retry that could double-submit a form).
                     const CHANNEL_GONE = /message channel closed|Receiving end does not exist|No tab with id/i;
                     let env: Partial<import("../contract").PageToolEnvelope>;
+                    // The document this call goes to: if the call navigates, that document stays alive a moment and
+                    // still knows the run id, and its re-adopt must not pass for the destination's. Unknown while a
+                    // navigation is in flight (the call then goes to whichever document re-adopts); never a wait of
+                    // its own, since the barrier's timeout releases a waiter without ending the navigation.
+                    const sentTo = navBarrier.isNavigating(tabId) ? undefined : await documentOn(tabId);
+                    /** The destination's pageInfo, unless it came from the document this call left. */
+                    const takeInfo = (): string | undefined => {
+                        const r = readoptPageInfo.get(tabId); readoptPageInfo.delete(tabId);
+                        return r && (sentTo === undefined || r.doc !== sentTo) ? r.info : undefined;
+                    };
                     try {
                         env = await sendTool({ runId, name, args, stream: !!onStream }, onStream) as Partial<import("../contract").PageToolEnvelope>;
                     } catch (e) {
@@ -448,9 +467,8 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                             // The page navigated out from under the call. Its pageInfo may already be here (a fast
                             // re-adopt beat us); else engage the barrier and wait for it (bounded by the barrier's
                             // own timeout, then a generic "still loading" note).
-                            let info = readoptPageInfo.get(tabId);
-                            if (!info) { navBarrier.noteNavigating(tabId); await navBarrier.whenReady(tabId); info = readoptPageInfo.get(tabId); }
-                            readoptPageInfo.delete(tabId);
+                            let info = takeInfo();
+                            if (!info) { navBarrier.noteNavigating(tabId, sentTo); await navBarrier.whenReady(tabId); info = takeInfo(); }
                             hasNavigated = true;   // the run moved pages → the terminal result must fan to the new page
                             env = { result: `The page navigated while running "${name}" — the action triggered a navigation, or the page redirected mid-call.${info ? `\n\nYou are now on the new page:\n${info}` : " The new page is still loading — wait, then look."}\n\nNOTE: "${name}" may NOT have taken effect on the previous page. Verify the CURRENT page (look / findByText) and re-run "${name}" here if the change didn't happen.` };
                         }
@@ -463,14 +481,14 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     // model call + tool delegation, letting the next tool fire into the dying document.
                     // The next delegateSend then waits for the new page to re-adopt. Skip an errored nav.
                     if (name === "navigate" && !String(env?.result || "").startsWith("Error")) {
-                        navBarrier.noteNavigating(tabId); hasNavigated = true;
+                        navBarrier.noteNavigating(tabId, sentTo); hasNavigated = true;
                         // Orient-on-nav: WAIT for the new document to re-adopt, then fold its pageInfo into
                         // THIS tool's result — so the model's next turn already knows where it landed instead
                         // of spending a look()/pageInfo turn to find out. The barrier's own timeout is the
                         // fallback (a nav that never re-adopts → whenReady resolves, no pageInfo → plain result).
                         if (env) {
                             await navBarrier.whenReady(tabId);
-                            const info = readoptPageInfo.get(tabId); readoptPageInfo.delete(tabId);
+                            const info = takeInfo();
                             if (info) env.result = `${env.result || ""}\n\nYou are now on the new page:\n${info}`;
                             // verify → fold a view of the DESTINATION page into the result, captured on the NEW
                             // page after re-adopt (same await path as the click/type verify). "viewport" (or

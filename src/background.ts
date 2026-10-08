@@ -24,7 +24,7 @@ import { handleRunLogDump } from "./sw/sw-run-log";
 import { handleRunStateDump } from "./sw/sw-run-state";
 import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw/sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, pendingGrants, takeCredFetch, isExtensionSender } from "./sw/sw-consent";
-import { isWorkerRun, makeWorkerRun, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
+import { isWorkerRun, makeWorkerRun, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
 import { startBackgroundRun, delegateStreams, hostRun } from "./sw/sw-run-host";
@@ -114,11 +114,13 @@ if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
         // A BACKGROUND run survives the navigation and keeps its own per-run claim, so this never cuts one short.
         if (d.frameId === 0) releaseSessionValues(pageValueSession(d.tabId));
         if (d.frameId === 0 && activeRuns.has(d.tabId)) navBarrier.noteNavigating(d.tabId);
+        // After noteNavigating, which takes the document being left from the barrier: a re-adopt from it is refused.
+        if (d.frameId === 0 && typeof d.documentId === "string") navBarrier.noteDocument(d.tabId, d.documentId);
     });
     chrome.webNavigation.onHistoryStateUpdated?.addListener((d) => { if (d.frameId === 0) tabPageUrl.set(d.tabId, d.url); });
 }
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
-    chrome.tabs.onRemoved.addListener((tabId) => { tabPageUrl.delete(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseSessionValues(pageValueSession(tabId)); releaseDebugger(tabId); sessionServer.pageGone(tabId, { closed: true }); });
+    chrome.tabs.onRemoved.addListener((tabId) => { tabPageUrl.delete(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); replayedTo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseSessionValues(pageValueSession(tabId)); releaseDebugger(tabId); sessionServer.pageGone(tabId, { closed: true }); });
 }
 // THE THIRD THING A TAB CAN DO, besides navigate and close: come back under a new id. A discard the browser
 // restores, or a prerender swapped in, fires only this — so without it a run's tab state is left filed under an
@@ -333,7 +335,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             // Durable resume, driven from here. The barrier holds the run's first tool call until the page answers the
             // adopt (RUN_READOPTED), so the call cannot reach a page whose toolset is not registered yet.
             if (tabId != null && resumeIds.length) {
-                navBarrier.noteNavigating(tabId);
+                navBarrier.noteNavigating(tabId, null);   // the sender is the document about to re-adopt, not one being left
                 for (const runId of resumeIds) hostRun({ type: "RESUME_RUN", payload: { runId, task: "" } }, tabId, () => { /* reported through its events */ });
             }
             // Overlay/off HUD replay-across-nav: stream the run's buffered history so the fresh card/overlay
@@ -343,8 +345,10 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             // AFTER the run finished: a completed run re-adopted from bgRuns replays its history ONCE so the
             // destination page still gets its card + final answer (else the corner card is blank there).
             const hasActive = !!(ids && ids.size);
-            if (tabId != null && adopt.length) {
+            const doc = typeof sender.documentId === "string" ? sender.documentId : undefined;
+            if (tabId != null && adopt.length && (doc === undefined || replayedTo.get(tabId) !== doc)) {
                 const history = runReplayBuffer.get(tabId) || [];
+                if (doc !== undefined) replayedTo.set(tabId, doc);   // once per document: a page can ask again at will
                 if (history.length) {
                     for (const event of history) chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
                     // A COMPLETED-only re-adopt (no live run) has served its purpose — drop the buffer so a later
@@ -358,13 +362,17 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     if (message.type === "RUN_READOPTED") {
         // The fresh document re-registered a run's toolset → release the navigation barrier so the held
         // delegated tool runs against the new page. Keyed by tab (the barrier is per-tab). Fire-and-forget.
+        // Any document on the tab can send this, the one being left included: it still holds the run id, and its
+        // pageInfo would reach the model as the destination's. So only the tab's own frame, only during a navigation,
+        // and never from the document the navigation is leaving (navBarrier.accepts).
         const tabId = sender.tab?.id;
         const pageInfo = (message.payload as { pageInfo?: string })?.pageInfo;
-        if (tabId != null) {
+        const doc = typeof sender.documentId === "string" ? sender.documentId : undefined;
+        if (tabId != null && (sender.frameId ?? 0) === 0 && navBarrier.accepts(tabId, doc)) {
             // Stash the new page's context BEFORE releasing the barrier, so the `navigate` tool call awaiting
             // re-adoption reads it and folds it into its result (orient-on-nav — see the navigate branch below).
-            if (pageInfo) readoptPageInfo.set(tabId, pageInfo);
-            navBarrier.noteReadopted(tabId);
+            if (pageInfo) readoptPageInfo.set(tabId, { info: pageInfo, doc });
+            navBarrier.noteReadopted(tabId, doc);
         }
         return;
     }
@@ -542,7 +550,10 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // A LIVE output chunk from a DELEGATED page tool (its ctx.stream) → hand it to the in-flight call's
         // sink, which is the loop's throttled fan → an agent-step `streamOutput` delta on every surface.
         // Keyed by runId: the loop delegates tool calls sequentially, so one is in flight per run.
-        const sink = delegateStreams.get(message.runId);
+        // Only from the run's own tab and frame: the run id reaches other tabs (a page-hosted run handed to the
+        // worker, a session message), and a line from one would show as this tool's output.
+        const onItsTab = sender.tab?.id != null && (sender.frameId ?? 0) === 0 && !!activeRuns.get(sender.tab.id)?.has(String(message.runId || ""));
+        const sink = onItsTab ? delegateStreams.get(message.runId) : undefined;
         // `skipped`: characters the page's sender left out before this chunk (stream-sender.ts), which the fan counts.
         const skipped = typeof message.skipped === "number" && message.skipped > 0 ? message.skipped : undefined;
         if (sink) { try { sink(String(message.chunk ?? ""), typeof message.ts === "number" ? message.ts : undefined, skipped); } catch { /* a bad sink must not break the run */ } }

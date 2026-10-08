@@ -21,7 +21,7 @@
 // CDP) and backend-repoint gains not covered there.
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { jsonResponse, loadBackground, loadPageWorld } = require("./helpers");
+const { jsonResponse, streamResponse, loadBackground, loadPageWorld } = require("./helpers");
 const { PAGE_STARTED_TYPES, RUN_CONTROL_TYPES } = require("../src/page-relay.ts");
 
 const baseConfig = (o = {}) => ({ chatUrl: "http://host/api/chat/completions", apiKey: "sk-SECRET-KEY", model: "default-model", apiFormat: "openai", ocrModel: "", ...o });
@@ -250,4 +250,197 @@ test("an approval that comes from the self-approval whitelist says so, so the po
     await bg.send({ type: "SITE_ACCESS", payload: { edit: { op: "allow", origin: "https://listed.example", scope: "always" } } }, surface);
     const listed = await bg.send({ type: "SITE_ACCESS", payload: { origin: "https://listed.example" } }, surface);
     assert.equal(listed.data.implied, undefined, "an approval on the list is the list's to revoke");
+});
+
+// ── UNGATED: what the content script sends OUTSIDE PAGE_STARTED_TYPES, on a page's word ─────────────────────────
+// The origin gate (sw-site-access.ts) passes any type that is not in PAGE_STARTED_TYPES. The content script sends five
+// more, each triggered by a window message the page can post: those handlers must check the sender themselves, and
+// nothing enumerates them. The OPEN tests below are attacks that work on main: each is a `todo` asserting the defended
+// behaviour, so it reports its failure without failing the suite, and loses the `todo` when the defence lands.
+
+test("the content script's ungated sends are exactly the reviewed list, each bound to the sender by its handler", () => {
+    const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "../src/content.ts"), "utf8");
+    const sent = new Set([...src.matchAll(/sendMessage\(\{\s*type:\s*"([A-Z_]+)"/g)].map((m) => m[1]));
+    assert.ok(sent.size >= 5, `found ${sent.size} sends: the scan is reading the file`);
+    const ungated = [...sent].filter((t) => !PAGE_STARTED_TYPES.has(t)).sort();
+    // A new entry here is a new way for any page, approved or not, to reach the worker: add it only with a test that a
+    // page cannot use it for a run it does not host, or move it under the gate (page-relay.ts PAGE_RELAYED_EXTRA).
+    assert.deepEqual(ungated, [
+        "CONTENT_READY",      // answers with the rebuild of runs on the SENDER's tab; triggers resume + history replay
+        "DEREF_TOKEN",        // attack 14 (part 1b in progress)
+        "PAGE_TOOL_STREAM",   // NO sender check: see the OPEN test below
+        "RUN_READOPTED",      // keyed by the sender's tab, not its document: see the OPEN test below
+        "VALUE_COLUMNS",      // attack 14
+    ]);
+});
+
+test("the page a run navigates AWAY from cannot write what the model is told about the destination", async () => {
+    // `navigate` defers the location change a tick and its result returns while the OLD document is still alive. The
+    // worker then waits on the nav barrier for RUN_READOPTED, which any document on the tab can send (window message
+    // RUN_READOPTED → content.ts → ungated). The departing page (an unapproved site the run was visiting) races the
+    // destination: its pageInfo is folded into the navigate result as "You are now on the new page", so site A writes
+    // what the model believes about site B (a bank, a login page), and the barrier opens before B's tools exist.
+    // Same race on the channel-closed path (sw-run-host.ts, `CHANNEL_GONE`). Fix shape: accept a re-adopt only from a
+    // document other than the one the navigation left (`sender.documentId`), or only after the tab committed.
+    let turn2 = null, fetches = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            fetches++;
+            if (fetches === 1) return jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "navigate", arguments: JSON.stringify({ url: "https://bank.example/" }) } }] }, finish_reason: "tool_calls" }] });
+            turn2 = call.body.messages;
+            return jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (_tabId, msg) => {
+            if (msg?.type !== "RUN_TOOL_IN_PAGE" || msg.payload?.name !== "navigate") return undefined;
+            // The departing document answers first (it saw PAGE_TOOL_RUN, and its runId); the destination commits and
+            // re-adopts a moment later, as a real tab reports it (webNavigation.onCommitted, then the new document).
+            setTimeout(() => { void bg.send({ type: "RUN_READOPTED", payload: { runId: "navx", pageInfo: "URL: https://bank.example/\nTitle: FORGED by evil.example" } }, { ...hostilePage(6), documentId: "doc-evil" }); }, 0);
+            setTimeout(() => { bg.commit(6, { documentId: "doc-bank", url: "https://bank.example/" }); }, 30);
+            setTimeout(() => { void bg.send({ type: "RUN_READOPTED", payload: { runId: "navx", pageInfo: "URL: https://bank.example/\nTitle: Real Bank" } }, { tab: { id: 6, url: "https://bank.example/" }, url: "https://bank.example/", documentId: "doc-bank" }); }, 40);
+            return { result: "Navigating to https://bank.example/ … wait for the new page, then continue." };
+        },
+    });
+    bg.commit(6, { documentId: "doc-evil", url: "https://evil.example/" });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "navx", task: "go to the bank", systemPrompt: "sys",
+        tools: [{ name: "navigate", description: "go", parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] }, requiresApproval: false, capabilities: [] }],
+        model: "m", think: null, maxSteps: 3, autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+    } }, { ...hostilePage(6), documentId: "doc-evil" });
+    const joined = (turn2 || []).map((m) => (typeof m.content === "string" ? m.content : "")).join("\n");
+    assert.match(joined, /You are now on the new page/, "positive control: orient-on-nav ran");
+    assert.doesNotMatch(joined, /FORGED by evil\.example/, "the departing page's pageInfo reached the model as the destination's");
+    assert.match(joined, /Real Bank/, "the destination's own pageInfo is what the model reads");
+});
+
+/** A run on tab 6 calls `navigate` (or a tool whose channel closes mid-call, `gone`); `during(bg)` plays the browser and
+ *  the two documents while the call is out. Returns what the model read on its next turn. */
+async function navRace(during, { gone = false } = {}) {
+    let turn2 = null, fetches = 0, bg;
+    const tool = gone ? "click" : "navigate";
+    bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            fetches++;
+            if (fetches === 1) return jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: tool, arguments: JSON.stringify({ url: "https://bank.example/" }) } }] }, finish_reason: "tool_calls" }] });
+            turn2 = call.body.messages;
+            return jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (_tabId, msg) => {
+            if (msg?.type !== "RUN_TOOL_IN_PAGE" || msg.payload?.name !== tool || msg.payload.renderOnly || msg.payload.precheck) return undefined;
+            await during(bg);
+            if (gone) throw new Error("A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received");
+            return { result: "Navigating to https://bank.example/ … wait for the new page, then continue." };
+        },
+    });
+    bg.commit(6, { documentId: "doc-evil", url: "https://evil.example/" });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "navy", task: "go to the bank", systemPrompt: "sys",
+        tools: [{ name: tool, description: "go", parameters: { type: "object", properties: { url: { type: "string" } } }, requiresApproval: false, capabilities: [] }],
+        model: "m", think: null, maxSteps: 3, autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+    } }, { ...hostilePage(6), documentId: "doc-evil" });
+    return (turn2 || []).map((m) => (typeof m.content === "string" ? m.content : "")).join("\n");
+}
+const readopt = (bg, doc, title, at) => setTimeout(() => { void bg.send({ type: "RUN_READOPTED", payload: { runId: "navy", pageInfo: `URL: https://bank.example/\nTitle: ${title}` } }, { tab: { id: 6, url: "https://bank.example/" }, url: "https://bank.example/", documentId: doc }); }, at);
+
+test("a document the tab has already left cannot re-adopt after the destination committed", async () => {
+    const joined = await navRace(async (bg) => {
+        setTimeout(() => bg.commit(6, { documentId: "doc-bank", url: "https://bank.example/" }), 5);
+        readopt(bg, "doc-evil", "FORGED by a stale document", 15);
+        readopt(bg, "doc-bank", "Real Bank", 40);
+    });
+    assert.doesNotMatch(joined, /FORGED/);
+    assert.match(joined, /You are now on the new page:[\s\S]*Real Bank/);
+});
+
+test("a call whose channel closes mid-navigation: the departing page's re-adopt is refused, the destination's fast one kept", async () => {
+    const joined = await navRace(async (bg) => {
+        // Both before the channel-closed error reaches the worker: the old page first, then the browser's commit and the
+        // new page, which "beat us" to it.
+        readopt(bg, "doc-evil", "FORGED by evil.example", 0);
+        setTimeout(() => bg.commit(6, { documentId: "doc-bank", url: "https://bank.example/" }), 5);
+        readopt(bg, "doc-bank", "Real Bank", 10);
+        await new Promise((r) => setTimeout(r, 30));
+    }, { gone: true });
+    assert.match(joined, /The page navigated while running "click"/, "positive control: the channel-closed path ran");
+    assert.doesNotMatch(joined, /FORGED/);
+    assert.match(joined, /Real Bank/, "the destination's own pageInfo, which arrived before the error did");
+});
+
+test("a page on ANOTHER tab cannot write into a run's live tool output", async () => {
+    // delegateStreams is keyed by runId and the PAGE_TOOL_STREAM handler never compares the sender's tab with the run's
+    // (VALUE_COLUMNS and DEREF_TOKEN do). Any tab that knows a run id (its own page-hosted run handed to the worker, a
+    // hash leaked by a session message) writes lines into another tab's run while one of its tools streams: they reach
+    // every surface as that tool's output. Fix shape: the run's tab (and frame 0) or nothing, like VALUE_COLUMNS.
+    const bg = loadBackground({
+        config: baseConfig(),
+        onTabMessage: async (_tabId, msg) => {
+            if (msg?.type !== "RUN_TOOL_IN_PAGE" || msg.payload?.name !== "exec" || msg.payload.renderOnly || msg.payload.precheck || msg.payload.readonlyTry) return undefined;
+            void bg.send({ type: "PAGE_TOOL_STREAM", runId: "victim", chunk: "real line\n" }, { tab: { id: 7, url: "https://ok.example/" }, url: "https://ok.example/" });
+            await new Promise((r) => setTimeout(r, 120));   // past the fan's 90 ms throttle, so each chunk is its own emit
+            void bg.send({ type: "PAGE_TOOL_STREAM", runId: "victim", chunk: "INJECTED from tab 9\n" }, hostilePage(9));   // another tab, another site
+            await new Promise((r) => setTimeout(r, 120));
+            return { result: "console:\nreal line" };
+        },
+        onFetch: (() => { let n = 0; return () => ++n === 1
+            ? streamResponse([
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"exec","arguments":"{\\"js\\":\\"x\\"}"}}]}}]}\n',
+                'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n', "data: [DONE]\n",
+            ])
+            : streamResponse(['data: {"choices":[{"delta":{"content":"done"}}]}\n', "data: [DONE]\n"]); })(),
+    });
+    const panel = bg.connect("ml-devtools");
+    panel.send({ type: "ml-devtools-init", tabId: 7 });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "victim", task: "t", systemPrompt: "s",
+        tools: [{ name: "exec", requiresApproval: false, description: "", parameters: { type: "object", properties: { js: { type: "string" } } }, capabilities: [] }],
+        model: "m", think: null, maxSteps: 3, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools", stream: true,
+    } }, { tab: { id: 7, url: "https://ok.example/" }, url: "https://ok.example/" });
+    await new Promise((r) => setTimeout(r, 150));   // past the fan's trailing emit
+    const outs = panel.messages.map((m) => m.__mlDebug).filter((e) => e?.kind === "agent-step" && e.streamOutput != null).map((e) => e.streamOutput);
+    assert.ok(outs.some((o) => /real line/.test(o)), `positive control: the run's own tab streams (got ${JSON.stringify(outs)})`);
+    assert.ok(outs.every((o) => !/INJECTED/.test(o)), `a line from another tab reached the run's live output: ${JSON.stringify(outs)}`);
+});
+
+test("what a page's CONTENT_READY is answered with: the rebuild's fields are the reviewed list", async () => {
+    // Any document on a tab hosting a run gets the run's rebuild (it must register the run's tools), approved or not.
+    // Pinned so a field added to RebuildConfig, a credential or a pointer say, is a decision rather than a leak.
+    let release;
+    const bg = loadBackground({ config: baseConfig(), onFetch: () => jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "look", arguments: "{}" } }] }, finish_reason: "tool_calls" }] }),
+        onTabMessage: async (_t, msg) => { if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "look" && !msg.payload.renderOnly) await new Promise((r) => { release = r; }); return msg?.type === "RUN_TOOL_IN_PAGE" ? { result: "ok" } : undefined; } });
+    const rebuild = { toolNames: ["look"], model: "m", driverSees: false, visionModel: "v", groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: false };
+    void bg.send({ type: "START_RUN", payload: { runId: "cr", task: "t", systemPrompt: "s", rebuild,
+        tools: [{ name: "look", requiresApproval: false, description: "", parameters: { type: "object", properties: {} }, capabilities: [] }],
+        model: "m", think: null, maxSteps: 2, autoApprovePython: false, autoApproveReadonly: false, surface: "off" } }, { ...hostilePage(9), documentId: "doc-1" });
+    for (let i = 0; i < 20 && !release; i++) await tick();
+    assert.ok(release, "the run is mid-tool on tab 9");
+    const res = await bg.send({ type: "CONTENT_READY" }, { ...hostilePage(9), documentId: "doc-1" });
+    assert.equal(res.adopt?.length, 1, "the page is handed the run on its tab");
+    assert.deepEqual(Object.keys(res.adopt[0]).sort(), ["rebuild", "runId"]);
+    assert.deepEqual(Object.keys(res.adopt[0].rebuild).sort(), ["cdp", "crossOrigin", "driverSees", "groundingModel", "groundingRange", "model", "pierceClosed", "toolNames", "visionModel"]);
+    release();
+});
+
+test("a page cannot make the worker replay a run's history to its tab again and again", async () => {
+    // CONTENT_READY means "a fresh document loaded", but the worker takes the page's word for it: one document that
+    // posts PAGE_ADOPT_HELLO three times gets the run's whole history pushed to its shell three times. The card's
+    // reducer then repeats every step with no seq (tests/reducer-batch.test.mjs), and each burst snaps the card's size
+    // back. Fix shape: replay once per `sender.documentId`.
+    let release;
+    const bg = loadBackground({ config: baseConfig(), onFetch: () => jsonResponse({ choices: [{ message: { content: "thinking first", tool_calls: [{ id: "c1", type: "function", function: { name: "look", arguments: "{}" } }] }, finish_reason: "tool_calls" }] }),
+        onTabMessage: async (_t, msg) => { if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "look" && !msg.payload.renderOnly) await new Promise((r) => { release = r; }); return msg?.type === "RUN_TOOL_IN_PAGE" ? { result: "ok" } : undefined; } });
+    const rebuild = { toolNames: ["look"], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: false };
+    void bg.send({ type: "START_RUN", payload: { runId: "spam", task: "t", systemPrompt: "s", rebuild,
+        tools: [{ name: "look", requiresApproval: false, description: "", parameters: { type: "object", properties: {} }, capabilities: [] }],
+        model: "m", think: null, maxSteps: 2, autoApprovePython: false, autoApproveReadonly: false, surface: "off" } }, { ...hostilePage(9), documentId: "doc-1" });
+    for (let i = 0; i < 20 && !release; i++) await tick();
+    const replays = () => bg.tabMessages.filter(([tabId, m]) => tabId === 9 && m?.type === "ML_DEBUG_TO_PAGE").length;
+    const sender = { ...hostilePage(9), documentId: "doc-1" };
+    await bg.send({ type: "CONTENT_READY" }, sender); await tick();
+    const first = replays();
+    await bg.send({ type: "CONTENT_READY" }, sender); await tick();
+    await bg.send({ type: "CONTENT_READY" }, sender); await tick();
+    release();
+    assert.ok(first > 0, "positive control: the run's history was buffered and the tab gets ML_DEBUG_TO_PAGE");
+    assert.equal(replays(), first, `the same document got the history again: ${first} events after one CONTENT_READY, ${replays()} after three`);
 });

@@ -23,13 +23,28 @@ export const READOPT_TIMEOUT_MS = 15000;
 interface TabNav {
     navigating: boolean;
     waiters: Array<() => void>;   // resolvers of in-flight whenReady() promises
+    /** The tab's committed main-frame document, as the browser reported it (`webNavigation.onCommitted`). */
+    current?: string;
+    /** The document the in-flight navigation is leaving: a re-adopt from it is the old page, not the new one. */
+    leaving?: string;
 }
 
 export interface NavBarrier {
-    /** A main-frame navigation committed on this tab — the current document (and its toolset) is going away. */
-    noteNavigating(tabId: number): void;
-    /** The new document re-adopted the run (rebuilt + registered its toolset) — safe to delegate again. */
-    noteReadopted(tabId: number): void;
+    /** A main-frame navigation is under way on this tab: the current document (and its toolset) is going away.
+     *  `leaving` names that document; omitted, it is the tab's current one, and `null` says there is none to refuse
+     *  (a fresh document that is itself about to re-adopt). A navigation already in flight keeps what it is leaving. */
+    noteNavigating(tabId: number, leaving?: string | null): void;
+    /** The browser committed a new main-frame document on this tab. */
+    noteDocument(tabId: number, documentId: string): void;
+    /** The tab's committed main-frame document, when the browser has reported one to this worker. */
+    currentDocument(tabId: number): string | undefined;
+    /** Whether a re-adopt from `documentId` may release the barrier: only during a navigation, never from the document
+     *  it is leaving, and only from the committed document when that is known. A document the browser never named
+     *  (`undefined`) is judged on the navigation alone. */
+    accepts(tabId: number, documentId: string | undefined): boolean;
+    /** The new document re-adopted the run (rebuilt + registered its toolset) — safe to delegate again. Ignored, and
+     *  false, when {@link accepts} refuses `documentId`. */
+    noteReadopted(tabId: number, documentId?: string): boolean;
     /** True while a navigation is in flight on this tab (for callers that want to branch, not wait). */
     isNavigating(tabId: number): boolean;
     /** Resolve immediately if the tab is idle, else when it re-adopts (or after `timeoutMs`, whichever first). */
@@ -53,12 +68,27 @@ export function createNavBarrier(
     const release = (t: TabNav): void => { const w = t.waiters; t.waiters = []; for (const fn of w) fn(); };
 
     return {
-        noteNavigating(tabId) { get(tabId).navigating = true; },
-        noteReadopted(tabId) {
+        noteNavigating(tabId, leaving) {
+            const t = get(tabId);
+            if (!t.navigating) t.leaving = leaving === null ? undefined : leaving ?? t.current;
+            t.navigating = true;
+        },
+        noteDocument(tabId, documentId) { get(tabId).current = documentId; },
+        currentDocument(tabId) { return tabs.get(tabId)?.current; },
+        accepts(tabId, documentId) {
             const t = tabs.get(tabId);
-            if (!t) return;
+            if (!t?.navigating) return false;
+            if (documentId === undefined) return true;
+            if (t.leaving !== undefined && documentId === t.leaving) return false;
+            return t.current === undefined || documentId === t.current;
+        },
+        noteReadopted(tabId, documentId) {
+            const t = tabs.get(tabId);
+            if (!t || !this.accepts(tabId, documentId)) return false;
             t.navigating = false;
+            t.leaving = undefined;
             release(t);   // let any tool that was waiting for the new page proceed
+            return true;
         },
         isNavigating(tabId) { return !!tabs.get(tabId)?.navigating; },
         whenReady(tabId, timeoutMs = READOPT_TIMEOUT_MS) {

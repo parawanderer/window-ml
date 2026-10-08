@@ -72,6 +72,22 @@ same dispatch first (`claimForWorker`). And if the page still wrote to a session
 the shell has the app drop that session when it does (`dropPageSession`, `__mlForgetSession`). Attack 15d is the race. `DUMP_EVENTS` (`ml.__events()`) gives a page
 only the buffered events of sessions it is not shut out of.
 
+## What the content script sends outside the gate
+
+Five types the content script sends on a page's word are not in `PAGE_STARTED_TYPES`, so the origin gate passes them
+and each handler checks the sender itself. `tests/redteam.test.js` (section "UNGATED") pins the list.
+
+- `CONTENT_READY`: answers with the rebuild of runs on the sender's tab, and replays a run's history to the tab once per
+  document (`replayedTo`). A page can resend it whenever it likes by posting `PAGE_ADOPT_HELLO`. The reducer also drops
+  a step without a `seq` that it already holds (same step, time, thought and tool).
+- `RUN_READOPTED`: releases the nav barrier only during a navigation, only from frame 0, and never from the document
+  the navigation is leaving (`navBarrier.accepts`). The current document is the browser's report
+  (`webNavigation.onCommitted`), never `CONTENT_READY`, which the departing page could resend. The page info is stored
+  with its document, and the call that navigated drops it if it came from the document the call went to
+  (`documentOn` in sw-run-host.ts, which asks `webNavigation.getFrame` after an eviction).
+- `PAGE_TOOL_STREAM`: only from the run's own tab, frame 0.
+- `DEREF_TOKEN`, `VALUE_COLUMNS`: the run's own tab; removed in slice 2 part 1c (attack 14).
+
 ## Tests
 
 - `tests/site-access.test.mjs`: the pure rules.
