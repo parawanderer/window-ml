@@ -350,7 +350,9 @@ coordinates, and offers live viewing only when the runtime has the capability.
 ## The state inspector: current state beside the linear transcript (proposal)
 
 **Status: agreed direction, unbuilt** (Shane, 2026-09-18). This page is where it goes, because it is the only surface
-with the room.
+with the room. **Superseded in detail by [`STATE_INSPECTOR.md`](STATE_INSPECTOR.md)** (2026-10-08): what the pane holds,
+the audience of each member, watches, Python state and where it is offered. This section keeps the reasoning for the
+pane and the `session.context` call.
 
 Everything this app renders today is derived from an event LOG. The transcript, the event lane, both exports and the
 DevTools panel are all replays of `MlDebugEvent`s, and the architecture leans on that: the reducer de-duplicates by
@@ -409,9 +411,10 @@ different lifetimes: `bgRuns` (`sw-runs.ts`) while the run is live, and the save
 directly**, because it is worker memory that an MV3 eviction empties. Exposing that array is the real work; the heap
 is the half to expose first.
 
-**Where it is offered** follows the rule the rest of the page follows: by capability, never by "it is local". A phone
-talking to a remote runtime over the hub gets it only if that runtime offers it, exactly as it gets the Python bench
-and the resource panel only where they exist. No branch anywhere asks whether this is the local browser.
+**Where it is offered** follows the rule the rest of the page follows: by capability, never by "it is local". The
+runtime decides, and it offers the inspector only to its OWN pages for now: `remoteDescription` strips the capability
+from what crosses the hub, so a phone or another desktop does not see it (Shane, 2026-10-08; `STATE_INSPECTOR.md`).
+No branch anywhere asks whether this is the local browser.
 
 Related: `AGENT_COMPACTION.md`, `COMPACTION.md`, `POINTER_VALUES.md`.
 
