@@ -18,7 +18,8 @@ import { hintSession } from "../contract/contract-run";
 import { outputCapEscalated } from "../contract/contract-pointers";
 import { executeTool, toolContext, answerSetFor, withRunSession, withRunDeref } from "../tools/tool-exec";
 import { expandPointers } from "../pointers/pointer-macro";
-import { derefViaBackground } from "../tools/deref-read";
+import { columnsViaBackground } from "../tools/deref-read";
+import { preResolvedDeref, type PreRead } from "../pointers/named-reads";
 import { captureVerify, captureVerifyElement } from "../tools/builtin-tools";
 import { htmlToMarkdown } from "../dom/html-to-md";
 import { clipOut, elLine, errText } from "../dom/dom";
@@ -106,11 +107,11 @@ const VERIFY_TEXT_MAX = 8000;   // cap the navigate verify:"text" Markdown so a 
 /** A tool of a BACKGROUND-hosted run, executed in the page. Every model call made on its behalf — the tool's
  *  own, and the verify captures below that call vision directly — is labelled as part of the run that caused it
  *  (RequestHint: `use: "agent"`, the run's session). */
-export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
+export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; reads?: PreRead[]; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
     return withRunSession(hintSession(runId), () => runDelegatedToolIn(runId, name, args, opts));
 }
 
-async function runDelegatedToolIn(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
+async function runDelegatedToolIn(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; reads?: PreRead[]; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
     const run = runs.get(runId);
     if (!run) return { result: `Error: no active agent run "${runId}" on this page (it may have ended).` };
     // navigate({ verify: "text" / "text-all" }): after the destination page re-adopts, the background rings
@@ -240,7 +241,15 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
         // page-reachable store) keeps the primitive scoped to a tool call of THIS run, exactly as on the page
         // path — a page's own console still has no active run and gets nothing.
         const ctx = toolContext(run.byName, run.model ?? null, null, run.driverSees ?? false, run.visionModel ?? null);
-        ctx.deref = (ref, pipe) => derefViaBackground(runId, ref, pipe);
+        // Only the reads the approved script names, which the worker resolved and sent with the call (named-reads.ts):
+        // the page shares this world, and could otherwise read anything the run holds while the call is in flight.
+        const answer = preResolvedDeref(opts.reads ?? []);
+        ctx.deref = async (ref, pipe) => {
+            const read = await answer(ref, pipe);
+            const key = read.meta?.table ? read.meta.value : undefined;
+            const table = read.meta?.table;
+            return key && table ? { ...read, readColumns: (names: string[]) => columnsViaBackground(runId, key, names, { ...(table.delimiter ? { delimiter: table.delimiter } : {}), ...(table.headerless ? { headerless: true } : {}) }) } : read;
+        };
         const env = await executeTool(tool, args, ctx, opts.onStream);
         // An answer-capable tool's result node(s) go into the run's answer SET (page-side); the live nodes stay
         // here (they can't cross the bus), only the COUNT crosses. The built-in `answer` tool curates the set
@@ -290,7 +299,7 @@ export function envelopeFrom(tool: MlTool, args: Record<string, unknown>, env: A
 export function installToolDelegation(): void {
     window.addEventListener("message", async (event: MessageEvent) => {
         if (event.source !== window || !event.data || event.data.type !== "PAGE_TOOL_RUN") return;
-        const { callId, runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, stream, finish, summary } = event.data as { callId: string; runId: string; name: string; args: Record<string, unknown>; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean; summary?: string };
+        const { callId, runId, name, args, reads, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, stream, finish, summary } = event.data as { callId: string; runId: string; name: string; args: Record<string, unknown>; reads?: PreRead[]; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean; summary?: string };
         // The END of a turn of a run the WORKER built (sw-run-host.ts): no page-side caller exists to assemble its
         // answer, so the worker asks for it. Ends the run's registration here, as the page path's caller does.
         if (finish) {
@@ -307,7 +316,7 @@ export function installToolDelegation(): void {
             try { window.postMessage({ type: "PAGE_TOOL_STREAM", runId, chunk, ts, ...(skipped ? { skipped } : {}) }, "*"); } catch { /* non-cloneable → drop */ }
         }) : null;
         const onStream = sender ? (chunk: string, ts?: number) => sender.push(chunk, ts) : undefined;
-        const envelope = await runDelegatedTool(runId, name, args || {}, { renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt, verifyViewport: !!verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, onStream });
+        const envelope = await runDelegatedTool(runId, name, args || {}, { reads: Array.isArray(reads) ? reads : [], renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt, verifyViewport: !!verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, onStream });
         sender?.flush();   // the last lines go out BEFORE the result, which supersedes the live view
         window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope }, "*");
     });

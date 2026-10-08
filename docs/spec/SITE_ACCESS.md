@@ -368,8 +368,14 @@ Recorded as each slice lands, with the reason.
   "delegation tokens" would have given the page a ticket to read the run's pointers; the worker instead reads them
   itself, and a survey goes to the page only when it reaches for the DOM, where pointer reads are refused. A survey
   needing both reaches the person. The page is not sent the script of a survey the worker answers, not even to draw
-  its In. Each routing decision is an execution-log record with its reason (owner's request). An approved `exec`
-  still reads pointers through `DEREF_TOKEN` until part 1c; attack 14 stays open until then.
+  its In. Each routing decision is an execution-log record with its reason (owner's request). 
+- **Slice 2 part 1c: an approved `exec` is sent the pointer values its script names, and `DEREF_TOKEN` is gone.**
+  The worker resolves each literal read in the approved script and sends the values with the call; the page answers
+  only those, so nothing sharing the page's world can read the rest of the run's store while the call runs. A pointer
+  or pipe computed at run time is refused with a sentence asking for the literal form (owner: ids are random handles,
+  and a model has no business computing them). `VALUE_COLUMNS` answers a worker-hosted run only for a key sent with
+  its in-flight call. Attack 14 is closed. The values a script names still enter the page's world while it runs; that
+  is part 4's (exec isolation).
 - **Owner decisions for exec on a page that is not approved (part 4):** run it isolated, through
   `chrome.userScripts.execute`, else a CDP isolated world, else refuse, with `ml.*` bound to the worker. Where the
   isolated run is known not to behave as the page's world would, the tool result carries one terse note naming the

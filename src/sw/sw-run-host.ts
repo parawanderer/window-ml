@@ -8,7 +8,8 @@ import { evalReadonlyInWorker } from "./sw-readonly";
 import { workerReadonlyMl } from "./worker-readonly-ml";
 import { recordRunLog, runLog } from "./sw-run-log";
 import { eventsForRun, type RunLogEvent } from "../log/run-log";
-import { execCodeIn } from "../pointers/pointer-macro";
+import { execCodeIn, expandPointers } from "../pointers/pointer-macro";
+import { namedReads, type PreRead } from "../pointers/named-reads";
 import type { CurrentSnapshot } from "../agent/current-context";
 import { watchWhileWaiting, PageUnreachable } from "./page-reachable";
 import type { TabState } from "./page-reachable";
@@ -30,7 +31,7 @@ import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
 import { noteRunMechanic } from "./sw-runs";
 import { ensureLocalTools, runLocalTool } from "./sw-local-tools";
-import { navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, turnByRun, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
+import { navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue } from "./sw-values";
 import { focusLineFor } from "./sw-focus";
@@ -71,6 +72,19 @@ async function documentOn(tabId: number): Promise<string | undefined> {
     if (known) return known;
     const frame = await Promise.resolve(chrome.webNavigation?.getFrame?.({ tabId, frameId: 0 })).catch(() => null) as { documentId?: string } | null;
     return typeof frame?.documentId === "string" ? frame.documentId : undefined;
+}
+
+/** Resolve the pointer reads an approved `exec` script names, against the run's store: each one's value, or the error
+ *  the read raises (a MemoryFault, a bad pipe), which the page then throws where the script reads it. */
+function preReadsFor(runId: string, js: string): PreRead[] {
+    const fn = derefByRun.get(runId);
+    if (!fn) return [];
+    return namedReads(expandPointers(js).code).map(({ ref, pipe }) => {
+        try {
+            const r = fn(ref, pipe);
+            return { ref, pipe, value: r.value, ...(r.warning ? { warning: r.warning } : {}), ...(r.meta ? { meta: r.meta } : {}) };
+        } catch (e) { return { ref, pipe, error: (e as Error)?.message || String(e) }; }
+    });
 }
 
 /** Send a message into a run's tab and wait for the page's answer, the way every delegated tool call is sent: held
@@ -211,7 +225,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     });
     // Every tool send that names a tool goes through here. A run the worker built (sw-run-start.ts) runs its REMOTE tools
     // itself (sw-local-tools.ts); everything else, and every run a page built, goes to the page as before.
-    const sendTool = async (payload: { runId: string; name: string; args: Record<string, unknown>; stream?: boolean; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean }, onStream?: (chunk: string, ts?: number) => void): Promise<unknown> => {
+    const sendTool = async (payload: { runId: string; name: string; args: Record<string, unknown>; stream?: boolean; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; reads?: PreRead[] }, onStream?: (chunk: string, ts?: number) => void): Promise<unknown> => {
         // A worker-built run's REMOTE tool never goes to the page, which has no such tool. If this worker does not hold
         // it (rehydrated after an eviction, or a resumed session), it is rebuilt first.
         if (p.builtBy === "worker" && p.tools.some((t) => t.name === payload.name && t.remote)) {
@@ -433,6 +447,10 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 // An APPROVED exec may fetch inline (ml.fetch): the human saw the code, so allow its fetches
                 // for THIS run (ephemeral — cleared below). Persisting a URL is button #3, not this.
                 if (name === "exec") grantsFor(tabId).fetchOpen = true;
+                // The pointer reads an approved script names, resolved here and sent with it: the page answers only
+                // those, so it cannot read the rest of the run's store while the call is in flight (named-reads.ts).
+                const reads = name === "exec" && typeof (args as { js?: unknown }).js === "string" ? preReadsFor(runId, (args as { js: string }).js) : undefined;
+                if (reads) execReads.set(runId, reads);
                 // A remote tool's args LEAVE THE MACHINE, so the grant is minted for the exact call the
                 // human saw — never for the tool in general. The identity comes from the tool's declared
                 // `remote` target rather than its name, which is what keeps the approval card and the
@@ -465,7 +483,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                         return r && (sentTo === undefined || r.doc !== sentTo) ? r.info : undefined;
                     };
                     try {
-                        env = await sendTool({ runId, name, args, stream: !!onStream }, onStream) as Partial<import("../contract").PageToolEnvelope>;
+                        env = await sendTool({ runId, name, args, stream: !!onStream, ...(reads ? { reads } : {}) }, onStream) as Partial<import("../contract").PageToolEnvelope>;
                     } catch (e) {
                         const emsg = (e as Error)?.message || String(e);
                         if (!CHANNEL_GONE.test(emsg)) {
@@ -637,6 +655,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     return { result: env?.result || `Error: the page returned nothing for tool "${name}".`, renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel, images: env?.images, remoteMs: env?.remoteMs };
                 } finally {
                     pendingGrants.delete(tabId);   // grants were for THIS approved call's sub-ops only
+                    if (reads) execReads.delete(runId);
                     if (onStream) delegateStreams.delete(runId);   // the call is done — stop routing live chunks to it
                 }
             },
@@ -655,8 +674,8 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             // Read-only try (exec only, and only when the user enabled autoApproveReadonly): ask the
             // page to run the call through the mediated interpreter — side-effect-free, so if it's
             // in-dialect it BOTH auto-approves AND returns the result, and the human gate is skipped.
-            // Keep this run's pointer resolver so a page-side tool's `ml.dereference` (DEREF_TOKEN) can
-            // read the outputs THIS run captured. Dropped in the run's finally, with the other per-run state.
+            // Keep this run's pointer resolver: a survey reads it here (worker-readonly-ml.ts), and an approved exec
+            // gets the reads its script names resolved by it (preReadsFor). Dropped in the run's finally.
             tokenSink: (fn) => { derefByRun.set(runId, fn); },
             // The live context, for `ml.current` and the state inspector (contextByRun). Per turn, like the resolver.
             contextSink: (fn) => { contextByRun.set(runId, fn); },

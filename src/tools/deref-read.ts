@@ -89,25 +89,3 @@ export function columnsViaBackground(runId: string, key: string, names: string[]
         window.postMessage({ type: "PAGE_VALUE_COLUMNS", id, runId, key, names, ...opts }, "*");
     });
 }
-
-/** Read a `@tool:<id>` pointer from a page-hosted run through the background worker, which holds the run's outputs;
- *  a stored table comes back with a column reader bound to the same run. */
-export function derefViaBackground(runId: string, ref: string, pipe?: string | string[]): Promise<DerefRead> {
-    return new Promise((resolve, reject) => {
-        const id = `deref-${Math.random().toString(16).slice(2)}`;
-        const onMsg = (e: MessageEvent) => {
-            const d = e.data as { type?: string; id?: string; value?: string; warning?: string; meta?: DerefMeta; error?: string } | undefined;
-            if (!d || d.type !== "PAGE_DEREF_RESULT" || d.id !== id) return;
-            window.removeEventListener("message", onMsg);
-            if (d.error) { reject(new Error(d.error)); return; }
-            // A stored table's columns are read through this run too, so the reader is bound here, where the runId is.
-            const key = d.meta?.table ? d.meta.value : undefined;
-            const table = d.meta?.table;
-            resolve({ value: d.value ?? "", ...(d.warning ? { warning: d.warning } : {}), ...(d.meta ? { meta: d.meta } : {}),
-                ...(key && table ? { readColumns: (names: string[]) => columnsViaBackground(runId, key, names, { delimiter: table.delimiter, headerless: table.headerless }) } : {}) });
-        };
-        window.addEventListener("message", onMsg);
-        // `pipe` may be an ARRAY of stages (structured-clones fine); `??` not `||` so an array survives.
-        window.postMessage({ type: "PAGE_DEREF", id, runId, ref, pipe: pipe ?? "" }, "*");
-    });
-}

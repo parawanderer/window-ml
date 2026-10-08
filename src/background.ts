@@ -24,7 +24,7 @@ import { handleRunLogDump } from "./sw/sw-run-log";
 import { handleRunStateDump } from "./sw/sw-run-state";
 import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw/sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, pendingGrants, takeCredFetch, isExtensionSender } from "./sw/sw-consent";
-import { isWorkerRun, makeWorkerRun, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
+import { isWorkerRun, makeWorkerRun, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
 import { startBackgroundRun, delegateStreams, hostRun } from "./sw/sw-run-host";
@@ -521,29 +521,16 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
                 return;
             }
             if (!viaPage && holders && !holders.includes(runId)) { sendResponse({ error: "That stored table is not held by this run." }); return; }
+            // A run this worker hosts reads columns only for a key sent with its in-flight approved call: the page
+            // shares that call's world, and a key it saw earlier in the run must not be enough (named-reads.ts).
+            if (!viaPage && !(execReads.get(runId) ?? []).some((r) => r.meta?.table && r.meta.value === key)) {
+                sendResponse({ error: "That stored table was not named by the running script." }); return;
+            }
             try {
                 const r = await readStoredColumns(key, names, { ...(typeof message.delimiter === "string" ? { delimiter: message.delimiter } : {}), ...(message.headerless ? { headerless: true } : {}) });
                 sendResponse(r);
             } catch (e) { sendResponse({ error: (e as Error)?.message || String(e) }); }
         })();
-        return true;
-    }
-    if (message.type === "DEREF_TOKEN") {
-        // Only the tab the run is on may read its pointers. It used to be anyone who knew the run id, which every run
-        // sends into its page in its own debug events (attack 14). Narrowed here; slice 2 removes the page's read.
-        const onItsTab = sender.tab?.id != null && !!activeRuns.get(sender.tab.id)?.has(String(message.runId || ""));
-        if (sender.tab != null && !onItsTab && !isExtensionSender(sender)) { sendResponse({ error: "No run on this page holds those pointers." }); return true; }
-        const fn = derefByRun.get(String(message.runId || ""));
-        if (!fn) { sendResponse({ error: `No active background run "${message.runId}" to read pointers from.` }); return true; }
-        // `pipe` is EITHER the dialect string or an ARRAY of stages — keep the array intact. `String(array)`
-        // comma-joins it ("grep -E a|b,head 5"), which is not the dialect and silently mangles the read.
-        const pipe = Array.isArray(message.pipe)
-            ? (message.pipe as unknown[]).filter((x): x is string => typeof x === "string")
-            : String(message.pipe || "");
-        // The advisory rides ALONGSIDE the value across the relay, for the same reason it does in-process:
-        // the page-side caller is a script that will operate on the value.
-        try { const read = fn(String(message.ref || ""), pipe); sendResponse({ value: read.value, ...(read.warning ? { warning: read.warning } : {}), ...(read.meta ? { meta: read.meta } : {}) }); }
-        catch (e) { sendResponse({ error: (e as Error)?.message || String(e) }); }
         return true;
     }
     if (message.type === "PAGE_TOOL_STREAM") {

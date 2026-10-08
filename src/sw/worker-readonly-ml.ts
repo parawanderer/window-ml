@@ -58,7 +58,7 @@ export function workerReadonlyMl(tabUrl: string, deref?: RunDeref, runId = ""): 
         range: mlRange,
     };
     if (deref) {
-        // The page's `ml.dereference`, with the store read in-process instead of over DEREF_TOKEN. Its advisory has
+        // The page's `ml.dereference`, with the store read in-process. Its advisory has
         // nowhere to go: the dialect's console is the script's, and a warning written into it would read as output.
         const dereference = async (ref: unknown, opts: { pipe?: string | string[] | null } = {}): Promise<DerefValue> => {
             const read = deref(String(ref ?? ""), pipeStages(opts?.pipe ?? null));
