@@ -19,7 +19,9 @@ ctx.stream). Works on BOTH paths: the page loop, and the BACKGROUND-hosted (desi
 keyed by runId since the loop delegates tools sequentially). The page posts through a SENDER (`stream-sender.ts`): one
 post per 90ms beat, the stream's first `UI_OUT_CAP` characters whole, and past them only the latest `UI_OUT_CAP` with
 a `skipped` count the fan adds to what it dropped, so a runaway print is a few posts, not one copied message per line
-(200 lines of 9 MB were 1.8 GB of messages). **CDP exec on strict-CSP pages streams too**, by a
+(200 lines of 9 MB were 1.8 GB of messages). A REMOTE client (the chat page over a hub, which is also the phone app's WebView) gets the same
+deltas: they are `agent-step` events, published whole (`tests/e2e/remote-stream.spec.mjs` guards it). Unlike
+`agent-stream`, they are not paced by `LivePreview` (session-relay.ts). **CDP exec on strict-CSP pages streams too**, by a
 different mechanism: `Runtime.evaluate` returns ONCE, and `Runtime.consoleAPICalled` can't help because our wrapper
 REPLACES `console.*` with a collector that never calls through, so no console event is ever raised. So `cdpEval`
 installs a **`Runtime.addBinding`** (the purpose-built page → debugger-client channel) and the patched console tees
