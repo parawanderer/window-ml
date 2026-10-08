@@ -140,6 +140,13 @@ if echo "$staged" | grep -qE '^(src|mobile)/.*\.(ts|tsx|css)$'; then
         echo "            A MISSING @param is fine; a WRONG one is not."
         exit 1
     fi
+    # A module-level store this commit ADDS, with no answer to "where does this state belong?" (docs/dev/state.md).
+    if [ -n "$base" ] && ! node scripts/check-state.mjs --new "$base" --staged; then
+        echo ""
+        echo "pre-commit: declare it with defineState (src/state-registry.ts) if it is a run's state,"
+        echo "            or mark it \`// state: ui|cache|plumbing|fixed|test\`."
+        exit 1
+    fi
     # A source file with no HEADER is invisible at the level that costs most: someone rebuilds the module.
     if ! node scripts/index.mjs --headerless >/dev/null; then
         echo ""

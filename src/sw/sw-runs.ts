@@ -25,6 +25,7 @@ import { type StartRunPayload } from "../contract/contract-messages";
 import { createNavBarrier } from "./nav-barrier";
 import { releaseSessionValues } from "./sw-values";
 import { TokenStore } from "../pointers/token-pipe";
+import { defineState } from "../state-registry";
 
 // Design A: the AbortController for each live background run, keyed by runId, so a CANCEL_RUN message
 // (the HUD's "Cancel agent run") stops the loop at the next boundary AND kills a slow in-flight model
@@ -37,6 +38,23 @@ export const runControllers = new Map<string, AbortController>();
 // MV3 service-worker eviction (~30s idle) — resume works while the SW is warm (the common
 // finish-then-follow-up flow); an evicted run reports an actionable error and the caller starts fresh.
 export const bgRuns = new Map<string, { p: StartRunPayload; tabId: number; messages: NeutralMessage[]; sub?: import("../contract").SubcallUsage }>();
+defineState({
+    id: "run.init", scope: "session", realm: "worker", audience: "model", lostOn: ["worker-eviction"],
+    describe: "What the run was started with: the task, model, step budget, tool names and what it may do without asking.",
+    read: ({ runId }) => {
+        const p = runId ? bgRuns.get(runId)?.p : undefined;
+        return p && {
+            task: p.task, model: p.model, think: p.think, maxSteps: p.maxSteps, tools: p.tools.map((t) => t.name),
+            images: p.images?.length ?? 0, surface: p.surface, unattended: !!p.unattended, toolTokens: !!p.toolTokens,
+            autoApprove: { readonly: p.autoApproveReadonly, python: p.autoApprovePython, sameOriginAuth: !!p.autoApproveSameOriginAuth, selfSource: !!p.autoApproveSelfSource },
+        };
+    },
+});
+defineState({
+    id: "run.sub", scope: "session", realm: "worker", audience: "model", lostOn: ["worker-eviction"],
+    describe: "What the run's delegated sub-calls (vision, grounding) have spent.",
+    read: ({ runId }) => (runId ? bgRuns.get(runId)?.sub : undefined),
+});
 
 /** Runs the WORKER assembled (sw-run-start.ts) whose first turn has not settled yet: `bgRuns` holds a run only once a
  *  turn has, and a page must not be able to drive one in that window either. */
@@ -97,6 +115,11 @@ const runModels = new Map<string, string>();
 const RUN_MODELS_KEY = "ml_run_models";
 /** More would be sessions nobody switches back to; the oldest go first. */
 const RUN_MODELS_MAX = 200;
+defineState({
+    id: "run.model", scope: "session", realm: "worker", audience: "model", lostOn: [],
+    describe: "The model a person switched the run to, which its next model call uses.",
+    read: ({ runId }) => (runId ? runModels.get(runId) : undefined),
+});
 try {
     void chrome.storage?.local?.get(RUN_MODELS_KEY).then((got) => {
         const saved = (got?.[RUN_MODELS_KEY] ?? {}) as Record<string, string>;
@@ -162,6 +185,12 @@ export const hydratedRuns = new Set<string>();
 // the surface LOST this run's session (the respawn wiped in-memory + the replay buffer), so it must RE-EMIT
 // the `agent` start — a visible, Stoppable row — instead of silently resuming into a ghost.
 export const resurrectedRuns = new Set<string>();
+defineState({
+    id: "run.interrupted", scope: "run", realm: "worker", audience: "human", lostOn: ["worker-eviction"],
+    describe: "Whether a worker restart interrupted the run, and whether it was resumed afterwards.",
+    read: ({ runId }) => (runId && (hydratedRuns.has(runId) || resurrectedRuns.has(runId))
+        ? { resumed: resurrectedRuns.has(runId) } : undefined),
+});
 
 /** Rebuild the run maps from storage when the worker starts again, so a run the eviction interrupted is resumable
  *  rather than lost. Awaited through `hydrationDone` by anything that would otherwise read an empty map. */
@@ -192,6 +221,11 @@ export const hydrationDone: Promise<void> = (typeof chrome !== "undefined" && ch
 // pushes here (only the owning tab may); the run's loop drains it at each step boundary (deps.drainInbox).
 // Present only while a run is live (set at start, deleted in finally).
 export const runInboxes = new Map<string, { tabId: number; queue: { id?: string; text: string; origin?: import("../contract/contract-run").PromptOrigin }[] }>();
+defineState({
+    id: "run.mailbox", scope: "run", realm: "worker", audience: "human", lostOn: ["worker-eviction", "turn-end"],
+    describe: "Messages sent to the run that it has not read yet; it reads them at its next step.",
+    read: ({ runId }) => runId ? runInboxes.get(runId)?.queue.map((m) => ({ text: m.text, origin: m.origin ?? null })) : undefined,
+});
 
 // ---- Cross-page persistence (Variant A; design tmp/cross-page-agent.md) ----
 // A background-hosted run delegates each DOM tool to its tab by tabId. When the page NAVIGATES the old
@@ -334,6 +368,15 @@ const tokensByRun = new Map<string, TokenStore>();
 /** How many SESSIONS' pointer stores to keep. Each is itself capped (TokenStore.CAP); this bounds the number
  *  of them, so a service worker that outlives many runs can't accumulate without limit. */
 const MAX_TOKEN_SESSIONS = 24;
+defineState({
+    id: "run.pointers", scope: "session", realm: "worker", audience: "model", lostOn: ["worker-eviction"],
+    describe: "The run's `@tool:` values: what each tool call returned, addressable by id, label or tool name.",
+    read: ({ runId }) => runId ? tokensByRun.get(runId)?.all().map((v) => ({
+        id: v.id, tool: v.tool, kind: v.kind, label: v.label ?? null, step: v.step, seq: v.seq ?? null, ts: v.t,
+        chars: (v.full ?? v.out).length, shownChars: v.out.length, rows: v.table?.shape?.[0] ?? null,
+        image: !!v.image, stored: v.value ?? null,
+    })) : undefined,
+});
 
 /** This run's pointer store, created on the first turn and REUSED by every later turn of the same session. */
 export const sessionTokens = (runId: string): TokenStore => {
@@ -357,6 +400,14 @@ export function releaseSessionTokens(runId: string): void { tokensByRun.delete(r
  *  of the page it is ON from a fetch of the page it STARTED on (see `fetchIsCurrentPage`). History-API
  *  changes count too: an SPA moves between URLs without committing a navigation. */
 export const tabPageUrl = new Map<number, string>();
+defineState({
+    id: "run.page", scope: "run", realm: "worker", audience: "human", lostOn: ["worker-eviction"],
+    describe: "The tab the run is on and the page that tab shows now, which can differ from the page it started on.",
+    read: ({ runId }) => {
+        const tabId = runId ? bgRuns.get(runId)?.tabId : undefined;
+        return tabId == null ? undefined : { tabId, url: tabPageUrl.get(tabId) ?? null };
+    },
+});
 
 /** A tab Chrome has handed a NEW id (`chrome.tabs.onReplaced` — a discard restored, a prerender swapped in):
  *  move everything this module files under the old one, or the run it is hosting is orphaned under an id nothing

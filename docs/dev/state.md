@@ -8,8 +8,11 @@ Built from a survey of the code on 2026-10-08 (raw reports in `tmp/state-survey/
 so names are the reference. UI state (what is open, hovered, scrolled: about 150 signals) and device preferences
 (about 55) are counted, not listed: they are not a run's state.
 
-**Adding state?** Give it a row here, in the scope it belongs to, with where it is persisted and whether the
-inspector shows it. Until the registry below exists, this file is the registry.
+**Adding state?** Declare it where it lives with `defineState` (`src/state-registry.ts`): its scope, realm, audience,
+what loses it, and a `read` that returns plain data for one run. The inspector lists what is declared. State that is not
+a run's (a cache, UI, in-flight plumbing, a lookup table) gets a `// state: cache|ui|plumbing|fixed|test` marker instead.
+`node scripts/check-state.mjs` asks about every store a change adds (`working-in-the-repo.md`). A store with no
+declaration yet still gets a row here.
 
 ## Where a value can live, and what kills it
 
@@ -128,14 +131,11 @@ keyring (`ml-hub-keyring`: private keys, the channel key, the account root) beyo
 pairing offer's code; the archive folder handle (its name and state only); values in Python's `full` namespace (it can
 hold live network handles: neither shown nor evaluated).
 
-## Toward a registry
+## The registry
 
-The inspector should enumerate state rather than hard-code it. The plan, not built:
-
-- **A declaration per store**, `defineState({ id, scope, realm, audience, describe, read })`, next to the store. The
-  inspector lists what is declared, so a new kind of state appears by declaring it.
-- **A ratchet**, in the pre-commit hook and CI's `tools` job like `scripts/index.mjs --new`: module-level mutable state
-  (`new Map`, `new Set`, `signal(`, a module-level `let`) ADDED in the worker, page or offscreen code must be declared,
-  or marked as not run state (`// state: cache` / `ui`). It asks only about what a change adds; about 470 declarations
-  exist today.
-- **This file** shrinks to the scopes, the places and the hazards once the declarations carry the rows.
+Each realm's bundle has its own registry (`src/state-registry.ts`); a snapshot asks the realm that holds the run.
+Declared so far, in the worker: `run.init`, `run.sub`, `run.model`, `run.interrupted`, `run.mailbox`, `run.pointers`,
+`run.page` (`sw-runs.ts`), `run.approvals`, `grants.call`, `grants.fetch`, `grants.credentialedFetch` (`sw-consent.ts`),
+`run.log` (`sw-run-log.ts`). `node scripts/check-state.mjs` with no arguments lists the stores that predate the ratchet
+and are neither declared nor marked (134 when it was written). This file shrinks to the scopes, the places and the
+hazards as the declarations take over its rows.

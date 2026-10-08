@@ -318,6 +318,14 @@ jobs:
           base=$(git merge-base HEAD "origin/${GITHUB_BASE_REF:-main}" 2>/dev/null || echo "")
           if [ -z "$base" ]; then echo "no merge base — skipping"; exit 0; fi
           node scripts/check-jsdoc.mjs --new "$base"
+      # A module-level store this PR ADDS in the worker, page or offscreen code says where its state belongs: declared
+      # to the state registry (the inspector lists it) or marked as not a run's state. The 134 that predate it are listed
+      # by a plain run and never fail it.
+      - name: Every store this PR adds says where its state belongs
+        run: |
+          base=$(git merge-base HEAD "origin/${GITHUB_BASE_REF:-main}" 2>/dev/null || echo "")
+          if [ -z "$base" ]; then echo "no merge base — skipping"; exit 0; fi
+          node scripts/check-state.mjs --new "$base"
       # Every Markdown link resolves, and every backticked path this PR ADDS names a real file. The old dead paths
       # are listed by a plain run and never fail it: some are historical, some name the hub repo.
       - name: The docs point at files that exist

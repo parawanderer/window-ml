@@ -150,6 +150,18 @@ function had no documentation and the next advertised an option it does not take
 findings: every one of the ten was a block that had drifted off its declaration, and each was FOLDED BACK
 rather than deleted, because a stranded block is usually the only copy of what it says.
 
+## State that says where it belongs
+
+**`node scripts/check-state.mjs`** asks every module-level store a change ADDS (a `let`, or a `const` holding a `new
+Map|Set|WeakMap|WeakSet`, a `signal(…)` or an empty `[]`/`{}`) in the worker, page or offscreen code where its state
+belongs. Either the store is declared to the state registry with `defineState` (`src/state-registry.ts`) in the same
+file, which puts it in the state inspector, or it carries a `state: ui|cache|plumbing|fixed|test` marker on its line or
+in the comment above it, or `state: <id>` naming a declaration in another file. The UI realms (`src/sidebar/`,
+`src/chat/`, `src/native/`) are left out: their state is presentation or a mirror of the worker's. A SCREAMING_CASE
+`const` is a lookup table by convention and is left out too. Ratcheted in the pre-commit hook and CI's `tools` job: a
+plain run lists the stores that predate it, and a store whose name was already at module scope at the base is a move,
+not an addition. Why it exists, and the scopes to choose from: `docs/dev/state.md`.
+
 ## File size, and what a refactor is worth
 
 **A HUGE TEST FILE COSTS MORE THAN ITS TESTS.** Splitting `sidebar.test.js` (407 jsdom tests) into twelve files
