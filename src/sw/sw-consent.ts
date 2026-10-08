@@ -61,10 +61,11 @@ export function resolveApproval(key: string, decision: ApprovalDecision): boolea
 // A privileged call passes iff: a trusted surface (sender.tab == null), a whitelisted domain, or a per-call
 // grant the design-A loop minted after an iframe approval. Grants are scoped to the approved tool's
 // delegation (minted in delegateTool, cleared when it returns), keyed by (tabId, resource).
-// `fetchOpen` = an approved `exec` is running: its inline `ml.fetch()` calls are allowed FOR THIS RUN (the
-// human approved the code containing them). Ephemeral like the rest — cleared when the exec delegation
-// returns; persisting a fetched URL for the session is the separate, explicit button-#3 path (not this).
-type TabGrants = { sheets: Set<string>; pyCode: Set<string>; fetchOpen?: boolean; serverTools: Set<string> };
+// `fetchUrls` = an approved `exec` is running: its inline `ml.fetch()` of the URLs it spells out as literals is allowed
+// for this call (the person approved the code naming them; `fetchUrlLiterals`, parsed here, never the page's word).
+// Only those: the page shares the tab, so an open grant let it fetch anything while any exec ran. Ephemeral like the
+// rest, cleared when the exec delegation returns; persisting a URL for the session is button #3 (not this).
+type TabGrants = { sheets: Set<string>; pyCode: Set<string>; fetchUrls?: Set<string>; serverTools: Set<string> };
 
 /** What a tab has been allowed for the session, per grant kind — the ledger `grantsFor` reads and a resolved
  *  approval grows. A page never writes it: only a background run's own `resolve` does. */
@@ -74,7 +75,7 @@ defineState({
     describe: "What the call now running on the run's tab was allowed when it was approved: sheets, Python code, server tools, fetches inside it.",
     read: ({ tabId }) => {
         const g = tabId == null ? undefined : pendingGrants.get(tabId);
-        return g && { sheets: [...g.sheets], pythonCode: g.pyCode.size, serverTools: [...g.serverTools], fetchOpen: !!g.fetchOpen };
+        return g && { sheets: [...g.sheets], pythonCode: g.pyCode.size, serverTools: [...g.serverTools], fetchOpen: !!g.fetchUrls?.size, fetchUrls: [...(g.fetchUrls ?? [])] };
     },
 });
 

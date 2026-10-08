@@ -384,8 +384,12 @@ Recorded as each slice lands, with the reason.
   what later re-reads show; both caches now keep frozen copies. Found by the red-team pass on it: the approval of a
   `fetch_url` minted its consent, and its one-time as-you grant, on the TAB, so a page on that tab could read the
   approved URL through its own `FETCH_URL`, or spend the as-you grant first and read the private page with the
-  person's cookies. A worker-built run's approvals are now the run's. Still open, and part 4's: while an APPROVED exec
-  runs, the tab may fetch any URL uncredentialed (`pendingGrants.fetchOpen`), the page included.
+  person's cookies. A worker-built run's approvals are now the run's.
+- **An approved exec fetches only the URLs its code spells out (owner's decision).** While an approved exec ran, the
+  tab could fetch ANY URL uncredentialed (`fetchOpen`), and the page shares the tab: a hostile page waited for the
+  person to approve any exec, then read whatever the browser reaches. The grant is now the script's literal
+  `ml.fetch("…")` URLs (`fetchUrlLiterals`, parsed in the worker); a computed URL is refused with a sentence asking
+  for a literal or `fetch_url`, the rule pointers follow. Part 4 may lift it once `ml.*` is bound to the worker.
 - **Owner decisions for exec on a page that is not approved (part 4):** run it isolated, through
   `chrome.userScripts.execute`, else a CDP isolated world, else refuse, with `ml.*` bound to the worker. Where the
   isolated run is known not to behave as the page's world would, the tool result carries one terse note naming the
