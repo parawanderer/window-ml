@@ -7,12 +7,10 @@ import { LOAD_RECORDS_KEY } from "./resource/load-records";
 import type { ApprovalDecision } from "./contract/contract-agent";
 import type { StartRunPayload, SetApprovalPayload, CancelRunPayload, InjectMessagePayload } from "./contract/contract-messages";
 import { modelFilterAllows, publicConfig } from "./contract/contract-config";
-import { googleSheetId, isCurrentPage } from "./dom/dom";
-import { isSelfSourceUrl } from "./agent/self-source";   // trusted-side enforcement of the self-source auto-approve (uncredentialed own-repo reads)
-import { BUILD_INFO } from "./build-info.gen";
+import { googleSheetId } from "./dom/dom";
 import { browserInfo } from "./util";   // the fork's settings scheme (page-context Browser line)
 import { ensureDebuggerAttached, releaseDebugger, cdpClick, cdpScreenshot, cdpShadowResolve } from "./sw/sw-cdp";   // CDP/debugger layer (strict-CSP exec, trusted click/type, host-grant-free screenshot)
-import { fetchUrlContent, fetchRenderedContent, fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw/sw-fetch";   // outbound fetch layer (ml.fetch, rendered fetch, credentialed Google Sheets CSV)
+import { fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw/sw-fetch";   // outbound fetch layer (ml.fetch, rendered fetch, credentialed Google Sheets CSV)
 import { executeServerTool, serverToolResult } from "./sw/sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw/sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw/sw-events";
@@ -22,8 +20,8 @@ import { ensureHubRuntime, hubDevices, hubLog, hubState, revokeHubDevice, stopHu
 import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, senderOrigin } from "./sw/sw-housekeeping";
 import { handleRunLogDump } from "./sw/sw-run-log";
 import { handleRunStateDump } from "./sw/sw-run-state";
-import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw/sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
-import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, pendingGrants, takeCredFetch, isExtensionSender } from "./sw/sw-consent";
+import { releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw/sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
+import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, pendingGrants, isExtensionSender } from "./sw/sw-consent";
 import { isWorkerRun, makeWorkerRun, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
@@ -35,6 +33,7 @@ import { editSiteAccess, pageRefusal, readSiteLists, siteDecision } from "./sw/s
 import { pythonPrewarm, pythonExec, relayPyStdout } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
 import { eventSession, pageMayWrite, type WorkerClaim } from "./event-admission";   // what a page may add to a session the worker speaks for
+import { fetchUrlFor, pageFetchCaller } from "./sw/sw-fetch-url";
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -616,110 +615,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // there's no URL host-lock (arbitrary URLs are the point), so the boundary IS the consent — an
         // untrusted page may fetch only a URL the user approved for THIS tab (grown in a run's approval,
         // unforgeable). A trusted surface / whitelisted domain is unrestricted. Only http(s) targets.
-        (async () => {
-            const url = String((message.payload as { url?: unknown })?.url || "");
-            const credentials = !!(message.payload as { credentials?: unknown })?.credentials;
-            const rendered = !!(message.payload as { rendered?: unknown })?.rendered;
-            // Only "html" opts OUT of the Markdown ladder; anything else (absent, junk) takes the default.
-            const format = (message.payload as { format?: unknown })?.format === "html" ? "html" as const : "markdown" as const;
-            let scheme = "";
-            try { scheme = new URL(url).protocol; } catch { sendResponse({ error: `Refused: "${url}" is not a valid URL.` }); return; }
-            if (scheme !== "http:" && scheme !== "https:") {
-                // A local file is refused because it could be ANY file on the machine — and Chrome's fetch has no
-                // file scheme anyway. The one file:// read that works is a session render of the page the call
-                // came from, answered page-side from its live DOM and never reaching here. So a file: URL here is
-                // either another file, or this page in a mode that would need its BYTES; the refusal says which,
-                // and names the mode that works, so the model does not retry the same thing.
-                const from = sender.url ?? sender.tab?.url ?? "";   // the frame's URL, else its tab's
-                const own = from.startsWith("file:") && isCurrentPage(url, from);
-                sendResponse({ error: scheme !== "file:"
-                    ? `Refused: ml.fetch supports only http(s) URLs (got "${scheme}").`
-                    : own
-                    ? `Refused: "${url}" is the page you are on, but a local file's bytes cannot be fetched. Use rendered: true with credentials: true to get its live DOM.`
-                    : `Refused: ml.fetch cannot read local files ("${url}"). The only one it reads is the page you are on${from.startsWith("file:") ? ` (${from.replace(/#.*$/, "")})` : ""}, with rendered: true and credentials: true.` });
-                return;
-            }
-            const tabId = sender.tab?.id;
-            const untrusted = await senderTrust(sender) === "untrusted";
-            // SAME-ORIGIN as the sender's page: a free read (the page can already `fetch()` its own origin, and
-            // navigate there is free) — applies to a plain GET AND a rendered load. Used by the gate below AND
-            // the render dispatch (a same-origin render uses the SESSION tab, not incognito — no leak, you're
-            // already signed in there).
-            const sameOriginAsSender = (() => { try { return !!sender.url && new URL(url, sender.url).origin === new URL(sender.url).origin; } catch { return false; } })();
-            const cfg = await getConfig();   // the same-origin as-you opt-in + the cdp render setting
-            // CREDENTIALED (fetch-as-the-user — a raw GET with cookies, OR a rendered load in a NORMAL tab that
-            // carries the session) → a "read any URL as you" primitive, so an untrusted page needs a ONE-TIME
-            // per-URL grant (minted by an approved fetch_url, consumed here). EXCEPTION: a SAME-ORIGIN as-you fetch
-            // is allowed WITHOUT a grant when the user opted into `autoApproveSameOriginAuth` (Advanced). Cross-
-            // origin always needs the grant; execOpen/consent never authorize the credentialed path.
-            if (credentials) {
-                const sameOriginAuthOk = !!cfg.autoApproveSameOriginAuth && sameOriginAsSender;
-                // THE SENDER'S OWN PAGE, as a raw GET: the page can already `fetch(location.href, {credentials:
-                // "include"})` itself, so it gains nothing here. Judged against the sender's REAL frame URL — the
-                // loop's auto-approve only skipped a prompt. A RENDER of it is not included: that would open a
-                // second tab of the page (re-running its scripts), which the page side never asks for — it
-                // answers a session render of itself from its live DOM.
-                const ownPage = !rendered && !!sender.url && isCurrentPage(url, sender.url);
-                if (untrusted && !sameOriginAuthOk && !ownPage && !takeCredFetch(tabId, url)) {
-                    sendResponse({ error: `Refused: an as-you fetch of "${url}" wasn't approved. A fetch AS THE USER (${rendered ? "rendered in your session" : "cookies"}) must be approved per-URL via the fetch_url tool; it can't run inline in exec or reuse a prior grant.` });
-                    return;
-                }
-            } else {
-                // UNCREDENTIALED: fetchOpen = an approved exec is running (its inline fetches are the human-approved
-                // code); per-URL consent = the human approved EXACTLY this url (and it's remembered). SAME-ORIGIN is
-                // FREE (no grant) — including a same-origin RENDER (it renders in your own session, no more than a
-                // free same-origin navigate). A CROSS-origin uncredentialed render runs in INCOGNITO (no session) and
-                // takes the rememberable consent path, same as a raw cross-origin GET.
-                const execOpen = tabId != null && !!pendingGrants.get(tabId)?.fetchOpen;
-                // SELF-SOURCE: an uncredentialed, non-rendered read of the agent's OWN repo source (committed files
-                // / structural API, NOT a prose endpoint) is allowed WITHOUT a per-URL grant, gated on the config
-                // flag. Enforced HERE, trusted-side (the client autoApprove only skips the prompt; the background is
-                // the authority — a forged "self-source" can't make this true for a non-self URL). See self-source.ts.
-                const selfSrc = !!cfg.autoApproveSelfSource && !rendered && isSelfSourceUrl(url, BUILD_INFO.repoUrl);
-                if (untrusted && !sameOriginAsSender && !execOpen && !selfSrc && !(tabId != null && fetchConsent.get(tabId)?.has(url))) {
-                    sendResponse({ error: `Refused: "${url}" hasn't been approved for fetching on this page. Use the fetch_url tool (each new URL is approved once, then remembered for the session), or call ml.fetch inside an approved exec.` });
-                    return;
-                }
-            }
-            const execOpen = tabId != null && !!pendingGrants.get(tabId)?.fetchOpen;
-            try {
-                // rendered: an uncredentialed render is INCOGNITO (session-less — a safe read, which is why a
-                // same-origin one is free); a credentialed render uses the SESSION tab (as-you → always prompts).
-                // A session (non-incognito) render is NEVER free. The `cdp` setting lets it emulate foreground so
-                // a backgrounded tab's gated loads fire.
-                // A table whose preview is not the whole of it hands back its body; it is stored only once the result is
-                // actually released below.
-                const kept: { body?: import("./sw/sw-fetch").FetchedBody } = {};
-                const data = rendered ? await fetchRenderedContent(url, !credentials, !!cfg.cdp) : await fetchUrlContent(url, credentials, format, (b) => { kept.body = b; });
-                // Redirect guard: a per-URL-consented fetch (NOT a surface/whitelisted/exec one) that ends on a
-                // DIFFERENT, un-consented origin followed a redirect off the approved resource — withhold the body
-                // (a consented public URL could redirect to a private/other target). The GET already happened but
-                // no data leaves, and returning nothing is safe. exec (execOpen) trusts the code's own redirects.
-                if (untrusted && !execOpen) {
-                    let sameOrigin = true;
-                    try { sameOrigin = new URL(data.url).origin === new URL(url).origin; } catch { /* keep true */ }
-                    if (!sameOrigin && !fetchConsent.get(tabId!)?.has(data.url)) {
-                        sendResponse({ error: `"${url}" redirected to a different origin (${(() => { try { return new URL(data.url).origin; } catch { return data.url; } })()}), which hasn't been approved. Fetch that URL directly to approve it.` });
-                        return;
-                    }
-                }
-                if (kept.body) {
-                    const key = await storeFetchedBody(kept.body, data.url);
-                    // Handing the key over IS the claim (see pageValueSession): this is the only way a key reaches a
-                    // page, so recording it here is what later lets that tab's PAGE-HOSTED run read the value, with no
-                    // claim message to forge and no page-supplied run id to trust. A background-hosted run claims it
-                    // again under its own session when the pointer is stored, which is what survives a navigation.
-                    if (key) { data.valueKey = key; if (tabId != null) claimValue(key, pageValueSession(tabId)); }
-                }
-                sendResponse({ data });
-            }
-            catch (err) {
-                const m = (err as Error)?.message || String(err);
-                // A redirect loop / too-many-redirects surfaces as a generic "Failed to fetch" (Chrome opaques the
-                // reason), so we can only HINT at it — the exact hops aren't visible to fetch.
-                sendResponse({ error: `Could not fetch "${url}" (${m}). Possible causes: a redirect loop / too many redirects (the chain isn't visible to the extension), the extension lacking host access (grant "On all sites"), or the URL being unreachable.` });
-            }
-        })();
+        void pageFetchCaller(sender).then((caller) => fetchUrlFor(message.payload, caller)).then(sendResponse);
         return true;   // async
     }
     if (message.type === "OPEN_EXTENSIONS_PAGE") {
