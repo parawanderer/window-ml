@@ -235,6 +235,16 @@ per device, in bytes.
   phase chip is kept SEPARATE from the keep-alive chip rather than folded into its "in use": they are
   different facts and they disagree exactly where it matters — a request in flight while the slot has not
   started reads `busy: true, phase: idle`.
+- **A SHORT ROW FOLDS ITS CHIPS into a "+N"** (`FoldBadges`, fold-badges.tsx; the tiers are set in `ModelFacts`).
+  Each chip says when it may fold: NEVER for the phase, the keep-alive and "card gone" (they change while you watch,
+  and are why you look at the row), LAST for the context window and its occupancy (what says whether a model is
+  about to spill), FIRST for the kind, the quantization, the expected rate and an empty RAM cache. The RAM cache
+  climbs a tier once it holds anything and stops folding at all near its limit: a chip with something to say does
+  not hide. Which fit is MEASURED rather than set by a breakpoint, because the room is what the NAME leaves, and a
+  long model id leaves less at the same panel width. The folded chips stay in the DOM inside the closed popover,
+  laid out off-screen and invisible, which is how their widths are known without drawing them twice. The popover
+  opens on a click and stays open, so each chip in it keeps its own tooltip; a wide panel folds nothing. With no
+  layout (jsdom) the row has no width and nothing folds, which is why the jsdom tests are unaffected.
 - **PHASE IS NEVER DRAWN FROM SAMPLES — and now it is drawn from the ENGINE's durations** (`genSpan`,
   `joinGens`). In the real capture (`tests/e2e/fixtures/runner-activity.json`) the event stream delivered ONE
   `prefill` frame and ZERO `decode` frames across two generations that a 40 ms poll resolved completely; our

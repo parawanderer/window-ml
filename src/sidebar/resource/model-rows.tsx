@@ -77,8 +77,8 @@ export function ModelRow({ m, hidden, latestSample, evict }: { m: LoadedModel; h
                 onPointerEnter={() => (rowTipSuppressed.value = true)}
                 onPointerLeave={() => (rowTipSuppressed.value = false)} />
             <span class="vram-name">{m.model}</span>
-            <ModelFacts m={m} />
-            <span class="sp" />
+            {/* The badges take the room the spacer did, and fold what does not fit into a "+N" chip. */}
+            <ModelFacts m={m} fold />
             <span class="vram-gb">{m.vramBytes ? formatBytes(m.vramBytes) : m.sizeBytes ? `${formatBytes(m.sizeBytes)} (CPU)` : "?"}</span>
             <button class="tt vram-x" aria-label="Evict from VRAM" onClick={() => evict(m.model)}
                 onPointerEnter={() => (rowTipSuppressed.value = true)}

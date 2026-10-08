@@ -237,7 +237,13 @@ test("cursor tooltips: one at a time, never under the pointer, never clipped", a
             expect(tip.y + tip.h, `${sel}: clipped at the bottom`).toBeLessThanOrEqual(view.height + 1);
         }
 
-        // Moving away clears them: a stuck tooltip is worse than none.
+        // Moving away clears them: a stuck tooltip is worse than none. AWAY INSIDE THE PANEL first: a move that
+        // leaves the sidebar's frame in one step reaches the frame as no pointer event at all here (measured: the row
+        // that was hovered saw its enter and never a leave), so nothing in the panel could clear a tip on it. That
+        // only showed once the hover landed on the model's name rather than on a badge whose own tip stands the row's
+        // down.
+        const panelBox = await frame.locator("body").boundingBox();
+        await page.mouse.move(panelBox.x + 4, panelBox.y + panelBox.height - 4, { steps: 4 });
         await page.mouse.move(20, 400);
         await sleep(300);
         expect(await frame.locator(".rc-tip, .vram-rowtip").count()).toBe(0);
