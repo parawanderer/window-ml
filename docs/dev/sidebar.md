@@ -177,7 +177,9 @@ never picks up the explanation of it.
     nothing for this case. The DevTools panel is not covered: the app fills it, and nothing of ours sees the pointer
     arrive in DevTools' own chrome.
   - **A scroll or a window blur** moves the content, or the focus, without moving the pointer. The anchored layer
-    always handled both; the cursor-following tips use `useGoneOnScrollOrBlur`.
+    always handled both; the cursor-following tips use `useGoneOnScrollOrBlur`. A scroll is a reason to LOOK: the tip
+    stays while its subject is still under the pointer (`underPointer`), because the scroll that brings a trigger into
+    view can land a frame after the pointer, and hiding on it took down a tip just raised (the tab picker, in CI).
   - **A control that unmounts under the pointer** (the ✕ that evicts a model) never sends its leave. Whatever a
     control's enter switched on must be re-derived from where the pointer is on the next move, as the model row does
     for `rowTipSuppressed`, rather than trusted to be switched off by the matching leave.

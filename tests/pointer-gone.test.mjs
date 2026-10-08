@@ -132,6 +132,23 @@ test("the cursor tip goes when anything scrolls, and when the window loses focus
     doc.body.dispatchEvent(new win.Event("scroll"));
 });
 
+// A scroll is a reason to look, not to hide: the scroll that brings a trigger into view can land a frame AFTER the
+// pointer did (Playwright's hover does exactly that, and so can a person), and hiding on it took down the tip that had
+// just been raised. The tip stays while its trigger is still what the pointer is on.
+test("a scroll that leaves the trigger under the pointer keeps the tip; one that moves something else there does not", async () => {
+    const c = await mountCursorTip();
+    const real = doc.elementFromPoint;
+    try {
+        doc.elementFromPoint = () => c.t;
+        await c.show();
+        await act(() => { doc.body.dispatchEvent(new win.Event("scroll")); });
+        assert.ok(c.tip(), "still on its trigger: the tip stays");
+        doc.elementFromPoint = () => doc.body;
+        await act(() => { doc.body.dispatchEvent(new win.Event("scroll")); });
+        assert.equal(c.tip(), null, "something else slid under the pointer: gone");
+    } finally { doc.elementFromPoint = real; }
+});
+
 test("uninstalling the anchored layer removes its window blur listener", () => {
     const added = [], removed = [];
     const add = win.addEventListener, rem = win.removeEventListener;

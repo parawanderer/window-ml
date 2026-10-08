@@ -12,7 +12,7 @@ import { hiddenModels, toggleHidden, poolFacts } from "./panel-state";
 import { colorFor } from "../palette";
 import { hhmmss } from "../timestamps";
 import { useTipPlacement } from "../use-tip";
-import { useGoneOnScrollOrBlur } from "../pointer-gone";
+import { useGoneOnScrollOrBlur, underPointer } from "../pointer-gone";
 import { hoverModel } from "./vram-focus";
 
 /** A model NAMED BUT NOT LOADED — evicted inside the window the chart still covers, or one that only ever
@@ -109,7 +109,7 @@ export const sparkAt = signal<{ i: number; x: number; y: number } | null>(null);
  *  refuse. The absolute figure and the instant are what this view genuinely knows. */
 export function SparkTip({ series, history }: { series: number[]; history: { t: number; models: Record<string, number> }[] }) {
     const at = sparkAt.value;
-    useGoneOnScrollOrBlur(!!at, () => { sparkAt.value = null; });
+    useGoneOnScrollOrBlur(!!at, () => { sparkAt.value = null; }, () => !!(at && underPointer(at.x, at.y)?.closest(".vram-spark-wrap")));
     if (!at || !series.length) return null;
     const i = Math.min(series.length - 1, Math.max(0, at.i));
     const t = history[i]?.t;
@@ -130,7 +130,11 @@ export function SparkTip({ series, history }: { series: number[]; history: { t: 
  *  system RAM, and that last one is why a "GPU" model can still be slow. */
 export function RowTip({ sample }: { sample: ResourceSample | null }) {
     const name = hoverModel.value, at = rowTipAt.value;
-    useGoneOnScrollOrBlur(!!(name && at), () => { rowTipAt.value = null; });
+    // After a scroll the tip stays only while the pointer is still on THIS model's row: another row may have slid under it.
+    useGoneOnScrollOrBlur(!!(name && at), () => { rowTipAt.value = null; }, () => {
+        const el = at && underPointer(at.x, at.y);
+        return el?.closest(".vram-row")?.querySelector(".vram-name")?.textContent === name;
+    });
     if (!name || !at || !sample || rowTipSuppressed.value) return null;
     const m = sample.models.find((x) => x.model === name);
     if (!m) return null;

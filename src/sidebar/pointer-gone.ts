@@ -11,7 +11,7 @@
 // Not covered: the DevTools panel. There the app fills the panel, leaving it means leaving the panel for DevTools'
 // own chrome, and no page of ours sees the pointer arrive anywhere.
 
-import { useEffect } from "preact/hooks";
+import { useEffect, useRef } from "preact/hooks";
 
 /** Where the pointer was last seen in this document, and whether it is (as far as we know) still here. */
 let last: Element | null = null;
@@ -64,16 +64,29 @@ export function pointerGone(): void {
  * now labels whatever slid under it), or the window loses focus (a switch to another window or tab). The anchored
  * layer (tooltip-layer.ts) already does both; the cursor-following tips did neither.
  *
+ * A scroll is a reason to LOOK, not to hide: `stillHere` is asked whether what the tip describes is still under the
+ * pointer, and only a no takes the tip down. Hiding on every scroll took down a tip that had just been raised, when the
+ * scroll that brought its trigger into view landed a frame after the pointer did (the chat page's tab picker, in CI).
+ *
  * @param up whether the tip is showing; the listeners exist only then
  * @param hide takes the tip down
+ * @param stillHere after a scroll, is the tip's subject still under the pointer? Absent, or false, hides it
  */
-export function useGoneOnScrollOrBlur(up: boolean, hide: () => void): void {
+export function useGoneOnScrollOrBlur(up: boolean, hide: () => void, stillHere?: () => boolean): void {
+    const ask = useRef(stillHere);
+    ask.current = stillHere;
     useEffect(() => {
         if (!up) return;
         const doc = typeof document !== "undefined" ? document : null;
         if (!doc) return;
-        doc.addEventListener("scroll", hide, true);
+        const onScroll = (): void => { if (!ask.current?.()) hide(); };
+        doc.addEventListener("scroll", onScroll, true);
         window.addEventListener("blur", hide);
-        return () => { doc.removeEventListener("scroll", hide, true); window.removeEventListener("blur", hide); };
+        return () => { doc.removeEventListener("scroll", onScroll, true); window.removeEventListener("blur", hide); };
     }, [up]);
+}
+
+/** What is under the pointer at (x, y), or null where nothing can say (no layout, or a test DOM without hit-testing). */
+export function underPointer(x: number, y: number): Element | null {
+    try { return typeof document.elementFromPoint === "function" ? document.elementFromPoint(x, y) : null; } catch { return null; }
 }
