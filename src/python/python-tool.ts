@@ -4,7 +4,7 @@
 import { type MlApi } from "../contract";
 import { outputCapPrecheck, resolveOutputCap } from "../contract/contract-pointers";
 import { UI_OUT_CAP } from "../contract/contract-chat";
-import { clipHeadTail, panelHead } from "../agent/output-clip";
+import { clipHeadTail, panelHead, ceilingNote } from "../agent/output-clip";
 import { type MlTool, type ToolResult } from "../contract/contract-agent";
 import { type RenderDescriptor } from "../contract/contract-render";
 import { googleSheetCsvUrl, nonEmptyTables, clipOut, clipValue } from "../dom/dom";
@@ -129,7 +129,9 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             const r = await ml.pythonExec(code, { image: image || null, mode: mode === "full" ? "full" : "readonly", margin: typeof margin === "number" ? margin : 0, tableRaw: !!tableRaw, tables: tables || null, onStdout: ctx?.stream });
             // Cap stdout/value/error fed back to the model so a runaway result (e.g. a
             // string-concat blowup) can't flood the context — with a "[+N truncated]" note.
-            const stdoutClipped = clipOut(r.stdout || "", PY_OUT_MAX);
+            // Past the ceiling the model is told AFTER its clip, and the panel's last line says the same (output-clip.ts).
+            const overNote = r.stdoutDropped ? ceilingNote(r.stdoutDropped) : "";
+            const stdoutClipped = clipOut(r.stdout || "", PY_OUT_MAX) + (overNote ? `\n${overNote}` : "");
             // Synthetic "already loaded" log — models get confused about HOW their tables/image arrive
             // (do they read_csv? what variable?). State it plainly at the top so they infer the setup:
             // `img`/`df`/named DataFrames are PRE-loaded, reference them directly.
@@ -156,10 +158,10 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 ...(r.inputImage ? { image: r.inputImage } : {}), ...(imageToken ? { imageToken } : {}), ...(r.inputTables && r.inputTables.length ? { tables: r.inputTables } : {}) };
             // UI keeps far more than the model's cap (PY_OUT_MAX) so a watched stream doesn't SHRINK when the
             // step lands; `seen` marks where the model-facing view ended (the surplus renders marked).
-            const stdoutFull = r.stdout || "";
+            const stdoutFull = (r.stdout || "") + (overNote ? `\n${overNote}` : "");
             const stdout = stdoutFull ? clipHeadTail(stdoutFull, UI_OUT_CAP, panelHead(PY_OUT_MAX)) : undefined;   // the start the model read, and the LATEST
             const capture = stdoutFull.length > UI_OUT_CAP ? clipOut(stdoutFull, UI_OUT_CAP) : undefined;   // what a pointer reads, in one piece
-            const seen = stdoutFull ? Math.min(stdoutFull.length, PY_OUT_MAX) : undefined;
+            const seen = stdoutFull ? Math.min((r.stdout || "").length, PY_OUT_MAX) : undefined;
             // The SANDBOX'S OWN CLOCK, kept apart from our wall time around the dispatch: `durationMs` is the
             // script, `bootMs` the cold start it had to pay for first (absent on every warm call). Without
             // the split a first run reports four seconds and blames the script for time it never spent.

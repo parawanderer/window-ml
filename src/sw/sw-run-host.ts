@@ -10,7 +10,7 @@ import type { ToolMeta } from "../agent/agent-loop";
 import type { HousekeepingReport } from "../log/housekeeping";
 import type { NeutralMessage, ToolCall, TokenUsage } from "../contract/contract-chat";
 import { UI_OUT_CAP } from "../contract/contract-chat";
-import { clipHeadTail, panelHead } from "../agent/output-clip";
+import { clipHeadTail, panelHead, ceilingNote } from "../agent/output-clip";
 import type { ApprovalDecision } from "../contract/contract-agent";
 import { stepBudget } from "../agent/step-budget";
 import type { StartRunPayload, ResumeRunPayload } from "../contract/contract-messages";
@@ -594,8 +594,9 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                             // the page's CSP-BLOCKED render (an exec-out carrying that error), so forwarding
                             // it would show a red "this page blocks eval" next to a successful result — and
                             // would wipe the output the user just watched stream in.
-                            const stdout = r.logs.join("\n");
-                            const seen = Math.min(stdout.length, CDP_EXEC_CAP);
+                            const kept = r.logs.join("\n");
+                            const stdout = r.dropped ? `${kept}\n${ceilingNote(r.dropped)}` : kept;   // past the ceiling, its last line says so
+                            const seen = Math.min(kept.length, CDP_EXEC_CAP);
                             return { result: r.text, renderIn: env.renderIn,
                                 renderOut: { type: "exec-out", stdout: clipHeadTail(stdout, UI_OUT_CAP, panelHead(CDP_EXEC_CAP)), ...(stdout.length > UI_OUT_CAP ? { capture: clipOut(stdout, UI_OUT_CAP) } : {}), seen, value: r.value } };
                         }

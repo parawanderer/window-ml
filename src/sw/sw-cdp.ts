@@ -4,6 +4,7 @@
 // background.ts verbatim; it owns its own attach lifecycle and shares no state with the rest of the worker.
 // Gated at the call sites behind the off-by-default `cdp` setting + the `debugger` permission (checked here).
 import { clipOut } from "../dom/dom";
+import { OUTPUT_CEILING, ceilingNote } from "../agent/output-clip";
 import { noteRunMechanic } from "./sw-runs";
 
 /** Is the `debugger` permission held? It's declared at INSTALL time (in `permissions`, not optional) —
@@ -106,11 +107,11 @@ export async function cdpClick(tabId: number, x: number, y: number): Promise<{ o
  *  banner is the honest "the browser is being driven" signal), evaluates, ALWAYS detaches. Two shapes, like
  *  the main-world exec: a trailing-expression first (REPL value), then a statement body (the model `return`s).
  *  See docs/spec/EXEC_STRICT_CSP.md. */
-export async function cdpEval(tabId: number, source: string, onStream?: (text: string, ts?: number) => void): Promise<{ ok: true; value: string; logs: string[]; text: string } | { error: string; needsPermission?: true }> {
+export async function cdpEval(tabId: number, source: string, onStream?: (text: string, ts?: number) => void): Promise<{ ok: true; value: string; logs: string[]; dropped: number; text: string } | { error: string; needsPermission?: true }> {
     const at = await ensureDebuggerAttached(tabId);   // reuses a live attachment; attach/detach is the dominant per-exec cost on a strict page
     if ("error" in at) return { error: `Couldn't attach the debugger to run exec (${at.error}). Another debugger (DevTools?) may be attached to this tab.`, ...(at.needsPermission ? { needsPermission: true } : {}) };
     const target: chrome.debugger.Debuggee = { tabId };
-    type WrapVal = { __mlWrapped: true; v: string; logs: string[] };
+    type WrapVal = { __mlWrapped: true; v: string; logs: string[]; dropped?: number };
     type EvalResult = { result?: { value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string } };
     const evaluate = (expression: string) => chrome.debugger.sendCommand(target, "Runtime.evaluate",
         { expression, awaitPromise: true, returnByValue: true, userGesture: true }) as Promise<EvalResult>;
@@ -148,11 +149,12 @@ export async function cdpEval(tabId: number, source: string, onStream?: (text: s
     const tee = bound ? `try { ${BINDING}(JSON.stringify({ text: __s + '\\n', ts: Date.now() })); } catch (e) {}` : "";
     const wrap = (inner: string) => `(async () => {
         const __logs = [], __M = ['log','info','warn','error','debug'], __S = {};
-        for (const m of __M) { __S[m] = console[m]; console[m] = (...a) => { const __s = a.map(x => { try { return typeof x === 'string' ? x : JSON.stringify(x); } catch { return String(x); } }).join(' '); __logs.push(__s); ${tee} }; }
+        let __c = 0, __d = 0;   // characters kept, and dropped past the ceiling (output-clip.ts boundedLines, inlined)
+        for (const m of __M) { __S[m] = console[m]; console[m] = (...a) => { const __s = a.map(x => { try { return typeof x === 'string' ? x : JSON.stringify(x); } catch { return String(x); } }).join(' '); const __k = __s.length + (__logs.length || __d ? 1 : 0); if (__d || __c + __k > ${OUTPUT_CEILING}) { __d += __k; return; } __c += __k; __logs.push(__s); ${tee} }; }
         try {
             const __v = await (${inner});
             const __vs = __v === undefined ? '(undefined)' : typeof __v === 'string' ? __v : (() => { try { return JSON.stringify(__v); } catch { return String(__v); } })();
-            return { __mlWrapped: true, v: __vs, logs: __logs };
+            return { __mlWrapped: true, v: __vs, logs: __logs, dropped: __d };
         } finally { for (const m of __M) console[m] = __S[m]; }
     })()`;
     try {
@@ -166,11 +168,13 @@ export async function cdpEval(tabId: number, source: string, onStream?: (text: s
         const out = r?.result?.value as WrapVal | undefined;
         const value = out && out.__mlWrapped ? out.v : "(undefined)";
         const logs = out && Array.isArray(out.logs) ? out.logs : [];
-        // Prefix captured console output onto the value, exactly like the main-world path's `withLogs`.
-        const combined = logs.length ? `console:\n${clipOut(logs.join("\n"), CAP)}\n\nvalue: ${value}` : value;
+        const dropped = out && typeof out.dropped === "number" ? out.dropped : 0;
+        // Prefix captured console output onto the value, exactly like the main-world path's `withLogs`; past the ceiling
+        // the model is told after its clip.
+        const combined = logs.length ? `console:\n${clipOut(logs.join("\n"), CAP)}${dropped ? `\n${ceilingNote(dropped)}` : ""}\n\nvalue: ${value}` : value;
         // `logs`/`value` come back structurally too, so the caller can build the same rendered Out cell the
         // main-world exec produces (console / value sections) instead of leaving the CSP-blocked error render.
-        return { ok: true, value, logs, text: combined };
+        return { ok: true, value, logs, dropped, text: combined };
     } catch (e) {
         return { error: `The CDP exec failed (${(e as Error)?.message || e}).` };
     } finally {

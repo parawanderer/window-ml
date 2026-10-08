@@ -481,7 +481,7 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
                 const ro = await withRunDeref(toolCtx.deref, () => evalReadonly(roSrc, document, this,
                     makeAnswerFacade(answerSet, elLine), { checkpoint: () => answerSet.checkpoint(),
                     onLog: live ? (line) => live.push(line + "\n") : undefined }));   // each line as it prints, as an approved exec streams it
-                const { result, elements, render } = formatReadonlyExec(ro.value, ro.logs);
+                const { result, elements, render } = formatReadonlyExec(ro.value, ro.logs, undefined, ro.dropped);
                 const { in: renderIn, out: renderOut } = descriptorFor(byName[name], { result, elements, render }, args);
                 // Cached ml.fetch URLs this survey re-read → a "reused a grant you approved" note (transparency).
                 const urls = [...new Set(ro.reused)];

@@ -44,3 +44,35 @@ export function clipHeadTail(text: string, cap: number = UI_OUT_CAP, head: numbe
     const from = winAt + tailStart(win, text[winAt - 1] === "\n");
     return text.slice(0, h) + gapNote(from - h) + text.slice(from);
 }
+
+/** The most characters of output one tool call KEEPS (its console lines, its stdout). Past it a call stops capturing
+ *  and counts what it left out: a runaway print otherwise grows until joining it throws `Invalid string length` (V8's
+ *  limit is about 536 million characters), and every copy of it costs memory in the page and on the way to the worker.
+ *  32 million is far past anything a person reads and far under both limits. */
+export const OUTPUT_CEILING = 32_000_000;
+
+/** What the MODEL is told when a call passed {@link OUTPUT_CEILING}: the limit, how much was not kept, and what to do
+ *  instead. It goes AFTER the model's clip of the output, never inside it, or a 500-character copy would never reach it. */
+export const ceilingNote = (dropped: number): string =>
+    `[output stopped at the ${OUTPUT_CEILING}-char limit: ${dropped} more chars were printed and not kept. Print less: filter, count or aggregate in the script.]`;
+
+/**
+ * A capture of printed lines bounded by {@link OUTPUT_CEILING}: whole lines are kept until the next would pass it, and
+ * from then on every line is only counted, so a script printing in a loop costs a counter, not memory. `add` returns
+ * whether the line was kept, which is what decides whether it is streamed. `dropped` counts the characters a joined
+ * copy would have had, separators included.
+ */
+export function boundedLines(ceiling: number = OUTPUT_CEILING): { lines: string[]; dropped: number; add(line: string): boolean } {
+    let chars = 0;
+    const cap = {
+        lines: [] as string[],
+        dropped: 0,
+        add(line: string): boolean {
+            const cost = line.length + (cap.lines.length || cap.dropped ? 1 : 0);
+            if (cap.dropped || chars + cost > ceiling) { cap.dropped += cost; return false; }
+            chars += cost; cap.lines.push(line);
+            return true;
+        },
+    };
+    return cap;
+}

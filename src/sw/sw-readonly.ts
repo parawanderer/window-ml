@@ -69,7 +69,7 @@ export async function evalReadonlyInWorker(args: Record<string, unknown>, deps: 
     try {
         const ro = await evalReadonly(code, null, deps.ml ?? {}, undefined, { realm: "worker", current,
             onLog: deps.live ? (line) => deps.live!.push(line + "\n") : undefined });
-        const { result, render } = formatReadonlyExec(ro.value, ro.logs, ro.prints);
+        const { result, render } = formatReadonlyExec(ro.value, ro.logs, ro.prints, ro.dropped);
         const { in: renderIn, out: renderOut } = descriptorFor(deps.tool, { result, render, ...(deps.tool ? {} : { renderIn: codeIn }) }, args);
         return { kind: "answered", result, renderIn, renderOut };
     } catch (e) {

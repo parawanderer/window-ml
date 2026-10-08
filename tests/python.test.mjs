@@ -221,6 +221,27 @@ test("no injected image → img/img_np are None", { skip }, async () => {
     assert.deepEqual((await pyRun("return [img is None, img_np is None]")).value, [true, true]);
 });
 
+// ---- the output ceiling: past it stdout is counted, not kept (output-clip.ts OUTPUT_CEILING) ----
+
+test("stdout past the output ceiling: kept up to it, the rest counted, nothing teed past it", { skip, timeout: 120000 }, async () => {
+    const teed = [];
+    py.globals.set("_ml_stdout_cb", (s) => teed.push(s.length));
+    try {
+        // Five 9 MB prints: three fit under 32 million, the fourth would pass it.
+        const r = await pyRun(`s = "x" * 9000000\nfor _ in range(5):\n    print(s)\nreturn 1`);
+        assert.equal(r.ok, true, r.error);
+        assert.equal(r.stdout.length, 3 * 9_000_001, "three whole writes of a line and its newline");
+        assert.equal(Number(py.globals.get("_ml_stdout_dropped")), 2 * 9_000_001);
+        assert.ok(teed.reduce((a, b) => a + b, 0) <= 3 * 9_000_001, "a write past the ceiling is not streamed");
+    } finally { py.globals.delete("_ml_stdout_cb"); }
+});
+
+test("stdout under the ceiling reports nothing dropped", { skip, timeout: 120000 }, async () => {
+    const r = await pyRun(`print("hi")`);
+    assert.equal(r.stdout, "hi\n");
+    assert.equal(Number(py.globals.get("_ml_stdout_dropped")), 0);
+});
+
 // ---- readonly-mode sandbox hardening: a script CANNOT escape to the outside world ----
 // These are the security invariant that makes `python_exec` auto-approvable. Run against real
 // Pyodide via the shipped harden()/unharden() (python-runtime.ts).

@@ -499,3 +499,20 @@ test("python_exec: an unresolvable table pointer faults like any other bad point
     assert.equal(ran.length, 1, "only the call with no pointer ran");
     assert.deepEqual(ran[0].args.tables, { df: "https://x.test/a.csv", t: "current" }, "and its sources are exactly as written");
 });
+
+// --- a CUT copy names its pointer and how to read further -----------------------------------------------------------
+
+test("a cut output tells the model where the rest is and how to read it, on the result itself", async () => {
+    const full = Array.from({ length: 300 }, (_, i) => `row ${i + 1}`).join("\n");
+    const { results } = await drive(
+        [call("exec", { js: "x" })],
+        () => ({ result: full.slice(0, 120) + "…", renderOut: { type: "exec-out", stdout: full, seen: 120 } }));
+    const out = results.find((r) => r.name === "exec").result;
+    assert.match(out, /\n\[your copy is cut: @tool:[0-9a-f]{7} holds \d+ chars of this output\. Read further with dereference and a pipe \(grep, sed -n, tail -n\) instead of running it again\.\]$/);
+    assert.doesNotMatch(out, / {2}/, "model-facing text never pads");
+});
+
+test("an output the model got whole carries no cut note", async () => {
+    const { results } = await drive([call("exec", { js: "x" })], () => ({ result: "short", renderOut: { type: "exec-out", stdout: "short" } }));
+    assert.equal(results.find((r) => r.name === "exec").result, "short");
+});

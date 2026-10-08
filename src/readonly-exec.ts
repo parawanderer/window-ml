@@ -25,6 +25,7 @@
 // This file is the ENTRY (`evalReadonly`) and re-exports the public names; the pieces live in readonly-exec/:
 // limits.ts (refusals + halting bounds), tokenizer.ts, parser.ts, policy.ts (what may be read/called/built + the
 // `ml` facade), print.ts (the print boundary) and evaluator.ts (the evaluator + its two drivers).
+import { boundedLines } from "./agent/output-clip";
 import type { CurrentSnapshot } from "./agent/current-context";   // a TYPE: erased, so it adds nothing at runtime
 import { NotInDialect, Denied, NeedsPage } from "./readonly-exec/limits";
 import { tokenize } from "./readonly-exec/tokenizer";
@@ -57,9 +58,13 @@ export type { PrintSwap } from "./readonly-exec/print";
  *   streamed lines from a run that did not happen: the caller must discard them (agent-loop.ts, `LiveOutput`).
  */
 export async function evalReadonly(code: string, doc: Document | null, ml?: unknown, answerFacade?: unknown,
-    opts: { checkpoint?: () => () => void; stepBudget?: number; realm?: ReadonlyRealm; current?: CurrentSnapshot; onLog?: (line: string) => void } = {}): Promise<{ value: unknown; logs: string[]; reused: string[]; prints: { console: PrintSwap[]; value: PrintSwap[] } }> {
+    opts: { checkpoint?: () => () => void; stepBudget?: number; realm?: ReadonlyRealm; current?: CurrentSnapshot; onLog?: (line: string) => void } = {}): Promise<{ value: unknown; logs: string[]; dropped: number; reused: string[]; prints: { console: PrintSwap[]; value: PrintSwap[] } }> {
     const realm: ReadonlyRealm = opts.realm ?? "page";
-    const logs: string[] = [];
+    // Bounded (output-clip.ts): past OUTPUT_CEILING a line is counted, not kept. The step budget bounds the WORK, and a
+    // string may be 10 million characters, so without this 200 prints of one were 1.8 GB held and then an
+    // `Invalid string length` when joined.
+    const capture = boundedLines();
+    const logs = capture.lines;
     // Printed through the evaluator's print boundary once it exists (it abridges `ml.current.messages` rows).
     let printable: (v: unknown, swaps: PrintSwap[], where: string) => unknown = (v) => v;
     // What the print boundary changed, STRUCTURED. The caller writes the notes (`describeSwaps`), because only it knows
@@ -72,8 +77,8 @@ export async function evalReadonly(code: string, doc: Document | null, ml?: unkn
             if (typeof x === "string") return x;
             return safeStr(printable(x, prints.console, a.length > 1 ? `console.log argument ${i + 1}` : "console.log"));
         }).join(" ");
-        logs.push(line);
-        opts.onLog?.(line);
+        // Streamed only while kept, as an approved exec streams: past the ceiling the panel ends where the result does.
+        if (capture.add(line)) opts.onLog?.(line);
     };
     const reused: string[] = [];   // ml.fetch cache hits — URLs this survey re-read from a prior approval
     // The pipe charges the step budget, which lives on the evaluator built below: the meter forwards to it once it exists.
@@ -117,7 +122,7 @@ export async function evalReadonly(code: string, doc: Document | null, ml?: unkn
     printable = (v, swaps, where) => ev.printable(v, swaps, where);
     try {
         const value = await runAsync(ev.eval(ast, top));
-        return { value: ev.printable(value, prints.value, "the returned value"), logs, reused, prints };
+        return { value: ev.printable(value, prints.value, "the returned value"), logs, dropped: capture.dropped, reused, prints };
     } catch (e) {
         restore?.();
         // WHERE it threw, for a RUNTIME error. A refusal is about the script's shape and needs no line; a

@@ -44,7 +44,17 @@ the rest of the cap is the latest output, from a line start. One module does thi
 so the output keeps its shape when the step lands. Line stamps are remapped across the gap: a dropped line's stamp
 moves to the tail's first line, which began in the gap. An `@tool:` pointer does NOT read that copy: a JSON dump with
 its middle cut out cannot be repaired, so when `stdout` dropped a middle part the descriptor also carries `capture`, the
-first `UI_OUT_CAP` characters in one piece, and the pointer holds that (agent-loop.ts, `fuller`). It used to keep only the start, so a long-running loop's live
+first `UI_OUT_CAP` characters in one piece, and the pointer holds that (agent-loop.ts, `fuller`).
+
+*The ceiling, and what the model is told.* One call KEEPS at most `OUTPUT_CEILING` (32 million) characters of output
+(`boundedLines`, output-clip.ts): whole lines up to it, then every line only counted, and not streamed. All four
+producers apply it where the output is made: `exec`'s console patch (tools.ts), the read-only recorder
+(readonly-exec.ts), CDP exec's in-page wrapper (sw-cdp.ts, inlined since it runs in the page), and Python's `_MlTee`
+(python-runtime.ts, reported back as `stdoutDropped`). Without it, a survey printing 200 lines of 9 MB held 1.8 GB and
+then failed with `Invalid string length` when joined. The model is told in two places, both AFTER its clip of the
+output, never inside it (a 500-character copy would cut a note at the end away): `ceilingNote` (the limit, how much was
+not kept, "print less: filter, count or aggregate"), and, on any result cut before the model with a pointer to it, a
+line naming the pointer, how much it holds, and the pipe verbs to read further with (agent-loop.ts, `cutLine`). It used to keep only the start, so a long-running loop's live
 view froze on its first lines while a "[+N chars]" count ticked up beside it.
 
 *The output cell.* `python_exec` and `exec` render their Out through ONE shared **`OutputCell`**
