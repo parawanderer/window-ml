@@ -119,10 +119,10 @@ called".
 
 ## Adding a tool, a member or a message
 
-The red-team pass AGENTS.md requires. Run it as its own agent, told to attack rather than review; every attack it
-finds becomes a test that fails before the fix. The threat is a page that shares the main world with `window.ml` and
-with any tool code run there, posts any window message, reaches the extension's open shadow roots, and knows every run
-id. Cover:
+The red-team pass AGENTS.md requires. Run it as its own agent, told to find where a property does not hold rather
+than to review; each gap it finds becomes a test titled by the property, failing before the fix. The threat is a page
+that shares the main world with `window.ml` and with any tool code run there, posts any window message, reaches the
+extension's open shadow roots, and knows every run id. Cover:
 
 - **Where it runs.** A tool run in the page puts its inputs and results into the page's world. Prefer the worker; if
   it must run in the page, name what of the run it puts there (another site's content, a pointer's value, the system
@@ -137,8 +137,8 @@ id. Cover:
   the worker facade on purpose.
 - **A message type.** In `PAGE_STARTED_TYPES`, or sent by the content script outside `HANDLE_MAP`, where its handler
   must bind it to the sender itself (the run's tab, frame 0, the document) and the UNGATED ratchet lists it.
-- **A blocked attack.** If a safety classifier stops an attack test, stop on that case and hand it to the owner,
-  whose other model writes attack sides; this side writes the defence.
+- **A blocked case.** If a safety classifier stops a test, stop on that case and hand it to the owner, whose other
+  model writes the test; this side writes the defence.
 
 ## Tests
 

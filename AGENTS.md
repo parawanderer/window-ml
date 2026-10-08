@@ -119,9 +119,9 @@ contract, not just the new surface: HALTING tests (in a worker with a timeout), 
 dialect leaves nothing behind), and an update to the doc. Why, with the `for…of` that broke: the doc's last section.
 
 **RULE — a new agent tool, `ml.*` member or page-started message type gets a RED-TEAM PASS, without being asked.**
-Before the PR, run a separate agent whose only job is to attack it from a hostile page (shares the main world, posts
-any window message, knows every run id), writing tests that fail first in `tests/redteam.test.js` or
-`tests/e2e/site-access.spec.mjs`; the change lands with them passing. What to attack: `docs/dev/site-access.md`,
+Before the PR, run a separate agent whose only job is what a hostile page (shares the main world, posts any window
+message, knows every run id) must NOT get from it, each property a test that fails first in `tests/redteam.test.js` or
+`tests/e2e/site-access.spec.mjs`; the change lands with them passing. What to check: `docs/dev/site-access.md`,
 "Adding a tool, a member or a message"; how: the `redteam` skill.
 
 ## Where the implementation notes live — read the one you are about to change
