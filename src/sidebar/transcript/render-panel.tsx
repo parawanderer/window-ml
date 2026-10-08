@@ -1624,7 +1624,9 @@ function markSeen(value: object, seenText: string): WeakMap<object, number> | un
  *  draws it as a collapsible JSON TREE whenever it is an object or array. A value clipped for the UI (the
  *  `… [first K of M chars]` note) still gets its tree: the part that arrived whole, closed at the cut, with a row
  *  saying where the cut was. Text stays the default, since it is what the model read and what Ctrl+F searches. */
-export function ValueOut({ text, fill, seen }: { text: string; fill?: boolean; /** chars the model received; absent → all */ seen?: number }) {
+export function ValueOut({ text, fill, seen, after }: { text: string; fill?: boolean; /** chars the model received; absent → all */ seen?: number;
+    /** drawn inside the cell, after the value (an exec's print notes), so it scrolls and is found with it */
+    after?: ComponentChildren }) {
     const partial = seen != null && seen < text.length;
     const [asTree, setAsTree] = useState(false);
     const loose = useMemo(() => parseLooseJson(text), [text]);
@@ -1637,7 +1639,7 @@ export function ValueOut({ text, fill, seen }: { text: string; fill?: boolean; /
         return { value, unsent: partial ? markSeen(value, text.slice(0, seen)) : undefined };
     }, [asTree, text, seen]);
     const asText = <SeenSplit text={text} seen={partial ? seen : undefined} lang="json" />;
-    if (!loose) return <OutputCell fill={fill}>{asText}</OutputCell>;
+    if (!loose) return <OutputCell fill={fill}>{asText}{after}</OutputCell>;
     const dropped = loose.droppedChars;
     const cut = `… cut here${dropped != null ? `: ${dropped.toLocaleString("en-US")} more characters were not kept` : ""}`;
     const tip = asTree ? "Show the value as text"
@@ -1651,16 +1653,18 @@ export function ValueOut({ text, fill, seen }: { text: string; fill?: boolean; /
     return (
         <OutputCell fill={fill} corner={corner}>
             {tree ? <div class="jt-value"><JsonNode v={tree.value} defaultOpen cut={cut} unsent={tree.unsent} /></div> : asText}
+            {after}
         </OutputCell>
     );
 }
 
 /** The print boundary's notes for one part of an exec's output: what the print showed as a VIEW of the value (a large
- *  `ml.current` message summarised), with the JSONPaths of what was replaced. Drawn after the part's output in a cell of
- *  its own, styled like the output the model read, because the model reads them right after its cut: OUTSIDE the
- *  scrolling cell, so a long output can never scroll them out of sight. */
+ *  `ml.current` message summarised), with the JSONPaths of what was replaced. Drawn INSIDE the part's output cell, after
+ *  the output, because the model reads them right after its cut: they scroll with the output, and the cell's find
+ *  (Ctrl/Cmd+F) searches them with it. A code block of their own, like the output above them, because they are text
+ *  the model read in the same place. */
 function PrintNotes({ notes }: { notes: string[] }) {
-    return <div class="r-print-notes"><OutputCell text><Code text={notes.join("\n")} lang="text" /></OutputCell></div>;
+    return <div class="r-print-notes"><Code text={notes.join("\n")} lang="text" /></div>;
 }
 
 function ExecOutRender({ d, marks, live, ranMs, ranSince, lineMap, remoteMs }: { d: Extract<RenderDescriptor, { type: "exec-out" }>; marks?: [number, number][]; live?: boolean; ranMs?: number; ranSince?: number; lineMap?: number[] | null; remoteMs?: { durationMs: number; bootMs?: number } | null }) {
@@ -1675,14 +1679,14 @@ function ExecOutRender({ d, marks, live, ranMs, ranSince, lineMap, remoteMs }: {
                 // draws two blocks, and selecting across them by hand drags the marker's text along. The print notes
                 // come with it: they say what a printed line stands in for, and a copy without them reads as the data.
                 actions={<CopyBtn text={d.stdoutNotes?.length ? `${d.stdout}\n${d.stdoutNotes.join("\n")}` : d.stdout} tip={d.seen != null && d.seen < d.stdout.length ? "copy the whole console output, including the part the model was not sent" : "copy the console output"} />}>
-                <OutputCell text><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell>
-                {d.stdoutNotes?.length ? <PrintNotes notes={d.stdoutNotes} /> : null}
+                <OutputCell text><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} />
+                    {d.stdoutNotes?.length ? <PrintNotes notes={d.stdoutNotes} /> : null}</OutputCell>
                 <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} />
             </PyOutSection> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
             {d.error ? <PyOutSection label="error" cls="r-py-err"><OutputCell text><ExecError text={d.error} line={d.errorLine} map={lineMap} /></OutputCell></PyOutSection> : null}
-            {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><ValueOut text={d.value} seen={d.valueSeen} />
-                {d.valueNotes?.length ? <PrintNotes notes={d.valueNotes} /> : null}</PyOutSection> : null}
+            {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><ValueOut text={d.value} seen={d.valueSeen}
+                after={d.valueNotes?.length ? <PrintNotes notes={d.valueNotes} /> : null} /></PyOutSection> : null}
             {!d.stdout ? <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} /> : null}
         </div>
     );
