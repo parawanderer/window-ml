@@ -61,14 +61,15 @@ function CopyValue({ v }: { v: unknown }) {
 function Member({ m, e }: { m: RunStateMember; e: StateEntry | undefined }) {
     const label = <span class="rstate-key" {...cursorTipOn(memberTip(m))}><MemberName m={m} /></span>;
     const chips = <span class="rstate-trail">
-        {m.audience === "human" ? <span class="rstate-aud" {...cursorTipOn(readerOf(m))}>you only</span>
-            : !m.exposedAs ? <span class="rstate-aud rstate-notyet" {...cursorTipOn(readerOf(m))}>not in ml.current yet</span> : null}
+        {/* Only the person's own state is marked: that is a decision. A model member not given to the model yet is a
+            gap that closes member by member, and its dimmed `inspector.` root and its tooltip already say so. */}
+        {m.audience === "human" ? <span class="rstate-aud" {...cursorTipOn(readerOf(m))}>you only</span> : null}
         {/* The PAGE answered for this one, and a hostile page answers whatever it likes: said, not hidden. */}
         {m.realm === "page" || e?.realm === "page" ? <span class="rstate-aud rstate-page" {...cursorTipOn("Reported by the page the run is on. A page can put anything here, so read it as the page's word.")}>from the page</span> : null}
         {e && !e.error ? <CopyValue v={e.value} /> : null}
     </span>;
     return (
-        <div class={`rstate-member${e ? "" : " empty"}`} data-member={m.id}>
+        <div class={`rstate-member${e ? "" : " rstate-empty"}`} data-member={m.id}>
             {!e ? <div class="jt-row">{label}<span class="rstate-none">none</span>{chips}</div>
                 : e.error ? <div class="jt-row">{label}<span class="hint err">could not read: {e.error}</span>{chips}</div>
                     : <JsonNode v={e.value} defaultOpen={false} path={memberPath(m)} label={label} trail={chips} />}
@@ -97,8 +98,12 @@ function Group({ g, ms, byId }: { g: string; ms: RunStateMember[]; byId: Map<str
     return (
         <section class={`rstate-group${shut ? " shut" : ""}`} data-group={g}>
             <button class="rstate-group-head" aria-expanded={!shut} onClick={() => toggleGroup(g)}>
-                <span class={`tri${shut ? "" : " open"}`} aria-hidden="true"><IconChevron /></span>{g}
-                {shut ? <span class="rstate-count">{ms.length} member{ms.length === 1 ? "" : "s"} · {holding} holding something</span> : null}
+                {g}
+                {/* The fold control at the END of the heading's line, where the eye goes after reading what it heads. */}
+                <span class="rstate-group-end">
+                    {shut ? <span class="rstate-count">{ms.length} member{ms.length === 1 ? "" : "s"} · {holding} holding something</span> : null}
+                    <span class={`tri${shut ? "" : " open"}`} aria-hidden="true"><IconChevron /></span>
+                </span>
             </button>
             {shut ? null : ms.map((m) => <Member key={m.id} m={m} e={byId.get(m.id)} />)}
         </section>

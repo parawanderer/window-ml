@@ -3264,21 +3264,24 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .rstate-group-head { display: flex; align-items: center; gap: 4px; width: 100%; margin: 2px 0; padding: 2px 0; border: 0; background: none;
     font: inherit; font-size: 0.8em; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--fg-dim); cursor: pointer; text-align: left; }
 .rstate-group-head:hover { color: var(--fg); }
+/* The end of a group's heading: its count when folded, then the fold chevron, at the right edge. */
+.rstate-group-end { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
 /* A folded group's count: how many members, and how many hold something. */
-.rstate-count { margin-left: auto; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+.rstate-count { font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--fg-faint); font-variant-numeric: tabular-nums; }
 /* One member: ONE LINE until opened, like a debug console's variables. Dimmed when it holds nothing for this run. */
 .rstate-member { border-top: 1px solid var(--border); }
-.rstate-member > .jt-row, .rstate-member > .jt-node > .jt-row:first-child { position: relative; padding-right: 0; }
-.rstate-member.empty { opacity: 0.6; }
-.rstate-key { font-family: var(--mono, monospace); font-weight: 600; cursor: help; margin-right: 6px; }
-/* A member meant for the model that it is not given yet: quieter than "you only", which is a decision rather than a gap. */
-.rstate-notyet { border-style: dashed; color: var(--fg-faint); }
+/* Its first row stays ONE line however long the preview: the name and the chips keep their width, the preview is cut. */
+.rstate-member > .jt-row, .rstate-member > .jt-node > .jt-row:first-child { white-space: nowrap; }
+.rstate-member > .jt-row > :is(.jt-preview, .jt-val, .rstate-none),
+.rstate-member > .jt-node > .jt-row:first-child > :is(.jt-preview, .jt-val) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.rstate-member.rstate-empty { opacity: 0.6; }
+.rstate-key { font-family: var(--mono, monospace); font-weight: 600; cursor: help; margin-right: 6px; flex-shrink: 0; }
 /* The `inspector.` root of a member the model does not read: dimmed, so the part that is the model's path stands out. */
 .rstate-root { font-weight: 400; color: var(--fg-faint); }
 /* What sits at the end of a member's line: who sees it, whose word it is, and copy. */
-.rstate-trail { float: right; display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; }
+.rstate-trail { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; padding-left: 8px; flex-shrink: 0; }
 /* The chip on a member the model is not given, or one the page reported. */
-.rstate-aud { font-size: 0.75em; padding: 0 5px; border-radius: 8px; border: 1px solid var(--border); color: var(--fg-dim); font-style: normal; }
+.rstate-aud { font: 0.9em/1.3 system-ui, sans-serif; padding: 0 5px; border-radius: 8px; border: 1px solid var(--border); color: var(--fg-dim); }
 .rstate-none { color: var(--fg-faint); font-style: italic; }
 /* Copy a member's value: shown on the row the pointer is over, and to keyboard focus. */
 .rstate-copy { display: inline-flex; padding: 1px; border: 0; background: none; color: var(--fg-dim); cursor: pointer; opacity: 0; }

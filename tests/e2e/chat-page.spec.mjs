@@ -540,20 +540,27 @@ test("the run state panel lists every declared member of the open run, what each
         // preview, and the chips, on one row.
         const firstRow = (id) => panel.locator(`[data-member="${id}"] .jt-row`).first();
         expect((await panel.locator('[data-member="run.messages"] .jt-row').count())).toBe(1);
-        const line = await firstRow("run.messages").boundingBox();
-        const chipBox = await panel.locator('[data-member="run.messages"] .rstate-aud').boundingBox();
+        // Every member is the height of one row, empty ones included (a global `.empty` once padded those to three),
+        // and its chip sits on that row.
+        // (`run.init` was opened above to read its task; an opened member is as tall as its value, so it is not counted.)
+        const heights = await panel.locator(".rstate-member").evaluateAll((els) => els.filter((el) => !el.querySelector(".tri.open"))
+            .map((el) => [el.dataset.member, el.getBoundingClientRect().height, el.querySelector(".jt-row").getBoundingClientRect().height]));
+        expect(heights.length, "most members are folded").toBeGreaterThan(10);
+        for (const [id, h, row] of heights) expect(h, `${id} is one line`).toBeLessThan(row * 1.6);
+        const line = await firstRow("run.mailbox").boundingBox();
+        const chipBox = await panel.locator('[data-member="run.mailbox"] .rstate-aud').boundingBox();
         expect(Math.abs(chipBox.y + chipBox.height / 2 - (line.y + line.height / 2)), "the chip is on the member's own line").toBeLessThan(line.height / 2);
         // Named by the expression that reaches them. Nothing is in the model's `ml.current` yet, so every member is under
-        // `inspector.`; the person's own are marked "you only", the model's-to-be "not in ml.current yet".
+        // `inspector.`; the person's own are marked "you only", and a model member waiting for its path carries no chip.
         await expect(firstRow("run.mailbox").locator(".rstate-key")).toHaveText("inspector.run.mailbox:");
         await expect(panel.locator('[data-member="run.mailbox"] .rstate-aud')).toHaveText("you only");
         await expect(panel.locator('[data-member="grants.fetch"] .rstate-aud')).toHaveText("you only");
-        await expect(panel.locator('[data-member="run.pointers"] .rstate-aud')).toHaveText("not in ml.current yet");
+        await expect(panel.locator('[data-member="run.pointers"] .rstate-aud')).toHaveCount(0);
         // The title is the session's, read from the one place that owns it (the worker's index): no utility model
         // is set here, so it holds no title yet, but the member is filled, not empty, and the model may read it.
         const title = panel.locator('[data-member="session.title"]');
         await expect(title).not.toHaveClass(/empty/);
-        await expect(title.locator(".rstate-aud")).toHaveText("not in ml.current yet");
+        await expect(title.locator(".rstate-aud")).toHaveCount(0);
         // The page's members come from the run's tab. Finished, the run's answer has been handed over, but the page is
         // still there to say so; closed, the panel says why the page's members are missing instead of dropping them.
         await expect(panel.locator('[data-member="run.answer"]')).toHaveClass(/empty/);
