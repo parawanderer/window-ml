@@ -159,7 +159,7 @@ test("GAIN blocked — a tab hosting a run may send only what the run's tools se
         assert.equal(refused, !RUN_TAB_TYPES.has(type), `${type}: ${refused ? "refused" : "allowed"} on a tab hosting a run`);
     }
     for (const type of RUN_TAB_TYPES) assert.ok(PAGE_STARTED_TYPES.has(type), `${type} is a page-started type (a typo would allow nothing and test nothing)`);
-    for (const type of [...RUN_CONTROL_TYPES, "SET_MODEL", "OLLAMA_UNLOAD", "SAVE_SESSION", "GET_SESSION", "EMBED", "DUMP_EVENTS", "ML_DEBUG_EVENT", "ML_SESSION_EVENT"])
+    for (const type of [...RUN_CONTROL_TYPES, "SET_MODEL", "OLLAMA_UNLOAD", "SAVE_SESSION", "GET_SESSION", "EMBED", "DUMP_EVENTS", "ML_DEBUG_EVENT", "ML_SESSION_EVENT", "GET_INVOCATION"])
         assert.ok(!RUN_TAB_TYPES.has(type), `${type} is never sent by a run's tools`);
 });
 

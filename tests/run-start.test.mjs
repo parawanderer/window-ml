@@ -543,6 +543,58 @@ test("a survey re-reading what the run's fetch_url read is answered from the wor
     assert.ok(!JSON.stringify(toPage).includes("SECRET OTHER SITE"));
 });
 
+/** A worker-built run on SITE whose model calls `calls` in turn, every gate approved, with chrome.commands binding the
+ *  HUD to `shortcut`. The page answers any tool it is sent with `PAGE <name>`. Returns what reached the page and what
+ *  the model read back from each call. */
+async function toolsRun(calls, { shortcut = "Ctrl+Shift+K" } = {}) {
+    let turns = 0, bg;
+    const seenByModel = [];
+    bg = loadBackground({
+        config: { ...config, autoApproveReadonly: true }, openTabs: [SITE], commandShortcut: shortcut,
+        onFetch: (call) => {
+            if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            seenByModel.push(call.body.messages);
+            const next = calls[turns++];
+            return next
+                ? jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: `c${turns}`, type: "function", function: { name: next.name, arguments: JSON.stringify(next.args ?? {}) } }] } }] })
+                : jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (_t, msg) => {
+            if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
+            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+            if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
+            if (msg.payload.finish) return { result: "" };
+            return msg.payload.renderOnly || msg.payload.precheck || msg.payload.readonlyTry ? {} : { result: `PAGE ${msg.payload.name}` };
+        },
+    });
+    await bg.context.__mlStartUserRunForTest(7, { task: "tell me about yourself", surface: "hud" });
+    for (let i = 0; i < 600 && turns <= calls.length; i++) await new Promise((r) => setTimeout(r, 0));
+    await flush(30);
+    const toPage = bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE" && !m.payload.finish).map(([, m]) => JSON.parse(JSON.stringify(m.payload)));
+    const toolResults = (seenByModel.at(-1) ?? []).filter((m) => m.role === "tool").map((m) => m.content);
+    return { bg, toPage, toolResults };
+}
+
+test("agent_api_docs of a worker-built run runs in the worker, with the live shortcut and config read there", T, async () => {
+    const { toPage, toolResults } = await toolsRun([{ name: "agent_api_docs" }]);
+    assert.equal(toPage.filter((p) => p.name === "agent_api_docs").length, 0, "not even a preview of it went to the page");
+    const out = toolResults[0] ?? "";
+    assert.match(out, /Keyboard: `Ctrl\+Shift\+K`/, `the shortcut bound now, read from chrome.commands; got ${out.slice(-600)}`);
+    assert.match(out, /Reading your own setup \(no approval needed\)/, "autoApproveReadonly read from the worker's config");
+});
+
+test("agent_api_docs in the worker still counts the run's page steps: one detour keeps the dig, a second ends it", T, async () => {
+    const docs = { name: "agent_api_docs", args: { types: ["FetchResult"] } };
+    const page = { name: "scroll", args: { to: "top" } };
+    const { toPage, toolResults } = await toolsRun([docs, page, docs, page, page, docs]);
+    assert.deepEqual(toPage.filter((p) => !p.renderOnly && !p.precheck && !p.readonlyTry).map((p) => p.name), ["scroll", "scroll", "scroll"], "the scrolls ran in the page");
+    const fetchResult = /interface FetchResult|type FetchResult/;
+    assert.match(toolResults[0], fetchResult, "the first read prints it");
+    assert.match(toolResults[2], /already seen/, `within one detour it is collapsed; got ${toolResults[2]?.slice(0, 300)}`);
+    assert.doesNotMatch(toolResults[5], /already seen/, "after two page steps the dig is over and it is printed again");
+    assert.match(toolResults[5], fetchResult);
+});
+
 // --- WORKER TOOLS: what a page can still get from a fetch_url the worker ran (red team) ---
 
 const OTHER = "https://other.example/private";

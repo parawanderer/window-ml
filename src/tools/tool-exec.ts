@@ -90,6 +90,18 @@ export function currentServerAllow(): readonly string[] | null { return activeSe
 // a second intervening step means the model has moved on, so a later re-pull re-reads the definitions fresh.
 const DOCS_STREAK_LENIENCY = 1;
 
+/**
+ * Drive `agent_api_docs`'s burst-scoped dedup: a NON-docs tool call is a step away from the dig, so count it, and once
+ * the model has moved on (past the leniency) purge what it was shown so a later re-pull re-reads definitions fresh.
+ * The docs tool itself resets `sinceDocs` when it runs (it's the streak). Called for every call `executeTool` makes,
+ * and by the worker for a worker-built run's calls that go to the page, where its docs tool's memory is not.
+ * @param mem the run's docs memory
+ * @param name the tool being called
+ */
+export function countDocsStreak(mem: NonNullable<ToolContext["docsMemory"]>, name: string): void {
+    if (name !== "agent_api_docs" && ++mem.sinceDocs > DOCS_STREAK_LENIENCY) mem.shown.clear();
+}
+
 /** Build the runtime ToolContext from the run's toolset (+ model/caps). One helper so the page loop and the
  *  background-delegation path produce an identical `ctx`. `byName` is the same map both paths already hold —
  *  which is also what keys the per-run docs-dedup memory, so it survives `toolContext` being rebuilt per call. */
@@ -154,12 +166,7 @@ export async function executeTool(tool: MlTool, args: Record<string, unknown>, c
     // Set even when ABSENT, unlike the two above: a run that exposed no server tools must narrow the
     // namespace to nothing, and leaving the previous value would hand it whatever the last run allowed.
     activeServerAllow = ctx?.serverAllow ?? [];   // absent → nothing, see the note on the binding
-    // Drive `agent_api_docs`'s burst-scoped dedup: a NON-docs tool call is a step away from the dig, so count
-    // it, and once the model has moved on (past the leniency) purge what it was shown so a later re-pull re-reads
-    // definitions fresh. The docs tool itself resets `sinceDocs` when it runs (it's the streak).
-    if (ctx?.docsMemory && tool.name !== "agent_api_docs" && ++ctx.docsMemory.sinceDocs > DOCS_STREAK_LENIENCY) {
-        ctx.docsMemory.shown.clear();
-    }
+    if (ctx?.docsMemory) countDocsStreak(ctx.docsMemory, tool.name);
     try {
         // Per-call live-output channel: when the loop supplied `onStream` (opt-in streaming), hand the tool a
         // ctx carrying `stream` so `run` can push partial output. A shallow copy per call (never mutate the

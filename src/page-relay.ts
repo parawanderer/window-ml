@@ -66,12 +66,12 @@ export const RUN_CONTROL_TYPES: ReadonlySet<string> = new Set<string>(["START_RU
 
 /** What a tab HOSTING a background run may send from its top frame whatever its origin: what that run's own tools send
  *  while they run in the page (a vision tool's model call and screenshot, `fetch_url`, `python_exec`, a sheet, a server
- *  tool, a shadow root's CDP resolve, the config reads `agent_api_docs` makes, and the abort of one of those requests).
+ *  tool, a shadow root's CDP resolve, the config a vision tool or an exec reads, and the abort of one of those requests).
  *  Nothing that changes the model, unloads it, saves or reads sessions, embeds, or dumps a log: a page a run visits
  *  gains only what the run itself needs there. It shrinks as tools move to the worker (docs/spec/SITE_ACCESS.md slice
  *  2) and goes when none run in the page. */
 export const RUN_TAB_TYPES: ReadonlySet<string> = new Set<string>([
-    "FETCH_LLM", "ABORT_TASK", "MODEL_CAPS", "GET_MODEL", "GET_CONFIG", "GET_INVOCATION",
+    "FETCH_LLM", "ABORT_TASK", "MODEL_CAPS", "GET_MODEL", "GET_CONFIG",
     "CAPTURE_TAB", "FETCH_IMAGE_B64", "FETCH_URL", "PYTHON_EXEC", "FETCH_SHEET",
     "LIST_SERVER_TOOLS", "SERVER_TOOL_EXEC", "CDP_SHADOW_RESOLVE",
 ]);
