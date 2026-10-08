@@ -108,6 +108,8 @@ export interface StartRunPayload {
     autoApproveSameOriginAuth?: boolean;
     /** config flag → auto-approve an uncredentialed read of the agent's OWN repo source (self-source.ts) */
     autoApproveSelfSource?: boolean;
+    /** `selfIntrospection`: give this run's read-only surveys `ml.current`. Absent is on. */
+    selfIntrospection?: boolean;
     /** trusted config flag → the background may auto-approve an in-dialect exec survey */
     autoApproveReadonly: boolean;
     /** agent option → surface `@tool:<id>` tokens on rich tool results (so the model can cite exact outputs) */

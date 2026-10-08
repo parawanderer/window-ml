@@ -76,6 +76,11 @@ export interface MlApi {
      *  lexical `state` variable. Stash reusable functions/results across `exec` calls (the Jupyter/kernel
      *  paradigm). Page-lifetime, shared across runs; read-only binding (mutate its properties). */
     readonly state: Record<string, unknown>;
+    /** YOUR OWN RUN, as data: the context the next model call gets (`messages`, verbatim), what is known about each
+     *  message (`meta`: ids, times, tokens, which tool), the run (`run`), its execution log (`log`, with `log.text`
+     *  for `ml.pipe`), and the watches the person shared with you (`debug.userWatches`). A read-only snapshot, there
+     *  only inside a read-only `exec` of an agent run the extension hosts; a page's `window.ml` has no `current`. */
+    readonly current?: import("./agent/current-context").CurrentSnapshot;
     /** Curate the CURRENT run's user-facing answer (what the user sees as the result). A run-bound collection —
      *  valid only WHILE your run is executing; from the console outside a run it throws. Free to call from
      *  `exec` (no approval — curating your own answer is a safe operation). Keep it MINIMAL and matched to the

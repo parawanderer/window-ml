@@ -160,6 +160,9 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         structuredClone,   // every service worker has it; a fetch cache keeps a frozen copy made with it
         // WebCrypto, which every MV3 service worker has: the worker mints each request's id (`hint.request`) with it.
         crypto: globalThis.crypto,
+        // As every worker has it. Without it `ml.current` (snapshotCurrent copies the context) threw in this realm
+        // only, so no test here had read a run's own context through the worker.
+        structuredClone,
         // SW-realm navigator: ml.fetch's browser-identity headers read userAgent/languages; the HUD-invocation
         // doc reads userAgent for the Cmd/Alt hint. A non-Mac UA keeps that path's isMac false (as when absent).
         navigator: { userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", languages: ["en-US", "en"], language: "en-US" },

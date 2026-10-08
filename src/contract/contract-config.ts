@@ -178,6 +178,10 @@ export interface MlConfig {
      *  a run a PAGE started learns only "another tab", since the page reads its own run's results. Off: no user-focus
      *  line at all. The site goes into the model's context, which for a cloud model means the provider sees it. */
     agentSeesFocus: boolean;
+    /** Default ON. The agent may read ITS OWN RUN as data: `ml.current` (its context, what is known about each message,
+     *  its execution log, the watches you shared) inside a read-only `exec` of a run the extension hosts, and its system
+     *  prompt says so, with `ml.current`'s shape. Off: no `ml.current` at all, and no word of it in the prompt. */
+    selfIntrospection: boolean;
     /** The most disk, in MB, the value store may hold: the whole bodies of fetched tables too large for their preview,
      *  kept so a later step can read every row by pointer. Least recently read goes first past it; the browser's own
      *  quota caps it further. */
@@ -281,6 +285,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     autoApproveSameOriginAuth: false,   // Advanced, default off: a same-origin as-you fetch always asks
     autoApproveSelfSource: true,        // default on: an uncredentialed read of the agent's OWN repo source is free
     agentSeesFocus: true,               // default on: chat_metadata says where the user is, when it is not the agent's tab
+    selfIntrospection: true,            // default on: the agent reads its own run as `ml.current`, and is told so
     valueStoreBudgetMB: 1024,           // capped at half the browser's quota for the extension
     protoStream: "auto",                // ask every time: one header, and a backend that won't serve it answers as it always did
     pierceClosedShadow: true,
@@ -307,7 +312,7 @@ export const fmtCtx = (n: number): string => {
  *  ml.agent can decide whether to route a run through the unforgeable BACKGROUND loop (design A —
  *  when a debug surface is enabled) or the in-page loop (off). It's UI state, not a secret. */
 export type MlPublicConfig = Pick<MlConfig,
-    "model" | "ocrModel" | "ocrNumCtx" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "serverToolsOff" | "commanderServerTools" | "autoApprovePython" | "autoApproveSameOriginAuth" | "autoApproveSelfSource" | "pierceClosedShadow" | "cdp" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision" | "labelMatch"> & {
+    "model" | "ocrModel" | "ocrNumCtx" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "serverToolsOff" | "commanderServerTools" | "autoApprovePython" | "autoApproveSameOriginAuth" | "autoApproveSelfSource" | "selfIntrospection" | "pierceClosedShadow" | "cdp" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision" | "labelMatch"> & {
     /** COMPUTED per request (not stored): whether THIS page's origin is on the user's page-approval
      *  whitelist. When true, ml.agent honours the page's own approve()/confirm gate (the user trusts this
      *  domain); otherwise a privileged tool routes to the unforgeable background gate. The raw domain
@@ -337,6 +342,7 @@ export function publicConfig(config: MlConfig, senderUrl: string): MlPublicConfi
         autoApproveReadonly: config.autoApproveReadonly, autoApprovePython: config.autoApprovePython,
         serverToolsOff: config.serverToolsOff || [], commanderServerTools: config.commanderServerTools || [],
         autoApproveSameOriginAuth: config.autoApproveSameOriginAuth, autoApproveSelfSource: config.autoApproveSelfSource,
+        selfIntrospection: config.selfIntrospection !== false,
         pierceClosedShadow: config.pierceClosedShadow, cdp: config.cdp,
         groundingEnabled: config.groundingEnabled, groundingModel: config.groundingModel,
         groundingRange: config.groundingRange, debugMode: config.debugMode, pageApprovalAllowed,

@@ -318,7 +318,14 @@ export function makeResolver(entry) {
         if (!m) {
             if (mods.size >= MAX_MODULES) return null;
             const text = readFileSync(file, "utf8");
-            m = { decls: parseDecls(text), links: moduleLinks(file, text) };
+            // contract.ts's own modules are written for this parser and must parse; a module reached only through
+            // another one's imports may not (a class body it cannot follow), and its declarations are then left out
+            // rather than failing the build: an unparsed type is named in the doc, just not defined there.
+            let decls;
+            try { decls = parseDecls(text); } catch (e) { if (file === entry || /[\\/]contract[\\/]/.test(file)) throw e; decls = new Map(); }
+            m = { decls, links: moduleLinks(file, text) };
+            // Each declaration remembers its file, so the names IT mentions are resolved through ITS imports.
+            for (const d of m.decls.values()) d.file = file;
             mods.set(file, m);
         }
         return m;
@@ -341,11 +348,13 @@ export function makeResolver(entry) {
         }
         return null;
     };
-    const get = (name) => {
-        if (!memo.has(name)) memo.set(name, find(name, entry, new Set()));
-        return memo.get(name);
+    /** `name` as `file` sees it: declared there, or bound by one of its imports. Defaults to contract.ts. */
+    const get = (name, file = entry) => {
+        const key = `${file}\0${name}`;
+        if (!memo.has(key)) memo.set(key, find(name, file, new Set()));
+        return memo.get(key);
     };
-    return { get, has: (name) => !!get(name), modules: () => mods.size };
+    return { get, has: (name, file) => !!get(name, file), modules: () => mods.size };
 }
 
 /* ------------------------------- generation -------------------------------- */
@@ -392,25 +401,55 @@ export function generateApiParts() {
     const seedLines = apiLines.map(l => (returnsMlTool(l) ? l.replace(/\):\s*MlTool\b.*$/, ")") : l));
 
     // BFS the types MlApi's public members mention, then the types THOSE mention. `MlTool` is seeded as OPAQUE.
+    // A name is resolved from the file whose declaration MENTIONS it: `CurrentSnapshot` (agent/current-context.ts)
+    // names `MessageMeta`, which contract.ts never imports, and asking contract.ts for it found nothing, so the doc
+    // named a type it did not define. First binding wins per name, as before.
     const seen = new Set(["MlApi", "MlTool", ...SKIP_TYPES]);
     const queue = [];
-    const enqueue = names => {
-        for (const n of names) if (resolve.has(n) && !seen.has(n)) { seen.add(n); queue.push(n); }
+    const enqueue = (names, file) => {
+        for (const n of names) {
+            // Its own file first; then contract.ts, for a contract type named in prose (`RunStats.genBasis`).
+            const decl = resolve.get(n, file) ?? resolve.get(n);
+            if (decl && !seen.has(n)) { seen.add(n); queue.push([n, decl]); }
+        }
     };
-    enqueue(referencedTypes(seedLines, resolve.has));   // seed from non-tool-initialiser signatures only
+    enqueue(referencedTypes(seedLines, (n) => resolve.has(n)), SOURCE);   // seed from non-tool-initialiser signatures only
 
     const found = [];
     while (queue.length) {
-        const name = queue.shift();
-        const decl = resolve.get(name);
+        const [name, decl] = queue.shift();
         const body = decl.kind === "interface" ? stripPrivateMembers(decl.body)
             : decl.kind === "class" ? classSurface(decl.body) : decl.body;
         found.push([name, `### ${name}\n\n\`\`\`ts\n${[...decl.doc, ...body].map(deAlign).join("\n")}\n\`\`\`\n`]);
-        enqueue(referencedTypes(body, resolve.has));
+        enqueue(referencedTypes([...decl.doc, ...body], (n) => resolve.has(n, decl.file) || resolve.has(n)), decl.file);
     }
     // Alphabetical, so the output doesn't churn when contract.ts is reordered.
     found.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
     return { preamble: PREAMBLE, mlApi, types: Object.fromEntries(found) };
+}
+
+/**
+ * `ml.current`'s top-level members as one line, lifted from `CurrentSnapshot` itself, so the system prompt's
+ * self-introspection clause (CURRENT_CLAUSE, prompts.ts) can never describe a shape the code no longer has.
+ * Member names and their types only; the types themselves are what `agent_api_docs` expands.
+ * @param resolve from {@link makeResolver}
+ * @returns {string} `{ run: CurrentRun; messages: NeutralMessage[]; … }`
+ */
+export function currentSignature(resolve) {
+    const d = resolve.get("CurrentSnapshot");
+    if (!d) throw new Error("gen-api-docs: no `CurrentSnapshot` reachable from contract.ts");
+    const members = [];
+    let depth = 0, inDoc = false;
+    for (const raw of d.body.slice(1, -1)) {
+        const l = raw.trim();
+        // JSDoc and line comments are skipped whole: a brace in prose must not move the depth.
+        if (inDoc || l.startsWith("/*")) { inDoc = !l.includes("*/"); continue; }
+        if (l.startsWith("//")) continue;
+        const code = stripLineComment(raw).trim();
+        if (depth === 0 && /^\w+\??:/.test(code)) members.push(code.replace(/;$/, ""));
+        depth += depthDelta(code);
+    }
+    return `{ ${members.join("; ")} }`;
 }
 
 /** Join the parts back into the single flat reference (the shape older callers/tests expect). */
@@ -434,7 +473,9 @@ export function renderModule() {
     return "// GENERATED by scripts/gen-api-docs.mjs from contract.ts — do not edit.\n" +
         "// Regenerated on every build; `npm test` fails if it is stale.\n" +
         `export const ML_API_DOCS = ${JSON.stringify(fullDoc(parts))};\n` +
-        `export const ML_API_PARTS = ${JSON.stringify(parts)};\n`;
+        `export const ML_API_PARTS = ${JSON.stringify(parts)};\n` +
+        `/** \`ml.current\`'s members, one line, from \`CurrentSnapshot\` (gen-api-docs.mjs \`currentSignature\`). */\n` +
+        `export const CURRENT_SIGNATURE = ${JSON.stringify(currentSignature(makeResolver(SOURCE)))};\n`;
 }
 
 /** Regenerate api-docs.gen.ts in place. Called by build.mjs (and directly by npm scripts). */

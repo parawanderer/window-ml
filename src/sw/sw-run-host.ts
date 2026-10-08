@@ -695,12 +695,18 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 // answered here, where the run's context and pointers live, and never enters the page. One that reaches
                 // for the page comes back `needs-page` and goes there, where pointer reads are refused, so a survey that
                 // needs both reaches the person.
-                const snap = contextByRun.get(runId);
+                // `selfIntrospection` off: no `ml.current` at all (a survey naming it then goes to the page, where it refuses).
+                const snap = p.selfIntrospection === false ? undefined : contextByRun.get(runId);
                 const wantsLog = typeof args.js === "string" && /\bcurrent\b/.test(args.js);
                 const log = snap && wantsLog ? eventsForRun(await runLog.all(), runId) : [];
                 // Made once, here, only for a script that names `current`: the person's shared watches are evaluated
                 // into it (sw-shared-watches.ts), which is async, and the evaluator asks for the snapshot synchronously.
-                const current = snap && wantsLog ? await withUserWatches(snap({ model: modelNow(), log })) : undefined;
+                // A snapshot that cannot be made is not the run's end: the survey falls through to the person.
+                let current: import("../agent/current-context").CurrentSnapshot | undefined;
+                try { current = snap && wantsLog ? await withUserWatches(snap({ model: modelNow(), log })) : undefined; } catch (e) {
+                    recordRunLog(runId, { level: "warn", subsystem: "routing", kind: "current-failed", reason: e instanceof Error ? e.message || e.name : String(e), detail: { tool: name } });
+                    return null;
+                }
                 const w = await evalReadonlyInWorker(args, {
                     ...(snap ? { current: () => current ?? snap({ model: modelNow(), log }) } : {}),
                     ml: workerReadonlyMl(tabPageUrl.get(tabId) ?? "", derefByRun.get(runId), runId),

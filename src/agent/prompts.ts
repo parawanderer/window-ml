@@ -1,6 +1,7 @@
 // The ml.agent system prompt + the tool-aware clauses appended to it. Split out
 // so the prompt is easy to find and tune. Bundled into injected.js.
 import type { ElementContext } from "../contract/contract-run";
+import { CURRENT_SIGNATURE } from "../api-docs.gen";
 
 export const AGENT_SYSTEM = [
     "You are an automation agent operating on the CURRENT web page through a set",
@@ -68,6 +69,16 @@ export const SELF_CLAUSE =
     "TOOLBOX: e.g. `await ml.chat(prompt)` for a sub-LLM call (summarise/classify a blob of text " +
     "you've gathered) or `await ml.read(el)` to OCR an image — each returns a `Promise<string>`; " +
     "`agent_api_docs` lists the rest.";
+/** SELF-INTROSPECTION (`selfIntrospection`, default on): the model may read its own run as `ml.current`. Added only
+ *  where a survey can actually reach it (read-only exec auto-approved, a run the extension hosts), and stripped from a
+ *  page-hosted run's prompt (`withoutCurrentClause`). The shape is GENERATED from `CurrentSnapshot`, so this line
+ *  cannot describe one the code no longer has. `docs` is whether `agent_api_docs` is in the toolset. */
+export const currentClause = (docs: boolean): string =>
+    `\n\nYou can read YOUR OWN RUN as data: \`ml.current\` in a read-only \`exec\` is \`${CURRENT_SIGNATURE}\`. Use it to ` +
+    "check what is in your context, what a tool really returned, or what the user shared with you in " +
+    "`ml.current.debug.userWatches`" + (docs ? "; `agent_api_docs` has every type" : "") + ". It is read-only and never " +
+    "reaches the page, so a script that also acts on the page cannot read it: read in one exec, act in the next.";
+
 // Appended to the run's provenance clause (prompt-surface.ts) per the HUD's verbosity (agentHud). PROGRESS: your between-step prose shows live in
 // the corner card, so keep it to ONE terse line. QUIET: the user won't see intermediate prose at all — stay
 // silent between steps and put everything in the final answer.
