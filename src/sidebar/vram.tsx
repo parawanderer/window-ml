@@ -16,7 +16,7 @@ import {
 import { truncate } from "./format";
 // The ONE predicate for "this runs somewhere else": affirmatively not a model of this server. Shared with the
 // composer rather than re-derived here, so the panel and the picker cannot disagree about what is local.
-import { isCloudModel } from "./card-state";
+import { isCloudModel } from "./model";
 import { IconWarn, IconVram, IconEye, IconEyeOff, IconBench, IconGear, IconEvictAll } from "./icons";
 import { Disclosure } from "./ui-kit";
 import { fmtAge, hhmmss } from "./timestamps";

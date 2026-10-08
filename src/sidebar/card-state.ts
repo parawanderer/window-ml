@@ -58,10 +58,6 @@ export const composerModelOpen = signal(false);     // the model-picker dropdown
 export const composerVision = signal(false);
 // Known Ollama-backed? The server's provenance list is authoritative.
 export const isOllamaModel = (id: string): boolean => !!ollamaIds.value?.includes(id);
-// AFFIRMATIVELY non-Ollama — provenance is loaded (ollamaIds non-null) AND doesn't list it. Used to gate the
-// native-vision toggle: while the list is still loading (null) this is false, so the eye doesn't flash in then
-// out and shove the chip when LIST_MODELS lands. The send() vision override reads the same signal.
-export const isCloudModel = (id: string): boolean => ollamaIds.value != null && !ollamaIds.value.includes(id);
 // The model a UI-started run will actually use: the per-call override, else the configured default.
 export const composerResolvedModel = (): string => composerModel.value || config.value.model || "";
 // Switch the CONFIGURED default model from the composer dropdown (a testing convenience — no Settings trip).

@@ -9,8 +9,9 @@ import { useImageAttach, ThumbStrip, ElementPill } from "./composer";
 import {
     composerModel, composerModelOpen, composerVision, composerStream, composerMaxSteps, composerResolvedModel,
     composerOpen, composerElement, composerTarget, composerStarting, setDefaultModel,
-    isOllamaModel, isCloudModel,
+    isOllamaModel,
 } from "./card-state";
+import { isCloudModel } from "./model";
 import { STEP_BUDGETS } from "../step-budget";
 
 // The composer's model control: a chip showing the run's model (the per-call pick, else the default) that

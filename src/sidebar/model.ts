@@ -4,7 +4,7 @@
 // values are defaults. Pure except for reading the live `config` signal.
 import type { ExtendProfile } from "../contract-chat";
 import type { DebugSessionConfig } from "../contract-debug";
-import { config } from "./store";
+import { config, ollamaIds } from "./store";
 import type { Turn, Session } from "./store";
 
 // createChat defaults — values equal to these get a `// default` annotation in
@@ -54,6 +54,11 @@ export function sessionProfile(s: Session): "utility" | "default" | null {
     const last = s.turns[s.turns.length - 1];
     return last ? turnProfile(last) : null;
 }
+
+// AFFIRMATIVELY non-Ollama — provenance is loaded (ollamaIds non-null) AND doesn't list it. Used to gate the
+// native-vision toggle: while the list is still loading (null) this is false, so the eye doesn't flash in then
+// out and shove the chip when LIST_MODELS lands. The send() vision override reads the same signal.
+export const isCloudModel = (id: string): boolean => ollamaIds.value != null && !ollamaIds.value.includes(id);
 
 // ONE model, spelled two ways by one server. `/api/ps` reports Ollama's SHORT name (`gemma4:31b`) while the
 // event stream reports the fully-qualified one (`registry.ollama.ai/library/gemma4:31b`) — so without this
