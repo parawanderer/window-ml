@@ -99,9 +99,9 @@ jobs:
           # The hub suite talks to a real `wmlhub`, which has to be downloaded, so it runs only when something it
           # could notice changed. Generous on purpose, in the same direction as `code` above: the cost of running it
           # for nothing is a couple of minutes, and the cost of NOT running it is thirty integration tests that said
-          # nothing about the change that broke them. `src/session-` is in because the publisher and the contract are
+          # nothing about the change that broke them. `src/session/` is in because the publisher and the contract are
           # what the hub carries.
-          if echo "$files" | grep -qE '^(src/(hub|pairing)/|src/hub-|src/session-|tests/(hub-|pairing-|fixtures/hub-|session-publisher)|scripts/fetch-hub|\.github/workflows/tests\.yml)'; then
+          if echo "$files" | grep -qE '^(src/(hub|pairing|session)/|tests/(hub-|pairing-|fixtures/hub-|session-publisher)|scripts/fetch-hub|\.github/workflows/tests\.yml)'; then
             echo "hub=true" >> "$GITHUB_OUTPUT"
           else
             echo "hub=false" >> "$GITHUB_OUTPUT"

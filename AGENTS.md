@@ -10,10 +10,24 @@ and OCR. This file is the map for *extending* the code.
 
 ## Layout
 
-The extension's own sources live in **`src/`** — every `.ts`/`.tsx`, `src/sidebar/`, and the two
-extension pages (`popup.html`, `offscreen.html`). Everything else stays at the root: `tests/`,
-`scripts/`, `tools/`, `docs/`, `manifest.json`, `build.mjs`. Paths in this file name files by their
-bare name (`background.ts`, `sw-llm.ts`) — they are all under `src/`.
+The extension's own sources live in **`src/`**; everything else stays at the root (`tests/`, `scripts/`, `tools/`,
+`docs/`, `manifest.json`, `build.mjs`). Inside `src/`, a file sits in the folder of what it is FOR and keeps its
+prefixed name, so this file names files by their bare name (`sw-llm.ts`) and `node scripts/index.mjs '<name>' --kind
+file` finds the path:
+
+| Folder | Holds |
+| --- | --- |
+| `src/` top | build entries (`background`, `content`, `injected`, `popup`, `offscreen`, `chat-ext`, …), the `contract.ts` barrel, shared plumbing (`util`, `bridge`, `bus`, `ids`, `protostream`), pure rules (`site-access`, `page-relay`, `json-path`), generated `*.gen.ts` |
+| `sw/` | everything only the service worker runs: every `sw-*`, plus its tab and nav helpers |
+| `contract/` | the themed `contract-*` modules behind the barrel |
+| `agent/`, `tools/` | the run loop and its gate; the agent's tools |
+| `ml/` | the `window.ml` surface (`ml-*`) |
+| `readonly-exec/`, `pointers/`, `table/`, `dom/` | the dialect's parts; `@tool:` pointers and values; the one table type; reading the DOM |
+| `python/`, `resource/`, `session/`, `log/` | the Pyodide sandbox; the box's memory and events; the session store; run and housekeeping logs |
+| `hub/` (+ `hub/runtime/`), `pairing/`, `archive/`, `chat/`, `native/`, `proto/` | as named; `hub/runtime/` is this browser AS a runtime |
+| `sidebar/` (+ `resource/`, `transcript/`, `card/`, `code/`, `export/`, `settings/`) | the panel, by view |
+
+A new file goes in the folder of what it is for. Move files with `node scripts/move-files.mjs`, never `git mv`.
 
 ## Architecture (4 files + popup)
 

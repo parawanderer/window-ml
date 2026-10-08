@@ -265,10 +265,10 @@ test("DRIFT GUARD: every model-facing description of the dialect is derived, not
     // The sources live under src/. Scanning the old root would find NOTHING and pass silently, which is
     // the exact failure this guard exists to catch — so it asserts it found files before trusting a pass.
     const SRC = new URL("../src/", import.meta.url);
-    const sources = readdirSync(SRC).filter((f) => f.endsWith(".ts"));
+    const sources = readdirSync(SRC, { recursive: true }).filter((f) => f.endsWith(".ts"));   // recursive: sources live in folders
     assert.ok(sources.length > 20, `the scan found ${sources.length} sources — it is looking in the wrong place`);
     for (const f of sources) {
-        if (f === "text-pipe.ts") continue;        // the single source is allowed to name them
+        if (f === "pointers/text-pipe.ts") continue;        // the single source is allowed to name them
         if (f.endsWith(".gen.ts")) continue;      // generated (build-info embeds a diff of the working tree)
         const lines = readFileSync(new URL(f, SRC), "utf8").split("\n");
         lines.forEach((line, i) => {

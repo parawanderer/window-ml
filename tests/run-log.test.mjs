@@ -137,7 +137,7 @@ async function emittedNames() {
     const { readFile } = await import("node:fs/promises");
     const out = { subsystem: new Set(), kind: new Set(), reason: new Set() };
     for (const f of ["sw-run-host.ts", "sw-cdp.ts", "sw-runs.ts"]) {
-        const src = await readFile(new URL(`../src/${f}`, import.meta.url), "utf8");
+        const src = await readFile(new URL(`../src/sw/${f}`, import.meta.url), "utf8");
         for (const key of ["subsystem", "kind", "reason"])
             for (const m of src.matchAll(new RegExp(`\\b${key}:\\s*([^,}\\n]+)`, "g")))
                 for (const lit of m[1].matchAll(/"([^"]*)"/g)) out[key].add(lit[1]);

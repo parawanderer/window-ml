@@ -41,10 +41,10 @@ test("a file that names nothing moved is left alone", () => {
 
 test("a moved file's own imports are rewritten for its new directory, including one to a file moving with it", () => {
     const p = plan({
-        "src/zz-a.ts": `import { b } from "./zz-b";\nimport { d } from "./dom";\nimport type { C } from "./contract";\n`,
-        "src/zz-b.ts": "", "src/dom/dom.ts": "", "src/contract.ts": "",
+        "src/zz-a.ts": `import { b } from "./zz-b";\nimport { d } from "./zz-dom";\nimport type { C } from "./contract";\n`,
+        "src/zz-b.ts": "", "src/zz-dom.ts": "", "src/contract.ts": "",
     }, { "src/zz-a.ts": "src/zz/zz-a.ts", "src/zz-b.ts": "src/zz/zz-b.ts" });
-    assert.strictEqual(p.rewritten.get("src/zz/zz-a.ts"), `import { b } from "./zz-b";\nimport { d } from "../dom";\nimport type { C } from "../contract";\n`);
+    assert.strictEqual(p.rewritten.get("src/zz/zz-a.ts"), `import { b } from "./zz-b";\nimport { d } from "../zz-dom";\nimport type { C } from "../contract";\n`);
 });
 
 test("a moved file with no paths in it is still carried, under its new path", () => {
@@ -114,7 +114,7 @@ test("dangling() names a relative specifier that resolves to nothing, and accept
 test("after a planned move, nothing that resolved before dangles", () => {
     const tree = {
         "src/background.ts": `import "./zz-a";\n`,
-        "src/zz-a.ts": `import "./dom";\n`, "src/dom/dom.ts": "",
+        "src/zz-a.ts": `import "./zz-dom";\n`, "src/zz-dom.ts": "",
     };
     const p = plan(tree, { "src/zz-a.ts": "src/zz/zz-a.ts" });
     const read = (r) => p.rewritten.get(r) ?? tree[r] ?? null;
