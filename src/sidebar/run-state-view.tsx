@@ -83,6 +83,8 @@ function CopyValue({ v }: { v: unknown }) {
 /** One member, on ONE LINE until it is opened: its name, what it holds folded to a preview, and who sees it. */
 function Member({ m, e }: { m: RunStateMember; e: StateEntry | undefined }) {
     const label = <span class="rstate-key" {...cursorTipOn(memberTip(m))}><MemberName m={m} /></span>;
+    // An empty member has nothing to open: the chevron's width, kept blank, so its name lines up with the rest.
+    const spacer = <span class="tri jt-tri-space" aria-hidden="true"><IconChevron /></span>;
     const chips = <span class="rstate-trail">
         {/* Only the person's own state is marked: that is a decision. A model member not given to the model yet is a
             gap that closes member by member, and its dimmed `inspector.` root and its tooltip already say so. */}
@@ -93,9 +95,9 @@ function Member({ m, e }: { m: RunStateMember; e: StateEntry | undefined }) {
     </span>;
     return (
         <div class={`rstate-member${e ? "" : " rstate-empty"}`} data-member={m.id}>
-            {!e ? <div class="jt-row">{label}<span class="rstate-none">none</span>{chips}</div>
-                : e.error ? <div class="jt-row">{label}<span class="hint err">could not read: {e.error}</span>{chips}</div>
-                    : <JsonNode v={e.value} defaultOpen={false} path={memberPath(m)} label={label} trail={chips} />}
+            {!e ? <div class="jt-row">{spacer}{label}<span class="rstate-none">none</span>{chips}</div>
+                : e.error ? <div class="jt-row">{spacer}{label}<span class="hint err">could not read: {e.error}</span>{chips}</div>
+                    : <JsonNode v={e.value} defaultOpen={false} path={memberPath(m)} label={label} trail={chips} times />}
         </div>
     );
 }

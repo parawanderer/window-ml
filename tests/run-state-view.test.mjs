@@ -154,3 +154,17 @@ test("a folded group counts its members and how many hold something, and draws n
     assert.equal(grants.querySelectorAll(".rstate-member").length, 3);
     assert.equal(grants.querySelector(".rstate-count"), null);
 });
+
+// --- one column of names ---
+
+test("every member's name starts in the same column: an empty one keeps the chevron's width blank", async () => {
+    const a = member("run.init"), b = member("run.model"), c = member("run.sub");
+    const host = await show({ members: [a, b, c], entries: [entry(a, { task: "x" }), entry(c, 3)] });
+    for (const id of ["run.init", "run.model", "run.sub"]) {
+        const first = row(host, id).querySelector(".jt-row").firstElementChild;
+        assert.ok(first.classList.contains("tri"), `${id} opens with a chevron or its blank`);
+    }
+    assert.ok(row(host, "run.model").querySelector(".jt-tri-space"), "empty: blank");
+    assert.ok(row(host, "run.sub").querySelector(".jt-tri-space"), "a single value: blank");
+    assert.equal(row(host, "run.init").querySelector(".jt-tri-space"), null, "a branch: its real chevron");
+});
