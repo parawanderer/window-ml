@@ -7,6 +7,7 @@
 import { useNarrow } from "./chat/narrow";
 import { HousekeepingView } from "./sidebar/housekeeping-log";
 import { RunLogView } from "./sidebar/run-log-view";
+import { RunStateView } from "./sidebar/run-state-view";
 import { render } from "preact";
 import { useEffect } from "preact/hooks";
 import { ChatApp } from "./chat/chat-app";
@@ -127,6 +128,7 @@ const extras: ChatExtras = {
     // the runtime reports on, while this log is read out of THIS browser's worker — so a device that can draw it
     // has it, and a runtime that is not ours gets null.
     runLog: (id, run) => (localRuntimes.has(id) ? <RunLogView run={run} /> : null),
+    runState: (id, run) => (localRuntimes.has(id) ? <RunStateView run={run} /> : null),
     fixedTimes: (id, code) => (localRuntimes.has(id) && code === "archive-folder-lapsed" ? regrantCount() : 0),
     fix: (id, code) => (localRuntimes.has(id) && FIXES[code] ? FIXES[code] : null),
     // The narrow grant: one origin, asked for inside the click. `<all_urls>` would also unblock it and is the wrong

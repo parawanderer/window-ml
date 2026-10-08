@@ -14,7 +14,7 @@
 /** An edge of the reading column a panel can be docked to. */
 export type DockSide = "top" | "right" | "bottom" | "left";
 /** The panels the page can dock: the box's resource panel, the Python bench, and the open run's execution log. */
-export type DockPanelId = "resource" | "bench" | "runlog";
+export type DockPanelId = "resource" | "bench" | "runlog" | "state";
 
 /** Panels shown as tabs, one at a time. */
 export interface DockGroup { kind: "group"; tabs: DockPanelId[]; active?: DockPanelId }
@@ -54,7 +54,7 @@ export const MAX_SPLIT_DEPTH = 1;
 export const SIDES: readonly DockSide[] = ["top", "right", "bottom", "left"];
 /** The graphs across the top, because a timeline is wide and short; the bench underneath, where a drawer is; the
  *  execution log to the RIGHT, because it is read line by line beside the steps it explains. */
-export const DEFAULT_HOME: Record<DockPanelId, DockSide> = { resource: "top", bench: "bottom", runlog: "right" };
+export const DEFAULT_HOME: Record<DockPanelId, DockSide> = { resource: "top", bench: "bottom", runlog: "right", state: "right" };
 /** Every panel there is, from the defaults — so a stored layout is validated against the panels that EXIST rather
  *  than against a list written out a second time, which is how the third panel once went unrecognised. */
 export const PANEL_IDS = Object.keys(DEFAULT_HOME) as DockPanelId[];
