@@ -59,6 +59,17 @@ test("a path to a generated, untracked file (`extra`) still follows the move, an
     assert.ok(!p.rewritten.has("src/zz-info.gen.ts"));
 });
 
+test("a `.js` specifier that names a `.ts` file (TypeScript's ESM spelling) follows the move and keeps its `.js`", () => {
+    const p = plan({ "tests/a.test.mjs": `import { x } from "../src/zz-a.js";\n`, "src/zz-a.ts": "" }, { "src/zz-a.ts": "src/zz/zz-a.ts" });
+    assert.strictEqual(p.rewritten.get("tests/a.test.mjs"), `import { x } from "../src/zz/zz-a.js";\n`);
+});
+
+test("a literal that is a moved path minus its leading directories is REPORTED as `suffix`: its base is not knowable", () => {
+    const p = plan({ "tests/v.test.mjs": `const ROOTS = ["sidebar/zz-view.tsx"];\n`, "src/sidebar/zz-view.tsx": "" },
+        { "src/sidebar/zz-view.tsx": "src/sidebar/zz/zz-view.tsx" });
+    assert.deepStrictEqual(p.reports.map((r) => [r.file, r.line, r.kind, r.text]), [["tests/v.test.mjs", 1, "suffix", "sidebar/zz-view.tsx"]]);
+});
+
 // --- docs and the paths it can only report ---
 
 test("a doc's exact old path is rewritten; a bare name, which stays true, is not", () => {

@@ -4,7 +4,7 @@
 // HUD never appears after a navigate", which bit cross-domain because a long prior session overflowed the ring).
 import { test } from "node:test";
 import assert from "node:assert";
-import { pushReplay } from "../src/contract-run.js";
+import { pushReplay } from "../src/contract/contract-run.js";
 
 const start = { kind: "agent", id: "r1" };
 const step = (n) => ({ kind: "agent-step", step: n });

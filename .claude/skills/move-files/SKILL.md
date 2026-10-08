@@ -40,6 +40,9 @@ A file move changes no code, only paths, so this is path arithmetic over every t
    "src", f)` over a list of basenames) is `pieces`: fix it by hand. A ROOT-relative string equal to a moved path
    (`"src/x.ts"`) is rewritten and listed as `rooted`, because it is usually a path (build.mjs, a `readFileSync`)
    but can be DATA (a sample path in a test): read each one.
+   A string that is a moved path minus its leading directories (`"sidebar/x.tsx"`, joined onto a `SRC` constant
+   somewhere) is `suffix`: its base cannot be known from the string, so fix it by hand.
+   A `.js` specifier naming a `.ts` file (TypeScript's ESM spelling) is resolved and rewritten, keeping its `.js`.
 
    Examples in docs and fixtures that describe moves should use a placeholder (`<name>`) or a name no real file has (`zz-*`), or a real move
    rewrites them too. That is how this skill's own examples got rewritten the first time it ran.

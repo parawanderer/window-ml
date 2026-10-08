@@ -7,8 +7,8 @@
 // traffic this browser never sees (another client, a script, a terminal), which no local in-flight flag can.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { expiresIn } from "../src/sidebar/model-status.js";
-import { fmtTTL } from "../src/sidebar/panel-facts.js";
+import { expiresIn } from "../src/sidebar/resource/model-status.js";
+import { fmtTTL } from "../src/sidebar/resource/panel-facts.js";
 
 const inMs = (ms) => new Date(Date.now() + ms).toISOString();
 
