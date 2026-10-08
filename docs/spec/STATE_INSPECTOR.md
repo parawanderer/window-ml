@@ -271,7 +271,15 @@ exactly the model half of the registry and `inspector` the rest.
    allows on its kind (never a mutator), and at a bare name the roots. It reads a shape of the tree, keys and kinds
    without values, that the worker sends with each read, so `ml.current.` completes against the live context. Tab
    takes the highlighted row, and Enter takes it only after the arrows were used, so Enter still adds what was typed.
-   The console reuses it. Still to come: the share toggle (`ml.current` is reachable since #410).
+   The console reuses it.
+   **Sharing built** (2026-10-08): an eye on each watch shares it, stored as `ml_runstate_shared` beside the watches.
+   A worker-hosted run's `ml.current.debug.userWatches` is `[{ expression, value | error, at }]`, evaluated before each
+   survey that names `current` (`src/sw/sw-shared-watches.ts`), each over `{ ml: { current } }` ALONE, so even a forged
+   storage entry over `inspector.` finds nothing to read; the panel also refuses to share one, and says why. At most
+   eight are shared, a value over 4,000 characters is an error rather than a cut, and the dialect hands `debug` to the
+   script read-only. It is a registry member (`debug.userWatches`, audience `model`), so the panel lists it at that
+   path. Not yet: a page-hosted run's `ml.current` has no `debug`, and nothing TELLS the model to look; it finds the
+   shares only if it reads `ml.current.debug`.
 3. **The read-only console.**
 4. **Python per-run state**: the investigation above, then the design, then the Python group.
 5. **The slots** fill in as the features behind them land: `mailbox` (once its audience is settled for subagent

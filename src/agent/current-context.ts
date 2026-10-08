@@ -106,6 +106,19 @@ export interface CurrentSnapshot {
     /** Parallel to `messages`: same length, same order. */
     meta: MessageMeta[];
     log: CurrentLog;
+    /** What the PERSON pointed the model at. Present only where the host adds it (a worker-hosted run). */
+    debug?: { userWatches: UserWatch[] };
+}
+
+/** One watch the person shared with the model from the Run state panel ("look at this"): the expression they wrote, over
+ *  this snapshot, and what it gave. A JSONPath gives the list of what it matched. `error` instead of `value` when it
+ *  failed or its value was too large to hand over. */
+export interface UserWatch {
+    expression: string;
+    value?: unknown;
+    error?: string;
+    /** When it was evaluated, epoch ms. */
+    at: number;
 }
 
 /** A message's stable id. `toolToken` gives the avalanche and the check character; the `:msg` namespace keeps it

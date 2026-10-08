@@ -680,6 +680,31 @@ test("the run state panel shows the LIVE turn: what it was asked, the gate it wa
     } finally { await ext.context.close(); await site.stop(); await fake.stop(); }
 });
 
+test("a watch shared from the Run state panel reaches the model: its survey of ml.current.debug.userWatches reads the value", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const site = await startPageServer({});
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off", autoApproveReadonly: true });
+        // What the panel writes when its eye is clicked (tests/run-state-view.test.mjs): the watches, and the shared subset.
+        // The inspector watch is in the shared list as a forged storage write would put it, and is still refused.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_runstate_watches: ["ml.current.run.step", "inspector.grants.turn"],
+            ml_runstate_shared: ["ml.current.run.step", "inspector.grants.turn"] }));
+        fake.setScript([{ tool: "exec", args: { js: "JSON.stringify(ml.current.debug.userWatches.map(w => [w.expression, w.value ?? w.error]))" } },
+            { content: "done" }]);
+        const site1 = await ext.context.newPage();
+        await site1.goto(site.url + "/");
+        await waitForMl(site1);
+        void site1.evaluate(() => window.ml.agent("what am I watching?", { env: false, approvalRouting: "both" })).catch(() => {});
+        // Answered without a gate (a read-only survey of the run's own context, in the worker), so the second call comes.
+        await expect.poll(() => fake.calls().length, { timeout: 15000 }).toBe(2);
+        const sent = fake.calls()[1].messages.find((m) => m.role === "tool").content;
+        expect(sent).toContain('["ml.current.run.step",1]');
+        expect(sent).toContain("model does not have");
+        expect(sent).not.toMatch(/origins/);
+    } finally { await ext.context.close(); await site.stop(); await fake.stop(); }
+});
+
 test("the run state panel joins the run's pointers to the stored values behind them, and says which the context still mentions", async () => {
     // A table past the parse cap: the pointer holds a preview, and the whole body goes to the value store.
     const big = ["order_id,region,revenue"];

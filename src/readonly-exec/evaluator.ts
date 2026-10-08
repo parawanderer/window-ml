@@ -123,6 +123,8 @@ export class Evaluator {
      *  `ml.current`) but a TypeError the model reads. The write half will one day make these writes MEAN something
      *  (docs/spec/AGENT_COMPACTION.md), so the error is loud now rather than a copy that silently discards them. */
     private readOnly = new WeakSet<object>();
+    /** The part of {@link readOnly} that is `ml.current.debug`, so a write there is told what it hit. */
+    private shared = new WeakSet<object>();
     /** Each message row, to its index: the print boundary abridges a large one and names how to print it whole. */
     private rows = new Map<object, number>();
     constructor(private ml: Record<string, unknown> | null, private budget: number = STEP_BUDGET, private realm: ReadonlyRealm = "page") { this.fuel = budget; }
@@ -144,21 +146,28 @@ export class Evaluator {
 
     /** Build what `ml.current` reads from a snapshot. `messages` is the snapshot's own copy, protected; `run`, `meta`
      *  and `log` are copies the script OWNS, since they will never be writable and annotating a working copy of the
-     *  metadata is how a compaction is planned. Flat records, so one level of ownership covers all of them. */
+     *  metadata is how a compaction is planned. Flat records, so one level of ownership covers all of them. `debug`,
+     *  where the host adds it, is a read-only copy. */
     adoptCurrent(snap: CurrentSnapshot): Record<string, unknown> {
-        const protect = (v: unknown, depth: number): void => {
+        const protect = (v: unknown, depth: number, shared = false): void => {
             if (v === null || typeof v !== "object" || depth > 8 || this.readOnly.has(v)) return;
             this.readOnly.add(v);
-            for (const x of Object.values(v)) protect(x, depth + 1);
+            if (shared) this.shared.add(v);
+            for (const x of Object.values(v)) protect(x, depth + 1, shared);
         };
         protect(snap.messages, 0);
         snap.messages.forEach((m, i) => this.rows.set(m as object, i));
         const log = this.own(snap.log.map((r) => this.own({ ...r })));
+        // What the PERSON shared (`debug.userWatches`, a worker-hosted run's): a copy, read-only like `messages`, since
+        // it is their words and a script annotating it would be the model rewriting what it was told to look at.
+        const debug = snap.debug ? structuredClone({ userWatches: snap.debug.userWatches }) : undefined;
+        if (debug) protect(debug, 0, true);
         return Object.assign(Object.create(null), {
             run: this.own({ ...snap.run }),
             messages: snap.messages,
             meta: this.own(snap.meta.map((r) => this.own({ ...r }))),
             log: Object.assign(log, { text: snap.log.text }),
+            ...(debug ? { debug } : {}),
         });
     }
 
@@ -187,6 +196,8 @@ export class Evaluator {
     }
 
     private refuseWrite(obj: unknown): void {
+        if (obj !== null && typeof obj === "object" && this.shared.has(obj))
+            throw new TypeError("ml.current.debug is read-only: it is what the person shared with you. To work on it as data, copy what you need ([...ml.current.debug.userWatches]).");
         if (obj !== null && typeof obj === "object" && this.readOnly.has(obj))
             throw new TypeError("ml.current.messages is read-only: it is the context the next model call gets. To work on the messages as data, build what you need (msgs.map(m => ({ role: m.role, content: m.content }))).");
     }

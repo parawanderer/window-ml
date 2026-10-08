@@ -3314,6 +3314,13 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .rstate-unwatch { display: inline-flex; padding: 1px; border: 0; background: none; color: var(--fg-dim); cursor: pointer; opacity: 0; }
 .rstate-watch:hover .rstate-unwatch, .rstate-unwatch:focus-visible { opacity: 1; }
 .rstate-unwatch svg { width: 11px; height: 11px; }
+/* A watch's SHARE toggle, before its ✕: shown on hover like the ✕ while off, and always while on, in the accent, so a
+   watch the model is given reads as one at a glance. Disabled (an `inspector.` watch) it stays dim; its tip says why. */
+.rstate-share { display: inline-flex; padding: 1px; border: 0; background: none; color: var(--fg-dim); cursor: pointer; opacity: 0; }
+.rstate-watch:hover .rstate-share, .rstate-share:focus-visible, .rstate-share.on { opacity: 1; }
+.rstate-share.on { color: var(--accent); }
+.rstate-share:disabled { cursor: default; color: var(--fg-faint); }
+.rstate-share svg { width: 12px; height: 12px; }
 /* The line that adds a watch, at the end of the group: an input that looks like the next row until it is used. */
 .rstate-watch-input { flex: 1 1 auto; min-width: 0; font: inherit; color: var(--fg); background: none; border: 0;
     border-bottom: 1px dashed transparent; padding: 0; outline: none; }

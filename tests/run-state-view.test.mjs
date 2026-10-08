@@ -326,3 +326,52 @@ test("a row is taken by pointer, before the input's blur can shut the list", asy
     await act(async () => { host.querySelector(".rstate-complete-row").dispatchEvent(new win.PointerEvent("pointerdown", { bubbles: true, cancelable: true })); });
     assert.equal(input.value, "inspector.run");
 });
+
+// --- sharing a watch with the model ---
+
+test("the eye shares a watch with the model and stops sharing it; the list is kept beside the watches", async () => {
+    V.watches.value = ["ml.current.run.step"];
+    V.shared.value = [];
+    const stored = [];
+    const was = chrome.storage.local.set;
+    chrome.storage.local.set = (o) => stored.push(o);
+    try {
+        withWatches({ members: [], entries: [] }, {});
+        const host = await show({ members: [], entries: [] });
+        const eye = () => watchRow(host, "ml.current.run.step").querySelector(".rstate-share");
+        assert.equal(eye().getAttribute("aria-pressed"), "false");
+        await act(async () => { eye().click(); });
+        assert.deepEqual(V.shared.value, ["ml.current.run.step"]);
+        assert.deepEqual(stored.at(-1), { ml_runstate_shared: ["ml.current.run.step"] });
+        assert.equal(eye().getAttribute("aria-pressed"), "true");
+        assert.match(eye().className, /\bon\b/);
+        await act(async () => { eye().click(); });
+        assert.deepEqual(V.shared.value, []);
+    } finally { chrome.storage.local.set = was; }
+});
+
+test("a watch over inspector. cannot be shared, and its eye says why; removing a shared watch stops sharing it", async () => {
+    V.watches.value = ["inspector.grants.turn", "ml.current.run.step"];
+    V.shared.value = ["ml.current.run.step"];
+    withWatches({ members: [], entries: [] }, {});
+    const host = await show({ members: [], entries: [] });
+    const eye = watchRow(host, "inspector.grants.turn").querySelector(".rstate-share");
+    assert.equal(eye.disabled, true);
+    V.toggleShared("inspector.grants.turn");
+    assert.deepEqual(V.shared.value, ["ml.current.run.step"], "nor by calling the toggle directly");
+    await act(async () => { watchRow(host, "ml.current.run.step").querySelector(".rstate-unwatch").click(); });
+    assert.deepEqual(V.shared.value, []);
+});
+
+test("no more than MAX_SHARED_WATCHES are shared: past it the other eyes are disabled", async () => {
+    const { MAX_SHARED_WATCHES } = await import("../src/state-watch.ts");
+    const all = Array.from({ length: MAX_SHARED_WATCHES + 1 }, (_, i) => `ml.current.run.step + ${i}`);
+    V.watches.value = all;
+    V.shared.value = all.slice(0, MAX_SHARED_WATCHES);
+    withWatches({ members: [], entries: [] }, {});
+    const host = await show({ members: [], entries: [] });
+    assert.equal(watchRow(host, all.at(-1)).querySelector(".rstate-share").disabled, true);
+    assert.equal(watchRow(host, all[0]).querySelector(".rstate-share").disabled, false, "a shared one can still be unshared");
+    V.toggleShared(all.at(-1));
+    assert.equal(V.shared.value.length, MAX_SHARED_WATCHES);
+});
