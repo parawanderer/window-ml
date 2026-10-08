@@ -690,6 +690,9 @@ test("tooltips: moving straight off the panel onto the page takes every kind of 
         });
         fake.setCapacity(BOX);
         fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        // The model list and the lane are sections that can be folded; this test needs the rows, so it says so rather
+        // than leaning on a default (the resource-panel specs do the same).
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_sections: { lane: true, models: true } }));
         const page = await ext.context.newPage();
         await page.setViewportSize({ width: 1100, height: 800 });
         await page.goto(`${fake.url}/api/version`);
@@ -698,8 +701,9 @@ test("tooltips: moving straight off the panel onto the page takes every kind of 
             const root = document.getElementById("ml-sb-root").shadowRoot;
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = "420px";
-            panel.classList.add("open");
-            root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+            // Opened through its own tab, as a person does: a message posted into the frame from the page no longer
+            // reaches the app (parent-channel.ts), so the old `__mlSidebarOpen` post left it believing it was closed.
+            root.getElementById("ml-sb-tab").click();
         });
         let frame;
         for (let i = 0; i < 80 && !frame; i++) { frame = page.frames().find((f) => /sidebar\.html/.test(f.url())); if (!frame) await sleep(100); }
