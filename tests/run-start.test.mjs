@@ -651,23 +651,32 @@ test("while an approved exec runs, the page cannot fetch a URL the exec never na
 
 const { CURRENT_SIGNATURE } = await import("../src/api-docs.gen.ts");
 
-test("UPGRADE: a stored config from before the flag reads as ON: the prompt shows ml.current's shape, and a survey reads it", T, async () => {
+test("UPGRADE: a stored config from before the flag reads as ON: the prompt names ml.current in one sentence, and a survey reads it", T, async () => {
     // `config` above has no `selfIntrospection` key, exactly as a config saved by an older build.
     assert.equal("selfIntrospection" in config, false);
     const { system, toPage, results, log } = await surveyRun(["ml.current.run.step"]);
-    assert.ok(system.includes(`\`ml.current\` in a read-only \`exec\` is \`${CURRENT_SIGNATURE}\``), "the generated signature, verbatim");
-    assert.match(system, /agent_api_docs` has every type/);
-    // What two real models got wrong from the shape alone (converse sessions, 2026-10-08): a per-turn step read as
-    // session-wide, and a shared watch read as a snapshot from when it was shared.
-    assert.match(system, /`run\.step` \(1 on this turn's first call\), `maxSteps` and `startedTs` are THIS turn's/);
-    assert.match(system, /a read holds the call making it, not its result/);
-    assert.match(system, /a shared watch is re-evaluated on every read, so its value is now/);
-    // From real runs: DeepSeek V4 Pro summed `meta[].tokens` and called the total exact, and read a watch's note asking
-    // "is it climbing?" as a label, reporting the number instead of answering it.
-    assert.match(system, /system prompt first; `tokens` is an estimate unless `tokensBasis` is "counted"/);
-    assert.match(system, /its `note` is the user's question about it, so answer that/);
+    // With agent_api_docs, ONE sentence (Shane, 2026-10-08: most runs never need it): what it is, and where to learn it.
+    assert.match(system, /`ml\.current`, read in a read-only `exec`, is your own run as data/);
+    assert.match(system, /`ml\.current\.debug\.userWatches`\)\. Most tasks never need it; `agent_api_docs` documents it\./);
+    // The one fact a real model got wrong with the sentence alone, without looking it up (DeepSeek V4 Pro, 2026-10-08).
+    assert.match(system, /A shared watch is re-evaluated on every read, so its value is now, and its `note` is the user's question to answer\./);
+    assert.ok(!system.includes(CURRENT_SIGNATURE), "the shape is the docs' to give");
     assert.deepEqual(toPage, [], "answered in the worker");
     assert.equal(results[0], "1", JSON.stringify({ results, log }));
+});
+
+test("what real models got wrong about ml.current is said where agent_api_docs serves it, and in the prompt of a run without the docs", async () => {
+    const { ML_API_DOCS } = await import("../src/api-docs.gen.ts");
+    const { currentClause } = await import("../src/agent/prompts.ts");
+    // From converse sessions, 2026-10-08: a per-turn step read as session-wide, a shared watch read as a snapshot from
+    // when it was shared, an estimated token total called exact, a note's question answered with the number.
+    for (const fact of ["1 on a turn's first call", "re-evaluated for every read", "An ESTIMATE unless", "often their question", "the system prompt first"])
+        assert.ok(ML_API_DOCS.includes(fact), `agent_api_docs says: ${fact}`);
+    const bare = currentClause(false);
+    assert.ok(bare.includes(`\`ml.current\` in a read-only \`exec\` is \`${CURRENT_SIGNATURE}\``), "no docs: the generated signature, verbatim");
+    assert.match(bare, /`run\.step` \(1 on this turn's first call\), `maxSteps` and `startedTs` are THIS turn's/);
+    assert.match(bare, /system prompt first; `tokens` is an estimate unless `tokensBasis` is "counted"/);
+    assert.match(bare, /its `note` is the user's question about it, so answer that/);
 });
 
 test("the flag OFF: no word of ml.current in the prompt, and a survey naming it is not answered from the run's context", T, async () => {

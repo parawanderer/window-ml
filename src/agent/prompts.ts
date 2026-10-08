@@ -71,14 +71,24 @@ export const SELF_CLAUSE =
     "`agent_api_docs` lists the rest.";
 /** SELF-INTROSPECTION (`selfIntrospection`, default on): the model may read its own run as `ml.current`. Added only
  *  where a survey can actually reach it (read-only exec auto-approved, a run the extension hosts), and stripped from a
- *  page-hosted run's prompt (`withoutCurrentClause`). The shape is GENERATED from `CurrentSnapshot`, so this line
- *  cannot describe one the code no longer has. `docs` is whether `agent_api_docs` is in the toolset. */
-export const currentClause = (docs: boolean): string =>
-    `\n\nYou can read YOUR OWN RUN as data: \`ml.current\` in a read-only \`exec\` is \`${CURRENT_SIGNATURE}\`, with \`meta[i]\` describing \`messages[i]\` (system prompt first; \`tokens\` is an estimate unless \`tokensBasis\` is "counted"); ` +
-    "`run.step` (1 on this turn's first call), `maxSteps` and `startedTs` are THIS turn's; a read holds the call making it, not its result, and a shared watch is re-evaluated on every read, so its value is now; its `note` is the user's question about it, so answer that. Use it to " +
-    "check what is in your context, what a tool really returned, or what the user shared with you in " +
-    "`ml.current.debug.userWatches`" + (docs ? "; `agent_api_docs` has every type" : "") + ". It is read-only and never " +
-    "reaches the page, so a script that also acts on the page cannot read it: read in one exec, act in the next.";
+ *  page-hosted run's prompt (`withoutCurrentClause`). `docs` is whether `agent_api_docs` is in the toolset.
+ *
+ *  With the docs, ONE sentence (Shane, 2026-10-08: most runs never need it): that it exists, what it is for, and where
+ *  to learn it, then the one fact a model got WRONG without it (DeepSeek V4 Pro called the watches frozen at share
+ *  time, without looking anything up). The rest of what models got wrong reading it (an estimate called exact,
+ *  `step`'s start) is said in `CurrentSnapshot`'s JSDoc, which `agent_api_docs` serves. Measured with converse: a
+ *  self-count question takes a few more calls (the model looks it up), the shared-watch question one. Without the docs
+ *  there is nowhere to learn it, so the GENERATED shape and those facts stay in the prompt. */
+export const currentClause = (docs: boolean): string => docs
+    ? "\n\n`ml.current`, read in a read-only `exec`, is your own run as data: your messages and what each costs, this " +
+      "turn's step, the execution log, and what the user shared with you (`ml.current.debug.userWatches`). Most tasks " +
+      "never need it; `agent_api_docs` documents it. A shared watch is re-evaluated on every read, so its value is " +
+      "now, and its `note` is the user's question to answer."
+    : `\n\nYou can read YOUR OWN RUN as data: \`ml.current\` in a read-only \`exec\` is \`${CURRENT_SIGNATURE}\`, with \`meta[i]\` describing \`messages[i]\` (system prompt first; \`tokens\` is an estimate unless \`tokensBasis\` is "counted"); ` +
+      "`run.step` (1 on this turn's first call), `maxSteps` and `startedTs` are THIS turn's; a read holds the call making it, not its result, and a shared watch is re-evaluated on every read, so its value is now; its `note` is the user's question about it, so answer that. Use it to " +
+      "check what is in your context, what a tool really returned, or what the user shared with you in " +
+      "`ml.current.debug.userWatches`. It is read-only and never " +
+      "reaches the page, so a script that also acts on the page cannot read it: read in one exec, act in the next.";
 
 // Appended to the run's provenance clause (prompt-surface.ts) per the HUD's verbosity (agentHud). PROGRESS: your between-step prose shows live in
 // the corner card, so keep it to ONE terse line. QUIET: the user won't see intermediate prose at all — stay
