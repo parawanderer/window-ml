@@ -344,3 +344,46 @@ test("OPEN — a page on ANOTHER tab cannot write into a run's live tool output"
     assert.ok(outs.some((o) => /real line/.test(o)), `positive control: the run's own tab streams (got ${JSON.stringify(outs)})`);
     assert.ok(outs.every((o) => !/INJECTED/.test(o)), `a line from another tab reached the run's live output: ${JSON.stringify(outs)}`);
 });
+
+test("what a page's CONTENT_READY is answered with: the rebuild's fields are the reviewed list", async () => {
+    // Any document on a tab hosting a run gets the run's rebuild (it must register the run's tools), approved or not.
+    // Pinned so a field added to RebuildConfig, a credential or a pointer say, is a decision rather than a leak.
+    let release;
+    const bg = loadBackground({ config: baseConfig(), onFetch: () => jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "look", arguments: "{}" } }] }, finish_reason: "tool_calls" }] }),
+        onTabMessage: async (_t, msg) => { if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "look" && !msg.payload.renderOnly) await new Promise((r) => { release = r; }); return msg?.type === "RUN_TOOL_IN_PAGE" ? { result: "ok" } : undefined; } });
+    const rebuild = { toolNames: ["look"], model: "m", driverSees: false, visionModel: "v", groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: false };
+    void bg.send({ type: "START_RUN", payload: { runId: "cr", task: "t", systemPrompt: "s", rebuild,
+        tools: [{ name: "look", requiresApproval: false, description: "", parameters: { type: "object", properties: {} }, capabilities: [] }],
+        model: "m", think: null, maxSteps: 2, autoApprovePython: false, autoApproveReadonly: false, surface: "off" } }, { ...hostilePage(9), documentId: "doc-1" });
+    for (let i = 0; i < 20 && !release; i++) await tick();
+    assert.ok(release, "the run is mid-tool on tab 9");
+    const res = await bg.send({ type: "CONTENT_READY" }, { ...hostilePage(9), documentId: "doc-1" });
+    assert.equal(res.adopt?.length, 1, "the page is handed the run on its tab");
+    assert.deepEqual(Object.keys(res.adopt[0]).sort(), ["rebuild", "runId"]);
+    assert.deepEqual(Object.keys(res.adopt[0].rebuild).sort(), ["cdp", "crossOrigin", "driverSees", "groundingModel", "groundingRange", "model", "pierceClosed", "toolNames", "visionModel"]);
+    release();
+});
+
+test("OPEN — a page cannot make the worker replay a run's history to its tab again and again", { todo: "CONTENT_READY replays on every call, whatever the document" }, async () => {
+    // CONTENT_READY means "a fresh document loaded", but the worker takes the page's word for it: one document that
+    // posts PAGE_ADOPT_HELLO three times gets the run's whole history pushed to its shell three times. The card's
+    // reducer then repeats every step with no seq (tests/reducer-batch.test.mjs), and each burst snaps the card's size
+    // back. Fix shape: replay once per `sender.documentId`.
+    let release;
+    const bg = loadBackground({ config: baseConfig(), onFetch: () => jsonResponse({ choices: [{ message: { content: "thinking first", tool_calls: [{ id: "c1", type: "function", function: { name: "look", arguments: "{}" } }] }, finish_reason: "tool_calls" }] }),
+        onTabMessage: async (_t, msg) => { if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "look" && !msg.payload.renderOnly) await new Promise((r) => { release = r; }); return msg?.type === "RUN_TOOL_IN_PAGE" ? { result: "ok" } : undefined; } });
+    const rebuild = { toolNames: ["look"], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: false };
+    void bg.send({ type: "START_RUN", payload: { runId: "spam", task: "t", systemPrompt: "s", rebuild,
+        tools: [{ name: "look", requiresApproval: false, description: "", parameters: { type: "object", properties: {} }, capabilities: [] }],
+        model: "m", think: null, maxSteps: 2, autoApprovePython: false, autoApproveReadonly: false, surface: "off" } }, { ...hostilePage(9), documentId: "doc-1" });
+    for (let i = 0; i < 20 && !release; i++) await tick();
+    const replays = () => bg.tabMessages.filter(([tabId, m]) => tabId === 9 && m?.type === "ML_DEBUG_TO_PAGE").length;
+    const sender = { ...hostilePage(9), documentId: "doc-1" };
+    await bg.send({ type: "CONTENT_READY" }, sender); await tick();
+    const first = replays();
+    await bg.send({ type: "CONTENT_READY" }, sender); await tick();
+    await bg.send({ type: "CONTENT_READY" }, sender); await tick();
+    release();
+    assert.ok(first > 0, "positive control: the run's history was buffered and the tab gets ML_DEBUG_TO_PAGE");
+    assert.equal(replays(), first, `the same document got the history again: ${first} events after one CONTENT_READY, ${replays()} after three`);
+});
