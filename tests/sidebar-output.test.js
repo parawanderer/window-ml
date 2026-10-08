@@ -186,9 +186,9 @@ test("tool output: the console's copy button copies all of it, across the not-se
 });
 
 // A print that showed a VIEW of a value (an ml.current message summarised) carries notes saying what was replaced. They
-// are drawn INSIDE the part they describe, after its output, in a cell of their own: the model reads them right after
-// its cut, and a long output scrolling in its own cell must not carry them out of sight.
-test("tool output: the print notes sit inside the console and the value, after the output, outside its scrolling cell", async () => {
+// are drawn INSIDE the output's own cell, after the output: they scroll with it (they had a cell of their own, pinned
+// under it, and are not notable enough to stay in view), and the cell's find searches them with the output.
+test("tool output: the print notes sit inside the console's and the value's own cells, after the output, and the find reaches them", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("pnotes", "run it"));
     await w.dispatch(agentStep("pnotes", 1, {
@@ -202,9 +202,21 @@ test("tool output: the print notes sit inside the console and the value, after t
     assert.ok(inConsole, "the console's notes are inside the console section");
     assert.match(inConsole.textContent, /console\.log printed a VIEW: \$\[0\]\.content/);
     assert.equal(inConsole.closest(".r-unseen"), null, "not inside the part the model was not sent");
-    const cells = [...w.shadow.querySelectorAll(".r-py-stdout .r-outcell")];
-    assert.ok(cells.indexOf(inConsole.querySelector(".r-outcell")) > 0, "a cell of their own, after the output's cell");
-    assert.match(w.shadow.querySelector(".r-py-val .r-print-notes").textContent, /the returned value printed a VIEW/);
+    const scroller = inConsole.closest(".r-outscroll");
+    assert.ok(scroller, "inside the scrolling part of the output's cell");
+    assert.equal(w.shadow.querySelectorAll(".r-py-stdout .r-outcell").length, 1, "one cell, not a second one for the notes");
+    assert.equal(scroller.lastElementChild, inConsole, "after the output");
+    const inValue = w.shadow.querySelector(".r-py-val .r-print-notes");
+    assert.match(inValue.textContent, /the returned value printed a VIEW/);
+    assert.ok(inValue.closest(".r-outscroll"), "the value's notes are inside the value's cell too");
+    // Ctrl+F in the console's cell finds text that is only in the notes.
+    scroller.dispatchEvent(new w.window.KeyboardEvent("keydown", { key: "f", ctrlKey: true, bubbles: true }));
+    await w.tick();
+    const q = inConsole.closest(".r-outcell").querySelector(".r-find-q");
+    assert.ok(q, "the console's find bar opens");
+    q.value = "REPLACED"; q.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.flush();
+    assert.match(inConsole.closest(".r-outcell").querySelector(".r-find-n")?.textContent ?? "", /1 of 1/, "the note is found");
     const copied = [];
     Object.defineProperty(w.window.navigator, "clipboard", { value: { writeText: async (t) => { copied.push(t); } }, configurable: true });
     w.shadow.querySelector(".r-py-stdout > .r-py-actions button").click(); await w.tick();

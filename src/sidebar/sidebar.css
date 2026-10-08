@@ -3086,7 +3086,10 @@ html[data-focus] .action-verb { font-weight: 500; }
 .rp-note { font-size: .85em; color: var(--fg-dim); margin: 0 0 4px; font-style: italic; }
 /* The print boundary's notes, after a part of an exec's output: each names, in JSONPath, what the print showed as a
    view rather than as the value. A cell of their own just under the output, so they read as part of it. */
-.r-print-notes { margin-top: 4px; }
+/* An exec's print notes, inside its output cell after the output: a rule above them, since they say what the print
+   showed rather than being more of it. Wrapped like prose: a note is a sentence, and one line of it scrolled sideways
+   is unreadable. */
+.r-print-notes { margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--border); white-space: pre-wrap; overflow-wrap: anywhere; }
 /* A hint REPORTING a failure rather than explaining a control. */
 .hint.err { color: var(--err, #ef4444); }
 
