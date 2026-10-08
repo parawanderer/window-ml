@@ -604,7 +604,7 @@ test("a page cannot read a URL the person approved for the run's worker-side fet
     let stolen;
     const { fetched, toolResults } = await attackRun({ url: OTHER }, {
         // A second step that goes to the page, so the page runs code while the run is live on its tab. Not an approved
-        // exec: that opens the tab's fetches for its duration (`fetchOpen`), which is its own test below.
+        // exec: that allows the URLs its code names for its duration (`fetchUrls`), which is its own test below.
         then: [{ name: "findByText", args: { text: "x" } }],
         inPage: async (bg, msg) => {
             if (msg.payload.name !== "findByText" || msg.payload.renderOnly || msg.payload.readonlyTry || msg.payload.precheck) return undefined;
@@ -632,7 +632,7 @@ test("a page cannot spend the one-time as-you grant the person minted for the ru
     assert.equal(fetched.length, 1);
 });
 
-test("OPEN — while an approved exec runs, the page cannot fetch a URL the exec never named", { ...T, todo: "an approved exec opens uncredentialed fetching for the whole TAB (pendingGrants fetchOpen), and the page shares the tab; part 4 isolates exec" }, async () => {
+test("while an approved exec runs, the page cannot fetch a URL the exec never named", T, async () => {
     let stolen;
     const { toolResults } = await attackRun({ url: OTHER }, {
         then: [{ name: "exec", args: { js: "document.title = 'x'; return 1" } }],
@@ -687,4 +687,21 @@ test("a run the PAGE hosts is not offered ml.current: the clause is taken out of
         assert.equal(withoutCurrentClause("BEFORE" + currentClause(docs) + "AFTER", tools), "BEFOREAFTER");
     }
     assert.equal(withoutCurrentClause("no clause here", [{ name: "exec" }]), "no clause here");
+});
+
+test("an approved exec may fetch the URLs its code spells out, and a computed one is refused with what to write", T, async () => {
+    const named = "https://other.example/named";
+    let literal, computed;
+    await attackRun({ url: OTHER }, {
+        then: [{ name: "exec", args: { js: `document.title = 'x'; return (await ml.fetch("${named}")).status` } }],
+        inPage: async (bg, msg) => {
+            if (msg.payload.name !== "exec" || msg.payload.renderOnly || msg.payload.readonlyTry || msg.payload.precheck) return undefined;
+            // What the approved script's own ml.fetch sends: the literal it names, then (say) a URL it built.
+            literal = await bg.send({ type: "FETCH_URL", payload: { url: named } }, RUN_TAB);
+            computed = await bg.send({ type: "FETCH_URL", payload: { url: named + "?page=2" } }, RUN_TAB);
+            return undefined;
+        },
+    });
+    assert.equal(literal?.data?.status, 200, `the literal URL was fetched: ${JSON.stringify(literal).slice(0, 120)}`);
+    assert.match(computed?.error || "", /not spelled out in the approved script.*string literal/, JSON.stringify(computed));
 });

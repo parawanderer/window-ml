@@ -23,7 +23,7 @@ import { stepBudget } from "../agent/step-budget";
 import type { StartRunPayload, ResumeRunPayload } from "../contract/contract-messages";
 import { type RequestHint, hintSession } from "../contract/contract-run";
 import { externalSheetIds, clipOut, isCurrentPage } from "../dom/dom";
-import { extractGrants } from "./grant-extract";
+import { extractGrants, fetchUrlLiterals } from "./grant-extract";
 import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
 import { grantsFor, serverToolKey, pendingGrants, pendingApprovals, grantCredFetch, consentFetch, persistGrants, fetchConsent } from "./sw-consent";
@@ -452,9 +452,9 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 // choke-point grants for the privileged sub-ops this tool will make, bound to the exact
                 // resources in its args — an untrusted page's FETCH_SHEET / full PYTHON_EXEC checks them.
                 // Scoped to this delegation: cleared in `finally`, so a later call needs its own approval.
-                // An APPROVED exec may fetch inline (ml.fetch): the human saw the code, so allow its fetches
-                // for THIS run (ephemeral — cleared below). Persisting a URL is button #3, not this.
-                if (name === "exec") grantsFor(tabId).fetchOpen = true;
+                // An APPROVED exec may fetch inline (ml.fetch) the URLs its code spells out: the person saw them. Only
+                // those, parsed here: the page shares the tab, and an open grant lent it every URL while any exec ran.
+                if (name === "exec") grantsFor(tabId).fetchUrls = new Set(fetchUrlLiterals(String((args as { js?: unknown }).js ?? "")));
                 // The pointer reads an approved script names, resolved here and sent with it: the page answers only
                 // those, so it cannot read the rest of the run's store while the call is in flight (named-reads.ts).
                 const reads = name === "exec" && typeof (args as { js?: unknown }).js === "string" ? preReadsFor(runId, (args as { js: string }).js) : undefined;
