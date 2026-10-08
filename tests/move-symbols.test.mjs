@@ -427,3 +427,60 @@ test("CLI: a blocked move writes nothing and exits 1; a clean one writes and exi
     const usage = run("--from", "src/a.ts");
     assert.strictEqual(usage.status, 2);
 });
+
+// --- inline `import("…")` type queries: rebased inside the moved code, repointed everywhere else ---
+
+test("relative `import(\"…\")` specifiers inside the moved code are rebased to a target in another directory", (t) => {
+    // The real cases (2026-10-08): `import("./sw/sw-fetch").FetchedBody` moved from src/background.ts into src/sw/,
+    // and `import("./contract")` moved from src/injected.ts into src/ml/. Both stayed relative to the OLD file.
+    const f = fixture({
+        "src/contract.ts": 'export * from "./contract/run";\n',
+        "src/contract/run.ts": "export type Body = { text: string };\n",
+        "src/sw/fetch.ts": "export type Fetched = { n: number };\nexport async function get() { return 1; }\n",
+        "src/a.ts": [
+            "/** Reads one. @param {import(\"./contract\").Body} b */",
+            'export async function read(b: import("./contract").Body, x: import("./sw/fetch.ts").Fetched): Promise<typeof import("./a").helper> {',
+            '    const { get } = await import("./sw/fetch");',
+            "    await get();",
+            "    return helper;",
+            "}",
+            "export function helper(): void {}",
+            "",
+        ].join("\n"),
+    });
+    t.after(f.cleanup);
+    const { report, text } = f.move({ from: "src/a.ts", symbols: ["read"], to: "src/ml/read.ts", pull: false });
+    assert.deepStrictEqual(report.blocks, []);
+    assert.ok(report.verbatim);
+    const moved = text("src/ml/read.ts");
+    assert.match(moved, /@param \{import\("\.\.\/contract"\)\.Body\} b/, "a JSDoc type query is rebased too");
+    assert.match(moved, /b: import\("\.\.\/contract"\)\.Body/, "the barrel stays the barrel");
+    assert.match(moved, /x: import\("\.\.\/sw\/fetch\.ts"\)\.Fetched/, "the extension stays as written");
+    assert.match(moved, /typeof import\("\.\.\/a"\)\.helper/, "a query of the source for a name that stays names the source");
+    assert.match(moved, /await import\("\.\.\/sw\/fetch"\)/, "a dynamic import in the moved code is rebased");
+    assert.deepStrictEqual(report.rebased.map((r) => r.to), ["../contract", "../contract", "../sw/fetch.ts", "../a", "../sw/fetch"]);
+});
+
+test("a moved name queried as `import(\"<source>\").X` elsewhere follows it; a staying one does not", (t) => {
+    const f = fixture({
+        "src/a.ts": 'export type Shape = { w: number };\nexport function area(s: Shape) { return s.w; }\nexport const keep = 1;\n',
+        "src/user.ts": [
+            '/** @type {import("./a").Shape} */',
+            'export let s: import("./a").Shape = { w: 1 };',
+            'export let fn: typeof import("./a").area;',
+            'export let k: typeof import("./a").keep;',
+            "",
+        ].join("\n"),
+        "src/deep/other.ts": 'export type S = import("../a.ts").Shape;\n',
+    });
+    t.after(f.cleanup);
+    const { report, text } = f.move({ from: "src/a.ts", symbols: ["Shape", "area"], to: "src/geo/shape.ts" });
+    assert.deepStrictEqual(report.blocks, []);
+    const user = text("src/user.ts");
+    assert.match(user, /@type \{import\("\.\/geo\/shape"\)\.Shape\}/, "the JSDoc query follows");
+    assert.match(user, /s: import\("\.\/geo\/shape"\)\.Shape/);
+    assert.match(user, /typeof import\("\.\/geo\/shape"\)\.area/);
+    assert.match(user, /typeof import\("\.\/a"\)\.keep/, "a staying name keeps its query");
+    assert.match(text("src/deep/other.ts"), /import\("\.\.\/geo\/shape\.ts"\)\.Shape/, "in the importer's own extension style");
+    assert.ok(report.alsoRewritten.some((r) => r.file === "src/deep/other.ts"));
+});

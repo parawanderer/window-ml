@@ -9,7 +9,7 @@
 //      at the end of the file the block also cannot inherit the file's header comment as leading trivia.
 //   3. Run the refactor, then put the moved code back BYTE FOR BYTE: it reprints what it moves (re-spacing trailing
 //      comments, for one), and a move should be a move. The only edit kept is an added `export`.
-//   4. Rewrite the `import()`/`require()` uses and the re-exports it does not touch, then check: no new diagnostics, no new import
+//   4. Rewrite the `import()`/`require()` uses, the `import("…").X` type queries and the re-exports it does not touch, then check: no new diagnostics, no new import
 //      cycle, what each bundle gains, and who names the file as a string.
 import path from "node:path";
 import { ts, FORMAT, PREFS } from "./project.mjs";
@@ -18,7 +18,7 @@ import {
     attachedStart, attachedEnd,
 } from "./declarations.mjs";
 import { projectGraph, newCycles, bundleEntries, reach } from "./graph.mjs";
-import { rewriteDynamicImports, rewriteReExports, removeEmptyDestructuring } from "./missed-imports.mjs";
+import { rewriteDynamicImports, rewriteReExports, rewriteTypeQueries, removeEmptyDestructuring, rebaseSpecifiers } from "./missed-imports.mjs";
 import { textReferences } from "./text-refs.mjs";
 
 /**
@@ -48,6 +48,7 @@ export function moveSymbols(project, { from, symbols, to, pull = true }) {
         /** @type {{ entry: string, gains: string[] }[]} */ bundles: [],
         /** @type {ReturnType<typeof textReferences>} */ textRefs: [],
         /** @type {{ file: string, line: number }[]} */ alsoRewritten: [],
+        /** @type {{ from: string, to: string }[]} */ rebased: [],
         verbatim: false,
     };
     const block = (kind, message) => report.blocks.push({ kind, message });
@@ -147,8 +148,13 @@ export function moveSymbols(project, { from, symbols, to, pull = true }) {
     // 2. Relocate the block to the end of the file.
     const text = sf.text;
     const units = ordered.map((st) => {
-        const start = lineStartIfClear(text, attachedStart(sf, st));
-        return { names: declaredNames(st), kind: kindOf(st), start, end: attachedEnd(sf, st), exported: isExported(st), exportAt: st.getStart(sf) - start };
+        const start = lineStartIfClear(text, attachedStart(sf, st)), end = attachedEnd(sf, st);
+        // A relative `import("…")` in the moved text names a path from the SOURCE's directory. Rebased in two halves
+        // so the offset of the declaration, where an added `export` goes, is still known.
+        const head = rebaseSpecifiers(project, sf, toAbs, movedNames, start, st.getStart(sf));
+        const tail = rebaseSpecifiers(project, sf, toAbs, movedNames, st.getStart(sf), end);
+        report.rebased.push(...head.rebased, ...tail.rebased);
+        return { names: declaredNames(st), kind: kindOf(st), start, end, exported: isExported(st), exportAt: head.text.length, body: head.text + tail.text };
     });
     let rest = "", cursor = 0;
     for (const u of units) {
@@ -185,7 +191,7 @@ export function moveSymbols(project, { from, symbols, to, pull = true }) {
     // too — for the source's first import that is the source's file header. The header describes the old file.
     if (report.newFile) stripImportLeadingComments(project, toAbs);
 
-    if (!restoreVerbatim(project, toAbs, units, text)) block("verbatim", `the moved code in ${report.to} could not be matched back to the original; inspect it with --diff`);
+    if (!restoreVerbatim(project, toAbs, units)) block("verbatim", `the moved code in ${report.to} could not be matched back to the original; inspect it with --diff`);
     else report.verbatim = true;
 
     // 4. What the refactor leaves alone, then the checks.
@@ -193,8 +199,9 @@ export function moveSymbols(project, { from, symbols, to, pull = true }) {
     report.alsoRewritten = dyn.rewritten;
     for (const m of dyn.manual) block("dynamic-import", `${m.file}:${m.line} loads ${report.from} dynamically and ${m.text}; fix it by hand`);
     const reexports = rewriteReExports(project, fromAbs, toAbs, movedNames);
-    report.alsoRewritten.push(...reexports);
-    for (const r of [...dyn.rewritten, ...reexports]) touched.add(project.abs(r.file));
+    const queries = rewriteTypeQueries(project, fromAbs, toAbs, movedNames);
+    report.alsoRewritten.push(...reexports, ...queries);
+    for (const r of [...dyn.rewritten, ...reexports, ...queries]) touched.add(project.abs(r.file));
     removeEmptyDestructuring(project, touched);
     removeSelfImports(project, toAbs);
     for (const f of touched) mergeDuplicateImports(project, f);
@@ -348,13 +355,13 @@ function joinCut(left, right) {
 /**
  * Replace the refactor's reprint of each moved statement in the target with the original text, keeping an `export`
  * the refactor added. Everything from the end of the previous statement up to a moved one's end is the refactor's
- * copy of it and its comments, so that whole region is replaced. Returns false when a statement cannot be found or
- * the result does not read back identical.
+ * copy of it and its comments, so that whole region is replaced. "Original" is the source's text with its inline
+ * specifiers rebased (`body`). Returns false when a statement cannot be found or the result does not read back
+ * identical.
  * @param {import("./project.mjs").Project} project @param {string} toAbs
- * @param {{ names: string[], kind: string, start: number, end: number, exported: boolean, exportAt: number }[]} units
- * @param {string} original the source file's text the units index into
+ * @param {{ names: string[], kind: string, exported: boolean, exportAt: number, body: string }[]} units
  */
-function restoreVerbatim(project, toAbs, units, original) {
+function restoreVerbatim(project, toAbs, units) {
     const tsf = project.sourceFile(toAbs);
     const used = new Set();
     const plan = [];
@@ -363,7 +370,7 @@ function restoreVerbatim(project, toAbs, units, original) {
         if (idx < 0) return false;
         used.add(idx);
         const st = tsf.statements[idx];
-        let body = original.slice(u.start, u.end);
+        let body = u.body;
         if (isExported(st) && !u.exported) body = `${body.slice(0, u.exportAt)}export ${body.slice(u.exportAt)}`;
         const prev = idx > 0 ? attachedEnd(tsf, tsf.statements[idx - 1]) : 0;
         plan.push({ start: prev, end: attachedEnd(tsf, st), newText: `${idx > 0 ? "\n\n" : ""}${body}`, body });

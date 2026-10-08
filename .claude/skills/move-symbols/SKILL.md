@@ -41,6 +41,11 @@ finds dependencies by eye, and never sees the tests that load a module by `await
    moved), `({ a } = await import("…"))` in a `before` hook, `(await import("…")).a`, `const M = await
    import("…"); M.a`, `.catch(() => null)` imports, destructured `require`, and re-exports
    (`export { a } from`, `export type { … } from`, `export * from`).
+   And the inline `import("…")` the refactor never reads: a type query `import("./old").Moved` (in code or in JSDoc)
+   anywhere in the project is repointed at the target, and every relative `import("…")`/`require("…")` INSIDE the
+   moved code is rebased to the target's directory (`rebased` lines in the plan). The rebased path names the same
+   file, so `import("./contract")` moved into `src/ml/` becomes `import("../contract")`, still the barrel. A query of
+   the source itself for a name that moves along names the target instead.
    Also drops an import of the TARGET from itself: code moving INTO the module it imported from (`utilOf` into
    `resource-model.ts`) arrives with the refactor's copy of that import, which conflicts with the local declaration.
 6. **Checks, in memory, before writing anything**:
@@ -66,6 +71,11 @@ finds dependencies by eye, and never sees the tests that load a module by `await
 | `dynamic-import` | a test loads the module in a shape the tool will not guess at (a namespace used for moved AND staying members, a rest element, `.then(m => m.x)`) | fix that line by hand, then `--allow dynamic-import` |
 | `text-ref` | something reads the source file as text | look at it: a generator (gen-api-docs reads `contract.ts`) will silently produce less; a test grepping the file will pass vacuously |
 | `dirty` | a file the move touches has uncommitted edits | commit or stash, so the undo is a checkout |
+
+An inline `import("…")` type query no longer blocks: before 2026-10-08 a move into another directory left
+`import("./contract")` relative to the old file and stopped on `typecheck` (TS2307). Only a query through a module
+OTHER than the source (a barrel re-exporting it) is left alone, which is right, since the barrel still exports the
+name.
 
 `--allow cycle,text-ref,…` proceeds despite the named checks. `input`, `conflict`, `mutable` and a refactor
 failure cannot be overridden.

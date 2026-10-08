@@ -49,8 +49,8 @@ the isolated content-script world.
 
 **The CONTRACT is one contract in eleven files.** `contract.ts` holds `MlApi`, `JsonSchema`, and a BARREL
 (`export * from "./contract-<theme>"`). Keep importing from `./contract`: about a hundred references are the inline
-type query `import("./contract").X`, which no refactoring tool rewrites, and the doc/schema generators start from it
-by path. List the modules live with `node scripts/index.mjs '^contract-' --kind file --word`.
+type query `import("./contract").X`, which `move-symbols` rebases only inside the code it moves, and the doc/schema
+generators start from it by path. List the modules live with `node scripts/index.mjs '^contract-' --kind file --word`.
 
 **`background.ts` is the message ROUTER + the print/nav spine.** Every cohesive leaf layer is its own `sw-*.ts`
 module, bundled back into `dist/background.js`. List them live with `node scripts/index.mjs '^sw-' --kind file

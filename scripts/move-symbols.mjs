@@ -132,10 +132,11 @@ function main() {
                 out.push(`  file      ${project.rel(c.file)}${c.before == null ? " (new)" : ""}  +${d.added} −${d.removed}  (${c.after.split("\n").length - 1} lines)`);
             }
         }
+        for (const r of report.rebased) out.push(`  rebased   import("${r.from}") → import("${r.to}") in the moved code`);
         if (report.alsoRewritten.length) out.push(`  also      rewrote ${report.alsoRewritten.map((r) => `${r.file}:${r.line}`).join(", ")}`);
         out.push("");
         if (changed.length) {
-            out.push(`  verbatim  ${report.verbatim ? "✓ moved code is byte-identical to the original" : "✗ moved code differs from the original"}`);
+            out.push(`  verbatim  ${report.verbatim ? `✓ moved code is byte-identical to the original${report.rebased.length ? ", apart from the rebased specifiers" : ""}` : "✗ moved code differs from the original"}`);
             out.push(`  typecheck ${report.newDiagnostics.length ? `✗ ${report.newDiagnostics.length} new error(s)` : "✓ no new errors"} in ${report.diagnosticsChecked} file(s)`);
             out.push(`  cycles    ${report.cycles.length ? `✗ ${report.cycles.length} new` : "✓ none new"}`);
             for (const b of report.bundles) out.push(`  bundle    ${b.entry} now also contains ${b.gains.join(", ")}`);
