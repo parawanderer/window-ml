@@ -57,7 +57,8 @@ export interface MessageMeta {
     gapMs: number | null;
     /** Where a user message was typed. Null for every other role, and for history. */
     surface: PromptSurface | null;
-    /** The size of this message: what compacting it would reclaim. Text only; see `images`. */
+    /** The size of this message: what compacting it would reclaim. Text only; see `images`. An ESTIMATE unless
+     *  `tokensBasis` is `"counted"`: a real model summed these and called the total exact. */
     tokens: number;
     tokensBasis: TokensBasis;
     /** Images the message carries, which `tokens` does NOT include: an image's cost depends on the model, and
@@ -106,7 +107,8 @@ export type CurrentLog = CurrentLogRecord[] & { text: string };
 /** Everything `ml.current` is, at one instant. */
 export interface CurrentSnapshot {
     run: CurrentRun;
-    /** The NeutralMessage[] the next model call gets, verbatim: a COPY, so nothing a script does reaches the loop's. */
+    /** The NeutralMessage[] the next model call gets, verbatim: the system prompt first, then every user and assistant
+     *  message, tool call and tool result. A COPY, so nothing a script does reaches the loop's. */
     messages: NeutralMessage[];
     /** Parallel to `messages`: same length, same order. */
     meta: MessageMeta[];
@@ -120,7 +122,8 @@ export interface CurrentSnapshot {
  *  failed or its value was too large to hand over. */
 export interface UserWatch {
     expression: string;
-    /** What the person wrote about WHY they shared it ("is this growing?"), when they wrote anything. Their words. */
+    /** What the person wrote about WHY they shared it ("is this growing?"), when they wrote anything. Their words, and
+     *  often their question: answer it, not just the value (a real model read "is it climbing?" and reported the number). */
     note?: string;
     value?: unknown;
     error?: string;
