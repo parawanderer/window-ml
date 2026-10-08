@@ -82,7 +82,7 @@ export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, 
     /** Drawn instead of the key on THIS row (not its members'): a caller's own name for the root. */ label?: ComponentChildren;
     /** Drawn at the end of THIS row: a caller's chips and buttons, so a root takes one line. */ trail?: ComponentChildren }) {
     const branch = !!v && typeof v === "object";
-    const menu = path != null && v !== JT_CUT && v !== JT_SEEN ? (e: MouseEvent) => { e.stopPropagation(); openCtxMenu(e, copyMenu(v, path)); } : undefined;
+    const menu = path != null && v !== JT_CUT && v !== JT_SEEN ? (e: MouseEvent) => { e.stopPropagation(); openCtxMenu(e, copyMenu(v, path), { mark: e.currentTarget as Element }); } : undefined;
     const [open, setOpen] = useState(allOpen || (defaultOpen ?? depth < 1));   // allOpen → expanded at EVERY depth (the raw In view)
     const [shown, setShown] = useState(JT_PAGE);
     const pad = { paddingLeft: `${depth * 13}px` };

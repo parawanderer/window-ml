@@ -540,20 +540,42 @@ test("the run state panel lists every declared member of the open run, what each
         // preview, and the chips, on one row.
         const firstRow = (id) => panel.locator(`[data-member="${id}"] .jt-row`).first();
         expect((await panel.locator('[data-member="run.messages"] .jt-row').count())).toBe(1);
-        const line = await firstRow("run.messages").boundingBox();
-        const chipBox = await panel.locator('[data-member="run.messages"] .rstate-aud').boundingBox();
+        // Every member is the height of one row, empty ones included (a global `.empty` once padded those to three),
+        // and its chip sits on that row.
+        // (`run.init` was opened above to read its task; an opened member is as tall as its value, so it is not counted.)
+        const heights = await panel.locator(".rstate-member").evaluateAll((els) => els.filter((el) => !el.querySelector(".tri.open"))
+            .map((el) => [el.dataset.member, el.getBoundingClientRect().height, el.querySelector(".jt-row").getBoundingClientRect().height]));
+        expect(heights.length, "most members are folded").toBeGreaterThan(10);
+        for (const [id, h, row] of heights) expect(h, `${id} is one line`).toBeLessThan(row * 1.6);
+        const line = await firstRow("run.mailbox").boundingBox();
+        const chipBox = await panel.locator('[data-member="run.mailbox"] .rstate-aud').boundingBox();
         expect(Math.abs(chipBox.y + chipBox.height / 2 - (line.y + line.height / 2)), "the chip is on the member's own line").toBeLessThan(line.height / 2);
         // Named by the expression that reaches them. Nothing is in the model's `ml.current` yet, so every member is under
-        // `inspector.`; the person's own are marked "you only", the model's-to-be "not in ml.current yet".
+        // `inspector.`; the person's own are marked "you only", and a model member waiting for its path carries no chip.
         await expect(firstRow("run.mailbox").locator(".rstate-key")).toHaveText("inspector.run.mailbox:");
         await expect(panel.locator('[data-member="run.mailbox"] .rstate-aud')).toHaveText("you only");
         await expect(panel.locator('[data-member="grants.fetch"] .rstate-aud')).toHaveText("you only");
-        await expect(panel.locator('[data-member="run.pointers"] .rstate-aud')).toHaveText("not in ml.current yet");
+        // The name's tooltip: the sentence, then one fact per row, the path among them.
+        // Two moves: the tip follows the pointer, so it opens on a movement over the name, not on arriving there.
+        const keyBox = await firstRow("run.mailbox").locator(".rstate-key").boundingBox();
+        await chat.mouse.move(keyBox.x + 4, keyBox.y + keyBox.height / 2);
+        await chat.mouse.move(keyBox.x + 6, keyBox.y + keyBox.height / 2);
+        const tip = chat.locator(".cursor-tip .rstate-tip");
+        await expect(tip.locator(".rc-tip-line", { hasText: "read by" })).toContainText("only you");
+        await expect(tip.locator(".rc-tip-line", { hasText: "lost when" })).toContainText("the turn ends");
+        await expect(tip.locator(".rc-tip-line", { hasText: "path" }).locator("code")).toHaveText("inspector.run.mailbox");
+        expect(await tip.locator("code").evaluate((el) => getComputedStyle(el).fontFamily), "the path reads as code").toMatch(/mono|Menlo|Courier/i);
+        // At the docked panels' tip size, as the resource panel's tips are, not the page's reading size.
+        const [tipPx, panelPx] = await chat.evaluate(() => [parseFloat(getComputedStyle(document.querySelector(".cursor-tip")).fontSize),
+            parseFloat(getComputedStyle(document.querySelector(".chat")).getPropertyValue("--panel-fs")) || 12]);
+        expect(tipPx).toBeCloseTo(panelPx * 0.83, 0);
+        await chat.mouse.move(0, 0);
+        await expect(panel.locator('[data-member="run.pointers"] .rstate-aud')).toHaveCount(0);
         // The title is the session's, read from the one place that owns it (the worker's index): no utility model
         // is set here, so it holds no title yet, but the member is filled, not empty, and the model may read it.
         const title = panel.locator('[data-member="session.title"]');
         await expect(title).not.toHaveClass(/empty/);
-        await expect(title.locator(".rstate-aud")).toHaveText("not in ml.current yet");
+        await expect(title.locator(".rstate-aud")).toHaveCount(0);
         // The page's members come from the run's tab. Finished, the run's answer has been handed over, but the page is
         // still there to say so; closed, the panel says why the page's members are missing instead of dropping them.
         await expect(panel.locator('[data-member="run.answer"]')).toHaveClass(/empty/);
@@ -771,7 +793,10 @@ test("the run state panel folds a group to a count, and copies a member's value,
         await init.locator(".jt-clickable").first().click();
         const task = init.locator(".jt-row", { hasText: "task:" });
         await task.click({ button: "right" });
+        // The row the menu is about is marked while the menu is open, and only then.
+        await expect(task).toHaveClass(/ctx-target/);
         await chat.getByRole("button", { name: "Copy path" }).click();
+        await expect(task).not.toHaveClass(/ctx-target/);
         await expect.poll(clip).toBe("inspector.run.init.task");
         await task.click({ button: "right" });
         await chat.getByRole("button", { name: "Copy value" }).click();

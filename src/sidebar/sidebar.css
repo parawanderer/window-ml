@@ -2143,6 +2143,9 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 .jt-row { display: flex; align-items: baseline; gap: 4px; font: 0.86em/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .jt-row.jt-clickable { cursor: pointer; }
 .jt-row.jt-clickable:hover { background: var(--panel-2); border-radius: 3px; }
+/* The element a right-click menu is about, while that menu is open (openCtxMenu's `mark`): a step darker than a hover,
+   so it reads as chosen rather than pointed at. */
+.ctx-target { background: color-mix(in srgb, var(--fg) 14%, transparent); border-radius: 4px; }
 .jt-row .tri { align-self: center; margin-left: -2px; }
 .jt-key { color: var(--j-key); }
 .jt-brace { color: var(--j-base); }
@@ -3264,26 +3267,41 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .rstate-group-head { display: flex; align-items: center; gap: 4px; width: 100%; margin: 2px 0; padding: 2px 0; border: 0; background: none;
     font: inherit; font-size: 0.8em; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--fg-dim); cursor: pointer; text-align: left; }
 .rstate-group-head:hover { color: var(--fg); }
+/* The end of a group's heading: its count when folded, then the fold chevron, at the right edge. */
+.rstate-group-end { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
 /* A folded group's count: how many members, and how many hold something. */
-.rstate-count { margin-left: auto; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+.rstate-count { font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--fg-faint); font-variant-numeric: tabular-nums; }
 /* One member: ONE LINE until opened, like a debug console's variables. Dimmed when it holds nothing for this run. */
-.rstate-member { border-top: 1px solid var(--border); }
-.rstate-member > .jt-row, .rstate-member > .jt-node > .jt-row:first-child { position: relative; padding-right: 0; }
-.rstate-member.empty { opacity: 0.6; }
-.rstate-key { font-family: var(--mono, monospace); font-weight: 600; cursor: help; margin-right: 6px; }
-/* A member meant for the model that it is not given yet: quieter than "you only", which is a decision rather than a gap. */
-.rstate-notyet { border-style: dashed; color: var(--fg-faint); }
+.rstate-member { }
+/* Its first row stays ONE line however long the preview: the name and the chips keep their width, the preview is cut. */
+.rstate-member > .jt-row, .rstate-member > .jt-node > .jt-row:first-child { white-space: nowrap; }
+.rstate-member > .jt-row > :is(.jt-preview, .jt-val, .rstate-none),
+.rstate-member > .jt-node > .jt-row:first-child > :is(.jt-preview, .jt-val) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.rstate-member.rstate-empty { opacity: 0.6; }
+.rstate-key { font-family: var(--mono, monospace); font-weight: 600; cursor: help; margin-right: 6px; flex-shrink: 0; }
 /* The `inspector.` root of a member the model does not read: dimmed, so the part that is the model's path stands out. */
 .rstate-root { font-weight: 400; color: var(--fg-faint); }
 /* What sits at the end of a member's line: who sees it, whose word it is, and copy. */
-.rstate-trail { float: right; display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; }
+.rstate-trail { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; padding-left: 8px; flex-shrink: 0; }
 /* The chip on a member the model is not given, or one the page reported. */
-.rstate-aud { font-size: 0.75em; padding: 0 5px; border-radius: 8px; border: 1px solid var(--border); color: var(--fg-dim); font-style: normal; }
+.rstate-aud { font: 0.9em/1.3 system-ui, sans-serif; padding: 0 5px; border-radius: 8px; border: 1px solid var(--border); color: var(--fg-dim); }
 .rstate-none { color: var(--fg-faint); font-style: italic; }
 /* Copy a member's value: shown on the row the pointer is over, and to keyboard focus. */
 .rstate-copy { display: inline-flex; padding: 1px; border: 0; background: none; color: var(--fg-dim); cursor: pointer; opacity: 0; }
 .rstate-member:hover .rstate-copy, .rstate-copy:focus-visible { opacity: 1; }
 .rstate-copy svg { width: 13px; height: 13px; }
+/* A member's tooltip: its sentence, then a rule, then one fact per row, label left and value right, as the resource
+   panel's tips are laid out. */
+.rstate-tip { display: flex; flex-direction: column; gap: 2px; max-width: 340px; }
+/* A tip from this pane is drawn at the page's root, which reads at the page's size; the pane's own tips are at the
+   docked panels' size, as the resource panel's are (they are drawn inside the dock, so they inherit it). */
+.cursor-tip:has(.rstate-tip) { font-size: calc(var(--panel-fs, 12px) * 0.83); }
+.rstate-tip-sect { display: flex; flex-direction: column; gap: 1px; margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--tip-line); }
+.rstate-tip-sect > .rc-tip-line > :last-child { text-align: right; }
+.rstate-tip-k { color: var(--fg-faint); white-space: nowrap; }
+/* The member's path, as code: monospace on a chip of its own, the way a path reads in prose. */
+.rstate-tip code { font-family: var(--mono, ui-monospace, monospace); font-size: 0.95em; overflow-wrap: anywhere;
+    padding: 0 4px; border-radius: 3px; background: color-mix(in srgb, var(--fg) 10%, transparent); }
 /* The sentence a session with nothing live gets, above its (empty) members. */
 .rstate-idle { color: var(--fg-dim); }
 /* The states that are not a log — nothing open, nothing recorded, unreadable — do want the margin back. */

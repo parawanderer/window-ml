@@ -16,13 +16,22 @@ import type { StateEntry, StateLoss } from "../state-registry";
 /** How often an open panel re-reads. A read is a message to the worker and a walk over a dozen maps: cheap. */
 export const RUN_STATE_POLL_MS = 2000;
 
+/** What empties a member, as a short phrase for the tooltip's "lost when" row. */
 const LOSS: Record<StateLoss, string> = {
-    "worker-eviction": "the service worker being stopped (it is, after ~30 s idle)",
-    navigation: "the tab navigating",
-    "offscreen-close": "the Python sandbox closing",
-    "browser-restart": "the browser restarting",
-    "turn-end": "the turn ending",
+    "worker-eviction": "the service worker stops (after ~30 s idle)",
+    navigation: "the tab navigates",
+    "offscreen-close": "the Python sandbox closes",
+    "browser-restart": "the browser restarts",
+    "turn-end": "the turn ends",
 };
+
+/** How long a member lives, by its scope, for the tooltip's "lives for" row. */
+const SCOPE: Record<RunStateMember["scope"], string> = {
+    run: "this run", session: "this session, every turn", tab: "this tab", page: "this page, until it navigates", browser: "this browser",
+};
+
+/** Which bundle holds a member, for the tooltip's "held by" row. */
+const REALM: Record<RunStateMember["realm"], string> = { worker: "the service worker", page: "the page", offscreen: "the Python sandbox" };
 
 /** Who reads a member, in a sentence: the model at a path it really has, the model not yet, or only you. */
 function readerOf(m: RunStateMember): string {
@@ -30,10 +39,23 @@ function readerOf(m: RunStateMember): string {
     return m.exposedAs ? `The model reads this as ${m.exposedAs}.` : "Meant for the model, and not given to it yet: no ml.current path reaches it.";
 }
 
-/** The tooltip on a member's name: what it holds, who reads it, and what empties it. */
+/** A short tooltip from this pane, marked so it is drawn at the docked panels' size like the rest of the pane's tips. */
+const paneTip = (text: string) => <span class="rstate-tip">{text}</span>;
+
+/** The tooltip on a member's name: what it holds, then under a rule, one fact per row (who reads it, how long it
+ *  lives, what holds it, what loses it, and its path), laid out like the resource panel's tips. */
 function memberTip(m: RunStateMember) {
-    const lost = m.lostOn.length ? `Lost on ${m.lostOn.map((l) => LOSS[l]).join(", or ")}.` : "Kept in storage.";
-    return <>{m.describe}<span class="tt-note">{readerOf(m)} Scope: {m.scope}. {lost}</span></>;
+    const reader = m.audience === "human" ? "only you" : m.exposedAs ? "the model" : "meant for the model, not yet";
+    return <span class="rstate-tip">
+        <span class="rstate-tip-desc">{m.describe}</span>
+        <span class="rstate-tip-sect">
+            <span class="rc-tip-line"><span class="rstate-tip-k">read by</span><span>{reader}</span></span>
+            <span class="rc-tip-line"><span class="rstate-tip-k">lives for</span><span>{SCOPE[m.scope]}</span></span>
+            <span class="rc-tip-line"><span class="rstate-tip-k">held by</span><span>{REALM[m.realm]}</span></span>
+            <span class="rc-tip-line"><span class="rstate-tip-k">lost when</span><span>{m.lostOn.length ? m.lostOn.map((l) => LOSS[l]).join(", or ") : "kept in storage"}</span></span>
+            <span class="rc-tip-line"><span class="rstate-tip-k">path</span><code>{memberPath(m)}</code></span>
+        </span>
+    </span>;
 }
 
 /** The root of every member the model does not read: `inspector.<id>`. A prefix that is plainly not the model's, so the
@@ -54,21 +76,22 @@ function MemberName({ m }: { m: RunStateMember }) {
 function CopyValue({ v }: { v: unknown }) {
     const { copied, copy } = useCopy();
     return <button class="rstate-copy" aria-label="Copy the value" onClick={(e) => { e.stopPropagation(); copy(copyableValue(v)); }}
-        {...cursorTipOn("Copy the value. Right-click any row for its value or its path.")}>{copied ? <IconCheck /> : <IconCopy />}</button>;
+        {...cursorTipOn(paneTip("Copy the value. Right-click any row for its value or its path."))}>{copied ? <IconCheck /> : <IconCopy />}</button>;
 }
 
 /** One member, on ONE LINE until it is opened: its name, what it holds folded to a preview, and who sees it. */
 function Member({ m, e }: { m: RunStateMember; e: StateEntry | undefined }) {
     const label = <span class="rstate-key" {...cursorTipOn(memberTip(m))}><MemberName m={m} /></span>;
     const chips = <span class="rstate-trail">
-        {m.audience === "human" ? <span class="rstate-aud" {...cursorTipOn(readerOf(m))}>you only</span>
-            : !m.exposedAs ? <span class="rstate-aud rstate-notyet" {...cursorTipOn(readerOf(m))}>not in ml.current yet</span> : null}
+        {/* Only the person's own state is marked: that is a decision. A model member not given to the model yet is a
+            gap that closes member by member, and its dimmed `inspector.` root and its tooltip already say so. */}
+        {m.audience === "human" ? <span class="rstate-aud" {...cursorTipOn(paneTip(readerOf(m)))}>you only</span> : null}
         {/* The PAGE answered for this one, and a hostile page answers whatever it likes: said, not hidden. */}
-        {m.realm === "page" || e?.realm === "page" ? <span class="rstate-aud rstate-page" {...cursorTipOn("Reported by the page the run is on. A page can put anything here, so read it as the page's word.")}>from the page</span> : null}
+        {m.realm === "page" || e?.realm === "page" ? <span class="rstate-aud rstate-page" {...cursorTipOn(paneTip("Reported by the page the run is on. A page can put anything here, so read it as the page's word."))}>from the page</span> : null}
         {e && !e.error ? <CopyValue v={e.value} /> : null}
     </span>;
     return (
-        <div class={`rstate-member${e ? "" : " empty"}`} data-member={m.id}>
+        <div class={`rstate-member${e ? "" : " rstate-empty"}`} data-member={m.id}>
             {!e ? <div class="jt-row">{label}<span class="rstate-none">none</span>{chips}</div>
                 : e.error ? <div class="jt-row">{label}<span class="hint err">could not read: {e.error}</span>{chips}</div>
                     : <JsonNode v={e.value} defaultOpen={false} path={memberPath(m)} label={label} trail={chips} />}
@@ -97,8 +120,12 @@ function Group({ g, ms, byId }: { g: string; ms: RunStateMember[]; byId: Map<str
     return (
         <section class={`rstate-group${shut ? " shut" : ""}`} data-group={g}>
             <button class="rstate-group-head" aria-expanded={!shut} onClick={() => toggleGroup(g)}>
-                <span class={`tri${shut ? "" : " open"}`} aria-hidden="true"><IconChevron /></span>{g}
-                {shut ? <span class="rstate-count">{ms.length} member{ms.length === 1 ? "" : "s"} · {holding} holding something</span> : null}
+                {g}
+                {/* The fold control at the END of the heading's line, where the eye goes after reading what it heads. */}
+                <span class="rstate-group-end">
+                    {shut ? <span class="rstate-count">{ms.length} member{ms.length === 1 ? "" : "s"} · {holding} holding something</span> : null}
+                    <span class={`tri${shut ? "" : " open"}`} aria-hidden="true"><IconChevron /></span>
+                </span>
             </button>
             {shut ? null : ms.map((m) => <Member key={m.id} m={m} e={byId.get(m.id)} />)}
         </section>
@@ -157,7 +184,7 @@ export function RunStateView({ run }: { run: string | null }) {
     return (
         <div class="rstate">
             <PanelHead>
-                {dump ? <span class="rstate-asof" {...cursorTipOn(`Read from the service worker, and from the page the run is on, every ${RUN_STATE_POLL_MS / 1000} s while this panel is open.`)}>
+                {dump ? <span class="rstate-asof" {...cursorTipOn(paneTip(`Read from the service worker, and from the page the run is on, every ${RUN_STATE_POLL_MS / 1000} s while this panel is open.`))}>
                     as of {new Date(dump.ts).toLocaleTimeString()}</span> : <span />}
             </PanelHead>
             {error ? <div class="hint err">could not read the run's state: {error}</div>
