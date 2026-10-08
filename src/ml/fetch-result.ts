@@ -44,3 +44,25 @@ export function derivedFetchFields(r: FetchResult, opts: { markdown: (html: stri
     // at python_exec is read from the running run's toolset.
     if (r && r.table && !isTable(r.table)) r.table = asTable(r.table, { python: opts.python });
 }
+
+/** Freeze a plain value all the way down. */
+function deepFreeze<T>(v: T): T {
+    if (v && typeof v === "object" && !Object.isFrozen(v)) {
+        Object.freeze(v);
+        for (const k of Object.keys(v)) deepFreeze((v as Record<string, unknown>)[k]);
+    }
+    return v;
+}
+
+/**
+ * The copy of a result a fetch cache keeps: frozen, so a read-only survey that writes to what it re-read (`r.markdown =
+ * "…"`) cannot change what the next re-read shows as the site's content. A copy, because the caller of the fetch keeps
+ * the original and may still add to it. The table facade is read-only by construction and is shared as it is.
+ * @param r the result just fetched
+ * @returns the frozen copy to cache
+ */
+export function cacheCopy(r: FetchResult): FetchResult {
+    const { table, ...rest } = r;
+    const copy = deepFreeze(structuredClone(rest)) as FetchResult;
+    return Object.freeze(table === undefined ? copy : { ...copy, table });
+}

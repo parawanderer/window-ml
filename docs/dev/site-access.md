@@ -74,6 +74,19 @@ same dispatch first (`claimForWorker`). And if the page still wrote to a session
 the shell has the app drop that session when it does (`dropPageSession`, `__mlForgetSession`). Attack 15d is the race. `DUMP_EVENTS` (`ml.__events()`) gives a page
 only the buffered events of sessions it is not shut out of.
 
+## Tools of a worker-built run that run in the worker
+
+A builtin tool that never reads the page runs in the worker for a run the worker built (`WORKER_TOOL_NAMES` in
+`src/sw/worker-tools.ts`), so what it reads never enters the page's world: the same tool from the same factory, given
+an `ml` the worker answers. Today: `fetch_url`, through `fetchUrlFor` (`sw-fetch-url.ts`) with the run's tab as an
+untrusted caller, so the run's approval mints exactly the consent a page's call would have needed; its Markdown comes
+from the offscreen document (`HTML_TO_MD`) and its reader's model call is metered as the call's `subUsage`. The one
+`fetch_url` still answered by the page is a session render of the page the run is on, from its own live DOM. A
+read-only survey re-reads the run's fetches from the worker's cache (`_fetchCached` in `worker-readonly-ml.ts`), and a
+miss defers to the page's. Both caches hold frozen copies (`cacheCopy`), so a survey cannot rewrite what a later
+re-read shows. `RUN_TAB_TYPES` keeps `FETCH_URL` until approved exec is isolated (part 4): an approved script's inline
+`ml.fetch` and a page-built run still send it.
+
 ## What the content script sends outside the gate
 
 Four types the content script sends on a page's word are not in `PAGE_STARTED_TYPES`, so the origin gate passes them

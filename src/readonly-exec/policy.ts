@@ -2,7 +2,7 @@
 // allowlist, the callable roots and safe constructors, and the `ml` facade the dialect sees.
 
 import { isTable } from "../table/table-brand";   // a table facade is recognised by BRAND, and the brand module is itself dependency-free
-import { Denied, riskyRegex, PIPE_CHARS_PER_STEP, MAX_STRING, NotInDialect } from "./limits";
+import { Denied, riskyRegex, PIPE_CHARS_PER_STEP, MAX_STRING, NotInDialect, NeedsPage } from "./limits";
 
 // Property names that can walk back to the realm (window/Function/…). Denied on
 // every read, static or computed. `constructor`/`__proto__` kill the
@@ -286,9 +286,11 @@ export function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown,
     // so a survey that re-reads an approved URL auto-approves (the python_exec+Sheet parallel). Kept OUT of
     // ML_READONLY_METHODS (which drives the "always free" docs) because it's free only for cached URLs.
     const cachedFetch = (ml as Record<string, unknown>)["_fetchCached"];
-    // The cache is the PAGE's (`ml.fetch`'s, in the main world). In the worker a miss would be the WORKER fetching:
-    // `<all_urls>` and none of the page's cookies, a different capability. So it is not offered there.
-    if (typeof cachedFetch === "function" && !worker) {
+    // Each realm reads its OWN cache, and neither ever fetches: the page's is `ml.fetch`'s in the main world, the
+    // worker's is what the run's `fetch_url` read there (worker-tools.ts). In the worker, anything it cannot answer
+    // (a miss, a non-default mode) defers to the page, whose cache an approved exec's inline fetch fills and whose
+    // live document answers a session render of itself; there a miss is refused as before.
+    if (typeof cachedFetch === "function") {
         out.fetch = (url: unknown, opts?: unknown): unknown => {
             // The MODE is part of the question, so it is handed to the host rather than dropped: the cache holds
             // only default-mode results, and a `rendered` or `format: "html"` read answered from it would be a
@@ -303,6 +305,7 @@ export function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown,
             // answered by a LIVE read of the page you are on (nothing else in those modes is cached), so any
             // other answer to one is a host bug handing back the wrong document — refused, not served.
             if (r !== undefined && (mode.credentials || mode.rendered) && !(r as { live?: unknown })?.live) r = undefined;
+            if (r === undefined && worker) throw new NeedsPage(`fetch(${JSON.stringify(String(url))}) is not in the worker's cache`);
             if (r === undefined) throw new Denied(mode.credentials
                 ? "fetch({ credentials }) is an authenticated fetch — it needs approval"
                 : `fetch(${JSON.stringify(String(url))}) isn't cached in this mode — approve it once, then re-reads are free`);

@@ -16,6 +16,7 @@ import { mlRange } from "../util";
 import { workerMl } from "./worker-ml";
 import { getConfig, listLoadedModels, fetchOllamaInfo } from "./sw-llm";
 import { valueHolders, readStoredColumns } from "./sw-values";
+import { workerFetchCached } from "./worker-tools";
 import type { StoredColumnReader } from "../table/table-data";
 
 /** A run's pointer resolver, as the loop hands it to the host (`tokenSink`). */
@@ -56,6 +57,10 @@ export function workerReadonlyMl(tabUrl: string, deref?: RunDeref, runId = ""): 
         jsonPath: mlJsonPath,
         schema: mlSchema,
         range: mlRange,
+        // The run's own fetches, made by its `fetch_url` in the worker: a re-read is free and never egresses. Only the
+        // default mode is cached; any other misses, and the dialect defers it to the page.
+        _fetchCached: (url: unknown, mode?: { credentials?: boolean; rendered?: boolean; format?: string }) =>
+            mode?.credentials || mode?.rendered || mode?.format === "html" ? undefined : workerFetchCached(runId, String(url)),
     };
     if (deref) {
         // The page's `ml.dereference`, with the store read in-process. Its advisory has

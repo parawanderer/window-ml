@@ -36,7 +36,7 @@ import { createChat, resumeChat, chat, step } from "./ml/ml-chat";
 import { agent } from "./ml/ml-agent-run";
 import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } from "./ml/ml-agent-handle";
 import { mlSchema } from "./ml/ml-schema";
-import { derivedFetchFields } from "./ml/fetch-result";
+import { derivedFetchFields, cacheCopy } from "./ml/fetch-result";
 
 // Every family that used to live in the window.ml literal now has a module above; what is left here is the
 // object that binds them together, the small `_`-prefixed introspection helpers, and the page's own window
@@ -363,7 +363,7 @@ import { derivedFetchFields } from "./ml/fetch-result";
                     // never cache). Keyed by url ALONE, so only the DEFAULT format is cached: `format:"html"`
                     // returns different bytes for the same url, and letting it share the key would hand a later
                     // reader the wrong document.
-                    if (r && r.ok && !credentials && !rendered && format === "markdown") mlFetchCache.set(key, r);
+                    if (r && r.ok && !credentials && !rendered && format === "markdown") mlFetchCache.set(key, cacheCopy(r));
                     return r;
                 });
         },

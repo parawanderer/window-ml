@@ -30,7 +30,7 @@ import { grantsFor, serverToolKey, pendingGrants, pendingApprovals, grantCredFet
 import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
 import { noteRunMechanic } from "./sw-runs";
-import { ensureLocalTools, runLocalTool } from "./sw-local-tools";
+import { ensureLocalTools, runLocalTool, runsInWorker } from "./sw-local-tools";
 import { withUserWatches } from "./sw-shared-watches";
 import { navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
@@ -225,14 +225,20 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
         ...(subByModel.size ? { byModel: [...subByModel.entries()].map(([model, u]) => ({ model, ...u })) } : {}),
     });
     // Every tool send that names a tool goes through here. A run the worker built (sw-run-start.ts) runs its REMOTE tools
-    // itself (sw-local-tools.ts); everything else, and every run a page built, goes to the page as before.
+    // and the builtins that never read the page itself (sw-local-tools.ts, worker-tools.ts); everything else, and every
+    // run a page built, goes to the page as before.
     const sendTool = async (payload: { runId: string; name: string; args: Record<string, unknown>; stream?: boolean; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; reads?: PreRead[] }, onStream?: (chunk: string, ts?: number) => void): Promise<unknown> => {
         // A worker-built run's REMOTE tool never goes to the page, which has no such tool. If this worker does not hold
         // it (rehydrated after an eviction, or a resumed session), it is rebuilt first.
-        if (p.builtBy === "worker" && p.tools.some((t) => t.name === payload.name && t.remote)) {
-            await ensureLocalTools(runId, p, tabPageUrl.get(tabId) || p.pageUrl || "").catch(() => { /* answered below */ });
-            return (await runLocalTool(payload, onStream))
-                ?? { result: `Error: the server tool "${payload.name}" is not available any more (the server no longer lists it).` };
+        const tabUrl = (): string => tabPageUrl.get(tabId) || p.pageUrl || "";
+        if (p.builtBy === "worker" && runsInWorker(p, payload.name)) {
+            await ensureLocalTools(runId, p, tabId, tabUrl).catch(() => { /* answered below */ });
+            const local = await runLocalTool({ ...payload, tabUrl: tabUrl() }, onStream);
+            if (local) return local;
+            // A remote tool has nowhere else to run; a builtin declined here (fetch_url's render of this very page) does.
+            if (p.tools.some((t) => t.name === payload.name && t.remote))
+                return { result: `Error: the server tool "${payload.name}" is not available any more (the server no longer lists it).` };
+            return delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload });
         }
         return (await runLocalTool(payload, onStream)) ?? delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload });
     };
