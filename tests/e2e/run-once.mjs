@@ -326,6 +326,10 @@ export function decideApproval(policy, gate) {
  * @param {object} cfg
  * @param {string} [cfg.task] the agent task
  * @param {string} [cfg.followup] a SECOND turn in the SAME session (createAgent + two run()s)
+ * @param {(info: { turn: number, result: object | null, events: object[] }) => Promise<string | null>} [cfg.nextTurn]
+ *   ANY NUMBER of further turns, decided as the run goes (converse.mjs): asked after each turn, with that turn's
+ *   result; a string is the next message, null ends the session. Each turn gets `timeoutMs`.
+ * @param {(gate: object) => Promise<boolean>} [cfg.decide] decides each approval gate itself, instead of `approve`
  * @param {string} [cfg.start] start route on the test site (e.g. "/spreadsheet")
  * @param {string[]|null} [cfg.tools] limit to this subset of domTools (smaller prompt), or null for the full kit
  * @param {boolean} [cfg.python] wire python_exec as an extraTool
@@ -361,7 +365,7 @@ export async function runOnce(cfg = {}) {
         python = false, toolTokens = false, agentOptions = {},
         backend = null, script = DEFAULT_SCRIPT, warm = true, warmAll = false,
         dist = null, artDir = null, approve = "auto", capture = "failure",
-        focusSidebar = true, hold = false, synthetic = true, sharedWatches = [],
+        focusSidebar = true, hold = false, synthetic = true, sharedWatches = [], nextTurn = null, decide = null,
         timeoutMs = followup ? 240000 : 120000,
         log = () => {}, onEvent = null,
     } = cfg;
@@ -478,8 +482,8 @@ export async function runOnce(cfg = {}) {
                     seen.add(g.key);
                     const argstr = JSON.stringify(g.arguments ?? {}).slice(0, 200);
                     if (approve === "hold") { log(`  ⏸ APPROVAL GATE (step ${g.step}) — ${g.tool}(${argstr})  [APPROVE=hold → left for a manual click]`); approvals.push({ tool: g.tool, arguments: g.arguments, decision: "held", step: g.step }); continue; }
-                    const decision = decideApproval(approve, g);
-                    log(`  ⏸ APPROVAL GATE (step ${g.step}) — ${g.tool}(${argstr}) → ${decision ? "APPROVE" : "DENY"}  [APPROVE=${approve}]`);
+                    const decision = decide ? !!(await decide(g).catch(() => false)) : decideApproval(approve, g);
+                    log(`  ⏸ APPROVAL GATE (step ${g.step}) — ${g.tool}(${argstr}) → ${decision ? "APPROVE" : "DENY"}  [${decide ? "decided by the caller" : `APPROVE=${approve}`}]`);
                     approvals.push({ tool: g.tool, arguments: g.arguments, decision: decision ? "approved" : "denied", step: g.step });
                     try { await ext.sw.evaluate(({ key, d }) => globalThis.__mlApprovals.resolve(key, d), { key: g.key, d: decision }); }
                     catch (e) { log(`  (approval resolve failed: ${String(e).slice(0, 80)})`); }
@@ -490,10 +494,11 @@ export async function runOnce(cfg = {}) {
 
         let result = null, error = null;
         let seedBoundaryStep = -1;
+        let extraTurns = 0;   // turns `nextTurn` added
         // A seeded or multi-turn run is driven from NODE, one turn at a time, so the backend can be swapped
         // between turns and the seed boundary recorded. A plain single-turn run still goes through
         // ml.agent() exactly as before — the path observe.mjs exercises stays untouched.
-        const needsHandle = !!(seed || followup);
+        const needsHandle = !!(seed || followup || nextTurn);
         const t0 = Date.now();
         try {
             await page.evaluate(({ task, needsHandle, toolNames, toolTokens, python, extra }) => {
@@ -563,6 +568,15 @@ export async function runOnce(cfg = {}) {
             await startTurn(task);
             await awaitResults(++turnsDone, deadline);
             if (followup) { await startTurn(followup); await awaitResults(++turnsDone, deadline); }
+            // A conversation: each further turn is asked for after the last one ends, with its own deadline.
+            if (nextTurn) for (;;) {
+                const last = [...events].reverse().find((e) => e.kind === "agent-result") ?? null;
+                const t = await nextTurn({ turn: turnsDone, result: last, events });
+                if (t == null) break;
+                await startTurn(t);
+                await awaitResults(++turnsDone, Date.now() + timeoutMs);
+                extraTurns++;
+            }
         }
 
         if (focusSidebar) await openSidebarAndFocus(page, artDir, log).catch((e) => log(`  (sidebar focus: ${e})`));
@@ -572,7 +586,7 @@ export async function runOnce(cfg = {}) {
         // A cross-page / background run's ml.agent() promise dies with the navigated-away page context (that's
         // the caught error), but the run carries on in the BACKGROUND. Wait for its terminal agent-result event
         // (via the init-script bridge, which re-attaches each document) before we snapshot final state.
-        const need = (seed ? 1 : 0) + 1 + (followup ? 1 : 0);   // every turn emits its own agent-result
+        const need = (seed ? 1 : 0) + 1 + (followup ? 1 : 0) + extraTurns;   // every turn emits its own agent-result
         const hasResult = () => events.filter((e) => e.kind === "agent-result").length >= need;
         if (!hasResult()) {
             while (Date.now() < deadline && !hasResult()) await new Promise((r) => setTimeout(r, 500));

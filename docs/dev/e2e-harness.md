@@ -5,6 +5,10 @@ changed rather than loaded into every session. AGENTS.md keeps the repository's 
 bite; this file keeps how the subsystem works and why it is built that way. Paths name files by their bare name,
 as in AGENTS.md — they are all under `src/`.
 
+- **`converse.mjs`** (`converse` skill) — observe's run, TALKED TO: `runOnce`'s `nextTurn` hook asks for each next
+  turn as the run goes, and `decide` lets the caller rule on gates. The interface is a directory (`inbox/`, `outbox/`,
+  `status`, `gate.json`/`decision`), so an agent session can interview a model about a feature, answer what it asks
+  and steer it, one Bash call per message. Built for the `ml.current` usability runs (2026-10-08).
 - **`observe.mjs`** — a **debug/observation wrapper, not a test** (see the `observe` skill for the
   full playbook): `node --import tsx tests/e2e/observe.mjs` drives ONE agent run in a real Chromium
   and writes ARTIFACTS to `tests/e2e/artifacts/<RUN_LABEL|timestamp>/` (gitignored): **`run.md`** =
