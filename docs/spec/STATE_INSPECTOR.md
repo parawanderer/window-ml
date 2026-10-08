@@ -68,7 +68,37 @@ change when it lands).
 | `crossPage` | state the run explicitly carried across pages, if it was kept | model | slot, until cross-page persistence says what survives |
 | `policies` | access policies the person approved: the run drafts a policy, the person approves it once, and it decides what the run may do on a page (unspecified) | model | slot |
 | `hooks` | reusable functions and page hooks the run defined, behind approval (unspecified). These will also get a human-facing UI of their own; this row is the variable view of them | model | slot |
+| `grants` | every remembered approval that applies to this run, with its scope (below) | **human** | exists in the worker (`sw-consent.ts`, `site-access.ts`); nothing reads it out |
 | `debug.userWatches` | the watches you chose to SHARE (below) | model, by your choice | new |
+
+### `grants`: what the run may do without asking
+
+(Shane, 2026-10-08.) Every approval that is remembered is state: it decides what the next identical call does without
+a prompt. They live in the worker (`src/sw/sw-consent.ts`, `src/site-access.ts`), and nothing shows them today.
+
+| Grant | What it allows | Scope and lifetime |
+| --- | --- | --- |
+| fetch URLs (`fetchConsent`) | `ml.fetch` of these exact URLs again (approve and remember) | the TAB, until it closes |
+| Sheets (`pendingGrants.sheets`) | reading these Google Sheets | the tab |
+| Python code (`pendingGrants.pyCode`) | running this exact code again | the tab |
+| server tools (`pendingGrants.serverTools`) | this server tool with these exact arguments | the tab |
+| fetches during an approved `exec` (`fetchOpen`) | the `ml.fetch` calls inside code the person approved | that one `exec` |
+| credentialed fetches (`credFetchGrants`) | one fetch as the person, cookies included | ONE use, consumed by the fetch |
+| site access (approved and denied origins) | a page on that origin using `window.ml` at all | the BROWSER, persistent |
+| auto-approve settings in effect | read-only `exec`, read-only Python, reading the extension's own source | the browser |
+
+**Grants belong to TABS and to the browser, not to runs.** A run that moves between tabs has a different set on each,
+and two runs on one tab share one. So the member shows what applies to THIS run right now: the grants of every tab it
+acts on, plus the browser-wide ones, each row labelled with its scope (tab, browser, or one use). A grant from another
+run on the same tab is shown as that, not as this run's.
+
+**Audience: `human`.** The model asked for the grants it obtained and saw their results, but a grant another run left
+on the tab, or an origin approved last week, is information it was not given. Which grants could move to `model` (so
+a model stops asking for what it already has) is a later decision, and this is where it is recorded.
+
+**Read-only first, like the rest; revoking is the obvious first write.** Taking back a remembered approval is the one
+action every grant row invites. It belongs where the grant is decided (the worker, through the same choke point that
+grants it), never in the pane alone.
 
 **The context buffer.** When the message history splits from what is sent (compaction, `AGENT_COMPACTION.md`), the
 part that is sent becomes its own member in the same shape as `messages`, and the history keeps the rest. Both stay.
@@ -169,8 +199,8 @@ The Python bench is the Python half of this already. The two are the same kind o
 
 ## Order
 
-1. **Session group from what exists**: `run` (with the title), `init`, `input`, `messages`/`meta`, `log`, and
-   `pointers` with the `linked` join, in a right-dock pane beside the execution log (the splits from #391 give that
+1. **Session group from what exists**: `run` (with the title), `init`, `input`, `messages`/`meta`, `log`, `grants`,
+   and `pointers` with the `linked` join, in a right-dock pane beside the execution log (the splits from #391 give that
    layout directly), drawn from `session.context`.
 2. **Watches**, device-local, then the share toggle and `debug.userWatches`.
 3. **The read-only console.**
