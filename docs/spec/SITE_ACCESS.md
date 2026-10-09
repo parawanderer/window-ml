@@ -399,6 +399,8 @@ Recorded as each slice lands, with the reason.
   AND a page source is refused before the gate with a steer to two calls, and on the page-leg fallback the page's
   own `FETCH_SHEET` finds no grant to spend. A mixed call an EARLIER approval of the same sheet auto-approves past
   that refusal still fails closed the same way, since the grant never lands on the tab.
+  A `@tool:` table pointer is not a page source: the precheck reads the args before the loop resolves the pointer to
+  a table by value, so a sheet joined with a pointer runs in the worker rather than being refused as mixed.
 - **Owner decisions for exec on a page that is not approved (part 4):** run it isolated, through
   `chrome.userScripts.execute`, else a CDP isolated world, else refuse, with `ml.*` bound to the worker. Where the
   isolated run is known not to behave as the page's world would, the tool result carries one terse note naming the

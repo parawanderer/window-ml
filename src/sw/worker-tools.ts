@@ -85,12 +85,14 @@ export function pageOnlyFetch(args: Record<string, unknown> | undefined, tabUrl:
 }
 
 /** Whether a python_exec send needs the page: a screenshot (`image`), a page table by CSS selector, or `current` (the
- *  page's own sheet or table). A table by value, a URL the run fetched and an external sheet do not. */
+ *  page's own sheet or table). A table by value, a URL the run fetched and an external sheet do not, and neither does a
+ *  `@tool:` table pointer: the loop resolves it to a table by value before the call is sent, but the precheck reads the
+ *  args before that, so the raw pointer string must not count as a selector (agent-loop.ts `resolveTablePointers`). */
 export function pageOnlyPython(args: Record<string, unknown> | undefined): boolean {
     if (args?.image) return true;
     const t = args?.tables;
     const sources = typeof t === "string" ? [t] : Array.isArray(t) ? t : t && typeof t === "object" ? Object.values(t) : [];
-    return sources.some((src) => typeof src === "string" && (src === "current" || (!/^https?:\/\//i.test(src))));
+    return sources.some((src) => typeof src === "string" && (src === "current" || (!/^https?:\/\//i.test(src) && !/^\s*@tool:/.test(src))));
 }
 
 /** Whether a worker tool's send of `name` with `args` must go to the page instead. */

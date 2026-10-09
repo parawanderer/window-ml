@@ -931,13 +931,14 @@ test("a python_exec reading an external Google Sheet always asks the person, wha
  * A worker-built run on tab 7 whose model calls python_exec with `args`; the page plays the person (approving what
  * it is asked) and attacks with `attack(bg)` the moment it can SEE the step skipped (the mixed-call refusal — a
  * script on the page acts on the step event it receives). Returns what the sandbox was given, what ran on the page,
- * the answer to the attack, how often the person was asked, and how often the sheet was fetched with the cookies.
+ * the answer to the attack, how often the person was asked, how often the sheet was fetched with the cookies, and the
+ * tool results the model was last sent. `pyReply(n)` answers the sandbox's n-th run (default: the value 1).
  */
-async function pageOnlyGrantRun(args, attack, cfg) {
+async function pageOnlyGrantRun(args, attack, cfg, { pyReply } = {}) {
     // `args` is one tool call, or a LIST of them played one model turn per entry (a run whose second call meets a
     // sheet the FIRST call got approved). The page plays the person and attacks with `attack(bg)` at both moments a
     // script on it could act: the step event of a refused call, and the real RUN_TOOL_IN_PAGE send of a running one.
-    let turns = 0, bg, stolen, asked = 0, reads = 0, finished = false;
+    let turns = 0, bg, stolen, asked = 0, reads = 0, finished = false, toolResults = [];
     const runs = [];
     const calls = Array.isArray(args) ? args : [args];
     bg = loadBackground({
@@ -945,6 +946,7 @@ async function pageOnlyGrantRun(args, attack, cfg) {
         onFetch: (call) => {
             if (call.url.startsWith("https://docs.google.com/")) { reads++; return { ok: true, status: 200, url: call.url, headers: { get: () => "text/csv" }, text: async () => "name,salary\nAda,999999\n" }; }
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            toolResults = (call.body?.messages ?? []).filter((m) => m.role === "tool").map((m) => String(m.content ?? ""));
             return ++turns <= calls.length
                 ? jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: `c${turns}`, type: "function", function: { name: "python_exec", arguments: JSON.stringify(calls[turns - 1]) } }] } }] })
                 : jsonResponse({ choices: [{ message: { content: "done" } }] });
@@ -952,7 +954,7 @@ async function pageOnlyGrantRun(args, attack, cfg) {
         onPyRun: async (msg) => {
             if (msg.type !== "PY_RUN") return { ok: true, prewarm: "started" };
             runs.push(JSON.parse(JSON.stringify(msg)));
-            return { ok: true, value: 1, stdout: "" };
+            return pyReply?.(runs.length) ?? { ok: true, value: 1, stdout: "" };
         },
         onTabMessage: async (_t, msg) => {
             if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
@@ -971,7 +973,7 @@ async function pageOnlyGrantRun(args, attack, cfg) {
     for (let i = 0; i < 600 && !finished; i++) await new Promise((r) => setTimeout(r, 0));
     await flush(30);
     const toPage = bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE" && m.payload.name === "python_exec" && !m.payload.renderOnly && !m.payload.precheck).map(([, m]) => m.payload);
-    return { runs, stolen, toPage, asked, reads };
+    return { runs, stolen, toPage, asked, reads, toolResults };
 }
 
 test("a sheet approved for a run's python_exec is readable only by the run, whatever else the call loads", T, async () => {
@@ -1014,4 +1016,22 @@ test("a sheet approved for a run's python_exec stays off the tab when a later ca
     assert.ok(stolen !== undefined, "positive control: the page's mid-call FETCH_SHEET was answered");
     assert.match(stolen?.error || "", /Refused/, `the page spent the run-approved sheet through its own FETCH_SHEET: ${JSON.stringify(stolen).slice(0, 160)}`);
     assert.equal(reads, 1, `the sheet was fetched ${reads} times — only the worker's approved first call may fetch it`);
+});
+
+test("a sheet joined with a table pointer runs in the worker: a `@tool:` source is not a page source", T, async () => {
+    // The pointer is resolved inside the loop's runTool, AFTER the precheck, so the precheck sees the raw "@tool:…"
+    // string. Counted as a page source, it turned this call into a "mixed" one and refused it with the image /
+    // selector / current steer, though the call never needed the page (it ran in the worker before the refusal).
+    const table = { columns: ["name", "target"], rows: [["Ada", 5]] };
+    const { runs, toPage, asked, reads, toolResults } = await pageOnlyGrantRun(
+        [{ code: "return df" }, { code: "return len(s)", tables: { s: SHEET_EDIT, t: "@tool:python_exec" } }],
+        undefined, config, { pyReply: (n) => (n === 1 ? { ok: true, value: "df", stdout: "", table } : { ok: true, value: 1, stdout: "" }) });
+    assert.ok(!toolResults.some((r) => /cannot mix an external Google Sheet/.test(r)), `the sheet + pointer call was refused as a mixed call: ${toolResults.join(" | ").slice(0, 200)}`);
+    assert.equal(toPage.length, 0, "the call never went to the page");
+    assert.equal(runs.length, 2, `the sheet + pointer call did not run in the worker (sandbox runs: ${runs.length})`);
+    const second = JSON.stringify(runs[1].tables);
+    assert.match(second, /Ada/, "the second call loaded the sheet's rows");
+    assert.match(second, /target/, "the second call loaded the pointer's table by value");
+    assert.equal(reads, 1, `the approved call read the sheet once (reads ${reads})`);
+    assert.ok(asked >= 1, `positive control: the sheet was asked for (asked ${asked})`);
 });
