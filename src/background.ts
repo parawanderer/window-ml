@@ -11,7 +11,8 @@ import type { ApprovalDecision } from "./contract/contract-agent";
 import type { StartRunPayload, SetApprovalPayload, CancelRunPayload, InjectMessagePayload } from "./contract/contract-messages";
 import { modelFilterAllows, publicConfig } from "./contract/contract-config";
 import { googleSheetId } from "./dom/dom";
-import { browserInfo } from "./util";   // the fork's settings scheme (page-context Browser line)
+import { browserInfo, cropDataUrl } from "./util";   // the fork's settings scheme (page-context Browser line); cropDataUrl for the test-only __mlWorkerCropForTest
+import { workerRaster } from "./raster";
 import { ensureDebuggerAttached, releaseDebugger, cdpClick, cdpScreenshot, cdpShadowResolve } from "./sw/sw-cdp";   // CDP/debugger layer (strict-CSP exec, trusted click/type, host-grant-free screenshot)
 import { fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw/sw-fetch";   // outbound fetch layer (ml.fetch, rendered fetch, credentialed Google Sheets CSV)
 import { executeServerTool, serverToolResult } from "./sw/sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
@@ -108,6 +109,10 @@ startValueSweeps();
 // TEST-ONLY (SW realm only): send a person's message into, or Continue, a run the worker built, as the sidebar and the
 // HUD do (`userRunAction`). The harness's conversations with a UI-started run (converse.mjs, SURFACE=…) go through it.
 (globalThis as unknown as { __mlUserRunActionForTest?: unknown }).__mlUserRunActionForTest = (hash: string, action: "send" | "continue", body: { text?: string; surface?: string }) => userRunAction(hash, action, body);
+
+// TEST-ONLY (SW realm only): crop a data URL with the worker's raster, so tests/e2e/raster.spec.mjs can hold the real
+// worker's OffscreenCanvas to the page's canvas pixel for pixel. Nothing in the extension crops in the worker yet.
+(globalThis as unknown as { __mlWorkerCropForTest?: unknown }).__mlWorkerCropForTest = (dataUrl: string, rect: { left: number; top: number; width: number; height: number }, dpr: number) => cropDataUrl(dataUrl, rect, dpr, workerRaster);
 
 // captureVisibleTab quota backoff: retry a rate-limited screenshot (~2/sec cap) rather than failing the step.
 const CAPTURE_RETRIES = 5;       // ~5 tries…

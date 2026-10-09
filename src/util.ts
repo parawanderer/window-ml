@@ -6,6 +6,7 @@ import { truncate, shadowRootStats, iframeStats, markdownTwin } from "./dom/dom"
 import { TOKEN_PAYLOAD_LEN, checkChar, formatToken } from "./pointers/token-id";
 import type { ShotBox, VisionMemory } from "./contract/contract-render";
 import { defineState } from "./state-registry";
+import { pageRaster, withDecoded, type Raster } from "./raster";
 
 /**
  * The agent's persistent JS scratchpad — a plain object injected into every `exec` body as the lexical
@@ -226,24 +227,19 @@ export { VISION_NUM_CTX } from "./contract/contract-render";
  * @param {string} dataUrl The full-viewport PNG data URL.
  * @param {DOMRect} rect The element's bounding rectangle.
  * @param {number} dpr The device pixel ratio.
+ * @param {Raster} [raster] Where the image and canvas come from: the page's (default) or the worker's.
  * @returns {Promise<string>} The cropped image as a data URL.
  */
-export const cropDataUrl = (dataUrl: string, rect: { left: number; top: number; width: number; height: number }, dpr: number): Promise<string> => new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
+export const cropDataUrl = (dataUrl: string, rect: { left: number; top: number; width: number; height: number }, dpr: number, raster: Raster = pageRaster): Promise<string> =>
+    withDecoded(raster, dataUrl, "failed to load the captured screenshot", (img) => {
         const sx = Math.max(0, Math.round(rect.left * dpr));
         const sy = Math.max(0, Math.round(rect.top * dpr));
-        const sw = Math.max(1, Math.min(Math.round(rect.width * dpr), img.naturalWidth - sx));
-        const sh = Math.max(1, Math.min(Math.round(rect.height * dpr), img.naturalHeight - sy));
-        const canvas = document.createElement("canvas");
-        canvas.width = sw;
-        canvas.height = sh;
-        canvas.getContext("2d")!.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
-        resolve(canvas.toDataURL("image/png"));
-    };
-    img.onerror = () => reject(new Error("failed to load the captured screenshot"));
-    img.src = dataUrl;
-});
+        const sw = Math.max(1, Math.min(Math.round(rect.width * dpr), img.width - sx));
+        const sh = Math.max(1, Math.min(Math.round(rect.height * dpr), img.height - sy));
+        const canvas = raster.canvas(sw, sh);
+        canvas.getContext("2d")!.drawImage(img.source, sx, sy, sw, sh, 0, 0, sw, sh);
+        return raster.encode(canvas);
+    });
 
 // --- Canvas coordinate targets: an OPAQUE `@pt:<hex>` token → a viewport {x,y} ------
 // A <canvas> has no sub-node to snap to, so `locate` mints a point token that `click`

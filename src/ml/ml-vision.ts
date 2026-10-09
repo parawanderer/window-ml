@@ -21,6 +21,7 @@ import type { ShotBox, VisionMemory } from "../contract/contract-render";
 import { queryAll, isElement, viewportRect, classifyOverlay, errText } from "../dom/dom";
 import { pickAccentColorForTarget, annotate } from "../dom/locate";
 import { POINT_RE, resolvePoint, PT_LOOK_RADIUS, cropDataUrl, BOX_RE, resolveBox, MIN_SHOT_PX, markSeen } from "../util";
+import { pageRaster, type Raster } from "../raster";
 
 /**
  * OCR: transcribe baked-in text from an image to a plain string, using
@@ -281,26 +282,34 @@ export const _stitchFullPage = async function(capture: () => Promise<string>): P
         window.scrollTo(0, startY);
     }
 
-    return new Promise((resolve, reject) => {
-        if (!shots.length) return reject(new Error("nothing captured"));
-        const imgs: HTMLImageElement[] = [];
-        let loaded = 0;
-        const done = () => {
-            const canvas = document.createElement("canvas");
-            canvas.width = imgs[0].naturalWidth;
-            canvas.height = Math.round(total * dpr);
-            const ctx = canvas.getContext("2d")!;
-            shots.forEach((s, i) => ctx.drawImage(imgs[i], 0, Math.round(s.y * dpr)));
-            resolve(canvas.toDataURL("image/png"));
-        };
-        shots.forEach((s, i) => {
-            const img = new Image();
-            img.onload = () => { imgs[i] = img; if (++loaded === shots.length) done(); };
-            img.onerror = () => reject(new Error("failed to load a capture"));
-            img.src = s.url;
-        });
-    });
+    return composeStitch(shots, total, dpr);
 };
+
+/**
+ * Compose a full-page stitch's viewport captures into one tall PNG data URL: each tile drawn at its scroll offset
+ * (`y`, CSS px, × `dpr`) on a canvas as wide as the first tile and `total` CSS px tall. `raster` is where the images
+ * and canvas come from (the page's by default).
+ *
+ * @param {{ y: number, url: string }[]} shots The captures, each with the scroll offset it was taken at.
+ * @param {number} total The page height covered, in CSS px.
+ * @param {number} dpr The device pixel ratio the captures were taken at.
+ * @param {Raster} [raster] The page's raster (default) or the worker's.
+ * @returns {Promise<string>} The stitched image as a PNG data URL.
+ */
+export async function composeStitch(shots: { y: number; url: string }[], total: number, dpr: number, raster: Raster = pageRaster): Promise<string> {
+    if (!shots.length) throw new Error("nothing captured");
+    const decoded = await Promise.allSettled(shots.map((s) => raster.decode(s.url)));
+    const imgs = decoded.flatMap((d) => (d.status === "fulfilled" ? [d.value] : []));
+    try {
+        if (imgs.length < shots.length) throw new Error("failed to load a capture");
+        const canvas = raster.canvas(imgs[0].width, Math.round(total * dpr));
+        const ctx = canvas.getContext("2d")!;
+        shots.forEach((s, i) => ctx.drawImage(imgs[i].source, 0, Math.round(s.y * dpr)));
+        return await raster.encode(canvas);
+    } finally {
+        for (const img of imgs) img.close();
+    }
+}
 
 /**
  * Pick a vision model for the auto-registered `look` tool (see ml.agent's `vision` option).
