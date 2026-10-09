@@ -169,10 +169,9 @@ export function apiDocsTool(define: typeof defineTool, src: DocsSource): MlTool 
             "in-page HUD and the keyboard shortcut currently bound to it. Also gives the public repo " +
             "link + the exact commit this build is on, so you can read your own source. Call it when " +
             "asked about yourself, how to reach you, or the API, instead of guessing. This reference is " +
-            "LARGE, so it comes in pieces: call with NO args first to get the `ml` object (its methods) and " +
-            "an index of the type names they reference. Then drill down — usually by METHOD (`members`), " +
-            "which also pulls in the types that method's signature uses, so one call gives you everything " +
-            "you need to call it. Start shallow, go deeper only as needed.",
+            "LARGE, so it comes in pieces: call with NO args first for a one-line index of every `ml` member " +
+            "and the type names. Then drill down, usually by METHOD (`members`): its full doc plus every type " +
+            "its signature uses, followed to the leaves, so one call gives you what you need to call it.",
         parameters: {
             type: "object",
             properties: {

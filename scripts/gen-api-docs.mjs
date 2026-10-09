@@ -72,24 +72,6 @@ only the prompt string (plus any \`images\`) and has no DOM access and no tools,
 the console you must either extract the text yourself and pass it in
 (\`ml.chat("Summarise: " + document.body.innerText)\`) or use \`ml.agent\`.
 
-The console is not the only entry point. A run can also be started and continued from
-four UIs: the in-page **Commander HUD** (a Spotlight-style command bar in a corner card),
-the **sidebar panel** open over the page, the **DevTools panel**, and the **chat app**,
-which is either this browser's own page or a client on another device. **How to open the
-HUD on this browser — including the keyboard shortcut actually bound right now — is in the
-"Opening the HUD" section at the END of this document.** It is read live rather than
-written here, because the user can rebind it.
-
-Which of them the person typed in is recorded per message and reported by
-\`chat_metadata\`, and it is worth asking for, because it says what they can actually see:
-at the HUD they are looking at the page you are working on; in the chat app on another
-device they cannot see it at all.
-
-Each \`ml.agent\` run gets a short session hash, and every one of those surfaces shows the
-same session under it (and can resume it). Requests flow page -> content script ->
-background worker -> the LLM server; the API key and server URL are never exposed to the
-page.
-
 \`window.ml\` is chiefly how the USER invokes you, but it is also reachable from your own
 \`exec\` tool — those calls run in the page like any other JS, and go through the same human
 approval gate, so introspecting yourself is fair game:
@@ -102,8 +84,31 @@ Prefer your own tools for page work — they're cheaper and already in your sche
 \`ml.chat\`/\`ml.agent\` from inside \`exec\` for when you genuinely need a nested model call;
 each one spends real time and VRAM, and an \`ml.agent\` inside an agent recurses.
 
-The reference below is generated from the extension's TypeScript contract, so the
-signatures are exact. Members prefixed with \`_\` are internal plumbing and are omitted.
+The reference is generated from the extension's TypeScript contract. Members prefixed with
+\`_\` are internal plumbing and are omitted.
+`;
+
+// Where a run can be started and what a person sees there: served on request (a search), not in the default view,
+// which is for finding a method. It used to be the preamble's middle, paid on every first call.
+const SURFACES = `## Where a run starts
+
+The console is not the only entry point. A run can also be started and continued from
+four UIs: the in-page **Commander HUD** (a Spotlight-style command bar in a corner card),
+the **sidebar panel** open over the page, the **DevTools panel**, and the **chat app**,
+which is either this browser's own page or a client on another device. **How to open the
+HUD on this browser — including the keyboard shortcut actually bound right now — is the
+"Opening the HUD" section** (\`search: "HUD"\`). It is read live rather than written here,
+because the user can rebind it.
+
+Which of them the person typed in is recorded per message and reported by
+\`chat_metadata\`, and it is worth asking for, because it says what they can actually see:
+at the HUD they are looking at the page you are working on; in the chat app on another
+device they cannot see it at all.
+
+Each \`ml.agent\` run gets a short session hash, and every one of those surfaces shows the
+same session under it (and can resume it). Requests flow page -> content script ->
+background worker -> the LLM server; the API key and server URL are never exposed to the
+page.
 `;
 
 /* ----------------------------- the line scanner ---------------------------- */
@@ -450,7 +455,7 @@ export function generateApiParts() {
     }
     // Alphabetical, so the output doesn't churn when contract.ts is reordered.
     found.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
-    return { preamble: PREAMBLE, mlApi, types: Object.fromEntries(found) };
+    return { preamble: PREAMBLE, surfaces: SURFACES, mlApi, types: Object.fromEntries(found) };
 }
 
 /** The member lines of an interface body at its own level, JSDoc and line comments skipped (a brace in prose must not
@@ -500,8 +505,8 @@ export function currentSignature(resolve) {
 }
 
 /** Join the parts back into the single flat reference (the shape older callers/tests expect). */
-export function fullDoc({ preamble, mlApi, types }) {
-    return [preamble, mlApi, "## Option & result types\n", ...Object.values(types)].join("\n");
+export function fullDoc({ preamble, surfaces, mlApi, types }) {
+    return [preamble, surfaces, mlApi, "## Option & result types\n", ...Object.values(types)].join("\n");
 }
 
 /**

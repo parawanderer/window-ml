@@ -27,11 +27,14 @@ const FIXTURE = {
     },
 };
 
-test("default view: preamble + MlApi + a type INDEX, but not the type bodies", () => {
+// --- the default view: an index of what exists ---
+
+test("default view: preamble + ONE LINE per member + a type INDEX, but no full docs or type bodies", () => {
     const out = queryApiDocs(FIXTURE);
     assert.match(out, /PREAMBLE_SENTINEL/, "preamble missing");
-    assert.match(out, /export interface MlApi/, "MlApi block missing");
-    assert.match(out, /Available types: ChatOptions, ContentKind, FetchResult\./, "index of type names missing");
+    assert.match(out, /- `chat\(prompt: string, options\?: ChatOptions\): Promise<string>`: Talk to the model\./, "a member's index line is its declaration and its doc's first sentence");
+    assert.doesNotMatch(out, /export interface MlApi/, "the full MlApi block is for `members`, not the default view");
+    assert.match(out, /Types: ChatOptions, ContentKind, FetchResult\./, "index of type names missing");
     // The whole point: the type bodies are NOT expanded in the default call.
     assert.doesNotMatch(out, /schema\?: object/, "ChatOptions body leaked into the default view");
     assert.doesNotMatch(out, /### FetchResult/, "FetchResult section leaked into the default view");
@@ -143,11 +146,13 @@ const ENV = [
     { name: "My source", body: "## My source\n\n- Public repository: https://example.test/repo\n" },
 ];
 
-test("default view includes the runtime env sections and says they're searchable", () => {
+// --- the runtime environment sections: named by default, served by a search ---
+
+test("default view NAMES the runtime env sections as searchable, and does not print them", () => {
+    // Every panel model (2026-10-09) counted them as noise for an API question; a search still serves them.
     const out = queryApiDocs(FIXTURE, {}, ENV);
-    assert.match(out, /## Opening the HUD/, "env section missing from the default view");
-    assert.match(out, /Alt\+Space/, "the live shortcut is missing");
-    assert.match(out, /searchable/, "the default view should tell the model env facts are searchable");
+    assert.match(out, /searchable by name: "Opening the HUD", "My source"/, "the default view should name what a search reaches");
+    assert.doesNotMatch(out, /Alt\+Space/, "the section's body is a search away, not in the default view");
 });
 
 test("{ search } finds a runtime env section (this is the HUD-shortcut failure the model hit)", () => {
@@ -221,11 +226,12 @@ test("search collapses an already-shown section to a stub too", () => {
 
 test("env sections stub on repeat within a burst", () => {
     const seen = new Set();
-    const first = queryApiDocs(FIXTURE, {}, ENV, seen);
-    assert.match(first, /Alt\+Space/, "first default view shows the env section in full");
-    const second = queryApiDocs(FIXTURE, {}, ENV, seen);
+    const first = queryApiDocs(FIXTURE, { search: "HUD" }, ENV, seen);
+    assert.match(first, /Alt\+Space/, "first search shows the env section in full");
+    const second = queryApiDocs(FIXTURE, { search: "HUD" }, ENV, seen);
     assert.match(second, /\[Opening the HUD already seen\]/, "repeated env section should stub");
-    assert.match(second, /\[the ml object \(methods\) already seen\]/, "the ml block should stub on a repeat default view");
+    queryApiDocs(FIXTURE, {}, ENV, seen);
+    assert.match(queryApiDocs(FIXTURE, {}, ENV, seen), /\[the member index already seen\]/, "the index should stub on a repeat default view");
 });
 
 test("without a `seen` set, nothing is ever stubbed (legacy / dedup-disabled path)", () => {
@@ -239,8 +245,8 @@ test("without a `seen` set, nothing is ever stubbed (legacy / dedup-disabled pat
 
 test("real parts: default view names the actual types and hides their bodies", () => {
     const out = queryApiDocs(generateApiParts());
-    assert.match(out, /## `ml`/, "real MlApi block missing");
-    assert.match(out, /Available types: .*ChatOptions/, "ChatOptions not in the real index");
+    assert.match(out, /## `ml`: every member, one line each/, "real member index missing");
+    assert.match(out, /Types: .*ChatOptions/, "ChatOptions not in the real index");
     assert.doesNotMatch(out, /### ChatOptions\b/, "real ChatOptions section leaked into the default view");
 });
 
@@ -332,4 +338,22 @@ test("real parts: the CSV and streaming answers are stated, not left to inferenc
     assert.match(parts.types.ChatOptions, /passing this is what turns streaming on/);
     assert.match(parts.types.TableLike, /200,000 rows/, "the row cap is a number");
     assert.match(parts.types.Table, /From `ml\.fetch`, every method is synchronous/);
+});
+
+test("real parts: a member comes back COMPLETE, its types followed to the leaves (ml.fetch brings Table and TableCell)", () => {
+    // Six of seven panel models paid a call for these: the one-hop types used to spend the whole budget.
+    const out = queryApiDocs(generateApiParts(), { members: ["fetch"] });
+    for (const t of ["FetchResult", "Table", "TableLike", "TableCell"]) assert.match(out, new RegExp(`### ${t}\\b`), `${t} missing`);
+    assert.match(out, /✓ Complete/);
+    assert.doesNotMatch(out, /Also reachable, not expanded/);
+});
+
+test("real parts: the default view is an index, a fraction of the full reference, and where runs start is a search away", () => {
+    const parts = generateApiParts();
+    const out = queryApiDocs(parts);
+    assert.ok(out.length < parts.mlApi.length, `the index (${out.length}) should be smaller than the full member docs alone (${parts.mlApi.length})`);
+    assert.doesNotMatch(out, /Commander HUD/, "the entry-point paragraphs are not in the default view");
+    assert.match(out, /"Where a run starts"/, "but the default view says they can be searched");
+    assert.match(queryApiDocs(parts, { search: "sidebar panel" }), /## Where a run starts/);
+    assert.match(queryApiDocs(parts), /agent` and `chat` are NOT interchangeable/, "the one framing every reader needs stays");
 });
