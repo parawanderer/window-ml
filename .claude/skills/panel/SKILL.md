@@ -10,7 +10,7 @@ misreading points at a sentence; one model's misreading can be that model, three
 
 ```bash
 USE_ENV=1 node --import tsx tests/e2e/panel.mjs tests/e2e/panel/bloat.json \
-    --models deepseek.deepseek-v4-pro,deepseek.deepseek-flash,litellm.google/gemini-flash-latest,openrouter.anthropic/claude-opus-5.5,openrouter.moonshotai/kimi-k3
+    --models deepseek.deepseek-v4-pro,deepseek.deepseek-flash,litellm.google/gemini-flash-latest,openrouter.anthropic/claude-opus-5.5,moonshot.kimi-k3
 # → tests/e2e/artifacts/panel-bloat-<time>/summary.md, plus each model's session in its own directory
 ```
 
@@ -96,5 +96,6 @@ as exact"); when the fix is a choice between versions that needs numbers, that i
 Through OpenWebUI, tool calls and multi-turn included: `deepseek.deepseek-v4-pro`, `deepseek.deepseek-flash`,
 `litellm.google/gemini-flash-latest`, `litellm.google/gemini-pro-latest` (weak reviewer), and on OpenRouter
 `openrouter.anthropic/claude-opus-5.5`, `openrouter.anthropic/claude-sonnet-5.5`, `openrouter.openai/gpt-6-luna`,
-`openrouter.moonshotai/kimi-k3`, `openrouter.z-ai/glm-5.3-flash`. MiniMax had no balance. Local Ollama models work
+`openrouter.z-ai/glm-5.3-flash`, `openrouter.minimax/minimax-m3`, and Moonshot's own `moonshot.kimi-k3` (also
+`moonshot.kimi-k2.6`; the OpenRouter Kimi is gone). Local Ollama models work
 when the GPU is free; ask first. The probe is the source of truth: run it rather than trusting this list.
