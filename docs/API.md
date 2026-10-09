@@ -311,7 +311,8 @@ model, and call `ml.agent`. What's built in:
   (it doesn't throw). Compose it with a timeout, a UI "stop" button, etc.
 
 Returns `{ summary, steps, transcript, elements, hash }` (`elements` holds any DOM
-nodes the agent designated as its answer; `hash` identifies the session for
+nodes the agent designated as its answer, which needs `answer: true` to give it the
+`answer` tool; `hash` identifies the session for
 `{ resume }`; a `hitCap`/`cancelled` flag marks a run that stopped early). Nudge it without rewriting the prompt via `systemAppend`, cancel it
 with `signal`, and watch every thought and tool call in the console with
 `logDebug` (or pass your own `onStep`):

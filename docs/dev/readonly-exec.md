@@ -240,6 +240,14 @@ because no allowlisted method returns one; they all build new ones.
 API, plus two special members. `ml.fetch` answers only from the cache of URLs a human already approved and throws on
 a miss, so a new URL goes to approval. `ml.answer` curates the run's answer set.
 
+**A member a run does not have.** `ml.answer` belongs to the `answer` tool, which is opt-in (`ml.agent({ answer:
+true })`). `ML_MEMBER_TOOL` (`src/ml/ml-member-tools.ts`) maps each such member to its tool, and a run without the tool
+gets the member nowhere: the host passes `hidden` to `evalReadonly`, which deletes it from the facade, and every read
+of it (dotted, computed, destructured, optional) throws that run's reason as a runtime error. It is not a refusal,
+since no approval would give the run a tool it was not built with. The page's `window.ml` getter throws the same
+sentence during an approved exec (`currentHiddenMember`), and `agent_api_docs` serves the reference through
+`withoutMembers`, which drops the member and every type only it reaches.
+
 **Async.** `eval` is a generator: yielding a value asks the driver to await it. `runAsync` drives the top level and
 directly called arrows, so `await` works there. `runSync` drives an arrow a host method calls (`.map`, `.filter`),
 where there is nowhere to await, so an `await` inside a callback is out of dialect. A facade call that returns a

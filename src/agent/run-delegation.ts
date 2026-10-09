@@ -24,6 +24,7 @@ import { captureVerify, captureVerifyElement } from "../tools/builtin-tools";
 import { htmlToMarkdown } from "../dom/html-to-md";
 import { clipOut, elLine, errText } from "../dom/dom";
 import { makeAnswerFacade, finalizeAnswer } from "../pointers/answer-set";
+import { hiddenMlMembers } from "../ml/ml-member-tools";
 import { runPipe, pipeHint } from "../pointers/text-pipe";
 import { descriptorFor } from "../tools/render-descriptor";
 import { evalReadonly, Denied } from "../readonly-exec";
@@ -215,6 +216,7 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
             const { code } = expandPointers((args as { js: string }).js);
             const ro = await withRunDeref(() => { throw new Denied("a survey that reads both the page and the run's pointers needs approval"); }, () => evalReadonly(code, document,
                 typeof window !== "undefined" ? window.ml : null, makeAnswerFacade(set, elLine), { checkpoint: () => set.checkpoint(),
+                hidden: hiddenMlMembers((n) => n in run.byName),
                 // Each line as it prints, stamped here (the executor) like an approved exec's. A refused try's lines
                 // are discarded by the loop, which owns the stream.
                 onLog: opts.onStream ? (line) => opts.onStream!(line + "\n", Date.now()) : undefined }));

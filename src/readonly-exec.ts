@@ -55,13 +55,15 @@ export type { PrintSwap } from "./readonly-exec/print";
  *   does not cost seconds per case.
  * @param opts.globals Plain data bound as root names (a watch's `inspector`). Copied, so the script's assignments stay
  *   in its copy; a name the environment already has (`document`, `ml`, `Math`…) or a denied one is skipped.
+ * @param opts.hidden Members of `ml` this run does not have, to the sentence a script reaching one gets
+ *   (ml-member-tools.ts): left off the facade, and a runtime error rather than a refusal.
  * @param opts.onLog Called with each console line as it is printed, the SAME string that goes into `logs` (abridged by
  *   the print boundary), so a live view shows what the model will be given. A survey that is then refused has
  *   streamed lines from a run that did not happen: the caller must discard them (agent-loop.ts, `LiveOutput`).
  */
 export async function evalReadonly(code: string, doc: Document | null, ml?: unknown, answerFacade?: unknown,
     opts: { checkpoint?: () => () => void; stepBudget?: number; realm?: ReadonlyRealm; current?: CurrentSnapshot; onLog?: (line: string) => void;
-        globals?: Record<string, unknown> } = {}): Promise<{ value: unknown; logs: string[]; dropped: number; reused: string[]; prints: { console: PrintSwap[]; value: PrintSwap[] } }> {
+        globals?: Record<string, unknown>; hidden?: ReadonlyMap<string, string> } = {}): Promise<{ value: unknown; logs: string[]; dropped: number; reused: string[]; prints: { console: PrintSwap[]; value: PrintSwap[] } }> {
     const realm: ReadonlyRealm = opts.realm ?? "page";
     // Bounded (output-clip.ts): past OUTPUT_CEILING a line is counted, not kept. The step budget bounds the WORK, and a
     // string may be 10 million characters, so without this 200 prints of one were 1.8 GB held and then an
@@ -87,6 +89,8 @@ export async function evalReadonly(code: string, doc: Document | null, ml?: unkn
     // The pipe charges the step budget, which lives on the evaluator built below: the meter forwards to it once it exists.
     let charge: (steps: number) => void = () => {};
     let facade = mlFacade(ml, reused, answerFacade, { charge: (n) => charge(n) }, realm);
+    // A member this run does not have is not on the facade, so `"answer" in ml` reads false as it would for any other.
+    if (facade) for (const k of opts.hidden?.keys() ?? []) delete facade[k];
     if (!facade && opts.current) facade = Object.create(null);
     const root: Record<string, unknown> = Object.create(null);
     Object.assign(root, {
@@ -125,6 +129,7 @@ export async function evalReadonly(code: string, doc: Document | null, ml?: unkn
     // asked to approve a script whose first half had already run. The caller's checkpoint restores it.
     const restore = opts.checkpoint?.();
     const ev = new Evaluator(facade, opts.stepBudget, realm);
+    if (opts.hidden) ev.hidden = opts.hidden;
     charge = (n) => ev.spend(n);
     if (opts.current && facade) facade.current = ev.adoptCurrent(opts.current);
     printable = (v, swaps, where) => ev.printable(v, swaps, where);

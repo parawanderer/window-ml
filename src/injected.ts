@@ -25,7 +25,7 @@ import { makeDynamicTools } from "./ml/dynamic-tools";
 import type { DynamicToolNamespace } from "./ml/dynamic-tools";
 import { renderArgs, logStep } from "./agent/approval";
 import { captureVerify } from "./tools/builtin-tools";
-import { currentAnswer, currentDeref, currentServerAllow, currentHasTool } from "./tools/tool-exec";
+import { currentAnswer, currentDeref, currentServerAllow, currentHasTool, currentHiddenMember } from "./tools/tool-exec";
 import { installToolDelegation, registerRun, endRun } from "./agent/run-delegation";
 import { models, serverTools, execServerTool, info, capabilities, getModel, embed, config, setModel, ps, unload } from "./ml/ml-server";
 import { defineTool, lookTool, locateTool, clickTool, typeTool, navigateTool, fetchTool, pythonTool, chatMetaTool } from "./ml/ml-tool-factories";
@@ -78,6 +78,8 @@ import { derivedFetchFields, cacheCopy } from "./ml/fetch-result";
          *  A GETTER, so it always targets the run whose tool is executing; from the console outside a run it
          *  THROWS (a clear message beats a baffling failure on the next `.add`). Free to curate from `exec`. */
         get answer(): MlAnswer {
+            const hidden = currentHiddenMember("answer");
+            if (hidden) throw new Error(hidden);
             const set = currentAnswer();
             if (!set) throw new Error("ml.answer is only live inside an ml.agent run (it curates that run's user-facing answer).");
             return makeAnswerFacade(set, elLine);

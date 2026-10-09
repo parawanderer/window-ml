@@ -162,6 +162,30 @@ const closureTypes = (parts: ApiDocsParts, seeds: string[]): string[] => {
     return order;
 };
 
+/**
+ * The reference for a run that does not have some `ml` members (ml-member-tools.ts): those members' blocks are cut out
+ * of `mlApi`, and a type goes with them when nothing left reaches it. A type a remaining member also uses stays, so
+ * hiding `answer` never costs the reader a type `agent` needs.
+ * @param parts the full reference
+ * @param hidden member names this run does not have
+ * @returns the reference as this run should see it; `parts` itself when nothing is hidden
+ */
+export function withoutMembers(parts: ApiDocsParts, hidden: string[]): ApiDocsParts {
+    if (!hidden.length) return parts;
+    const drop = new Set(hidden);
+    const members = splitMembers(parts.mlApi);
+    const gone = members.filter(m => drop.has(m.name));
+    if (!gone.length) return parts;
+    const known = new Set(Object.keys(parts.types));
+    const kept = new Set(closureTypes(parts, members.filter(m => !drop.has(m.name)).flatMap(m => typesIn(m.block, known))));
+    const orphaned = new Set(closureTypes(parts, gone.flatMap(m => typesIn(m.block, known))).filter(t => !kept.has(t)));
+    let mlApi = parts.mlApi;
+    for (const m of gone) mlApi = mlApi.replace(m.block + "\n", "");
+    const types: Record<string, string> = {};
+    for (const [name, section] of Object.entries(parts.types)) if (!orphaned.has(name)) types[name] = section;
+    return { ...parts, mlApi, types };
+}
+
 /* ---------------------- within-burst dedup (see DocsMemory) ---------------------- */
 
 /** interface vs. type alias, for the "already seen" stub label. */

@@ -18,7 +18,8 @@ import { ML_READONLY_METHODS } from "../readonly-exec";
 import { browserInfo } from "../util";
 import { errText } from "../dom/dom";
 import { runPipe, pipeHint, PIPE_REF } from "../pointers/text-pipe";
-import { queryApiDocs, isDefaultQuery, type ApiDocsQuery } from "./api-docs-query";
+import { queryApiDocs, isDefaultQuery, withoutMembers, type ApiDocsQuery } from "./api-docs-query";
+import { hiddenMlMembers } from "../ml/ml-member-tools";
 
 /** Where `agent_api_docs` reads the two runtime facts it reports. Either may reject or return null: it says less. */
 export interface DocsSource {
@@ -233,7 +234,9 @@ export function apiDocsTool(define: typeof defineTool, src: DocsSource): MlTool 
             // path) collapses chunks already printed earlier in the dig to one-line stubs.
             const mem = ctx?.docsMemory;
             if (mem) { mem.sinceDocs = 0; if (args.fresh) mem.shown.clear(); }
-            const view = queryApiDocs(ML_API_PARTS, args, env, mem?.shown);
+            // A member this run does not have (its tool is not in the toolset) is not in its reference either.
+            const parts = ctx?.hasTool ? withoutMembers(ML_API_PARTS, [...hiddenMlMembers(ctx.hasTool).keys()]) : ML_API_PARTS;
+            const view = queryApiDocs(parts, args, env, mem?.shown);
             // The reduction lives HERE rather than in api-docs-query.ts, which has no imports on purpose, and it
             // goes through `runPipe` rather than growing a second one: PIPE_CMDS is the single source for every
             // description of the dialect, and a private reduction in one tool is how that stops being true.

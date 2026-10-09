@@ -587,6 +587,13 @@ test("agent_api_docs of a worker-built run runs in the worker, with the live sho
     assert.match(out, /Reading your own setup \(no approval needed\)/, "autoApproveReadonly read from the worker's config");
 });
 
+test("agent_api_docs in the worker leaves out ml.answer for a UI-started run, which has no answer tool", T, async () => {
+    const { toolResults } = await toolsRun([{ name: "agent_api_docs", args: { members: ["answer", "agent"] } }]);
+    const out = toolResults[0] ?? "";
+    assert.doesNotMatch(out, /readonly answer: MlAnswer|interface MlAnswer/, `the member and its type are gone; got ${out.slice(0, 400)}`);
+    assert.match(out, /agent\(/, "a member the run has is still served");
+});
+
 test("agent_api_docs in the worker still counts the run's page steps: one detour keeps the dig, a second ends it", T, async () => {
     const docs = { name: "agent_api_docs", args: { types: ["FetchResult"] } };
     const page = { name: "scroll", args: { to: "top" } };

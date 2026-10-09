@@ -15,7 +15,7 @@ import type { PromptOrigin } from "../contract/contract-run";
 import type { StartRunPayload, RebuildConfig } from "../contract/contract-messages";
 import { promptSurfaceClause, promptSurfaceOf } from "./prompt-surface";
 import { stepBudget } from "./step-budget";
-import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, shadowClause, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, askAboutTask } from "./prompts";
+import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause, DEREF_CLAUSE, shadowClause, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, askAboutTask } from "./prompts";
 import { buildDereferenceTool } from "../tools/tools";
 
 /** The part of `window.ml` assembly reads: config and capability probes, the model and server-tool lists, the tool
@@ -37,6 +37,8 @@ export interface AssemblyOptions {
     navigate?: boolean;
     crossOrigin?: boolean;
     toolTokens?: boolean;
+    /** give the run the `answer` tool (and `ml.answer`) when it takes the default kit; a `tools` list decides for itself */
+    answer?: boolean;
     images?: (string | HTMLImageElement)[];
 }
 
@@ -79,8 +81,12 @@ export interface AssembledRun {
  * @param opts what the run should contain
  * @returns the assembled run
  */
-export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, extraTools = [], serverTools = [], commanderTools = false, system = null, systemAppend = null, model = null, vision = null, unattended = false, navigate = true, crossOrigin = false, toolTokens = false, images = [] }: AssemblyOptions = {}): Promise<AssembledRun> {
+export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, extraTools = [], serverTools = [], commanderTools = false, system = null, systemAppend = null, model = null, vision = null, unattended = false, navigate = true, crossOrigin = false, toolTokens = false, answer = false, images = [] }: AssemblyOptions = {}): Promise<AssembledRun> {
     let toolset = [...(tools || ml.domTools || []), ...extraTools];
+    // `answer` is for a CALLER that wants elements or a curated block back (`AgentResult.elements`), not for a person
+    // reading the reply, which embeds outputs inline. So the default kit leaves it out unless asked; a `tools` list
+    // that names it has asked.
+    if (!tools && !answer) toolset = toolset.filter(t => t.name !== "answer" || extraTools.includes(t));
     // Server-side tools, opt-in by bundle id. Resolved here rather than by the caller so the
     // function schemas the model sees are the server's own. A bundle that does not resolve (a stock
     // backend, a revoked key, a wrong id) is simply absent — a run should degrade to the tools it
@@ -286,7 +292,7 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
         // Adapt the default prompt to what the toolset can actually do.
         systemPrompt += CALL_TITLE_CLAUSE;   // every tool carries the param, so the instruction is unconditional
         if (hasCap("vision")) systemPrompt += VISION_CLAUSE;
-        if (toolTokens) systemPrompt += TOOLTOKENS_CLAUSE + DEREF_CLAUSE;   // rich results carry an @tool: id — to cite verbatim, and to read back
+        if (toolTokens) systemPrompt += tooltokensClause(!!byName.answer) + DEREF_CLAUSE;   // rich results carry an @tool: id — to cite verbatim, and to read back
         // The DOM tools all pierce open shadow roots + resolve `>>>` — tell the model, plus (only when
         // exec is wired) how the notation maps to JS. Gated on a representative DOM tool being present.
         if (toolset.some(t => ["findByText", "describeElement", "interactives", "click", "type"].includes(t.name))) {
