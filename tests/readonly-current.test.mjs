@@ -57,9 +57,11 @@ test("meta is parallel to messages, with ages, gaps, sizes and where a prompt wa
     assert.equal(sys.surface, null, "and nothing else does");
     assert.equal(task.ageMs, 60_000);
     assert.equal(tool.gapMs, 40_000, "the gap since the previous message, pre-computed");
-    assert.deepEqual([asst.tokens, asst.tokensBasis], [37, "counted"], "the engine's own count, labelled as one");
-    assert.equal(sys.tokensBasis, "estimated");
-    assert.equal(sys.tokens, Math.ceil(LONG_SYSTEM.length / 4));
+    // ONE of the two, never both: `tokens` is the engine's count, `estimatedTokens` the characters' estimate, so the
+    // name says which (a real model summed a bare `tokens` and called the total exact, 2026-10-08).
+    assert.deepEqual([asst.tokens, "estimatedTokens" in asst], [37, false], "the engine's own count, under the counted name");
+    assert.deepEqual(["tokens" in sys, sys.estimatedTokens], [false, Math.ceil(LONG_SYSTEM.length / 4)], "an estimate, under its own name");
+    assert.ok(s.meta.every((x) => ("tokens" in x) !== ("estimatedTokens" in x)), "every message has exactly one size");
     assert.deepEqual([tool.tool, tool.seq, tool.step, tool.truncated], ["exec", 1, 1, true]);
 });
 
@@ -78,7 +80,7 @@ test("history from an earlier turn is UNKNOWN, never stamped now; images are cou
     });
     assert.deepEqual([s.meta[0].ts, s.meta[0].ageMs, s.meta[0].gapMs], [null, null, null]);
     assert.equal(s.meta[1].images, 1);
-    assert.equal(s.meta[1].tokens, 1, "the 50k-char data URL is not estimated as 12,500 tokens of text");
+    assert.equal(s.meta[1].estimatedTokens, 1, "the 50k-char data URL is not estimated as 12,500 tokens of text");
 });
 
 test("the snapshot is a COPY: nothing done to it reaches the messages the loop holds", () => {
@@ -141,8 +143,8 @@ test("the loop records the task's surface, each step, each tool, a counted reply
     const m = s.meta;
     assert.equal(m[1].surface, "hud", "the task carries the run's own surface");
     assert.equal(m[4].surface, "chat", "a steering message carries where IT was typed");
-    assert.deepEqual([m[2].tokensBasis, m[2].tokens], ["counted", 12], "a reply with no reasoning is measured by its count");
-    assert.equal(m[5].tokensBasis, "estimated", "a reply that also reasoned is NOT: its count includes reasoning not re-sent");
+    assert.deepEqual([m[2].tokens, m[2].estimatedTokens], [12, undefined], "a reply with no reasoning is measured by its count");
+    assert.deepEqual([m[5].tokens, typeof m[5].estimatedTokens], [undefined, "number"], "a reply that also reasoned is NOT: its count includes reasoning not re-sent");
     assert.deepEqual([m[3].tool, m[3].seq, m[3].step, m[3].truncated], ["exec", 1, 1, true], "the model saw 500 of 800");
     assert.ok(m.every((x) => typeof x.ts === "number"), "every message this turn appended has a time");
     assert.equal(s.run.model, "gemma4:31b");
@@ -155,8 +157,9 @@ test("the spec's own join runs as written: messages and meta zip by index, synch
     const { value } = await inWorkerRealm(`const meta = ml.current.meta;
 return ml.current.messages
     .map((m, i) => ({ m, meta: meta[i] }))
-    .filter(x => x.meta.tokens > 100)
-    .map(x => x.meta.id + " " + x.m.role + " " + x.meta.tokens + "t");`);
+    .map(x => ({ ...x, size: x.meta.tokens ?? x.meta.estimatedTokens }))
+    .filter(x => x.size > 100)
+    .map(x => x.meta.id + " " + x.m.role + " " + x.size + "t");`);
     assert.equal(value.length, 2, "the system prompt and the long tool result");
     assert.match(value[0], / system 900t$/);
 });
