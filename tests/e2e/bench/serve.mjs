@@ -111,6 +111,34 @@ const PAGE = /* html */ `<!doctype html>
      because it is read character by character, and that is the only way two of them compare at a glance. */
   .pill.hash { font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--dim); letter-spacing:.02em }
   tr:hover .pill.hash { color:var(--fg) }
+  /* The ANSWERS view: an interview's turns as rows, its runs (models) as columns, each answer whole. A grid rather
+     than the table above: an answer is paragraphs, and a column must be wide enough to read one. */
+  .answers { overflow-x:auto; padding-bottom:6px }
+  .agrid { display:grid; gap:0 12px; align-items:start; min-width:min-content }
+  .agrid > .ah { position:sticky; top:0; z-index:1; background:var(--bg); padding:6px 0 6px;
+                 border-bottom:1px solid var(--line); font-size:12px }
+  .agrid > .q { grid-column:1 / -1; margin:16px 0 6px; color:var(--dim) }
+  .agrid > .q b { color:var(--fg); font-weight:600; margin-right:6px }
+  .ans { border:1px solid var(--line); border-radius:6px; padding:8px 10px; background:var(--bg) }
+  .ans .meta { color:var(--dim); font-size:11px; margin-bottom:6px; display:flex; gap:8px; align-items:baseline }
+  .ans .meta .sp { flex:1 }
+  .ans .txt { white-space:pre-wrap; overflow-wrap:anywhere; max-height:28em; overflow:auto }
+  .ans.none { color:var(--dim); font-style:italic }
+  .mark { border:1px solid var(--line); background:var(--panel); color:var(--dim); border-radius:9px;
+          font:11px/1.5 inherit; padding:0 8px; cursor:pointer }
+  .mark:hover { color:var(--bad); border-color:var(--bad) }
+  .flag { margin:6px 0 0; padding:4px 8px; border-left:3px solid var(--line); font-size:12px }
+  .flag.here { border-color:var(--bad) } .flag.still { border-color:var(--bad); color:var(--bad) }
+  .flag.gone { border-color:var(--ok) }
+  .flag q { font-style:italic }
+  dialog.markd { border:1px solid var(--line); border-radius:9px; background:var(--bg); color:var(--fg);
+                 width:min(560px, 92vw); padding:14px 16px }
+  dialog.markd::backdrop { background:rgba(0,0,0,.42) }
+  dialog.markd label { display:block; color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.05em; margin:10px 0 3px }
+  dialog.markd textarea, dialog.markd input { width:100%; font:13px/1.4 inherit; color:var(--fg); background:var(--panel);
+                 border:1px solid var(--line); border-radius:5px; padding:6px 8px }
+  dialog.markd .row { display:flex; gap:8px; justify-content:flex-end; margin-top:12px }
+  dialog.markd .err { color:var(--bad); font-size:12px; min-height:16px; margin-top:6px }
 </style>
 <h1 id="name">bench</h1>
 <p class="sub" id="desc"></p>
@@ -120,6 +148,12 @@ const PAGE = /* html */ `<!doctype html>
 <div id="stats" class="stats"></div>
 <div id="flight" class="flight-panel"></div>
 <p id="last" class="last"></p>
+
+<div id="answers-wrap" hidden>
+<h2>Answers</h2>
+<p class="sub" id="answers-sub"></p>
+<div id="answers" class="answers"></div>
+</div>
 
 <h2>Results</h2>
 <div id="agg" class="empty">Nothing measured yet.</div>
@@ -349,6 +383,109 @@ function renderStats(s, now) {
         : (s.finished ? "" : '<span class="dim">…</span>');
 }
 
+
+/**
+ * An interview's answers side by side: one block per interview task, its turns as rows and its runs as columns.
+ *
+ * Redrawn only when the answers CHANGE, not on the one-second tick the rest of the page redraws on: a person is
+ * reading these, scrolling inside one and selecting a line to mark, and a redraw would throw both away.
+ */
+let answersSig = "";
+function renderAnswers(s, base) {
+    const ivs = s.interviews || {};
+    const ids = Object.keys(ivs);
+    $("answers-wrap").hidden = !ids.length;
+    if (!ids.length) return;
+    const sig = JSON.stringify([ivs, s.skipped, s.runs.map((r) => [r.state, r.turns, r.checks, r.path, r.hash])]);
+    if (sig === answersSig) return;
+    answersSig = sig;
+    const live = !window.__BENCH_STATE__;
+    $("answers-sub").innerHTML = (live ? "Select a line in an answer and press <b>mark wrong</b> to flag it; the next run of that model checks whether it still says it. " : "")
+        + (s.skipped?.length ? "Skipped (failed the tool-call probe): " + s.skipped.map((k) => "<code>" + esc(k.model) + "</code> " + esc(k.why)).join("; ") : "");
+    const repeats = new Set(s.runs.map((r) => r.repeat)).size > 1;
+    $("answers").innerHTML = ids.map((id) => {
+        const runs = s.runs.map((r, i) => ({ r, i })).filter((x) => x.r.taskId === id);
+        const qs = ivs[id];
+        let h = (ids.length > 1 ? "<h3>" + esc(id) + "</h3>" : "")
+            + '<div class="agrid" style="grid-template-columns:repeat(' + runs.length + ', minmax(340px, 1fr))">';
+        for (const { r } of runs) {
+            h += '<div class="ah"><code>' + esc(r.who) + (repeats ? " r" + r.repeat : "") + "</code> "
+                + (r.hash ? '<span class="pill hash">' + esc(r.hash) + "</span> " : "") + outcome(r, Date.now()) + "</div>";
+        }
+        qs.forEach((q, n) => {
+            h += '<div class="q"><b>Turn ' + (n + 1) + "</b>" + esc(q.length > 600 ? q.slice(0, 600) + " …" : q) + "</div>";
+            for (const { r, i } of runs) h += answerCell(r, i, n + 1, r.path ? base + encodeURI(r.path) : "", live);
+        });
+        return h + "</div>";
+    }).join("");
+}
+
+/** One answer: what the turn called, the answer itself, the marks on it, and (live) the button that adds one. */
+function answerCell(r, i, turn, dir, live) {
+    const t = r.turns?.[turn - 1];
+    if (!t) return '<div class="ans none">' + (r.state === "done" ? "no answer" : r.state === "running" ? "…" : "queued") + "</div>";
+    const who = [r.taskId, r.who, "turn " + turn, r.hash].filter(Boolean).join(" · ");
+    const read = dir ? '<a class="view" href="' + dir + '/run.md.html" data-title="' + esc(who) + '">read</a>'
+        + ' <span class="dim">·</span> <a class="view" href="' + dir + "/outbox/turn-" + turn + '.md" data-title="' + esc(who) + '">turn</a>' : "";
+    const flags = (r.checks || []).filter((c) => c.turn === turn && c.still != null).map((c) => {
+        const cls = c.here ? "here" : c.still ? "still" : "gone";
+        const what = c.here ? "marked wrong" : c.still ? "still says a line marked wrong" : "no longer says a line marked wrong";
+        return '<div class="flag ' + cls + '">' + what + (c.quote ? ": <q>" + esc(c.quote.slice(0, 300)) + "</q>" : "")
+            + (c.note ? ' <span class="dim">— ' + esc(c.note) + "</span>" : "") + "</div>";
+    }).join("");
+    return '<div class="ans" data-run="' + i + '" data-turn="' + turn + '"><div class="meta"><span>'
+        + t.tools.length + " call(s)" + (t.tools.length ? ": " + esc(t.tools.join(", ")) : "") + (t.capped ? ' · <span class="warn">step cap</span>' : "")
+        + '</span><span class="sp"></span>' + read
+        + (live && r.state === "done" ? ' <button class="mark">mark wrong</button>' : "") + "</div>"
+        + '<div class="txt">' + esc(t.answer || "(no answer)") + "</div>" + flags + "</div>";
+}
+
+/**
+ * The mark dialog. The quote is the text selected in that answer when the button was pressed (taken on mousedown,
+ * before the click can move the selection), editable, since a check matches the quote verbatim.
+ */
+function initMarks() {
+    const d = document.createElement("dialog");
+    d.className = "markd";
+    d.innerHTML = '<form method="dialog"><b class="mt"></b>'
+        + '<label for="mq">The wrong line (quoted; the next run checks whether the answer still says it)</label><textarea id="mq" rows="4"></textarea>'
+        + '<label for="mn">Why it is wrong</label><input id="mn" autocomplete="off">'
+        + '<div class="err"></div><div class="row"><button value="cancel">Cancel</button><button value="ok" class="go">Mark wrong</button></div></form>';
+    document.body.appendChild(d);
+    let target = null, picked = "";
+    document.addEventListener("mousedown", (e) => {
+        const b = e.target.closest("button.mark");
+        if (!b) return;
+        const sel = window.getSelection();
+        const box = b.closest(".ans").querySelector(".txt");
+        picked = sel && !sel.isCollapsed && box.contains(sel.anchorNode) ? sel.toString().trim() : "";
+    });
+    document.addEventListener("click", (e) => {
+        const b = e.target.closest("button.mark");
+        if (!b) return;
+        const cell = b.closest(".ans");
+        const r = latest.runs[Number(cell.dataset.run)];
+        target = { taskId: r.taskId, who: r.who, turn: Number(cell.dataset.turn), hash: r.hash || null };
+        d.querySelector(".mt").textContent = r.who + " · turn " + target.turn;
+        d.querySelector("#mq").value = picked;
+        d.querySelector("#mn").value = "";
+        d.querySelector(".err").textContent = "";
+        d.showModal();
+        (picked ? d.querySelector("#mn") : d.querySelector("#mq")).focus();
+    });
+    d.querySelector("form").addEventListener("submit", async (e) => {
+        if (e.submitter?.value !== "ok") return;
+        e.preventDefault();
+        const body = { ...target, quote: d.querySelector("#mq").value.trim(), note: d.querySelector("#mn").value.trim() };
+        if (!body.quote && !body.note) { d.querySelector(".err").textContent = "Quote the line, or say why."; return; }
+        try {
+            const res = await fetch("/mark", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+            if (!res.ok) throw new Error(await res.text());
+            d.close();
+        } catch (err) { d.querySelector(".err").textContent = "Not saved: " + err.message; }
+    });
+}
+
 function renderHead(s) {
     $("name").textContent = s.name;
     $("desc").textContent = s.description || "";
@@ -400,6 +537,7 @@ const draw = () => {
     const now = Date.now();
     window.__SWEEP_PDF__ = !!latest.pdf;
     renderHead(latest); renderStats(latest, now); renderFlight(latest, now);
+    renderAnswers(latest, latest.artifactBase ?? "/artifacts/");
     renderAgg(latest.rows); renderRuns(latest.runs, latest.artifactBase ?? "/artifacts/");
 };
 if (latest) {
@@ -419,6 +557,7 @@ if (latest) {
 // Redraw on a timer as well as on a push: the elapsed clocks and the ETA move with the wall, not with
 // events, and a run that sits in one tool for a minute would otherwise look frozen.
 initViewer();
+if (!window.__BENCH_STATE__) initMarks();
 
 const tick = setInterval(() => {
     if (!latest || latest.finished) return clearInterval(tick);   // nothing left to advance
@@ -434,8 +573,10 @@ const tick = setInterval(() => {
  * @param {object} opts
  * @param {number} [opts.port] omit for the stable default; 0 picks any free port
  * @param {string} opts.artifactRoot directory that `run.path` values are relative to, served read-only
+ * @param {(body: object) => Promise<object | null>} [opts.onMark] stores a person's mark on an answer (POST /mark);
+ *   null means it was not a valid one
  */
-export async function startDashboard({ port = DEFAULT_PORT, artifactRoot }) {
+export async function startDashboard({ port = DEFAULT_PORT, artifactRoot, onMark = null }) {
     const clients = new Set();
     let state = { name: "bench", runs: [], rows: [], jobs: 1, started: Date.now() };
     const root = resolve(artifactRoot);
@@ -454,6 +595,18 @@ export async function startDashboard({ port = DEFAULT_PORT, artifactRoot }) {
             clients.add(res);
             req.on("close", () => clients.delete(res));
             return;
+        }
+        if (url.pathname === "/mark" && req.method === "POST" && onMark) {
+            // JSON only: a page on another origin can POST text/plain here without asking, but not
+            // application/json, which needs a CORS preflight this server never answers.
+            if (!/^application\/json\b/.test(req.headers["content-type"] || "")) { res.writeHead(415); return res.end("JSON only"); }
+            let raw = "";
+            for await (const chunk of req) { raw += chunk; if (raw.length > 64_000) { res.writeHead(413); return res.end("too large"); } }
+            let body; try { body = JSON.parse(raw); } catch { res.writeHead(400); return res.end("not JSON"); }
+            const saved = await onMark(body);
+            if (!saved) { res.writeHead(400); return res.end("not a mark: taskId, who, turn, and a quote or a note"); }
+            res.writeHead(200, { "content-type": "application/json" });
+            return res.end(JSON.stringify(saved));
         }
         if (url.pathname.startsWith("/artifacts/")) {
             // Confined to the sweep directory: a `..` in a link must not read the filesystem, even on a

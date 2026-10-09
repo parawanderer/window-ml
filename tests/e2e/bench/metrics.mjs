@@ -300,13 +300,33 @@ export function recovery(events) {
     return { faults: scored.length, recovered: recovered.length, rate: scored.length ? recovered.length / scored.length : 0 };
 }
 
-/** Token cost — the economic bottom line the pointer mechanism exists to lower. */
-export function tokenCost(events) {
-    let prompt = 0, completion = 0, sub = 0;
+/**
+ * The delegated sub-calls' tokens (look/locate/verify asking the vision reader) spent so far. A step's
+ * `subUsage` is the SESSION's running total (`{ prompt, completion, calls }`, reset once when the session
+ * starts: ml-agent-run.ts, and carried across turns on the background path: sw-run-host.ts), not that
+ * step's own spend, so the total is its largest value rather than a sum over steps.
+ */
+function subTotal(events) {
+    let n = 0;
+    for (const ev of events) {
+        if (ev.kind !== "agent-step" || !ev.subUsage) continue;
+        n = Math.max(n, (ev.subUsage.prompt || 0) + (ev.subUsage.completion || 0));
+    }
+    return n;
+}
+
+/**
+ * Token cost — the economic bottom line the pointer mechanism exists to lower.
+ * @param {object[]} events the measured events
+ * @param {object[]} [before] events of the same session BEFORE them (a seed turn), whose sub-calls the
+ *   running total still carries and which are not this measurement's spend
+ */
+export function tokenCost(events, before = []) {
+    let prompt = 0, completion = 0;
     for (const s of stepsOf(events)) {
         if (s.usage) { prompt += s.usage.promptTokens || 0; completion += s.usage.completionTokens || 0; }
-        for (const u of s.subUsage || []) sub += (u.promptTokens || 0) + (u.completionTokens || 0);
     }
+    const sub = Math.max(0, subTotal(events) - subTotal(before));
     return { prompt, completion, sub, total: prompt + completion + sub };
 }
 
@@ -388,7 +408,7 @@ export function measureRun(run, task = {}, opts = {}) {
         denied: approvals.filter((a) => a.decision === "denied").length,
         answer,
         finalAnswer,
-        tokens: tokenCost(events),
+        tokens: tokenCost(events, events === run.events ? [] : (run.events || []).filter((e) => !events.includes(e))),
         reEmission: reEmission(events, k),
         pointers: pointerUse(events),
         recovery: recovery(events),

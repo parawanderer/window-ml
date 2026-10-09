@@ -11,8 +11,13 @@ misreading points at a sentence; one model's misreading can be that model, three
 ```bash
 USE_ENV=1 node --import tsx tests/e2e/panel.mjs tests/e2e/panel/bloat.json \
     --models deepseek.deepseek-v4-pro,deepseek.deepseek-flash,litellm.google/gemini-flash-latest,openrouter.anthropic/claude-opus-5.5,openrouter.moonshotai/kimi-k3
-# → tests/e2e/artifacts/panel-bloat-<time>/summary.md, plus each model's converse session in its own directory
+# → tests/e2e/artifacts/panel-bloat-<time>/summary.md, plus each model's session in its own directory
 ```
+
+Each model's directory holds `run.md`, `run.json`, `outbox/turn-<n>.md` (one per turn, the answer then each step) and
+`run.log`. A PERSON reading a panel wants the bench's page instead: the same file through `bench/run.mjs` with
+`--models … --serve` sets the answers side by side in a browser and lets them mark a wrong line, which every later run
+of that model is checked against (`bench` skill, "Interviews").
 
 Run it in the BACKGROUND (a few minutes; the models run in parallel). Options: `--out <dir>`, `--surface hud|console`,
 `--turn-minutes N`, or `PANEL_MODELS=a,b,c` instead of `--models`.
@@ -56,7 +61,7 @@ Related, not the same. The **bench** (`bench` skill) asks "is B better than A?":
 predicate over the run, repeated for spread. The **panel** asks "what in this is confusing, and why?": the model is a
 READER and reviewer, asked once each, across many models for breadth. A panel turns up a hypothesis ("`tokens` reads
 as exact"); when the fix is a choice between versions that needs numbers, that is a bench spec. Both drive
-`runOnce`, through `converse` here.
+`runOnce`, and an interview file runs as a bench sweep too (`interview.mjs` is the part they share).
 
 ## Which models work (2026-10-09)
 

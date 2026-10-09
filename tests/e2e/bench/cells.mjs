@@ -91,6 +91,9 @@ export function cellKey(cell, fingerprint) {
             followup: cell.task.followup ?? "", seed: cell.task.seed ? { task: cell.task.seed.task, script: String(cell.task.seed.script) } : null,
             script: cell.task.script ? String(cell.task.script) : null,
             agentOptions: cell.task.agentOptions ?? null,
+            // Only when set, so adding these fields left every cache written before them valid.
+            ...Object.fromEntries(["asks", "surface", "sharedWatches", "watchNotes"]
+                .filter((k) => cell.task[k] != null).map((k) => [k, cell.task[k]])),
         },
     });
     return createHash("sha256").update(material).digest("hex").slice(0, 16);
