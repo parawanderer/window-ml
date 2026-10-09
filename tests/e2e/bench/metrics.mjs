@@ -300,13 +300,26 @@ export function recovery(events) {
     return { faults: scored.length, recovered: recovered.length, rate: scored.length ? recovered.length / scored.length : 0 };
 }
 
-/** Token cost — the economic bottom line the pointer mechanism exists to lower. */
+/**
+ * Token cost — the economic bottom line the pointer mechanism exists to lower.
+ *
+ * A step's `subUsage` (the delegated look/locate/verify calls) is the TURN's running total so far
+ * (`{ prompt, completion, calls }`, reset when a turn starts, bus.ts), not that step's own spend, so a turn
+ * counts once at its last value: summing it per step would count the first look again on every later step.
+ */
 export function tokenCost(events) {
-    let prompt = 0, completion = 0, sub = 0;
+    let prompt = 0, completion = 0, sub = 0, turnSub = 0;
     for (const s of stepsOf(events)) {
         if (s.usage) { prompt += s.usage.promptTokens || 0; completion += s.usage.completionTokens || 0; }
-        for (const u of s.subUsage || []) sub += (u.promptTokens || 0) + (u.completionTokens || 0);
     }
+    for (const ev of events) {
+        if (ev.kind === "agent-result") { sub += turnSub; turnSub = 0; continue; }
+        if (ev.kind !== "agent-step" || !ev.subUsage) continue;
+        const u = ev.subUsage, n = (u.prompt || 0) + (u.completion || 0);
+        if (n < turnSub) sub += turnSub;   // reset without a result between (a turn that never reported one)
+        turnSub = n;
+    }
+    sub += turnSub;
     return { prompt, completion, sub, total: prompt + completion + sub };
 }
 

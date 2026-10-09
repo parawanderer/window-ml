@@ -104,7 +104,7 @@ From the memories and git, as of 2026-10-08:
 - **Paused**: drawing the bench's runs with the resource panel's event format (`ExportEvent`), deliberately waited on
   the resource panel finishing. The panel has since shipped, so this can resume.
 - **Gaps for this plan**:
-  - a cell cannot set `surface` yet: add it to `CellEffects` and pass it to `runOnce` in `run.mjs` (one line);
+  - ~~a cell cannot set `surface` yet~~: done, `surface` on a task or on `CellEffects` (2026-10-09);
   - `backend` is per cell already, so the panel models are a `model` dimension;
   - none of the step 3 tasks exist yet, and the closed-shadow-root and iframe fixtures may need pages on the
     fixture site.

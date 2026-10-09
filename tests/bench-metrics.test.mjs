@@ -181,13 +181,29 @@ test("recovery: a fault on the FINAL step is not evidence either way and is excl
 });
 
 test("tokenCost: sums the step usage AND the delegated sub-calls", () => {
+    // `subUsage` as the product sends it: the TURN's running total, on every step after the first sub-call.
+    const sub = (prompt, completion, calls) => ({ subUsage: { prompt, completion, calls } });
     const ev = [
         start(),
-        ...step(1, "look", {}, "a chart", { usage: { promptTokens: 100, completionTokens: 20 }, subUsage: [{ promptTokens: 900, completionTokens: 30 }] }),
-        ...step(2, "answer", {}, "ok", { usage: { promptTokens: 200, completionTokens: 10 } }),
+        ...step(1, "look", {}, "a chart", { usage: { promptTokens: 100, completionTokens: 20 }, ...sub(900, 30, 1) }),
+        ...step(2, "answer", {}, "ok", { usage: { promptTokens: 200, completionTokens: 10 }, ...sub(900, 30, 1) }),
         end("done"),
     ];
-    assert.deepEqual(tokenCost(ev), { prompt: 300, completion: 30, sub: 930, total: 1260 });
+    assert.deepEqual(tokenCost(ev), { prompt: 300, completion: 30, sub: 930, total: 1260 },
+        "a running total repeated on a later step is the same spend, not more");
+});
+
+test("tokenCost: each turn's sub-calls count once, at that turn's last total", () => {
+    const sub = (prompt, completion, calls) => ({ subUsage: { prompt, completion, calls } });
+    const ev = [
+        start(),
+        ...step(1, "look", {}, "a", sub(100, 10, 1)),
+        ...step(2, "look", {}, "b", sub(250, 20, 2)),
+        end("one"),
+        ...step(3, "look", {}, "c", sub(50, 5, 1)),   // the next turn starts again from zero
+        end("two"),
+    ];
+    assert.equal(tokenCost(ev).sub, 270 + 55);
 });
 
 test("afterSeed: the seeded turn's steps are excluded from the measurement", () => {

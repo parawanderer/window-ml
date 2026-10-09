@@ -59,6 +59,18 @@ export interface BenchTask {
     toolTokens?: boolean;
     /** a SECOND measured turn in the same session */
     followup?: string;
+    /**
+     * An INTERVIEW: each of these is sent as the next turn once the one before it ends, and each turn's answer is kept
+     * (`outbox/turn-<n>.md`, and the cell's `turns`), so the page can set the answers side by side. A panel
+     * (tests/e2e/panel/*.json) is a spec of one such task over a `model` dimension, usually with no predicate: a model
+     * there is a reader asked what it makes of the tools, not a subject scored. Not combined with `followup`.
+     */
+    asks?: string[];
+    /** start the run as a person does from that UI ("hud", "overlay", "chat"); null/absent is a console `ml.agent` run */
+    surface?: string | null;
+    /** watch expressions shared with the model through `ml.current` (and the person's note on each, by expression) */
+    sharedWatches?: string[];
+    watchNotes?: Record<string, string>;
     /** install a history before the measured turn (see BenchSeed) */
     seed?: BenchSeed;
     /**
@@ -98,6 +110,12 @@ export interface CellEffects {
     tools?: string[] | null;
     toolTokens?: boolean;
     python?: boolean;
+    /**
+     * Start the run from a UI surface ("hud", …) instead of a console `ml.agent`, overriding the task's own `surface`;
+     * `null` forces a console run. A UI run gets the kit a person's run gets, so `tools`, `python`, `toolTokens`,
+     * `agentOptions` and a task's `seed` do not apply to it.
+     */
+    surface?: string | null;
 }
 
 export type ApprovePolicy = "auto" | "deny" | "readonly" | "hold";
