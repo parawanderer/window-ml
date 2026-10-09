@@ -151,7 +151,7 @@ a.plain:hover { text-decoration: none } a.plain:hover .badge { border-color: var
 .kv dd { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; overflow-wrap: anywhere }
 .spec details { margin: 8px 0 0 }
 .spec summary { cursor: pointer; color: var(--fg-dim); font-size: 12.5px }
-.sdiff, .ssrc { margin: 6px 0 0; padding: 8px 10px; border-radius: 6px; background: var(--panel); overflow: auto; max-height: 32em;
+.sdiff { margin: 6px 0 0; padding: 8px 10px; border-radius: 6px; background: var(--panel); overflow: auto; max-height: 32em;
                 font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace }
 .sdiff span { display: block; white-space: pre-wrap }
 .sdiff .add { color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent) }
@@ -199,3 +199,15 @@ td .hot { color: var(--warn); font-weight: 600 }
 a.role.score { color: inherit } a.role.score:hover { text-decoration: none; background: color-mix(in srgb, var(--accent) 10%, transparent) }
 .role.score b { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--accent) }
 @media (max-width: 600px) { .method dl { grid-template-columns: 1fr } .method dd { margin-bottom: 6px } }
+
+/* The timeline's show/hide chips (timeline.tsx): the panel lane's filter chips, a little larger on a page, one row per
+   dimension; a model's chip carries its colour, the colour its bars are drawn in. */
+.tlfilter { display: flex; flex-direction: column; gap: 6px; margin: 0 0 12px }
+.tlfilter .tlrow { display: flex; align-items: center; gap: 4px }
+.tlfilter .rc-lane-filter { flex-wrap: wrap; gap: 4px 6px; overflow: visible }
+.tlfilter .rc-lane-chip { font-size: 11.5px; padding: 1px 8px; display: inline-flex; align-items: center; gap: 5px }
+.tlfilter .dim { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; margin-right: 4px }
+.tlfilter .swatch { width: 8px; height: 8px; border-radius: 50%; display: inline-block }
+/* The spec's source is a panel code block (spec.tsx `SpecSource`): its theme paints the surface, so no second box. */
+.spec .ssrc { max-height: 32em; overflow: auto; margin: 6px 0 0 }
+.spec .ssrc pre.code { margin: 0 }

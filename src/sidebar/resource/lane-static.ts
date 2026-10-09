@@ -45,7 +45,8 @@ export function themeVars(sidebarCss: string): { dark: string; light: string } {
  */
 export function laneCss(sidebarCss: string, { scoped = true }: { scoped?: boolean } = {}): string {
     const rules = cssRules(sidebarCss);
-    const wanted = /\.rc-ev\b|\.rc-ev-|\.rc-lane-rows?\b/;
+    // The bars and their rows, and the tooltip a hovered bar shows (event-tip.tsx), with the chips inside it.
+    const wanted = /\.rc-ev\b|\.rc-ev-|\.rc-lane-rows?\b|\.rc-tip\b|\.rc-tip-|\.rc-chip\b|\.rc-chip-|\.rc-kv/;
     const kept = rules.filter((r) => {
         if (r.startsWith("@keyframes")) return /rc-ev-live|rcEvPulse/.test(r.slice(0, r.indexOf("{")));
         return wanted.test(r.slice(0, r.startsWith("@") ? r.length : r.indexOf("{")));

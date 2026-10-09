@@ -46,6 +46,8 @@ export const pageSources = () => [
     path.join(ROOT, "src/sidebar/help-tip.tsx"),
     path.join(ROOT, "src/sidebar/interval-bar.tsx"),
     path.join(ROOT, "src/sidebar/disclosure.tsx"),
+    path.join(ROOT, "src/sidebar/code-block.tsx"),
+    path.join(ROOT, "src/sidebar/filter-chips.tsx"),
     path.join(ROOT, "src/sidebar/icons.tsx"),
 ];
 
@@ -59,6 +61,28 @@ export const runLaneScript = () => bundle("run-lane.tsx");
 /** The sidebar's stylesheet, the source of the lane's rules and of both themes' colours. */
 export const sidebarCss = () => readFileSync(path.join(ROOT, "src/sidebar/sidebar.css"), "utf8");
 
+/** `css`'s rules with every selector put under `scope`, so a stylesheet applies only while the scope matches. */
+function scopeRules(css, scope) {
+    return css.replace(/\/\*[^]*?\*\//g, "").replace(/([^{}]+)\{([^}]*)\}/g, (_, sel, body) =>
+        `${sel.split(",").map((x) => `${scope} ${x.trim()}`).join(",")}{${body}}`);
+}
+
+/**
+ * The panel's DEFAULT code theme (code-themes.ts `DEFAULT_CODE_THEME`) for both modes: the highlight.js stylesheet the
+ * panel's settings apply when nobody picked another, and the surface colours (`--code-bg`/`--code-fg`) it declares,
+ * which the panel's code blocks paint with.
+ */
+async function codeThemeCss() {
+    const { DEFAULT_CODE_THEME, presetFile, hljsBaseColors } = await import("../../../../src/code-themes.ts");
+    const one = (mode) => {
+        // Without its comments: they credit the theme's author with a link, and the page loads nothing from outside.
+        const text = readFileSync(path.join(ROOT, "node_modules/highlight.js/styles", `${presetFile(DEFAULT_CODE_THEME, mode).file}.css`), "utf8").replace(/\/\*[^]*?\*\//g, "");
+        const { bg, fg } = hljsBaseColors(text);
+        return { css: text, vars: `${bg ? `;--code-bg:${bg}` : ""}${fg ? `;--code-fg:${fg}` : ""}` };
+    };
+    return { dark: one("dark"), light: one("light") };
+}
+
 /**
  * The dashboard's stylesheet: the sidebar's colour tokens for both themes (following the system unless the page's
  * toggle set `data-theme`), the lane's rules from sidebar.css, and the page's own layout (page.css).
@@ -67,18 +91,23 @@ export async function appCss() {
     const { themeVars, laneCss, sidebarRules } = await import("../../../../src/sidebar/resource/lane-static.ts");
     const css = sidebarCss();
     const { dark, light } = themeVars(css);
+    const code = await codeThemeCss();
     return [
-        `:root{${dark}}`,
-        `@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){${light}}}`,
-        `:root[data-theme="light"]{${light}}`,
+        `:root{${dark}${code.dark.vars}}`,
+        `@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){${light}${code.light.vars}}}`,
+        `:root[data-theme="light"]{${light}${code.light.vars}}`,
+        // Code coloured as the panel colours it by default (Settings → Code blocks: Atom One), dark and light.
+        code.dark.css,
+        `@media (prefers-color-scheme: light){${scopeRules(code.light.css, ':root:not([data-theme="dark"])')}}`,
+        scopeRules(code.light.css, ':root[data-theme="light"]'),
         laneCss(css, { scoped: false }),
         // The panel's click-to-copy hash chip and the tooltip layer it shows its tip in (page/app.tsx installs it).
         sidebarRules(css, /\.hash\b|\.tt\b|\.tt-pop\b|\.tt-layer\b/),
         // The shared pieces the pages are built from: a label with a tip (help-tip.tsx), an estimate on its interval
         // (interval-bar.tsx), and the fold (disclosure.tsx).
-        sidebarRules(css, /\.help\b|\.ival\b|\.disc\b|\.disc-/),
+        sidebarRules(css, /\.help\b|\.ival\b|\.disc\b|\.disc-|\.rc-lane-chip\b|\.rc-lane-filter\b/),
         // An answer rendered as markdown, styled as the panel styles one (format.ts `markdown`).
-        sidebarRules(css, /\.md\b|\.md-|(^|[\s,])\.code\b|pre\.code|\.hljs/),
+        sidebarRules(css, /\.md\b|\.md-|(^|[\s,])\.code\b|pre\.code|\.hljs|\.cline\b/),
         readFileSync(path.join(HERE, "page.css"), "utf8"),
     ].join("\n");
 }

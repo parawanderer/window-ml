@@ -2,6 +2,7 @@
 // before. An agent iterating on the bench edits the bench itself; a reader comparing two sweeps sees here whether the
 // question changed, not only the answers. The data is sweeps.mjs `specProvenance`, the same as spec.md.
 
+import { CodeBlock } from "../../../../src/sidebar/code-block";
 import { Tip } from "../../../../src/sidebar/help-tip";
 import type { BenchState, SpecState } from "./state";
 
@@ -46,7 +47,12 @@ export function SpecCard({ s }: { s: BenchState }) {
                         ))}</tbody></table></div>
                 </details>
             ) : null}
-            <details><summary>The spec as it ran</summary><pre class="ssrc">{p.source}</pre></details>
+            <details><summary>The spec as it ran</summary><SpecSource source={p.source} file={p.spec} /></details>
         </section>
     );
+}
+
+/** The spec's text as the panel shows code (code-block.tsx `CodeBlock`): highlighted and numbered. */
+export function SpecSource({ source, file }: { source: string; file: string }) {
+    return <div class="ssrc"><CodeBlock text={source} lang={/\.json$/i.test(file) ? "json" : "typescript"} lineNumbers /></div>;
 }

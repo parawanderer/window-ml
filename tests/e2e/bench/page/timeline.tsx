@@ -3,16 +3,64 @@
 // model). The events are the resource panel's derivation (`eventsFrom`), sent by the harness; the layout and the bars
 // are the panel's too (lane-view.tsx).
 
+import { useState } from "preact/hooks";
 import { Tip } from "../../../../src/sidebar/help-tip";
+import { colorFor } from "../../../../src/sidebar/palette";
+import { FilterChips } from "../../../../src/sidebar/filter-chips";
 import type { BenchState } from "./state";
 import { LaneRows, LaneAxis, laneWindow } from "./lane-view";
 import { runName } from "./runs";
 
+/** Hidden `dim=value` pairs, remembered per sweep in this browser; guarded, since a saved page opened from file:// can
+ *  throw on storage. */
+const hiddenKey = (name: string) => `benchTimelineHidden:${name}`;
+const readHidden = (name: string): string[] => { try { return JSON.parse(localStorage.getItem(hiddenKey(name)) || "[]"); } catch { return []; } };
+
+/**
+ * Show or hide runs by the value of a dimension: a chip per value (each model, each prompt variant), with how many of
+ * the drawn runs have it, the panel lane's filter chips (`.rc-lane-chip`). A run is hidden when any of its values is,
+ * and the axis closes up around what is left.
+ */
+function TimelineFilter({ values, hidden, toggle }: { values: Map<string, Map<string, number>>; hidden: Set<string>; toggle: (k: string) => void }) {
+    return (
+        <div class="tlfilter">
+            {[...values].map(([dim, vals]) => (
+                <div class="tlrow" key={dim}>
+                    <Tip tip="A dimension of the spec. Click a value to hide or show the runs that used it."><span class="dim">{dim}</span></Tip>
+                    <FilterChips hidden={hidden} toggle={toggle} items={[...vals].map(([v, n]) => {
+                        const k = `${dim}=${v}`;
+                        return {
+                            key: k, count: n,
+                            label: dim === "model" ? <><i class="swatch" style={{ background: colorFor(v) }} />{v}</> : v,
+                            tip: `${hidden.has(k) ? "Show" : "Hide"} the ${n} run${n === 1 ? "" : "s"} with ${dim} = ${v}.`,
+                        };
+                    })} />
+                </div>
+            ))}
+        </div>
+    );
+}
+
 export function SweepTimeline({ s }: { s: BenchState }) {
+    const [hiddenList, setHidden] = useState<string[]>(() => readHidden(s.name));
     const t = s.timeline;
     if (!t?.runs.length) return null;
-    const axis = laneWindow(t.runs.flatMap((r) => r.events), t.now);
-    if (!axis) return null;
+    const hidden = new Set(hiddenList);
+    const toggle = (k: string) => {
+        const next = hidden.has(k) ? hiddenList.filter((x) => x !== k) : [...hiddenList, k];
+        setHidden(next);
+        try { localStorage.setItem(hiddenKey(s.name), JSON.stringify(next)); } catch { /* storage off */ }
+    };
+    // Every value a drawn run has, per dimension; only dimensions with more than one value can be told apart.
+    const values = new Map<string, Map<string, number>>();
+    for (const { index } of t.runs) for (const d of s.dims) {
+        const v = String(s.runs[index].combo[d]);
+        if (!values.has(d)) values.set(d, new Map());
+        values.get(d)!.set(v, (values.get(d)!.get(v) ?? 0) + 1);
+    }
+    for (const [d, vals] of values) if (vals.size < 2) values.delete(d);
+    const shown = t.runs.filter(({ index }) => !s.dims.some((d) => hidden.has(`${d}=${String(s.runs[index].combo[d])}`)));
+    const axis = laneWindow(shown.flatMap((r) => r.events), t.now);
     const cached = s.runs.filter((r) => r.cached).length;
     return (
         <section class="card">
@@ -20,8 +68,9 @@ export function SweepTimeline({ s }: { s: BenchState }) {
                 <h2><Tip tip="Each run's model calls, tool steps and model loads on one clock. Rows that overlap ran at the same time; on one GPU that is contention. Hover a bar for what it was. Also as text in timeline.md.">Timeline</Tip></h2>
                 {cached ? <span class="sub">{cached} cached run(s) are not drawn: they ran in an earlier sweep.</span> : null}
             </header>
-            <div class="tl">
-                {t.runs.map(({ index, events }) => {
+            {values.size ? <TimelineFilter values={values} hidden={hidden} toggle={toggle} /> : null}
+            {!axis ? <div class="empty">Every run is hidden: click a struck-out value to show it again.</div> : <div class="tl">
+                {shown.map(({ index, events }) => {
                     const r = s.runs[index];
                     const name = runName(r, s.dims);
                     return [
@@ -31,7 +80,7 @@ export function SweepTimeline({ s }: { s: BenchState }) {
                 })}
                 <div />
                 <section class="wml-lane"><LaneAxis axis={axis} /></section>
-            </div>
+            </div>}
         </section>
     );
 }
