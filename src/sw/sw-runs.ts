@@ -79,13 +79,16 @@ export function makeWorkerRun(runId: string): void {
 
 /**
  * Whether the worker assembled this run (a run the user started from a surface, or a saved session adopted onto a
- * tab). Such a run is driven only from the worker: a PAGE may not start a turn in it, continue it or steer it, since
- * that would let the page decide what the person's run does (docs/spec/SITE_ACCESS.md, slice 0).
+ * tab) or was handed it (`makeWorkerRun`). Such a run is driven only from the worker: a PAGE may not start a turn in
+ * it, continue it or steer it, since that would let the page decide what the person's run does
+ * (docs/spec/SITE_ACCESS.md, slice 0). `runRebuilds` is read too: a run handed over during its FIRST turn is not in
+ * `bgRuns` until that turn settles, and is the worker's from the hand-over on.
  * @param runId the run
  * @returns true for a worker-built run
  */
 export function isWorkerRun(runId: unknown): boolean {
-    return typeof runId === "string" && (workerRunsStarting.has(runId) || bgRuns.get(runId)?.p.builtBy === "worker");
+    return typeof runId === "string" && (workerRunsStarting.has(runId) || bgRuns.get(runId)?.p.builtBy === "worker"
+        || runRebuilds.get(runId)?.builtBy === "worker");
 }
 
 /**
