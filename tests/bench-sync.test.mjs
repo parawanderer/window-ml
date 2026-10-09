@@ -132,6 +132,21 @@ test("views.sql dedupes each table on its key and says to query it, not the raw 
     assert.doesNotMatch(sql, /secret_access_key = '[^…]/, "no secret in a file that is uploaded");
 });
 
+test("views.sql creates a view only over a table the store holds: DuckDB fails at CREATE on a glob with no files", async () => {
+    const only = viewsSql("wml-bench", ["scores"]);
+    assert.match(only, /CREATE OR REPLACE VIEW scores/);
+    assert.doesNotMatch(only, /VIEW box_frames/);
+    assert.match(only, /-- box_frames: no box\/ objects in the store yet/);
+    // As a push writes it: no rows anywhere yet, so neither view; then scores land, and only that one.
+    objects.clear();
+    await push(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", sweeps: [] });
+    assert.doesNotMatch(String(objects.get("views.sql")), /CREATE/);
+    await push(store(), { clone: "a", scoresDb: await scoresWith([row("r1", 1)]), boxDb: "/x", sweeps: [] });
+    const sql = String(objects.get("views.sql"));
+    assert.match(sql, /CREATE OR REPLACE VIEW scores/);
+    assert.doesNotMatch(sql, /VIEW box_frames/);
+});
+
 // --- traces ---
 
 /** A sweep directory as run.mjs leaves it: page.json, a run directory per done run with its cell.json. */

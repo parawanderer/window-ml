@@ -103,9 +103,14 @@ async function pushTable(store, table, db, clone) {
     }
 }
 
-/** DuckDB views over the pool, deduped on each table's key: what an analysis reads instead of the raw objects. */
-export function viewsSql(bucket) {
+/**
+ * DuckDB views over the pool, deduped on each table's key: what an analysis reads instead of the raw objects. Only for
+ * the tables in `present`: DuckDB resolves a view's glob when the view is CREATED, so a view over a prefix with no
+ * objects yet fails there, and a script run as one batch stops at it. An absent table gets a comment saying so.
+ */
+export function viewsSql(bucket, present = Object.keys(TABLES)) {
     const view = (name, table) => {
+        if (!present.includes(table)) return `-- ${name}: no ${table}/ objects in the store yet; the next push after there are writes this view.`;
         const key = TABLES[table].key.join(", ");
         return `CREATE OR REPLACE VIEW ${name} AS\n    SELECT DISTINCT ON (${key}) * FROM read_parquet('s3://${bucket}/${table}/*.parquet', union_by_name = true);`;
     };
@@ -203,7 +208,10 @@ export async function push(store, { clone = cloneName(), sweeps = null, onlyDb =
         if (!db) continue;
         try { sent[table] = await pushTable(store, table, db, clone); } finally { db.close(); }
     }
-    await store.put("views.sql", viewsSql(store.bucket ?? "wml-bench"), "text/plain; charset=utf-8");
+    // Views for the tables the store holds now (any clone's), after this push's rows have landed.
+    const present = [];
+    for (const table of Object.keys(TABLES)) if ((await store.list(`${table}/`)).some((o) => o.key.endsWith(".parquet"))) present.push(table);
+    await store.put("views.sql", viewsSql(store.bucket ?? "wml-bench", present), "text/plain; charset=utf-8");
     if (!onlyDb) for (const dir of sweeps ?? await sweepDirs()) sent.runs += await pushSweep(store, dir, clone);
     log(`  store: ${sent.scores} score row(s), ${sent.box} box frame(s), ${sent.runs} run(s) sent`);
     return sent;
