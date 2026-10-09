@@ -9,7 +9,7 @@ import { Outcome, HeldTag, runDir, runName } from "./runs";
 import { Hash } from "../../../../src/sidebar/copy-hash";
 import { FromSpec, specSource } from "./from-spec";
 import { markdown } from "../../../../src/sidebar/format";
-import { Card } from "./card";
+import { Card } from "../../../../src/sidebar/fold-card";
 
 /** How answers are shown: rendered as the panel renders an answer, or the exact text the model sent. */
 type Mode = "md" | "raw";

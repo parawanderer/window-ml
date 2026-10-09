@@ -1,12 +1,13 @@
-// card.tsx — a section of the sweep page that folds: the page's card, with a chevron in its top-right corner that
-// collapses it to its header line. Folded is remembered per card in this browser, so a long timeline someone folded
-// stays folded on the next reload or sweep. The summary card at the top never folds; every card after it does.
+// fold-card.tsx — a section of a standalone page that folds: a bordered card with a chevron in its top-right corner that
+// collapses it to its header line. Folded is remembered per card in this browser (the storage key is the bench's, where
+// it started, so a card folded before the move stays folded). Its rules are page-kit.css's `.card`/`.foldbtn`.
 
 import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
-import { IconChevron } from "../../../../src/sidebar/icons";
+import { IconChevron } from "./icons";
 
-const FOLD_KEY = "benchFolded";
+const FOLD_KEY = "benchFolded";   // state: ui
+
 /** Guarded, since a saved report opened from file:// can throw on storage. */
 const readFolded = (): string[] => { try { return JSON.parse(localStorage.getItem(FOLD_KEY) || "[]"); } catch { return []; } };
 

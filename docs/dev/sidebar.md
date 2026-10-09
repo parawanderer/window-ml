@@ -150,6 +150,9 @@ the old/new line-number gutter on the code block's surface (code-diff.tsx; a ret
 `EventTip` wraps it in its hover), and the chart's keys, `installChartKeys` (resource-chart.tsx; the panel installs it
 while open). Each imports nothing from ui-kit or the store; their CSS stays in sidebar.css, and
 the bench lifts it with `sidebarRules`.
+A STANDALONE page's own furniture is `Card`, a section that folds (fold-card.tsx), with the tiles, badges and buttons
+around it in **page-kit.css** (src/sidebar), which such a page loads whole. Not in sidebar.css: its names (`.card`,
+`.btn`, `.badge`) are short and generic, and the panel and the chat page style their own.
 
 **RULE — use the PANEL'S tooltip, not the browser's `title`.** `cursorTipOn(text)` (ui-kit.tsx) is the
 default for anything explanatory; a native `title` needs an argument for itself. Three reasons, all of them
