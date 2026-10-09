@@ -17,7 +17,14 @@ export async function captureOwnTab(tabId: number): Promise<string> {
     const onActivated = (info: { tabId: number; windowId: number }): void => { if (info.windowId === before.windowId) switched = true; };
     chrome.tabs.onActivated.addListener(onActivated);
     try {
-        const shot = await chrome.tabs.captureVisibleTab(before.windowId, { format: "png" });
+        let shot: string;
+        // A capture that fails while the window shows another tab fails about THAT tab: its error is not the page's to read.
+        try { shot = await chrome.tabs.captureVisibleTab(before.windowId, { format: "png" }); }
+        catch (e) {
+            const now = switched ? null : await chrome.tabs.get(tabId).catch(() => null);
+            if (switched || !now?.active || now.windowId !== before.windowId) throw new Error(NOT_SHOWING);
+            throw e;
+        }
         const after = await chrome.tabs.get(tabId).catch(() => null);
         if (switched || !after?.active || after.windowId !== before.windowId) throw new Error(NOT_SHOWING);
         return shot;

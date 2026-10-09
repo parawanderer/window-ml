@@ -238,7 +238,7 @@ test("the refusal says nothing about the tab that is showing", async () => {
     for (const leak of ["bank.example", "12345", OTHER_TITLE, "Balance"]) assert.ok(!res.error.includes(leak), `refusal names ${leak}`);
 });
 
-test("a capture that FAILS while the window shows another tab reports the refusal, not the browser's description of that tab", { todo: "captureOwnTab rethrows captureVisibleTab's error without consulting `switched`, so a switch to a restricted tab mid-capture surfaces the browser's error about THAT tab (its scheme / the permission it lacks)" }, async () => {
+test("a capture that FAILS while the window shows another tab reports the refusal, not the browser's description of that tab", async () => {
     const { bg } = browser({
         onCaptureTab: (b) => {
             b.activateTab(4);
@@ -252,6 +252,18 @@ test("a capture that FAILS while the window shows another tab reports the refusa
     // positive control: with no switch, the browser's own error about the page's own tab is surfaced as before
     const own = browser({ onCaptureTab: () => { throw new Error("cannot capture this page"); } });
     assert.match((await capture(own.bg)).error, /cannot capture this page/);
+});
+
+test("a failed capture after a switch made before the capture's listener existed is refused the same way", async () => {
+    // The switch lands inside the first tabs.get, before onActivated is listened to: only a re-read can tell.
+    const { bg } = browser({
+        during: { before: (b) => b.activateTab(4) },
+        onCaptureTab: () => { throw new Error(`Cannot access contents of url "${OTHER}".`); },
+    });
+    const res = await capture(bg);
+    assert.equal(res.data, undefined);
+    assert.ok(!res.error.includes("bank.example"), `the error names the other tab: ${res.error}`);
+    assert.match(res.error, /isn't the one showing/);
 });
 
 test("two pages asking at once in one window: the one in front gets its own pixels, the one behind gets nothing", async () => {
