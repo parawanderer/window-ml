@@ -111,7 +111,7 @@ const noDom = () => assert.equal(typeof globalThis.document, "undefined", "the f
 // --- look and locate: the same text over the fake host and over the page's ---
 
 test("delegated look of an element: the fake host's run gives the model the page host's text, through shoot, chat and two geometry ops", async () => {
-    const LEGEND = { controls: [{ name: "«Save»", selector: "#save" }], media: [], boundaries: [], text: [], moreControls: 0, moreMedia: 0 };
+    const LEGEND = { controls: [{ name: "Save", role: "button", selector: "#save" }], media: [], boundaries: [], text: [], moreControls: 0, moreMedia: 0 };
     const fake = fakeHost({ target: { rect: rect(SAVE) }, legend: LEGEND }, "A blue Save button.");
     noDom();
     const fromFake = await buildLookTool({ defineTool }, { model: "reader-vl", host: fake }).run({ selector: "#save" });

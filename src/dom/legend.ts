@@ -85,9 +85,21 @@ const TEXT_SEL = "p, h1, h2, h3, h4, h5, h6, li, td, th, dt, dd, blockquote, fig
 const boundaryEl = (el: Element): boolean => el.tagName === "IFRAME" || el.tagName === "CANVAS";
 // Guillemets « » (not " ) delimit a page LABEL so it's unambiguous when the text itself contains " or ' —
 // e.g. «await ml.agent("…")». Selectors get backticks (they contain () like :nth-of-type(1) but never `).
-const quote = (s: string): string => (s ? `«${truncate(s, 40)}»` : "");
+/** The longest a legend label is, before its quotes: forty characters and an ellipsis. */
+export const LEGEND_NAME_MAX = 41;
+/** The longest a text anchor is: {@link PROSE_LEN} and an ellipsis at each end. */
+export const LEGEND_TEXT_MAX = PROSE_LEN + 2;
+/** A page string as it sits between the legend's own delimiters: « » and ` are the format's, so a label cannot close
+ *  its quote and write an entry of its own (‹ › and ' stand in for them). */
+const inQuotes = (s: string): string => s.replace(/«/g, "‹").replace(/»/g, "›").replace(/`/g, "'");
+const quote = (s: string): string => (s ? `«${inQuotes(s)}»` : "");
 const imgName = (el: Element): string => { const src = el.getAttribute("src") || ""; const m = src.split("?")[0].split("/").pop() || ""; return m && !m.startsWith("data:") ? m : ""; };
-const labelFor = (el: Element): string => { const n = accessibleName(el); if (n) return quote(n); const r = roleOf(el); return r || el.tagName.toLowerCase(); };
+/** A control as data: its accessible name cut to forty characters ("" for none), and the role (or tag) shown instead
+ *  when it has no name. The legend quotes the name itself ({@link formatLegend}), never the page. */
+const controlOf = (el: Element): { name: string; role: string } => {
+    const n = accessibleName(el);
+    return { name: n ? truncate(n, 40) : "", role: roleOf(el) || el.tagName.toLowerCase() };
+};
 /** The frames a boundary line names: at most three selectors, and "…" when there were more (`count`). */
 const framesList = (sels: string[], count: number): string => sels.slice(0, MAX_FRAMES).map(s => `\`${s}\``).join(", ") + (count > Math.min(sels.length, MAX_FRAMES) ? ", …" : "");
 
@@ -115,8 +127,10 @@ export function boundaryLine(b: LegendBoundary): string {
 }
 
 export interface RegionLegend {
-    controls: { name: string; selector: string }[];
-    media: { name: string; selector: string }[];
+    /** Each control's bare name ("" for none: its `role` is shown instead) and a selector. */
+    controls: { name: string; role: string; selector: string }[];
+    /** Each image or canvas: which it is, an image's bare alt text or file name ("" for none), and a selector. */
+    media: { kind: "img" | "canvas"; name: string; selector: string }[];
     /** Structural notices (iframes, shadow roots), as data; {@link boundaryLine} phrases each. */
     boundaries: LegendBoundary[];
     text: { text: string; selector: string }[];
@@ -134,12 +148,12 @@ export function regionLegend(box: Box): RegionLegend {
     const controlsF = ctrlEls
         .filter(el => { for (let p = el.parentElement; p; p = p.parentElement) if (ctrlSet.has(p)) return false; return true; })
         .sort((a, b) => { const ra = rectOf(a)!, rb = rectOf(b)!; return (ra.top - rb.top) || (ra.left - rb.left); });
-    const controls = controlsF.slice(0, MAX_CONTROLS).map(el => ({ name: labelFor(el), selector: clickSelector(el) }));
+    const controls = controlsF.slice(0, MAX_CONTROLS).map(el => ({ ...controlOf(el), selector: clickSelector(el) }));
 
     // ---- media (img / canvas) ----
     const mediaEls = deepQueryAll("img, canvas", root).filter(el => shown(el) && boxIntersects(rectOf(el), box));
     const media = mediaEls.slice(0, MAX_MEDIA).map(el => ({
-        name: el.tagName === "CANVAS" ? "canvas" : (`img ${quote(el.getAttribute("alt") || imgName(el) || "")}`).trim(),
+        ...(el.tagName === "CANVAS" ? { kind: "canvas" as const, name: "" } : { kind: "img" as const, name: truncate(el.getAttribute("alt") || imgName(el) || "", 40) }),
         selector: clickSelector(el),
     }));
 
@@ -192,9 +206,11 @@ export function regionLegend(box: Box): RegionLegend {
  *  crop-specific and never deduped. A genuinely new boundary (a different frame) still shows. */
 export function formatLegend(lg: RegionLegend, seen?: Set<string>): string {
     const lines: string[] = [];
-    if (lg.controls.length) lines.push("• controls: " + lg.controls.map(c => `${c.name} \`${c.selector}\``).join(" · ") + (lg.moreControls ? ` …+${lg.moreControls}` : ""));
-    if (lg.media.length) lines.push("• media: " + lg.media.map(m => `${m.name} \`${m.selector}\``).join(" · ") + (lg.moreMedia ? ` …+${lg.moreMedia}` : ""));
-    if (lg.text.length) lines.push("• text: " + lg.text.map(t => `«${t.text}» \`${t.selector}\``).join(" · "));
+    const control = (c: RegionLegend["controls"][number]): string => (c.name ? quote(c.name) : c.role);
+    const medium = (m: RegionLegend["media"][number]): string => (m.kind === "canvas" ? "canvas" : m.name ? `img ${quote(m.name)}` : "img");
+    if (lg.controls.length) lines.push("• controls: " + lg.controls.map(c => `${control(c)} \`${c.selector}\``).join(" · ") + (lg.moreControls ? ` …+${lg.moreControls}` : ""));
+    if (lg.media.length) lines.push("• media: " + lg.media.map(m => `${medium(m)} \`${m.selector}\``).join(" · ") + (lg.moreMedia ? ` …+${lg.moreMedia}` : ""));
+    if (lg.text.length) lines.push("• text: " + lg.text.map(t => `«${inQuotes(t.text)}» \`${t.selector}\``).join(" · "));
     const all = lg.boundaries.map(boundaryLine);
     const boundaries = seen ? all.filter(b => !seen.has(b)) : all;
     if (seen) boundaries.forEach(b => seen.add(b));

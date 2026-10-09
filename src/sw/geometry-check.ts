@@ -9,7 +9,7 @@
 // What a page can still do is lie within those bounds, as it can by changing its DOM.
 
 import type { GeoBox, GeoMark, GeoOpaque, GeoPoint, GeoRect, GeoView, MarksReply, MintReply, SnapReply, CellReply, StitchBegin, StitchTile, TargetReply } from "../tools/vision-host";
-import { LEGEND_CAPS, type LegendBoundary, type RegionLegend } from "../dom/legend";
+import { LEGEND_CAPS, LEGEND_NAME_MAX, LEGEND_TEXT_MAX, type LegendBoundary, type RegionLegend } from "../dom/legend";
 import { POINT_RE, BOX_RE } from "../util";
 
 /** The ops a worker may ask a page, exactly the `Geometry` interface's members. */
@@ -27,7 +27,7 @@ export const DPR_MAX = 8;
 /** The most marks one reply may carry, per op: a Set-of-Marks sweep, a snapped grounding box, a grid cell. */
 export const MARK_CAPS = { marks: 150, snap: 12, cell: 20 } as const;
 /** The longest a page string may be once cut, by what it is. Selectors are refused past theirs, not cut. */
-export const TEXT_CAPS = { name: 200, role: 50, selector: 1000, msg: 300, line: 200, legend: 200 } as const;
+export const TEXT_CAPS = { name: 200, role: 50, selector: 1000, msg: 300, line: 200, legendName: LEGEND_NAME_MAX, legendText: LEGEND_TEXT_MAX } as const;
 /** The most screens a full-page stitch covers (the page caps itself at eight; the worker holds it to that). */
 export const STITCH_SCREENS = 8;
 
@@ -57,12 +57,20 @@ const bool = (v: unknown): boolean => (typeof v === "boolean" ? v : no());
 const obj = (v: unknown): Record<string, unknown> => (v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : no());
 const list = (v: unknown, cap: number): unknown[] => (Array.isArray(v) && v.length <= cap ? v : no());
 
-/** Control characters (and the two line separators) a page could use to start a line of its own in a tool's result. */
-const CONTROL = /[\u0000-\u001f\u007f\u2028\u2029]+/g;
-/** Display text: a string, control characters folded to one space, cut to `cap`. */
+/** Characters a page could use to start a line of its own in a tool's result, or to make one text read as another:
+ *  every control character (C0, DEL, C1 with NEL), every format character (bidi overrides and isolates, zero-width
+ *  joiners and spaces, the BOM) and the two Unicode line separators. */
+const CONTROL = /[\p{Cc}\p{Cf}\u2028\u2029]+/gu;
+/** Display text: a string, control and format characters folded to one space, cut to `cap`. */
 const text = (v: unknown, cap: number): string => (typeof v === "string" ? v.replace(CONTROL, " ").slice(0, cap) : no());
-/** A selector: a string with no control character, refused past its cap. */
-const selector = (v: unknown): string => (typeof v === "string" && v.length <= TEXT_CAPS.selector && !/[\u0000-\u001f\u007f\u2028\u2029]/.test(v) ? v : no());
+/** A selector: a string with no control or format character and no backtick (the legend's own code quote), refused
+ *  past its cap. Refused rather than folded: a changed selector is another selector. */
+const selector = (v: unknown): string => (typeof v === "string" && v.length <= TEXT_CAPS.selector && !/[\p{Cc}\p{Cf}\u2028\u2029`]/u.test(v) ? v : no());
+/** What an ARIA role (or a tag name) looks like. */
+const ROLE = /^[a-z][a-z0-9-]{0,49}$/;
+/** A role, printed bare as `[role]` in locate's result: held to a role token, lower-cased; anything else (a page's free
+ *  text in its role attribute) is shown as "generic", ARIA's word for no particular role. */
+const role = (v: unknown): string => { const r = text(v, TEXT_CAPS.role + 1).toLowerCase(); return ROLE.test(r) ? r : "generic"; };
 /** A token matching `re` exactly. */
 const token = (v: unknown, re: RegExp): string => (typeof v === "string" && re.test(v) ? v : no());
 
@@ -92,7 +100,7 @@ function opaque(v: unknown): GeoOpaque | null {
 function marks(v: unknown, cap: number): GeoMark[] {
     return list(v, cap).map((m, i) => {
         const x = obj(m);
-        return { ref: 0, id: i + 1, role: text(x.role, TEXT_CAPS.role), name: text(x.name, TEXT_CAPS.name), selector: selector(x.selector), rect: rect(x.rect) };
+        return { ref: 0, id: i + 1, role: role(x.role), name: text(x.name, TEXT_CAPS.name), selector: selector(x.selector), rect: rect(x.rect) };
     });
 }
 
@@ -128,14 +136,19 @@ function legendBoundary(v: unknown): LegendBoundary {
 
 function legend(v: unknown): RegionLegend {
     const r = obj(v);
-    const named = (key: "controls" | "media") => list(r[key], LEGEND_CAPS[key]).map((x) => { const o = obj(x); return { name: text(o.name, TEXT_CAPS.legend), selector: selector(o.selector) }; });
+    const controls = list(r.controls, LEGEND_CAPS.controls).map((x) => { const o = obj(x); return { name: text(o.name, TEXT_CAPS.legendName), role: role(o.role), selector: selector(o.selector) }; });
+    const media = list(r.media, LEGEND_CAPS.media).map((x) => {
+        const o = obj(x);
+        const kind: "img" | "canvas" = o.kind === "img" || o.kind === "canvas" ? o.kind : no();
+        return { kind, name: kind === "canvas" ? "" : text(o.name, TEXT_CAPS.legendName), selector: selector(o.selector) };
+    });
     const boundaries = list(r.boundaries, 3).map(legendBoundary);
     if (new Set(boundaries.map((b) => b.kind)).size !== boundaries.length) no();
     return {
-        controls: named("controls"),
-        media: named("media"),
+        controls,
+        media,
         boundaries,
-        text: list(r.text, LEGEND_CAPS.text).map((x) => { const o = obj(x); return { text: text(o.text, TEXT_CAPS.legend), selector: selector(o.selector) }; }),
+        text: list(r.text, LEGEND_CAPS.text).map((x) => { const o = obj(x); return { text: text(o.text, TEXT_CAPS.legendText), selector: selector(o.selector) }; }),
         moreControls: count(r.moreControls),
         moreMedia: count(r.moreMedia),
     };

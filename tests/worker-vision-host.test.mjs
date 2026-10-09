@@ -226,17 +226,29 @@ test("an endless stitch is cut at nine tiles by the worker, whatever the page sa
         for (let i = 0; i < STITCH_TILES; i++) await h.geo.stitchTile({ y: 0 });
         await assert.rejects(h.geo.stitchTile({ y: 0 }), (e) => e.message === GEOMETRY_REFUSED);
         assert.equal(w.geoMsgs().filter((g) => g.op === "stitchTile").length, STITCH_TILES, "the tenth was never asked");
+        const asked = w.geoMsgs().length;
         await h.geo.stitchEnd();
-        assert.equal(w.geoMsgs().filter((g) => g.op === "stitchEnd").length, 0, "nothing more is asked of a page that broke the call");
+        assert.deepEqual(w.geoMsgs().slice(asked).map((g) => g.op), ["stitchEnd"], "only the stitch's end is still sent (best effort, to restore the page), nothing else");
+        await assert.rejects(h.geo.focus(), (e) => e.message === GEOMETRY_REFUSED);
+        assert.equal(w.geoMsgs().length, asked + 1);
     });
 });
 
 test("a stitch whose canvas would be taller than 65536 device pixels is refused before a tile is taken", T, async () => {
     await onPage(async () => {
-        const w = world({ shot: png(2048, 1536), page: (q) => (q.op === "stitchBegin" ? { result: "", geometry: { seq: q.seq, stitch: q.stitch, reply: { total: 40000, vh: 5000, startY: 0, dpr: 2 } } } : q.op === "view" ? { result: "", geometry: { seq: q.seq, reply: { w: 1024, h: 768, dpr: 2, sx: 0, sy: 0 } } } : undefined) });
+        const w = world({ shot: png(2048, 1536), page: (q) => (q.op === "stitchBegin" ? { result: "", geometry: { seq: q.seq, stitch: q.stitch, reply: { total: 40000, vh: 5000, startY: 0, dpr: 2 } } } : q.op === "view" ? { result: "", geometry: { seq: q.seq, reply: { w: 1024, h: 5000, dpr: 2, sx: 0, sy: 0 } } } : undefined) });
         const h = w.host();
         await assert.rejects(h.geo.stitchBegin(), (e) => e.message === GEOMETRY_REFUSED);
         assert.equal(w.geoMsgs().filter((g) => g.op === "stitchTile").length, 0);
+    });
+});
+
+test("an element the page says is all but off the viewport (3 px of it in view) is refused, not cropped to a sliver the reader is asked about", T, async () => {
+    await onPage(async () => {
+        const w = world({ reply: "A button.", page: (q) => (q.op === "target" && q.selector ? { result: "", geometry: { seq: q.seq, reply: { rect: rect({ left: 1021, top: 200, width: 100, height: 40 }) } } } : undefined) });
+        const r = await buildLookTool({ defineTool }, { model: "reader-vl", host: w.host() }).run({ selector: "#save" });
+        assert.match(typeof r === "string" ? r : r.content, /off-screen \(only 3×40px of it is in view\)/);
+        assert.equal(w.chats.length, 0);
     });
 });
 
@@ -332,13 +344,13 @@ test("a question the page does not answer in time is refused after the per-quest
 
 // --- the run's vision memory ---
 
-test("the run's vision memory is the worker's, shared by every host (every vision call) of the run, and not another run's", T, async () => {
+test("the run's vision memory is the worker's: what a completed call marks seen, the run's next call on that document starts from; not another run's", T, async () => {
     await onPage(async () => {
         const w = world();
-        const a = w.host(), b = w.host();
-        a.memory.seen.push({ x: 1, y: 2 });
-        assert.equal(b.memory, a.memory);
+        const a = w.host();
+        await w.wv.onWorkerHost(a, async () => { a.memory.seen.push({ x: 1, y: 2 }); return "done"; });
+        assert.deepEqual([...w.host().memory.seen].map((p) => [p.x, p.y]), [[1, 2]]);
         w.wv.seedRun("run-2", 3);
-        assert.notEqual(w.wv.workerVisionHost("run-2", 3, "doc-3").memory, a.memory);
+        assert.equal(w.wv.workerVisionHost("run-2", 3, "doc-3").memory.seen.length, 0);
     });
 });

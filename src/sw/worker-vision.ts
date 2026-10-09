@@ -152,24 +152,26 @@ export function workerVisionChat(runId: string, prompt: string, o: { images: str
     return runChat(runId, oneShotRequest(prompt, { images: o.images, model: o.model, maxTokens: o.maxTokens, numCtx: o.numCtx, session: hintSession(runId) }));
 }
 
-/** Each run's vision memory in the worker: the spots look and locate already showed its driver, and the boundary notes
- *  already appended. Worker memory only, so an eviction forgets it and a repeated crop or note is shown again. */
-const memories = new Map<string, VisionMemory>();   // see the defineState below
+/** Each run's vision memory in the worker, for the one document it is about: the spots look and locate already showed
+ *  its driver there, and the boundary notes already appended. A new document starts it empty (what page A showed must
+ *  not suppress page B's feedback). Worker memory only, so an eviction forgets it and a repeated crop or note is shown
+ *  again. */
+const memories = new Map<string, { documentId: string; memory: VisionMemory }>();   // see the defineState below
 
 defineState({
-    id: "run.vision", scope: "run", realm: "worker", audience: "human", lostOn: ["worker-eviction"], heldOnly: true,
-    describe: "The spots look and locate already showed the model in a run the worker sees for, and the iframe and shadow-root notes already given, so neither is repeated.",
+    id: "run.vision", scope: "run", realm: "worker", audience: "human", lostOn: ["worker-eviction", "navigation"], heldOnly: true,
+    describe: "The spots look and locate already showed the model on the run's current page, and the iframe and shadow-root notes already given there, so neither is repeated.",
     read: ({ runId }) => {
-        const m = runId ? memories.get(runId) : undefined;
+        const m = runId ? memories.get(runId)?.memory : undefined;
         return m ? { seen: m.seen.map((p) => ({ x: p.x, y: p.y })), boundariesSeen: [...(m.boundariesSeen ?? [])] } : undefined;
     },
 });
 
-/** A run's vision memory in the worker, made empty on first use. */
-export function visionMemoryFor(runId: string): VisionMemory {
+/** A run's vision memory in the worker for `documentId`, made empty on first use and whenever the document changes. */
+export function visionMemoryFor(runId: string, documentId: string): VisionMemory {
     let m = memories.get(runId);
-    if (!m) { m = { seen: [], boundariesSeen: new Set() }; memories.set(runId, m); }
-    return m;
+    if (!m || m.documentId !== documentId) { m = { documentId, memory: { seen: [], boundariesSeen: new Set() } }; memories.set(runId, m); }
+    return m.memory;
 }
 
 /** Forget a run's vision memory, when its worker tools are dropped. */

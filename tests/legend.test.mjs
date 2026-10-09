@@ -73,8 +73,8 @@ test("clipVisibleText: a line the crop clips >50% VERTICALLY is dropped (unreada
 // --- formatLegend (pure): grouped lines + suppress-empty --------------------------------------------
 test("formatLegend: grouped lines for each non-empty category", () => {
     const s = formatLegend({
-        controls: [{ name: "«Reveal secret»", selector: "#b" }],
-        media: [{ name: "img «logo»", selector: ".logo" }],
+        controls: [{ name: "Reveal secret", role: "button", selector: "#b" }],
+        media: [{ kind: "img", name: "logo", selector: ".logo" }],
         text: [{ text: "XORG-4242", selector: ".secret" }],
         boundaries: [{ kind: "cross-frames", count: 1, selectors: ["#f2"] }],
         moreControls: 0, moreMedia: 0,
@@ -93,7 +93,7 @@ test("formatLegend: nothing notable → empty string (suppress-empty)", () => {
 test("formatLegend: a `seen` set dedups the BOUNDARIES line across calls (not controls/text)", () => {
     const seen = new Set();
     const lg = () => ({
-        controls: [{ name: "«Go»", selector: "#g" }],
+        controls: [{ name: "Go", role: "button", selector: "#g" }],
         text: [{ text: "VAL", selector: ".v" }],
         media: [],
         boundaries: [{ kind: "same-frames", count: 1, selectors: ["#f"] }],
@@ -119,7 +119,7 @@ test("boundaryLine: each kind of boundary reads as the sentence the page used to
 });
 
 test("formatLegend: truncation counts show as …+N", () => {
-    const s = formatLegend({ controls: [{ name: '"a"', selector: "#a" }], media: [], text: [], boundaries: [], moreControls: 3, moreMedia: 0 });
+    const s = formatLegend({ controls: [{ name: "a", role: "button", selector: "#a" }], media: [], text: [], boundaries: [], moreControls: 3, moreMedia: 0 });
     assert.match(s, /…\+3/);
 });
 

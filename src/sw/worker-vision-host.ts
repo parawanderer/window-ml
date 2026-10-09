@@ -10,6 +10,7 @@
 // Nothing builds one yet: look and locate move onto it in later PRs (docs/spec/SITE_ACCESS.md, slice 2 part 3).
 
 import type { GeoView, Geometry, Shot, StitchBegin, TargetQuery, VisionHost } from "../tools/vision-host";
+import type { VisionMemory } from "../contract/contract-render";
 import { shootVia } from "../ml/ml-vision";
 import { workerRaster, type Raster } from "../raster";
 import { checkGeometry, DPR_MAX, GEOMETRY_MOVED, GEOMETRY_REFUSED, GEOMETRY_SLOW, GEOMETRY_UNREACHABLE, STITCH_TILES, type GeoAsked, type GeoOp } from "./geometry-check";
@@ -26,12 +27,25 @@ export const STITCH_MAX_PX = 65_536;
 const DPR_TOLERANCE = 0.02;
 /** How long a capture taken to measure the pixel ratio stays the next capture a body asks for. */
 const PENDING_MS = 2_000;
+/** The smallest scale a capture may have against the page's viewport: Chrome's minimum zoom (25%). Below it the page's
+ *  reported viewport is not the one captured, and every crop would shrink to a sliver. */
+const SCALE_MIN = 0.25;
+/** How far short of the viewport a stitch's height may be: a page no taller than its viewport, less a horizontal
+ *  scrollbar (`innerHeight` counts the scrollbar, `scrollHeight` does not). */
+const STITCH_SHORT_PX = 32;
+
+/** Stitch ids for the whole worker, so two vision calls of one run (one page) never share one. */
+let stitchSeq = 0;   // state: plumbing — only unique within the worker's life; the page ends a reused id's old stitch
 
 
 /** A worker host: a VisionHost that also says whether the call it serves was refused, and why. */
 export interface WorkerVisionHost extends VisionHost {
     /** The first refusal any question of this call met (the sentence for the tool's result), or null. */
     refusal(): string | null;
+    /** The call completed: keep what it added to the run's vision memory (`onWorkerHost` calls it). */
+    commit(): void;
+    /** The call is over: stop watching the tab's navigations (`onWorkerHost` calls it). */
+    end(): void;
 }
 
 /** What a test may set: the per-question bound, the raster (a vm has no OffscreenCanvas), and the capture's bounds. */
@@ -50,25 +64,47 @@ export function workerVisionHost(runId: string, tabId: number, documentId: strin
     const opMs = opts.opMs ?? GEOMETRY_OP_MS;
     let refused: string | null = null;
     let seq = 0;
-    let stitchIds = 0;
     let stitch: { id: number; total: number; tiles: number } | null = null;
     let dims: { w: number; h: number } | null = null;                 // the last capture's pixel size
     let pending: { shot: Required<Shot>; at: number } | null = null;  // a capture taken to measure, not yet handed out
     let noted = false;
 
+    // The run's vision memory for this document, and the call's own copy of it: what the call marks seen is kept only
+    // once the call completes (`commit`), so a refused call leaves nothing behind.
+    const base = visionMemoryFor(runId, documentId);
+    const seen0 = base.seen.length;
+    const memory: VisionMemory = { seen: [...base.seen], boundariesSeen: new Set(base.boundariesSeen) };
+    const discard = (): void => { memory.seen.splice(0, memory.seen.length, ...base.seen); memory.boundariesSeen = new Set(base.boundariesSeen); };
+
+    /** Refuse the call without throwing: the first sentence sticks, and the call's memory is thrown away. */
+    const refuse = (sentence: string): void => { if (!refused) { refused = sentence; discard(); } };
     /** Refuse the call: the first sentence sticks, and is what this and every later question throws. */
-    const fail = (sentence: string): never => { refused ??= sentence; throw new Error(refused); };
+    const fail = (sentence: string): never => { refuse(sentence); throw new Error(refused!); };
+
+    // ANY navigation of the tab's top frame while the call is open ends it: a commit (even one back to the same document
+    // from the back-forward cache, which keeps its id), and a same-document one (pushState, a fragment), which keeps the
+    // document but not the page the geometry described.
+    const onNav = (d: { tabId: number; frameId: number }): void => { if (d.tabId === tabId && d.frameId === 0) refuse(GEOMETRY_MOVED); };
+    const nav = chrome.webNavigation;
+    const events = [nav?.onCommitted, nav?.onHistoryStateUpdated, nav?.onReferenceFragmentUpdated].filter(Boolean) as { addListener(fn: typeof onNav): void; removeListener(fn: typeof onNav): void }[];
+    for (const e of events) e.addListener(onNav);
+    const end = (): void => { for (const e of events) e.removeListener(onNav); };
     /** Whether the tab still holds the call's document. */
     const sameDocument = async (): Promise<boolean> => (await topDocument(tabId).catch(() => null)) === documentId;
 
     /** Ask the page one question, and rebuild its answer. */
+    /** Send one question, pinned to the call's document. */
+    const send = (op: GeoOp, args: Record<string, unknown>, n: number, stitchId?: number): Promise<unknown> => {
+        const geometry = { ...args, seq: n, op, ...(stitchId !== undefined ? { stitch: stitchId } : {}) };
+        return Promise.resolve().then(() => delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, geometry } }, documentId));
+    };
+
     const ask = async (op: GeoOp, args: Record<string, unknown>, asked: GeoAsked = {}, stitchId?: number): Promise<unknown> => {
         if (refused) throw new Error(refused);
         const n = ++seq;
-        const geometry = { ...args, seq: n, op, ...(stitchId !== undefined ? { stitch: stitchId } : {}) };
         const SLOW = Symbol("slow");
         let timer: ReturnType<typeof setTimeout> | undefined;
-        const sent = Promise.resolve().then(() => delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, geometry } }, documentId));
+        const sent = send(op, args, n, stitchId);
         sent.catch(() => { /* a late failure after the timeout is already a refusal */ });
         let env: unknown;
         try {
@@ -78,6 +114,7 @@ export function workerVisionHost(runId: string, tabId: number, documentId: strin
             return fail((await sameDocument()) ? GEOMETRY_UNREACHABLE : GEOMETRY_MOVED);
         } finally { clearTimeout(timer); }
         if (env === SLOW) return fail(GEOMETRY_SLOW);
+        if (refused) throw new Error(refused);   // the tab navigated while the page answered
         const g = (env as { geometry?: unknown } | null)?.geometry as { seq?: unknown; stitch?: unknown; reply?: unknown; error?: unknown } | undefined;
         if (!g || typeof g !== "object" || g.seq !== n || g.error !== undefined || (stitchId !== undefined && g.stitch !== stitchId)) return fail(GEOMETRY_REFUSED);
         const checked = checkGeometry(op, g.reply, asked);
@@ -100,7 +137,7 @@ export function workerVisionHost(runId: string, tabId: number, documentId: strin
      */
     const scaleFor = (v: GeoView, d: { w: number; h: number }): number => {
         const sw = d.w / v.w, sh = d.h / v.h;
-        if (!(sw > 0 && sw <= DPR_MAX)) return fail(GEOMETRY_REFUSED);
+        if (!(sw >= SCALE_MIN && sw <= DPR_MAX)) return fail(GEOMETRY_REFUSED);
         const off = Math.abs(sw - v.dpr) > DPR_TOLERANCE * v.dpr;
         // A shorter capture is a crop of the top (as under the debugger's infobar), so the width decides; a height that
         // disagrees is only noted.
@@ -135,10 +172,13 @@ export function workerVisionHost(runId: string, tabId: number, documentId: strin
         focus: async () => ask("focus", {}) as ReturnType<Geometry["focus"]>,
         stitchBegin: async () => {
             // The stitch's pixel ratio sizes its canvas, so it is the measured one too.
-            const { dpr } = await geo.view();
-            const id = ++stitchIds;
+            const v = await geo.view();
+            const dpr = v.dpr;
+            const id = ++stitchSeq;
             scrolled();
             const b = await ask("stitchBegin", {}, {}, id) as StitchBegin;
+            // The stitch steps by the viewport the worker just measured, and covers at least about one of it.
+            if (Math.abs(b.vh - v.h) > 1 || b.total < b.vh - STITCH_SHORT_PX) return fail(GEOMETRY_REFUSED);
             if (b.total * dpr > STITCH_MAX_PX) return fail(GEOMETRY_REFUSED);
             stitch = { id, total: b.total, tiles: 0 };
             return { ...b, dpr };
@@ -156,9 +196,14 @@ export function workerVisionHost(runId: string, tabId: number, documentId: strin
             stitch = null;
             if (!s) return;
             scrolled();
-            // Restores the page's scroll and overlays. Not sent once the call is refused (the page is gone, or is the
-            // one that broke it), and never throws over the stitch's own error: a failure here is still the call's refusal.
-            if (refused) return;
+            // Restores the page's scroll and overlays, so it is sent even after a refusal while the tab still holds the call's
+            // document (best effort, bounded, its answer unread), and never throws over the stitch's own error.
+            if (refused) {
+                if (!(await sameDocument())) return;
+                let timer: ReturnType<typeof setTimeout> | undefined;
+                await Promise.race([send("stitchEnd", {}, ++seq, s.id).catch(() => undefined), new Promise((r) => { timer = setTimeout(r, opMs); })]).finally(() => clearTimeout(timer));
+                return;
+            }
             await ask("stitchEnd", {}, {}, s.id).catch(() => undefined);
         },
     };
@@ -180,8 +225,16 @@ export function workerVisionHost(runId: string, tabId: number, documentId: strin
             return workerVisionChat(runId, prompt, o);
         },
         raster: opts.raster ?? workerRaster,
-        memory: visionMemoryFor(runId),
+        memory,
         refusal: () => refused,
+        commit: () => {
+            if (refused) return;
+            const into = visionMemoryFor(runId, documentId);
+            if (into !== base) return;   // the run's memory moved to another document meanwhile
+            into.seen.push(...memory.seen.slice(seen0));
+            for (const b of memory.boundariesSeen ?? []) into.boundariesSeen?.add(b);
+        },
+        end,
     };
     return host;
 }
@@ -196,10 +249,13 @@ export function workerVisionHost(runId: string, tabId: number, documentId: strin
 export async function onWorkerHost<T>(host: WorkerVisionHost, body: () => Promise<T>): Promise<T | string> {
     try {
         const r = await body();
-        return host.refusal() ?? r;
+        const refused = host.refusal();
+        if (refused) return refused;
+        host.commit();
+        return r;
     } catch (e) {
         const r = host.refusal();
         if (r) return r;
         throw e;
-    }
+    } finally { host.end(); }
 }
