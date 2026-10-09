@@ -29,6 +29,7 @@ import { resolveOutputCap } from "../contract/contract-pointers";
 import { recordAppended, snapshotCurrent, type CurrentSnapshot, type RecordedMeta } from "./current-context";
 import type { RunLogEvent } from "../log/run-log";
 import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, shortType, isAliasRef, parseLabel, DEREF_TOOL, type TokenKind, type TokenValue, type DerefRead } from "../pointers/token-pipe";
+import { CITABLE_TOOLS } from "../tools/tool-params";
 
 export type Approval = "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled";
 /** What the loop knows about a tool besides running it: its name, whether it asks first, and where it runs. */
@@ -246,11 +247,6 @@ function formatChatMeta(
  *  paragraph before acting (wasted completion tokens on a split-second visual check). Shared by the page
  *  loop and the background host so the two can't drift. */
 export const shotTurnMessage = (labels: string, count: number): string => `[Screenshot${count > 1 ? "s" : ""}: ${labels}]`;
-
-// The tools whose output is CITABLE with an `@tool:` token — they expose the opt-in `token` param, and (when
-// tool tokens are on) get a stable id minted onto every non-failed call so the answer renderer can resolve a
-// reference to it. Shared with injected.ts's per-call param injection so the two can't drift.
-export const CITABLE_TOOLS = new Set(["exec", "python_exec", "look", "locate", "fetch_url", "agent_api_docs"]);   // agent_api_docs is here for the POINTER, not for citation: the reference is ~120 KB and it was the one output the pipe dialect could not reach
 
 export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() => number); signal?: AbortSignal | null; unattended?: boolean;
     // Tool tokens: when set (+ a runHash to seed the id), a tool RESULT that has a rich render (renderIn/

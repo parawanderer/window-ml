@@ -8,7 +8,7 @@ import type { RenderDescriptor, ToolFeedback } from "../contract/contract-render
 import type { DerefRead } from "../pointers/token-pipe";
 import { AnswerSet } from "../pointers/answer-set";
 import { validateArgs } from "./validate";
-import { takeCallTitle } from "./tool-params";
+import { CALL_TITLE, CITABLE_TOOLS, takeCallTitle } from "./tool-params";
 import { errText } from "../dom/dom";
 
 // `agent_api_docs`'s within-burst dedup memory is per RUN, but `toolContext` is rebuilt on every
@@ -137,7 +137,13 @@ export async function executeTool(tool: MlTool, args: Record<string, unknown>, c
     // so short-circuit with the schema error. Softer issues (unknown/extra prop, bad enum, type
     // mismatch) don't block — the tool runs and we PREPEND the note, so a lenient validator never
     // rejects a legitimate call.
-    const issues = validateArgs(tool.parameters, args);
+    // The RUN offers two parameters the tool's own schema may not carry: `title` on every tool, and `token` on the
+    // citable ones when tool tokens are on (run-assembly.ts). A tool that runs in the PAGE validates against its
+    // own copy, so without this the model was told "unknown property" for a parameter it was given (GPT-6 Luna,
+    // 2026-10-09). Neither reaches the tool: the title is taken below, the token by the loop.
+    const { [CALL_TITLE]: _title, ...checked } = args;
+    if (CITABLE_TOOLS.has(tool.name)) delete checked.token;
+    const issues = validateArgs(tool.parameters, checked);
     if (issues.some(s => s.startsWith("missing required"))) {
         // "Error:" so the sidebar's toolFailed marks the step failed (red dot), not green — it never ran.
         return { result: `Error: invalid arguments for "${tool.name}" — ${issues.join("; ")}. Call it again with the correct argument name(s).` };
