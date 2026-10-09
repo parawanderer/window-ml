@@ -334,6 +334,9 @@ export function decideApproval(policy, gate) {
     return true;   // auto
 }
 
+/** The scripted fake LLM's model name: every model call of a fake run, and the seed turn of a seeded one. */
+export const FAKE_MODEL = "fake-model";
+
 /**
  * Drive one agent run end to end and return everything it produced.
  *
@@ -377,8 +380,9 @@ export function decideApproval(policy, gate) {
  *   the worker, with the kit a UI run gets (click, type, python_exec, chat_metadata) and its prompt clauses, and each
  *   later turn sent as that person's message. Null (the default) is a console run, `ml.agent` from the page. `tools`,
  *   `python`, `toolTokens`, `agentOptions` and `seed` are the console run's knobs and do not apply.
- * @returns {Promise<{events, session, runMd, runJson, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, models, seedBoundaryStep, captured, stream}>}
- *   `stream` is whether the run asked to stream; its `agent-stream` events say whether it did.
+ * @returns {Promise<{events, session, runMd, runJson, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, models, seedBoundaryStep, seedMs, captured, stream}>}
+ *   `stream` is whether the run asked to stream; its `agent-stream` events say whether it did. `seedMs` is how long a
+ *   seeded run's scripted first turn took (0 unseeded); `runMs` includes it.
  */
 export async function runOnce(cfg = {}) {
     const {
@@ -395,7 +399,7 @@ export async function runOnce(cfg = {}) {
     const { dump, settle } = makeDumper(artDir);
 
     // A seeded run needs the fake even WITH a real backend: turn 1 is scripted, turn 2 is the real model.
-    const fake = (backend && !cfg.seed) ? null : await startFakeLlm({ model: "fake-model" });
+    const fake = (backend && !cfg.seed) ? null : await startFakeLlm({ model: FAKE_MODEL });
     const site = await startPageServer({});
     // A window only when someone is watching: `hold` (observe's WATCH) or an explicit focusSidebar
     // request means a human is looking at it. A bench cell is neither.
@@ -414,13 +418,13 @@ export async function runOnce(cfg = {}) {
         const realCfg = {
             chatUrl: backend ? backend.chatUrl : fake.url,
             apiKey: backend?.key || "",
-            model: backend ? backend.model : "fake-model",
+            model: backend ? backend.model : FAKE_MODEL,
         };
         // Only when seeding. `fake` is NULL whenever a real backend is configured and no seed was asked
         // for, and building this unconditionally dereferenced it — so EVERY real-model run crashed here
         // before reaching the browser. It went unnoticed because the seed feature was only ever exercised
         // against the fake, which is exactly the configuration that hides it.
-        const seedCfg = seed && fake ? { chatUrl: fake.url, apiKey: "", model: "fake-model" } : null;
+        const seedCfg = seed && fake ? { chatUrl: fake.url, apiKey: "", model: FAKE_MODEL } : null;
         // GENERATED TRAFFIC, said so on every request (`hint.synthetic`): a patched ollama serves it exactly like
         // real traffic but keeps it out of what it learns keep-alive and placement from. Observe and the bench
         // both drive this profile, and neither is a person using the box.
@@ -483,7 +487,7 @@ export async function runOnce(cfg = {}) {
         // not interpretable without knowing which was which. Reported even when unused: "no vision model
         // was configured" is itself an answer to why a run never looked at anything.
         const models = {
-            driver: backend?.model || "fake-model",
+            driver: backend?.model || FAKE_MODEL,
             vision: backend?.visionModel || null,
             utility: backend?.utilityModel || null,
         };
@@ -515,7 +519,7 @@ export async function runOnce(cfg = {}) {
         })();
 
         let result = null, error = null;
-        let seedBoundaryStep = -1;
+        let seedBoundaryStep = -1, seedMs = 0;
         let extraTurns = 0;   // turns `nextTurn` added
         // A seeded or multi-turn run is driven from NODE, one turn at a time, so the backend can be swapped
         // between turns and the seed boundary recorded. A plain single-turn run still goes through
@@ -623,6 +627,7 @@ export async function runOnce(cfg = {}) {
                 await startTurn(seed.task);
                 await awaitResults(++turnsDone, deadline);
                 seedBoundaryStep = maxStep();
+                seedMs = Date.now() - t0;   // the scripted turn's wall time, which the measured turn's `runMs` leaves out
                 // Swap to the MEASURED backend mid-session. Config is chrome.storage.sync — the run's history,
                 // its pointer store and its session hash are all untouched by the change.
                 await configureExtension(ext.sw, { ...realCfg, apiFormat: backend?.apiFormat || "openai" });
@@ -693,7 +698,7 @@ export async function runOnce(cfg = {}) {
             await new Promise((resolve) => { ext.context.on("close", resolve); process.on("SIGINT", resolve); });
         }
 
-        return { events, session, runMd: md, runJson: json, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, models, seedBoundaryStep, captured,
+        return { events, session, runMd: md, runJson: json, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, models, seedBoundaryStep, seedMs, captured,
             stream: stream ?? (surface ? false : agentOptions.stream === true) };
     } catch (thrown) {
         // An UNEXPECTED failure — the interesting one. A capture in `finally` would run after the context

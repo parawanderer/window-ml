@@ -397,7 +397,9 @@ export function focusStep(run) {
 }
 
 export function measureRun(run, task = {}, opts = {}) {
-    const { result = null, runMs = 0, error = null, approvals = [] } = run;
+    const { result = null, error = null, approvals = [] } = run;
+    // The measured turns' time: a seeded run's scripted first turn is the spec's history, not the model's work.
+    const runMs = Math.max(0, (run.runMs ?? 0) - ((run.seedBoundaryStep ?? -1) >= 0 ? (run.seedMs ?? 0) : 0));
     const events = afterSeed(run.events || [], run.seedBoundaryStep ?? -1);
     const k = opts.k ?? 40;
     const done = resultOf(events);

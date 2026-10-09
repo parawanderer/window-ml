@@ -400,6 +400,13 @@ test("focusStep rides on the measurement, so the index needs no second pass over
     assert.deepEqual(measureRun({ events: ev, runMs: 10 }, {}).focus, { step: 1, tool: "exec", why: "tool error" });
 });
 
+test("measureRun: a seeded run's seconds are its measured turns', without the scripted turn's", () => {
+    const events = [{ kind: "agent-step", step: 0, thought: "seed" }, { kind: "agent-result", summary: "s" }, { kind: "agent-step", step: 1, thought: "real" }, { kind: "agent-result", summary: "r" }];
+    assert.equal(measureRun({ events, runMs: 10_000, seedMs: 3000, seedBoundaryStep: 0 }).runMs, 7000);
+    assert.equal(measureRun({ events, runMs: 10_000, seedMs: 3000, seedBoundaryStep: -1 }).runMs, 10_000, "unseeded: all of it");
+    assert.equal(measureRun({ events, runMs: 10_000, seedBoundaryStep: 0 }).runMs, 10_000, "a run recorded before seedMs existed is unchanged");
+});
+
 // --- streaming as a knob: which runs stream, and whether they did ---
 
 test("cellStream: the cell's stream, then its agentOptions, then the task's; unset, a UI surface streams and a console run does not", () => {

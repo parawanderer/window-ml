@@ -20,7 +20,7 @@ import { ThemeToggle, applyTheme, readTheme } from "./theme";
 import { signed } from "../../../../src/sidebar/interval-bar";
 import { laneScoped, resWindowS, zoomRange } from "../../../../src/sidebar/store";
 import { installChartKeys } from "../../../../src/sidebar/resource/resource-chart";
-import { cloudModels } from "../../../../src/sidebar/palette";
+import { cloudModels, scriptedModels } from "../../../../src/sidebar/palette";
 
 declare global { interface Window { __BENCH_STATE__?: BenchState } }
 
@@ -165,12 +165,14 @@ function fitFinished(s: BenchState | null | undefined) {
     fitted = true;
 }
 
-/** The sweep's cloud models get their own shade wherever a model is coloured (palette.ts `cloudModels`); set before the
- *  state renders, and only when the list changed, so a live update does not recolour every bar for nothing. */
+/** The sweep's cloud models get their own shade wherever a model is coloured (palette.ts `cloudModels`), and a seeded
+ *  run's script a neutral one (`scriptedModels`); set before the state renders, and only when a list changed, so a live
+ *  update does not recolour every bar for nothing. */
 function markCloud(s: BenchState | null | undefined) {
-    const next = s?.cloud ?? [];
-    const cur = cloudModels.value;
-    if (next.length !== cur.size || next.some((m) => !cur.has(m))) cloudModels.value = new Set(next);
+    for (const [sig, next] of [[cloudModels, s?.cloud ?? []], [scriptedModels, s?.scripted ?? []]] as const) {
+        const cur = sig.value;
+        if (next.length !== cur.size || next.some((m) => !cur.has(m))) sig.value = new Set(next);
+    }
 }
 
 applyTheme(readTheme());

@@ -8,7 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { timelineText } from "../tests/e2e/bench/timeline-text.mjs";
+import { timelineText, labelSeed, SEED_LABEL } from "../tests/e2e/bench/timeline-text.mjs";
 import { addMark, readMarks } from "../tests/e2e/bench/mark.mjs";
 import { checkMarks } from "../tests/e2e/interview.mjs";
 
@@ -37,6 +37,17 @@ test("timeline.md: a run still going is drawn to `now`; runs that never met have
     assert.match(md, /None: every run had the machine to itself/);
     assert.match(md, /2 cached run\(s\) are left out/);
     assert.match(timelineText(null, () => ""), /No run has events/);
+});
+
+test("timeline.md: a seeded run's scripted first turn is named as the spec's script, not as the fake model", () => {
+    const events = labelSeed([
+        ev("run", 0, 1000, { model: "fake-model", label: "run 1/2 · fake-model" }),
+        ev("run", 1000, 4000, { model: "qwen3:8b", label: "run 2/2 · qwen3:8b" }),
+    ], "fake-model");
+    assert.deepEqual(events.map((e) => [e.model, e.label]), [[SEED_LABEL, `run 1/2 · ${SEED_LABEL}`], ["qwen3:8b", "run 2/2 · qwen3:8b"]]);
+    const md = timelineText({ now: 4000, runs: [{ index: 0, events }] }, () => "a");
+    assert.match(md, /seed \(scripted, from the spec\)/);
+    assert.doesNotMatch(md, /fake-model/);
 });
 
 // --- marks from the command line ---

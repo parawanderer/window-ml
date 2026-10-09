@@ -36,7 +36,7 @@ import { mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { runOnce, resolveBackendFromEnv, renderRun } from "../run-once.mjs";
+import { runOnce, resolveBackendFromEnv, renderRun, FAKE_MODEL } from "../run-once.mjs";
 import { measureRun, aggregate } from "./metrics.mjs";
 import { expandCells, cellKey, cellPath, comboLabel, buildGroups, parseSelector, slug, cellSurface, cellStream } from "./cells.mjs";
 import { writeReport, mdSink, terminalSink } from "./sinks.mjs";
@@ -44,7 +44,7 @@ import { startDashboard, staticPage } from "./serve.mjs";
 import { pageSources } from "./page/bundle.mjs";
 import { addMark, readMarks, defaultBy } from "./mark.mjs";
 import { recordSweep, specProvenance, specText } from "./sweeps.mjs";
-import { timelineText } from "./timeline-text.mjs";
+import { timelineText, labelSeed, SEED_LABEL } from "./timeline-text.mjs";
 import { memoryText } from "./resource-poll.mjs";
 import { startBox, openBoxLog, BOX_DB } from "./box-stream.mjs";
 import { repoUrl } from "../../../scripts/gen-build-info.mjs";
@@ -448,7 +448,11 @@ const main = async () => {
     const laneEvents = cells.map(() => null);
     let ganttAt = 0, gantt = null;
     ctx.rawOf = (i) => raw[i];
-    ctx.finalSession = (i, session) => { laneEvents[i] = session ? eventsFrom([session]) : []; raw[i] = []; ganttAt = 0; };
+    // A seeded cell against a real model runs its first turn on the fake LLM: named as the spec's script, not as a model.
+    const seededOf = (c) => !!c.task.seed && !!(c.effects.backend || backend);
+    const lane = (i, events) => (seededOf(cells[i]) ? labelSeed(events, FAKE_MODEL) : events);
+    const scripted = cells.some(seededOf) ? [SEED_LABEL] : [];
+    ctx.finalSession = (i, session) => { laneEvents[i] = session ? lane(i, eventsFrom([session])) : []; raw[i] = []; ganttAt = 0; };
     const sweepTimeline = () => {
         if (Date.now() - ganttAt < 2000 && gantt) return gantt;
         ganttAt = Date.now();
@@ -457,7 +461,7 @@ const main = async () => {
             if (runsState[i].cached) return null;
             if (laneEvents[i]) return laneEvents[i];
             if (runsState[i].state !== "running" || !raw[i].length) return null;
-            try { const { session } = renderRun(raw[i]); return session ? eventsFrom([session], now) : null; } catch { return null; }
+            try { const { session } = renderRun(raw[i]); return session ? lane(i, eventsFrom([session], now)) : null; } catch { return null; }
         });
         const runs = evs.flatMap((events, index) => (events?.length ? [{ index, events }] : []));
         gantt = runs.length ? { runs, now } : null;
@@ -466,7 +470,7 @@ const main = async () => {
     const push = () => dash?.update({
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
         runs: runsState, rows: aggregateRows(cells, results),
-        started, finished: null, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: liveScores, cloud, repo,
+        started, finished: null, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: liveScores, cloud, scripted, repo,
         resources: resPoll?.resources() ?? null,
     });
     ctx.liveOf = (i) => runsState[i].live;
@@ -559,7 +563,7 @@ const main = async () => {
     const pageState = {
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
         runs, rows, started, finished, jobs: args.jobs, dirty, fingerprint, pdf: args.pdf, interviews, skipped, spec: provenance,
-        scores: scoreLines("../scores.html"), cloud, repo,
+        scores: scoreLines("../scores.html"), cloud, scripted, repo,
         resources: resPoll?.resources() ?? null,
         timeline: (ganttAt = 0, sweepTimeline()),
     };
@@ -598,7 +602,7 @@ const main = async () => {
     if (dash) {
         dash.update({
             name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
-            runs: runsState, rows, started, finished, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: scoreLines("/scores"), cloud, repo,
+            runs: runsState, rows, started, finished, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: scoreLines("/scores"), cloud, scripted, repo,
             resources: pageState.resources,
         });
         // Held open on purpose: the page IS the result when you ran with --serve, and tearing the server

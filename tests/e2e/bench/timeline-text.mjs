@@ -1,6 +1,15 @@
 // timeline-text.mjs — the sweep timeline as text, for a model reading the bench from the command line: the same data the
 // page's Timeline card draws (each run's events, the resource panel's `eventsFrom`), written as timeline.md. Pure.
 
+/** What a seeded run's scripted first turn is called wherever the timeline names its model: the page, timeline.md and
+ *  page.json. Not a model: the history the spec replays through the fake LLM before the measured model takes over. */
+export const SEED_LABEL = "seed (scripted, from the spec)";
+
+/** A seeded run's events with the fake LLM's name (`fakeModel`) replaced by `SEED_LABEL`, in the model and the label. */
+export function labelSeed(events, fakeModel) {
+    return events.map((e) => (e.model === fakeModel ? { ...e, model: SEED_LABEL, label: String(e.label).split(fakeModel).join(SEED_LABEL) } : e));
+}
+
 /** A duration: milliseconds under a second (a fake-model run takes a few), else seconds. */
 const span = (ms) => (ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`);
 

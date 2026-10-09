@@ -74,6 +74,8 @@ export interface BenchState {
     scores?: SweepScores | null;
     /** models the server lists as cloud (not Ollama's), drawn in their own shade (palette.ts `cloudModels`) */
     cloud?: string[];
+    /** names that are a script, not a model (a seeded run's first turn), drawn neutral (palette.ts `scriptedModels`) */
+    scripted?: string[];
     /** the repository's web URL (origin's, as gen-build-info reads it), for links to a commit and a file at it */
     repo?: string | null;
     /** the box's memory over the sweep (resource-poll.mjs), each distinct capacity once; null without readings */

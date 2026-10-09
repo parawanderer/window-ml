@@ -226,6 +226,18 @@ test("a run that asked to stream is tagged streamed, or not streamed when no del
     assert.match(tags[1].dataset.tip, /2 of 3 turns reported usage/);
 });
 
+test("a seeded run's scripted turn is drawn in the neutral colour, never as one more model's hue", async () => {
+    const SEED = "seed (scripted, from the spec)";
+    const doc = await dashboard({
+        dims: ["m"], scripted: [SEED],
+        runs: [{ combo: { m: "a" }, who: "a", taskId: "t", repeat: 0, state: "done", ok: true }],
+        timeline: { now: 4000, runs: [{ index: 0, events: [ev("gen", 0, 1000, { model: SEED, label: SEED }), ev("gen", 1000, 4000, { model: "qwen3:8b" })] }] },
+    });
+    const gens = [...card(doc, "Timeline").querySelectorAll(".rc-ev-gen")];
+    assert.equal(gens[0].style.getPropertyValue("--model"), "var(--fg-faint)");
+    assert.notEqual(gens[1].style.getPropertyValue("--model"), "var(--fg-faint)");
+});
+
 // --- a run's own page ---
 
 test("a run page draws its lane from inert data, with its script admitted by hash and nothing else", () => {
