@@ -16,7 +16,7 @@ const sets = new Map<string, AnswerSet>();   // see the defineState below
 const KEY = (runId: string): string => `ml_answer:${runId}`;
 
 defineState({
-    id: "run.answer", scope: "run", realm: "worker", audience: "model", lostOn: ["turn-end"],
+    id: "run.answer", scope: "run", realm: "worker", audience: "model", lostOn: ["turn-end"], heldOnly: true,
     describe: "What the run will hand you as its result (`ml.answer`): elements, text and `@tool:` values, in order. Held by the worker for a run it built; cleared when a turn starts.",
     read: ({ runId }) => (runId ? sets.get(runId)?.dump() : undefined),
 });

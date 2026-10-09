@@ -163,6 +163,22 @@ test("for a PAGE-hosted run the page fills the worker's members the worker holds
         "a member the worker DOES hold for the run is never the page's to answer, hosted or not");
 });
 
+test("a member the worker lists only where it holds something gives way to the page's for a run it holds nothing for", async () => {
+    // run.answer: the worker holds it for a run it built, the page for a run the page built.
+    R.resetStateRegistry();
+    R.defineState(decl({ id: "run.init", read: ({ runId }) => (runId ? { task: "t" } : undefined) }));
+    R.defineState(decl({ id: "run.answer", heldOnly: true, read: ({ runId }) => (runId === "worker-built" ? [] : undefined) }));
+    const snap = async (runId) => { const entries = await R.readState({ runId }, "human", "worker"); return { members: R.membersFor("worker", entries), entries }; };
+    const mine = await snap("worker-built");
+    assert.deepEqual(mine.members.map((m) => m.id), ["run.answer", "run.init"], "held, even empty: listed as the worker's");
+    assert.deepEqual(R.withPageState(mine, PAGE_REPLY, false).entries.filter((e) => e.id === "run.answer").map((e) => e.realm), ["worker"], "the page cannot answer for it");
+    const pages = await snap("page-built");
+    assert.deepEqual(pages.members.map((m) => m.id), ["run.init"], "not held: not listed, so not drawn as an empty worker member");
+    const merged = R.withPageState(pages, PAGE_REPLY, false);
+    assert.deepEqual(merged.members.filter((m) => m.id === "run.answer").map((m) => m.realm), ["page"], "the page's member shows, labelled as the page's");
+    assert.deepEqual(R.membersFor("worker", []).map((m) => m.id), ["run.init"], "no run: a heldOnly member is not listed");
+});
+
 test("a reply that is not a snapshot is reported, not merged", () => {
     for (const pageHosts of [false, true]) assert.equal(R.withPageState(WORKER, { members: "x" }, pageHosts), null);
 });
