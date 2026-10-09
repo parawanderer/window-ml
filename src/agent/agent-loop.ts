@@ -997,7 +997,13 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const cutLine = tokenId && !mintedView && heldChars
                 ? `\n[your copy is cut: @tool:${tokenId} holds ${heldChars} chars of this output. Read further with dereference and a pipe (grep, sed -n, tail -n) instead of running it again.]`
                 : "";
-            const forModel = `${result}${cutLine}${embedLine}`;
+            // The step budget, said on the last result of a step once few are left: the cap is read live (a handle or
+            // Continue can raise it mid-run), so a number in the system prompt would go stale.
+            const left = maxSteps() - step;
+            const budgetLine = call === msg.tool_calls[msg.tool_calls.length - 1] && left > 0 && left <= 2
+                ? `\n[${left} step${left === 1 ? "" : "s"} left this turn: answer before it runs out, or say what is left undone.]`
+                : "";
+            const forModel = `${result}${cutLine}${embedLine}${budgetLine}`;
             // The DONE event carries the clean `result` for the pretty Out AND — when a token line was appended —
             // `modelResult` (what the model ACTUALLY saw), so the log's raw view stays complete (the AGENTS rule).
             // Folded onto the In render — the slot that already shows the code, since a diff of it belongs
