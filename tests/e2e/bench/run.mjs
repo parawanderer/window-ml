@@ -47,6 +47,7 @@ import { recordSweep, specProvenance, specText } from "./sweeps.mjs";
 import { timelineText } from "./timeline-text.mjs";
 import { memoryText } from "./resource-poll.mjs";
 import { startBox, openBoxLog, BOX_DB } from "./box-stream.mjs";
+import { repoUrl } from "../../../scripts/gen-build-info.mjs";
 import { openScores, modelInfo, runRow, logRuns, readRuns, scoreboard, sweepScores, writeScoreFiles, unscoredTasks, SCORES_DB } from "./scores.mjs";
 import { watch as watchFs } from "node:fs";
 // The sweep's timeline: each run's events as the resource panel derives them; the page draws them with its lane.
@@ -375,11 +376,16 @@ const main = async () => {
     // Which spec this sweep ran and who started it, appended to the sweep's log; the page's Spec card, spec.md and
     // page.json show it beside the diff against the sweep before (sweeps.mjs).
     const specRel = path.relative(ROOT, path.resolve(args.specPath));
-    const provenance = specProvenance(await recordSweep(sweepDir, { specPath: specRel, source: await readFile(args.specPath, "utf8"), fingerprint, dirty, by: defaultBy() }));
+    const provenance = specProvenance(await recordSweep(sweepDir, { specPath: specRel, onDisk: path.resolve(args.specPath), source: await readFile(args.specPath, "utf8"), fingerprint, dirty, by: defaultBy() }));
 
     // The scores log (scores.mjs): every run against a real model, one row each, for the scoreboard. Never the fake's.
     const scores = backend ? await openScores() : null;
-    const info = scores ? await modelInfo(backend) : new Map();
+    // What the server says about each model: digests for the scoreboard, and which are cloud, for their own shade on the page.
+    const info = backend ? await modelInfo(backend) : new Map();
+    const cloud = [...info].filter(([, v]) => v.local === false).map(([k]) => k);
+    // The repository the build came from (origin's URL, as the extension's own build stamp reads it), so the page can
+    // link the build to its commit and the spec to its file there. "" without a remote: no links.
+    const repo = repoUrl() || null;
     const scoreSweep = { name: spec.name, spec: specRel, specHash: provenance?.specHash ?? null, fingerprint, dirty, backend, info, by: defaultBy() };
     const ctx = {
         spec, fingerprint, sweepDir, backend, buildDirs, cache: args.cache, scores, scoreSweep, logged: 0,
@@ -459,7 +465,7 @@ const main = async () => {
     const push = () => dash?.update({
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
         runs: runsState, rows: aggregateRows(cells, results),
-        started, finished: null, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: liveScores,
+        started, finished: null, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: liveScores, cloud, repo,
         resources: resPoll?.resources() ?? null,
     });
     ctx.liveOf = (i) => runsState[i].live;
@@ -551,7 +557,7 @@ const main = async () => {
     const pageState = {
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
         runs, rows, started, finished, jobs: args.jobs, dirty, fingerprint, pdf: args.pdf, interviews, skipped, spec: provenance,
-        scores: scoreLines("../scores.html"),
+        scores: scoreLines("../scores.html"), cloud, repo,
         resources: resPoll?.resources() ?? null,
         timeline: (ganttAt = 0, sweepTimeline()),
     };
@@ -590,7 +596,7 @@ const main = async () => {
     if (dash) {
         dash.update({
             name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
-            runs: runsState, rows, started, finished, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: scoreLines("/scores"),
+            runs: runsState, rows, started, finished, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: scoreLines("/scores"), cloud, repo,
             resources: pageState.resources,
         });
         // Held open on purpose: the page IS the result when you ran with --serve, and tearing the server

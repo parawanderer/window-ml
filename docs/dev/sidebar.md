@@ -130,7 +130,8 @@ them: `Hash` (copy-hash.tsx), `Disclosure` (disclosure.tsx), `Tip`, a label expl
 `Interval`, an estimate on its interval (interval-bar.tsx), `CodeBlock`, a code block with the line-number setting and
 mark tooltip as props (code-block.tsx; ui-kit's `Code` fills them in from the panel), `FilterChips`, show/hide chips
 (filter-chips.tsx), `LaneBars` and the lane tooltip's body `EventTipBody` (resource/event-tip.tsx; the panel's
-`EventTip` wraps it in its hover). Each imports nothing from ui-kit or the store; their CSS stays in sidebar.css, and
+`EventTip` wraps it in its hover), and the chart's keys, `installChartKeys` (resource-chart.tsx; the panel installs it
+while open). Each imports nothing from ui-kit or the store; their CSS stays in sidebar.css, and
 the bench lifts it with `sidebarRules`.
 
 **RULE — use the PANEL'S tooltip, not the browser's `title`.** `cursorTipOn(text)` (ui-kit.tsx) is the

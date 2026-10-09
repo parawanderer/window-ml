@@ -44,7 +44,7 @@ test("an answer is text: markup a model wrote (or copied off a hostile page) is 
             checks: [{ id: "c", turn: 1, quote: "<svg onload=1>", note: "<u>n</u>", here: true, still: true }] }],
     });
     const answers = card(doc, "Answers");
-    assert.equal(answers.querySelectorAll("img, svg, i:not(.spin), u, script").length, 0, answers.innerHTML);
+    assert.equal(answers.querySelectorAll(":not(.foldbtn) > svg, img, i:not(.spin), u, script").length, 0, answers.innerHTML);
     assert.match(answers.querySelector(".txt").textContent, /<img src=x/);
     assert.equal(doc.defaultView.__pwned, undefined);
     assert.match(answers.querySelector(".flag").textContent, /marked wrong.*<svg onload=1>/);
@@ -218,4 +218,70 @@ test("barPaint: a pattern never becomes a gradient stop, for every phase kind", 
         const patterned = fill.startsWith("repeating-") || fill.startsWith("radial-gradient(");
         if (patterned && k !== "wait" && k !== "context") assert.ok(p.overlays.some((o) => o.cls === "rc-ev-pattern" && o.background === fill), `${k} is drawn as an overlay`);
     }
+});
+
+// --- folding cards, cloud shades, the spec's links, the chart's window and keys ---
+
+test("every card after the summary folds to its header from the chevron in its corner; the summary does not", async () => {
+    const doc = await dashboard({ dims: ["m"], runs: [{ combo: { m: "a" }, taskId: "t", repeat: 0, state: "done", who: "a", ok: true }],
+        rows: [{ combo: { m: "a" }, taskId: "t", agg: { runs: 1, errors: 0 } }], columns: [] });
+    assert.equal(doc.querySelector("main > .card").querySelector(".foldbtn"), null, "the summary has no fold");
+    const results = card(doc, "Results");
+    const btn = results.querySelector(":scope > .foldbtn");
+    assert.equal(btn.getAttribute("aria-expanded"), "true");
+    assert.match(btn.getAttribute("data-tip"), /^Hide the results/);
+    btn.click();
+    await new Promise((r) => doc.defaultView.setTimeout(r, 20));
+    assert.ok(results.classList.contains("folded"));
+    assert.equal(btn.getAttribute("aria-expanded"), "false");
+    assert.ok(results.querySelector("table"), "its content stays mounted, hidden by the stylesheet");
+    assert.equal(doc.querySelectorAll("#app [title]").length, 0);
+});
+
+test("the Spec card shows the spec's path on disk, linked to the file at the build's commit; the build links to the commit", async () => {
+    const hash = "118a480b5725bc4fb246e90a948eedc2a44281f3";
+    const spec = { at: "2026-10-09T10:00:00Z", by: "a", specHash: "99c98c58f379", fingerprint: hash, dirty: false, spec: "tests/e2e/bench/specs/x.bench.ts", onDisk: "/home/a/clone/tests/e2e/bench/specs/x.bench.ts",
+        source: "export default {};\n", sweeps: 1, previous: null, changed: null, diff: null, tooBig: false, stat: null, history: [] };
+    const doc = await dashboard({ spec, repo: "https://github.com/o/r" });
+    const links = [...doc.querySelectorAll("#spec a[href]")].map((a) => [a.textContent, a.getAttribute("href")]);
+    assert.deepEqual(links, [
+        ["/home/a/clone/tests/e2e/bench/specs/x.bench.ts", `https://github.com/o/r/blob/${hash}/tests/e2e/bench/specs/x.bench.ts`],
+        [hash, `https://github.com/o/r/commit/${hash}`],
+    ]);
+    assert.ok([...doc.querySelectorAll("#spec a[href]")].every((a) => a.getAttribute("rel")?.includes("noopener")));
+    // A dirty build's commit is not what ran: the tips say so.
+    const dirty = await dashboard({ spec: { ...spec, fingerprint: `${hash}+1a2b3c4d`, dirty: true }, repo: "https://github.com/o/r" });
+    assert.match(dirty.querySelector(`#spec a[href$="/commit/${hash}"]`).getAttribute("data-tip"), /uncommitted changes .* not in that commit/);
+    // No repo known, or a record from before the path was kept: the repo path, as text.
+    const old = await dashboard({ spec: { ...spec, onDisk: null } });
+    assert.equal(old.querySelectorAll("#spec a[href]").length, 0);
+    assert.match(old.querySelector("#spec dd code").textContent, /^tests\/e2e\/bench\/specs\/x\.bench\.ts$/);
+});
+
+test("a cloud model is drawn in its own shade of its hue: a local model keeps the plain hue", async () => {
+    const run = (m) => ({ combo: { model: m }, taskId: "t", repeat: 0, state: "done", who: m, ok: true, models: { driver: m } });
+    const doc = await dashboard({ dims: ["model"], runs: [run("local:7b"), run("cloud.model")], cloud: ["cloud.model"],
+        timeline: { now: 10_000, runs: [0, 1].map((index) => ({ index, events: [ev("run", index * 1000, index * 1000 + 500)] })) } });
+    const swatch = (m) => [...doc.querySelectorAll(".tlfilter .rc-lane-chip")].find((c) => c.textContent.startsWith(m)).querySelector(".swatch").style.background;
+    assert.match(swatch("cloud.model"), /^color-mix\(in srgb, #[0-9a-f]{6} 55%, var\(--fg\)\)$/i);
+    assert.match(swatch("local:7b"), /^(#[0-9a-f]{6}|rgb\()/i);
+});
+
+test("a finished sweep's chart is framed to the sweep, and Esc on the page reaches the chart's keys", async (t) => {
+    const { readSample, packSamples } = await import("../tests/e2e/bench/resource-poll.mjs");
+    const GiB = 1024 ** 3;
+    const info = { compute: { system_compute: { cpu_cores: 8, total_memory: 64 * GiB, free_memory: 32 * GiB, free_swap: 0 }, supported_gpus: [{ gpu_id: "0", name: "CUDA0", runner: "CUDA", total_memory: 24 * GiB, free_memory: 20 * GiB, compute: "8.6", driver: "13" }] } };
+    const fetchImpl = async (url) => ({ ok: true, json: async () => (url.endsWith("/api/ps") ? { models: [] } : info) });
+    const reads = [];
+    for (let k = 0; k < 20; k++) reads.push(await readSample({ chatUrl: "http://box/api/chat/completions" }, { fetchImpl, now: () => 1000 + k * 2000 }));
+    const html = await staticPage({ name: "x", dims: [], runs: [{ combo: {}, taskId: "t", repeat: 0, state: "done", who: "x", ok: true }], rows: [], jobs: 1,
+        started: 5000, finished: 30_000, resources: packSamples(reads), timeline: { now: 30_000, runs: [{ index: 0, events: [ev("run", 6000, 20_000)] }] } });
+    const w = new JSDOM(html, { runScripts: "dangerously", pretendToBeVisual: true }).window;
+    t.after(() => w.close());   // the chart ticks on an interval
+    const tick = () => new Promise((r) => w.setTimeout(r, 30));
+    await tick();
+    assert.ok(w.document.querySelector(".tlchart .rc-scrub"), "framed to 5 s to 30 s, inside the readings' 1 s to 39 s: the strip shows where");
+    w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await tick();
+    assert.equal(w.document.querySelector(".tlchart .rc-scrub"), null, "Esc let go of the frame: the whole of the readings, no strip");
 });

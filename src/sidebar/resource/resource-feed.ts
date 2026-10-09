@@ -17,6 +17,7 @@ import { seenContext } from "../model";
 import { capacity, resourceHistory, layout, streamLive } from "./panel-state";
 import { models, ollamaIds, modelKinds, config, psError, backendAliveAt, loadedModels, backendLoading, sidebarOpen, vramOpen, view, backendError, unreachableIfNothingSaysOtherwise } from "../store";
 import { residencyOf, residentFrom } from "../../resource/residency";
+import { cloudModels } from "../palette";
 
 // Fetch the server's model list via the background worker (privileged fetch);
 // degrade silently if unreachable. Populates the datalists.
@@ -28,6 +29,9 @@ export function fetchModels(): void {
         if (chrome.runtime.lastError || !resp || resp.error) return;
         models.value = resp.data || [];
         ollamaIds.value = resp.ollamaModels ?? null;   // null = provenance unknown (skip cloud detection)
+        // The cloud ones, for their own shade (palette.ts `cloudModels`): listed, and not among Ollama's. Unknown
+        // provenance marks none.
+        cloudModels.value = new Set(ollamaIds.value ? models.value.filter((m) => !ollamaIds.value!.includes(m)) : []);
         if (resp.kinds) modelKinds.value = resp.kinds;
     });
 }

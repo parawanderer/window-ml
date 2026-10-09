@@ -9,6 +9,7 @@ const TASK_TIP = "The spec's task id: what the run was asked to do.";
 import { Hash } from "../../../../src/sidebar/copy-hash";
 import type { BenchState, RunState, Agg } from "./state";
 import { dur } from "./format";
+import { Card } from "./card";
 
 /** A run's directory as a link base, or "" before it has one. */
 export const runDir = (r: RunState, base: string): string => (r.path ? base + encodeURI(r.path) : "");
@@ -51,7 +52,7 @@ export function Flight({ s }: { s: BenchState }) {
     const live = s.runs.filter((r) => r.state === "running");
     if (!live.length) return null;
     return (
-        <section class="card">
+        <Card id="flight" label="what is running">
             <header><h2><Tip tip="The runs in flight: the step against its budget, the tool it is in, and how long it has been going.">Running now</Tip></h2><span class="sub">{live.length} of {s.jobs} job{s.jobs > 1 ? "s" : ""}</span></header>
             <div class="flight">
                 {live.map((r) => (
@@ -62,7 +63,7 @@ export function Flight({ s }: { s: BenchState }) {
                     </div>
                 ))}
             </div>
-        </section>
+        </Card>
     );
 }
 
@@ -97,7 +98,7 @@ function Fmt({ a, digits }: { a?: Agg; digits: number }) {
 /** The aggregate table: one row per (combination x task), mean ± sd over its repeats. */
 export function Results({ s }: { s: BenchState }) {
     return (
-        <section class="card">
+        <Card id="results" label="the results">
             <header><h2><Tip tip="One row per combination and task: the mean over its repeats, ± the sample standard deviation. A dash is not measured. Also in report.md and rows.json.">Results</Tip></h2></header>
             {!s.rows?.length ? <div class="empty">Nothing measured yet.</div> : (
                 <div class="tablewrap"><table>
@@ -109,7 +110,7 @@ export function Results({ s }: { s: BenchState }) {
                     ))}</tbody>
                 </table></div>
             )}
-        </section>
+        </Card>
     );
 }
 
@@ -117,7 +118,7 @@ export function Results({ s }: { s: BenchState }) {
 export function Runs({ s, base }: { s: BenchState; base: string }) {
     const nextUp = s.runs.findIndex((r) => r.state === "pending");
     return (
-        <section class="card">
+        <Card id="runs" label="the runs">
             <header><h2><Tip tip="Every run, in the order of the matrix. The status opens the transcript, at the step that broke when one did.">Runs</Tip></h2></header>
             {!s.runs.length ? <div class="empty">Nothing has started.</div> : (
                 <div class="tablewrap"><table>
@@ -149,6 +150,6 @@ export function Runs({ s, base }: { s: BenchState; base: string }) {
                     })}</tbody>
                 </table></div>
             )}
-        </section>
+        </Card>
     );
 }

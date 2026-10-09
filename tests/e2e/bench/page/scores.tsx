@@ -9,6 +9,7 @@ import { Tip } from "../../../../src/sidebar/help-tip";
 import { ThemeToggle, applyTheme, readTheme } from "./theme";
 import { Hash } from "../../../../src/sidebar/copy-hash";
 import { installTooltipLayer } from "../../../../src/sidebar/tooltip-layer";
+import { cloudModels } from "../../../../src/sidebar/palette";
 import { signed, Interval } from "../../../../src/sidebar/interval-bar";
 import { Disclosure } from "../../../../src/sidebar/disclosure";
 
@@ -168,4 +169,6 @@ function Board({ b }: { b: ScoreBoard }) {
 applyTheme(readTheme());
 installTooltipLayer(document);
 const board = window.__BENCH_SCORES__;
+// Cloud models in their own shade, as on the sweep page (palette.ts `cloudModels`).
+if (board) cloudModels.value = new Set(board.models.filter((m) => m.local === false).map((m) => m.model));
 render(board ? <Board b={board} /> : <main><div class="card"><div class="empty">No scoreboard in this page.</div></div></main>, document.getElementById("app")!);
