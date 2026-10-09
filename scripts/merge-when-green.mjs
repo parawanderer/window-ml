@@ -19,7 +19,7 @@
 // committed or stashed by hand; `--discard` merges anyway. The main clone is only reminded: nothing removes it. A
 // checkout on the branch also keeps its LOCAL branch, and only the remote one is deleted.
 
-import { existsSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
@@ -158,6 +158,8 @@ export async function keepBench(from, to, { sweeps, scoreDbs }) {
         }
         db.exec("DETACH DATABASE wt");
         db.close();
+        // Its rows are in the main clone's now; left here, the worktree would still hold "work in no commit".
+        rmSync(path.join(src, name), { force: true });
     }
     return clashes;
 }

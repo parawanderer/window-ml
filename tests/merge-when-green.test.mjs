@@ -108,4 +108,5 @@ test("keepBench moves sweeps, merges scoreboard rows without doubling one, and l
     assert.ok(existsSync(path.join(wt, B, "clash", "done.json")), "a clash is left where it was");
     const rows = new DatabaseSync(path.join(main, B, "scores.sqlite")).prepare("SELECT run FROM runs ORDER BY run").all().map((r) => r.run);
     assert.deepEqual(rows, ["a", "b", "c"]);
+    assert.ok(!existsSync(path.join(wt, B, "scores.sqlite")), "a merged scoreboard leaves the worktree, so it no longer blocks the merge");
 });
