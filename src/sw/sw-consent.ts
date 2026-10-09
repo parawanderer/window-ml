@@ -67,14 +67,15 @@ export function resolveApproval(key: string, decision: ApprovalDecision): boolea
 // rest, cleared when the exec delegation returns; persisting a URL for the session is button #3 (not this).
 type TabGrants = { sheets: Set<string>; pyCode: Set<string>; fetchUrls?: Set<string>; serverTools: Set<string> };
 
-/** What a tab has been allowed for the session, per grant kind — the ledger `grantsFor` reads and a resolved
- *  approval grows. A page never writes it: only a background run's own `resolve` does. */
-export const pendingGrants = new Map<number, TabGrants>();
+/** What each approved call now running on a tab was allowed, per call: a tab can host two runs, and one call ending must
+ *  not take away another's grants. Minted by `grantsFor`, read through `tabGrants`, dropped by `dropCallGrants` when the
+ *  call returns. A page never writes it: only a background run's own delegation does. */
+export const pendingGrants = new Map<number, Map<object, TabGrants>>();
 defineState({
     id: "grants.call", scope: "run", realm: "worker", audience: "human", lostOn: ["worker-eviction"],
     describe: "What the call now running on the run's tab was allowed when it was approved: sheets, Python code, server tools, fetches inside it.",
     read: ({ tabId }) => {
-        const g = tabId == null ? undefined : pendingGrants.get(tabId);
+        const g = tabId == null ? undefined : tabGrants(tabId);
         return g && { sheets: [...g.sheets], pythonCode: g.pyCode.size, serverTools: [...g.serverTools], fetchOpen: !!g.fetchUrls?.size, fetchUrls: [...(g.fetchUrls ?? [])] };
     },
 });
@@ -143,11 +144,38 @@ export const serverToolKey = (toolId: string, name: string, args: Record<string,
     return `${toolId}\u0000${name}\u0000${a}`;
 };
 
-/** This tab's grant ledger, created empty on first ask — so a caller never has to know whether one exists yet. */
-export const grantsFor = (tabId: number): TabGrants => {
-    let g = pendingGrants.get(tabId);
-    if (!g) { g = { sheets: new Set(), pyCode: new Set(), serverTools: new Set() }; pendingGrants.set(tabId, g); }
+/** One call's grant ledger on a tab, created empty on first ask — so a caller never has to know whether one exists yet.
+ *  @param call the call's own key (an object made per call), so ending it drops only its grants */
+export const grantsFor = (tabId: number, call: object): TabGrants => {
+    let calls = pendingGrants.get(tabId);
+    if (!calls) { calls = new Map(); pendingGrants.set(tabId, calls); }
+    let g = calls.get(call);
+    if (!g) { g = { sheets: new Set(), pyCode: new Set(), serverTools: new Set() }; calls.set(call, g); }
     return g;
+};
+
+/** Drop one call's grants when it returns; the tab's other calls keep theirs. */
+export const dropCallGrants = (tabId: number, call: object): void => {
+    const calls = pendingGrants.get(tabId);
+    if (!calls) return;
+    calls.delete(call);
+    if (!calls.size) pendingGrants.delete(tabId);
+};
+
+/** What the calls now running on a tab were allowed, together: what a sub-op of any of them may do. Undefined when no
+ *  call holds a grant. `fetchUrls` is present when any call is an exec (an exec's own `ml.fetch` is then refused with
+ *  the exec's sentence rather than the plain one). */
+export const tabGrants = (tabId: number): TabGrants | undefined => {
+    const calls = pendingGrants.get(tabId);
+    if (!calls?.size) return undefined;
+    const all: TabGrants = { sheets: new Set(), pyCode: new Set(), serverTools: new Set() };
+    for (const g of calls.values()) {
+        for (const x of g.sheets) all.sheets.add(x);
+        for (const x of g.pyCode) all.pyCode.add(x);
+        for (const x of g.serverTools) all.serverTools.add(x);
+        if (g.fetchUrls) { all.fetchUrls ??= new Set(); for (const x of g.fetchUrls) all.fetchUrls.add(x); }
+    }
+    return all;
 };
 
 /** Whether a message or port comes from one of the extension's OWN pages or frames (the sidebar app, the popup, the

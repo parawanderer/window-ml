@@ -62,7 +62,7 @@ page-hosted one. Several stores exist once per host.
 | --- | --- | --- |
 | Cross-origin navigations approved, which also make fetches to those origins free | `consentedOrigins` (`sw-run-host.ts` closure) | ONE TURN; reset on resume |
 | Sheets approved for `python_exec` | `approvedSheets` (`sw-run-host.ts` closure); page: `approvedSheets` (`ml-agent-run.ts`, page-wide) | one turn; page-hosted: the page |
-| Sub-operations of an approved call: sheets, Python code, server-tool calls, fetches inside an approved `exec` | `pendingGrants` (`sw-consent.ts`) | ONE DELEGATED CALL. Deleted per TAB in `delegateTool`'s `finally`, so two runs on one tab clobber each other |
+| Sub-operations of an approved call: sheets, Python code, server-tool calls, fetches inside an approved `exec` | `pendingGrants` (`sw-consent.ts`), per tab and per CALL; checks read their union (`tabGrants`) | ONE DELEGATED CALL. `delegateTool`'s `finally` drops only its own call's grants (`dropCallGrants`), so two runs on one tab keep theirs |
 | Repeat `ml.fetch` of an approved URL | `fetchConsent` | the tab, until it closes (memory) |
 | One credentialed fetch | `credFetchGrants` | one use |
 | Remembered `confirm()` decisions | `approveOnce.remembered` (`ml-agent-handle.ts`, page) | the gate |

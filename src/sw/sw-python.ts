@@ -2,7 +2,7 @@
 // WASM), the choke point that decides whether a caller may run `full` mode, and the live stdout relay back to
 // whoever is awaiting the run. Created lazily on first use and reused after.
 
-import { senderTrust, pendingGrants, isExtensionSender } from "./sw-consent";
+import { senderTrust, tabGrants, isExtensionSender } from "./sw-consent";
 import { recordHousekeeping } from "./sw-housekeeping";
 import { ensureOffscreen, forgetOffscreen } from "./sw-offscreen";
 import { activeRuns, pageValueSession } from "./sw-runs";
@@ -44,7 +44,7 @@ export interface PythonCaller {
     tabId?: number;
     /** Not a trusted surface or a whitelisted domain: `full` mode needs a grant. Asked only when it matters. */
     untrusted: () => Promise<boolean>;
-    /** Whether `full` mode is approved for exactly this code. Absent: the tab's call grant (`pendingGrants.pyCode`). */
+    /** Whether `full` mode is approved for exactly this code. Absent: the call grants on the tab (`tabGrants(tabId).pyCode`, sw-consent.ts). */
     pyCodeOk?: (code: string) => boolean;
     /** Whether this caller may read a stored table held by `holders`. Absent: a run hosted on its tab, or the tab the
      *  key was disclosed to. */
@@ -111,7 +111,7 @@ export async function runPython(payload: any, requestId: string | undefined, cal
     const wantsFull = !complete && payload?.hardened === false;
     if (wantsFull && await caller.untrusted()) {
         const code = String(payload?.code ?? "");
-        const approved = caller.pyCodeOk ? caller.pyCodeOk(code) : caller.tabId != null && !!pendingGrants.get(caller.tabId)?.pyCode.has(code);
+        const approved = caller.pyCodeOk ? caller.pyCodeOk(code) : caller.tabId != null && !!tabGrants(caller.tabId)?.pyCode.has(code);
         if (!approved) return { error: "Refused: network-enabled (full) Python needs approval on this page — run it through an agent and approve it, or add this site to the approval whitelist." };
     }
     // LIVE stdout streaming (opt-in): record where this run's chunks go.

@@ -26,7 +26,7 @@ import { externalSheetIds, clipOut, isCurrentPage } from "../dom/dom";
 import { extractGrants, fetchUrlLiterals } from "./grant-extract";
 import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
-import { grantsFor, serverToolKey, pendingGrants, pendingApprovals, grantCredFetch, consentFetch, persistGrants, fetchConsent } from "./sw-consent";
+import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, consentFetch, persistGrants, fetchConsent } from "./sw-consent";
 import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
 import { noteRunMechanic } from "./sw-runs";
@@ -460,6 +460,9 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 return { content: r.content, tool_calls: r.tool_calls, reasoning: r.reasoning, usage: r.usage };
             },
             delegateTool: async (name, args, onStream) => {
+                // This call's own key for the grants it mints on the tab (sw-consent.ts): another run on the same tab
+                // ending its call drops only its own.
+                const callKey = {};
                 // The mixed-call refusal again, for the call the precheck never saw: one AUTO-approved because an
                 // earlier call got its sheet approved skips the gate and the precheck with it. Refused before any
                 // grant is minted or anything is sent, with the same two-call steer (the tab grant staying unminted,
@@ -500,7 +503,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 // Scoped to this delegation: cleared in `finally`, so a later call needs its own approval.
                 // An APPROVED exec may fetch inline (ml.fetch) the URLs its code spells out: the person saw them. Only
                 // those, parsed here: the page shares the tab, and an open grant lent it every URL while any exec ran.
-                if (name === "exec") grantsFor(tabId).fetchUrls = new Set(fetchUrlLiterals(String((args as { js?: unknown }).js ?? "")));
+                if (name === "exec") grantsFor(tabId, callKey).fetchUrls = new Set(fetchUrlLiterals(String((args as { js?: unknown }).js ?? "")));
                 // The pointer reads an approved script names, resolved here and sent with it: the page answers only
                 // those, so it cannot read the rest of the run's store while the call is in flight (named-reads.ts).
                 const reads = name === "exec" && typeof (args as { js?: unknown }).js === "string" ? preReadsFor(runId, (args as { js: string }).js) : undefined;
@@ -511,7 +514,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 // grant reading the same thing: a friendly name cannot make the card say one callable
                 // while the grant authorises another.
                 const remote = p.tools.find(t => t.name === name)?.remote;
-                if (remote) grantsFor(tabId).serverTools.add(serverToolKey(remote.toolId, remote.fn, args as Record<string, unknown>));
+                if (remote) grantsFor(tabId, callKey).serverTools.add(serverToolKey(remote.toolId, remote.fn, args as Record<string, unknown>));
                 // A python_exec the WORKER runs gets its grants as the RUN's call grant (worker-tools.ts): on the tab
                 // they were a sheet read with the person's cookies, and full-mode Python, that any script on the
                 // page could use while the call ran. One that needs the page (an image, a selector) still mints the
@@ -521,7 +524,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "").catch(() => { /* nothing granted: fails closed */ });
                     grantRunPython(runId, { sheets: externalSheetIds(args), code: (args as { mode?: string }).mode === "full" ? String((args as { code?: unknown }).code ?? "") : null });
                 } else if (name === "python_exec") {
-                    const g = grantsFor(tabId);
+                    const g = grantsFor(tabId, callKey);
                     // A worker-built run's sheet grant NEVER goes on the tab, even when the call fell back to the
                     // page: the tab is shared with the page, and the minted id is a credentialed read any script on
                     // it can spend (FETCH_SHEET is a run-tab type) while the call runs. A page-built run's loop is
@@ -722,7 +725,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     // the loop injects it into the model's next turn (pushToolImages).
                     return { result: (env?.result || `Error: the page returned nothing for tool "${name}".`) + (execNote ? `\n\n${execNote}` : ""), renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel, images: env?.images, remoteMs: env?.remoteMs };
                 } finally {
-                    pendingGrants.delete(tabId);   // grants were for THIS approved call's sub-ops only
+                    dropCallGrants(tabId, callKey);   // grants were for THIS approved call's sub-ops only; another run's call on the tab keeps its own
                     if (pyInWorker) grantRunPython(runId, null);
                     if (reads) execReads.delete(runId);
                     if (onStream) delegateStreams.delete(runId);   // the call is done — stop routing live chunks to it
