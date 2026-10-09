@@ -397,8 +397,10 @@ Recorded as each slice lands, with the reason.
   One that needs the page mints the tab's FULL-MODE code (the residue part 4 and the vision split take), but a
   worker-built run's EXTERNAL-SHEET grant is never minted on the tab (red-team T2/T3 on #442): a call naming a sheet
   AND a page source is refused before the gate with a steer to two calls, and on the page-leg fallback the page's
-  own `FETCH_SHEET` finds no grant to spend. A mixed call an EARLIER approval of the same sheet auto-approves past
-  that refusal still fails closed the same way, since the grant never lands on the tab.
+  own `FETCH_SHEET` finds no grant to spend. A mixed call an EARLIER approval of the same sheet auto-approves skips
+  the gate and its precheck, so the same refusal runs again where the call is delegated, before any grant or send;
+  the unminted tab grant stays the second layer. The full-mode code grant on the tab for a page-only call is accepted
+  until part 5 removes the run tab's allowance: it is the exact code the person approved.
   A `@tool:` table pointer is not a page source: the precheck reads the args before the loop resolves the pointer to
   a table by value, so a sheet joined with a pointer runs in the worker rather than being refused as mixed.
 - **Owner decisions for exec on a page that is not approved (part 4):** run it isolated, through

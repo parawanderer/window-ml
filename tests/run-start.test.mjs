@@ -963,6 +963,9 @@ async function pageOnlyGrantRun(args, attack, cfg, { pyReply } = {}) {
             // second trigger is for the AUTO-approved mixed call (its sheet was approved by an earlier call): it has
             // no refused step — the attack rides the call's real send, mid-call, with whatever grants it minted live.
             if (attack && msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.approval === "skipped") stolen = await attack(bg);
+            // An AUTO-approved mixed call is refused where it is delegated, so it has no skipped step either: the page
+            // sees the refusal in the step's result, and attacks then.
+            else if (attack && msg.type === "ML_DEBUG_TO_PAGE" && /cannot mix an external Google Sheet/.test(String(msg.event?.result ?? ""))) stolen = await attack(bg);
             if (attack && msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.name === "python_exec" && !msg.payload.renderOnly && !msg.payload.precheck) stolen = await attack(bg);
             if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
             if (msg.payload.finish) { finished = true; return { result: "" }; }
@@ -1000,11 +1003,11 @@ test("a sheet approved for a run's python_exec is readable only by the run, what
 });
 
 test("a sheet approved for a run's python_exec stays off the tab when a later call drags it to the page", T, async () => {
-    // The route the pre-gate refusal does NOT cover: the first (sheet-only) call gets approved, which approves the
-    // SPREADSHEET for the run — so the mixed call's auto-approve sees nothing un-approved, skips the gate AND the
-    // refusal, and goes to the page as the sandbox path. With the sheet grant off the tab (the second clause of the
-    // fix), the page's own FETCH_SHEET mid-call still finds nothing to spend.
-    const { runs, stolen, toPage, asked, reads } = await pageOnlyGrantRun(
+    // The route the pre-gate refusal does not reach: the first (sheet-only) call gets approved, which approves the
+    // SPREADSHEET for the run, so the mixed call's auto-approve sees nothing un-approved and skips the gate AND its
+    // precheck. The same refusal runs where the call is delegated, so the model gets the two-call steer and the page
+    // is sent nothing; the sheet grant staying off the tab (the second layer) is what the page's FETCH_SHEET meets.
+    const { runs, stolen, toPage, asked, reads, toolResults } = await pageOnlyGrantRun(
         [{ code: "return len(s)", tables: { s: SHEET_EDIT } }, { code: "return len(df)", tables: { s: SHEET_EDIT, here: "current" } }],
         (bg) => bg.send({ type: "FETCH_SHEET", payload: { url: SHEET_EXPORT } }, PAGE7),
         { ...config, autoApprovePython: true });
@@ -1012,8 +1015,9 @@ test("a sheet approved for a run's python_exec stays off the tab when a later ca
     assert.equal(runs.length, 1, "positive control: the approved first call ran in the worker");
     assert.match(JSON.stringify(runs[0].tables), /Ada/, "positive control: the first call loaded the sheet");
     assert.equal(asked, 1, `the auto-approved mixed call asked again (${asked} asks) — this test pins the auto path, not the gate`);
-    assert.equal(toPage.length, 1, `positive control: the mixed call reached the page: ${JSON.stringify(toPage).slice(0, 160)}`);
-    assert.ok(stolen !== undefined, "positive control: the page's mid-call FETCH_SHEET was answered");
+    assert.match(toolResults[1] ?? "", /cannot mix an external Google Sheet with a page source/, `the auto-approved mixed call was not refused with the two-call steer: ${JSON.stringify(toolResults).slice(0, 200)}`);
+    assert.equal(toPage.length, 0, `the auto-approved mixed call went to the page: ${JSON.stringify(toPage).slice(0, 160)}`);
+    assert.ok(stolen !== undefined, "positive control: the page's FETCH_SHEET after the refusal was answered");
     assert.match(stolen?.error || "", /Refused/, `the page spent the run-approved sheet through its own FETCH_SHEET: ${JSON.stringify(stolen).slice(0, 160)}`);
     assert.equal(reads, 1, `the sheet was fetched ${reads} times — only the worker's approved first call may fetch it`);
 });

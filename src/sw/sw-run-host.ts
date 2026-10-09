@@ -264,6 +264,15 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     // only reading the pointer back faulted with "nothing has been captured in this run".
     const toolMetas: ToolMeta[] = p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, capabilities: t.capabilities, ...(t.remote ? { remote: t.remote } : {}) }));
     const toolDefs = p.tools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
+    /** The refusal for a worker-built run's python_exec that names BOTH an external sheet and something only the page can
+     *  supply (an image, a selector, `current`), or null. Such a call runs nowhere safely: the worker cannot read the page
+     *  part, and sending it to the page would put the sheet grant on the TAB, where any script on it could spend it while
+     *  the call ran (red-team T3 on #442). Checked in the precheck (before the gate) and where the call is delegated
+     *  (the auto-approved path skips the precheck). */
+    const mixedPythonRefusal = (name: string, args: Record<string, unknown>): string | null =>
+        name === "python_exec" && p.builtBy === "worker" && pageOnlyPython(args) && externalSheetIds(args).length
+            ? "Refused: a python_exec for this run cannot mix an external Google Sheet with a page source (an image, a CSS selector, or \"current\"). Load the sheet in its own call — the worker runs that, and the sheet's rows come back to you — then do the page part in the next call."
+            : null;
     const approvedSheets = new Set<string>();   // external sheets approved this run (isSheetApproved)
     // Cross-origin navigation consent: origins this run may navigate to WITHOUT re-prompting — seeded
     // with the start origin, and each cross-origin nav the user approves is added (so repeat navs to it
@@ -445,6 +454,12 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 return { content: r.content, tool_calls: r.tool_calls, reasoning: r.reasoning, usage: r.usage };
             },
             delegateTool: async (name, args, onStream) => {
+                // The mixed-call refusal again, for the call the precheck never saw: one AUTO-approved because an
+                // earlier call got its sheet approved skips the gate and the precheck with it. Refused before any
+                // grant is minted or anything is sent, with the same two-call steer (the tab grant staying unminted,
+                // below, is the second layer).
+                const mixed = mixedPythonRefusal(name, args);
+                if (mixed) return { result: mixed };
                 // Live output: register this call's stream sink under the runId so a PAGE_TOOL_STREAM chunk
                 // the page posts mid-run reaches the loop's throttled fan. Cleared in the finally below.
                 if (onStream) delegateStreams.set(runId, onStream);
@@ -753,9 +768,8 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 // part, and sending it to the page would put the sheet grant on the TAB, where any script on it could
                 // spend it while the call ran. So it runs nowhere — refused here, BEFORE the gate, rather than putting
                 // the person through approving a call that must then fail (red-team T3 on #442).
-                if (name === "python_exec" && p.builtBy === "worker" && pageOnlyPython(args as Record<string, unknown>) && externalSheetIds(args).length) {
-                    return "Refused: a python_exec for this run cannot mix an external Google Sheet with a page source (an image, a CSS selector, or \"current\"). Load the sheet in its own call — the worker runs that, and the sheet's rows come back to you — then do the page part in the next call.";
-                }
+                const mixed = mixedPythonRefusal(name, args);
+                if (mixed) return mixed;
                 if (!p.tools.some((t) => t.name === name && t.precheck)) return null;
                 const env = await sendTool({ runId, name, args, precheck: true })
                     .catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
