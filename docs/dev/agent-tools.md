@@ -119,6 +119,20 @@ on `pageVisionHost` (`src/dom/page-geometry.ts`), which answers from the DOM, CA
 before; the seam is what lets a worker host ask the same geometry of the page over a message instead
 (`tests/vision-host.test.mjs` drives the bodies over a fake host with no DOM in the process).
 
+**The worker's vision host** (`workerVisionHost`, `src/sw/worker-vision-host.ts`; built, not yet used by a tool). The
+same bodies, with the capture (`workerShot`), the drawing (`workerRaster`) and the model call (`workerVisionChat`) in
+the worker, and only GEOMETRY asked of the page: `RUN_TOOL_IN_PAGE { runId, geometry: { seq, op, ...args } }` through
+`delegateSend`, pinned to one documentId for the whole call, answered by `answerGeometry` (page-geometry.ts) in
+`envelope.geometry` with `seq` (and a stitch's id) echoed. `checkGeometry` (`src/sw/geometry-check.ts`) rebuilds every
+reply field by field (finite numbers clamped to ±1e5, enums, text cut and control characters folded, selectors and
+`@pt`/`@box` tokens refused rather than cut, list caps, mark ids renumbered by the worker) and refuses the whole reply on
+any malformed part; a legend's boundaries cross as data (`LegendBoundary`), phrased by `boundaryLine` on the worker. A
+refusal, a 10 s stall or a document change is the WHOLE call's (`refusal()`, `onWorkerHost` hands it back instead of a
+half result a body made of it). The pixel ratio is the capture's width over the page's viewport width; more than 2% from
+what the page reported, the capture's wins and the run log notes `routing`/`dpr-mismatch`. The worker bounds a stitch
+itself (nine tiles, a canvas of at most 65536 device px). Tests: `tests/geometry-check.test.mjs`,
+`tests/worker-vision-host.test.mjs`.
+
 **Agent self-knowledge (`agent_api_docs`).** The agent had none: asked "how do I call you
 from the console?" it answered from pre-training ("try typing `window`…"), because nothing in
 its context named `window.ml` or the extension. Two pieces fix it. `SELF_CLAUSE` (prompts.ts,

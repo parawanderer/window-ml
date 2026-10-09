@@ -21,7 +21,7 @@ import { expandPointers } from "../pointers/pointer-macro";
 import { columnsViaBackground } from "../tools/deref-read";
 import { preResolvedDeref, type PreRead } from "../pointers/named-reads";
 import { captureVerify, captureVerifyElement } from "../tools/builtin-tools";
-import { pageVisionHost } from "../dom/page-geometry";
+import { pageVisionHost, pageGeometry, answerGeometry, type PageGeometry, type GeometryRequest } from "../dom/page-geometry";
 import { htmlToMarkdown } from "../dom/html-to-md";
 import { clipOut, elLine, errText } from "../dom/dom";
 import { makeAnswerFacade, finalizeAnswer, AnswerLog, type AnswerShapeItem, type AnswerArgs, type AnswerSelection } from "../pointers/answer-set";
@@ -62,6 +62,7 @@ export interface PageRun {
     model?: string | null;         // the run's driver model, for the tools' ToolContext (background-delegated path)
     driverSees?: boolean;          // does the driver see natively (native vs delegated look/locate feedback)
     visionModel?: string | null;   // the resolved vision reader — both carried onto the delegated ToolContext
+    geo?: PageGeometry;            // the run's page geometry, answering the worker's vision host (made on first use)
 }
 
 /** Assemble a delegated run's page-side answer, from its (page-side) AnswerSet: the live nodes →
@@ -109,11 +110,11 @@ const VERIFY_TEXT_MAX = 8000;   // cap the navigate verify:"text" Markdown so a 
 /** A tool of a BACKGROUND-hosted run, executed in the page. Every model call made on its behalf — the tool's
  *  own, and the verify captures below that call vision directly — is labelled as part of the run that caused it
  *  (RequestHint: `use: "agent"`, the run's session). */
-export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
+export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
     return withRunSession(hintSession(runId), () => runDelegatedToolIn(runId, name, args, opts));
 }
 
-async function runDelegatedToolIn(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
+async function runDelegatedToolIn(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
     const run = runs.get(runId);
     if (!run) return { result: `Error: no active agent run "${runId}" on this page (it may have ended).` };
     // A worker-built run's `answer` tool runs in the worker, and asks the page only for a selector's elements: this
@@ -126,6 +127,15 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
             const got = await select(a.selector, typeof a.index === "number" ? a.index : undefined, typeof a.note === "string" ? a.note : undefined, a.show);
             return { result: "", answerSelection: { count: got.count, ...(got.preview ? { preview: got.preview } : {}), ...(got.media?.length ? { media: got.media } : {}) } };
         } catch (e) { return { result: `Error: ${errText(e)}` }; }
+    }
+    // A worker vision host's question about this page's layout (worker-vision-host.ts): answered from the DOM, as plain
+    // data, by the run's own page geometry. No capture, prompt, image or model name comes with it; the worker checks
+    // the answer field by field (geometry-check.ts).
+    if (opts.geometry) {
+        if (!run.geo) run.geo = pageGeometry();
+        const g = opts.geometry;
+        const a = g && typeof g === "object" && typeof g.seq === "number" ? await answerGeometry(run.geo, g) : null;
+        return a ? { result: "", geometry: a } : { result: "Error: this page cannot answer that layout question." };
     }
     // navigate({ verify: "text" / "text-all" }): after the destination page re-adopts, the background rings
     // back HERE to distil the new page's DOM to Markdown (same HTML→Markdown as fetch_url) — a text-only way to
@@ -318,7 +328,7 @@ export function envelopeFrom(tool: MlTool, args: Record<string, unknown>, env: A
 export function installToolDelegation(): void {
     window.addEventListener("message", async (event: MessageEvent) => {
         if (event.source !== window || !event.data || event.data.type !== "PAGE_TOOL_RUN") return;
-        const { callId, runId, name, args, reads, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, stream, finish, summary, answerShape, answerSelect } = event.data as { answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; callId: string; runId: string; name: string; args: Record<string, unknown>; reads?: PreRead[]; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean; summary?: string };
+        const { callId, runId, name, args, reads, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, stream, finish, summary, answerShape, answerSelect, geometry } = event.data as { answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; callId: string; runId: string; name: string; args: Record<string, unknown>; reads?: PreRead[]; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean; summary?: string };
         // The END of a turn of a run the WORKER built (sw-run-host.ts): no page-side caller exists to assemble its
         // answer, so the worker asks for it. Ends the run's registration here, as the page path's caller does.
         if (finish) {
@@ -335,7 +345,7 @@ export function installToolDelegation(): void {
             try { window.postMessage({ type: "PAGE_TOOL_STREAM", runId, chunk, ts, ...(skipped ? { skipped } : {}) }, "*"); } catch { /* non-cloneable → drop */ }
         }) : null;
         const onStream = sender ? (chunk: string, ts?: number) => sender.push(chunk, ts) : undefined;
-        const envelope = await runDelegatedTool(runId, name, args || {}, { reads: Array.isArray(reads) ? reads : [], renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt, verifyViewport: !!verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, ...(Array.isArray(answerShape) ? { answerShape } : {}), ...(answerSelect && typeof answerSelect === "object" ? { answerSelect } : {}), onStream });
+        const envelope = await runDelegatedTool(runId, name, args || {}, { reads: Array.isArray(reads) ? reads : [], renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt, verifyViewport: !!verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, ...(Array.isArray(answerShape) ? { answerShape } : {}), ...(answerSelect && typeof answerSelect === "object" ? { answerSelect } : {}), ...(geometry && typeof geometry === "object" ? { geometry } : {}), onStream });
         sender?.flush();   // the last lines go out BEFORE the result, which supersedes the live view
         window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope }, "*");
     });

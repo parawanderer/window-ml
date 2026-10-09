@@ -297,6 +297,18 @@ test("RUN_TOOL_IN_PAGE relays through content.js → the page runs the tool → 
     world.ml._endRun("run-A");
 });
 
+test("a worker's geometry question relays through content.js to the run's page geometry, and the answer comes back as data", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "ok" }) });
+    world.ml._registerRun("run-G", []);
+    const envelope = await world.fireRuntimeMessage({ type: "RUN_TOOL_IN_PAGE", payload: { runId: "run-G", geometry: { seq: 3, op: "view" } } });
+    assert.equal(envelope.result, "");
+    assert.equal(envelope.geometry.seq, 3);
+    assert.deepEqual(Object.keys(envelope.geometry.reply).sort(), ["dpr", "h", "sx", "sy", "w"]);
+    const unknown = await world.fireRuntimeMessage({ type: "RUN_TOOL_IN_PAGE", payload: { runId: "run-G", geometry: { seq: 4, op: "nodes" } } });
+    assert.equal(unknown.geometry, undefined, "the page's debug channel is not a geometry op");
+    world.ml._endRun("run-G");
+});
+
 test("a non-RUN_TOOL_IN_PAGE message is ignored by the reverse channel (returns undefined)", async () => {
     const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "ok" }) });
     const r = await world.fireRuntimeMessage({ type: "SOMETHING_ELSE", payload: {} });

@@ -15,6 +15,7 @@ import { countDocsStreak, executeTool, toolContext } from "../tools/tool-exec";
 import { listServerTools } from "./sw-llm";
 import { workerMl } from "./worker-ml";
 import { dropAnswer } from "./worker-answer";
+import { dropVisionMemory } from "./worker-vision";
 import { buildWorkerTools, dropWorkerTools, pageOnlySend, workerSpend, WORKER_TOOL_NAMES } from "./worker-tools";
 
 /** What a run's local tools need to run: the tools by name, and the vision facts their ToolContext carries. */
@@ -35,7 +36,7 @@ export function registerLocalTools(runId: string, tools: MlTool[], facts: { mode
 }
 
 /** Forget a run's local tools, when the run is deleted. */
-export function dropLocalTools(runId: string): void { localToolsets.delete(runId); dropWorkerTools(runId); dropAnswer(runId); }
+export function dropLocalTools(runId: string): void { localToolsets.delete(runId); dropWorkerTools(runId); dropAnswer(runId); dropVisionMemory(runId); }
 
 /** Forget every run's local tools: what an eviction does to this memory (the eviction test hook). */
 export function dropAllLocalTools(): void { localToolsets.clear(); }

@@ -287,3 +287,41 @@ export function pageVisionHost(ml: MlApi, memory: VisionMemory | null = null): V
         elements: (list) => geo.nodes(list),
     };
 }
+
+/** A geometry question as it crosses from the worker (worker-vision-host.ts): the op, its arguments, the worker's
+ *  sequence number for the call, and for a stitch op the stitch it belongs to. */
+export type GeometryRequest = { seq: number; op: string; stitch?: number } & Record<string, unknown>;
+
+/** The page's answer to one geometry question: the op's reply with the request's `seq` (and `stitch`) echoed, or
+ *  `error` when the op threw (its message stays here: the worker refuses it with its own sentence). */
+export type GeometryAnswer = { seq: number; stitch?: number; reply?: unknown; error?: true };
+
+/**
+ * Answer one geometry question from the worker with this page's `Geometry`. Each op is called with the arguments that
+ * op takes, read from the request by name, so nothing else in the request reaches it. An op the interface does not have
+ * (`nodes`, the page-only debug channel, included) is not answered.
+ * @param geo the run's page geometry (one per run, so a stitch's state and the marks' refs carry between questions)
+ * @param req the question
+ * @returns the answer, or null for an unknown op
+ */
+export async function answerGeometry(geo: Geometry, req: GeometryRequest): Promise<GeometryAnswer | null> {
+    const q = req as Record<string, any>;
+    const ops: Record<string, () => Promise<unknown>> = {
+        view: () => geo.view(),
+        target: () => geo.target("token" in q ? { token: String(q.token) } : "focus" in q ? { focus: true, scroll: q.scroll } : { selector: String(q.selector), index: q.index, scroll: q.scroll, measure: q.measure }),
+        marks: () => geo.marks({ filter: q.filter, box: q.box, scoped: !!q.scoped, max: q.max, badge: q.badge }),
+        snap: () => geo.snap({ box: q.box, cx: q.cx, cy: q.cy, filter: q.filter }),
+        cell: () => geo.cell({ box: q.box, filter: q.filter }),
+        mint: () => geo.mint("box" in q ? { box: q.box } : { pt: q.pt }),
+        legend: () => geo.legend({ box: q.box }),
+        crossesText: () => geo.crossesText({ box: q.box }),
+        focus: () => geo.focus(),
+        stitchBegin: () => geo.stitchBegin(),
+        stitchTile: () => geo.stitchTile({ y: q.y }),
+        stitchEnd: () => geo.stitchEnd(),
+    };
+    if (typeof req.op !== "string" || !Object.prototype.hasOwnProperty.call(ops, req.op)) return null;
+    const echo = { seq: req.seq, ...(typeof req.stitch === "number" ? { stitch: req.stitch } : {}) };
+    try { return { ...echo, reply: await ops[req.op]() }; }
+    catch { return { ...echo, error: true }; }
+}

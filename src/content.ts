@@ -156,7 +156,7 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
         return true;
     }
     if (!message || message.type !== "RUN_TOOL_IN_PAGE") return undefined;
-    const { runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, stream, finish: finishTurn, summary, reads, answerShape, answerSelect } = (message.payload || {}) as { runId: string; name: string; args: unknown; reads?: unknown[]; answerShape?: unknown[]; answerSelect?: unknown; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean; summary?: string };
+    const { runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, stream, finish: finishTurn, summary, reads, answerShape, answerSelect, geometry } = (message.payload || {}) as { runId: string; name: string; args: unknown; reads?: unknown[]; answerShape?: unknown[]; answerSelect?: unknown; geometry?: unknown; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean; summary?: string };
     // window.ml's script was fetch-refused by CSP (script-src 'none') — nothing will ever answer. Fail fast.
     if (injectedBlocked) { sendResponse({ result: CSP_BLOCK_MSG(name) }); return true; }
     const callId = Math.random().toString(36).slice(2);
@@ -189,7 +189,7 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
         finish({ result: `Error: the page didn't respond while running "${name}" (timed out). It may be mid-navigation. Re-check the page (look / pageInfo) and retry, or navigate to a different page.` }, false);
     }, TOOL_RELAY_TIMEOUT_MS);
     window.addEventListener("message", onResult);
-    window.postMessage({ type: "PAGE_TOOL_RUN", callId, runId, name, args, reads, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, stream, finish: finishTurn, summary, answerShape, answerSelect }, "*");
+    window.postMessage({ type: "PAGE_TOOL_RUN", callId, runId, name, args, reads, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, stream, finish: finishTurn, summary, answerShape, answerSelect, geometry }, "*");
     return true;   // async sendResponse (the window round-trip completes later)
 });
 
