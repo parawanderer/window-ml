@@ -97,52 +97,56 @@ test("a capture that is not a readable image is refused rather than returned wit
     await assert.rejects(wv.captureRunTab(3), /not an image/);
 });
 
-// --- workerShot: hide through the shell, capture, show ---
+// --- workerShot: the extension's UI masked out, nothing on the page changed ---
 
-test("the hide goes to the tab's top frame and is answered before the capture; the show follows it, with the same shot id", async () => {
+const NO_UI = { vw: 800, vh: 600, rects: [] };
+
+test("the shell is asked where the extension's UI is before and after the capture, in the run's document and top frame only; with none, the capture is returned as taken", async () => {
     const order = [];
     const { bg, wv } = world({
         cdp: false,
-        onTabMessage: async (tabId, msg, opts) => { order.push(msg.type); return msg.type === "SHOT_HIDE" ? { hidden: true } : undefined; },
+        onTabMessage: async (_t, msg) => { order.push(msg.type); return NO_UI; },
         onCaptureTab: async () => { order.push("capture"); return dataUrl(OWN_PNG); },
     });
-    await wv.workerShot(3);
-    await new Promise((r) => setTimeout(r, 0));
-    assert.deepEqual(order, ["SHOT_HIDE", "capture", "SHOT_SHOW"]);
-    const sent = bg.tabMessages.filter((a) => /^SHOT_/.test(a[1]?.type));
-    assert.ok(sent.every((a) => a[0] === 3 && a[2]?.frameId === 0), "to the run's tab, top frame only");
-    assert.equal(sent[0][1].id, sent[1][1].id, "the show names the hide's shot");
-    assert.match(sent[0][1].id, /^[0-9a-f-]{36}$/);
+    const shot = await wv.workerShot(3);
+    assert.deepEqual({ ...shot }, { dataUrl: dataUrl(OWN_PNG), w: 800, h: 600 });
+    assert.deepEqual(order, ["SHOT_RECTS", "capture", "SHOT_RECTS"]);
+    const sent = bg.tabMessages.map((a) => JSON.parse(JSON.stringify(a)));
+    assert.deepEqual(sent.map((a) => a[1]), [{ type: "SHOT_RECTS" }, { type: "SHOT_RECTS" }], "a read, and nothing that changes the page");
+    assert.ok(sent.every((a) => a[0] === 3 && a[2]?.frameId === 0 && a[2]?.documentId === "doc-3"), "to the run's tab, top frame, pinned to its document");
 });
 
-test("the show is sent even when the capture fails", async () => {
-    const order = [];
-    const { wv } = world({ cdp: false, showing: 4, onTabMessage: async (_t, msg) => { order.push(msg.type); return {}; } });
-    await assert.rejects(wv.workerShot(3), (e) => e.message === NOT_SHOWING);
-    await new Promise((r) => setTimeout(r, 0));
-    assert.deepEqual(order, ["SHOT_HIDE", "SHOT_SHOW"]);
-});
-
-test("a shell that never answers the hide (none mounted, a tab that does not paint) is waited for 200 ms, then the capture goes anyway", async () => {
-    const order = [];
-    const { wv } = world({
-        cdp: false,
-        onTabMessage: (_t, msg) => { order.push(msg.type); return msg.type === "SHOT_HIDE" ? new Promise(() => {}) : undefined; },
-        onCaptureTab: async () => { order.push("capture"); return dataUrl(OWN_PNG); },
-    });
-    const t0 = Date.now();
-    await wv.workerShot(3);
-    const took = Date.now() - t0;
-    await new Promise((r) => setTimeout(r, 0));
-    assert.ok(took >= 190 && took < 1500, `waited ${took} ms`);
-    assert.deepEqual(order, ["SHOT_HIDE", "capture", "SHOT_SHOW"]);
-});
-
-test("a tab with no content script (the send rejects) is captured at once, and the rejection goes nowhere", async () => {
+test("a tab with no content script (the send rejects) has no extension UI on it: captured at once, unmasked", async () => {
     const { wv } = world({ cdp: false, onTabMessage: async () => { throw new Error("Could not establish connection. Receiving end does not exist."); } });
     const t0 = Date.now();
-    assert.equal((await wv.workerShot(3)).w, 800);
+    assert.equal((await wv.workerShot(3)).dataUrl, dataUrl(OWN_PNG));
     assert.ok(Date.now() - t0 < 150);
+});
+
+test("a shell that is there and does not answer in time (a page holding its main thread) is refused a shot, not shot unmasked", async () => {
+    const { bg, wv } = world({ cdp: false, onTabMessage: () => new Promise(() => {}) });
+    await assert.rejects(wv.workerShot(3, { rectsMs: 50 }), /too busy for window.ml to find its own panels/);
+    assert.equal(bg.captures.length, 0, "refused before anything was captured");
+    // And when only the second answer is late: the capture taken is not returned.
+    let n = 0;
+    const late = world({ cdp: false, onTabMessage: () => (n++ === 0 ? NO_UI : new Promise(() => {})) });
+    await assert.rejects(late.wv.workerShot(3, { rectsMs: 50 }), /too busy/);
+    assert.equal(late.bg.captures.length, 1);
+});
+
+test("an answer that is not the shell's shape is refused rather than read as no UI", async () => {
+    for (const bad of [undefined, null, "x", { rects: [] }, { vw: 800, vh: 600, rects: [{ x: NaN, y: 0, w: 1, h: 1, kind: "card" }] }]) {
+        const { wv } = world({ cdp: false, onTabMessage: async () => bad });
+        await assert.rejects(wv.workerShot(3), /can't be read/, JSON.stringify(bad));
+    }
+    // A send that fails other than "nothing is listening" (the shell threw, its port closed) is not "no UI here".
+    const { wv } = world({ cdp: false, onTabMessage: async () => { throw new Error("The message port closed before a response was received."); } });
+    await assert.rejects(wv.workerShot(3), /can't be read/);
+});
+
+test("an extension surface covering most of the viewport (the image viewer) is refused with a sentence, not masked into a grey image", async () => {
+    const { wv } = world({ cdp: false, onTabMessage: async () => ({ vw: 800, vh: 600, rects: [{ x: 0, y: 0, w: 800, h: 600, kind: "lightbox" }] }) });
+    await assert.rejects(wv.workerShot(3), /image viewer is open over the page: close it \(Esc\)/);
 });
 
 // --- workerVisionChat: the page's request, sent by the worker, counted into the run ---

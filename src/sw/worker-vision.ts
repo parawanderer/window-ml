@@ -1,7 +1,7 @@
-// worker-vision.ts — the worker's half of a vision tool: a screenshot of the run's own tab with the sidebar hidden through the extension's shell, and the vision model's sub-call metered into the run.
+// worker-vision.ts — the worker's half of a vision tool: a screenshot of the run's own tab and document with the extension's own UI masked out, and the vision model's sub-call metered into the run.
 
 // Built for the worker's VisionHost (docs/spec/SITE_ACCESS.md, slice 2 part 3): in a worker-built run the page sees no
-// capture, no sidebar handshake and no reader request. Nothing calls these yet; look, locate and verify move onto them
+// capture, no change to its DOM around one, and no reader request. Nothing calls these yet; look, locate and verify move onto them
 // in later PRs.
 
 import type { Shot } from "../tools/vision-host";
@@ -12,6 +12,9 @@ import { cdpScreenshot } from "./sw-cdp";
 import { CAPTURE_RETRIES, CAPTURE_RETRY_MS, captureOwnTab, NOT_SHOWING } from "./sw-capture";
 import { getConfig } from "./sw-llm";
 import { runChat } from "./worker-tools";
+import { maskShot } from "./shot-mask";
+import { workerRaster } from "../raster";
+import type { ShotRects } from "../sidebar/shell-shot";
 
 /**
  * How long a debugger screenshot may take before the own-tab capture is tried instead. A shot of a showing tab, attach
@@ -21,8 +24,16 @@ import { runChat } from "./worker-tools";
  */
 export const CDP_SHOT_MS = 5000;
 
-/** How long the worker waits for the shell to say the sidebar is hidden before capturing anyway: the page path's wait. */
-export const SHOT_HIDE_MS = 200;
+/**
+ * How long the shell has to say where the extension's UI is. It answers from the page's main thread, at once on an idle
+ * page; a page that holds its main thread past this is refused a shot rather than given one with the UI unmasked.
+ */
+export const SHOT_RECTS_MS = 1000;
+
+/** The sentence for a shell that did not say where the extension's UI is in time. */
+const RECTS_SLOW = "Can't screenshot this tab: the page is too busy for window.ml to find its own panels on it (they would be in the shot). Retry once the page settles.";
+/** The sentence for a tab whose document changed while the shot was taken. */
+const NAVIGATED = "Can't screenshot this tab: it went to another page while the screenshot was being taken. Look again.";
 
 /** The sentence for a run tab that is not showing when the debugger's screenshot also failed: the own-tab capture can't help. */
 const cdpFailedNotShowing = (err: string): string => `Can't screenshot this tab: the debugger's screenshot failed (${err}), and without it a screenshot is only of the tab showing in its window, which this one isn't. Switch to it, or close Chrome DevTools on it if it's open, and retry.`;
@@ -64,25 +75,62 @@ function sized(dataUrl: string): Required<Shot> {
     return { dataUrl, w: s.width, h: s.height };
 }
 
+/** The tab's top-frame document now, by the browser's answer (null when it gives none). */
+async function topDocument(tabId: number): Promise<string | null> {
+    const f = await Promise.resolve(chrome.webNavigation?.getFrame?.({ tabId, frameId: 0 })).catch(() => null) as { documentId?: string } | null;
+    return typeof f?.documentId === "string" ? f.documentId : null;
+}
+
 /**
- * {@link captureRunTab} with the debug sidebar hidden around it, through the extension's own shell (the tab's content
- * script) and never the page: `SHOT_HIDE` to the top frame, answered once the sidebar is hidden and has painted, then
- * the capture, then `SHOT_SHOW`, sent whatever the capture did. A shell that does not answer within `hideMs` (none
- * mounted, a tab that does not paint) is not waited for: the capture goes anyway, as the page's own path does.
+ * Ask the tab's shell, in `documentId` only, where the extension's UI is. A send nothing receives means no content
+ * script there, so no extension UI: null. One that answers in time is the answer. One that does neither is refused.
  * @param tabId the run's tab
- * @param opts `hideMs`: the wait for the shell ({@link SHOT_HIDE_MS}); `cdpTimeoutMs` as {@link captureRunTab}
- * @returns the capture
+ * @param documentId the document the shot is of
+ * @param ms the bound ({@link SHOT_RECTS_MS})
+ * @returns the shell's answer, or null for none
+ * @throws {@link RECTS_SLOW} when the shell is there and did not answer in time
  */
-export async function workerShot(tabId: number, opts: { hideMs?: number; cdpTimeoutMs?: number } = {}): Promise<Required<Shot>> {
-    // One id per shot: the shell lifts this shot's hide only, and drops it on its own if the show never comes.
-    const id = crypto.randomUUID();
-    const send = (type: "SHOT_HIDE" | "SHOT_SHOW") => Promise.resolve().then(() => chrome.tabs.sendMessage(tabId, { type, id }, { frameId: 0 })).catch(() => undefined);
+async function askRects(tabId: number, documentId: string, ms: number): Promise<ShotRects | null> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const SLOW = Symbol("slow");
+    const r = await Promise.race([
+        // Only "nothing is listening" means no content script. Any other failure (the shell threw, the port closed) is
+        // not an answer, and is refused below as one that can't be read rather than read as "no UI".
+        Promise.resolve().then(() => chrome.tabs.sendMessage(tabId, { type: "SHOT_RECTS" }, { frameId: 0, documentId }))
+            .then((a) => ({ a: a ?? {} }), (e) => (/Receiving end does not exist/i.test(String((e as Error)?.message ?? e)) ? null : { a: {} })),
+        new Promise<typeof SLOW>((res) => { timer = setTimeout(() => res(SLOW), ms); }),
+    ]).finally(() => clearTimeout(timer));
+    if (r === SLOW) throw new Error(RECTS_SLOW);
+    return r ? (r.a as ShotRects) : null;
+}
+
+/**
+ * {@link captureRunTab} of the run's document with the extension's own UI masked out, changing nothing on the page.
+ * The shell (the tab's content script) says where the sidebar, the run card, the image viewer, the hover highlight and
+ * any extension frame sit, before and after the capture, and the union of both is painted opaque in the worker. Pinned
+ * to the top frame's document: a commit during the shot, or a different document after it, refuses the shot.
+ * @param tabId the run's tab
+ * @param opts `rectsMs`: the bound on each of the shell's answers ({@link SHOT_RECTS_MS}); `cdpTimeoutMs` as {@link captureRunTab}
+ * @returns the masked capture
+ * @throws when the document changed, the shell did not answer in time or unreadably, or the mask covers most of the shot
+ */
+export async function workerShot(tabId: number, opts: { rectsMs?: number; cdpTimeoutMs?: number } = {}): Promise<Required<Shot>> {
+    const doc = await topDocument(tabId);
+    if (!doc) throw new Error("Can't screenshot this tab: the browser does not say which page it holds.");
+    let moved = false;
+    const onCommitted = (d: { tabId: number; frameId: number }): void => { if (d.tabId === tabId && d.frameId === 0) moved = true; };
+    chrome.webNavigation.onCommitted.addListener(onCommitted);
     try {
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        await Promise.race([send("SHOT_HIDE"), new Promise((r) => { timer = setTimeout(r, opts.hideMs ?? SHOT_HIDE_MS); })]).finally(() => clearTimeout(timer));
-        return await captureRunTab(tabId, opts);
+        const ms = opts.rectsMs ?? SHOT_RECTS_MS;
+        const before = await askRects(tabId, doc, ms);
+        const shot = await captureRunTab(tabId, opts);
+        const after = await askRects(tabId, doc, ms);
+        // A commit, even one back to the same document from the back-forward cache, means the pixels may be another page's.
+        if (moved || (await topDocument(tabId)) !== doc) throw new Error(NAVIGATED);
+        const masked = await maskShot(shot, [before, after], workerRaster);
+        return { dataUrl: masked.dataUrl, w: masked.w, h: masked.h };
     } finally {
-        void send("SHOT_SHOW");
+        chrome.webNavigation.onCommitted.removeListener(onCommitted);
     }
 }
 

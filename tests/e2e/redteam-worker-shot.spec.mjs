@@ -1,36 +1,16 @@
 // redteam-worker-shot.spec.mjs — the red-team pass on the worker's own screenshot of a run's tab (src/sw/worker-vision.ts
-// `workerShot`, src/sidebar/shell-shot.ts), in a real browser: what a hostile page sharing the tab can do to the hide
-// that keeps the extension's sidebar out of the capture. Only real pixels and real frames show it.
+// `workerShot`, src/sw/shot-mask.ts, src/sidebar/shell-shot.ts), in a real browser: what a hostile page sharing the tab
+// can do to keep the extension's sidebar in the capture or learn when it is taken. Only real pixels and real frames
+// show it. The worker no longer hides anything: it masks the rects the shell reports, so the attacks on the hide
+// (restyling it, starving its acknowledgement, watching it) are held here against the mask.
 //
-// The page is one flat green, so any other pixel in a capture is the sidebar (the oracle of worker-shot.spec.mjs), and
-// every test first shows that oracle sees the sidebar when it is there. Driven through `__mlWorkerVisionForTest`
+// The page is one flat green and the mask one flat grey, so any other pixel in a capture is the sidebar (the oracle of
+// worker-shot.spec.mjs), and every test first shows that oracle sees the sidebar when it is there. Driven through `__mlWorkerVisionForTest`
 // (background.ts), since no tool takes its shots this way yet.
-//
-// Holes follow site-access.spec.mjs: while one is listed in `OPEN`, its test asserts the attack WORKS (proving the
-// attack and the oracle both); the fix flips the entry and the same test then has to show it defended.
 
 import { test, expect } from "@playwright/test";
 import http from "node:http";
 import { launchExtension, configureExtension } from "./harness.mjs";
-
-/** The holes this pass found, open on the PR's commit. */
-const OPEN = {
-    // The hide is an inline `visibility: hidden` on page-owned DOM: a page stylesheet with !important (or a style on a
-    // node inside the OPEN shadow root) wins, and the shell still acknowledges the hide.
-    restyle: true,
-    // The hide is a DOM mutation the page can observe, so the page knows when the worker shoots.
-    timing: true,
-    // Without the debugger, a page that blocks its main thread on the hide holds the shell's two-frame ack past the
-    // worker's 200 ms wait, and captureVisibleTab gives back the last painted frame at once, sidebar included. (The
-    // debugger's screenshot waits for a new frame instead, so the debugger path holds.)
-    starve: true,
-};
-
-/** Whether `hole` is still open, recording it on the test so the report says which holes this run demonstrated. */
-function holeOpen(hole, what) {
-    if (OPEN[hole]) test.info().annotations.push({ type: "open hole", description: `${hole}: ${what}` });
-    return OPEN[hole];
-}
 
 /** A page that is one flat green, on a local http server. */
 async function greenSite() {
@@ -42,7 +22,7 @@ async function greenSite() {
     return { url: `http://127.0.0.1:${server.address().port}/`, close: () => new Promise((r) => server.close(r)) };
 }
 
-/** How many pixels of a capture are not the page's green, decoded in `page`. */
+/** How many pixels of a capture are neither the page's green nor the mask's grey, decoded in `page`. */
 const offGreen = (page, dataUrl) => page.evaluate(async (src) => {
     const img = new Image();
     await new Promise((ok, bad) => { img.onload = ok; img.onerror = bad; img.src = src; });
@@ -52,7 +32,10 @@ const offGreen = (page, dataUrl) => page.evaluate(async (src) => {
     g.drawImage(img, 0, 0);
     const d = g.getImageData(0, 0, c.width, c.height).data;
     let n = 0;
-    for (let i = 0; i < d.length; i += 4) if (!(d[i] < 8 && d[i + 1] > 247 && d[i + 2] < 8)) n++;
+    for (let i = 0; i < d.length; i += 4) {
+        const green = d[i] < 8 && d[i + 1] > 247 && d[i + 2] < 8, grey = d[i] === 128 && d[i + 1] === 128 && d[i + 2] === 128;
+        if (!green && !grey) n++;
+    }
     return n;
 }, dataUrl);
 
@@ -74,20 +57,20 @@ async function setup({ cdp = false } = {}) {
     return { page, shot, bare, close: async () => { await ext.close(); await site.close(); } };
 }
 
-/** How long the page blocks its main thread once it sees the hide. */
+/** How long the page blocks its main thread. */
 const STARVE_MS = Number(process.env.STARVE_MS || 3000);
 
-/** The page blocks its main thread for `ms` as soon as it sees the shell set the host hidden (a style mutation). */
-const blockOnHide = (page, ms) => page.evaluate((ms) => {
-    new MutationObserver(() => {
-        if (document.getElementById("ml-sb-root").style.visibility !== "hidden") return;
-        const end = performance.now() + ms; while (performance.now() < end) { /* hold the frame */ }
-    }).observe(document.getElementById("ml-sb-root"), { attributes: true, attributeFilter: ["style"] });
+/**
+ * The page blocks its main thread for `ms`, starting a moment from now. The page no longer sees a shot start (nothing
+ * on it changes), so the worst it can do is block at a time of its choosing: here, just as the worker starts.
+ */
+const blockSoon = (page, ms) => page.evaluate((ms) => {
+    setTimeout(() => { const end = performance.now() + ms; while (performance.now() < end) { /* hold the frame */ } }, 30);
 }, ms);
 
 // --- the oracle of worker-shot.spec.mjs is not vacuous ---
 
-test("the page's window handshake really reaches the shell (so 'a page posting show is ignored' tests something)", async () => {
+test("the page's own window handshake still reaches the shell for a page-built run's shot, from the page's own window only", async () => {
     const { page, close } = await setup();
     try {
         const vis = () => page.evaluate(() => document.getElementById("ml-sb-root").style.visibility);
@@ -96,6 +79,14 @@ test("the page's window handshake really reaches the shell (so 'a page posting s
         await expect.poll(vis).toBe("hidden");
         await page.evaluate(() => window.postMessage({ __mlSidebarShot: "show" }, "*"));
         await expect.poll(vis).toBe(shown);
+        // A subframe's post is not injected.js's: it hides nothing.
+        await page.evaluate(() => new Promise((r) => {
+            const f = document.createElement("iframe");
+            f.srcdoc = "<script>parent.postMessage({ __mlSidebarShot: 'hide' }, '*')<\/script>";
+            f.onload = () => setTimeout(r, 200);
+            document.body.append(f);
+        }));
+        expect(await vis(), "a subframe's hide hid the sidebar").toBe(shown);
     } finally { await close(); }
 });
 
@@ -104,40 +95,35 @@ test("the page's window handshake really reaches the shell (so 'a page posting s
 test("a page's own CSS cannot put the sidebar back into the worker's shot", async () => {
     const { page, shot, close } = await setup();
     try {
-        // A stylesheet rule beats the shell's inline (non-important) visibility on the host.
+        // A stylesheet rule that would beat an inline hide on the host (what the hide this replaced was).
         await page.evaluate(() => { const s = document.createElement("style"); s.textContent = "#ml-sb-root{visibility:visible!important}"; document.head.append(s); });
         const viaSheet = await offGreen(page, (await shot()).dataUrl);
         // And without touching the host: a node inside the OPEN shadow root set visible overrides an inherited hidden.
         await page.evaluate(() => { document.head.lastElementChild.remove(); document.getElementById("ml-sb-root").shadowRoot.querySelector("#ml-sb-host").style.setProperty("visibility", "visible", "important"); });
         const viaShadow = await offGreen(page, (await shot()).dataUrl);
-        if (holeOpen("restyle", "a page stylesheet or a style inside the open shadow root shows the sidebar through the hide")) {
-            expect(viaSheet, "the stylesheet attack did not show the sidebar").toBeGreaterThan(50);
-            expect(viaShadow, "the shadow-root attack did not show the sidebar").toBeGreaterThan(50);
-            return;
-        }
+        // And moved and scaled with a transform: the shell reads rects with getBoundingClientRect, which includes it.
+        await page.evaluate(() => { document.getElementById("ml-sb-root").shadowRoot.querySelector("#ml-sb-host").style.transform = "translateX(-200px) scale(1.15)"; });
+        const viaTransform = await offGreen(page, (await shot()).dataUrl);
         expect(viaSheet, "the sidebar is in the worker's shot through a page stylesheet").toBe(0);
+        expect(viaTransform, "the sidebar is in the worker's shot through a transform").toBe(0);
         expect(viaShadow, "the sidebar is in the worker's shot through a style in its shadow root").toBe(0);
     } finally { await close(); }
 });
 
-test("a page that blocks its main thread on the hide does not get the sidebar into a shot taken without the debugger", async () => {
+test("a page that blocks its main thread as the shot starts does not get the sidebar into a shot taken without the debugger", async () => {
     const { page, shot, close } = await setup({ cdp: false });
     try {
-        // The page sees the hide as a style mutation on the host and blocks for 600 ms before anything paints.
-        await blockOnHide(page, STARVE_MS);
+        await blockSoon(page, STARVE_MS);
         const got = await shot().then((s) => offGreen(page, s.dataUrl), (e) => `refused: ${e.message}`);
-        if (holeOpen("starve", "a blocked main thread holds the two-frame ack past 200 ms and captureVisibleTab shoots the last painted frame")) {
-            expect(typeof got === "number" && got > 50, `the starve attack did not show the sidebar: ${got}`).toBe(true);
-            return;
-        }
         expect(typeof got === "string" || got === 0, `the sidebar is in the worker's shot: ${got} pixels`).toBe(true);
+        if (typeof got === "string") expect(got).toMatch(/too busy/);
     } finally { await close(); }
 });
 
 test("with the debugger on, the same blocked main thread still gets no sidebar into the shot", async () => {
     const { page, shot, close } = await setup({ cdp: true });
     try {
-        await blockOnHide(page, STARVE_MS);
+        await blockSoon(page, STARVE_MS);
         const got = await shot().then((s) => offGreen(page, s.dataUrl), (e) => `refused: ${e.message}`);
         expect(typeof got === "string" || got === 0, `the sidebar is in the debugger's shot: ${got} pixels`).toBe(true);
     } finally { await close(); }
@@ -147,31 +133,27 @@ test("with the debugger on, a page that blocks past the debugger's 5 s bound doe
     test.setTimeout(90_000);
     const { page, shot, close } = await setup({ cdp: true });
     try {
-        await blockOnHide(page, 8000);
+        await blockSoon(page, 8000);
         const got = await shot().then((s) => offGreen(page, s.dataUrl), (e) => `refused: ${e.message}`);
-        // Measured: the fallback's captureVisibleTab, sent while the debugger's screenshot is still pending, waits for the
-        // same new frame (the block's end) rather than giving back the last painted one. Incidental, so held by a test.
+        // The shell cannot answer while the page blocks, so the shot is refused at the rect query's bound, before any capture.
         expect(typeof got === "string" || got === 0, `the sidebar is in the fallback's shot: ${got} pixels`).toBe(true);
     } finally { await close(); }
 });
 
 // --- what the page learns about the worker's shot ---
 
-test("the page does not learn when the worker takes a screenshot of it", async () => {
+test("the page does not learn when the worker takes a screenshot of it: nothing the extension owns changes on the page", async () => {
     const { page, shot, close } = await setup();
     try {
         await page.evaluate(() => {
             window.__seen = [];
-            new MutationObserver(() => window.__seen.push(document.getElementById("ml-sb-root").style.visibility))
-                .observe(document.getElementById("ml-sb-root"), { attributes: true, attributeFilter: ["style"] });
+            const mo = new MutationObserver((l) => { for (const m of l) window.__seen.push(`${m.type}:${m.attributeName ?? ""}`); });
+            const all = { attributes: true, childList: true, subtree: true, characterData: true };
+            mo.observe(document.documentElement, all);
+            mo.observe(document.getElementById("ml-sb-root").shadowRoot, all);
         });
         await shot();
         await page.waitForTimeout(100);
-        const seen = await page.evaluate(() => window.__seen);
-        if (holeOpen("timing", "the hide and the show are style mutations on a page-owned host: the page sees each shot start and end")) {
-            expect(seen, "the page saw nothing of the shot").toContain("hidden");
-            return;
-        }
-        expect(seen).toEqual([]);
+        expect(await page.evaluate(() => window.__seen)).toEqual([]);
     } finally { await close(); }
 });

@@ -17,13 +17,13 @@ const require = createRequire(import.meta.url);
 // worker-vision.ts imports by extensionless paths, which only the bundle resolves: read its bounds from the source.
 const visionSrc = readFileSync(new URL("../src/sw/worker-vision.ts", import.meta.url), "utf8");
 const constOf = (name) => Number(new RegExp(`export const ${name} = ([0-9_]+);`).exec(visionSrc)[1].replace(/_/g, ""));
-const CDP_SHOT_MS = constOf("CDP_SHOT_MS"), SHOT_HIDE_MS = constOf("SHOT_HIDE_MS");
+const CDP_SHOT_MS = constOf("CDP_SHOT_MS"), SHOT_RECTS_MS = constOf("SHOT_RECTS_MS");
 const { jsonResponse, loadBackground } = require("./helpers");
 const { PAGE_STARTED_TYPES, RUN_TAB_TYPES } = require("../src/page-relay.ts");
 
 globalThis.requestAnimationFrame ??= (fn) => setTimeout(fn, 0);
 globalThis.chrome ??= { runtime: { id: "ext-id" } };
-const { shotGate, WORKER_SHOT_HOLD_MS } = await import("../src/sidebar/shell-shot.ts");
+const { pageShotGate } = await import("../src/sidebar/shell-shot.ts");
 
 const config = (o = {}) => ({ chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "default-model", apiFormat: "openai", ocrModel: "", ...o });
 const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));
@@ -40,6 +40,8 @@ function png(w, h, tag = "") {
 const RUN_PNG = png(800, 600, "RUN-DOCUMENT");
 const BANK_PNG = png(800, 600, "BANK-DOCUMENT");
 const RUN_URL = "https://run.example/";
+/** The shell's answer when none of the extension's UI is on the page. */
+const NO_UI = { vw: 800, vh: 600, rects: [] };
 /** The run's tab 3, as a sender: what the page on it can post. */
 const fromRunTab = (documentId = "doc-A", url = RUN_URL) => ({ tab: { id: 3, url }, url, origin: new URL(url).origin, frameId: 0, documentId });
 
@@ -58,7 +60,8 @@ function world({ cdp = false, onTabMessage, onCaptureTab, onDebuggerCommand, onF
         config: config({ cdp, ...cfg }), openTabs, siteGate, local,
         onDebuggerCommand: onDebuggerCommand ?? ((m) => (m === "Page.captureScreenshot" ? { data: pixels().split(",")[1] } : undefined)),
         onCaptureTab: onCaptureTab ?? (async () => pixels()),
-        onTabMessage: (...a) => (onTabMessage ? onTabMessage(...a) : undefined),
+        // The shell, by default mounted with no extension UI showing.
+        onTabMessage: (...a) => (onTabMessage ? onTabMessage(...a) : a[1]?.type === "SHOT_RECTS" ? NO_UI : undefined),
         onFetch: onFetch ?? (() => jsonResponse({ model: "vl", choices: [{ message: { content: "ok" } }], usage: { prompt_tokens: 10, completion_tokens: 1 } })),
     });
     bg.commit(3, { documentId: "doc-A", url: RUN_URL });
@@ -85,67 +88,79 @@ async function sendEveryType(bg, payload, senders, extra = {}) {
 
 // --- (b) the worker's capture is of the run's document, and only that ---
 
-test("a shot whose tab commits another document between the hide and the capture is refused, not handed back with that document's pixels", {
-    todo: "workerShot/captureRunTab are by tab id and pin no document: a page that navigates its own top frame on the hide (it sees the hide in the DOM) gets the next document captured, with no shell hide in it. Later PR (document pinning): read frame 0's documentId before the hide, send SHOT_* with { documentId }, and refuse when getFrame differs after the capture.",
-}, async () => {
+test("a shot whose tab commits another document between the rect query and the capture is refused, not handed back with that document's pixels", async () => {
     for (const cdp of [false, true]) {
         // Positive control: no navigation, the run's own document.
         const honest = world({ cdp });
         assert.equal((await honest.wv.workerShot(3)).dataUrl, RUN_PNG, `cdp=${cdp}: the honest shot`);
 
-        // The page, seeing the sidebar hidden, navigates the tab to a page the person is signed in to.
-        const w = world({ cdp, onTabMessage: (_t, m) => { if (m.type === "SHOT_HIDE") w.navigate(); return { hidden: true }; } });
+        // The page navigates the tab to a page the person is signed in to as the shot starts.
+        const w = world({ cdp, onTabMessage: (_t, m) => { if (m.type === "SHOT_RECTS" && w.state.doc === "doc-A") w.navigate(); return NO_UI; } });
         const got = await w.wv.workerShot(3).then((s) => s.dataUrl, (e) => `refused: ${e.message}`);
         assert.notEqual(got, BANK_PNG, `cdp=${cdp}: the worker returned another document's pixels as the run's screenshot`);
-        assert.match(got, /^refused/);
+        assert.match(got, /^refused: .*went to another page/);
+
+        // A commit back to the same document id (a back-forward cache restore) during the shot is refused too.
+        const b = world({ cdp, onCaptureTab: async () => { b.bg.commit(3, { documentId: "doc-A", url: RUN_URL }); return RUN_PNG; },
+            onDebuggerCommand: (m) => { if (m === "Page.captureScreenshot") { b.bg.commit(3, { documentId: "doc-A", url: RUN_URL }); return { data: RUN_PNG.split(",")[1] }; } } });
+        await assert.rejects(b.wv.workerShot(3), /went to another page/, `cdp=${cdp}: a commit during the shot`);
     }
 });
 
-test("the hide and the show go to the run's tab, top frame only, and two shots at once each show their own id", async () => {
-    const { bg, wv } = world({ onTabMessage: (_t, m) => (m.type === "SHOT_HIDE" ? { hidden: true } : undefined) });
+test("the rect query is pinned to the run's document: it names the documentId the shot is of", async () => {
+    const { bg, wv } = world();
+    await wv.workerShot(3);
+    const q = shotMsgs(bg);
+    assert.equal(q.length, 2);
+    assert.ok(q.every(([tab, m, opts]) => tab === 3 && m.type === "SHOT_RECTS" && opts?.frameId === 0 && opts?.documentId === "doc-A"));
+});
+
+test("two shots at once each ask the run's tab, top frame only, and neither sends anything that changes the page", async () => {
+    const { bg, wv } = world();
     const [a, b] = await Promise.all([wv.workerShot(3), wv.workerShot(3)]);
     await flush();
     assert.equal(a.dataUrl, RUN_PNG); assert.equal(b.dataUrl, RUN_PNG);
     const sent = shotMsgs(bg);
-    assert.equal(sent.length, 4, "a hide and a show per shot");
-    assert.ok(sent.every(([tab, , opts]) => tab === 3 && opts?.frameId === 0), "never another tab or a subframe");
-    const ids = (t) => sent.filter(([, m]) => m.type === t).map(([, m]) => m.id).sort();
-    assert.deepEqual(ids("SHOT_HIDE"), ids("SHOT_SHOW"), "each show names a hide");
-    assert.notEqual(ids("SHOT_HIDE")[0], ids("SHOT_HIDE")[1], "two shots share an id: one's show would lift the other's hide");
+    assert.equal(sent.length, 4, "a query before and after per shot");
+    assert.ok(sent.every(([tab, m, opts]) => tab === 3 && m.type === "SHOT_RECTS" && Object.keys(m).length === 1 && opts?.frameId === 0), "a bare read, never another tab or a subframe");
 });
 
 // --- (b) the sidebar is not in the shot ---
 
-test("with the debugger off, a shell that is mounted but has not confirmed the hide is not shot past: the capture waits or is refused", {
-    todo: "workerShot captures after 200 ms whether or not the shell answered (worker-vision.ts SHOT_HIDE_MS race). The shell answers after two frames on the PAGE's main thread, which the page can hold (it sees the hide as a style mutation), and captureVisibleTab shoots the last painted frame: the sidebar is in the shot (tests/e2e/redteam-worker-shot.spec.mjs shows it in pixels). This PR: on the own-tab path, a send that did not REJECT (a shell is there) and did not answer in time means refuse, not capture; with CDP the capture renders the current DOM, so the timeout may stand there.",
-}, async () => {
-    const order = [];
-    const { wv } = world({
-        cdp: false,
-        // The page starves frames: the shell's two-frame ack comes 400 ms late.
-        onTabMessage: (_t, m) => { order.push(m.type); return m.type === "SHOT_HIDE" ? tick(400).then(() => { order.push("hidden"); return { hidden: true }; }) : undefined; },
-        onCaptureTab: async () => { order.push("capture"); return RUN_PNG; },
-    });
-    const r = await wv.workerShot(3).then(() => "shot", (e) => e.message);
-    await tick(450);
-    if (r === "shot") assert.ok(order.indexOf("hidden") >= 0 && order.indexOf("hidden") < order.indexOf("capture"), `the capture went before the shell had hidden the sidebar: ${order.join(" → ")}`);
+test("a shell that is mounted but does not say where the extension's UI is in time (the page holds its main thread) gets no shot taken past it", async () => {
+    for (const cdp of [false, true]) {
+        const order = [];
+        const { wv } = world({
+            cdp,
+            // The page starves its main thread: the shell's answer comes 1.5 s late, past the bound.
+            onTabMessage: (_t, m) => { order.push(m.type); return tick(SHOT_RECTS_MS + 500).then(() => { order.push("answered"); return NO_UI; }); },
+            onCaptureTab: async () => { order.push("capture"); return RUN_PNG; },
+            onDebuggerCommand: (m) => { if (m === "Page.captureScreenshot") { order.push("capture"); return { data: RUN_PNG.split(",")[1] }; } },
+        });
+        const r = await wv.workerShot(3).then(() => "shot", (e) => e.message);
+        assert.match(r, /too busy/, `cdp=${cdp}: ${order.join(" → ")}`);
+        assert.ok(!order.includes("capture"), `cdp=${cdp}: a capture was taken without knowing where the UI is`);
+    }
 });
 
-test("every bounded step of a worker shot together stays inside the shell's 15 s hold, so the sidebar is not back mid-shot", async () => {
-    const bounded = SHOT_HIDE_MS + CDP_SHOT_MS + CAPTURE_RETRIES * CAPTURE_RETRY_MS;
-    assert.ok(bounded < WORKER_SHOT_HOLD_MS, `${bounded} ms of bounded steps against a ${WORKER_SHOT_HOLD_MS} ms hold`);
-    // Measured: a debugger shot that never finishes, then the own-tab capture hitting its quota every time (a page on an
-    // approved origin can spend that quota with CAPTURE_TAB).
+test("every step of a worker shot is bounded: a page stalling every one of them gets a refusal in bounded time, never a hang", async () => {
+    const bounded = 2 * SHOT_RECTS_MS + CDP_SHOT_MS + CAPTURE_RETRIES * CAPTURE_RETRY_MS;
+    // A debugger shot that never finishes, then the own-tab capture hitting its quota every time (a page on an approved
+    // origin can spend that quota with CAPTURE_TAB).
     const { wv } = world({
         cdp: true,
-        onTabMessage: () => new Promise(() => {}),
         onDebuggerCommand: (m) => (m === "Page.captureScreenshot" ? new Promise(() => {}) : undefined),
         onCaptureTab: async () => { throw new Error("This request exceeds the MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND quota."); },
     });
     const t0 = Date.now();
     await assert.rejects(wv.workerShot(3), /MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND/);
     const took = Date.now() - t0;
-    assert.ok(took < WORKER_SHOT_HOLD_MS, `the shot took ${took} ms`);
+    assert.ok(took < bounded + 1000, `the shot took ${took} ms against ${bounded} ms of bounded steps`);
+    // And a shell that never answers at all is a refusal at the first bound.
+    const silent = world({ onTabMessage: () => new Promise(() => {}) });
+    const t1 = Date.now();
+    await assert.rejects(silent.wv.workerShot(3), /too busy/);
+    assert.ok(Date.now() - t1 < SHOT_RECTS_MS + 500);
 });
 
 // --- (d) the shell acts on the worker alone ---
@@ -153,23 +168,26 @@ test("every bounded step of a worker shot together stays inside the shell's 15 s
 test("no page-started or run-tab message, from the run's tab or a hostile one, makes the worker send SHOT_* to any tab", async () => {
     const { bg } = world({ siteGate: true, local: { ml_site_always: ["https://run.example"] } });
     const evil = { tab: { id: 9, url: "https://evil.example/" }, url: "https://evil.example/", origin: "https://evil.example", frameId: 0, documentId: "doc-evil" };
-    await sendEveryType(bg, { type: "SHOT_SHOW", id: "x", tabId: 4, runId: "run-1" }, [fromRunTab(), evil], { id: "x" });
+    await sendEveryType(bg, { type: "SHOT_RECTS", id: "x", tabId: 4, runId: "run-1" }, [fromRunTab(), evil], { id: "x" });
     assert.deepEqual(shotMsgs(bg), [], "a page's message became a SHOT_* to a shell");
     // Positive control: the worker's own shot does reach the shell.
-    await bg.context.__mlWorkerVisionForTest.workerShot(3, { hideMs: 10 });
+    await bg.context.__mlWorkerVisionForTest.workerShot(3);
     await flush();
     assert.equal(shotMsgs(bg).length, 2);
 });
 
-test("the page's own hide never ends: the extension's sidebar and approval card stay hidden for as long as the page likes", {
-    todo: "pre-existing, not this PR: `__mlSidebarShot: \"hide\"` from any window message (no e.source check, so a cross-origin subframe too) sets pageHidden with no bound, hiding the sidebar and the off-mode approval card until the page says show. A page can also cover them with its own overlay, so the fix is a bound like the worker's hold (lift a page hide after a few seconds), for the honest page-hosted look, which shows within a second.",
-}, async () => {
+test("the page's own hide ends on its own: a page cannot keep the extension's sidebar and approval card hidden by never saying show", async () => {
     const surface = { hidden: false, hide() { this.hidden = true; }, show() { this.hidden = false; } };
-    const gate = shotGate(surface, 40);
+    const gate = pageShotGate(surface, 40);
     gate.pageHide(() => {});
     assert.equal(surface.hidden, true, "control: the page's hide hides");
     await tick(200);
     assert.equal(surface.hidden, false, "the page's hide is still holding the sidebar hidden");
+    // The shell takes the handshake only from its own window (shell.ts: e.source === window), so a cross-origin
+    // subframe's post does not hide anything.
+    const shell = readFileSync(new URL("../src/sidebar/shell.ts", import.meta.url), "utf8");
+    assert.match(shell, /__mlSidebarShot === "hide" && e\.source === window/);
+    assert.match(shell, /__mlSidebarShot === "show" && e\.source === window/);
 });
 
 // --- (c) spend: only the worker's own calls, only into its own run ---

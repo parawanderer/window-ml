@@ -58,14 +58,20 @@ land before injected's async `<script>` was listening, stranding the panel un-li
 until a settings toggle. `bus.ts` replays its ring only ONCE per session so the re-handshake
 can't double-emit.
 
-**Hiding for a shot: two parties, held apart (`shell-shot.ts`).** A page-hosted vision tool hides the sidebar with
-the window handshake (`__mlSidebarShot: hide → hidden → show`), which any page script can post. A shot the WORKER
-takes (`workerShot`, `sw/worker-vision.ts`) hides it with `SHOT_HIDE`/`SHOT_SHOW` over `chrome.tabs.sendMessage` to
-the top frame, accepted only from the worker (this extension's id and no `sender.tab`) and never page-relayable. Each
-party's hide is held separately and the sidebar shows only when neither holds one, so a page's "show" cannot bring
-the sidebar back into the worker's shot. `SHOT_HIDE` is answered after two frames; the worker waits 200 ms for it,
-then captures anyway, and always sends `SHOT_SHOW`. A worker hide with no show (an eviction mid-shot) lifts itself
-after 15 s.
+**Keeping the extension out of a shot (`shell-shot.ts`).** Two paths. A page-hosted vision tool HIDES the sidebar with
+the window handshake (`__mlSidebarShot: hide → hidden → show`), taken only from the page's own window (`e.source`), and
+the hide lifts itself after 5 s if no show comes. A shot the WORKER takes (`workerShot`, `sw/worker-vision.ts`) changes
+nothing on the page: it asks the shell over `chrome.tabs.sendMessage` (`SHOT_RECTS`, top frame, pinned to the shot's
+`documentId`; answered only for this extension's id with no `sender.tab`, never page-relayable) for the viewport rects of
+everything the shell paints (every element in its shadow roots, padded by its shadow, outline and filter; the hover
+highlight as four strips round the element, never the element; any extension frame the page embedded), before and
+after the capture, and paints the union opaque grey in the worker (`sw/shot-mask.ts`). Why not hide: an inline hide is
+page-owned DOM, so a stylesheet overrides it, a MutationObserver times every shot, and a page that blocks its main thread
+holds the ack. A shell that does not answer within 1 s is a refusal; a mask over 60% of the shot (the image viewer, a
+near-full sidebar or card) is a refusal naming what to put away. Residual: a page that moves or animates the extension's
+own elements continuously (or reflects them, `-webkit-box-reflect`) can get extension pixels into its OWN screenshot
+for the vision model; it gets no pixels back and no timing signal. The highlight's translucent tint over the outlined
+element stays in the shot.
 
 **The services seam (`services.ts`): the session views never call `chrome` or the parent frame themselves.**
 The session views (agent runs, chat turns, output cells, code blocks, approvals, the composer) are shared by the

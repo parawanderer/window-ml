@@ -20,7 +20,7 @@ import { resolveContextContainer, domToContext } from "../dom/dom";   // right-c
 import type { ElementContext } from "../contract/contract-run";
 import type { DebugMode } from "../contract/contract-config";
 import { eventSession, pageMayWrite, type WorkerClaim } from "../event-admission";
-import { shotGate } from "./shell-shot";
+import { answerShotRects, pageShotGate, type ShotRoots } from "./shell-shot";
 
 const WIDTH_KEY = "ml_debug_width";
 const CARD_W_KEY = "ml_card_width";   // the corner card's dragged width
@@ -735,8 +735,14 @@ function showHighlight(ref: { selector?: string; index?: number; token?: string;
 // hide→show window: snapshot the position and snap back on any scroll until we restore.
 let scrollPin: { x: number; y: number; onScroll: () => void } | null = null;
 
-/** The sidebar's shot handling: the page's handshake and the worker's SHOT_HIDE/SHOT_SHOW, held apart. */
-const shot = shotGate({
+/** Where the shell's UI is mounted now, for the worker's mask (shell-shot.ts `extensionRects`). */
+const shotRoots = (): ShotRoots => ({
+    hosts: [{ host: shellHost, kind: "sidebar" }, { host: cardHost, kind: "card" }, { host: hlHost, kind: "highlight" }],
+    lightboxId: SB_LIGHTBOX, highlightId: SB_HIGHLIGHT, extensionOrigin: chrome.runtime.getURL(""),
+});
+
+/** The page's hide handshake for a page-hosted screenshot, bounded (shell-shot.ts). */
+const shot = pageShotGate({
     hide() {
         if (!scrollPin) {
             const x = window.scrollX, y = window.scrollY;
@@ -770,10 +776,11 @@ function onWindowMessage(e: MessageEvent): void {
     // The page's answer to a session action the chat page asked for (shell-session-relay.ts).
     if (d.__mlSessionDone && e.source === window) { onSessionDone(d.__mlSessionDone); return; }
     // injected.js asks us to hide the overlay for a screenshot (so the sidebar isn't captured into the agent's
-    // `look`). Hide, then ack after two frames so the hidden state has painted before the capture fires. Its "show"
-    // lifts its own hide only: a shot the worker is taking stays hidden (shell-shot.ts).
-    if (d.__mlSidebarShot === "hide") { shot.pageHide(() => window.postMessage({ __mlSidebarShot: "hidden" }, "*")); return; }
-    if (d.__mlSidebarShot === "show") { shot.pageShow(); return; }
+    // `look`). Hide, then ack after two frames so the hidden state has painted before the capture fires; the hide
+    // lifts itself if no "show" comes (shell-shot.ts). Only from this window: a subframe's post is not injected.js's.
+    // A shot the WORKER takes hides nothing: it masks the rects SHOT_RECTS reports.
+    if (d.__mlSidebarShot === "hide" && e.source === window) { shot.pageHide(() => window.postMessage({ __mlSidebarShot: "hidden" }, "*")); return; }
+    if (d.__mlSidebarShot === "show" && e.source === window) { shot.pageShow(); return; }
     // injected resolved an @pt/@box token to viewport coords → draw a point marker / box outline (unless
     // a newer hover superseded it, or the token was stale and didn't resolve).
     if (d.type === "ML_HL_AT" && e.source === window) {
@@ -1465,7 +1472,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // so the page neither reads it nor can pass one off as the worker's (docs/spec/SITE_ACCESS.md, attack 15).
     if (msg?.type === "ML_DEBUG_TO_PAGE") { if (startupQueue) workerStartup.push(msg.event); else feedDebug(msg.event, true); return; }
     // The worker hiding the sidebar for a screenshot it takes itself: answered only for the worker, never the page.
-    if (msg?.type === "SHOT_HIDE" || msg?.type === "SHOT_SHOW") return shot.onRuntime(msg, sender, sendResponse) || undefined;
+    // Where the extension's UI is, for a screenshot the worker takes and masks itself: read only, for the worker only.
+    if (msg?.type === "SHOT_RECTS") { answerShotRects(sender, shotRoots, sendResponse); return; }
     // Not ours to answer (content.ts relays them to the page), but they carry a run's id to the page: claim it first.
     if (msg?.type === "ADOPT_RUN_NOW") claimForWorker(msg.payload?.runId, true);
     else if (msg?.type === "RUN_TOOL_IN_PAGE") claimForWorker(msg.payload?.runId, false);
