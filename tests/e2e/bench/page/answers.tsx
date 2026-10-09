@@ -2,7 +2,7 @@
 // wrong line in. A mark is POSTed to the dashboard, appended to the sweep's marks.jsonl, and checked on every later run of
 // that model at that turn (interview.mjs `checkMarks`); the checks come back on the run as `checks`.
 
-import { Tip } from "./tip";
+import { Tip } from "../../../../src/sidebar/help-tip";
 import { useState, useRef } from "preact/hooks";
 import type { BenchState, RunState } from "./state";
 import { Outcome, runDir } from "./runs";

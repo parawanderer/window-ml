@@ -18,7 +18,7 @@ import { readFile } from "node:fs/promises";
 import { watch as fsWatch } from "node:fs";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { COLUMNS } from "./metrics.mjs";
-import { appScript, appCss, invalidate } from "./page/bundle.mjs";
+import { appScript, scoresScript, appCss, invalidate } from "./page/bundle.mjs";
 
 /** The stable default. Arbitrary, but FIXED: a reused URL is the whole point (see startDashboard). */
 export const DEFAULT_PORT = 7331;
@@ -33,17 +33,17 @@ const MIME = {
  * page/bundle.mjs). `state`, when given, is baked in ahead of the script as `window.__BENCH_STATE__`, which is all a
  * saved report.html is: the same page with the last state inlined, so the archive cannot drift from the live view.
  */
-async function pageHtml(state = null) {
+async function pageHtml(state = null, { script = appScript, title = "bench", key = "__BENCH_STATE__" } = {}) {
     // `</script>` inside the JSON would close the tag early, and U+2028/9 are literal line terminators in a script:
     // escaping `<` and those two keeps the JSON a valid JS object literal that cannot leave its tag.
-    const baked = state == null ? "" : `<script>window.__BENCH_STATE__ = ${JSON.stringify(state)
+    const baked = state == null ? "" : `<script>window.${key} = ${JSON.stringify(state)
         .replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029")};</script>`;
     return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>bench</title>
+<title>${title}</title>
 <style>${await appCss()}</style></head>
 <body><div id="app"></div>
-${baked}<script>${appScript()}</script>
+${baked}<script>${script()}</script>
 </body></html>
 `;
 }
@@ -62,8 +62,10 @@ ${baked}<script>${appScript()}</script>
  *   stream, its scroll position with it), so a person, Claude Code or any other agent can work on the page live. A
  *   build that fails is shown on the page and the last good build keeps being served.
  * @param {() => Promise<string>} [opts.rebuild] how to build the page again after a change (a test's seam)
+ * @param {() => Promise<object | null>} [opts.scores] the scoreboard as it is now (scores.mjs `scoreboard`), served at
+ *   /scores, read afresh on every visit so it includes the runs this sweep has logged so far
  */
-export async function startDashboard({ port = DEFAULT_PORT, artifactRoot, onMark = null, watch = null, rebuild = null }) {
+export async function startDashboard({ port = DEFAULT_PORT, artifactRoot, onMark = null, watch = null, rebuild = null, scores = null }) {
     let page = await pageHtml();
     const clients = new Set();
     let state = { name: "bench", runs: [], rows: [], jobs: 1, started: Date.now() };
@@ -74,6 +76,12 @@ export async function startDashboard({ port = DEFAULT_PORT, artifactRoot, onMark
         if (url.pathname === "/") {
             res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
             return res.end(page);
+        }
+        if (url.pathname === "/scores" && scores) {
+            const board = await scores().catch(() => null);
+            if (!board) { res.writeHead(404); return res.end("no scores log"); }
+            res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+            return res.end(await scoresPage(board));
         }
         if (url.pathname === "/events") {
             res.writeHead(200, {
@@ -202,3 +210,9 @@ export async function startDashboard({ port = DEFAULT_PORT, artifactRoot, onMark
 export async function staticPage(state) {
     return pageHtml({ ...state, artifactBase: "", columns: COLUMNS.map((c) => ({ key: c.key, label: c.label, about: c.about, digits: c.digits })) });
 }
+
+/**
+ * The scoreboard page (page/scores.tsx) with a board baked in: scores.html beside the log, and /scores on a live sweep.
+ * Same stylesheet and tooltip layer as the sweep page.
+ */
+export const scoresPage = (board) => pageHtml(board, { script: scoresScript, title: "scoreboard", key: "__BENCH_SCORES__" });

@@ -1,7 +1,7 @@
 // runs.tsx — the sweep's tables and the pieces that describe one run: its outcome badge, its artifacts, what is in
 // flight, and the aggregate results.
 
-import { Tip } from "./tip";
+import { Tip } from "../../../../src/sidebar/help-tip";
 
 /** A spec dimension's column: what a value in it is. */
 const dimTip = (d: string) => `A dimension of the spec: the value of ${d} this run used.`;

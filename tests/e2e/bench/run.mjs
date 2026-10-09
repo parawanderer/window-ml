@@ -45,6 +45,7 @@ import { pageSources } from "./page/bundle.mjs";
 import { addMark, readMarks, defaultBy } from "./mark.mjs";
 import { recordSweep, specProvenance, specText } from "./sweeps.mjs";
 import { timelineText } from "./timeline-text.mjs";
+import { openScores, modelInfo, runRow, logRuns, readRuns, scoreboard, sweepScores, writeScoreFiles, unscoredTasks, SCORES_DB } from "./scores.mjs";
 import { watch as watchFs } from "node:fs";
 // The sweep's timeline: each run's events as the resource panel derives them; the page draws them with its lane.
 const { eventsFrom } = await import("../../../src/sidebar/resource/model-stats.ts");
@@ -258,6 +259,9 @@ async function runCell(cell, ctx, index) {
         backend: run.backendLabel ?? null, models: run.models ?? null,
         ...(turns ? { turns, prompt: promptChars(dir), statuses: driver.statuses } : {}) };
     await writeFile(cacheFile, JSON.stringify(saved, null, 2));
+    // Into the scores log, once, as it lands (scores.mjs): a sweep that dies half way still leaves its runs counted.
+    const row = ctx.scores && runRow({ ...saved, fromCache: false }, t, ctx.scoreSweep);
+    if (row) ctx.logged += logRuns(ctx.scores, [row]);
     ctx.ran++;
     ctx.report?.(index, "done", { ...saved, dir, fromCache: false });
     ctx.log(`  ${measurement.ok ? "✔" : "✖"} ${label} — ${measurement.steps} steps, ${(measurement.runMs / 1000).toFixed(1)}s${measurement.succeeded === null ? "" : measurement.succeeded ? ", correct" : ", WRONG"}${measurement.error ? ` — ${String(measurement.error).slice(0, 80)}` : ""}`);
@@ -366,8 +370,12 @@ const main = async () => {
     const specRel = path.relative(ROOT, path.resolve(args.specPath));
     const provenance = specProvenance(await recordSweep(sweepDir, { specPath: specRel, source: await readFile(args.specPath, "utf8"), fingerprint, dirty, by: defaultBy() }));
 
+    // The scores log (scores.mjs): every run against a real model, one row each, for the scoreboard. Never the fake's.
+    const scores = backend ? await openScores() : null;
+    const info = scores ? await modelInfo(backend) : new Map();
+    const scoreSweep = { name: spec.name, spec: specRel, specHash: provenance?.specHash ?? null, fingerprint, dirty, backend, info, by: defaultBy() };
     const ctx = {
-        spec, fingerprint, sweepDir, backend, buildDirs, cache: args.cache,
+        spec, fingerprint, sweepDir, backend, buildDirs, cache: args.cache, scores, scoreSweep, logged: 0,
         // Warming is a VRAM concern for a local model, and pointless against a hosted API or the fake.
         warm: !!backend && process.env.WARM !== "0",
         cached: 0, ran: 0, pdf: args.pdf,
@@ -409,7 +417,11 @@ const main = async () => {
     })();
     // Watching the page's own sources makes the page editable while it is open: a person or an agent changes a file
     // under bench/page/ (or the lane's shared modules) and every open browser reloads onto the new build.
-    const dash = args.serve ? await startDashboard({ artifactRoot: sweepDir, onMark, watch: pageSources(), ...(args.port != null ? { port: args.port } : {}) }) : null;
+    const dash = args.serve ? await startDashboard({ artifactRoot: sweepDir, onMark, watch: pageSources(), ...(scores ? { scores: async () => scoreboard(readRuns(scores)) } : {}), ...(args.port != null ? { port: args.port } : {}) }) : null;
+    // Each driver model's line on the scoreboard, for the badge in its pill; refreshed as runs are logged.
+    const drivers = () => runsState.map((r) => r.models?.driver).concat(cells.map((c) => c.effects.backend?.model ?? backend?.model));
+    const scoreLines = (href) => (scores ? sweepScores(scoreboard(readRuns(scores)), drivers(), info, href) : null);
+    let liveScores = dash ? scoreLines("/scores") : null;
     const started = Date.now();
     // The question each turn of each interview asked, for the answers view's row headings.
     const interviews = Object.fromEntries(spec.tasks.filter((t) => t.asks?.length).map((t) => [t.id, [t.task, ...t.asks]]));
@@ -440,7 +452,7 @@ const main = async () => {
     const push = () => dash?.update({
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
         runs: runsState, rows: aggregateRows(cells, results),
-        started, finished: null, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(),
+        started, finished: null, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: liveScores,
     });
     ctx.liveOf = (i) => runsState[i].live;
     ctx.report = (i, state, info) => {
@@ -460,6 +472,7 @@ const main = async () => {
             });
             recheck(r);
             results[i] = info;
+            if (dash && scores && !info.fromCache) liveScores = scoreLines("/scores");
         }
         push();
     };
@@ -524,9 +537,12 @@ const main = async () => {
     // EVERYTHING THE PAGE SHOWS IS ALSO A FILE, from the same object: report.html bakes `pageState` in, page.json is
     // it verbatim, and timeline.md is its timeline as text, so a model reading the sweep from a terminal and a person
     // reading the page see the same thing and cannot drift apart.
+    // The scoreboard as of this sweep, beside the log: scores.md, scores.json, scores.html (the saved page's badges link there).
+    if (scores) await writeScoreFiles(scores);
     const pageState = {
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
         runs, rows, started, finished, jobs: args.jobs, dirty, fingerprint, pdf: args.pdf, interviews, skipped, spec: provenance,
+        scores: scoreLines("../scores.html"),
         timeline: (ganttAt = 0, sweepTimeline()),
     };
     // report.html — the live page with the final state baked in. Written ALWAYS, not only with --serve:
@@ -547,6 +563,12 @@ const main = async () => {
     if (existsSync(marksFile)) files.push(["marks", "marks.jsonl", "lines marked wrong, who marked each and when (append-only); later runs are checked for them"]);
     console.log(`\n  ${path.relative(ROOT, sweepDir)}/`);
     for (const [what, f, why] of files) console.log(`    ${f.padEnd(22)} ${what}: ${why}`);
+    // The scoreboard counts only tasks that say what a right answer is, so say which did not.
+    if (scores) {
+        const none = unscoredTasks(spec);
+        console.log(`\n  ${path.relative(ROOT, SCORES_DB)}: ${ctx.logged} run${ctx.logged === 1 ? "" : "s"} logged; the scoreboard is scores.md / scores.html beside it (node tests/e2e/bench/scores.mjs).`);
+        if (none.length) console.log(`  ${none.length} of ${spec.tasks.length} task${spec.tasks.length === 1 ? "" : "s"} had no \`succeeded\` predicate, so their runs count for tokens but not for any model's score: ${none.join(", ")}`);
+    } else if (backend) console.log("\n  (runs not logged for the scoreboard: this Node has no node:sqlite)");
     console.log("");
     // A live watcher holds the process open: without a page to keep current, stop watching marks.jsonl now.
     const unwatchMarks = () => { clearTimeout(marksTimer); marksWatch?.close(); };
@@ -555,7 +577,7 @@ const main = async () => {
     if (dash) {
         dash.update({
             name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
-            runs: runsState, rows, started, finished, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(),
+            runs: runsState, rows, started, finished, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: scoreLines("/scores"),
         });
         // Held open on purpose: the page IS the result when you ran with --serve, and tearing the server
         // down the instant the last cell lands would blank it exactly when you look.

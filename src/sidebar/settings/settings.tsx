@@ -26,7 +26,7 @@ import { applyTheme, applyFont, applyCodePrefs, panelThemeActive } from "../pref
 import { CODE_THEME_PRESETS, DEFAULT_CODE_THEME, VSCODE_THEME_ID, convertVscodeTheme, parseJsonc, type CodeThemePreset, type ConvertedTheme } from "../../code-themes";
 import { convertStored } from "../code/code-theme-css";
 import { IconCheck } from "../icons";
-import { Disclosure } from "../ui-kit";
+import { Disclosure } from "../disclosure";
 import { toHost } from "../parent-channel";
 
 /** The chart-window lengths the picker offers by name. The scrub strip can set others by drag, which is

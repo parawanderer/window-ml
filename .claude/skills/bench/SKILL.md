@@ -124,6 +124,14 @@ export default defineBench({
 A task without `succeeded` reports `—` (not scored) rather than counting as a failure — which keeps a
 task usable for measuring behaviour when correctness is not the question.
 
+**Give every task a `succeeded` predicate whenever a right answer can be checked.** Only predicate-scored runs count
+toward a model's score on the bench's scoreboard (below), so a task without one adds nothing to it, and the sweep ends
+by listing which tasks had none. Writing one is usually a line: a regex for the number the page holds, or a check
+against the artifact the task produced (ground truth from the page or the file, never from the model's own claim).
+Check it against an answer a model would plausibly write, right and wrong, before the sweep: a predicate that is too
+strict scores every model as failing, and nothing flags it. An edit to the task's text or its predicate makes it a new
+task on the scoreboard, so the old runs do not mix with the new.
+
 A task (or a cell, through `apply`) can set `surface: "hud"` to start the run the way a person does from the UI (the
 kit and prompt a UI run gets) instead of a console `ml.agent`; `tools`, `python`, `toolTokens`, `agentOptions` and
 `seed` are console knobs and do not apply to it. `sharedWatches`/`watchNotes` go to `ml.current` as in observe.
@@ -180,6 +188,18 @@ logs, who and when on every edit): [docs/dev/bench-design.md](../../../docs/dev/
 | Spec: which spec version ran, who started the sweep, the diff against the sweep before | `spec.md`; the log of every sweep, `sweeps.jsonl` (append-only) | read it. Set `BENCH_BY="<who you are>"` when you start a sweep, so it says who did. |
 | Timeline | `timeline.md`: each run's start, end and busy time on one clock, which runs overlapped and for how long, then every span (model calls with their phases, tool steps, model loads, sub-calls) | read it |
 | all of it | `page.json`: the exact state `report.html` renders | `jq` it |
+| each model's score, in its pill (links to the scoreboard) | one level up, beside every sweep: `scores.md`, `scores.json`, `scores.html`, from the log `scores.sqlite` | `node tests/e2e/bench/scores.mjs` prints it and rewrites the three files |
+
+### The scoreboard (every sweep, every model)
+
+Every run a sweep makes against a REAL model (never the fake one, never a cached cell) is inserted into
+`tests/e2e/artifacts/bench/scores.sqlite`, table `runs`, as it finishes: the model's tag plus the digest and
+quantisation the server reports, the task's id plus a hash of its text and predicate, pass/fail, tokens, steps, the
+build, who started the sweep and when. A row is never updated. `scores.mjs` fits a Rasch model over the predicate-scored
+runs (`rasch.mjs`): a score θ per model and a difficulty per task, so models that ran different tasks compare. Token
+bloat is each run's tokens over the median run of the same task, averaged per model. Every number's meaning is in
+`scores.md` under "How these numbers are computed", and in the page's tooltips. Ask the log anything else directly:
+`sqlite3 tests/e2e/artifacts/bench/scores.sqlite "SELECT model, task, passed, tokens FROM runs ORDER BY at DESC LIMIT 20"`.
 
 `tests/e2e/artifacts/bench/<spec>/` (gitignored) holds `report.md`, `rows.json` (the aggregate AND every
 individual run, for further analysis), and one directory per RUN at

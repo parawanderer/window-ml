@@ -18,7 +18,7 @@ import { truncate } from "../format";
 // composer rather than re-derived here, so the panel and the picker cannot disagree about what is local.
 import { isCloudModel } from "../model";
 import { IconWarn, IconVram, IconEye, IconEyeOff, IconBench, IconGear, IconEvictAll } from "../icons";
-import { Disclosure } from "../ui-kit";
+import { Disclosure } from "../disclosure";
 import { fmtAge, hhmmss } from "../timestamps";
 // lsGet/lsSet live in store.ts, not here: a rendered code block hands the bench a script, and render-panel
 // cannot import this module (it would be a cycle — this one imports RenderPanel).

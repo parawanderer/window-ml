@@ -74,7 +74,9 @@ as in AGENTS.md — they are all under `src/`.
   cites instead (0.00) and one that hides a re-emission in a seeded turn (0.00), and it caught two real
   extractor bugs before any GPU time. Assertions: `tests/bench-metrics.test.mjs` (fast, synthetic
   streams) and `tests/e2e/bench-selftest.spec.mjs` (real streams — the only thing that catches an
-  extractor reading a field the product never emits). One walk, N sinks: terminal + markdown today. **Two audiences, one run:** the terminal is for the agent, and
+  extractor reading a field the product never emits). Every real run is also logged to `scores.sqlite`, the
+  scoreboard's log: a Rasch fit over predicate-scored runs gives each model a score comparable across tasks
+  (`scores.mjs`, `rasch.mjs`; the skill's "The scoreboard"). One walk, N sinks: terminal + markdown today. **Two audiences, one run:** the terminal is for the agent, and
   **`--serve`** prints a banner URL for a live page a human watches — every run's state and what is
   queued, the in-flight run's step against its budget and the tool it is in, elapsed / mean-per-run /
   mean-per-step / ETA, and links to each `run.md`. Served by node:http + SSE; the page is Preact

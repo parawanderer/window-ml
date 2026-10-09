@@ -24,10 +24,14 @@ lines in the terminal list them:
 | Spec | `spec.md` (log: `sweeps.jsonl`) |
 | marks and their checks | `marks.jsonl`, and each check in `summary.md` |
 | all of it | `page.json` |
+| a model's score (its pill), the scoreboard | `scores.md`, `scores.json` beside the sweeps (log: `scores.sqlite`) |
 
 Everything the page DOES has a command too: "mark wrong" is `bench/mark.mjs`. A model driving the bench never needs
 the page, and a new card is not done until its file is written beside it and listed in the bench skill's "What it
 writes" table.
+
+Data that accumulates ACROSS sweeps goes in SQLite rather than a file per sweep: the scoreboard's log,
+`scores.sqlite` (`scores.mjs`), one row per run, inserted once and never updated, under the same who-and-when rule.
 
 ## 2. Edits go to an append-only log; nothing is overwritten
 
@@ -61,6 +65,13 @@ state in. Each run's files are rewritten as its events arrive, and the viewer re
 Nothing renders a run twice, so the live view cannot show something the saved one does not. The page's own source is
 watched the same way: a change under `bench/page/` (or the lane modules it shares with the panel) rebuilds the bundle
 and the open pages reload onto it, so a person or an agent can change the page while someone watches.
+
+## 6. Every computed number says where it came from
+
+A number the bench derives (a rate, a score, a ratio) carries a tooltip saying what it is and how it was computed, in
+words a reader can check without the code: the page's column tips are `COLUMNS[].about` (metrics.mjs), the scoreboard's
+are `board.about` (scores.mjs), and the text files print the same strings. A page that summarises stored data names
+the store and shows a query to read it directly.
 
 ## Where this is heading
 
