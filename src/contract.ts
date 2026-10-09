@@ -90,8 +90,8 @@ export interface MlApi {
     /** Read a `@tool:<id>` pointer — an output this run already produced — instead of re-running the tool that
      *  made it. Reaches the FULL capture, not the truncated copy the model was shown. `pipe` reduces it first,
      *  as a dialect string (".rows | head 5") or an array with one stage per entry ([".rows", "head 5"]) —
-     *  an array entry is never re-split, so use it when a stage holds a `|` (["grep -E error|warn"]). Run-bound like
-     *  `ml.answer`: live inside a tool call (an approved `exec`), throws from the console outside a run.
+     *  an array entry is never re-split, so use it when a stage holds a `|` (["grep -E error|warn"]). Run-bound: live
+     *  inside a tool call (an approved `exec`), throws from the console outside a run.
      *
      *  SYNCHRONOUS inside `exec` for a reference written LITERALLY — `@tool:abc1234`, or the same string
      *  passed directly — and for the no-argument listing, because all of those are resolved before the
@@ -115,7 +115,8 @@ export interface MlApi {
     resumeChat(hash: string): Promise<MlHistory>;
     /** One-shot chat — a throwaway single-turn history. A RAW model call: it sees ONLY the
      *  prompt string you pass (plus any `images`), NOT the page. No DOM access, no tools —
-     *  to ask about the page, extract the text yourself and pass it in, or use ml.agent. */
+     *  to ask about the page, extract the text yourself and pass it in, or use ml.agent. Resolves to the reply
+     *  text, or to the parsed object when `options.schema` is given. Pass `options.onToken` to stream it. */
     chat(prompt: string, options?: ChatOptions): Promise<string | unknown>;
 
     /* ---- tools / agent ---- */
@@ -246,8 +247,8 @@ export interface MlApi {
     embed<T extends string | string[]>(input: T, opts?: { model?: string }): Promise<T extends string[] ? Embedding[] : Embedding>;
     /** GET a URL's content via the background (bypasses CORS; UNCREDENTIALED BY DEFAULT — no cookies unless you
      *  ask). Use it to READ a page/file the current DOM can't reach — a raw file, a JSON API, another site —
-     *  instead of navigating there. Returns a {@link FetchResult}: `.type` classifies the body (json/csv/html/
-     *  text) so you can chain (`.json` is pre-parsed; hand `.text` of a CSV to `python_exec`). Each new URL
+     *  instead of navigating there. Returns a {@link FetchResult}: `.type` classifies the body ({@link ContentKind})
+     *  so you can chain (`.json` is pre-parsed; a CSV/TSV comes back parsed as `.table`, with `col`/`records`). Each new URL
      *  requires the user's one-time approval (then it's remembered for the session). GET only — no custom
      *  headers or body. `credentials: true` fetches AS THE USER (sends cookies; always prompts, never cached).
      *  `rendered: true` loads the URL in a background tab so its JavaScript runs, then returns the SETTLED DOM

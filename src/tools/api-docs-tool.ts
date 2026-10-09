@@ -191,7 +191,8 @@ export function apiDocsTool(define: typeof defineTool, src: DocsSource): MlTool 
                 search: {
                     type: "string",
                     description: "Scan every member and type section for this term (e.g. \"screenshot\") " +
-                        "and return what mentions it. Use it when you don't know the method or type name."
+                        "and return what mentions it. Use it when you don't know the method or type name. With `members` or " +
+                            "`types` in the same call, you get both."
                 },
                 fresh: {
                     type: "boolean",

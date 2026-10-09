@@ -349,17 +349,25 @@ const searchDocs = (parts: ApiDocsParts, term: string, env: EnvSection[], seen?:
  * (HUD shortcut, source commit, read-only note) to the DEFAULT view separately.
  *
  * @param parts The generated reference parts (ML_API_PARTS).
- * @param q     `{ members }`/`{ types }` to expand, `{ search }` to scan, none for the default view.
+ * @param q     `{ members }`/`{ types }` to expand, `{ search }` to scan (with either, both are returned), none for the
+ *              default view.
  * @param env   Runtime/environment sections (HUD shortcut, source, …): shown in the default view and
  *              searchable. The tool resolves these live and passes them only when the view can use them.
  * @param seen  The run's within-burst dedup set (DocsMemory.shown): a chunk whose key is already in it is
  *              printed as a one-line stub instead of in full, and a full emit adds its key. Omit to disable.
  */
 export function queryApiDocs(parts: ApiDocsParts, q: ApiDocsQuery = {}, env: EnvSection[] = [], seen?: Set<string>): string {
-    if (q.search && q.search.trim()) return searchDocs(parts, q.search.trim(), env, seen);
+    const search = q.search?.trim();
     const members = (q.members ?? []).filter(s => s && s.trim());
     const types = (q.types ?? []).filter(s => s && s.trim());
-    if (members.length || types.length) return expand(parts, members, types, seen);
+    // Both, when both are asked: a search used to replace the members and types it came with, so a call asking
+    // for three new types plus a search printed only the search's one already-seen stub. The expansion goes first
+    // and marks what it printed, so the search then stubs those instead of printing them twice.
+    if (members.length || types.length) {
+        const view = expand(parts, members, types, seen);
+        return search ? `${view}\n\n${searchDocs(parts, search, env, seen)}` : view;
+    }
+    if (search) return searchDocs(parts, search, env, seen);
     return defaultView(parts, env, seen);
 }
 

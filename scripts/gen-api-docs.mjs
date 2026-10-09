@@ -38,6 +38,8 @@ export const SKIP_TYPES = new Set([
     "AgentStepEvent",       // the onStep callback's event — the model never writes an onStep handler from exec
     "AnswerMedia",          // internal render shape (answer element screenshots) — never constructed by a caller
     "AgentTranscriptEntry", // AgentResult.transcript entry shape — internal, not something a caller builds
+    "TokenRender",          // INTERNAL: stripped before ml.agent resolves; a model that requested it got a cut-off
+                            // section naming an undefined type (model panel, 2026-10-09)
 ]);
 
 // Public MlApi members the CONSOLE user has but the MODEL should NOT see in its doc — kept in the API, stripped
@@ -165,6 +167,26 @@ export function parseDecls(text) {
 }
 
 /**
+ * Where a class member's BODY opens on its first line, or -1 when it has none there. Not the first `{`: a parameter
+ * or return type can hold an object type (`rank<T>(c: readonly { key: T }[]): { score: number }[] {`), and cutting
+ * there printed `rank<T>(c: readonly;`. The body brace is the last one on a line that ends with `{`, or, for a
+ * one-line body, the `{` that opens the balanced group the line ends with.
+ *
+ * @param {string} line A member's first source line.
+ * @returns {number} The index of the body's `{`, or -1.
+ */
+export function bodyBrace(line) {
+    const t = stripLineComment(line).trimEnd();
+    if (t.endsWith("{")) return t.lastIndexOf("{");
+    if (!t.endsWith("}")) return -1;
+    for (let i = t.length - 1, depth = 0; i >= 0; i--) {
+        if (t[i] === "}") depth++;
+        else if (t[i] === "{" && --depth === 0) return i;
+    }
+    return -1;
+}
+
+/**
  * A CLASS as its declaration surface: member signatures, their JSDoc, no bodies.
  *
  * Classes are indexed because a model can be handed one and expected to CALL it — `ml.embed` returns an
@@ -187,7 +209,7 @@ export function classSurface(body) {
         // member without its JSDoc would leave the comment explaining it attached to the NEXT one.
         if (/^\s*(private|protected)\b/.test(line)) { pending = []; continue; }
         out.push(...pending); pending = [];
-        const cut = line.indexOf("{");
+        const cut = bodyBrace(line);
         out.push(cut >= 0 ? `${line.slice(0, cut).trimEnd()};` : line);
     }
     out.push(body[body.length - 1]);

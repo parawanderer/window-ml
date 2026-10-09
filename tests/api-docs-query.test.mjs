@@ -294,3 +294,42 @@ test("against the real reference: `current` and `state` expand as members, and a
     const deref = queryApiDocs(parts, { members: ["dereference"] });
     assert.doesNotMatch(deref, /YOUR OWN RUN|persistent JS scratchpad/, "dereference no longer carries state's or current's doc");
 });
+
+// --- what the model panel found wrong in the reference (2026-10-09), each against the real parts ---
+
+test("a search with members or types returns both, instead of the search replacing them", () => {
+    const fresh = queryApiDocs(FIXTURE, { types: ["FetchResult"], search: "schema" }, [], new Set());
+    assert.match(fresh, /### FetchResult/, "the asked-for type is there");
+    assert.match(fresh, /ChatOptions/, "and what the search found");
+    // DeepSeek Flash's call: new types plus a search whose only hit it had already read. It got back one line,
+    // `[interface ChatOptions already seen]`, and none of the types it asked for.
+    const seen = new Set();
+    queryApiDocs(FIXTURE, { types: ["ChatOptions"] }, [], seen);
+    const out = queryApiDocs(FIXTURE, { types: ["FetchResult"], search: "schema" }, [], seen);
+    assert.match(out, /### FetchResult/, "the new type is printed even when the search's hit was already seen");
+});
+
+test("real parts: a class method whose parameter is an object type prints whole, not cut at its first brace", async () => {
+    const { bodyBrace } = await import("../scripts/gen-api-docs.mjs");
+    const line = "    rank<T>(candidates: readonly { key: T }[]): { key: T; score: number }[] {";
+    assert.equal(line.slice(0, bodyBrace(line)).trimEnd(), "    rank<T>(candidates: readonly { key: T }[]): { key: T; score: number }[]");
+    assert.equal(bodyBrace("    get dims(): number { return this.v.length; }"), "    get dims(): number ".length);
+    assert.equal(bodyBrace("    dot(other: Embedding): number;"), -1);
+    assert.match(generateApiParts().types.Embedding, /rank<T>\(candidates: readonly \{ key: T; embedding: Embedding \}\[\]\): \{ key: T; score: number \}\[\];/);
+});
+
+test("real parts: a type marked INTERNAL is not in the reference, and every section opens with its own doc", () => {
+    const parts = generateApiParts();
+    assert.ok(!("TokenRender" in parts.types), "INTERNAL types stay out of the index");
+    assert.doesNotMatch(parts.types.TableCell, /The result of `ml\.fetch\(url\)`/, "TableCell no longer carries FetchResult's stray comment");
+    assert.match(parts.types.FetchResult, /typeByHeader`\/`typeByContent` are the raw signals/, "that comment's content is folded into FetchResult's own");
+});
+
+test("real parts: the CSV and streaming answers are stated, not left to inference", () => {
+    const parts = generateApiParts();
+    assert.doesNotMatch(parts.mlApi, /hand `\.text` of a CSV to `python_exec`/, "the stale CSV advice is gone");
+    assert.match(parts.mlApi, /a CSV\/TSV comes back parsed as `\.table`/);
+    assert.match(parts.types.ChatOptions, /passing this is what turns streaming on/);
+    assert.match(parts.types.TableLike, /200,000 rows/, "the row cap is a number");
+    assert.match(parts.types.Table, /From `ml\.fetch`, every method is synchronous/);
+});
