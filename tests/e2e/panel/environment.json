@@ -1,9 +1,0 @@
-{
-  "about": "Whether a model can find out the environment it is acting in (site approval, Debugger-based actions, user scripts, where an approved exec would run, what runs without asking) without trying things and reading the refusal. The baseline for a possible ml.current.env.",
-  "surface": "hud",
-  "task": "Before you do anything on this page, answer these about your own environment. For EACH answer, say how you know it: you READ it somewhere (say where), you INFERRED it (from what), you TRIED something and saw the result, or you are GUESSING. (1) Is the site you are on approved for window.ml? (2) Are \"Debugger-based actions\" (CDP) turned on in the extension? (3) Are user scripts allowed for the extension? (4) If you ran an exec that both reads ml.current and clicks a button on this page, would it run, and if so in which world: the page's own, or an isolated one? (5) Would a read-only survey of the page (counting elements, reading text) run without asking the person first? Do not change anything on the page.",
-  "asks": [
-    "Now check each of your five answers by whatever means you have, still without changing anything on the page. Which ones changed, and what did checking each one cost you (calls, guesses, an error you had to read)?",
-    "An honest review. What about your environment did you have to guess or discover by trying, that you would rather have been able to read? Where would you have expected to find it (the system prompt, a tool description, agent_api_docs, ml.current, somewhere else)? If one thing were added so you could answer all five questions with one read, what should it look like? Be specific and critical; this is for the people building it."
-  ]
-}
