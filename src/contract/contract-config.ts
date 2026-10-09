@@ -317,7 +317,8 @@ export type MlPublicConfig = Pick<MlConfig,
     /** COMPUTED per request (not stored): whether THIS page's origin is on the user's page-approval
      *  whitelist. When true, ml.agent honours the page's own approve()/confirm gate (the user trusts this
      *  domain); otherwise a privileged tool routes to the unforgeable background gate. The raw domain
-     *  list is NEVER sent to the page — only this one boolean for the page's own origin. */
+     *  list is NEVER sent to the page — only this one boolean for the page's own origin. It is NOT whether the
+     *  site is approved for window.ml (site access): an agent run reads that in `ml.current.env.page.approved`. */
     pageApprovalAllowed?: boolean;
 };
 

@@ -496,6 +496,41 @@ test("FAILURE: a survey that reads ml.current.debug and then falls out of dialec
     assert.equal(snap.debug.userWatches[0].value, 2);
 });
 
+// --- every field of the snapshot reaches a survey, env included ---
+
+const ENV = { page: { url: "https://site.example/page", approved: true }, isolation: { userScripts: false, cdp: true }, exec: { plain: "page", readsCurrent: "isolated", readsPointer: "isolated" }, readonlyAutoApprove: true };
+const fullSnapshot = () => ({ ...sampleSnapshot(), debug: { userWatches: [] }, env: structuredClone(ENV) });
+
+test("a survey's ml.current has every field the snapshot has: one the facade forgets is silently absent", async () => {
+    // `env` was: the facade rebuilds ml.current from a list of fields, and five models read it as undefined.
+    const keys = JSON.parse((await inWorkerRealm("return JSON.stringify(Object.keys(ml.current))", fullSnapshot())).value);
+    assert.deepEqual(keys.sort(), Object.keys(fullSnapshot()).sort());
+});
+
+test("a survey reads ml.current.env whole, and writing its own copy changes nothing the next read sees", async () => {
+    const snap = fullSnapshot();
+    assert.deepEqual(JSON.parse((await inWorkerRealm("return JSON.stringify(ml.current.env)", snap)).value), ENV);
+    assert.equal((await inWorkerRealm("return ml.current.env.exec.readsCurrent", snap)).value, "isolated");
+    await inWorkerRealm("ml.current.env.exec.plain = 'refused'; ml.current.env.page.approved = false; return 1", snap);
+    assert.deepEqual(snap.env, ENV, "the snapshot the host made is untouched");
+    // Absent where the host adds none (a page-hosted run): no field, not an empty one.
+    assert.equal((await inWorkerRealm("return String(ml.current.env)", sampleSnapshot())).value, "undefined");
+});
+
+test("ADVERSARIAL: a field copied whole gives no way to its realm, and a deep one is walked within bounds", async () => {
+    const snap = fullSnapshot();
+    for (const js of ["return ml.current.env.constructor", "return ml.current.env.__proto__", "return ml.current.env.page.constructor.constructor('return 1')()", "return Object.getPrototypeOf(ml.current.env.exec)"])
+        await assert.rejects(inWorkerRealm(js, snap), (e) => e instanceof Denied || e instanceof NotInDialect, js);
+    // A future field that is deep: copied and owned to the bottom, without hanging on it.
+    let deep = {}; const top = deep;
+    for (let i = 0; i < 2000; i++) { deep.next = { i }; deep = deep.next; }
+    const t0 = Date.now();
+    const r = await inWorkerRealm("let n = ml.current.later; let d = 0; for (const _ of ml.range(50)) { n = n.next; d += 1 } n.i = -1; return d", { ...snap, later: top });
+    assert.equal(r.value, 50);
+    assert.equal(top.next.next.i, 1, "the host's object was not written through the script's copy");
+    assert.ok(Date.now() - t0 < 2000, "walking a deep field is bounded");
+});
+
 // --- the worker's fetch cache: re-reads of what the run's fetch_url read in the worker (slice 2 part 2) ---
 
 /** A worker `ml` whose cache holds one result for `url`, as the run's fetch_url would have left it. */

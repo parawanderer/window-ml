@@ -743,7 +743,7 @@ test("UPGRADE: a stored config from before the flag reads as ON: the prompt name
     assert.match(system, /`ml\.current`, read in a read-only `exec`, is your own run as data/);
     // DeepSeek V4 Pro and Kimi K3 summed only `estimatedTokens` until the sentence named both (2026-10-09).
     assert.match(system, /what each costs \(`meta\[i\]\.tokens \?\? meta\[i\]\.estimatedTokens`\)/);
-    assert.match(system, /`ml\.current\.debug\.userWatches`\)\. Most tasks never need it; `agent_api_docs` documents it\./);
+    assert.match(system, /`ml\.current\.debug\.userWatches`\), and your environment \(`ml\.current\.env`: whether this site is approved, where an approved exec would run\)\. Most tasks never need it; `agent_api_docs` documents it\./);
     // The one fact a real model got wrong with the sentence alone, without looking it up (DeepSeek V4 Pro, 2026-10-08).
     assert.match(system, /A shared watch is re-evaluated on every read, so its value is now, and its `note` is the user's question to answer\./);
     assert.ok(!system.includes(CURRENT_SIGNATURE), "the shape is the docs' to give");
