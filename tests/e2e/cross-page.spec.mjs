@@ -1397,7 +1397,7 @@ test("answer → HUD: designated elements' screenshots render in the completion 
         { content: "Returned the paragraphs." },
     ]);
     // A background-hosted run (off mode + the default toolset's exec ⚠) → the corner HUD card surfaces it.
-    await page.evaluate(() => { window.ml.agent("Return the paragraphs as the answer.", { env: false }); return true; });
+    await page.evaluate(() => { window.ml.agent("Return the paragraphs as the answer.", { env: false, answer: true }); return true; });
 
     // The HUD card iframe (sidebar.html) shows the answer-media gallery with REAL screenshot crops (data URLs).
     const card = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();

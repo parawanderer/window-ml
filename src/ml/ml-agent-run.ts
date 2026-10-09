@@ -19,6 +19,7 @@
 import { type AgentLoopDeps, shotTurnMessage, runAgentLoop } from "../agent/agent-loop";
 import { setPageContext, trackPageHosted } from "../agent/page-run-state";
 import { resolveOutputs, makeAnswerFacade, finalizeAnswer } from "../pointers/answer-set";
+import { hiddenMlMembers } from "./ml-member-tools";
 import { defaultApprove, logStep, normalizeApproval, formatReadonlyExec, readonlyRefused } from "../agent/approval";
 import { autoApprovePython } from "../agent/auto-approve";
 import { makeBackgroundTaskPromise } from "../bridge";
@@ -101,9 +102,9 @@ import { validateArgs } from "../tools/validate";
  *   (it does not reject, matching the `hitCap` convention).
  * @returns {Promise<{summary: string, steps: number, transcript: Array<{thought?: string, tool?: string, arguments?: Object, result?: string, elements?: Node[]}>, elements: Node[], hitCap?: boolean, cancelled?: boolean}>}
  *   `elements` is the live DOM node(s) the model designated via an
- *   `answer`-capable tool (empty for tasks that just act on the page).
+ *   `answer`-capable tool: pass `answer: true` for the default kit to include one (empty otherwise).
  */
-export const agent = async function(this: MlApi, task: string, { tools = null, extraTools = [], serverTools = [], commanderTools = false, system = null, systemAppend = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, crossOrigin = false, approvalRouting = "ui", stream = false, toolTokens = false, images = [], origin = null, _control = null, _onSession = null }: {
+export const agent = async function(this: MlApi, task: string, { tools = null, extraTools = [], serverTools = [], commanderTools = false, system = null, systemAppend = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, crossOrigin = false, approvalRouting = "ui", stream = false, toolTokens = false, answer = false, images = [], origin = null, _control = null, _onSession = null }: {
     tools?: MlTool[] | null;
     extraTools?: MlTool[];
     serverTools?: string[];
@@ -133,6 +134,7 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
      *  console or a userscript leaves it unset, which reads as `console`. */
     origin?: import("../contract/contract-run").PromptOrigin | null;
     toolTokens?: boolean;   // surface `@tool:<id>` on rich tool results so the model can cite exact outputs. Default false; HUD auto-on.
+    answer?: boolean;   // give the default kit the `answer` tool (and `ml.answer`), to get elements back in `.elements`. Default false.
     images?: (string | HTMLImageElement)[];   // attachments for THIS turn (composer paste/upload)
     _control?: AgentControl | null;   // internal: a handle's persistent session state (ml.createAgent). Absent → a throwaway per-call one.
     _onSession?: ((hash: string) => void) | null;   // internal: called once, with the hash, the moment the FIRST turn mints it (a UI that started this run needs to know which session it got)
@@ -153,7 +155,7 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
     // span turns; a plain ml.agent() call gets a throwaway one. The page loop reads history / inbox /
     // cap / seq from it, so there's a single code path — a handle just persists it across turns.
     const control: AgentControl = _control ?? { hash: null, messages: [], inbox: [], maxSteps, running: false, seqBase: 0, stepBase: 0 };
-    const asm = await assembleRun(this as unknown as AssemblyMl, task, { tools, extraTools, serverTools, commanderTools, system, systemAppend, model, vision, unattended, navigate, crossOrigin, toolTokens, images });
+    const asm = await assembleRun(this as unknown as AssemblyMl, task, { tools, extraTools, serverTools, commanderTools, system, systemAppend, model, vision, unattended, navigate, crossOrigin, toolTokens, answer, images });
     const { toolset, byName, toolDefs, turnImages, agentCfg, runModel, driverSees, autoRO, autoPy, autoSOA, autoSelfSrc, labelMatch, pierceClosed, cdpOn } = asm;
     const runVisionModel = asm.runVisionModel, runGroundingModel = asm.runGroundingModel, runGroundingRange = asm.runGroundingRange;
     let pendingImages = asm.pendingImages;
@@ -487,7 +489,7 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
                 // The run's resolver is bound for the attempt: it runs before any tool call, outside
                 // executeTool's binding, and `ml.dereference` reads whatever is bound.
                 const ro = await withRunDeref(toolCtx.deref, () => evalReadonly(roSrc, document, this,
-                    makeAnswerFacade(answerSet, elLine), { checkpoint: () => answerSet.checkpoint(),
+                    makeAnswerFacade(answerSet, elLine), { checkpoint: () => answerSet.checkpoint(), hidden: hiddenMlMembers((n) => n in byName),
                     onLog: live ? (line) => live.push(line + "\n") : undefined }));   // each line as it prints, as an approved exec streams it
                 const { result, elements, render } = formatReadonlyExec(ro.value, ro.logs, undefined, ro.dropped);
                 const { in: renderIn, out: renderOut } = descriptorFor(byName[name], { result, elements, render }, args);

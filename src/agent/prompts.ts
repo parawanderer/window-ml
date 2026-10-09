@@ -107,7 +107,9 @@ export const CALL_TITLE_CLAUSE =
     "not a sentence, and never an explanation of the tool itself.";
 import { PIPE_SYNTAX } from "../pointers/text-pipe";
 
-export const TOOLTOKENS_CLAUSE =
+/** The tool-tokens section. `answer`: the run has the `answer` tool, so an output can also go in the block under the
+ *  reply; without it, an output is embedded inline only, and the prompt never names a tool the run lacks. */
+export const tooltokensClause = (answer: boolean): string =>
     "\n\nTOOL OUTPUT TOKENS. An `@tool:<id>` is a HANDLE to one tool result, and it has TWO uses: showing that " +
     "output to the user in your answer, and READING IT BACK YOURSELF later (with `dereference`). So opt in " +
     "whenever an output is worth keeping — either because you'll show it, OR because you may need it again " +
@@ -125,9 +127,9 @@ export const TOOLTOKENS_CLAUSE =
     "image / value) right where you write it; `:in` embeds your exact executed CODE instead. So you never retype " +
     "an output or code you can embed — the macro already shows it. (A plain link `[caption](@tool:<id>:out)` " +
     "instead renders as a LINK that jumps to the output — use it only to REFERENCE the output; prefer the `![…]` " +
-    "embed to actually show it.) Two spots to embed: INLINE for a value that reads mid-sentence; or the BOTTOM " +
+    "embed to actually show it.) " + (answer ? "Two spots to embed: INLINE for a value that reads mid-sentence; or the BOTTOM " +
     "block via `ml.answer.add(\"@tool:<id>:out\")` (or the `answer` tool's `text`) with a `note` caption, for a big " +
-    "table/image. Cite each output ONCE, only for a result worth showing (your final computation), not exploratory " +
+    "table/image. " : "") + "Cite each output ONCE, only for a result worth showing (your final computation), not exploratory " +
     "steps. Embed any computed/looked-up figure you want the user to see — nothing is shown unless you cite it, so " +
     "an uncited computation stays hidden; a pure-prose answer needs none. EXPLAINING CODE YOU RAN: embed " +
     "`![the code](@tool:<id>:in)`, THEN explain it. Write executed code " +
@@ -135,6 +137,8 @@ export const TOOLTOKENS_CLAUSE =
     "sympy expression / a `sympy.latex(...)` string / an image ALREADY auto-typesets (or shows the image) when " +
     "cited — NO pipe needed. A pipe only OVERRIDES: `| latex` forces typesetting, `| img` forces an image, `| raw` " +
     "forces the literal text. E.g. `![derivative](@tool:<id>:out)` typesets a sympy result on its own.";
+/** The tool-tokens section for a run with the `answer` tool. */
+export const TOOLTOKENS_CLAUSE = tooltokensClause(true);
 // The other half of tool tokens: a token is not only a CITATION for the answer, it is a POINTER the model can
 // read back mid-run. Kept in the same clause because it is only true when tool tokens are on.
 /** THE PIPE DIALECT, once. It was spelled out verbatim in four `pipe` PARAMETERS (fetch_url, navigate,

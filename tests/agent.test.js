@@ -1423,7 +1423,7 @@ test("follow-up run: the answer set is CLEARED between turns — a 2nd turn that
         reply("done turn one"),
         reply("just chatting now"),
     ]) });
-    const a = world.ml.createAgent({ maxSteps: 4, vision: false });
+    const a = world.ml.createAgent({ maxSteps: 4, vision: false, answer: true });
     const r1 = await a.run("compute it");
     assert.match(r1.answer || "", /grand total is 6260/, "turn 1 surfaces the designated answer");
     const r2 = await a.run("thanks");
@@ -2867,6 +2867,26 @@ test("the default kit has click and type (asking before they act); a hand-picked
     const find = world.ml.domTools.find(t => t.name === "findByText");
     await world.ml.agent("t", { vision: false, tools: [find] });
     assert.ok(!tools[2].includes("agent_api_docs"), "no exec, no docs added");
+});
+
+test("answer is opt-in: the default kit leaves it out (and the prompt never names it), answer:true or a tools list brings it", async () => {
+    const tools = [], prompts = [];
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type === "GET_CONFIG" || m.type === "MODEL_CAPS") return undefined;
+            tools.push((m.payload.tools || []).map(t => t.function?.name ?? t.name));
+            prompts.push(m.payload.messages[0].content); return { data: reply("done") };
+        }
+    });
+    await world.ml.agent("t", { vision: false, toolTokens: true });
+    assert.ok(!tools[0].includes("answer"), tools[0].join(","));
+    assert.doesNotMatch(prompts[0], /ml\.answer|`answer` tool/, "no tool the run lacks is named");
+    assert.match(prompts[0], /TOOL OUTPUT TOKENS/, "the rest of the section is there");
+    await world.ml.agent("t", { vision: false, toolTokens: true, answer: true });
+    assert.equal(tools[1].filter(n => n === "answer").length, 1);
+    assert.match(prompts[1], /ml\.answer\.add/, "a run with it is told about the block under the reply");
+    await world.ml.agent("t", { vision: false, tools: world.ml.domTools.filter(t => ["findByText", "answer"].includes(t.name)) });
+    assert.ok(tools[2].includes("answer"), "a tools list that names it has it");
 });
 
 test("wait tool: fixed ms pause and wait-for-selector resolve", async () => {

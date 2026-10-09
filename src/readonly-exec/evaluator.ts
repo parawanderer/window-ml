@@ -129,17 +129,28 @@ export class Evaluator {
     private rows = new Map<object, number>();
     constructor(private ml: Record<string, unknown> | null, private budget: number = STEP_BUDGET, private realm: ReadonlyRealm = "page") { this.fuel = budget; }
 
+    /** Members this run does not have, to why (ml-member-tools.ts): the host leaves them off the facade, and reaching
+     *  one is a runtime error saying so, since no approval would give the run a tool it was not built with. */
+    hidden: ReadonlyMap<string, string> = new Map();
+    /** Throw the run's reason when `key` is a member it does not have. */
+    private hiddenMember(key: string): void {
+        const why = this.hidden.get(key);
+        if (why) throw new Error(why);
+    }
+
     /** Reaching a member the facade does not carry, by a READ or a destructuring. In the worker every one defers the
      *  survey to the page. On the page a read of an absent member has always been `undefined` (an existence guard
      *  reads that way), EXCEPT for the run's context: `ml.current` there would make a survey that needs both the page
      *  and the run evaluate to a plausible wrong answer (`title + undefined`) with no one asked. So that name refuses. */
     private absentRead(key: string): void {
+        this.hiddenMember(key);
         if (this.realm === "worker") this.absentMl(key);
         if (key === "current") throw new NotInDialect("ml.current is the run's context, which a survey on the page does not have");
     }
     /** A member the facade does not carry. In the worker that defers the survey to the page; on the page it is a
      *  refusal, as it always was. */
     private absentMl(key: string): never {
+        this.hiddenMember(key);
         if (this.realm === "worker") throw new NeedsPage(`ml.${key} is not available in the worker`);
         throw new NotInDialect(`method '${key}' not allowed`);
     }

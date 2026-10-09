@@ -10,6 +10,7 @@ import { AnswerSet } from "../pointers/answer-set";
 import { validateArgs } from "./validate";
 import { CALL_TITLE, CITABLE_TOOLS, takeCallTitle } from "./tool-params";
 import { errText } from "../dom/dom";
+import { hiddenMlMembers } from "../ml/ml-member-tools";
 
 // `agent_api_docs`'s within-burst dedup memory is per RUN, but `toolContext` is rebuilt on every
 // background-delegated call (run-delegation.ts) — so it can't be created here per call. Keyed off the run's
@@ -57,6 +58,11 @@ let activeHasTool: ((name: string) => boolean) | null = null;
 /** Whether the RUNNING tool call's run has `name` in its toolset. False outside a run — where there is no
  *  toolset, so no tool can be recommended. */
 export function currentHasTool(name: string): boolean { return activeHasTool ? activeHasTool(name) : false; }
+/** Why the RUNNING tool call's run does not have `ml.<member>` (its tool is not in the toolset, ml-member-tools.ts), or
+ *  null when it does. Null outside a run too: the page's own console keeps the member, and its own error says why. */
+export function currentHiddenMember(member: string): string | null {
+    return activeHasTool ? hiddenMlMembers(activeHasTool).get(member) ?? null : null;
+}
 
 // And the same for the RUN'S SESSION, so a model call a tool makes (a vision read, grounding, an OCR pass, a
 // reader distilling a fetch) is labelled as part of the run that caused it: `use: "agent"`, the run's session (see

@@ -271,7 +271,7 @@ export interface AgentResult {
     summary: string;
     steps: number;
     transcript: AgentTranscriptEntry[];
-    /** nodes designated via an answer-capable tool */
+    /** nodes designated via an answer-capable tool (`answer: true` gives the default kit one) */
     elements: Node[];
     /** serialized visuals of the designated elements — for the HUD completion card (see AnswerMedia). */
     answerMedia?: AnswerMedia[];
@@ -375,6 +375,10 @@ export interface AgentOptions {
      *  so the model can cite that EXACT output in its final answer / answer set instead of re-typing it.
      *  Default false; a HUD-started run turns it on (that's where the rich answer card is shown). */
     toolTokens?: boolean;
+    /** Give the run the `answer` tool, and with it `ml.answer`, so the model can hand elements back in
+     *  `AgentResult.elements` and curate a block under its reply. Default false: a run that takes the default kit
+     *  answers in its reply. A `tools` list that names `answer` has it either way. */
+    answer?: boolean;
     /** abort the loop between steps → resolves { cancelled: true } with the partial run */
     signal?: AbortSignal | null;
     /** continue the run with this hash: append `task` as a follow-up turn (same session) */
