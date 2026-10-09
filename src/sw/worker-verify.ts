@@ -18,6 +18,10 @@ import { ensureRunState, spendDelta, workerSpend } from "./worker-tools";
 export const VERIFY_REFUSED = "\n\n(The page's request for the verify was malformed, so no verify was taken. Look at the page to see the result.)";
 /** The note for a verify with no document to pin it to: the browser does not say which page the tab holds. */
 const NO_DOCUMENT = "\n\n(No verify: the browser does not say which page the tab holds now. Look at the page to see the result.)";
+/** The note for a verify the model asked for when the page did not say what to picture: no verify was taken. */
+export const VERIFY_WITHHELD = "\n\n(No verify: the page did not say what to picture after the action, so no verify was taken. Look at the page to see the result.)";
+/** The note for a verify that produced nothing, when no more particular reason is known. */
+const VERIFY_EMPTY = "the screenshot after the action could not be taken. Look at the page to see the result.";
 
 /** What each tool's verify is called in its sentences, and which requests it can make: a click pictures the area
  *  around a point, a type the field it typed into (or the area where it was), a wait the viewport. */
@@ -63,6 +67,9 @@ export function checkVerifyRequest(raw: unknown, call: { name: string; args: Rec
         const selector = r.selector;
         if (typeof selector !== "string" || selector !== call.args.selector || selector.length > TEXT_CAPS.selector || /[\p{Cc}\p{Cf}\u2028\u2029`]/u.test(selector)) no();
         // The call's own index (a whole number), so nothing else passes.
+        // A call whose own index is not a whole number has no element the worker could name: the type tool reads `"1"`
+        // as element 1, and 0 here would picture a field the call never typed into.
+        if (call.args.index !== undefined && !(Number.isInteger(call.args.index) && (call.args.index as number) >= 0)) no();
         const index = r.index === undefined ? 0 : r.index;
         if (index !== indexOf(call.args)) no();
         if (r.line !== undefined && typeof r.line !== "string") no();
@@ -101,6 +108,11 @@ export async function workerVerify(runId: string, tabId: number, documentId: str
     ensureRunState(runId, tabId, tabUrl);
     const before = workerSpend(runId);
     const host = workerVisionHost(runId, tabId, documentId, opts);
+    // The capture's own failure, which the bodies swallow: the worker's sentence (sw-capture.ts, worker-vision.ts) or the
+    // browser's, never the page's (a page's text reaches an error only through geometry, which is not recorded here).
+    let captureError: string | null = null;
+    const capture = host.capture;
+    host.capture = () => capture().catch((e) => { captureError ??= String((e as Error)?.message || e); throw e; });
     // The bodies read only these two facts of a context.
     const ctx = { driverSees: vision.driverSees, visionModel: vision.visionModel } as ToolContext;
     const r = await onWorkerHost(host, async () => {
@@ -117,6 +129,8 @@ export async function workerVerify(runId: string, tabId: number, documentId: str
     }).catch((): Partial<ToolResult> => ({}));
     const subUsage = spendDelta(before, workerSpend(runId));
     if (typeof r === "string") return { content: `\n\n(No verify: ${r})`, ...(subUsage ? { subUsage } : {}) };
+    // A verify that produced nothing says so, with the capture's reason when there was one.
+    if (!r.content && !r.image && !r.feedback) return { content: `\n\n(No verify: ${captureError ?? VERIFY_EMPTY})`, ...(subUsage ? { subUsage } : {}) };
     return { content: r.content || "", ...(r.image ? { image: r.image, imageLabel: r.imageLabel } : {}), ...(r.feedback ? { feedback: r.feedback } : {}), ...(subUsage ? { subUsage } : {}) };
 }
 
@@ -136,7 +150,25 @@ export const PAGE_VISION_TOOLS: ReadonlySet<string> = new Set(["look", "locate"]
 export function withoutPageVision<T>(env: T, name: string | undefined): T {
     if (!env || typeof env !== "object" || (name && PAGE_VISION_TOOLS.has(name))) return env;
     const { image: _image, imageLabel: _label, images: _images, feedback: _feedback, subUsage: _sub, ...rest } = env as Partial<PageToolEnvelope>;
+    if (typeof rest.result === "string") rest.result = foldVerifyMarks(rest.result);
     return rest as T;
+}
+
+/** The mark that opens a reader's description in a verify (captureVerify, captureVerifyElement), which only the worker
+ *  may write in a worker-built run's tool result. */
+const VERIFY_EYE = /\u{1F441}/gu;
+/** The lead sentence of a reader's description in a verify, with the apostrophes and spacing a page could vary. */
+const VERIFY_LEAD = /you can['’`]?t see images,?\s*so this is\s*([^\n]{0,200}?)['’`]?s description\s*:/giu;
+
+/**
+ * A page's tool result with the verify's own marks folded, so the verify block the worker appends after it is the only
+ * one the model reads as a verify: every 👁 (the mark a reader's description opens with) becomes "(eye)", and the
+ * sentence that presents a reader's description is quoted as the page's own text. Nothing else of the text changes.
+ * @param text the page's result
+ * @returns the result with those marks folded
+ */
+export function foldVerifyMarks(text: string): string {
+    return text.replace(VERIFY_LEAD, "(the page's own text, not a verify: $1's description)").replace(VERIFY_EYE, "(eye)");
 }
 
 /** Whether the model asked this call for a verify the worker may take: a click, type or wait with `verify` set. */

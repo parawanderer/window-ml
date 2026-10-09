@@ -39,7 +39,7 @@ import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue } from "./sw-values";
 import { focusLineFor } from "./sw-focus";
 import { delegateSend } from "./delegate-send";
-import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerVerify, VERIFY_REFUSED, type VerifyOutcome, type WorkerVerify } from "./worker-verify";
+import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerVerify, VERIFY_REFUSED, VERIFY_WITHHELD, type VerifyOutcome, type WorkerVerify } from "./worker-verify";
 import { topDocument } from "./worker-vision";
 
 // The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
@@ -186,7 +186,8 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             const vis = workerVision();
             const call = vis && !payload.renderOnly && !payload.precheck && !payload.readonlyTry;
             const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: call ? { ...payload, verifyInWorker: true } : payload }, pin);
-            return vis ? withoutPageVision(env, payload.name) : env;
+            // Asked again on the answer: a run the person took over while the call was in flight is the worker's now.
+            return vis || workerVision() ? withoutPageVision(env, payload.name) : env;
         };
         if (p.builtBy === "worker" && runsInWorker(p, payload.name)) {
             await ensureLocalTools(runId, p, tabId, tabUrl).catch(() => { /* answered below */ });
@@ -507,6 +508,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     // page's context — actionable, and safe (no blind retry that could double-submit a form).
                     const CHANNEL_GONE = /message channel closed|Receiving end does not exist|No tab with id/i;
                     let env: Partial<import("../contract").PageToolEnvelope>;
+                    let workerMade = false;   // the worker wrote this result itself (the page could not be reached, or navigated)
                     // The document this call goes to: if the call navigates, that document stays alive a moment and
                     // still knows the run id, and its re-adopt must not pass for the destination's. Unknown while a
                     // navigation is in flight (the call then goes to whichever document re-adopts); never a wait of
@@ -526,7 +528,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     } catch (e) {
                         const emsg = (e as Error)?.message || String(e);
                         if (!CHANNEL_GONE.test(emsg)) {
-                            env = { result: `Error: could not reach the page to run "${name}" (${emsg}).` };
+                            env = { result: `Error: could not reach the page to run "${name}" (${emsg}).` }; workerMade = true;
                         } else {
                             // The page navigated out from under the call. Its pageInfo may already be here (a fast
                             // re-adopt beat us); else engage the barrier and wait for it (bounded by the barrier's
@@ -534,6 +536,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                             let info = takeInfo();
                             if (!info) { navBarrier.noteNavigating(tabId, sentTo); await navBarrier.whenReady(tabId); info = takeInfo(); }
                             hasNavigated = true;   // the run moved pages → the terminal result must fan to the new page
+                            workerMade = true;
                             env = { result: `The page navigated while running "${name}" — the action triggered a navigation, or the page redirected mid-call.${info ? `\n\nYou are now on the new page:\n${info}` : " The new page is still loading — wait, then look."}\n\nNOTE: "${name}" may NOT have taken effect on the previous page. Verify the CURRENT page (look / findByText) and re-run "${name}" here if the change didn't happen.` };
                         }
                     }
@@ -729,11 +732,14 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     // The verify of a click/type/wait in a run whose vision is the worker's: the page asked for it as data, and
                     // the worker takes it, pinned to the document the action ran in. A request the model did not ask for is
                     // dropped; a malformed one skips the verify with a fixed note.
-                    if (env && env.verifyRequest !== undefined && workerVision() && verifyAsked(name, args as Record<string, unknown>)) {
-                        const req = checkVerifyRequest(env.verifyRequest, { name, args: args as Record<string, unknown> });
-                        const v = req ? await verifyHere(await actionDoc(), req, verifyVerb(name)) : { content: VERIFY_REFUSED } as VerifyOutcome;
-                        addSub(v.subUsage);
-                        env = { ...env, result: (env.result || "") + v.content, image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };
+                    // A page that sends no request for a verify the model asked for gets the fixed note, never silence.
+                    if (env && !workerMade && workerVision() && verifyAsked(name, args as Record<string, unknown>)) {
+                        if (env.verifyRequest !== undefined) {
+                            const req = checkVerifyRequest(env.verifyRequest, { name, args: args as Record<string, unknown> });
+                            const v = req ? await verifyHere(await actionDoc(), req, verifyVerb(name)) : { content: VERIFY_REFUSED } as VerifyOutcome;
+                            addSub(v.subUsage);
+                            env = { ...env, result: (env.result || "") + v.content, image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };
+                        } else env = { ...env, result: (env.result || "") + VERIFY_WITHHELD };
                     }
                     // The page already computed the rendered In/Out slots (descriptorFor) — forward them so
                     // the sidebar shows the rich view. `image` rides along for INLINE VISION (native look):

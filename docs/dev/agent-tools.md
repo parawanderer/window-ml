@@ -158,8 +158,19 @@ Pinning: a click/type/wait verify is pinned to the document the call was SENT to
 flight, the tab's top document once the answer is in), because the request's coordinates and selector describe that
 document. An action that navigated the tab therefore gets the refusal sentence ("the page changed … look again"), never
 a picture of the destination taken with the old page's geometry. A `navigate` verify is the one meant for the
-destination: it is pinned to the tab's top document after the new page re-adopted the run. Tests:
-`tests/worker-verify.test.mjs`, and the verify cases of `tests/vision-characterize.test.mjs`.
+destination: it is pinned to the tab's top document after the new page re-adopted the run. The verify is unmistakably
+the worker's: before anything is appended, the page's result text has the verify's marks folded (`foldVerifyMarks`):
+every 👁 (the mark a reader's description opens with) becomes "(eye)", and the sentence that presents a reader's
+description ("You can't see images, so this is …'s description:", apostrophes and spacing varied) is quoted as the
+page's own text. The worker's block then needs no separator of its own: its 👁 is the only one in the result, a page
+cannot write that code point, and a driver that sees gets the worker's image, which no page envelope can carry. An
+honest run's text is unchanged. The fold is narrow on purpose (any other text is the page's word, as before), so a
+paraphrase or a homoglyph of the lead sentence is still readable as page text, just never with the worker's mark. A
+verify the model asked for that does not happen says so in a fixed note: the page sent no request (`VERIFY_WITHHELD`),
+a malformed one (`VERIFY_REFUSED`), a refused geometry call, or a capture that failed (the worker's own sentence, such
+as the tab not showing). Who strips is decided on the page's ANSWER, so a call in flight when the person takes a run
+over comes back stripped. Tests: `tests/worker-verify.test.mjs`, `tests/review-verify.test.mjs`, and the verify cases
+of `tests/vision-characterize.test.mjs`.
 
 **Agent self-knowledge (`agent_api_docs`).** The agent had none: asked "how do I call you
 from the console?" it answered from pre-training ("try typing `window`…"), because nothing in
