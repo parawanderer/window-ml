@@ -29,7 +29,7 @@ import { colorFor } from "../palette";
 import { scrollToStepSeq } from "../transcript/step-scroll";
 import { brush, snapDot, zoomRange, ollamaIds, models, laneScoped, predictView, sessionMap, view, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, showLane, laneHidden, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showModels, LANE_SCOPE_KEY } from "../store";
 import { fmtDur, hhmmssms } from "../timestamps";
-import { Disclosure } from "../ui-kit";
+import { Disclosure } from "../disclosure";
 import { useTipPlacement } from "../use-tip";
 import { hoverModel } from "./vram-focus";
 import { phaseFill, isPattern } from "./lane-paint";

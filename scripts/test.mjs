@@ -100,9 +100,10 @@ const GENRES = {
             "background-sessions.test.js", "sw-chat.test.mjs", "reducer-runtime-key.test.mjs"],
     },
     bench: {
-        about: "the benchmark harness (tests/e2e/bench/): its spec matrix, metrics, viewer and server",
+        about: "the benchmark harness (tests/e2e/bench/): its spec matrix, metrics, viewer, server, page, sweep log and scoreboard",
         files: ["bench-descriptor.test.mjs", "bench-metrics.test.mjs", "bench-serve.test.mjs",
-            "bench-specs.test.mjs", "bench-viewer.test.mjs"],
+            "bench-specs.test.mjs", "bench-viewer.test.mjs", "bench-files.test.mjs", "bench-page.test.mjs",
+            "bench-scores.test.mjs", "bench-sweeps.test.mjs"],
     },
     python: { about: "real CPython in Pyodide (self-skips without dist/pyodide)", files: ["python.test.mjs"] },
     live: { about: "opt-in, hits the backend in .env", files: ["live.test.js"] },

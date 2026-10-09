@@ -3,7 +3,7 @@
 // model). The events are the resource panel's derivation (`eventsFrom`), sent by the harness; the layout and the bars
 // are the panel's too (lane-view.tsx).
 
-import { Tip } from "./tip";
+import { Tip } from "../../../../src/sidebar/help-tip";
 import type { BenchState } from "./state";
 import { LaneRows, LaneAxis, laneWindow } from "./lane-view";
 import { runName } from "./runs";

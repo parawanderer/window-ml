@@ -1,4 +1,4 @@
-// bundle.mjs — the bench's pages as code: the dashboard (app.tsx) and a run page's lane (run-lane.tsx), each bundled by
+// bundle.mjs — the bench's pages as code: the dashboard (app.tsx), the scoreboard (scores.tsx) and a run page's lane (run-lane.tsx), each bundled by
 // esbuild into one script string, in memory, the first time it is asked for. Plus the stylesheet that goes with them.
 // No dist and no build step to forget: the page is built from the source that is checked out, every time the bench runs.
 
@@ -43,10 +43,16 @@ export const pageSources = () => [
     path.join(ROOT, "src/sidebar/format.ts"),
     path.join(ROOT, "src/sidebar/tooltip-layer.ts"),
     path.join(ROOT, "src/sidebar/tip.ts"),
+    path.join(ROOT, "src/sidebar/help-tip.tsx"),
+    path.join(ROOT, "src/sidebar/interval-bar.tsx"),
+    path.join(ROOT, "src/sidebar/disclosure.tsx"),
+    path.join(ROOT, "src/sidebar/icons.tsx"),
 ];
 
 /** The dashboard's script. */
 export const appScript = () => bundle("app.tsx");
+/** The scoreboard's script. */
+export const scoresScript = () => bundle("scores.tsx");
 /** The script that draws a run's lane on its own page. */
 export const runLaneScript = () => bundle("run-lane.tsx");
 
@@ -68,6 +74,9 @@ export async function appCss() {
         laneCss(css, { scoped: false }),
         // The panel's click-to-copy hash chip and the tooltip layer it shows its tip in (page/app.tsx installs it).
         sidebarRules(css, /\.hash\b|\.tt\b|\.tt-pop\b|\.tt-layer\b/),
+        // The shared pieces the pages are built from: a label with a tip (help-tip.tsx), an estimate on its interval
+        // (interval-bar.tsx), and the fold (disclosure.tsx).
+        sidebarRules(css, /\.help\b|\.ival\b|\.disc\b|\.disc-/),
         // An answer rendered as markdown, styled as the panel styles one (format.ts `markdown`).
         sidebarRules(css, /\.md\b|\.md-|(^|[\s,])\.code\b|pre\.code|\.hljs/),
         readFileSync(path.join(HERE, "page.css"), "utf8"),

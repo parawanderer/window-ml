@@ -16,26 +16,13 @@ import { Viewer } from "./viewer";
 import { SpecCard } from "./spec";
 import { FromSpec, specSource } from "./from-spec";
 import { installTooltipLayer } from "../../../../src/sidebar/tooltip-layer";
+import { ThemeToggle, applyTheme, readTheme } from "./theme";
+import { signed } from "../../../../src/sidebar/interval-bar";
 
 declare global { interface Window { __BENCH_STATE__?: BenchState } }
 
 /** Where the reader was when a rebuild reloaded the page; restored once, then forgotten. */
 const SCROLL_KEY = "benchScrollY";
-
-type Theme = "auto" | "light" | "dark";
-const THEME_KEY = "benchTheme";
-/** Remembered per browser; guarded, since a saved report opened from file:// can throw on localStorage. */
-const readTheme = (): Theme => { try { const t = localStorage.getItem(THEME_KEY); return t === "light" || t === "dark" ? t : "auto"; } catch { return "auto"; } };
-const applyTheme = (t: Theme) => { if (t === "auto") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t; };
-
-/** Auto (follow the system), light, dark: one button that says what it is now and switches to the next. */
-function ThemeToggle() {
-    const [theme, setTheme] = useState<Theme>(readTheme);
-    useEffect(() => { applyTheme(theme); try { localStorage.setItem(THEME_KEY, theme); } catch { /* private mode */ } }, [theme]);
-    const next: Record<Theme, Theme> = { auto: "light", light: "dark", dark: "auto" };
-    const icon = { auto: "◐", light: "☀", dark: "☾" }[theme];
-    return <button class="btn small tt" data-tip={`Theme: ${theme}${theme === "auto" ? " (follows the system)" : ""}. Click for ${next[theme]}.`} aria-label={`Theme: ${theme}`} onClick={() => setTheme(next[theme])}>{icon} {theme}</button>;
-}
 
 /** The models behind the runs, by role: the driver, the vision reader and the utility model, since a delegated look or
  *  a utility call makes "which model produced this" three questions. */
@@ -46,12 +33,25 @@ const ROLE_TIP = {
     utility: "A small, cheap model for side tasks, such as summarising a session into its title.",
 };
 
+/**
+ * The driver model's line on the bench's scoreboard (scores.mjs), as one more segment of its pill: θ, or how many scored
+ * runs it still needs. The tip says what the number is and where it came from; the link opens the scoreboard.
+ */
+function ScoreRole({ s, driver }: { s: BenchState; driver?: string | null }) {
+    const sc = s.scores, m = driver ? sc?.models[driver] : null;
+    if (!sc || !m) return null;
+    const tip = m.score
+        ? `On the bench's scoreboard: θ ${signed(m.score.theta)} (interval ${signed(m.score.lo)} to ${signed(m.score.hi)}) from ${m.scored} scored runs over ${m.tasks} tasks, every sweep's runs of this model included. 0 means even odds on a task of average difficulty. Click for the scoreboard, which says how it is computed.`
+        : `Not on the scoreboard yet: ${m.scored} of the ${sc.minScored} scored runs a score needs (runs of tasks with a \`succeeded\` predicate). Click for the scoreboard.`;
+    return <a class="role score tt" href={sc.href} data-tip={tip}><span class="rk">score</span>{m.score ? <b>{signed(m.score.theta)}</b> : <span class="dim">{m.scored}/{sc.minScored}</span>}</a>;
+}
+
 function Models({ s }: { s: BenchState }) {
     const seen = new Map<string, NonNullable<BenchState["runs"][number]["models"]>>();
     for (const r of s.runs) if (r.models) seen.set([r.models.driver, r.models.vision, r.models.utility].join(" "), r.models);
     if (!seen.size) return null;
     const role = (k: keyof typeof ROLE_TIP, v?: string | null) => <span class={`role tt${v ? "" : " none"}`} data-tip={ROLE_TIP[k]}><span class="rk">{k}</span>{v ? <code>{v}</code> : "none"}</span>;
-    return <div class="models">{[...seen.values()].map((m, i) => <span key={i} class="mset">{role("driver", m.driver)}{role("vision", m.vision)}{role("utility", m.utility)}</span>)}</div>;
+    return <div class="models">{[...seen.values()].map((m, i) => <span key={i} class="mset">{role("driver", m.driver)}<ScoreRole s={s} driver={m.driver} />{role("vision", m.vision)}{role("utility", m.utility)}</span>)}</div>;
 }
 
 /** The sweep's name, what it is for, how far along it is, and its counts; sticky, so it stays in view. */

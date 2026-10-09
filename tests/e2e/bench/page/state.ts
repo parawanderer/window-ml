@@ -64,4 +64,36 @@ export interface BenchState {
     timeline?: { runs: { index: number; events: ResourceEvent[] }[]; now: number } | null;
     /** where run paths are served from: "/artifacts/" live, "" in a saved report */
     artifactBase?: string;
+    /** the scoreboard's line for each driver model of the sweep, when the runs are logged */
+    scores?: SweepScores | null;
 }
+
+/** A model's score on the scoreboard (scores.mjs `scoreboard`): θ relative to the average task, and its chance there. */
+export interface Score { theta: number; se: number; lo: number; hi: number; chance: number; chanceLo: number; chanceHi: number }
+
+/** One model's line on the scoreboard. */
+export interface ScoreModel {
+    key: string; model: string; digest: string | null; quant: string | null; params: string | null; local: boolean | null;
+    runs: number; scored: number; passed: number; errored: number; unscored: number; tasks: number;
+    score: Score | null;
+    bloat: { ratio: number; runs: number } | null;
+    medianTokens: number | null;
+    first: string; last: string;
+}
+
+/** The scoreboard page's state (scores.mjs `scoreboard`), baked into scores.html as `window.__BENCH_SCORES__`. */
+export interface ScoreBoard {
+    /** the SQLite log, relative to the repo */
+    db: string;
+    generated: string;
+    totals: { runs: number; fitted: number; models: number; tasks: number; unscored: number; errored: number; scoredTasks: number };
+    method: { priorSd: number; z: number; minScored: number; converged: boolean; iterations: number };
+    /** what each number is, by column: the tooltips, and scores.md's notes */
+    about: Record<string, string>;
+    models: ScoreModel[];
+    tasks: { key: string; task: string; taskHash: string; text: string; variant: string; scored: boolean; runs: number; models: number; passed: number; scoredRuns: number;
+        difficulty: { b: number; se: number; lo: number; hi: number } | null; medianTokens: number | null }[];
+}
+
+/** The sweep page's view of the scoreboard: each driver model's line, and where the scoreboard is. */
+export interface SweepScores { href: string; about: Record<string, string>; minScored: number; models: Record<string, ScoreModel> }

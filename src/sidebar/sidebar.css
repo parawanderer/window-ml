@@ -1737,6 +1737,17 @@ details.io[open] > summary .io-preview { display: none; }
    it display:none is what stops its prose being selected and copied along with the row it sits in — the old
    scheme left it in the DOM at opacity 0, so copying a row dragged every tooltip's text with it. */
 .tt-pop { display: none; }
+/** A LABEL THAT EXPLAINS ITSELF on hover (help-tip.tsx `Tip`): a faint dotted underline says a tooltip is there,
+ *  so the explanation stays out of the way until asked for. Fainter still in a table head, where every label has one. */
+.help { cursor: help; text-decoration: underline dotted color-mix(in srgb, var(--fg-faint) 70%, transparent); text-underline-offset: 3px; }
+th .help { text-decoration-color: color-mix(in srgb, var(--fg-faint) 50%, transparent); }
+/** AN ESTIMATE AND ITS INTERVAL (interval-bar.tsx): a dot on a bar on a fixed axis, zero marked, then the number. */
+.ival { gap: 8px; }
+.ival .iaxis { position: relative; display: inline-block; width: 120px; height: 10px; border-radius: 5px; background: var(--panel); border: 1px solid var(--border); }
+.ival .izero { position: absolute; left: 50%; top: 1px; bottom: 1px; width: 1px; background: var(--fg-faint); }
+.ival .ispan { position: absolute; top: 3px; height: 2px; border-radius: 1px; background: color-mix(in srgb, var(--accent) 55%, transparent); }
+.ival .idot { position: absolute; top: 1px; width: 6px; height: 6px; margin-left: -3px; border-radius: 50%; background: var(--accent); }
+.ival b { font-weight: 600; font-variant-numeric: tabular-nums; min-width: 3.2em; text-align: right; }
 /** The FIGURES under a status tooltip's sentence — when it happened and how long it took — on their own line
  *  under a rule. A separator is a BORDER on the section it opens, never an element of its own (the same rule the
  *  event tip follows), or the two end up a pixel apart on surfaces whose font scale differs. */

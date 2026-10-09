@@ -183,6 +183,19 @@ h1.from, p.from { width: fit-content; max-width: 100% }
 .ans .txt.md > :last-child { margin-bottom: 0 }
 
 /* A label with an explanation on hover (tip.tsx): a faint dotted underline, nothing more. */
-.help { cursor: help; text-decoration: underline dotted color-mix(in srgb, var(--fg-faint) 70%, transparent); text-underline-offset: 3px }
-th .help { text-decoration-color: color-mix(in srgb, var(--fg-faint) 50%, transparent) }
 .tile .tt { display: inline }
+
+/* The scoreboard (scores.tsx): a model's name with its digest chip and quantisation; bloat past ×1.5 tinted; the
+   method section's definitions; a model's score beside its pill on the sweep page. */
+.mname { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap }
+.mname .kind { font-size: 11.5px }
+td .hot { color: var(--warn); font-weight: 600 }
+.method dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 10px 0 }
+.method dt { font-weight: 600; white-space: nowrap }
+.method dd { margin: 0; color: var(--fg-dim) }
+.method p { color: var(--fg-dim); margin: 8px 0 }
+.method pre.query { margin: 0; padding: 8px 10px; border-radius: 6px; background: var(--panel); overflow-x: auto; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace }
+.card .disc-head h2 { display: inline }
+a.role.score { color: inherit } a.role.score:hover { text-decoration: none; background: color-mix(in srgb, var(--accent) 10%, transparent) }
+.role.score b { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--accent) }
+@media (max-width: 600px) { .method dl { grid-template-columns: 1fr } .method dd { margin-bottom: 6px } }

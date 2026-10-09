@@ -2,7 +2,7 @@
 // before. An agent iterating on the bench edits the bench itself; a reader comparing two sweeps sees here whether the
 // question changed, not only the answers. The data is sweeps.mjs `specProvenance`, the same as spec.md.
 
-import { Tip } from "./tip";
+import { Tip } from "../../../../src/sidebar/help-tip";
 import type { BenchState, SpecState } from "./state";
 
 const when = (iso: string) => { const d = new Date(iso); return isNaN(+d) ? iso : d.toLocaleString(); };

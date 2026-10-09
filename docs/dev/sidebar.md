@@ -5,7 +5,7 @@ changed rather than loaded into every session. AGENTS.md keeps the repository's 
 bite; this file keeps how the subsystem works and why it is built that way. Paths name files by their bare name,
 as in AGENTS.md — they are all under `src/`.
 
-**One disclosure, everywhere something opens (`Disclosure`, ui-kit.tsx).** The panel had three of these
+**One disclosure, everywhere something opens (`Disclosure`, disclosure.tsx).** The panel had three of these
 written three different ways — the model list's fold, the agent's system prompt and tool definitions, the
 server-tool list — and all three were a pill button that injected a box into the layout on click. That reads
 as content appearing rather than a section opening, gives no hint the thing can be closed, and shoves
@@ -124,6 +124,11 @@ A future page-input channel would follow the pattern.
   live turns stop appearing while every window assertion still passed.
 
 ## Tooltips: the panel's, not the browser's `title`
+
+**Shared pieces that work without the panel**, so a page with none (the bench's) imports them instead of rebuilding
+them: `Hash` (copy-hash.tsx), `Disclosure` (disclosure.tsx), `Tip`, a label explained on hover (help-tip.tsx), and
+`Interval`, an estimate on its interval (interval-bar.tsx). Each imports nothing from ui-kit, whose other parts reach
+`services()`; their CSS stays in sidebar.css, and the bench lifts it with `sidebarRules`.
 
 **RULE — use the PANEL'S tooltip, not the browser's `title`.** `cursorTipOn(text)` (ui-kit.tsx) is the
 default for anything explanatory; a native `title` needs an argument for itself. Three reasons, all of them
