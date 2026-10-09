@@ -15,6 +15,8 @@ export interface RunState {
     /** what a person's mark names this run by: the `model` value, else the whole combination */
     who: string;
     ok?: boolean;
+    /** it errored because the backend refused for a rate limit (metrics.mjs `isRateLimit`) */
+    rateLimited?: boolean;
     succeeded?: boolean | null;
     steps?: number;
     secs?: number | null;

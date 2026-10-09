@@ -238,6 +238,14 @@ test("a seeded run's scripted turn is drawn in the neutral colour, never as one 
     assert.notEqual(gens[1].style.getPropertyValue("--model"), "var(--fg-faint)");
 });
 
+test("a run the backend refused for a rate limit says so, with the fix, instead of a bare failure", async () => {
+    const base = { taskId: "t", repeat: 0, state: "done", ok: false, path: "t/x/r0" };
+    const doc = await dashboard({ dims: ["m"], runs: [{ ...base, combo: { m: "a" }, who: "a", rateLimited: true }, { ...base, combo: { m: "b" }, who: "b" }] });
+    const badges = [...doc.querySelectorAll(".badge.bad")].map((b) => b.textContent);
+    assert.ok(badges.includes("rate-limited") && badges.includes("failed"), badges.join(","));
+    assert.match([...doc.querySelectorAll(".badge.bad")].find((b) => b.textContent === "rate-limited").dataset.tip, /--jobs|--lanes/);
+});
+
 // --- a run's own page ---
 
 test("a run page draws its lane from inert data, with its script admitted by hash and nothing else", () => {

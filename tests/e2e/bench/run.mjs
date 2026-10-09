@@ -42,7 +42,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { runOnce, resolveBackendFromEnv, renderRun, FAKE_MODEL } from "../run-once.mjs";
-import { measureRun, aggregate } from "./metrics.mjs";
+import { measureRun, aggregate, isRateLimit } from "./metrics.mjs";
 import { expandCells, cellKey, cellPath, comboLabel, buildGroups, parseSelector, slug, cellSurface, cellStream } from "./cells.mjs";
 import { writeReport, mdSink, terminalSink, doneSummary, doneLine } from "./sinks.mjs";
 import { startDashboard, staticPage, servedSweep } from "./serve.mjs";
@@ -160,7 +160,12 @@ async function runCell(cell, ctx, index) {
     if (ctx.cache && existsSync(cacheFile)) {
         try {
             const saved = JSON.parse(await readFile(cacheFile, "utf8"));
-            if (saved.key === key) {
+            // A run that ERRORED (the backend refused, timed out, crashed) measured nothing about the model: run it
+            // again rather than serve the error from the cache. A finished run, right or wrong, is kept.
+            if (saved.key === key && saved.measurement && !saved.measurement.ok) {
+                ctx.retried++;
+                ctx.log(`  ↻ ${cellPath(cell)}: errored last time${isRateLimit(saved.measurement.error) ? " (rate-limited)" : ""}, running it again`);
+            } else if (saved.key === key) {
                 ctx.cached++;
                 const hit = { ...saved, dir, fromCache: true };
                 ctx.report?.(index, "done", hit);
@@ -397,7 +402,7 @@ const main = async () => {
         spec, fingerprint, sweepDir, backend, buildDirs, cache: args.cache, scores, scoreSweep, logged: 0,
         // Warming is a VRAM concern for a local model, and pointless against a hosted API or the fake.
         warm: !!backend && process.env.WARM !== "0",
-        cached: 0, ran: 0, pdf: args.pdf,
+        cached: 0, ran: 0, retried: 0, pdf: args.pdf,
         // CLI beats the spec: a sweep you are debugging wants `--capture always` without editing the file.
         capture: args.capture || spec.capture || "failure",
         log: (s) => console.log(s),
@@ -492,6 +497,7 @@ const main = async () => {
             const m = info.measurement;
             Object.assign(r, {
                 ok: m.ok, succeeded: m.succeeded, steps: m.steps, secs: m.runMs / 1000,
+                ...(!m.ok && isRateLimit(m.error) ? { rateLimited: true } : {}),
                 cached: info.fromCache, path: path.relative(sweepDir, info.dir), live: undefined,
                 hash: info.hash ?? null, backend: info.backend ?? null, models: info.models ?? null,
                 stream: m.stream ?? null,
@@ -531,6 +537,7 @@ const main = async () => {
         // and saying so is more honest than calling it a failure.
         state: results[i] ? "done" : "pending",
         ok: results[i]?.measurement?.ok ?? false, succeeded: results[i]?.measurement?.succeeded ?? null,
+        ...(results[i]?.measurement && !results[i].measurement.ok && isRateLimit(results[i].measurement.error) ? { rateLimited: true } : {}),
         steps: results[i]?.measurement?.steps ?? 0, cached: !!results[i]?.fromCache,
         secs: results[i]?.measurement ? results[i].measurement.runMs / 1000 : null,
         // Relative to the SWEEP directory: report.html sits there, and the terminal/markdown reports
@@ -623,7 +630,7 @@ const main = async () => {
         page = await handOffPage(sweepDir, port);
     }
     // ONE line a poller can look for, last, and the same as done.json in the sweep directory.
-    const done = doneSummary(spec.name, runs, { report: path.relative(ROOT, reportPath), page });
+    const done = doneSummary(spec.name, runs, { report: path.relative(ROOT, reportPath), page, retried: ctx.retried });
     await writeFile(path.join(sweepDir, "done.json"), JSON.stringify(done, null, 2));
     if (page) console.log(`  the page stays up at ${page}; stop it with: node --import tsx tests/e2e/bench/serve.mjs --stop`);
     console.log(doneLine(done));

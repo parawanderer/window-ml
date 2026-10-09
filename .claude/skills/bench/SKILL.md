@@ -34,6 +34,11 @@ stays up after the exit, served from the sweep's files by a detached `serve.mjs`
 handed over keeps working. The next sweep takes that port back; `node --import tsx tests/e2e/bench/serve.mjs --stop`
 stops it, and `serve.mjs <sweep dir>` serves any finished sweep again.
 
+**A run that ERRORED is not cached as done.** The next sweep runs it again (`↻ … running it again`, `retried` in
+`done.json`); a finished run, right or wrong, stays cached. A backend's rate limit is named as one (`rate-limited` on
+the page, `rate_limited=` in the final line), however it arrives: Open WebUI passes OpenRouter's as a 400. Its fix is
+fewer at once: a lower `--jobs`, or `--lanes`, which runs a cloud model one run at a time.
+
 **In VS Code, that URL docks as an editor tab.** Cmd-click it in the terminal and VS Code offers a picker
 — choose **Simple Browser** and the page opens beside the code, TensorBoard-style. Simple Browser is
 built in (it registers an external URI opener for http), so nothing needs installing. The port is stable,

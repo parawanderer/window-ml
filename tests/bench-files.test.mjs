@@ -119,10 +119,18 @@ test("done: counts what ran, what came from the cache, what errored and what a p
     const run = (over) => ({ state: "done", ok: true, succeeded: null, cached: false, ...over });
     const runs = [run({ succeeded: true }), run({ succeeded: false }), run({ ok: false }), run({ cached: true, succeeded: true }), { state: "pending", ok: false }];
     const d = doneSummary("pb", runs, { report: "a/report.md", page: "http://127.0.0.1:7331" });
-    assert.deepEqual({ ...d, at: null }, { name: "pb", runs: 5, ran: 3, cached: 1, ok: 3, errors: 1, correct: 2, wrong: 1, report: "a/report.md", page: "http://127.0.0.1:7331", at: null, exit: 2 });
-    assert.equal(doneLine(d), "BENCH DONE pb runs=5 ran=3 cached=1 ok=3 errors=1 correct=2 wrong=1 report=a/report.md page=http://127.0.0.1:7331");
+    assert.deepEqual({ ...d, at: null }, { name: "pb", runs: 5, ran: 3, cached: 1, ok: 3, errors: 1, rateLimited: 0, correct: 2, wrong: 1, retried: 0, report: "a/report.md", page: "http://127.0.0.1:7331", at: null, exit: 2 });
+    assert.equal(doneLine(d), "BENCH DONE pb runs=5 ran=3 cached=1 ok=3 errors=1 rate_limited=0 correct=2 wrong=1 report=a/report.md page=http://127.0.0.1:7331");
     const clean = doneSummary("pb", [run({})], { report: "r.md" });
     assert.equal(clean.exit, 0);
     assert.match(doneLine(clean), /^BENCH DONE pb .* page=none$/, "no page without --serve");
+});
+
+test("done: a rate-limited error is counted apart, and how many errored cells ran again is said", () => {
+    const d = doneSummary("pb", [{ state: "done", ok: false, rateLimited: true }, { state: "done", ok: false }], { report: "r.md", retried: 2 });
+    assert.equal(d.errors, 2);
+    assert.equal(d.rateLimited, 1);
+    assert.equal(d.retried, 2);
+    assert.match(doneLine(d), / errors=2 rate_limited=1 /);
 });
 
