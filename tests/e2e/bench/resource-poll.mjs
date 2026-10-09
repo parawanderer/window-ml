@@ -9,7 +9,7 @@
 // API) gives no samples, and the page draws no chart: unknown, never zero.
 
 const { loadedFrom } = await import("../../../src/resource/resource-events.ts");
-const { residencyOf } = await import("../../../src/resource/residency.ts");
+const { residencyOf, residentFrom } = await import("../../../src/resource/residency.ts");
 const { parseInfo } = await import("../../../src/resource/resource-capacity.ts");
 
 /** How often the box is read. The panel polls `/api/ps` at this rate too. */
@@ -32,7 +32,7 @@ async function readJson(bases, route, headers, fetchImpl, ok = () => true) {
  * One reading: the resident models and the capacity, as a sample. Null when the box serves no capacity: the chart is
  * drawn against a ceiling, and without one there is nothing honest to draw.
  */
-export async function readSample(backend, { fetchImpl = fetch, now = Date.now, bases = null } = {}) {
+export async function readSample(backend, { fetchImpl = fetch, now = Date.now, bases = null, previous = [] } = {}) {
     const origin = new URL(backend.chatUrl).origin;
     const tryBases = bases ?? [`${origin}/ollama`, origin];
     const headers = backend.key ? { authorization: `Bearer ${backend.key}` } : {};
@@ -42,7 +42,9 @@ export async function readSample(backend, { fetchImpl = fetch, now = Date.now, b
     const capacity = parseInfo(info.body);
     if (!capacity) return null;
     const ps = await readJson([info.base], "/api/ps", headers, fetchImpl, (b) => Array.isArray(b?.models));
-    return { t, models: loadedFrom(ps?.body.models ?? []).map(residencyOf), capacity };
+    // A `loading` row is no news about a model last read as resident (residentFrom): `previous` is that reading.
+    const { loaded, placeholders } = residentFrom(loadedFrom(ps?.body.models ?? []), previous);
+    return { t, models: loaded.map(residencyOf), capacity, loaded, ...(placeholders.length ? { loading: placeholders } : {}) };
 }
 
 /**
@@ -52,11 +54,11 @@ export async function readSample(backend, { fetchImpl = fetch, now = Date.now, b
  */
 export function startResourcePoll(backend, { everyMs = POLL_MS, maxMisses = 5, fetchImpl = fetch, onSample = () => {} } = {}) {
     const read = [];
-    let misses = 0, timer = null, stopped = false, packed = null, packedAt = -1;
+    let misses = 0, timer = null, stopped = false, packed = null, packedAt = -1, previous = [];
     const tick = async () => {
         if (stopped) return;
-        const s = await readSample(backend, { fetchImpl }).catch(() => null);
-        if (s) { read.push(s); misses = 0; onSample(s); }
+        const r = await readSample(backend, { fetchImpl, previous }).catch(() => null);
+        if (r) { const { loaded, ...s } = r; previous = loaded; read.push(s); misses = 0; onSample(s); }
         else if (++misses >= maxMisses && !read.length) { stopped = true; return; }
         if (!stopped) timer = setTimeout(tick, everyMs);
     };
@@ -117,5 +119,18 @@ export function memoryText(packed) {
     out.push("", "| model | first seen resident | last seen | largest footprint (VRAM + RAM) |", "| --- | --- | --- | --- |");
     for (const [m, e] of models) out.push(`| ${m} | ${clock(e.from)} | ${clock(e.to)} | ${gib(e.peak)} |`);
     if (!models.size) out.push("| (none resident) | | | |");
+    // The box's own events, when the server has an event stream: what it loaded, dropped and served, from any client.
+    const evs = (packed.events ?? []).filter((e) => e.kind !== "gen").sort((a, b) => a.t - b.t);
+    if (packed.events) {
+        out.push("", "## What the box reported", "", "From its event stream, whoever caused it (this sweep, another, a person's panel). Generations are left out here; the page draws them.", "");
+        if (!evs.length) out.push("Nothing: no load, eviction or serving span over the sweep.");
+        else {
+            out.push("| at | what | model | took | detail |", "| --- | --- | --- | --- | --- |");
+            for (const e of evs) {
+                const phases = (e.phases ?? []).map((ph, i) => `${ph.kind} ${((ph.until - (i ? e.phases[i - 1].until : e.t)) / 1000).toFixed(1)} s`).join(", ");
+                out.push(`| ${clock(e.t)} | ${e.kind} | ${e.model ?? ""} | ${e.until != null ? `${((e.until - e.t) / 1000).toFixed(1)} s${e.open ? " (still going)" : ""}` : ""} | ${[e.label, phases].filter(Boolean).join("; ").replace(/\|/g, "\\|")} |`);
+            }
+        }
+    }
     return out.join("\n") + "\n";
 }

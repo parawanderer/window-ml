@@ -45,7 +45,8 @@ import { pageSources } from "./page/bundle.mjs";
 import { addMark, readMarks, defaultBy } from "./mark.mjs";
 import { recordSweep, specProvenance, specText } from "./sweeps.mjs";
 import { timelineText } from "./timeline-text.mjs";
-import { startResourcePoll, memoryText } from "./resource-poll.mjs";
+import { memoryText } from "./resource-poll.mjs";
+import { startBox, openBoxLog, BOX_DB } from "./box-stream.mjs";
 import { openScores, modelInfo, runRow, logRuns, readRuns, scoreboard, sweepScores, writeScoreFiles, unscoredTasks, SCORES_DB } from "./scores.mjs";
 import { watch as watchFs } from "node:fs";
 // The sweep's timeline: each run's events as the resource panel derives them; the page draws them with its lane.
@@ -365,9 +366,11 @@ const main = async () => {
 
     const backend = await resolveBackendFromEnv();
     const sweepDir = path.join(ARTROOT, slug(spec.name));
-    // The box's memory over the sweep, read as the resource panel reads it, for the page's memory chart and memory.md. Only
-    // against a real backend; one that serves no `/api/info` stops being asked after a few tries.
-    const resPoll = backend ? startResourcePoll(backend) : null;
+    // What the box did over the sweep, read as the resource panel reads it: its event stream when the server has one
+    // (memory readings and its own loads, evictions and serving spans, every frame also kept in box.sqlite), else polled
+    // memory. For the page's memory chart and memory.md; only against a real backend.
+    const boxLog = backend ? await openBoxLog() : null;
+    const resPoll = backend ? startBox(backend, { db: boxLog, log: (m) => console.log(m) }) : null;
     await mkdir(sweepDir, { recursive: true });
     // Which spec this sweep ran and who started it, appended to the sweep's log; the page's Spec card, spec.md and
     // page.json show it beside the diff against the sweep before (sweeps.mjs).
@@ -457,7 +460,7 @@ const main = async () => {
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
         runs: runsState, rows: aggregateRows(cells, results),
         started, finished: null, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: liveScores,
-        resources: resPoll?.samples() ?? null,
+        resources: resPoll?.resources() ?? null,
     });
     ctx.liveOf = (i) => runsState[i].live;
     ctx.report = (i, state, info) => {
@@ -549,7 +552,7 @@ const main = async () => {
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
         runs, rows, started, finished, jobs: args.jobs, dirty, fingerprint, pdf: args.pdf, interviews, skipped, spec: provenance,
         scores: scoreLines("../scores.html"),
-        resources: resPoll?.samples() ?? null,
+        resources: resPoll?.resources() ?? null,
         timeline: (ganttAt = 0, sweepTimeline()),
     };
     // report.html — the live page with the final state baked in. Written ALWAYS, not only with --serve:
@@ -578,6 +581,7 @@ const main = async () => {
         console.log(`\n  ${path.relative(ROOT, SCORES_DB)}: ${ctx.logged} run${ctx.logged === 1 ? "" : "s"} logged; the scoreboard is scores.md / scores.html beside it (node tests/e2e/bench/scores.mjs).`);
         if (none.length) console.log(`  ${none.length} of ${spec.tasks.length} task${spec.tasks.length === 1 ? "" : "s"} had no \`succeeded\` predicate, so their runs count for tokens but not for any model's score: ${none.join(", ")}`);
     } else if (backend) console.log("\n  (runs not logged for the scoreboard: this Node has no node:sqlite)");
+    if (resPoll) console.log(`  box: ${resPoll.mode === "stream" ? `its event stream, every frame kept in ${path.relative(ROOT, BOX_DB)}` : "polled memory (the server has no event stream)"}; memory.md says what it did.`);
     console.log("");
     // A live watcher holds the process open: without a page to keep current, stop watching marks.jsonl now.
     const unwatchMarks = () => { clearTimeout(marksTimer); marksWatch?.close(); };

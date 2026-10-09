@@ -16,7 +16,7 @@ import { type SeenCards, type Capacity, noteSeenCards, type UnavailableGpu, unav
 import { seenContext } from "../model";
 import { capacity, resourceHistory, layout, streamLive } from "./panel-state";
 import { models, ollamaIds, modelKinds, config, psError, backendAliveAt, loadedModels, backendLoading, sidebarOpen, vramOpen, view, backendError, unreachableIfNothingSaysOtherwise } from "../store";
-import { residencyOf } from "../../resource/residency";
+import { residencyOf, residentFrom } from "../../resource/residency";
 
 // Fetch the server's model list via the background worker (privileged fetch);
 // degrade silently if unreachable. Populates the datalists.
@@ -487,40 +487,8 @@ export function applyLoaded(raw: LoadedModel[], at: number = Date.now()): void {
     //
     // `/api/events` still names models fully qualified and deliberately so, which is the reason this exists
     // at all; extending it to `ps` is defence against older builds and costs a comparison.
-    const named = raw.map((m) => (m.model === normModel(m.model) ? m : { ...m, model: normModel(m.model) }));
-    // A `state: "loading"` ROW IS A PLACEHOLDER, NOT A MODEL HOLDING ZERO BYTES. It carries its name and
-    // zeros for everything else — no `size_vram`, no `gpus` — so read as a residency it says the model is
-    // here and using nothing, which is the notch: a band straight down to the axis and back up.
-    //
-    // And it was not only said of a model that is genuinely loading. Measured on a real box (capture
-    // 2026-09-05, t=76085..77473): a model RESIDENT and serving with 94,171,928,982 bytes on CUDA0 was
-    // re-reported as `loading` with zeros while a DIFFERENT model loaded, then back to its full figure 2ms
-    // later — with the server's own top-level `vram_used` unchanged at 94,171,928,982 through every frame.
-    //
-    // FIXED SERVER-SIDE since (parawanderer/ollama `slop`, deployed as ollama-slop:latest). The cause was
-    // narrower and worse than it looked: `state: "loading"` meant "I could not take this runner's lock just
-    // now", and ordinary traffic holds that lock — a request finishing, an expiry being reset, another model
-    // being admitted. `vram_used` disagreed because device discovery never consulted it. A `loading` row now
-    // appears only for a model that genuinely has no runner.
-    //
-    // KEPT ANYWAY, because it costs one comparison and it is the difference between a wrong reading and a
-    // right one on every build older than that fix — including whatever a user happens to be running. The
-    // one case it is imprecise in is a model evicted and reloaded inside a single poll, where it carries a
-    // stale figure for one reading; that is self-correcting and far cheaper than the notch.
-    // So a placeholder is NO NEWS, not news of zero — and for a model we last measured as resident, no news
-    // means it is still there. Carrying the previous reading forward is what keeps the band flat across the
-    // flicker; dropping the row instead would leave the model with no row at all for that frame, which draws
-    // the same notch by a different route. A model that genuinely goes away stops appearing in `ps` entirely,
-    // or arrives as an `unload` edge — neither of which this touches.
-    const wasResident = new Map((loadedModels.value ?? []).map((m) => [m.model, m]));
-    const placeholders: string[] = [];
-    const loaded: LoadedModel[] = [];
-    for (const m of named) {
-        if (m.state !== "loading") { loaded.push(m); continue; }
-        const known = wasResident.get(m.model);
-        if (known && (known.vramBytes ?? 0) > 0) loaded.push(known);   // still here; the row just said nothing
-        else placeholders.push(m.model);                               // genuinely loading — a name, no figures
-    }
+    // Model names normalised and `loading` placeholders read as no news (see residentFrom).
+    const { loaded, placeholders } = residentFrom(raw, loadedModels.value ?? []);
     // Remember each resident model's window (overwrite → tracks a mid-run reload).
     for (const m of loaded) if (typeof m.contextLength === "number") seenContext.set(normModel(m.model), m.contextLength);
     loadedModels.value = loaded;

@@ -71,11 +71,18 @@ export function SweepTimeline({ s }: { s: BenchState }) {
     // With memory readings, the panel's own chart, these lanes drawn under it on ITS axis, so a zoom, a scrub or a drag to
     // select on either moves both. A hidden model is hidden in the chart's bands too.
     const hiddenModels = new Set([...hidden].filter((k) => k.startsWith("model=")).map((k) => k.slice(6)));
-    const shownEvents: ResourceEvent[] = shown.flatMap((r) => r.events);
+    // The box's events (its stream), with a hidden model's left out as the chart leaves out its bands.
+    const boxEvents: ResourceEvent[] = (s.resources?.events ?? []).filter((e) => !(e.model && hiddenModels.has(e.model)));
+    const shownEvents: ResourceEvent[] = [...boxEvents, ...shown.flatMap((r) => r.events)];
     /** Each shown run's lane, labelled, on `axis`; with the time axis under them when no chart draws one. Called, never
      *  mounted as a component: a component defined here would be a new type each render and remount its rows. */
     const lanes = ({ axis, withAxis, rowAttrs, rowPrefix }: { axis: { from: number; to: number }; withAxis?: boolean; rowAttrs?: Parameters<typeof LaneRows>[0]["rowAttrs"]; rowPrefix?: () => ComponentChildren }) => (
         <div class="tl">
+            {/* The box's own events above the runs: what the server did, whoever asked (another sweep, a person's panel). */}
+            {boxEvents.length ? [
+                <div key="wbox" class="who box"><Tip tip="What the server itself reported over the sweep, from its event stream: model loads (weights, then context), evictions and unloads with its reason, serving spans and generations from any client, this sweep's or not. Hover a bar for what it was.">the box</Tip></div>,
+                <section key="lbox" class="wml-lane"><LaneRows events={boxEvents} axis={axis} now={t.now} maxRows={4} maxTotal={6} rowAttrs={rowAttrs} rowPrefix={rowPrefix} /></section>,
+            ] : null}
             {shown.map(({ index, events }) => {
                 const r = s.runs[index];
                 const name = runName(r, s.dims);

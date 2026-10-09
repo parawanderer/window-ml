@@ -103,4 +103,9 @@ export interface ScoreBoard {
 export interface SweepScores { href: string; about: Record<string, string>; minScored: number; models: Record<string, ScoreModel> }
 
 /** Resource samples as the harness sends them: each sample names its capacity by index (`c`). */
-export interface PackedSamples { capacities: Capacity[]; samples: (Omit<ResourceSample, "capacity"> & { c: number })[] }
+export interface PackedSamples {
+    capacities: Capacity[];
+    samples: (Omit<ResourceSample, "capacity"> & { c: number })[];
+    /** the box's own events from its stream (loads, evictions, serving spans, any client's generations); absent when polled */
+    events?: ResourceEvent[];
+}
