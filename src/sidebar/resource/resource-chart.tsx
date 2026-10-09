@@ -25,7 +25,7 @@ import { type Axis, segments, chartWindow, axisOf, scrubExtent, scrubPinch, wind
 import { scopeToSpan, filterEvents, sessionWindow } from "../../resource/resource-lane";
 import { deviceBands, hostBands, residualRank } from "../../resource/resource-bands";
 import { editLayout, VRAM_POLL_MS, laneFilter, layout, sampleGapMs } from "./panel-state";
-import { chartHeld, HOLD_LAPSE_MS, holdAxis, holdKey, hoverAt, lastPointerAt, live, readingIsOverlay, releaseAxis, stepPool, tipMuted, eventHover, leavePool, poolHover } from "./chart-interaction";
+import { chartHeld, HOLD_LAPSE_MS, holdAxis, holdKey, hoverAt, lastPointerAt, live, readingIsOverlay, releaseAxis, stepPool, tipMuted, leavePool, poolHover } from "./chart-interaction";
 import { scopedHash, resWindowS, zoomRange, laneScoped, laneEnabled, crosshair } from "../store";
 import { EventLane } from "./resource-lane-ui";
 import { AXIS_TICK_MS } from "./resource-overlays";
@@ -114,14 +114,16 @@ function TrackView({ def, samples, latest, hidden, events = [] }: { def: TrackDe
 if (typeof document !== "undefined") document.addEventListener("pointermove", (e) => {
     const on = e.target as Element | null;
     if (chartHeld.value && !on?.closest?.(".rc, .rc-lane")) chartHeld.value = null;
-    // THE SAME BACKSTOP FOR A PLOT'S HOVER (its crosshair, its readout, a pool lit, a rule's tip). A plot clears them on
-    // its own pointerleave, but a plot redrawn under a still pointer (a live page's next state) can be a new element
-    // that never sees the pointer go, and its readout stayed up wherever the pointer went next. Anywhere that is not a
-    // plot, a plot's hover is over: unless the keyboard holds a line, and except the lane's own (it clears it itself).
-    if (on?.closest?.(".rc-plot") || kbFocus.value || kbPool.value) return;
+    // THE SAME BACKSTOP FOR THE CHART'S READOUT (its crosshair, where the pointer is reading it, a pool lit). The chart
+    // clears them on its plots' pointerleave, but a chart redrawn under a still pointer (a live page's next state) has
+    // the browser re-enter whatever element is now under it, and that readout outlived the pointer: up wherever it went
+    // next, and over a lane bar on top of the bar's own tip. Only the chart's surfaces set these, so off the chart, or on
+    // a lane (whose bars have tips of their own), the readout is over, unless the keyboard holds a line. A lane's own
+    // reading position (surface "lane") is the lane's to clear, and event tips are untouched (a model card's ribbon
+    // opens one outside the chart).
+    if (kbFocus.value || kbPool.value || (on?.closest?.(".rc") && !on.closest(".rc-lane, .wml-lane"))) return;
     if (crosshair.value) crosshair.value = null;
     if (hoverAt.value && hoverAt.value.surface !== "lane") hoverAt.value = null;
-    if (eventHover.value && eventHover.value.scope !== "lane") eventHover.value = null;
     if (poolHover.value) leavePool();
 }, { passive: true });
 
