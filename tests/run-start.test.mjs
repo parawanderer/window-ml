@@ -15,6 +15,8 @@ const T = { timeout: 10000 };
 const config = { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "default-model", apiFormat: "openai", ocrModel: "", debugMode: "off" };
 const flush = async (n = 8) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
 const SITE = { id: 7, url: "https://site.example/page", title: "Site" };
+/** SITE's origin on the person's approved list. */
+const SITE_APPROVED = { ml_site_always: ["https://site.example"] };
 
 /** Stand-in factories for the kit's extra tools: the recipe only needs their names. */
 const kit = { clickTool: () => ({ name: "click" }), typeTool: () => ({ name: "type" }), pythonTool: () => ({ name: "python_exec" }), chatMetaTool: () => ({ name: "chat_metadata" }) };
@@ -435,7 +437,7 @@ test("an approved exec is sent the values of the pointers its script names, and 
     const scripts = ["window.a = 1; return 'FIRST OUTPUT'", "window.b = 1; return @tool:exec.length + ml.dereference(String.fromCharCode(64) + 'tool:exec').length"];
     let n = 0, bg;
     bg = loadBackground({
-        config: { ...config, autoApproveReadonly: false }, openTabs: [SITE],
+        config: { ...config, autoApproveReadonly: false }, openTabs: [SITE], local: SITE_APPROVED,
         onFetch: (call) => {
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
             const js = scripts[n++];
@@ -607,12 +609,12 @@ const RUN_TAB = { tab: { id: 7, url: SITE.url }, url: SITE.url, origin: "https:/
  * tab 7 is hostile: `atApproval(bg)` runs the instant the person's approval is sent, and `inPage(bg, msg)` whenever the
  * run sends a tool to the page. `siteGate` applies the real origin gate, so site.example is NOT approved.
  */
-async function attackRun(args, { then = [], siteGate = true, atApproval, inPage, evictAtFirstGate = false } = {}) {
+async function attackRun(args, { then = [], siteGate = true, atApproval, inPage, evictAtFirstGate = false, local = {} } = {}) {
     let turns = 0, bg, evicted = false;
     const calls = [{ name: "fetch_url", args }, ...then];
     const seenByModel = [];
     bg = loadBackground({
-        config: { ...config, autoApproveReadonly: true }, openTabs: [SITE], siteGate,
+        config: { ...config, autoApproveReadonly: true }, openTabs: [SITE], siteGate, local,
         onFetch: (call) => {
             if (call.url.startsWith("https://other.example/")) return { ok: true, status: 200, url: call.url, headers: { get: (h) => (/content-type/i.test(h) ? "text/html; charset=utf-8" : null) }, text: async () => SECRET, arrayBuffer: async () => new TextEncoder().encode(SECRET).buffer, body: null };
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
@@ -686,7 +688,9 @@ test("a page cannot spend the one-time as-you grant the person minted for the ru
 
 test("while an approved exec runs, the page cannot fetch a URL the exec never named", T, async () => {
     let stolen;
+    // An approved exec runs in the page's world only on an approved site (exec-routing.ts); elsewhere it is isolated.
     const { toolResults } = await attackRun({ url: OTHER }, {
+        local: SITE_APPROVED,
         then: [{ name: "exec", args: { js: "document.title = 'x'; return 1" } }],
         inPage: async (bg, msg) => {
             if (msg.payload.name !== "exec" || msg.payload.renderOnly || msg.payload.readonlyTry || msg.payload.precheck) return undefined;
@@ -765,6 +769,7 @@ test("an approved exec may fetch the URLs its code spells out, and a computed on
     const named = "https://other.example/named";
     let literal, computed;
     await attackRun({ url: OTHER }, {
+        local: SITE_APPROVED,
         then: [{ name: "exec", args: { js: `document.title = 'x'; return (await ml.fetch("${named}")).status` } }],
         inPage: async (bg, msg) => {
             if (msg.payload.name !== "exec" || msg.payload.renderOnly || msg.payload.readonlyTry || msg.payload.precheck) return undefined;

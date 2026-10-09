@@ -355,6 +355,9 @@ reported". **Read `docs/FORKED-BACKENDS.md` before assuming a resource-panel fie
   (`page-relay.ts`) from an unapproved origin, reading `sender`, never anything the page says; a run the USER starts is
   built by the worker and works on any page. → site-access.md
 
+- **An approved exec of a run the worker built runs in an isolated world** when it names a pointer or `ml.current`, or
+  the page is not approved (`exec-routing.ts`): never hand either to the page's main world. → site-access.md
+
 - **Config overrides (URL/key) are accepted only from the popup.** Page-relayed
   messages have `sender.tab` set; `background.js` strips overrides when it's set,
   so a hostile page can't repoint the saved API key at another host.
