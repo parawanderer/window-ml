@@ -10,6 +10,7 @@
 // from a string inside the page, so neither the page's CSP nor the world's matters: like `cdpEval`, the expression form
 // is tried first and the statement body second.
 
+import { parse } from "acorn";
 import type { PreRead } from "../pointers/named-reads";
 import type { RenderDescriptor } from "../contract";
 import { currentForExec, type CurrentSnapshot, type ExecCurrent } from "../agent/current-context";
@@ -111,8 +112,26 @@ export function isolatedWrapper(inner: string, b: IsolatedBindings, n: string, s
 })()`;
 }
 
-/** The two forms, as `cdpEval` tries them: a trailing expression (its value), then a statement body (`return`). */
-const forms = (code: string): [string, string] => [`(${code.trim().replace(/;\s*$/, "")})`, `{ ${code}\n}`];
+/**
+ * A script whose last top-level statement is an expression, with that statement returned: the value a main-world exec
+ * gets from `eval` (tools.ts), which a function body would drop. Anything else, or a script that does not parse, as it
+ * came.
+ * @param code the script, pointers already expanded
+ * @returns the script, its last expression statement made a `return`
+ */
+export function returnLastExpression(code: string): string {
+    type Stmt = { type: string; start: number; end: number; expression?: { start: number; end: number }; directive?: string };
+    let body: Stmt[];
+    try { body = (parse(code, { ecmaVersion: "latest", allowAwaitOutsideFunction: true, allowReturnOutsideFunction: true }) as unknown as { body: Stmt[] }).body; }
+    catch { return code; }
+    const last = body.filter((st) => st.type !== "EmptyStatement").at(-1);
+    if (!last || last.type !== "ExpressionStatement" || !last.expression || last.directive !== undefined) return code;
+    return `${code.slice(0, last.start)}return (${code.slice(last.expression.start, last.expression.end)});${code.slice(last.end)}`;
+}
+
+/** The two forms, as `cdpEval` tries them: a trailing expression (its value), then a statement body that returns its
+ *  last expression. */
+const forms = (code: string): [string, string] => [`(${code.trim().replace(/;\s*$/, "")})`, `{ ${returnLastExpression(code)}\n}`];
 
 type Wrapped = { __mlWrapped: true; v?: string; threw?: string; logs: string[]; dropped?: number };
 
