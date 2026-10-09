@@ -5,7 +5,7 @@ import assert from "node:assert";
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { judge, testLineCounts, diskOnly, keepBench } from "../scripts/merge-when-green.mjs";
+import { judge, testLineCounts, deletedTests, diskOnly, keepBench } from "../scripts/merge-when-green.mjs";
 
 // --- the rule: green pipeline, no test removed, nothing unread ---
 
@@ -41,6 +41,15 @@ test("every way the rule fails says why, and only CI still running is pending", 
 test("a test whose body changes counts the same removed and added, so an edit is not a removal", () => {
     const diff = ["--- a/tests/x.test.mjs", "+++ b/tests/x.test.mjs", '-test("old name", () => {', '+test("new name", () => {', "-    a.test(1)", "+    retest(2)"].join("\n");
     assert.deepEqual(testLineCounts(diff), { removed: 1, added: 1 });
+});
+
+test("a deleted test is a test file or a fixture; the harness and the bench's own code under tests/ are not tests", () => {
+    const status = [
+        "D\ttests/sidebar-vram.test.js", "D\ttests/e2e/resource-panel.spec.mjs", "D\ttests/fixtures/boxes.mjs",
+        "D\ttests/e2e/bench/page/card.tsx", "D\ttests/e2e/run-once.mjs", "M\ttests/bench-page.test.mjs", "A\ttests/new.test.mjs",
+    ].join("\n");
+    assert.deepStrictEqual(deletedTests(status), ["tests/sidebar-vram.test.js", "tests/e2e/resource-panel.spec.mjs", "tests/fixtures/boxes.mjs"]);
+    assert.deepStrictEqual(deletedTests(""), []);
 });
 
 // --- the reminder: what a merge would leave behind on disk ---

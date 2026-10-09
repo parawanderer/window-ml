@@ -19,7 +19,9 @@ The owner's standing rule for a session's OWN PR, nothing more:
 
 - the PR's `tests` workflow run is complete and every job succeeded or was skipped (a CANCELLED job counts as not
   green, since it prints as a failure: re-run it, do not merge past it);
-- no test file deleted, and no more `test(` lines removed than added (an edited test counts once each way);
+- no test file deleted (a `*.test.*` or `*.spec.*` file or a fixture under `tests/fixtures/`; the harness and the bench's
+  own code also live under `tests/`, and moving one of those is not removing a test), and no more `test(` lines removed
+  than added (an edited test counts once each way);
 - no review and no comment (the pr-conflicts bot's notice excepted): an unread review means stop and read it;
 - nothing stacked on it, and GitHub says it is mergeable.
 
