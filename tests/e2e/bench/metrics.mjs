@@ -93,9 +93,12 @@ export function resultOf(events) {
  * that said "East" and was entirely correct scored WRONG — in both arms, on every repeat. It reads as a
  * task the model cannot do, which is the most expensive kind of bench bug because the output looks like a
  * finding.
+ *
+ * A turn that ENDED IN AN ERROR (its agent-result carries `error`: the backend refused, the run crashed) answered
+ * nothing, so it is not one: counted as one, a one-turn run that errored looked finished and was scored on the error.
  */
 export function answersOf(events) {
-    return events.filter((e) => e.kind === "agent-result").map((e) => e.summary ?? "");
+    return events.filter((e) => e.kind === "agent-result" && !e.error).map((e) => e.summary ?? "");
 }
 
 /**
