@@ -218,7 +218,8 @@ async function main() {
     if (blocked) { console.log(`${pr}: ${merge ? "NOT MERGED" : "would not merge"}: a worktree holds work that is in no commit (above)`); process.exit(1); }
     if (!merge) return;
     // A checkout on the branch keeps its local branch: only the remote one goes.
-    const args = ["pr", "merge", pr, "--squash", ...(held ? [] : ["--delete-branch"])];
+    // Pinned to the commit the rule was checked on: a push during the wait must never be merged untested.
+    const args = ["pr", "merge", pr, "--squash", "--match-head-commit", f.sha, ...(held ? [] : ["--delete-branch"])];
     if (spawnSync("gh", args, { cwd: ROOT, stdio: "inherit" }).status !== 0) { console.log(`${pr}: merge FAILED`); process.exit(1); }
     if (held) gh("api", "-X", "DELETE", `repos/${REPO}/git/refs/heads/${f.head}`);
     stopServers(servers, checkoutsOf(f.head).main);

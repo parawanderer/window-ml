@@ -23,6 +23,9 @@ The owner's standing rule for a session's OWN PR, nothing more:
 - no review and no comment (the pr-conflicts bot's notice excepted): an unread review means stop and read it;
 - nothing stacked on it, and GitHub says it is mergeable.
 
+The merge is pinned to the commit the rule was checked on (`--match-head-commit`), so a push during the wait is
+refused by GitHub instead of merged untested.
+
 `no tests run` usually means the PR conflicts with main: a conflicting PR runs no checks at all. Rebase it.
 
 ## What a merge would leave behind
