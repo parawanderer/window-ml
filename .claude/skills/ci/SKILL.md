@@ -10,6 +10,9 @@ is why the work goes on branches and merges through PRs: the PR is the thing tha
 thing that catches what one session broke for another. A green local `npm test` is not that check —
 it does not run the e2e suite, three Node versions, or the real-CPython tests.
 
+Merging your own PR once it is green: the `merge-when-green` skill (`node scripts/merge-when-green.mjs <pr> --wait
+--merge`), which applies the merge rule and keeps a worktree's bench results.
+
 ## The loop
 
 ```bash
