@@ -4,7 +4,11 @@
 
 import { eventsIn, type ResourceEvent } from "../../../../src/resource/resource-timeline";
 import { placeEvents, laneRows, MIN_EV_SPAN } from "../../../../src/resource/resource-lane";
+import { useState } from "preact/hooks";
 import { LaneBars } from "../../../../src/sidebar/resource/lane-bars";
+import { EventTipBody } from "../../../../src/sidebar/resource/event-tip";
+import { useTipPlacement } from "../../../../src/sidebar/use-tip";
+import type { EventPlacement } from "../../../../src/resource/resource-timeline";
 import { fmtSpan } from "./format";
 
 export type Axis = { from: number; to: number };
@@ -18,7 +22,8 @@ export function laneWindow(events: readonly ResourceEvent[], now?: number): Axis
     return { from, to: Math.max(...spans.map((e) => e.until ?? now ?? e.t), from + 1) };
 }
 
-/** What a bar is, in words: its label and model, how long, its phases, whether it is still going. */
+/** What a bar is, in one line: its label and model, how long, its phases, whether it is still going. The bar's
+ *  accessible name; the tooltip (`LaneTip`) says the rest. */
 export function barTitle(e: ResourceEvent): string {
     const dur = e.until != null ? ` · ${fmtSpan(e.until - e.t)}` : "";
     const phases = e.phases?.length ? ` · ${e.phases.map((ph, i) => `${ph.kind} ${fmtSpan(ph.until - (i ? e.phases![i - 1].until : e.t))}`).join(", ")}` : "";
@@ -33,11 +38,27 @@ export function LaneRows({ events, axis, now, maxRows = 8, maxTotal = 24 }: { ev
     const spans = events.filter((e) => e.until != null || e.open)
         .map((e) => (e.until == null && e.open && now != null ? { ...e, until: now } : e));
     const rows = laneRows(placeEvents(axis, eventsIn(spans, axis.from, axis.to)), maxRows, MIN_EV_SPAN, maxTotal);
+    const [hover, setHover] = useState<{ p: EventPlacement; x: number; y: number } | null>(null);
+    const at = (p: EventPlacement) => (ev: PointerEvent) => setHover({ p, x: ev.clientX, y: ev.clientY });
     return (
         <div class="rc-lane-rows">
-            <LaneBars rows={rows} minSpan={MIN_EV_SPAN} barAttrs={(p) => ({ title: barTitle(p.event) })} />
+            <LaneBars rows={rows} minSpan={MIN_EV_SPAN} barAttrs={(p) => ({
+                "aria-label": barTitle(p.event),
+                onPointerEnter: at(p), onPointerMove: at(p),
+                onPointerLeave: () => setHover(null),
+            })} />
+            {hover ? <LaneTip p={hover.p} x={hover.x} y={hover.y} /> : null}
         </div>
     );
+}
+
+/**
+ * The panel's tooltip for the bar under the pointer (event-tip.tsx `EventTipBody`), following the cursor and placed
+ * as the panel places it. A page knows nothing of the box the run used, so only what the event itself carries.
+ */
+export function LaneTip({ p, x, y }: { p: EventPlacement; x: number; y: number }) {
+    const { ref, style } = useTipPlacement({ x, y, w: window.innerWidth });
+    return <div class="rc-tip rc-tip-event" role="tooltip" ref={ref} style={style}><EventTipBody e={p.event} clipped={!!p.clipped} /></div>;
 }
 
 /** Tick spacing for a window: the smallest of the usual steps that gives at most `max` ticks. */

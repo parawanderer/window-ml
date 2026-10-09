@@ -149,7 +149,30 @@ test("the timeline draws each run that has events as its own lane, on one shared
     // One axis for both: the first run's 4 s run bar starts at 0% and is 40% wide; the second starts at 60%.
     const lefts = [...tl.querySelectorAll(".rc-ev-run")].map((b) => [b.style.left, b.style.width]);
     assert.deepEqual(lefts, [["0%", "40%"], ["60%", "40%"]]);
-    assert.match(tl.querySelector(".rc-ev-gen").getAttribute("title"), /gen 0 \(m:1\) · 2\.0s/);
+    assert.match(tl.querySelector(".rc-ev-gen").getAttribute("aria-label"), /gen 0 \(m:1\) · 2\.0s/);
+    assert.equal(tl.querySelectorAll("[title]").length, 0, "the panel's tooltip, never the browser's");
+    // Hovering a bar shows the panel's own event tooltip (event-tip.tsx), with what the event was and how long it took.
+    const win = doc.defaultView;
+    const tick = () => new Promise((r) => win.setTimeout(r, 20));   // Preact renders a state change on its next tick
+    tl.querySelector(".rc-ev-gen").dispatchEvent(new win.PointerEvent("pointerenter", { bubbles: false, clientX: 50, clientY: 50 }));
+    await tick();
+    const tip = tl.querySelector(".rc-tip.rc-tip-event");
+    assert.ok(tip, "a tooltip on hover");
+    assert.match(tip.textContent, /gen 0/);
+    assert.match(tip.textContent, /2\.0s|2s/);
+    tl.querySelector(".rc-ev-gen").dispatchEvent(new win.PointerEvent("pointerleave", { bubbles: false }));
+    await tick();
+    assert.equal(tl.querySelector(".rc-tip"), null, "and gone when the pointer leaves");
+    // A chip per value of the dimension hides that value's runs, and shows them again.
+    const chip = (v) => [...tl.querySelectorAll(".tlfilter .rc-lane-chip")].find((c) => c.textContent.startsWith(v));
+    assert.deepEqual([...tl.querySelectorAll(".tlfilter .rc-lane-chip")].map((c) => c.textContent), ["a 1", "b 1"]);
+    chip("b").click();
+    await tick();
+    assert.deepEqual([...tl.querySelectorAll(".who")].map((w) => w.textContent), ["t · a · r0"]);
+    assert.equal(chip("b").getAttribute("aria-pressed"), "false");
+    chip("b").click();
+    await tick();
+    assert.equal(tl.querySelectorAll(".who").length, 2);
 });
 
 // --- a run's own page ---

@@ -79,6 +79,10 @@ test("the Spec card shows who started the sweep, that the spec changed, and the 
     assert.match(card.textContent, /uncommitted changes/);
     assert.deepEqual([...card.querySelectorAll(".sdiff .add")].map((e) => e.textContent), [`+ ${hostile.split("\n")[2]}`]);
     assert.equal(card.querySelectorAll("img, b").length, 0, card.innerHTML);
+    // The spec's text as the panel shows code: highlighted (its keywords coloured), one numbered row per line.
+    assert.equal(card.querySelectorAll(".ssrc .cline").length, hostile.split("\n").length);
+    assert.ok(card.querySelector(".ssrc .hljs-keyword"), "highlighted");
+    assert.equal(card.querySelector(".ssrc .cline:nth-child(3) .lno").textContent, "3");
     assert.equal(doc.defaultView.__pwned, undefined);
     assert.ok(doc.querySelector('header a.badge[href="#spec"]'), "the header says the spec changed, and links to the card");
 });
