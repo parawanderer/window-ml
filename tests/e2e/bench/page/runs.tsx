@@ -9,6 +9,7 @@ const TASK_TIP = "The spec's task id: what the run was asked to do.";
 import { Hash } from "../../../../src/sidebar/copy-hash";
 import type { BenchState, RunState, Agg } from "./state";
 import { dur } from "./format";
+import { now } from "./clock";
 import { Card } from "./card";
 
 /** A run's directory as a link base, or "" before it has one. */
@@ -24,7 +25,7 @@ export function Outcome({ r }: { r: RunState }) {
         const l = r.live || {};
         return (
             <span class="badge run"><i class="spin" />{l.step != null ? <>step {l.step}{l.maxSteps ? <span class="dim">/{l.maxSteps}</span> : null}</> : "starting"}
-                {l.tool ? <> · {l.tool}</> : null}{r.startedAt ? <span class="dim"> · {dur(Date.now() - r.startedAt)}</span> : null}</span>
+                {l.tool ? <> · {l.tool}</> : null}{r.startedAt ? <span class="dim"> · {dur(now.value - r.startedAt)}</span> : null}</span>
         );
     }
     if (r.state === "pending") return <span class="badge">queued</span>;
@@ -84,22 +85,22 @@ export function Flight({ s }: { s: BenchState }) {
 /** The four numbers a long sweep raises: elapsed, per run, per step, and when it will be over (withheld until a few
  *  runs have landed: an ETA from one sample is a guess wearing a number's clothes). */
 export function Stats({ s }: { s: BenchState }) {
-    const now = Date.now();
+    const at = now.value;
     const done = s.runs.filter((r) => r.state === "done");
     const timed = done.filter((r) => typeof r.secs === "number" && !r.cached);
     const total = timed.reduce((a, r) => a + (r.secs || 0), 0);
     const meanRun = timed.length ? total / timed.length : null;
     const steps = timed.reduce((a, r) => a + (r.steps || 0), 0);
     const left = s.runs.length - done.length;
-    const eta = !s.finished && meanRun != null && timed.length >= 3 && left > 0 ? new Date(now + (left * meanRun * 1000) / Math.max(1, s.jobs)) : null;
+    const eta = !s.finished && meanRun != null && timed.length >= 3 && left > 0 ? new Date(at + (left * meanRun * 1000) / Math.max(1, s.jobs)) : null;
     const tile = (label: string, value: string, tip: string) => <div class="tile"><b>{value}</b><span><Tip tip={tip}>{label}</Tip></span></div>;
     return (
         <div class="tiles">
-            {tile("elapsed", dur((s.finished || now) - s.started), "Wall-clock time since the sweep started.")}
+            {tile("elapsed", dur((s.finished || at) - s.started), "Wall-clock time since the sweep started.")}
             {tile("per run", meanRun == null ? "–" : dur(meanRun * 1000), `Mean wall-clock time of one run${timed.length ? `, over ${timed.length} timed run(s)` : ""}. Cached runs are left out: their time belongs to an earlier sweep.`)}
             {tile("per step", steps ? `${(total / steps).toFixed(1)}s` : "–", `Mean time of one agent step (a tool call or an answer)${steps ? `: ${steps} steps across ${timed.length} run(s)` : ""}.`)}
             {s.finished ? tile("finished", dur(s.finished - s.started), "How long the whole sweep took.")
-                : tile("eta", eta ? eta.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "–", eta ? `When the sweep should end: about ${dur(eta.getTime() - now)} left, from the mean run time at ${s.jobs} job(s).` : "When the sweep should end; shown once three runs have been timed, since one sample is a guess.")}
+                : tile("eta", eta ? eta.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "–", eta ? `When the sweep should end: about ${dur(eta.getTime() - at)} left, from the mean run time at ${s.jobs} job(s).` : "When the sweep should end; shown once three runs have been timed, since one sample is a guess.")}
         </div>
     );
 }

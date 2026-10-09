@@ -17,6 +17,7 @@ import { SpecCard } from "./spec";
 import { FromSpec, specSource } from "./from-spec";
 import { installTooltipLayer } from "../../../../src/sidebar/tooltip-layer";
 import { ThemeToggle, applyTheme, readTheme } from "./theme";
+import { runClock } from "./clock";
 import { signed } from "../../../../src/sidebar/interval-bar";
 import { laneScoped, resWindowS, zoomRange } from "../../../../src/sidebar/store";
 import { installChartKeys } from "../../../../src/sidebar/resource/resource-chart";
@@ -97,7 +98,6 @@ function Head({ s, disconnected }: { s: BenchState; disconnected: boolean }) {
 function App() {
     const baked = window.__BENCH_STATE__ ?? null;
     const [s, setS] = useState<BenchState | null>(baked);
-    const [, tick] = useState(0);
     const [disconnected, setDisconnected] = useState(false);
     const [buildError, setBuildError] = useState<string | null>(null);
     useEffect(() => {
@@ -123,12 +123,9 @@ function App() {
             if (y != null) { sessionStorage.removeItem(SCROLL_KEY); requestAnimationFrame(() => window.scrollTo(0, Number(y))); }
         } catch { /* storage off */ }
     }, [!!s]);
-    // The clocks (elapsed, a running step's time, the ETA) move with the wall, not with events.
-    useEffect(() => {
-        if (s?.finished) return;
-        const t = setInterval(() => tick((n) => n + 1), 1000);
-        return () => clearInterval(t);
-    }, [s?.finished]);
+    // The clocks (elapsed, a running step's time, the ETA) move with the wall, not with events: one clock for the page
+    // (clock.ts), stopped once the sweep is over.
+    useEffect(() => { runClock(!!s && !s.finished); return () => runClock(false); }, [!!s, s?.finished]);
     if (!s) return <main><div class="card"><div class="empty">Waiting for the sweep…</div></div></main>;
     const base = s.artifactBase ?? "/artifacts/";
     return (
