@@ -22,7 +22,7 @@ const call = (name, args, id = "c1") => ({ content: "", tool_calls: [{ id, name,
 async function drive(turns, runTool, opts = {}) {
     const results = [], got = [];
     let i = 0;
-    await runAgentLoop("t", { tools: TOOLS, maxSteps: () => turns.length + 2, toolTokens: true, runHash: "abcdef", ...opts }, {
+    await runAgentLoop("t", { tools: TOOLS, maxSteps: () => turns.length + 4, toolTokens: true, runHash: "abcdef", ...opts }, {
         callModel: async () => turns[i++] || { content: "done", tool_calls: [] },
         runTool: async (name, args) => { got.push({ name, args }); return runTool(name, args); },
         autoApprove: () => null,

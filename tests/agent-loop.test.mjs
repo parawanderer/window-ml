@@ -593,3 +593,26 @@ test("chat_metadata: the machine is described only for a LOCAL model — a cloud
     assert.match(await run(true), /device CUDA0: 6\.00 GiB in use of 10\.00 GiB/);
     assert.doesNotMatch(await run(false), /device |VRAM across|system RAM|devices: not reported/, "cloud: no machine lines at all");
 });
+
+// --- the step budget: said on a result once few steps are left, read live from the cap ---
+
+test("the last result of a step says how many steps are left once two or fewer remain, and only on the last call", async () => {
+    const two = { content: "", tool_calls: [{ id: "a", name: "safe", arguments: {} }, { id: "b", name: "safe", arguments: {} }] };
+    const msgs = [];
+    const { deps } = makeDeps({ turns: [toolCall("safe"), two, toolCall("safe"), reply("done")] });
+    deps.pushToolResult = (m, call, result) => { msgs.push(result); m.push({ role: "tool", tool_call_id: call.id, content: result }); };
+    await runAgentLoop("x", { tools: [{ name: "safe" }], maxSteps: 4 }, deps);
+    assert.deepEqual(msgs.map(r => r.match(/\[(\d) steps? left this turn/)?.[1] ?? null), [null, null, "2", "1"],
+        "step 1 of 4: nothing; step 2: only its LAST call carries 2; step 3: 1");
+    assert.doesNotMatch(msgs.join(""), / {2}/, "no run of two spaces in model-facing text");
+});
+
+test("a cap raised mid-run is the one the budget note counts from", async () => {
+    let cap = 2;
+    const msgs = [];
+    const { deps } = makeDeps({ turns: [toolCall("safe"), toolCall("safe"), reply("done")] });
+    deps.pushToolResult = (m, call, result) => { msgs.push(result); cap = 10; m.push({ role: "tool", tool_call_id: call.id, content: result }); };
+    await runAgentLoop("x", { tools: [{ name: "safe" }], maxSteps: () => cap }, deps);
+    assert.match(msgs[0], /\[1 step left this turn/, "with a cap of 2, step 1 leaves 1");
+    assert.doesNotMatch(msgs[1], /left this turn/, "after the cap rose to 10, step 2 says nothing");
+});
