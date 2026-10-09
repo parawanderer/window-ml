@@ -91,6 +91,13 @@ export interface BenchTask {
     stream?: boolean;
     /** `false` keeps this task's run directories (screenshots, page text) off the bench store (sync.mjs); its rows still go */
     sync?: boolean;
+    /**
+     * Keep the run open after its last turn, in a process of its own, to go on talking to it (bench/hold.mjs; attach with
+     * `converse.mjs --attach`): `true` always, `"failures"` only when it errored or was wrong. A sweep's `--hold` wins.
+     */
+    hold?: boolean | "failures";
+    /** minutes a held run waits for a message before it lets go (default 30; a sweep's `--hold-idle` wins) */
+    holdIdleMinutes?: number;
     /** how long one run of this task may take before it is recorded as a timeout */
     timeoutMs?: number;
     /**

@@ -19,6 +19,10 @@
 //   … tests/e2e/panel/bloat.json --models a,b,c    an INTERVIEW file instead of a spec: one run per model, each
 //                         follow-up sent as the turn before it ends, the answers side by side on the page (where a
 //                         person can mark one wrong) and in summary.md; `--surface hud|console` as panel.mjs takes it
+//   … --hold all | failures | k=v   keep those cells' runs open after their last turn, each in a detached process, to go
+//                         on talking to (`failures`: only a run that errored or was wrong). The sweep still exits; the
+//                         attach lines are printed above BENCH DONE (bench/hold.mjs lists and releases them).
+//                         `--hold-idle 60` releases one after that many minutes with no message (default 30)
 //   … --port 7400         serve on a specific port (the default is stable, so a browser tab can just
 //                         reload between sweeps — in VS Code, cmd-click the URL and pick "Simple
 //                         Browser" to dock the page as an editor tab)
@@ -44,10 +48,11 @@ import { createHash } from "node:crypto";
 import { mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { runOnce, resolveBackendFromEnv, renderRun, FAKE_MODEL } from "../run-once.mjs";
 import { measureRun, aggregate, isRateLimit } from "./metrics.mjs";
-import { expandCells, cellKey, cellPath, comboLabel, buildGroups, parseSelector, slug, cellSurface, cellStream } from "./cells.mjs";
+import { expandCells, cellKey, cellPath, comboLabel, buildGroups, parseSelector, slug, cellStream, runConfig } from "./cells.mjs";
+import { holdMode, loadSpec, startHeld, HOLD_IDLE_MIN } from "./hold.mjs";
 import { writeReport, mdSink, terminalSink, doneSummary, doneLine } from "./sinks.mjs";
 import { startDashboard, staticPage, servedSweep } from "./serve.mjs";
 import { pageSources } from "./page/bundle.mjs";
@@ -63,7 +68,7 @@ import { openScores, modelInfo, runRow, logRuns, readRuns, scoreboard, sweepScor
 import { watch as watchFs } from "node:fs";
 // The sweep's timeline: each run's events as the resource panel derives them; the page draws them with its lane.
 const { eventsFrom } = await import("../../../src/sidebar/resource/model-stats.ts");
-import { loadInterview, interviewBench, interviewDriver, readTurns, probe, panelSummary, promptChars, checkMarks, validMark } from "../interview.mjs";
+import { loadInterview, interviewDriver, readTurns, probe, panelSummary, promptChars, checkMarks, validMark } from "../interview.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../../..");
@@ -71,7 +76,7 @@ const ARTROOT = path.join(ROOT, "tests/e2e/artifacts/bench");
 const BUILDROOT = path.join(ROOT, "tests/e2e/artifacts/builds");
 
 function parseArgv(argv) {
-    const args = { specPath: null, models: (process.env.PANEL_MODELS || "").split(",").map((m) => m.trim()).filter(Boolean), surface: undefined, turnMinutes: 15, jobs: 1, jobsSet: false, lanes: false, only: [], skip: [], repeats: undefined, dry: false, cache: true, pdf: false, serve: false, open: false, port: undefined, capture: undefined };
+    const args = { specPath: null, models: (process.env.PANEL_MODELS || "").split(",").map((m) => m.trim()).filter(Boolean), surface: undefined, turnMinutes: 15, jobs: 1, jobsSet: false, lanes: false, only: [], skip: [], repeats: undefined, dry: false, cache: true, pdf: false, serve: false, open: false, port: undefined, capture: undefined, hold: [], holdIdle: undefined };
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
         if (a === "--jobs") { args.jobs = Math.max(1, Number(argv[++i]) || 1); args.jobsSet = true; }
@@ -80,6 +85,8 @@ function parseArgv(argv) {
         else if (a === "--only-db") args.onlyDb = true;
         else if (a === "--only") args.only.push(argv[++i]);
         else if (a === "--skip") args.skip.push(argv[++i]);
+        else if (a === "--hold") args.hold.push(argv[++i]);
+        else if (a === "--hold-idle") args.holdIdle = Number(argv[++i]) || undefined;
         else if (a === "--repeats") args.repeats = Math.max(1, Number(argv[++i]) || 1);
         else if (a === "--dry") args.dry = true;
         else if (a === "--no-cache") args.cache = false;
@@ -166,7 +173,9 @@ async function runCell(cell, ctx, index) {
     const dir = path.join(ctx.sweepDir, cellPath(cell));
     const cacheFile = path.join(dir, "cell.json");
 
-    if (ctx.cache && existsSync(cacheFile)) {
+    // A cell to hold always runs: a cached result has no browser to keep. One held only on failure keeps its cache.
+    const hold = holdMode(cell, ctx.holdCli);
+    if (ctx.cache && hold !== "always" && existsSync(cacheFile)) {
         try {
             const saved = JSON.parse(await readFile(cacheFile, "utf8"));
             // A run that ERRORED (the backend refused, timed out, crashed) measured nothing about the model: run it
@@ -189,80 +198,60 @@ async function runCell(cell, ctx, index) {
     await mkdir(dir, { recursive: true });
 
     const t = cell.task;
-    const e = cell.effects;
-    const backend = e.backend ? { ...(ctx.backend || {}), ...e.backend } : ctx.backend;
     const label = `${comboLabel(cell.combo)} · ${t.id} · r${cell.repeat}`;
     ctx.log(`  ▶ ${label}`);
 
-    const surface = cellSurface(cell);
     // An interview: each ask is sent once the turn before it ends, and every turn's answer lands in outbox/, read
     // back as the run goes so the page fills in turn by turn rather than at the end.
-    const driver = t.asks?.length ? interviewDriver({ asks: t.asks, dir }) : null;
+    const driver = !hold && t.asks?.length ? interviewDriver({ asks: t.asks, dir }) : null;
+    const onTurns = () => ctx.report?.(index, "running", { turns: readTurns(dir) });
     const nextTurn = driver && (async (info) => {
         const next = await driver.nextTurn(info);
-        ctx.report?.(index, "running", { turns: readTurns(dir) });
+        onTurns();
         return next;
     });
-    let run;
+    // The in-flight run's own debug stream, reduced to what a watcher wants: how far in it is, against what budget,
+    // what it is doing right now, and the last thing that actually happened. A sweep cell takes minutes; without this a
+    // running row is a spinner, and a slow step is indistinguishable from a wedged one.
+    const onEvent = (ev) => {
+        ctx.rawOf?.(index)?.push(ev);
+        const live = { ...(ctx.liveOf?.(index) || {}) };
+        if (ev.kind === "agent") { live.maxSteps = ev.maxSteps; live.last = "started"; }
+        else if (ev.kind === "agent-step" && ev.tool) {
+            live.step = ev.step;
+            live.tool = ev.tool;
+            live.pending = !!ev.pending;
+            // The DONE carries the result; a pending START does not. Show what came back, clipped —
+            // this is a status line, not a transcript (the transcript is one click away).
+            if (!ev.pending) live.last = `${ev.tool} → ${String(ev.result ?? "").replace(/\s+/g, " ").slice(0, 90)}`;
+            else live.last = `calling ${ev.tool}`;
+        } else if (ev.kind === "agent-step" && (ev.thought || ev.reasoning)) {
+            live.step = ev.step ?? live.step;
+            live.tool = "thinking";
+            live.last = String(ev.thought || ev.reasoning).replace(/\s+/g, " ").slice(0, 90);
+        } else if (ev.kind === "agent-result") {
+            live.tool = "answered";
+            live.last = String(ev.summary ?? "").replace(/\s+/g, " ").slice(0, 90);
+        } else return;
+        ctx.report?.(index, "running", { live });
+    };
+    const env = { backend: ctx.backend, dist: ctx.buildDirs.get(cell) ?? null, approve: ctx.spec.approve, capture: ctx.capture, timeoutMs: ctx.spec.timeoutMs, warm: ctx.warm };
+    let run, statuses = driver?.statuses ?? [], held = null;
     try {
-        run = await runOnce({
-            task: t.task,
-            followup: t.followup || "",
-            start: t.start || "/step3",
-            tools: e.tools !== undefined ? e.tools : (t.tools ?? null),
-            python: e.python ?? !!t.python,
-            toolTokens: e.toolTokens ?? !!t.toolTokens,
-            agentOptions: { ...(t.agentOptions || {}), ...(e.agentOptions || {}) },
-            stream: cellStream(cell),
-            seed: t.seed || null,
-            ...(t.script ? { script: t.script } : {}),
-            surface,
-            sharedWatches: t.sharedWatches ?? [], watchNotes: t.watchNotes ?? {},
-            ...(nextTurn ? { nextTurn } : {}),
-            backend,
-            dist: ctx.buildDirs.get(cell) ?? null,
-            artDir: dir,
-            approve: ctx.spec.approve || "auto",
-            capture: ctx.capture,
-            timeoutMs: t.timeoutMs ?? ctx.spec.timeoutMs ?? 180000,
-            // A sweep is a machine reading a matrix: no sidebar to focus, no browser to hold open, and the
-            // per-event chatter would bury the progress line.
-            focusSidebar: false,
-            hold: false,
-            warm: ctx.warm,
-            log: () => {},
-            // The in-flight run's own debug stream, reduced to what a watcher wants: how far in it is,
-            // against what budget, what it is doing right now, and the last thing that actually happened.
-            // A sweep cell takes minutes; without this a running row is a spinner, and a slow step is
-            // indistinguishable from a wedged one.
-            onEvent: (ev) => {
-                ctx.rawOf?.(index)?.push(ev);
-                const live = { ...(ctx.liveOf?.(index) || {}) };
-                if (ev.kind === "agent") { live.maxSteps = ev.maxSteps; live.last = "started"; }
-                else if (ev.kind === "agent-step" && ev.tool) {
-                    live.step = ev.step;
-                    live.tool = ev.tool;
-                    live.pending = !!ev.pending;
-                    // The DONE carries the result; a pending START does not. Show what came back, clipped —
-                    // this is a status line, not a transcript (the transcript is one click away).
-                    if (!ev.pending) live.last = `${ev.tool} → ${String(ev.result ?? "").replace(/\s+/g, " ").slice(0, 90)}`;
-                    else live.last = `calling ${ev.tool}`;
-                } else if (ev.kind === "agent-step" && (ev.thought || ev.reasoning)) {
-                    live.step = ev.step ?? live.step;
-                    live.tool = "thinking";
-                    live.last = String(ev.thought || ev.reasoning).replace(/\s+/g, " ").slice(0, 90);
-                } else if (ev.kind === "agent-result") {
-                    live.tool = "answered";
-                    live.last = String(ev.summary ?? "").replace(/\s+/g, " ").slice(0, 90);
-                } else return;
-                ctx.report?.(index, "running", { live });
-            },
-        });
+        if (hold) {
+            // Its own detached process (hold.mjs), which hands the run back here to be measured and can outlive the sweep.
+            held = startHeld({ ...ctx.held.job, index, key, fingerprint: ctx.fingerprint, dir, env, sweep: ctx.spec.name, label,
+                idleMs: (ctx.held.idleMin ?? t.holdIdleMinutes ?? HOLD_IDLE_MIN) * 60_000 }, { onEvent, onTurns });
+            ({ run, statuses } = await held.ran);
+        } else run = await runOnce(runConfig(cell, env, dir, { ...(nextTurn ? { nextTurn } : {}), onEvent }));
     } catch (err) {
         run = { events: [], result: null, error: String(err), runMs: 0, approvals: [], seedBoundaryStep: -1 };
     }
 
     const measurement = measureRun({ ...run, stream: run.stream ?? cellStream(cell) }, t);
+    // Kept open when asked to, or (`failures`) when the run errored or got it wrong; else its process lets go now.
+    const entry = held && await held.decide(hold === "always" || !measurement.ok || measurement.succeeded === false);
+    if (entry) ctx.held.runs.push(entry);
     ctx.finalSession?.(index, run.session ?? null, run.events ?? []);
     // An interview's answers, turn by turn, kept with the cell so a cached one still sets them side by side.
     const turns = t.asks?.length ? readTurns(dir, t.asks.length + 1) : null;
@@ -280,13 +269,14 @@ async function runCell(cell, ctx, index) {
         // not, "which model was this run against" is the first question asked of any result and was
         // previously answerable only by reading a run.md. Saved with the cell so a cached one keeps it.
         backend: run.backendLabel ?? null, models: run.models ?? null,
-        ...(turns ? { turns, prompt: promptChars(dir), statuses: driver.statuses } : {}) };
+        ...(turns ? { turns, prompt: promptChars(dir), statuses } : {}) };
     await writeFile(cacheFile, JSON.stringify(saved, null, 2));
     // Into the scores log, once, as it lands (scores.mjs): a sweep that dies half way still leaves its runs counted.
     const row = ctx.scores && runRow({ ...saved, fromCache: false }, t, ctx.scoreSweep);
     if (row) ctx.logged += logRuns(ctx.scores, [row]);
     ctx.ran++;
-    ctx.report?.(index, "done", { ...saved, dir, fromCache: false });
+    ctx.report?.(index, "done", { ...saved, dir, fromCache: false, held: entry || null });
+    if (entry) ctx.log(`  ⏸ ${label} is held open: ${entry.attach}`);
     ctx.log(`  ${measurement.ok ? "✔" : "✖"} ${label} — ${measurement.steps} steps, ${(measurement.runMs / 1000).toFixed(1)}s${measurement.succeeded === null ? "" : measurement.succeeded ? ", correct" : ", WRONG"}${measurement.error ? ` — ${String(measurement.error).slice(0, 80)}` : ""}${measurement.stream?.asked && measurement.stream.turns && !measurement.stream.streamed ? " — asked to stream, but nothing streamed" : ""}`);
     return { ...saved, dir, fromCache: false };
 }
@@ -356,12 +346,12 @@ const main = async () => {
             models = probed.filter((p) => !p.why).map((p) => p.model);
             if (!models.length) throw new Error("no model passed the tool-call probe");
         }
-        spec = interviewBench(iv, models, { surface: args.surface, turnMinutes: args.turnMinutes });
+        args.models = models;
+        spec = await loadSpec(args.specPath, { models, surface: args.surface, turnMinutes: args.turnMinutes });
         // One browser per model, as panel.mjs runs them, unless --jobs says otherwise.
         if (!args.jobsSet) args.lanes = true;
     } else {
-        const specMod = await import(pathToFileURL(path.resolve(args.specPath)).href);
-        spec = specMod.default || specMod.spec;
+        spec = await loadSpec(args.specPath);
         if (!spec?.name || !spec?.tasks?.length) throw new Error(`${args.specPath} does not export a bench spec (default export with name + tasks)`);
     }
 
@@ -417,6 +407,10 @@ const main = async () => {
         // Warming is a VRAM concern for a local model, and pointless against a hosted API or the fake.
         warm: !!backend && process.env.WARM !== "0",
         cached: 0, ran: 0, retried: 0, pdf: args.pdf,
+        // What a held cell's own process needs to find the same cell in the same spec (hold.mjs), and the runs kept open.
+        holdCli: args.hold,
+        held: { job: { specPath: path.resolve(args.specPath), load: { models: args.models, surface: args.surface, turnMinutes: args.turnMinutes }, select: { only: parseSelector(args.only), skip: parseSelector(args.skip), repeats: args.repeats } },
+            idleMin: args.holdIdle, runs: [] },
         // CLI beats the spec: a sweep you are debugging wants `--capture always` without editing the file.
         capture: args.capture || spec.capture || "failure",
         log: (s) => console.log(s),
@@ -515,6 +509,7 @@ const main = async () => {
                 cached: info.fromCache, path: path.relative(sweepDir, info.dir), live: undefined,
                 hash: info.hash ?? null, backend: info.backend ?? null, models: info.models ?? null,
                 stream: m.stream ?? null,
+                ...(info.held ? { held: info.held.attach } : {}),
                 ...(info.turns ? { turns: info.turns, statuses: info.statuses ?? [] } : {}),
             });
             recheck(r);
@@ -571,6 +566,7 @@ const main = async () => {
         path: results[i] ? path.relative(sweepDir, results[i].dir) : "",
         repoPath: results[i] ? path.relative(ROOT, results[i].dir) : "",
         who: runsState[i].who,
+        ...(runsState[i].held ? { held: runsState[i].held } : {}),
         ...(runsState[i].turns ? { turns: runsState[i].turns, checks: runsState[i].checks ?? [] } : {}),
     }));
 
@@ -658,7 +654,8 @@ const main = async () => {
         page = await handOffPage(sweepDir, port);
     }
     // ONE line a poller can look for, last, and the same as done.json in the sweep directory.
-    const done = doneSummary(spec.name, runs, { report: path.relative(ROOT, reportPath), page, retried: ctx.retried });
+    const done = doneSummary(spec.name, runs, { report: path.relative(ROOT, reportPath), page, retried: ctx.retried,
+        held: ctx.held.runs.map(({ pid, cell, dir, attach, expiresAt }) => ({ pid, cell, dir, attach, expiresAt })) });
     await writeFile(path.join(sweepDir, "done.json"), JSON.stringify(done, null, 2));
     // Into the bench store, when one is configured (sync.mjs; off by default). Never the sweep's failure: what did not
     // go now goes on the next push.
@@ -668,6 +665,10 @@ const main = async () => {
         catch (e) { console.log(`  (store push failed: ${String(e?.message || e).slice(0, 160)}; \`node --import tsx tests/e2e/bench/sync.mjs push\` retries)`); }
     }
     if (page) console.log(`  the page stays up at ${page}; stop it with: node --import tsx tests/e2e/bench/serve.mjs --stop`);
+    if (done.held.length) {
+        console.log(`  ${done.held.length} run${done.held.length === 1 ? " is" : "s are"} held open (each until /end, ${ctx.held.idleMin ?? HOLD_IDLE_MIN} idle minutes, or \`node --import tsx tests/e2e/bench/hold.mjs --stop\`):`);
+        for (const h of done.held) console.log(`    ${h.cell}: ${h.attach}`);
+    }
     console.log(doneLine(done));
     // Exit, rather than wait for every handle to close: everything is written, and the exit IS the signal.
     process.exit(done.exit);

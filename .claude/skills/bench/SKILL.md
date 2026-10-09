@@ -28,7 +28,7 @@ so START A SWEEP WITH `--serve` AND HAND THE HUMAN THE URL. It prints as a banne
 ```
 
 **A sweep ends by EXITING, so run it in the background and wait for it.** The last line it prints is
-`BENCH DONE <name> runs=… ok=… errors=… correct=… wrong=… report=… page=…` (and the same in `done.json` in the sweep
+`BENCH DONE <name> runs=… ok=… errors=… correct=… wrong=… held=… report=… page=…` (and the same in `done.json` in the sweep
 directory); the status is 0 when no run errored, 2 when some did, 1 when the runner failed. With `--serve` the page
 stays up after the exit, served from the sweep's files by a detached `serve.mjs` on the same port, so the URL you
 handed over keeps working. The next sweep takes that port back; `node --import tsx tests/e2e/bench/serve.mjs --stop`
@@ -38,6 +38,18 @@ stops it, and `serve.mjs <sweep dir>` serves any finished sweep again.
 `done.json`); a finished run, right or wrong, stays cached. A backend's rate limit is named as one (`rate-limited` on
 the page, `rate_limited=` in the final line), however it arrives: Open WebUI passes OpenRouter's as a 400. Its fix is
 fewer at once: a lower `--jobs`, or `--lanes`, which runs a cloud model one run at a time.
+
+**Keep a run open to go on talking to it: `--hold`.** `--hold all`, `--hold failures` (only a run that errored or was
+wrong) or `--hold k=v` (cells as `--only` picks them), or `hold: true | "failures"` on a task or an interview file. A
+held cell runs in a DETACHED process of its own (`bench/hold.mjs`) that hands the finished run back to be measured as
+usual and then stays up with the session, its pointers, `ml.current` and the page exactly as the run left them, which a
+re-seeded run cannot give back. The sweep still exits: `held=N` in the last line, each attach line printed above it and
+in `done.json` (`held`), a `held` badge on the page. Talk to one with `node tests/e2e/converse.mjs --attach <cell dir>
+"<message>"` (prints the turn it starts; without a message, where the session is), and end it with the message `/end`.
+It also lets go after 30 idle minutes (`--hold-idle N`, `holdIdleMinutes` on a task), since a local model's run keeps
+its memory on the box, and on SIGTERM. `hold.mjs` lists the held runs (`artifacts/bench/held.json`), `hold.mjs --stop
+[pid|cell|dir]` releases them, and merge-when-green releases those a merged worktree left. A held cell is never served
+from the cache under `all` or a selector (a cached result has no browser to keep); under `failures` it is.
 
 **Local models in parallel: `--lanes`.** One lane per model: each model's runs in turn, different models at once when
 the box says the next one fits beside what is loaded (`/api/fits` on the patched Ollama, `/ollama/api/fits` through
