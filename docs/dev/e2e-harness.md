@@ -76,9 +76,11 @@ as in AGENTS.md — they are all under `src/`.
   streams) and `tests/e2e/bench-selftest.spec.mjs` (real streams — the only thing that catches an
   extractor reading a field the product never emits). Every real run is also logged to `scores.sqlite`, the
   scoreboard's log: a Rasch fit over predicate-scored runs gives each model a score comparable across tasks
-  (`scores.mjs`, `rasch.mjs`; the skill's "The scoreboard"). Against a box that serves `/api/info`, the harness also
-  polls its memory (`resource-poll.mjs`, the panel's own parsers) and the timeline draws it with the panel's
-  `ResourceTracks`, the lanes passed in as its `lane` so they share its axis. One walk, N sinks: terminal + markdown today. **Two audiences, one run:** the terminal is for the agent, and
+  (`scores.mjs`, `rasch.mjs`; the skill's "The scoreboard"). The harness also watches the box: its `/api/events`
+  stream when the server has one (`box-stream.mjs`: the worker's connection rules, the panel's `residentFrom`,
+  `residencyOf` and `machineEventFrom`; every frame kept once in `box.sqlite`), else polled `/api/ps` + `/api/info`
+  (`resource-poll.mjs`). The timeline draws the memory with the panel's `ResourceTracks`, the lanes (the box's row,
+  then each run's) passed in as its `lane` so they share its axis. One walk, N sinks: terminal + markdown today. **Two audiences, one run:** the terminal is for the agent, and
   **`--serve`** prints a banner URL for a live page a human watches — every run's state and what is
   queued, the in-flight run's step against its budget and the tool it is in, elapsed / mean-per-run /
   mean-per-step / ETA, and links to each `run.md`. Served by node:http + SSE; the page is Preact

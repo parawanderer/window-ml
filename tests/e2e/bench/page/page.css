@@ -118,6 +118,7 @@ a.plain:hover { text-decoration: none } a.plain:hover .badge { border-color: var
 .tl .who { font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg-dim); white-space: nowrap;
            overflow: hidden; text-overflow: ellipsis; max-width: 34ch }
 .tl .wml-lane .rc-lane-rows { padding: 3px 0; border-bottom: 1px dashed var(--border) }
+.tl .who.box { color: var(--fg); font-weight: 600 }
 .wml-lane .rc-lane-rows { overflow: visible; height: auto }
 .wml-lane-axis { position: relative; height: 16px; margin-top: 3px; color: var(--fg-faint); font-size: 11px }
 .wml-lane-axis span { position: absolute; top: 2px; transform: translateX(-50%); white-space: nowrap }
