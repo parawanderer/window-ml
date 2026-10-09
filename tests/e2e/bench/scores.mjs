@@ -319,7 +319,7 @@ export function sweepScores(board, drivers, info, href) {
 }
 
 /** The tasks of a spec with no pass/fail predicate, whose runs therefore count for tokens but not for a score. */
-export const unscoredTasks = (spec) => spec.tasks.filter((t) => typeof t.succeeded !== "function" && !t.asks?.length).map((t) => t.id);
+export const unscoredTasks = (spec) => spec.tasks.filter((t) => typeof t.succeeded !== "function" && !(t.asks?.length || t.followUps?.length || t.expect)).map((t) => t.id);
 
 /** Write scores.md, scores.json and scores.html beside the log; returns the board. */
 export async function writeScoreFiles(db, { dir = SCORES_DIR, dbFile = SCORES_DB } = {}) {

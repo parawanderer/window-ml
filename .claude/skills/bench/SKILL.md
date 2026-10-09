@@ -190,7 +190,10 @@ usage off a stream.
 
 A task with `asks: [...]` is an INTERVIEW: each ask is sent once the turn before it ends, every turn's answer lands
 in `outbox/turn-<n>.md` and in the cell's `turns`, and the page gets an **Answers** view (turns as rows, runs as
-columns, each answer linked to its run). A panel interview file runs as a sweep directly:
+columns, each answer linked to its run). An ask may carry a check (`{ ask, expect, why }`) and a task conditional
+`followUps`, written as a `.interview.ts` (`defineInterview`, see the `panel` skill): each answer checked shows "as
+expected" or not, follow-ups sit under the answer that called for them. A panel interview file (`.json` or
+`.interview.ts`) runs as a sweep directly:
 
 ```bash
 USE_ENV=1 node --import tsx tests/e2e/bench/run.mjs tests/e2e/panel/bloat.json \
@@ -217,7 +220,7 @@ something the next run is held to. For a model reading results, `panel.mjs` is t
 | `--serve` | Serve the live page and print its URL. Costs nothing when nobody opens it; SSE, and the page is bundled from source in memory (no dist to rebuild). |
 | `--open` | `--serve` plus launch a browser. |
 | `--port N` | Serve on a specific port. The default (7331) is STABLE on purpose, so a browser tab can just reload between sweeps instead of needing a new URL. Falls back to any free port if taken. |
-| `--models a,b` | With an interview file (`.json`) in place of a spec: the models to put it to (or `PANEL_MODELS`). `--surface hud\|console` and `--turn-minutes N` as `panel.mjs` takes them. |
+| `--models a,b` | With an interview file (`.json`, `.interview.ts`) in place of a spec: the models to put it to (or `PANEL_MODELS`). `--surface hud\|console` and `--turn-minutes N` as `panel.mjs` takes them. |
 | `--pdf` | Also render each run to `run.html` + `run.pdf`. Off by default: it roughly triples a cell's disk and adds a render per run. The HTML is written alongside deliberately — it is searchable and diffable where a PDF is neither, and it is the only way to see why a PDF looks wrong. |
 
 Backend selection is the same as observe: `USE_ENV=1` reads `.env`, `E2E_BACKEND`/`E2E_MODEL`/`E2E_KEY`

@@ -120,12 +120,15 @@ export default defineBench({
             id: "interview",
             start: "/step3",
             task: "Find the code on this page and report it.",
-            asks: ["Which tool did you use?"],
+            // A check on an answer, and a follow-up only an answer can call for (interviews as code, `defineInterview`).
+            asks: [{ ask: "Which tool did you use?", expect: (t, run) => t.answer.includes(run.turns[0].tools[0] ?? "?"), why: "names the tool turn 1 called" }],
+            followUps: [{ after: 2, when: (t) => !/exec/.test(t.answer), ask: "Did you consider exec instead?" }],
             tools: ["findByText", "answer"],
             script: [
                 { tool: "findByText", args: { text: "CROSSPAGE" } },
                 { content: "The code is on the page." },
                 { content: "I used findByText." },
+                { content: "No: findByText was enough." },
             ],
         },
         {

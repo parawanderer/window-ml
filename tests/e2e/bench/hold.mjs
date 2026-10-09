@@ -60,11 +60,11 @@ export function holdMode(cell, cli = []) {
     return cli.includes("failures") ? "failures" : "always";
 }
 
-/** A spec file as run.mjs reads it: a `.bench.ts` module, or an interview `.json` over the given models. */
+/** A spec file as run.mjs reads it: a `.bench.ts` module, or an interview (`.json`, `.interview.ts`) over the given models. */
 export async function loadSpec(specPath, { models = [], surface, turnMinutes } = {}) {
-    if (specPath.endsWith(".json")) {
-        const { loadInterview, interviewBench } = await import("../interview.mjs");
-        return interviewBench(loadInterview(specPath), models, { surface, turnMinutes });
+    const { isInterviewFile, loadInterviewFile, interviewBench } = await import("../interview.mjs");
+    if (isInterviewFile(specPath)) {
+        return interviewBench(await loadInterviewFile(specPath), models, { surface, turnMinutes });
     }
     const mod = await import(pathToFileURL(path.resolve(specPath)).href);
     return mod.default || mod.spec;
@@ -128,7 +128,7 @@ async function child() {
     const send = (m) => { if (process.connected) try { process.send(m); } catch { /* the sweep is gone */ } };
     const { runOnce } = await import("../run-once.mjs");
     const { expandCells, cellKey, runConfig } = await import("./cells.mjs");
-    const { interviewDriver, turnReport } = await import("../interview.mjs");
+    const { driverFor, isInterviewTask, turnReport } = await import("../interview.mjs");
     const { dir } = job;
     const status = (s) => fs.writeFileSync(path.join(dir, "status"), s + "\n");
     let handed = false, verdict, why = null;
@@ -151,7 +151,7 @@ async function child() {
         const spec = await loadSpec(job.specPath, job.load);
         const cell = expandCells(spec, job.select)[job.index];
         if (!cell || cellKey(cell, job.fingerprint) !== job.key) throw new Error(`${job.specPath} changed since the sweep started: cell ${job.index} is not the one it asked for`);
-        const driver = cell.task.asks?.length ? interviewDriver({ asks: cell.task.asks, dir }) : null;
+        const driver = isInterviewTask(cell.task) ? driverFor(cell.task, dir, cell.effects.backend?.model ?? job.env.backend?.model ?? null) : null;
         const keep = async (run, talk, ctl) => {
             handed = true;
             send({ type: "run", run: JSON.parse(JSON.stringify(run)), statuses: driver?.statuses ?? [] });

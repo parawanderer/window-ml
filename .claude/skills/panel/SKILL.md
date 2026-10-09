@@ -28,12 +28,38 @@ Run it in the BACKGROUND (a few minutes; the models run in parallel). Options: `
 
 `tests/e2e/panel/<name>.json`: `{ about, task, asks?, surface?, sharedWatches?, watchNotes? }`. `task` is the first
 message, each of `asks` a follow-up sent once the turn before it ends. Keep a TASK first even when the point is a
-review: a model that has used the tools reviews them from experience instead of from the schema. The two so far:
+review: a model that has used the tools reviews them from experience instead of from the schema. The files so far:
 
 | File | What it asks |
 | --- | --- |
 | `bloat.json` | a page task, then a review of its own system prompt and tools for bloat, duplication, contradictions and gaps (`surface: hud`, the run a person starts) |
 | `ml-current.json` | a self-count through `ml.current`, then the shared watches and notes, then a critical review |
+
+
+### As code: checks on the answers, and follow-ups an answer calls for
+
+`tests/e2e/panel/<name>.interview.ts` (or anywhere) is the same interview as code, and runs wherever a JSON one does
+(`panel.mjs`, `bench/run.mjs --models …`). Its default export is `defineInterview` from `tests/e2e/bench/spec.ts`:
+
+```ts
+import { defineInterview } from "../bench/spec";
+export default defineInterview({
+    about: "…", surface: "hud",
+    task: { ask: "Find the code on this page.", expect: (t) => t.tools.includes("findByText"), why: "it searched the page" },
+    asks: ["Which tool did you use?", { ask: "What did it cost?", expect: (t) => /\d/.test(t.answer), why: "gives a number" }],
+    followUps: [{ after: 2, when: (t) => !/exec/.test(t.answer), ask: (t) => `You said "${t.answer}". Why not exec?` }],
+});
+```
+
+- `expect(turn, run)` checks one answer: `turn` is `{ n, ask, answer, answered, tools, capped, steps }` (steps with their
+  arguments and results), `run` is `{ model, turns }` so far. The result is in `turns.json`, the cell's `turns`
+  (`expect`) and `expects` (`{ passed, total }`), `rows.json`, `summary.md` (an "as expected" column and a line under
+  each checked answer) and a badge on the page; a check that throws counts as not expected. So a before/after of a
+  change is a diff of two sweeps' `rows.json`.
+- `followUps` are asked only when `when(turn, run)` holds for the fixed turn `after` (absent: any fixed turn), each at
+  most once. Models get different ones, so they are never a row of the side-by-side: they sit under the answer they
+  followed (page, `summary.md`), and the interview's own turns keep their numbers (`turns.json` maps them).
+- A `.bench.ts` task takes the same `expect`/`why` (for its first turn), ask objects and `followUps`.
 
 ## Before trusting it
 

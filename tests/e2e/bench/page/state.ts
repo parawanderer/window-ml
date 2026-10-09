@@ -32,7 +32,11 @@ export interface RunState {
     focus?: { step: number; tool?: string; why: string } | null;
     /** whether its model turns were to be streamed, and whether they were (metrics.mjs `streamUse`) */
     stream?: { asked: boolean | null; deltas: number; streamed: boolean; turns: number; turnsWithUsage: number } | null;
-    turns?: { answer: string; tools: string[]; capped: boolean }[];
+    turns?: { answer: string; tools: string[]; capped: boolean; expect?: boolean; why?: string; expectError?: string; n?: number }[];
+    /** turns asked only because an answer called for them (an interview's `followUps`), under the turn they followed */
+    followUps?: { after: number; n: number; ask: string; answer: string; tools: string[]; capped: boolean }[];
+    /** how many of its checked turns came out as expected */
+    expects?: { passed: number; total: number };
     /** turns someone added after the run's own, while it was held open (bench/hold.mjs): never part of the interview */
     continued?: { turn: number; ask: string; at: string | null; answer: string; tools: string[]; capped: boolean }[];
     checks?: { id: string; turn: number; quote: string; note: string; by: string; at: string | null; here: boolean; still: boolean | null }[];

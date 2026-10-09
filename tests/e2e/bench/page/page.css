@@ -91,6 +91,10 @@ a.plain:hover { text-decoration: none } a.plain:hover .badge { border-color: var
 /* Answers: a grid, a column per run; each answer its own bordered box. */
 .answers + .answers { margin-top: 16px }
 .answers h3 { margin: 0 0 8px }
+/* A follow-up an answer called for, under that answer: indented, its question as a pill like a turn's. */
+.fup { margin: 8px 0 0; padding: 6px 0 0 10px; border-left: 2px solid var(--border) }
+.fup-q { color: var(--fg-dim); margin-bottom: 4px }
+.fup-q .turn { display: inline-block; margin-right: 6px; padding: 0 7px; border-radius: 999px; border: 1px dashed var(--border); font-size: 11px }
 /* A run's added turns (Continued): one column, the run named once above them. */
 .answers.continued { display: grid; gap: 8px; align-items: start }
 .agrid { display: grid; gap: 8px 12px; align-items: start; overflow-x: auto; padding-bottom: 4px }

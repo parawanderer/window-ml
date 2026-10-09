@@ -9,7 +9,8 @@ as in AGENTS.md — they are all under `src/`.
   turn as the run goes, and `decide` lets the caller rule on gates. The interface is a directory (`inbox/`, `outbox/`,
   `status`, `gate.json`/`decision`), so an agent session can interview a model about a feature, answer what it asks
   and steer it, one Bash call per message. Built for the `ml.current` usability runs (2026-10-08).
-- **`panel.mjs`** (`panel` skill) — one interview file (`tests/e2e/panel/*.json`) put to several real models at once,
+- **`panel.mjs`** (`panel` skill) — one interview file (`tests/e2e/panel/*.json`, or `<name>.interview.ts` with
+  `defineInterview`: checks on answers, `expect`, and conditional `followUps`) put to several real models at once,
   each in its own browser, after a one-tool-call PROBE per model so a broken connection is named rather than read as
   a model ignoring the task. Writes `summary.md`: calls per turn, how each ended, then the answers side by side. For
   judging an API, prompt or tool change by how models in general read it; the bench measures, a panel asks. The

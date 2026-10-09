@@ -9,7 +9,9 @@ import os from "node:os";
 import path from "node:path";
 import {
     turnReport, parseTurnReport, readTurns, interviewDriver, interviewBench, checkMarks, validMark, panelSummary, loadInterview,
+    readFollowUps, expectTally, loadInterviewFile, isInterviewFile, isInterviewTask, askText,
 } from "../tests/e2e/interview.mjs";
+const { defineInterview } = await import("../tests/e2e/bench/spec.ts");
 import { startDashboard } from "../tests/e2e/bench/serve.mjs";
 import { cellKey } from "../tests/e2e/bench/cells.mjs";
 
@@ -61,6 +63,88 @@ test("a turn with no answer of its own ends the interview, and is not credited w
     assert.equal(await nextTurn({ turn: 2, result: { summary: "one" }, events: ev }), null);
     assert.match(readTurns(dir)[1].answer, /did not finish/);
     assert.match(statuses.at(-1), /timed out in turn 2/);
+});
+
+// --- interviews as code: a check on each answer, and follow-ups an answer calls for ---
+
+test("each turn's check runs on its answer and steps; a check that throws counts as not expected", async () => {
+    const dir = tmp();
+    const { nextTurn } = interviewDriver({ dir, task: "find it", expect: (t) => t.tools.includes("findByText"), why: "it searched",
+        asks: [{ ask: "which tool?", expect: (t, run) => t.answer.includes(run.turns[0].tools[0]), why: "names the tool it used" }, { ask: "boom?", expect: () => { throw new Error("bad check"); } }, "free?"] });
+    const ev = [step(1, "findByText", { text: "x" }), answer(2, "found")];
+    assert.equal(await nextTurn({ turn: 1, result: { summary: "found" }, events: ev }), "which tool?");
+    ev.push(answer(3, "I used findByText"));
+    assert.equal(await nextTurn({ turn: 2, result: { summary: "I used findByText" }, events: ev }), "boom?");
+    ev.push(answer(4, "?"));
+    assert.equal(await nextTurn({ turn: 3, result: { summary: "?" }, events: ev }), "free?");
+    ev.push(answer(5, "ok"));
+    assert.equal(await nextTurn({ turn: 4, result: { summary: "ok" }, events: ev }), null);
+    const turns = readTurns(dir);
+    assert.deepEqual(turns.map((t) => t.expect ?? null), [true, true, false, null]);
+    assert.equal(turns[1].why, "names the tool it used");
+    assert.match(turns[2].expectError, /bad check/);
+    assert.deepEqual(expectTally(turns), { passed: 2, total: 3 });
+    assert.equal(expectTally([{ answer: "" }]), null, "nothing checked: no tally");
+});
+
+test("a follow-up is asked after its turn when the answer calls for it, once, and is kept apart from the interview's turns", async () => {
+    const dir = tmp();
+    const { nextTurn } = interviewDriver({ dir, task: "find it", asks: ["which tool?", "anything else?"],
+        followUps: [
+            { after: 2, when: (t) => !/exec/.test(t.answer), ask: (t) => `You said "${t.answer}". Why not exec?` },
+            { after: 2, when: () => true, ask: "And the cost?" },
+            { after: 1, when: () => false, ask: "never" },
+        ] });
+    const ev = [answer(1, "found")];
+    assert.equal(await nextTurn({ turn: 1, result: { summary: "found" }, events: ev }), "which tool?", "after turn 1 nothing is called for");
+    ev.push(answer(2, "findByText"));
+    assert.equal(await nextTurn({ turn: 2, result: { summary: "findByText" }, events: ev }), 'You said "findByText". Why not exec?');
+    ev.push(answer(3, "it was enough"));
+    assert.equal(await nextTurn({ turn: 3, result: { summary: "it was enough" }, events: ev }), "And the cost?", "a second follow-up of the same turn, judged on that turn");
+    ev.push(answer(4, "cheap"));
+    assert.equal(await nextTurn({ turn: 4, result: { summary: "cheap" }, events: ev }), "anything else?", "then the interview goes on");
+    ev.push(answer(5, "no"));
+    assert.equal(await nextTurn({ turn: 5, result: { summary: "no" }, events: ev }), null);
+    const turns = readTurns(dir, 3);
+    assert.deepEqual(turns.map((t) => t.answer), ["found", "findByText", "no"], "the interview's own turns, by their place in it");
+    assert.equal(turns[2].n, 5, "turn 3 of the interview was turn 5 of the session");
+    assert.deepEqual(readFollowUps(dir).map((f) => [f.after, f.n, f.answer]), [[2, 3, "it was enough"], [2, 4, "cheap"]]);
+});
+
+test("defineInterview checks its shape; a .interview.ts file loads and becomes a bench task carrying its checks and follow-ups", async () => {
+    assert.throws(() => defineInterview({ task: " " }), /no task/);
+    assert.throws(() => defineInterview({ task: "t", asks: [{ ask: "" }] }), /no text/);
+    assert.throws(() => defineInterview({ task: "t", followUps: [{ ask: "x" }] }), /when/);
+    const dir = tmp();
+    const file = path.join(dir, "probe-tools.interview.ts");
+    fs.writeFileSync(file, `import { defineInterview } from ${JSON.stringify(path.resolve("tests/e2e/bench/spec.ts"))};
+export default defineInterview({ about: "a", surface: "hud", task: { ask: "find it", expect: (t) => t.answered, why: "answered" },
+    asks: ["which tool?", { ask: "why?", expect: (t) => t.answer.length > 0 }], followUps: [{ when: () => true, ask: "more?" }] });
+`);
+    assert.ok(isInterviewFile(file) && isInterviewFile("x/bloat.json") && !isInterviewFile("x/smoke.bench.ts"));
+    const iv = await loadInterviewFile(file);
+    assert.equal(iv.name, "probe-tools");
+    const [task] = interviewBench(iv, ["m"]).tasks;
+    assert.equal(task.task, "find it");
+    assert.equal(task.why, "answered");
+    assert.equal(typeof task.expect, "function");
+    assert.deepEqual(task.asks.map(askText), ["which tool?", "why?"]);
+    assert.equal(task.followUps.length, 1);
+    assert.equal(task.surface, "hud");
+    assert.ok(isInterviewTask(task) && isInterviewTask({ task: "t", followUps: [{}] }) && !isInterviewTask({ task: "t" }));
+    await assert.rejects(loadInterviewFile(path.join(dir, "x.interview.ts")), /Cannot find|ERR_MODULE_NOT_FOUND|not exist/);
+});
+
+test("the summary says how many answers were as expected, which were not and why, and each follow-up under its answer", () => {
+    const iv = { task: "find it", asks: [{ ask: "which tool?" }] };
+    const turns = [{ answer: "found", tools: [], capped: false, expect: true }, { answer: "exec", tools: [], capped: false, expect: false, why: "names findByText" }];
+    const md = panelSummary("p", iv, [{ model: "m", turns, statuses: [], prompt: "1", expected: 2,
+        followUps: [{ after: 2, n: 3, ask: "Why exec?", answer: "habit", tools: [], capped: false }] }], [], null);
+    assert.match(md, /\| as expected \|/);
+    assert.match(md, /\| `m` \| .* \| 1\/2 \|/);
+    assert.match(md, /> which tool\?/);
+    assert.match(md, /- NOT as expected: names findByText/);
+    assert.match(md, /- follow-up \(turn 3\): Why exec\?\n\n> habit/);
 });
 
 // --- an interview file as a bench spec ---
