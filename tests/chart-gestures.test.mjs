@@ -93,6 +93,8 @@ test("live on a sweep still running follows the clock: the window ends now, and 
     const before = c.bar(0)[0];
     await c.tick(1300);
     assert.ok(c.bar(0)[0] < before - 0.3, `run 0 moved left as the axis grew (${before}% → ${c.bar(0)[0]}%)`);
+    // And the chip counts with it, on the page's clock: no push comes to a saved page.
+    assert.match(c.chip().text, /^all · (39|4\d)s$/, "a second later, a second wider");
 });
 
 // --- selecting a stretch, and leaving it ---
