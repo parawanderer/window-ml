@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
     stepsOf, authoredTexts, capturedOutputs, sharesRun, reEmission, pointerRefs, pointerUse,
-    recovery, tokenCost, measureRun, afterSeed, spread, rate, aggregate, COLUMNS, focusStep, streamUse,
+    recovery, tokenCost, measureRun, afterSeed, spread, rate, aggregate, COLUMNS, focusStep, streamUse, isRateLimit,
 } from "../tests/e2e/bench/metrics.mjs";
 import { combos, expandCells, cellKey, selected, parseSelector, buildGroups, cellPath, cellStream } from "../tests/e2e/bench/cells.mjs";
 
@@ -444,3 +444,15 @@ test("streamUse: asked, how many live deltas, and how many turns reported usage"
     assert.deepEqual(streamUse(evs.filter((e) => e.kind !== "agent-stream"), true).streamed, false, "asked but never streamed is visible");
     assert.deepEqual(measureRun({ events: evs, stream: false }).stream.asked, false);
 });
+
+// --- a rate limit, by name ---
+
+test("isRateLimit: a provider's rate limit however it arrives (Open WebUI passes OpenRouter's as a 400); other errors are not", () => {
+    assert.ok(isRateLimit('HTTP 400: {"detail":"Rate limit exceeded: new-account-rpm/anthropic/claude-sonnet-5.5: new accounts are limited to 20 requests per minute for this model"}'));
+    assert.ok(isRateLimit("HTTP 429 Too Many Requests"));
+    assert.ok(isRateLimit("ratelimit"));
+    assert.ok(!isRateLimit("HTTP 400: model not found"));
+    assert.ok(!isRateLimit("timeout after 300000ms"));
+    assert.ok(!isRateLimit(null));
+});
+

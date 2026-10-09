@@ -28,6 +28,7 @@ export function Outcome({ r }: { r: RunState }) {
         );
     }
     if (r.state === "pending") return <span class="badge">queued</span>;
+    if (!r.ok && r.rateLimited) return <span class="badge bad tt" data-tip="The backend refused it for a rate limit, so it measured nothing about the model. Run fewer at once (--jobs), or --lanes (one at a time per model); the next sweep runs it again.">rate-limited</span>;
     if (!r.ok) return <span class="badge bad">failed</span>;
     if (r.cached) return <span class="badge">cached</span>;
     if (r.succeeded == null) return <span class="badge ok">ok</span>;

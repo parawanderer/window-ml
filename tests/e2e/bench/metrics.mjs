@@ -331,6 +331,13 @@ export function tokenCost(events, before = []) {
 }
 
 /**
+ * Whether a run's error is the backend refusing for a RATE LIMIT, whatever status carried it: OpenRouter's per-model
+ * limit reaches us through Open WebUI as a 400 with "Rate limit exceeded" in its detail, not a 429. Named apart from
+ * other errors because its fix is the sweep's, not the model's: fewer at once (`--jobs`), or `--lanes`.
+ */
+export const isRateLimit = (error) => !!error && /rate.?limit|too many requests|\b429\b|requests per minute/i.test(String(error));
+
+/**
  * Whether the run's model turns were streamed, from its events: what it asked for, how many live deltas
  * (`agent-stream`) it emitted, and how many of its turns reported usage. A streamed turn always ends with a delta (the
  * run host's final flush), so `asked` with no deltas means the option never took effect. Usage is counted because the
