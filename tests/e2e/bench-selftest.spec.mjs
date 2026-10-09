@@ -140,3 +140,21 @@ test("capture: a failed run snapshots the BROWSER; a clean one does not", async 
     expect(clean.error).toBeFalsy();
     expect(clean.captured, "nothing went wrong, so nothing is captured").toEqual([]);
 });
+
+// --- a follow-up after the first turn navigated ---
+
+test("a follow-up turn still runs when the first turn navigated, and the run is scored on both answers", async () => {
+    // A navigation reloads the page, taking the agent handle the harness kept on its `window`; the follow-up used to
+    // throw on the missing handle and wait out the whole deadline for an answer that could never come.
+    const t0 = Date.now();
+    const run = await runOnce({
+        ...base, tools: null, timeoutMs: 90000,
+        task: "Open step 3 and say what is there.", followup: "Now say it again.",
+        script: [{ tool: "navigate", args: { url: "/step3" } }, { content: "first answer" }, { content: "second answer" }],
+    });
+    expect(run.error, `run failed: ${run.error}`).toBeFalsy();
+    const m = measureRun(run, { followup: "Now say it again.", succeeded: ({ finalAnswer }) => finalAnswer === "second answer" });
+    expect(m.succeeded).toBe(true);
+    expect(Date.now() - t0, "it did not wait out the deadline").toBeLessThan(80000);
+});
+
