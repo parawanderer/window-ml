@@ -49,17 +49,23 @@ export function StreamTag({ r }: { r: RunState }) {
     return <span class={`badge tt${short ? " warn" : ""}`} data-tip={`Its model turns were streamed, as the HUD streams them: ${st.deltas} live deltas over ${st.turns} turn${st.turns === 1 ? "" : "s"}. ${st.turnsWithUsage} of ${st.turns} turns reported usage${short ? ": the provider left it off a stream, so this run's token figures miss the rest" : ""}.`}>streamed</span>;
 }
 
+/** A run kept open after the sweep (bench/hold.mjs), with how to talk to it. It may since have been released. */
+export function HeldTag({ r }: { r: RunState }) {
+    if (!r.held) return null;
+    return <span class="badge run tt" data-tip={`Held open after the sweep, its session and page as the run left them, until \`/end\`, its idle timeout, or \`hold.mjs --stop\`. Send it a message with: \`${r.held}\``}>held</span>;
+}
+
 /**
  * The outcome, linked into the transcript AT the step that broke where one is identifiable (`focus`, from the run's own
  * event stream), since landing at the top of a fifty-screen run.md is the work the link was supposed to save. A clean
  * wrong run has no failing step, so it links to the top.
  */
 function OutcomeLink({ r, dir, dims }: { r: RunState; dir: string; dims: string[] }) {
-    if (!dir || r.state !== "done") return <><Outcome r={r} /><StreamTag r={r} /></>;
+    if (!dir || r.state !== "done") return <><Outcome r={r} /><StreamTag r={r} /><HeldTag r={r} /></>;
     const f = r.focus;
     // The heading slugs are lower-cased, so the tool is too (sampleText -> sampletext).
     const anchor = f ? `#step-${f.step}${f.tool ? `-${String(f.tool).toLowerCase()}` : ""}` : "";
-    return <><a href={`${dir}/run.md.html${anchor}`} class="view plain tt" data-tip={f ? `Opens the transcript at step ${f.step}: ${f.why}` : "Opens the transcript"} data-title={runName(r, dims)}><Outcome r={r} /></a><StreamTag r={r} /></>;
+    return <><a href={`${dir}/run.md.html${anchor}`} class="view plain tt" data-tip={f ? `Opens the transcript at step ${f.step}: ${f.why}` : "Opens the transcript"} data-title={runName(r, dims)}><Outcome r={r} /></a><StreamTag r={r} /><HeldTag r={r} /></>;
 }
 
 /** What is running, lifted out of the table: with `--jobs N` the live rows can be anywhere in a hundred. */

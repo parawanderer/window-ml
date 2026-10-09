@@ -246,6 +246,14 @@ test("a run the backend refused for a rate limit says so, with the fix, instead 
     assert.match([...doc.querySelectorAll(".badge.bad")].find((b) => b.textContent === "rate-limited").dataset.tip, /--jobs|--lanes/);
 });
 
+test("a run held open after the sweep is badged, and its tip is the command that talks to it", async () => {
+    const attach = 'node tests/e2e/converse.mjs --attach tests/e2e/artifacts/bench/s/t/x/r0 "<message>"';
+    const doc = await dashboard({ dims: ["m"], runs: [{ combo: { m: "a" }, who: "a", taskId: "t", repeat: 0, state: "done", ok: true, path: "t/x/r0", held: attach }] });
+    const held = [...doc.querySelectorAll(".badge")].find((b) => b.textContent === "held");
+    assert.ok(held, "no held badge");
+    assert.ok(held.dataset.tip.includes(attach), held.dataset.tip);
+});
+
 test("one running run's badges count together: the Running card, the Answers header and the Runs table", async (t) => {
     const runs = [{ combo: { model: "m" }, who: "m", taskId: "iv", repeat: 0, state: "running", startedAt: Date.now() - 130_000, path: "iv/m/r0", live: { step: 8, maxSteps: 10, tool: "exec" } }];
     const doc = await dashboard({ dims: ["model"], runs, finished: null, interviews: { iv: ["q1"] } });

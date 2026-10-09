@@ -128,16 +128,18 @@ export function writeReport(sweep, sink) {
  * `isRateLimit`), whose fix is fewer at once. `exit` is the process's status: 0 when no run errored, 2 when some did (1 is
  * the runner itself crashing).
  */
-export function doneSummary(name, runs, { report, page = null, retried = 0 } = {}) {
+export function doneSummary(name, runs, { report, page = null, retried = 0, held = [] } = {}) {
     const done = runs.filter((r) => r.state === "done");
     const errors = done.filter((r) => !r.ok).length;
     return {
         name, runs: runs.length, ran: done.filter((r) => !r.cached).length, cached: done.filter((r) => r.cached).length,
         ok: done.length - errors, errors, rateLimited: done.filter((r) => !r.ok && r.rateLimited).length, correct: done.filter((r) => r.succeeded === true).length, wrong: done.filter((r) => r.succeeded === false).length,
         // Cells that errored last time and ran again instead of coming from the cache.
-        retried, report, page, at: new Date().toISOString(), exit: errors ? 2 : 0,
+        retried, report, page,
+        // Runs kept open after the sweep (bench/hold.mjs): `{ pid, cell, dir, attach, expiresAt }` each.
+        held, at: new Date().toISOString(), exit: errors ? 2 : 0,
     };
 }
 
 /** The final line: `BENCH DONE <name> key=value …`, stable so a poller can grep for `^BENCH DONE`. */
-export const doneLine = (d) => `BENCH DONE ${d.name} runs=${d.runs} ran=${d.ran} cached=${d.cached} ok=${d.ok} errors=${d.errors} rate_limited=${d.rateLimited ?? 0} correct=${d.correct} wrong=${d.wrong} report=${d.report} page=${d.page ?? "none"}`;
+export const doneLine = (d) => `BENCH DONE ${d.name} runs=${d.runs} ran=${d.ran} cached=${d.cached} ok=${d.ok} errors=${d.errors} rate_limited=${d.rateLimited ?? 0} correct=${d.correct} wrong=${d.wrong} held=${d.held?.length ?? 0} report=${d.report} page=${d.page ?? "none"}`;

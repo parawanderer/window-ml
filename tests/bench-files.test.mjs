@@ -13,6 +13,10 @@ import { addMark, readMarks } from "../tests/e2e/bench/mark.mjs";
 import { doneSummary, doneLine } from "../tests/e2e/bench/sinks.mjs";
 import { checkMarks } from "../tests/e2e/interview.mjs";
 
+// hold.mjs reads its list's path once, on import: a test's own, never the real one.
+process.env.BENCH_HELD_FILE = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "held-")), "held.json");
+const { holdMode, heldRuns, HELD_FILE } = await import("../tests/e2e/bench/hold.mjs");
+
 const ev = (kind, t, until, extra = {}) => ({ kind, t, until, label: kind, model: "m", ...extra });
 
 // --- timeline.md ---
@@ -119,8 +123,8 @@ test("done: counts what ran, what came from the cache, what errored and what a p
     const run = (over) => ({ state: "done", ok: true, succeeded: null, cached: false, ...over });
     const runs = [run({ succeeded: true }), run({ succeeded: false }), run({ ok: false }), run({ cached: true, succeeded: true }), { state: "pending", ok: false }];
     const d = doneSummary("pb", runs, { report: "a/report.md", page: "http://127.0.0.1:7331" });
-    assert.deepEqual({ ...d, at: null }, { name: "pb", runs: 5, ran: 3, cached: 1, ok: 3, errors: 1, rateLimited: 0, correct: 2, wrong: 1, retried: 0, report: "a/report.md", page: "http://127.0.0.1:7331", at: null, exit: 2 });
-    assert.equal(doneLine(d), "BENCH DONE pb runs=5 ran=3 cached=1 ok=3 errors=1 rate_limited=0 correct=2 wrong=1 report=a/report.md page=http://127.0.0.1:7331");
+    assert.deepEqual({ ...d, at: null }, { name: "pb", runs: 5, ran: 3, cached: 1, ok: 3, errors: 1, rateLimited: 0, correct: 2, wrong: 1, retried: 0, report: "a/report.md", page: "http://127.0.0.1:7331", held: [], at: null, exit: 2 });
+    assert.equal(doneLine(d), "BENCH DONE pb runs=5 ran=3 cached=1 ok=3 errors=1 rate_limited=0 correct=2 wrong=1 held=0 report=a/report.md page=http://127.0.0.1:7331");
     const clean = doneSummary("pb", [run({})], { report: "r.md" });
     assert.equal(clean.exit, 0);
     assert.match(doneLine(clean), /^BENCH DONE pb .* page=none$/, "no page without --serve");
@@ -134,3 +138,33 @@ test("done: a rate-limited error is counted apart, and how many errored cells ra
     assert.match(doneLine(d), / errors=2 rate_limited=1 /);
 });
 
+
+// --- runs held open after the sweep ---
+
+const cellOf = (task, combo = {}) => ({ task: { id: "t", ...task }, combo, repeat: 0, effects: {} });
+
+test("hold: the task's own setting, unless the command line says; a selector picks cells, `failures` narrows to the bad runs", () => {
+    assert.equal(holdMode(cellOf({})), null, "not held by default");
+    assert.equal(holdMode(cellOf({ hold: true })), "always");
+    assert.equal(holdMode(cellOf({ hold: "failures" })), "failures");
+    assert.equal(holdMode(cellOf({}), ["all"]), "always");
+    assert.equal(holdMode(cellOf({}), ["failures"]), "failures");
+    assert.equal(holdMode(cellOf({ hold: true }), ["task=other"]), null, "the command line wins over the task");
+    assert.equal(holdMode(cellOf({}, { model: "a" }), ["model=a"]), "always");
+    assert.equal(holdMode(cellOf({}, { model: "b" }), ["model=a", "failures"]), null);
+    assert.equal(holdMode(cellOf({}, { model: "a" }), ["model=a", "failures"]), "failures");
+});
+
+test("hold: held.json lists only runs whose process is alive, and BENCH DONE counts what the sweep left open", () => {
+    const dead = 2 ** 22 + 12345;   // above macOS's and Linux's default pid_max
+    fs.writeFileSync(HELD_FILE, JSON.stringify([
+        { pid: process.pid, cell: "a · t · r0", sweep: "s", dir: "x", attach: "node tests/e2e/converse.mjs --attach x \"<message>\"", expiresAt: "2026-10-09T12:00:00.000Z" },
+        { pid: dead, cell: "b · t · r0", sweep: "s", dir: "y", attach: "…", expiresAt: "2026-10-09T12:00:00.000Z" },
+    ]));
+    assert.deepEqual(heldRuns().map((h) => h.cell), ["a · t · r0"]);
+    fs.writeFileSync(HELD_FILE, "not json");
+    assert.deepEqual(heldRuns(), [], "an unreadable list holds nothing");
+    const d = doneSummary("pb", [{ state: "done", ok: true }], { report: "r.md", held: [{ pid: 1, cell: "a", attach: "…" }] });
+    assert.match(doneLine(d), / held=1 report=/);
+    assert.match(doneLine(doneSummary("pb", [], { report: "r.md" })), / held=0 /);
+});

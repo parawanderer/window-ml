@@ -347,6 +347,9 @@ export const FAKE_MODEL = "fake-model";
  *   ANY NUMBER of further turns, decided as the run goes (converse.mjs): asked after each turn, with that turn's
  *   result; a string is the next message, null ends the session. Each turn gets `timeoutMs`.
  * @param {(gate: object) => Promise<boolean>} [cfg.decide] decides each approval gate itself, instead of `approve`
+ * @param {(run: object, talk: (text: string) => Promise<{ turn: number, answered: boolean, result: object | null, events: object[] }>) => Promise<void>} [cfg.keep]
+ *   called once the run is over, with what runOnce will return, before the browser closes: the run stays live (its
+ *   session, page and gates) until `keep` resolves, and each `talk` sends one more turn into it (bench/hold.mjs)
  * @param {string} [cfg.start] start route on the test site (e.g. "/spreadsheet")
  * @param {string[]|null} [cfg.tools] limit to this subset of domTools (smaller prompt), or null for the full kit
  * @param {boolean} [cfg.python] wire python_exec as an extraTool
@@ -390,7 +393,7 @@ export async function runOnce(cfg = {}) {
         python = false, toolTokens = false, agentOptions = {}, stream = null,
         backend = null, script = DEFAULT_SCRIPT, warm = true, warmAll = false,
         dist = null, artDir = null, approve = "auto", capture = "failure",
-        focusSidebar = true, hold = false, synthetic = true, sharedWatches = [], watchNotes = {}, nextTurn = null, decide = null, surface = null,
+        focusSidebar = true, hold = false, synthetic = true, sharedWatches = [], watchNotes = {}, nextTurn = null, decide = null, surface = null, keep = null,
         timeoutMs = followup ? 240000 : 120000,
         log = () => {}, onEvent = null,
     } = cfg;
@@ -498,8 +501,8 @@ export async function runOnce(cfg = {}) {
         await watchRunEvents(ext, page, (ev) => { events.push(ev); onEvent?.(ev); dump(events); });
 
         // Watch for + resolve approval gates the whole time the run is in flight (a gate can appear at any step).
-        const approvalTask = (async () => {
-            const seen = new Set();
+        const seen = new Set();
+        const watchGates = async () => {
             while (approvalLoopOn) {
                 let gates = [];
                 try { gates = await ext.sw.evaluate(() => globalThis.__mlApprovals?.list?.() ?? []); } catch { /* SW asleep / navigating */ }
@@ -516,7 +519,8 @@ export async function runOnce(cfg = {}) {
                 }
                 await new Promise((r) => setTimeout(r, 350));
             }
-        })();
+        };
+        const approvalTask = watchGates();
 
         let result = null, error = null;
         let seedBoundaryStep = -1, seedMs = 0;
@@ -526,7 +530,7 @@ export async function runOnce(cfg = {}) {
         // ml.agent() exactly as before — the path observe.mjs exercises stays untouched.
         if (surface && seed) throw new Error("runOnce: `seed` is a console run's knob; a UI run (`surface`) cannot be seeded");
         // A UI run is always driven turn by turn from here, even a single turn: its turns are the worker's to start.
-        const needsHandle = !!(seed || followup || nextTurn || surface);
+        const needsHandle = !!(seed || followup || nextTurn || surface || keep);
         const t0 = Date.now();
         // The run a UI run became, once its first turn started: later turns are sent into it by its hash.
         let uiHash = null;
@@ -617,8 +621,8 @@ export async function runOnce(cfg = {}) {
         };
 
         const deadline = Date.now() + timeoutMs;
+        let turnsDone = 0;
         if (needsHandle) {
-            let turnsDone = 0;
             if (seed) {
                 // Turn 1 against the SCRIPTED fake: whatever history the experiment needs — a corrupted
                 // pointer, a failed call, a captured table — produced by the real loop, so it is a real
@@ -693,13 +697,27 @@ export async function runOnce(cfg = {}) {
                         : `[${t.kind}${t.type ? ":" + t.type : ""}] ${t.text}`).join("\n"));
         }
 
+        const out = { events, session, runMd: md, runJson: json, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, models, seedBoundaryStep, seedMs, captured,
+            stream: stream ?? (surface ? false : agentOptions.stream === true) };
+        if (keep) {
+            // The run is over and measured; the browser, the session and its gates stay live for as long as `keep` says.
+            // Each `talk` is one more turn in the same session, with its own deadline.
+            approvalLoopOn = true;
+            const gates = watchGates();
+            await keep(out, async (text) => {
+                await startTurn(text);
+                const answered = await awaitResults(++turnsDone, Date.now() + timeoutMs);
+                return { turn: turnsDone, answered, result: [...events].reverse().find((e) => e.kind === "agent-result") ?? null, events };
+            });
+            approvalLoopOn = false; await gates.catch(() => {});
+        }
+
         if (hold) {
             log(`\n  WATCH: browser is open — inspect the run in the sidebar. Close the window (or Ctrl+C) to exit.\n`);
             await new Promise((resolve) => { ext.context.on("close", resolve); process.on("SIGINT", resolve); });
         }
 
-        return { events, session, runMd: md, runJson: json, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, models, seedBoundaryStep, seedMs, captured,
-            stream: stream ?? (surface ? false : agentOptions.stream === true) };
+        return out;
     } catch (thrown) {
         // An UNEXPECTED failure — the interesting one. A capture in `finally` would run after the context
         // is torn down; doing it here, before rethrowing, is the only place the page still exists.

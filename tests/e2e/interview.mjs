@@ -158,6 +158,8 @@ export function interviewBench(iv, models, { surface, turnMinutes = 15 } = {}) {
             surface: s && s !== "console" ? s : null,
             ...(iv.sharedWatches ? { sharedWatches: iv.sharedWatches } : {}),
             ...(iv.watchNotes ? { watchNotes: iv.watchNotes } : {}),
+            ...(iv.hold != null ? { hold: iv.hold } : {}),
+            ...(iv.holdIdleMinutes != null ? { holdIdleMinutes: iv.holdIdleMinutes } : {}),
         }],
     };
 }

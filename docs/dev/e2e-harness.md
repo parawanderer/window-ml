@@ -87,6 +87,10 @@ as in AGENTS.md — they are all under `src/`.
   the next sweep (`artifacts/bench/server.json` names it; `serve.mjs --stop` stops it).
   With a bench store configured (`BENCH_STORE_*` in `.env`), a sweep then pushes its rows and run directories to it
   (`bench/sync.mjs`: S3, Parquet, at-least-once and deduped on read; `sync: false` keeps a spec's or task's traces here).
+  `--hold all | failures | k=v` (or `hold` on a task) runs those cells in a detached `bench/hold.mjs` process each, which
+  hands the run back to be measured and stays up after the sweep with the session live: `converse.mjs --attach <cell dir>
+  "<message>"` talks to it, `/end`, 30 idle minutes (`--hold-idle`) or SIGTERM releases it, and `artifacts/bench/held.json`
+  lists the live ones (`hold.mjs`, `hold.mjs --stop`). runOnce's `keep` hook is what keeps a finished run open.
   **`--serve`** prints a banner URL for a live page a human watches — every run's state and what is
   queued, the in-flight run's step against its budget and the tool it is in, elapsed / mean-per-run /
   mean-per-step / ETA, and links to each `run.md`. Served by node:http + SSE; the page is Preact

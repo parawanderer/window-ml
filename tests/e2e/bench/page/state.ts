@@ -17,6 +17,8 @@ export interface RunState {
     ok?: boolean;
     /** it errored because the backend refused for a rate limit (metrics.mjs `isRateLimit`) */
     rateLimited?: boolean;
+    /** kept open after the sweep to go on talking to (bench/hold.mjs): the command that sends it a message */
+    held?: string;
     succeeded?: boolean | null;
     steps?: number;
     secs?: number | null;

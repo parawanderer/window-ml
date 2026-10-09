@@ -87,6 +87,42 @@ export function cellStream(cell) {
 }
 
 /**
+ * The runOnce options a cell runs with, so the sweep and a held cell's own process (hold.mjs) run it the same way.
+ * `env` is what the sweep decided for every cell: `backend`, `dist`, `capture`, `warm`, the spec's `approve` and
+ * `timeoutMs`; `extra` adds the caller's hooks (`nextTurn`, `onEvent`, `keep`).
+ */
+export function runConfig(cell, env, dir, extra = {}) {
+    const t = cell.task, e = cell.effects;
+    return {
+        task: t.task,
+        followup: t.followup || "",
+        start: t.start || "/step3",
+        tools: e.tools !== undefined ? e.tools : (t.tools ?? null),
+        python: e.python ?? !!t.python,
+        toolTokens: e.toolTokens ?? !!t.toolTokens,
+        agentOptions: { ...(t.agentOptions || {}), ...(e.agentOptions || {}) },
+        stream: cellStream(cell),
+        seed: t.seed || null,
+        ...(t.script ? { script: t.script } : {}),
+        surface: cellSurface(cell),
+        sharedWatches: t.sharedWatches ?? [], watchNotes: t.watchNotes ?? {},
+        backend: e.backend ? { ...(env.backend || {}), ...e.backend } : env.backend,
+        dist: env.dist ?? null,
+        artDir: dir,
+        approve: env.approve || "auto",
+        capture: env.capture,
+        timeoutMs: t.timeoutMs ?? env.timeoutMs ?? 180000,
+        // A sweep is a machine reading a matrix: no sidebar to focus, no browser to hold open, and the per-event chatter
+        // would bury the progress line.
+        focusSidebar: false,
+        hold: false,
+        warm: env.warm,
+        log: () => {},
+        ...extra,
+    };
+}
+
+/**
  * The cache key: everything that could change the result.
  *
  * The build FINGERPRINT is in the key on purpose. A sweep's cells are only comparable if they ran against

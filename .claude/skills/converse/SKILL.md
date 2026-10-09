@@ -31,6 +31,13 @@ Without `TASK`, the first message is the first inbox file. Everything else is ob
 `PYTHON`, `TOOLTOKENS`, `SHARED_WATCHES`, `WATCH_NOTES`, `SURFACE`, `WATCH`, `HEADFUL`, `WARM`, `APPROVE`). Each turn gets runOnce's
 `timeoutMs`; a session with no inbox message for `CONVERSE_IDLE_MS` (default 30 min) ends on its own.
 
+## Attaching to a run another process drives
+
+`node tests/e2e/converse.mjs --attach <dir> "<message>"` posts the message to `<dir>/inbox/`, waits for the turn it starts
+and prints it; without a message it prints `status` and the last turn; the message `/end` ends the session. It is how a
+held bench cell (`bench/run.mjs --hold`, `bench/hold.mjs`) is talked to, and works on any converse directory. It needs
+no TypeScript loader.
+
 ## Gotchas
 
 - **Console run unless `SURFACE` is set.** The default is `ml.agent` from the page: no `click`, `type` or
