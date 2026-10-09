@@ -337,6 +337,8 @@ PR is what runs CI (e2e, three Node versions, real CPython), which a green local
 - **A PR that conflicts with its base has NO checks at all.** If `gh run list` shows nothing for a pushed commit,
   suspect this first.
 - **A CANCELLED check prints as `fail`.** Resolve the JOB conclusions before blaming a change; poll a run by ID.
+- **Merge your own PR with `node scripts/merge-when-green.mjs <pr> --wait --merge`**: it applies the standing rule and
+  refuses while a worktree on the branch holds bench results or uncommitted files (`--keep-bench`). `merge-when-green` skill.
 - **The `ci` skill is the playbook** (open, watch in the background, read only failing logs, the known-bad list);
   **the `background-work` skill** is how to run anything slow without blocking on it.
 
