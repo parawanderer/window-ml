@@ -15,7 +15,6 @@
            nothing behind it to blur, so this reads as frosted cards over a gentle gradient body. */
         --radius: 13px;
         --card-bg: rgba(255, 255, 255, .045); --card-border: rgba(255, 255, 255, .10);
-        --card-shadow: 0 6px 20px rgba(0, 0, 0, .32), 0 1px 3px rgba(0, 0, 0, .24);
     }
     :root[data-theme="light"] {
         --bg: #ffffff; --panel: #f4f4f5; --panel-2: #e4e4e7; --panel-2-hover: #d4d4d8;
@@ -23,7 +22,6 @@
         --accent: #6366f1; --accent-strong: #4f46e5; --accent-fg: #ffffff;
         --ok: #16a34a; --err: #dc2626;
         --card-bg: rgba(0, 0, 0, .03); --card-border: rgba(0, 0, 0, .09);
-        --card-shadow: 0 6px 20px rgba(0, 0, 0, .12), 0 1px 3px rgba(0, 0, 0, .08);
     }
     /* HARD-pin the whole document to 340px so Chrome can't grow the popup to fit an overflowing child (a
        long model id, a native <select> dropdown, whatever) — the "expands ridiculously" bug. Both html AND
@@ -40,7 +38,14 @@
     /* The header row: the name on the left, the sessions link at the top-right. */
     .pop-head { display: flex; align-items: center; justify-content: space-between; margin: 0 0 12px; }
     .pop-head h1 { margin: 0; }
-    button.icon-btn { display: inline-flex; align-items: center; justify-content: center; padding: 5px 7px; }
+    .pop-actions { display: inline-flex; gap: 2px; }
+    /* The gear while the settings are showing: filled, as the panel marks a toggle that is on. */
+    button.icon-btn[aria-expanded="true"] { background: var(--panel-2); color: var(--fg); }
+    /* An icon button as the DevTools panel draws one (sidebar.css `.icon-btn`): no fill until it is used, round. */
+    button.icon-btn { display: inline-flex; align-items: center; justify-content: center; line-height: 0;
+        background: transparent; border: none; color: var(--fg-faint); padding: 6px; border-radius: 50%; }
+    button.icon-btn:hover { background: var(--panel-2); color: var(--fg); }
+    button.icon-btn svg { width: 16px; height: 16px; }
     label { display: block; margin: 10px 0 3px; color: var(--fg-dim); }
     input, select {
         width: 100%; box-sizing: border-box; padding: 6px 8px;
@@ -80,7 +85,7 @@
         background: var(--bg);
         -webkit-backdrop-filter: blur(16px) saturate(160%); backdrop-filter: blur(16px) saturate(160%);
         border: 1px solid var(--card-border); border-radius: var(--radius);
-        box-shadow: var(--card-shadow); padding: 11px 12px; margin-bottom: 10px;
+        padding: 11px 12px; margin-bottom: 10px;
     }
     .panel > label:first-child, .panel > .panel-h { margin-top: 0; }
     details.conn { padding: 0 12px; }
@@ -105,7 +110,7 @@
     /* The rule above the per-site controls: they are about the tab you are on, below what is about window.ml. */
     hr.site-rule { border: 0; border-top: 1px solid var(--border); margin: 14px 0 4px; }
     /* Up to four buttons in a 340px popup: wrap rather than run past the edge. */
-    #siteButtons { flex-wrap: wrap; }
+    #siteButtons { flex-wrap: wrap; margin-top: 10px; }
     .perm-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
     .perm-chip { display: inline-flex; align-items: center; gap: 4px; background: var(--panel-2);
         border: 1px solid var(--border); border-radius: 14px; padding: 3px 4px 3px 10px; }
@@ -119,16 +124,28 @@
     <!-- The header carries the way to every session: one icon rather than a panel, since it is a link, not a setting. -->
     <div class="pop-head">
         <h1>window.ml</h1>
-        <button id="openChat" class="icon-btn" title="All sessions and chats: read them, answer them, start new ones" aria-label="Open all sessions and chats">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M4 5h11a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9l-4 3v-3H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/>
-                <path d="M17 9h3a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-1v3l-4-3h-4a2 2 0 0 1-1.6-.8"/>
+        <span class="pop-actions">
+        <button id="openConfig" class="icon-btn" title="Settings: connection, permissions, appearance" aria-label="Settings" aria-expanded="false" aria-controls="config">
+            <!-- The panel's IconGear (src/sidebar/icons.tsx). -->
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
+                <path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
             </svg>
         </button>
+        <button id="openChat" class="icon-btn" title="All sessions and chats: read them, answer them, start new ones" aria-label="Open all sessions and chats">
+            <!-- The panel's IconChat (src/sidebar/icons.tsx), so the popup and the panel draw "chats" the same way. -->
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" />
+            </svg>
+        </button>
+        </span>
     </div>
 
     <!-- Connection: the bare minimum to make the extension work. Collapsed once a URL is
          set; everything else (OCR/utility/grounding/filters) lives in the workbench Settings. -->
+    <!-- SETTINGS, behind the header's gear: set once, then rarely touched. Shown by itself while the connection is not
+         set up (popup.ts), since that is the first thing to do. -->
+    <div id="config" hidden>
     <details class="conn" id="conn">
         <summary><span id="connStatus"></span></summary>
 
@@ -246,6 +263,8 @@
 
         <label class="check" for="agentHudInDevtools"><input type="checkbox" id="agentHudInDevtools"> Also show the HUD alongside DevTools</label>
     </details>
+    </div>
+
 
     <!-- MANAGE: what is running across the whole browser and on the server, and the buttons that stop or free it. -->
     <div class="panel">
