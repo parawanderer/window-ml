@@ -332,6 +332,11 @@ test("a page's model call cannot file its generation under a run the worker buil
     await ask(`wml-${hash}`);
     await ask("wml-pagerun1");
     const hints = chats().slice(-2).map((c) => c.body.hint);
+    // Padding the wire trims away cannot slip the run's session past the check either.
+    for (const padded of [` wml-${hash}`, `wml-${hash}\t`, `\n wml-${hash} `]) {
+        await ask(padded);
+        assert.equal(chats().at(-1).body.hint?.session, undefined, `padded ${JSON.stringify(padded)} was dropped; got ${JSON.stringify(chats().at(-1).body.hint)}`);
+    }
     assert.equal(hints[0]?.session, undefined, `the worker-built run's session was dropped; got ${JSON.stringify(hints[0])}`);
     assert.equal(hints[0]?.use, "agent", "the rest of the hint passes");
     assert.equal(hints[1]?.session, "wml-pagerun1", "a session that is not a worker-built run's passes as it came");
@@ -380,6 +385,55 @@ test("the debug dump a page asks for leaves out the events of a run the worker b
     const dump = await bg.send({ type: "DUMP_EVENTS" }, page);
     assert.ok(Array.isArray(dump.data.debug));
     assert.ok(!JSON.stringify(dump.data.debug).includes("SECRET FROM THE RUN"));
+});
+
+test("a run a page built, handed to the worker during its FIRST turn, is the worker's at once and stays so after the turn", T, async () => {
+    // `bgRuns` holds a run only once a turn has settled, so a hand-over during the first turn was recorded in
+    // `runRebuilds` alone and `isWorkerRun` kept answering false: the page on the run's tab (an unapproved site may
+    // still send a hosting tab's model calls) filed its generations under the person's run. And the turn's settle wrote
+    // the page-built start payload back, which gave the run to the page again.
+    const A = "https://builder.example/", B = "https://elsewhere.example/";
+    const tab = { id: 7, url: A, title: "Builder" };
+    let release;
+    const held = new Promise((r) => { release = r; });
+    const bg = loadBackground({
+        config, siteGate: true, local: { ml_site_always: ["https://builder.example"] },
+        openTabs: [tab],
+        onFetch: async (call) => {
+            if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            if (call.body.messages?.some((m) => m.content === "PAGE CALL")) return jsonResponse({ choices: [{ message: { content: "page" } }] });
+            await held;   // the run's first turn waits on its model reply
+            return jsonResponse({ choices: [{ message: { content: "ok" } }] });
+        },
+        onTabMessage: async (_t, msg) => (msg.type === "ADOPT_RUN_NOW" ? { pageInfo: "" } : msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish ? { result: "" } : undefined),
+    });
+    void bg.send({ type: "START_RUN", payload: {
+        runId: "pagebuilt2", task: "first", systemPrompt: "S", tools: [], model: "m", think: null, maxSteps: 2,
+        autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+        rebuild: { toolNames: [], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true },
+    } }, { tab: { id: 7, url: A }, url: A });
+    await flush(20);
+    const pageCall = (url) => bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "PAGE CALL" }], hint: { use: "agent", session: "wml-pagebuilt2" } } },
+        { tab: { id: 7, windowId: 1, url }, url, origin: new URL(url).origin, frameId: 0 });
+    const pageHints = () => bg.calls.filter((c) => c.url.includes("/chat/completions") && c.body.messages?.some((m) => m.content === "PAGE CALL")).map((c) => c.body.hint);
+    // The control: while the run is still the page's, the page's own call files under it.
+    await pageCall(A);
+    assert.equal(pageHints()[0]?.session, "wml-pagebuilt2", "positive control: the page's run takes the page's call");
+    // The tab moves to a site that may not use window.ml, and the person sends a message mid-turn: the worker takes over.
+    tab.url = B;
+    const r = await bg.send({ type: "USER_RUN_ACTION", payload: { hash: "pagebuilt2", action: "send", text: "and this" } }, { tab: { id: 7, url: B }, url: B });
+    assert.equal(r.data, "steer", "the first turn is still live");
+    await pageCall(B);
+    assert.equal(pageHints().length, 2, "the hosting tab's call went through the gate");
+    assert.equal(pageHints()[1]?.session, undefined, `a page's call no longer files under the handed-over run; got ${JSON.stringify(pageHints()[1])}`);
+    // The turn settles; the tab returns to the approved site, whose page may drive its own runs, but not this one.
+    release();
+    await flush(30);
+    tab.url = A;
+    const resume = await bg.send({ type: "RESUME_RUN", payload: { runId: "pagebuilt2", task: "PAGE TURN" } }, { tab: { id: 7, url: A }, url: A, origin: "https://builder.example", frameId: 0 });
+    assert.match(resume.error || "", /Refused/, `the settled run is still the worker's; got ${JSON.stringify(resume)}`);
+    await flush(10);
+    assert.ok(!JSON.stringify(bg.calls).includes("PAGE TURN"));
 });
 
 // --- where a read-only survey of a worker-built run is evaluated (slice 2 part 1b) ---

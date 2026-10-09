@@ -38,7 +38,7 @@ import { finalizeAnswer, type AnswerShapeItem } from "../pointers/answer-set";
 import { withEnv } from "./sw-current-env";
 import { isolationAvailable, pageApproved, runIsolatedExec } from "./sw-isolated-exec";
 import { grantRunFetch, runFetchConsented, grantRunPython, pageOnlyPython } from "./worker-tools";
-import { navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
+import { navBarrier, bgRuns, isWorkerRun, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue } from "./sw-values";
 import { focusLineFor } from "./sw-focus";
@@ -993,7 +993,11 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             // prior turns. Without this it reused base 0 and the new turn's steps collided at step/seq 1 with
             // turn 1's — the reducer patches by seq, so the follow-up's tool steps OVERWROTE turn 1's and
             // vanished from the sidebar/panel (and scrambled the export's chat-log order).
-            const resumeP = { ...p, stepBase: stepBase + runMaxStep, seqBase: seqBase + runMaxSeq };
+            // A run handed to the worker while this turn ran (`makeWorkerRun`) stays the worker's: `p` is the turn's
+            // start payload, written before the hand-over, and storing it as it is would give the run back to the page.
+            const handed = p.builtBy !== "worker" && isWorkerRun(runId)
+                ? { builtBy: "worker" as const, ...(p.rebuild ? { rebuild: { ...p.rebuild, builtBy: "worker" as const } } : {}) } : {};
+            const resumeP = { ...p, ...handed, stepBase: stepBase + runMaxStep, seqBase: seqBase + runMaxSeq };
             bgRuns.set(runId, { p: resumeP, tabId, messages, sub: snapSub() });
             // The same snapshot `bgRuns` holds, where it outlives the run: `resumeP` so a later turn continues
             // AFTER this one's steps rather than colliding with them.

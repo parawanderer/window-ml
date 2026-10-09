@@ -79,13 +79,16 @@ export function makeWorkerRun(runId: string): void {
 
 /**
  * Whether the worker assembled this run (a run the user started from a surface, or a saved session adopted onto a
- * tab). Such a run is driven only from the worker: a PAGE may not start a turn in it, continue it or steer it, since
- * that would let the page decide what the person's run does (docs/spec/SITE_ACCESS.md, slice 0).
+ * tab) or was handed it (`makeWorkerRun`). Such a run is driven only from the worker: a PAGE may not start a turn in
+ * it, continue it or steer it, since that would let the page decide what the person's run does
+ * (docs/spec/SITE_ACCESS.md, slice 0). `runRebuilds` is read too: a run handed over during its FIRST turn is not in
+ * `bgRuns` until that turn settles, and is the worker's from the hand-over on.
  * @param runId the run
  * @returns true for a worker-built run
  */
 export function isWorkerRun(runId: unknown): boolean {
-    return typeof runId === "string" && (workerRunsStarting.has(runId) || bgRuns.get(runId)?.p.builtBy === "worker");
+    return typeof runId === "string" && (workerRunsStarting.has(runId) || bgRuns.get(runId)?.p.builtBy === "worker"
+        || runRebuilds.get(runId)?.builtBy === "worker");
 }
 
 /**
@@ -96,8 +99,10 @@ export function isWorkerRun(runId: unknown): boolean {
  * @returns the payload, its hint's session dropped when it names a worker-built run
  */
 export function withoutWorkerSession<T extends { hint?: { session?: unknown } | null }>(payload: T): T {
-    const s = payload?.hint?.session;
-    if (typeof s !== "string" || !s.startsWith("wml-") || !isWorkerRun(s.slice(4))) return payload;
+    // Read the session as `wireHint` will send it (trimmed, capped), so padding cannot slip a run's session past this.
+    const raw = payload?.hint?.session;
+    const s = typeof raw === "string" ? raw.trim().slice(0, 128) : undefined;
+    if (!s || !s.startsWith("wml-") || !isWorkerRun(s.slice(4))) return payload;
     const { session: _dropped, ...hint } = payload.hint!;
     return { ...payload, hint };
 }
