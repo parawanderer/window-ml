@@ -49,6 +49,12 @@ function ScoreRole({ s, driver }: { s: BenchState; driver?: string | null }) {
     return <a class="role score tt" href={sc.href} data-tip={tip}><span class="rk">score</span>{m.score ? <b>{signed(m.score.theta)}</b> : <span class="dim">{m.scored}/{sc.minScored}</span>}</a>;
 }
 
+/** The way to the scoreboard from the sweep, beside the theme; when this sweep logged nothing to it, a dim button saying why. */
+function ScoreboardLink({ s }: { s: BenchState }) {
+    if (s.scores) return <a class="btn small tt" href={s.scores.href} data-tip="Every model the bench has run against a real backend, scored over all sweeps (this one included), with how each number is computed and the SQLite file that holds the runs.">scoreboard</a>;
+    return <span class="btn small off tt" aria-disabled="true" data-tip="This sweep has no scoreboard: it ran against the fake model, on a Node without node:sqlite, or with a harness from before the scoreboard (#480). A sweep against a real model logs its runs, and this becomes a link.">scoreboard</span>;
+}
+
 function Models({ s }: { s: BenchState }) {
     const seen = new Map<string, NonNullable<BenchState["runs"][number]["models"]>>();
     for (const r of s.runs) if (r.models) seen.set([r.models.driver, r.models.vision, r.models.utility].join(" "), r.models);
@@ -71,6 +77,7 @@ function Head({ s, disconnected }: { s: BenchState; disconnected: boolean }) {
                     <FromSpec as="h1" tip={`The sweep's name, from ${specSource(s)}.`}>{s.name}</FromSpec>
                     {s.description ? <FromSpec as="p" class="desc" tip={`The sweep's description, from ${specSource(s)}: written by whoever wrote the spec, not by this page.`}>{s.description}</FromSpec> : null}
                 </div>
+                <ScoreboardLink s={s} />
                 <ThemeToggle />
             </div>
             <div class="bar"><i style={{ width: `${pct}%` }} /></div>

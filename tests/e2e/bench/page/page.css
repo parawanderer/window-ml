@@ -210,11 +210,22 @@ a.role.score { color: inherit } a.role.score:hover { text-decoration: none; back
 /* The timeline's show/hide chips (timeline.tsx): the panel lane's filter chips, a little larger on a page, one row per
    dimension; a model's chip carries its colour, the colour its bars are drawn in. */
 .tlfilter { display: flex; flex-direction: column; gap: 6px; margin: 0 0 12px }
-.tlfilter .tlrow { display: flex; align-items: center; gap: 4px }
-.tlfilter .rc-lane-filter { flex-wrap: wrap; gap: 4px 6px; overflow: visible }
-.tlfilter .rc-lane-chip { font-size: 11.5px; padding: 1px 8px; display: inline-flex; align-items: center; gap: 5px }
-.tlfilter .dim { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; margin-right: 4px }
-.tlfilter .swatch { width: 8px; height: 8px; border-radius: 50%; display: inline-block }
+.tlfilter .tlrow { display: flex; align-items: baseline; gap: 4px }
+.tlfilter .rc-lane-filter { flex-wrap: wrap; gap: 6px; overflow: visible }
+/* Round pills: the label, then its count in a quieter tone. Shown is outlined on the card's surface; hidden is a dashed,
+   faded outline with its dot hollowed, so a struck value still reads as one you can bring back. */
+.tlfilter .rc-lane-chip { font-size: 12px; line-height: 1.4; padding: 3px 11px; display: inline-flex; align-items: center; gap: 6px;
+                          border-radius: 999px; background: transparent; color: var(--fg); border: 1px solid var(--border) }
+.tlfilter .rc-lane-chip:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); border-color: var(--fg-faint) }
+/* The count, quieter than its label. */
+.tlfilter .rc-chip-n { display: inline-block; color: var(--fg-faint); font-variant-numeric: tabular-nums }
+.tlfilter .rc-lane-chip.off { opacity: .55; border-style: dashed; color: var(--fg-dim) }
+/* The dimension's name as a fixed column, so every row's pills start at one edge. */
+.tlfilter .tlrow > .tt:first-child { flex: 0 0 72px }
+.tlfilter .dim { font-size: 11px; text-transform: uppercase; letter-spacing: .05em }
+.tlfilter .swatch { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none }
+.tlfilter .off .swatch { background: transparent !important; box-shadow: inset 0 0 0 1.5px var(--fg-faint) }
+.btn.off { color: var(--fg-faint); cursor: default } .btn.off:hover { border-color: var(--border) }
 /* The spec's source is a panel code block (spec.tsx `SpecSource`): its theme paints the surface, so no second box. */
 .spec .ssrc { max-height: 32em; overflow: auto; margin: 6px 0 0 }
 .spec .ssrc pre.code { margin: 0 }

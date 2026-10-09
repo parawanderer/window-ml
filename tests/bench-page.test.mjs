@@ -200,6 +200,18 @@ test("an event-kind chip hides that kind in the box row and every run's lane at 
     assert.equal(tl.querySelectorAll(".rc-ev-load").length, 2);
 });
 
+test("the header links to the scoreboard beside the theme; a sweep that logged nothing to it says why instead", async () => {
+    const linked = await dashboard({ scores: { href: "../scores.html", minScored: 5, models: {} } });
+    const a = linked.querySelector("header.top .titlebar a.btn");
+    assert.equal(a.textContent, "scoreboard");
+    assert.equal(a.getAttribute("href"), "../scores.html");
+    const none = await dashboard({});
+    const off = [...none.querySelectorAll("header.top .titlebar .btn")].find((b) => b.textContent === "scoreboard");
+    assert.equal(off.tagName, "SPAN", "no link to a file that may not exist");
+    assert.equal(off.getAttribute("aria-disabled"), "true");
+    assert.match(off.dataset.tip, /fake model|node:sqlite|before the scoreboard/);
+});
+
 // --- a run's own page ---
 
 test("a run page draws its lane from inert data, with its script admitted by hash and nothing else", () => {

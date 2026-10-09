@@ -18,7 +18,7 @@ export function FilterChips({ items, hidden, toggle, children }: { items: Filter
                 return (
                     <button key={c.key} class={`rc-lane-chip${off ? " off" : ""}${c.tip ? " tt" : ""}`} aria-pressed={!off}
                         {...(c.tip ? { "data-tip": c.tip } : {})} onClick={() => toggle(c.key)}>
-                        {c.label}{c.count != null ? ` ${c.count}` : ""}
+                        {c.label}{c.count != null ? <> <span class="rc-chip-n">{c.count}</span></> : null}
                     </button>
                 );
             })}
