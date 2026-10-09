@@ -60,7 +60,7 @@ test("a page's own chat appears in the extension's chat page, and can be answere
     } finally { await ext.context.close(); await fake.stop(); await site.stop(); }
 });
 
-test("the popup opens the chat page, and opening it again focuses the one that is already there", async () => {
+test("the popup opens the chat page, and opening it again focuses the one that is already there, a chat open in it or not", async () => {
     const ext = await launchExtension();
     try {
         await configureExtension(ext.sw, { chatUrl: "http://127.0.0.1:1/", apiKey: "", apiFormat: "openai", model: "m" });
@@ -78,6 +78,16 @@ test("the popup opens the chat page, and opening it again focuses the one that i
         await popup2.locator("#openChat").click();
         await expect.poll(() => ext.context.pages().filter((p) => p.url().endsWith("popup.html")).length).toBe(0);
         expect(ext.context.pages().filter((p) => p.url() === url).length).toBe(1);
+
+        // With a chat OPEN its route is in the hash (`chat.html#/…`), and an exact-URL lookup missed the page and
+        // opened a second one. Still one page.
+        const chat = ext.context.pages().find((p) => p.url() === url);
+        await chat.evaluate(() => { location.hash = "#/session/local/abc"; });
+        const popup3 = await ext.context.newPage();
+        await popup3.goto(`chrome-extension://${ext.extensionId}/popup.html`);
+        await popup3.locator("#openChat").click();
+        await expect.poll(() => ext.context.pages().filter((p) => p.url().endsWith("popup.html")).length).toBe(0);
+        expect(ext.context.pages().filter((p) => p.url().startsWith(url)).length, "the open chat page is reused").toBe(1);
     } finally { await ext.context.close(); }
 });
 
