@@ -476,7 +476,13 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     grantRunPython(runId, { sheets: externalSheetIds(args), code: (args as { mode?: string }).mode === "full" ? String((args as { code?: unknown }).code ?? "") : null });
                 } else if (name === "python_exec") {
                     const g = grantsFor(tabId);
-                    for (const id of externalSheetIds(args)) g.sheets.add(id);
+                    // A worker-built run's sheet grant NEVER goes on the tab, even when the call fell back to the
+                    // page: the tab is shared with the page, and the minted id is a credentialed read any script on
+                    // it can spend (FETCH_SHEET is a run-tab type) while the call runs. A page-built run's loop is
+                    // the page's own, so its grant has to live where its calls are made. (Red-team T3 on #442; a
+                    // worker-built call that names a sheet AND a page source is now refused before the gate, so
+                    // this leg keeps working only for the page parts — the sheet load fails closed, not silent.)
+                    if (p.builtBy !== "worker") for (const id of externalSheetIds(args)) g.sheets.add(id);
                     if ((args as { mode?: string }).mode === "full") g.pyCode.add(String((args as { code?: unknown }).code ?? ""));
                 }
                 try {
@@ -742,6 +748,14 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             // A non-null error → the gate is SKIPPED and the error returned. Only delegated for tools
             // that HAVE a precheck (avoids a useless round-trip on every gated call).
             precheck: async (name, args) => {
+                // A worker-built run's python_exec that names BOTH an external sheet and something only the page can
+                // supply (an image, a selector, `current`) cannot run anywhere safely: the worker cannot read the page
+                // part, and sending it to the page would put the sheet grant on the TAB, where any script on it could
+                // spend it while the call ran. So it runs nowhere — refused here, BEFORE the gate, rather than putting
+                // the person through approving a call that must then fail (red-team T3 on #442).
+                if (name === "python_exec" && p.builtBy === "worker" && pageOnlyPython(args as Record<string, unknown>) && externalSheetIds(args).length) {
+                    return "Refused: a python_exec for this run cannot mix an external Google Sheet with a page source (an image, a CSS selector, or \"current\"). Load the sheet in its own call — the worker runs that, and the sheet's rows come back to you — then do the page part in the next call.";
+                }
                 if (!p.tools.some((t) => t.name === name && t.precheck)) return null;
                 const env = await sendTool({ runId, name, args, precheck: true })
                     .catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;

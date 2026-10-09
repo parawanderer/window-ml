@@ -928,23 +928,25 @@ test("a python_exec reading an external Google Sheet always asks the person, wha
 });
 
 /**
- * A worker-built run on tab 7 whose model calls python_exec with `args`, the person APPROVES it, and while the call
- * is in flight the page (same tab, `PAGE7`) makes the request `attack` names. The `here: "current"` source (or an
- * `image`) classifies the call as page-only (worker-tools.ts:89-94), so delegateTool mints its sheet ids and
- * full-mode code on the TAB's pendingGrants (sw-run-host.ts:477-480) while it runs. Returns what the sandbox saw,
- * what went to the page, whether a FETCH_SHEET / PYTHON_EXEC from the page was served mid-call, and whether any
- * approval was asked and granted.
+ * A worker-built run on tab 7 whose model calls python_exec with `args`; the page plays the person (approving what
+ * it is asked) and attacks with `attack(bg)` the moment it can SEE the step skipped (the mixed-call refusal — a
+ * script on the page acts on the step event it receives). Returns what the sandbox was given, what ran on the page,
+ * the answer to the attack, how often the person was asked, and how often the sheet was fetched with the cookies.
  */
-async function pageOnlyGrantRun(args, attack) {
-    let turns = 0, bg, stolen, approved;
+async function pageOnlyGrantRun(args, attack, cfg) {
+    // `args` is one tool call, or a LIST of them played one model turn per entry (a run whose second call meets a
+    // sheet the FIRST call got approved). The page plays the person and attacks with `attack(bg)` at both moments a
+    // script on it could act: the step event of a refused call, and the real RUN_TOOL_IN_PAGE send of a running one.
+    let turns = 0, bg, stolen, asked = 0, reads = 0, finished = false;
     const runs = [];
+    const calls = Array.isArray(args) ? args : [args];
     bg = loadBackground({
-        config, openTabs: [SITE], siteGate: true,
+        config: cfg ?? config, openTabs: [SITE], siteGate: true,
         onFetch: (call) => {
-            if (call.url.startsWith("https://docs.google.com/")) return { ok: true, status: 200, url: call.url, headers: { get: () => "text/csv" }, text: async () => "name,salary\nAda,999999\n" };
+            if (call.url.startsWith("https://docs.google.com/")) { reads++; return { ok: true, status: 200, url: call.url, headers: { get: () => "text/csv" }, text: async () => "name,salary\nAda,999999\n" }; }
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
-            return ++turns === 1
-                ? jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "python_exec", arguments: JSON.stringify(args) } }] } }] })
+            return ++turns <= calls.length
+                ? jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: `c${turns}`, type: "function", function: { name: "python_exec", arguments: JSON.stringify(calls[turns - 1]) } }] } }] })
                 : jsonResponse({ choices: [{ message: { content: "done" } }] });
         },
         onPyRun: async (msg) => {
@@ -954,31 +956,62 @@ async function pageOnlyGrantRun(args, attack) {
         },
         onTabMessage: async (_t, msg) => {
             if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
-            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) { approved = true; void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } }); }
+            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) { asked++; void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } }); }
+            // A script on the page sees the refused step the moment it fans, and tries the read itself then. The
+            // second trigger is for the AUTO-approved mixed call (its sheet was approved by an earlier call): it has
+            // no refused step — the attack rides the call's real send, mid-call, with whatever grants it minted live.
+            if (attack && msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.approval === "skipped") stolen = await attack(bg);
+            if (attack && msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.name === "python_exec" && !msg.payload.renderOnly && !msg.payload.precheck) stolen = await attack(bg);
             if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
-            if (msg.payload.finish) return { result: "" };
-            // Mid-call, with the call's grants live: exactly what a script on the page (an ad, the prompt injection
-            // that wrote this call's `here: "current"`) sends while its own tool call is in flight. Not during the
-            // precheck send, which runs before the approval and mints no grant (and is correctly refused there).
-            if (attack && msg.payload.name === "python_exec" && !msg.payload.renderOnly && !msg.payload.precheck) stolen = await attack(bg);
+            if (msg.payload.finish) { finished = true; return { result: "" }; }
             return { result: "FROM THE PAGE" };
         },
     });
     await bg.context.__mlStartUserRunForTest(7, { task: "summarise my sheet", surface: "hud" });
-    for (let i = 0; i < 400 && turns < 2; i++) await new Promise((r) => setTimeout(r, 0));
+    for (let i = 0; i < 600 && !finished; i++) await new Promise((r) => setTimeout(r, 0));
     await flush(30);
     const toPage = bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE" && m.payload.name === "python_exec" && !m.payload.renderOnly && !m.payload.precheck).map(([, m]) => m.payload);
-    return { runs, stolen, toPage, approved };
+    return { runs, stolen, toPage, asked, reads };
 }
 
-test("OPEN — a sheet approved for a run's python_exec is readable only by the run, whatever else the call loads", { ...T, todo: "a page-only python_exec still mints the call's sheet and full-code grants on the TAB (sw-run-host.ts:477-480) while it runs, and any non-http string source makes a call page-only (worker-tools.ts:93) — adding `here: \"current\"` to any sheet call pulls the read onto the page, where the tab's grant serves the page's own FETCH_SHEET for the same sheet with the person's cookies" }, async () => {
-    const { runs, stolen, toPage, approved } = await pageOnlyGrantRun(
+test("a sheet approved for a run's python_exec is readable only by the run, whatever else the call loads", T, async () => {
+    const { runs, stolen, toPage, asked, reads } = await pageOnlyGrantRun(
         { code: "return len(df)", tables: { s: SHEET_EDIT, here: "current" } },
         (bg) => bg.send({ type: "FETCH_SHEET", payload: { url: SHEET_EXPORT } }, PAGE7));
-    assert.ok(approved, "positive control: the person approved this call (its sheet was asked for)");
-    assert.equal(toPage.length, 1, "positive control: the `here: \"current\"` call went to the page");
-    assert.equal(runs.length, 0, "positive control: the page ran it (this harness's page answers), not the worker sandbox");
-    assert.ok(stolen !== undefined, "positive control: the page's mid-call FETCH_SHEET was answered");
-    assert.ok(!stolen?.data, `the page read the run-approved sheet with the person's cookies while the call ran: ${JSON.stringify(stolen).slice(0, 160)}`);
+    // A call mixing an external sheet with a page source runs nowhere safely: the worker cannot read the page part,
+    // and sending it to the page would put the sheet grant on the shared TAB. So it is refused BEFORE the gate —
+    // nobody is asked to approve what cannot run — and nothing is read on any path.
+    assert.equal(asked, 0, `the person was asked to approve the mixed call (${asked} times)`);
+    assert.equal(toPage.length, 0, `the mixed call ran on the page anyway: ${JSON.stringify(toPage).slice(0, 160)}`);
+    assert.equal(runs.length, 0, "the mixed call reached the worker sandbox anyway");
+    assert.equal(reads, 0, "the mixed call fetched the sheet with the person's cookies");
+    assert.ok(stolen !== undefined, "positive control: the page's FETCH_SHEET after the refusal was answered");
+    assert.match(stolen?.error || "", /Refused/, `the page read the sheet after the refusal: ${JSON.stringify(stolen).slice(0, 160)}`);
+    // The route the refusal steers to, as the positive control: the same sheet in its OWN call asks, the worker
+    // reads it once on the call's grant, and the page is never involved.
+    const solo = await pageOnlyGrantRun({ code: "return len(s)", tables: { s: SHEET_EDIT } });
+    assert.ok(solo.asked >= 1, `positive control: the sheet-only call asked the person (asked ${solo.asked})`);
+    assert.equal(solo.runs.length, 1, "positive control: the approved sheet-only call ran in the worker");
+    assert.match(JSON.stringify(solo.runs[0].tables), /Ada/, "positive control: the sheet-only call loaded the rows");
+    assert.equal(solo.reads, 1, "positive control: the approved call read the sheet exactly once");
+    assert.equal(solo.toPage.length, 0, "positive control: the sheet-only call never went to the page");
 });
 
+test("a sheet approved for a run's python_exec stays off the tab when a later call drags it to the page", T, async () => {
+    // The route the pre-gate refusal does NOT cover: the first (sheet-only) call gets approved, which approves the
+    // SPREADSHEET for the run — so the mixed call's auto-approve sees nothing un-approved, skips the gate AND the
+    // refusal, and goes to the page as the sandbox path. With the sheet grant off the tab (the second clause of the
+    // fix), the page's own FETCH_SHEET mid-call still finds nothing to spend.
+    const { runs, stolen, toPage, asked, reads } = await pageOnlyGrantRun(
+        [{ code: "return len(s)", tables: { s: SHEET_EDIT } }, { code: "return len(df)", tables: { s: SHEET_EDIT, here: "current" } }],
+        (bg) => bg.send({ type: "FETCH_SHEET", payload: { url: SHEET_EXPORT } }, PAGE7),
+        { ...config, autoApprovePython: true });
+    assert.ok(asked >= 1, `positive control: the first (sheet-only) call asked the person (asked ${asked})`);
+    assert.equal(runs.length, 1, "positive control: the approved first call ran in the worker");
+    assert.match(JSON.stringify(runs[0].tables), /Ada/, "positive control: the first call loaded the sheet");
+    assert.equal(asked, 1, `the auto-approved mixed call asked again (${asked} asks) — this test pins the auto path, not the gate`);
+    assert.equal(toPage.length, 1, `positive control: the mixed call reached the page: ${JSON.stringify(toPage).slice(0, 160)}`);
+    assert.ok(stolen !== undefined, "positive control: the page's mid-call FETCH_SHEET was answered");
+    assert.match(stolen?.error || "", /Refused/, `the page spent the run-approved sheet through its own FETCH_SHEET: ${JSON.stringify(stolen).slice(0, 160)}`);
+    assert.equal(reads, 1, `the sheet was fetched ${reads} times — only the worker's approved first call may fetch it`);
+});
