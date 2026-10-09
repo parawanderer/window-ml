@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS runs (
     vision TEXT, utility TEXT,         -- the other two roles' models
     backend TEXT,
     build TEXT NOT NULL, dirty INTEGER NOT NULL,
+    shown TEXT,                        -- what the model was SHOWN (shownFingerprint); null for a run logged before it was
     passed INTEGER,                    -- the predicate's verdict; null when unscored
     error TEXT, hit_cap INTEGER NOT NULL,
     prompt_tokens INTEGER, completion_tokens INTEGER, sub_tokens INTEGER,
@@ -65,6 +66,9 @@ export async function openScores(file = SCORES_DB) {
     await mkdir(path.dirname(file), { recursive: true });
     const db = new DatabaseSync(file);
     db.exec(SCHEMA);
+    // A log made before a column existed gets it, empty: its runs stay readable and say they predate it.
+    const have = new Set(db.prepare("PRAGMA table_info(runs)").all().map((c) => c.name));
+    for (const [col, type] of [["shown", "TEXT"]]) if (!have.has(col)) db.exec(`ALTER TABLE runs ADD COLUMN ${col} ${type}`);
     return db;
 }
 
@@ -145,7 +149,7 @@ export function runRow(saved, task, sweep) {
         local: info.local == null ? null : info.local ? 1 : 0,
         vision: saved.models.vision ?? null, utility: saved.models.utility ?? null,
         backend: new URL(sweep.backend.chatUrl).origin,
-        build: sweep.fingerprint, dirty: sweep.dirty ? 1 : 0,
+        build: sweep.fingerprint, dirty: sweep.dirty ? 1 : 0, shown: saved.shown ?? null,
         passed: scored && m.succeeded != null ? (m.succeeded ? 1 : 0) : null,
         error: m.error ? String(m.error).slice(0, 500) : null, hit_cap: m.hitCap ? 1 : 0,
         // tokenCost adds 0 for a step with no usage, so a run whose backend reported none sums to 0: that is unknown.
@@ -156,7 +160,7 @@ export function runRow(saved, task, sweep) {
 }
 
 /** The runs table's columns, in the order a row is written (the store's Parquet files carry the same). */
-export const COLS = ["run", "at", "by", "sweep", "spec", "spec_hash", "task", "task_hash", "task_text", "variant", "scored", "model", "digest", "quant", "params", "local", "vision", "utility", "backend", "build", "dirty", "passed", "error", "hit_cap", "prompt_tokens", "completion_tokens", "sub_tokens", "tokens", "steps", "secs"];
+export const COLS = ["run", "at", "by", "sweep", "spec", "spec_hash", "task", "task_hash", "task_text", "variant", "scored", "model", "digest", "quant", "params", "local", "vision", "utility", "backend", "build", "dirty", "shown", "passed", "error", "hit_cap", "prompt_tokens", "completion_tokens", "sub_tokens", "tokens", "steps", "secs"];
 
 /** Insert rows; one already logged (the same run hash) is left as it is. Returns how many were new. */
 export function logRuns(db, rows) {
@@ -171,8 +175,14 @@ export const readRuns = (db) => db.prepare("SELECT * FROM runs ORDER BY id").all
 
 /** A model as the scoreboard names it: its tag, plus the first 12 of its digest when the server reported one. */
 export const modelKey = (r) => (r.digest ? `${r.model}@${String(r.digest).replace(/^sha256:/, "").slice(0, 12)}` : r.model);
-/** A task as an item of the fit. */
-const itemKey = (r) => `${r.task}#${r.task_hash}`;
+/**
+ * A task as an item of the fit: its id and wording (`task_hash`), and what the model was SHOWN with it (`shown`: the
+ * system prompt and tool schemas). Rasch assumes an item stays the same question; a branch that rewords the prompt or a
+ * tool's description without a bench dimension asks a different one, and pooled with main's runs it silently moved the
+ * old item's difficulty. Runs logged before `shown` existed are their own item ("legacy") rather than a guess. (shown.mjs makes it.)
+ */
+export const itemKey = (r) => `${r.task}#${r.task_hash}#${r.shown ?? "legacy"}`;
+
 
 /** The median, rounded to a whole token. */
 const median = (xs) => {
@@ -239,7 +249,7 @@ export function scoreboard(rows, { db = SCORES_DB, minScored = MIN_SCORED, ...fi
         const scoredRuns = rs.filter((r) => r.scored && r.passed != null && !r.error);
         const f = fit.tasks.get(key);
         return {
-            key, task: r0.task, taskHash: r0.task_hash, text: r0.task_text, variant: r0.variant, scored: !!r0.scored,
+            key, task: r0.task, taskHash: r0.task_hash, shown: r0.shown ?? null, text: r0.task_text, variant: r0.variant, scored: !!r0.scored,
             runs: rs.length, models: ms.size, passed: scoredRuns.filter((r) => r.passed).length, scoredRuns: scoredRuns.length,
             difficulty: f ? { b: f.b, se: f.se, lo: f.lo, hi: f.hi } : null,
             medianTokens: itemMedian.get(key),
@@ -293,10 +303,10 @@ export function scoresText(board) {
         const c = m.score ? `${Math.round(m.score.chance * 100)}% [${Math.round(m.score.chanceLo * 100)}, ${Math.round(m.score.chanceHi * 100)}]` : "";
         out.push(`| ${m.key} | ${m.quant ?? (m.local === false ? "cloud" : "")} | ${s} | ${c} | ${m.scored} | ${m.passed} | ${m.tasks} | ${m.bloat ? `×${m.bloat.ratio.toFixed(2)}` : ""} | ${m.medianTokens ?? ""} | ${m.runs} | ${m.last.slice(0, 16).replace("T", " ")} |`);
     }
-    out.push("", "## Tasks", "", "| task | hash | variant | difficulty b [interval] | passed | runs | models | median tokens |", "| --- | --- | --- | --- | --- | --- | --- | --- |");
+    out.push("", "## Tasks", "", "| task | hash | shown | variant | difficulty b [interval] | passed | runs | models | median tokens |", "| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
     for (const t of board.tasks) {
         const d = t.difficulty ? `${num(t.difficulty.b)} [${num(t.difficulty.lo)}, ${num(t.difficulty.hi)}]` : t.scored ? "" : "no predicate";
-        out.push(`| ${t.task} | ${t.taskHash} | ${t.variant === "{}" ? "" : t.variant} | ${d} | ${t.scored ? `${t.passed}/${t.scoredRuns}` : ""} | ${t.runs} | ${t.models} | ${t.medianTokens ?? ""} |`);
+        out.push(`| ${t.task} | ${t.taskHash} | ${t.shown ?? "legacy"} | ${t.variant === "{}" ? "" : t.variant} | ${d} | ${t.scored ? `${t.passed}/${t.scoredRuns}` : ""} | ${t.runs} | ${t.models} | ${t.medianTokens ?? ""} |`);
     }
     out.push("", "## How these numbers are computed", "");
     for (const [k, v] of Object.entries(board.about)) out.push(`- **${k}**: ${v}`);

@@ -94,7 +94,7 @@ function Tasks({ b }: { b: ScoreBoard }) {
             <div class="tablewrap">
                 <table class="scores">
                     <thead><tr>
-                        <th class="l"><Tip tip="The spec's task id, and the hash of what it asks and how it is scored. Hover the id for the task's text.">task</Tip></th>
+                        <th class="l"><Tip tip="The spec's task id, the hash of what it asks and how it is scored, and the hash of what the model was shown with it (system prompt and tool schemas; `legacy` for runs logged before that was recorded). A change to either is a new item. Hover the id for the task's text.">task</Tip></th>
                         {variants ? <th class="l"><Tip tip="The spec's other dimensions this item ran under, besides the model. The same task under another variant is another item.">variant</Tip></th> : null}
                         <th class="l"><Tip tip={a.difficulty}>difficulty b</Tip></th>
                         <th><Tip tip={a.taskPassed}>passed</Tip></th>
@@ -104,7 +104,7 @@ function Tasks({ b }: { b: ScoreBoard }) {
                     </tr></thead>
                     <tbody>{b.tasks.map((t) => (
                         <tr key={t.key}>
-                            <td class="l"><span class="tt from" data-tip={`The task, from its spec: ${t.text}`}>{t.task}</span> <Hash hash={t.taskHash} /></td>
+                            <td class="l"><span class="tt from" data-tip={`The task, from its spec: ${t.text}`}>{t.task}</span> <Hash hash={t.taskHash} /> <span class="tt dim" data-tip={t.shown ? `What the model was shown with this task, system prompt and tool schemas: ${t.shown}. A reworded prompt or tool is a new item, with its own difficulty.` : "Runs logged before what the model was shown was recorded: their own item, never pooled with a version."}>{t.shown ? t.shown.slice(0, 6) : "legacy"}</span></td>
                             {variants ? <td class="l dim">{t.variant === "{}" ? "" : t.variant}</td> : null}
                             <td class="l">{t.difficulty
                                 ? <Interval lo={t.difficulty.lo} hi={t.difficulty.hi} v={t.difficulty.b} tip={`b = ${signed(t.difficulty.b)}, interval ${signed(t.difficulty.lo)} to ${signed(t.difficulty.hi)}, from ${t.scoredRuns} scored run${t.scoredRuns === 1 ? "" : "s"} by ${t.models} model${t.models === 1 ? "" : "s"}.`} />
