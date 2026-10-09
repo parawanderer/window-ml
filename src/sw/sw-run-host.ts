@@ -26,7 +26,8 @@ import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from
 import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, consentFetch, persistGrants, fetchConsent } from "./sw-consent";
 import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
-import { ensureLocalTools, runLocalTool, runsInWorker } from "./sw-local-tools";
+import { ensureLocalTools, noteLocalStep, runLocalTool, runsInWorker } from "./sw-local-tools";
+import { lookPreviewArgs, workerLook } from "./worker-look";
 import { withUserWatches } from "./sw-shared-watches";
 import { routeExec, execNames } from "./exec-routing";
 import { answerFor, answerShapeFor, applyAnswerOps, resetAnswer, setAnswerSelector } from "./worker-answer";
@@ -180,6 +181,18 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
         // A worker-built run's REMOTE tool never goes to the page, which has no such tool. If this worker does not hold
         // it (rehydrated after an eviction, or a resumed session), it is rebuilt first.
         const tabUrl = tabUrlNow;
+        // `look` of a run whose vision is the worker's runs here (worker-look.ts), pinned to the document the tab holds
+        // once any navigation settles; the page is asked geometry only. A preview it still draws (the target's label) is
+        // sent the target alone, never the question. Only for a run that offers `look`: a model naming it in a run without
+        // vision gets the page's unknown-tool answer, never a capture.
+        if (payload.name === "look" && workerVision() && p.tools.some((t) => t.name === "look")) {
+            if (payload.renderOnly || payload.precheck || payload.readonlyTry) payload = { ...payload, args: lookPreviewArgs(payload.args) };
+            else {
+                noteLocalStep(runId, payload.name);
+                await navBarrier.whenReady(tabId);
+                return workerLook(runId, tabId, await topDocument(tabId), payload.args, { driverSees: !!p.rebuild?.driverSees, visionModel: p.rebuild?.visionModel ?? null }, tabUrl);
+            }
+        }
         // To the page. The call itself of a run whose vision is the worker's is told so (its verify comes back as a
         // request), and what the page answers is held to that (`withoutPageVision`).
         const toPage = async (pin?: string): Promise<unknown> => {

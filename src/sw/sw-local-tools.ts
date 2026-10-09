@@ -66,6 +66,13 @@ export function runsInWorker(p: StartRunPayload, name: string | undefined): bool
     return !!name && p.tools.some((t) => t.name === name && (!!t.remote || WORKER_TOOL_NAMES.has(name)));
 }
 
+/** Count a call the worker runs outside the run's local tools (`look`, worker-look.ts) towards agent_api_docs's
+ *  streak, as `runLocalTool` counts a call the page runs. */
+export function noteLocalStep(runId: string, name: string): void {
+    const set = localToolsets.get(runId);
+    if (set) countDocsStreak(toolContext(set.byName).docsMemory!, name);
+}
+
 /** One tool send, as `RUN_TOOL_IN_PAGE` carries it. */
 interface ToolSend { runId: string; name?: string; args?: Record<string, unknown>; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; stream?: boolean; tabUrl?: string; }
 

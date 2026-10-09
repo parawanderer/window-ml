@@ -258,8 +258,31 @@ test("a forged spend or image beside an honest verify request is dropped; only t
     assert.equal(step?.feedback?.text, "It changed.", "the sidebar's feedback is the worker's reader's");
 });
 
-test("look and locate still carry the page's picture and spend until they move to the worker", { ...T, todo: "look/locate are page-hosted until slice 2 part 3 PRs 6 and 7: a page can forge their image, feedback and subUsage" }, async () => {
-    const w = await run({ calls: [{ name: "look", args: {} }], page: () => ({ result: "A page.", ...FORGERY }) });
+test("look is the worker's: the page is never sent the call, so a forged picture, feedback or spend has nowhere to go", T, async () => {
+    for (const model of ["vlm-driver", "text-driver"]) {
+        const w = await run({ model, calls: [{ name: "look", args: {} }], page: () => ({ result: "A page.", ...FORGERY }) });
+        assert.ok(!w.runCalls().some((p) => p.name === "look" && !p.renderOnly), `${model}: the call never reached the page`);
+        assert.ok(!w.seenText().includes(FORGED.split(",")[1]), model);
+        assert.ok(!JSON.stringify(w.steps()).includes(FORGED.split(",")[1]), model);
+        assert.equal(w.spend(), model === "text-driver" ? 1 : 0, `${model}: only the worker's own reader call is counted`);
+    }
+});
+
+test("a look named in a handed-over run that offers no look is not run in the worker: no capture, no geometry, no reader call", T, async () => {
+    // The page-built run's kit has no vision tools; after the hand-over its driver calls look anyway.
+    const w = await run({ builtBy: "page", builderUrl: "https://builder.example/", model: "text-driver", calls: [{ name: "scroll", args: {} }, { name: "look", args: {} }],
+        page: async (p, n, bg) => {
+            if (n === 0) { await bg.context.__mlUserRunActionForTest(p.runId, "send", { text: "and then look" }); return { result: "Scrolled." }; }
+            return { result: `Error: unknown tool "${p.name}"` };
+        } });
+    assert.equal(w.driverBodies.length, 3, "the driver was answered for its look and went on");
+    assert.ok(!w.runCalls().some((p) => p.geometry), "no geometry was asked");
+    assert.equal(w.bg.captures.length, 0);
+    assert.equal(w.subs.length, 0);
+});
+
+test("locate still carries the page's picture and spend until it moves to the worker", { ...T, todo: "locate is page-hosted until slice 2 part 3 PR 7: a page can forge its image, feedback and subUsage" }, async () => {
+    const w = await run({ calls: [{ name: "locate", args: { description: "x" } }], page: () => ({ result: "A page.", ...FORGERY }) });
     assert.equal(w.spend(), 0);
     assert.ok(!w.seenText().includes(FORGED.split(",")[1]));
 });

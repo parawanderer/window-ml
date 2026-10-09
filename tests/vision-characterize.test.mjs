@@ -6,8 +6,8 @@
 // MODEL sees (the tool result text, the inline image or the reader's description, the reader's prompt and which model it
 // goes to) and may change WHO sends what (the page today, the worker after). A test here that fails after the move is
 // either a change in what the model sees, which is a regression, or a pinned page-side message that moved, which is the
-// point of the move: update that assertion and say so in the PR. The verify after an action moved first (part 3, PR 5):
-// its tests below pin that the page sends no CAPTURE_TAB and no FETCH_LLM for it.
+// point of the move: update that assertion and say so in the PR. The verify after an action moved first (part 3, PR 5),
+// then look (PR 6): their tests below pin that the page sends no CAPTURE_TAB and no FETCH_LLM for them.
 //
 // The world is the real thing in node:vm, end to end: the background bundle (loadBackground, the real origin gate) starts
 // a run the person asked for (`__mlStartUserRunForTest`), and its tab is the real content.js + injected.js over a jsdom
@@ -42,6 +42,8 @@ function png(w, h) {
 }
 /** The viewport capture as the worker takes it (a verify of a worker-built run): jsdom's 1024×768 window at dpr 1. */
 const PNG_VIEWPORT = png(1024, 768);
+/** The worker's capture of the same viewport at a pixel ratio of 2. */
+const PNG_VIEWPORT_2X = png(2048, 1536);
 
 // --- the fake canvas: every image is a token with a recipe ---
 
@@ -105,7 +107,7 @@ function makeCanvasRecorder({ viewportW, viewportH }) {
 function recipe(images, url) {
     const r = images.get(url);
     if (!r) return null;
-    return { w: r.w, h: r.h, draws: r.draws.map(([src, ...nums]) => [src === VIEWPORT || src === PNG_VIEWPORT ? "VIEWPORT" : src.replace("data:image/png;base64,", ""), ...nums]), ops: [...new Set(r.ops.map((o) => o[0]))] };
+    return { w: r.w, h: r.h, draws: r.draws.map(([src, ...nums]) => [src === VIEWPORT || src === PNG_VIEWPORT || src === PNG_VIEWPORT_2X ? "VIEWPORT" : src.replace("data:image/png;base64,", ""), ...nums]), ops: [...new Set(r.ops.map((o) => o[0]))] };
 }
 
 /**
@@ -114,7 +116,7 @@ function recipe(images, url) {
  * @returns the registry (seeded with the worker's capture) and the Raster
  */
 function makeWorkerRecorder() {
-    const images = new Map([[PNG_VIEWPORT, { w: 1024, h: 768, draws: [], ops: [] }]]);
+    const images = new Map([[PNG_VIEWPORT, { w: 1024, h: 768, draws: [], ops: [] }], [PNG_VIEWPORT_2X, { w: 2048, h: 1536, draws: [], ops: [] }]]);
     let seq = 0;
     const raster = {
         decode: async (url) => {
@@ -322,64 +324,81 @@ const placeBtns = (p) => { p.place("#bar", { x: 280, y: 180, w: 400, h: 80 }); p
 const sq = (v) => Math.round(v * 1000 / 1024);
 const GROUNDING = { groundingEnabled: true, groundingModel: "qwen-ground" };
 
-// --- look: the driver sees the pixels itself (native) ---
+/** jsdom has no Range rects, so the DOM legend (which measures text nodes) throws on a page with text. The page's own
+ *  look and verify swallowed that and showed no legend; the worker's vision host refuses a call whose geometry failed. Text here
+ *  gets a box of no size, which the legend skips, so the legend of the controls is what a laid-out page gives. */
+const rangeRects = (p) => {
+    p.win.Range.prototype.getBoundingClientRect = function () { return { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0, x: 0, y: 0, toJSON() {} }; };
+    p.win.Range.prototype.getClientRects = function () { return []; };
+};
+const verifyPage = (p) => { placeBtns(p); rangeRects(p); };
+/** A worker→page payload by what it is: its option keys, and a geometry question's op. */
+const sendKind = (p) => p.geometry ? `geometry:${p.geometry.op}` : Object.keys(p).filter((k) => k !== "runId" && k !== "args" && k !== "name").join(",");
+/** The DOM legend of the BTNS page, as the worker formats it from the page's structured answer. */
+const LEGEND_LINE = "\n\nDOM in view (use these selectors with click/type/findByText):\n• controls: «Save» `#save` · «Delete» `#del`";
 
-test("native look of the viewport: the page sends one CAPTURE_TAB and no model call; the driver gets the raw capture inline", T, async () => {
-    const w = await startVisionRun({ model: "vlm-driver", turns: [{ name: "look", args: {} }] });
+// --- look: the driver sees the pixels itself (native) ---
+// A worker-built run's look is the WORKER's (site-access part 3, PR 6): the run host runs the same tool body over the
+// worker's vision host. These pinned the page's CAPTURE_TAB (and the reader's FETCH_LLM) before; they now pin that the page
+// sends neither and is asked geometry only, while the driver is shown the same text and the same image.
+
+test("native look of the viewport: the worker captures, the page is asked geometry only and sends nothing; the driver gets the raw capture inline", T, async () => {
+    const w = await startVisionRun({ model: "vlm-driver", capture: () => PNG_VIEWPORT, turns: [{ name: "look", args: {} }] });
     try {
-        assert.deepEqual(toolCallsToPage(w.bg).map((p) => [p.name, !!p.renderOnly]), [["look", true], ["look", false]], "the worker asks the page for the call's preview, then runs it there");
-        assert.deepEqual(pageSent(w.page), ["CAPTURE_TAB"], "the page captures through the worker, and calls no model");
+        assert.deepEqual(toolCallsToPage(w.bg).map(sendKind), ["renderOnly", "geometry:view", "geometry:legend"], "the call's preview, then the legend's geometry: the call itself never reaches the page");
+        assert.deepEqual(pageSent(w.page), [], "the page sends no CAPTURE_TAB and calls no model");
         assert.equal(w.subs().length, 0);
         assert.deepEqual(w.bg.debuggerCalls.filter((c) => c[0] === "sendCommand").map((c) => [c[1].tabId, c[2]]), [[SITE.id, "Page.captureScreenshot"]],
-            "CDP is on by default: the worker serves the page's CAPTURE_TAB through the debugger, on the sender's tab");
+            "CDP is on by default: the worker's own capture of the run's tab, through the debugger");
         assert.equal(w.bg.captures.length, 0);
         const seen = seenByDriver(w);
         assert.equal(seen.text, "Screenshot of the viewport captured — shown to you in the next message.");
         assert.deepEqual(seen.labels, ["[Screenshot: viewport]"]);
-        assert.deepEqual(seen.images, [VIEWPORT], "the capture itself, uncropped, as the next user turn");
+        assert.deepEqual(seen.images, [PNG_VIEWPORT], "the capture itself, uncropped, as the next user turn");
     } finally { w.page.close(); }
 });
 
-test("with CDP off, the page's CAPTURE_TAB is a captureVisibleTab of the sender tab's window, taken while that tab is the one showing", T, async () => {
-    const w = await startVisionRun({ model: "vlm-driver", cfg: { cdp: false }, turns: [{ name: "look", args: {} }] });
+test("with CDP off, the worker's capture is a captureVisibleTab of the run tab's window, taken while that tab is the one showing", T, async () => {
+    const w = await startVisionRun({ model: "vlm-driver", cfg: { cdp: false }, capture: () => PNG_VIEWPORT, turns: [{ name: "look", args: {} }] });
     try {
-        assert.deepEqual(plain(w.bg.captures), [[SITE.windowId, { format: "png" }]], "the window's capture, which is the run's tab because it is showing (#479 refuses otherwise)");
-        assert.deepEqual(seenByDriver(w).images, [VIEWPORT]);
+        assert.deepEqual(plain(w.bg.captures), [[SITE.windowId, { format: "png" }]], "the window's capture, which is the run's tab because it is showing (refused otherwise)");
+        assert.deepEqual(pageSent(w.page), []);
+        assert.deepEqual(seenByDriver(w).images, [PNG_VIEWPORT]);
     } finally { w.page.close(); }
 });
 
-test("native look of an element: the page crops the capture to the element's box times the pixel ratio", T, async () => {
-    const w = await startVisionRun({ model: "vlm-driver", dpr: 2, html: BTNS, before: placeBtns, turns: [{ name: "look", args: { selector: "#bar" } }] });
+test("native look of an element: the worker crops its capture to the element's box times the pixel ratio", T, async () => {
+    const w = await startVisionRun({ model: "vlm-driver", dpr: 2, capture: () => PNG_VIEWPORT_2X, html: BTNS, before: verifyPage, turns: [{ name: "look", args: { selector: "#bar" } }] });
     try {
-        assert.deepEqual(pageSent(w.page), ["CAPTURE_TAB"]);
+        assert.deepEqual(pageSent(w.page), []);
+        assert.deepEqual(toolCallsToPage(w.bg).map(sendKind), ["renderOnly", "geometry:target", "geometry:view", "geometry:target", "geometry:legend"]);
         const seen = seenByDriver(w);
-        assert.equal(seen.text, 'Screenshot of the element "#bar" captured — shown to you in the next message.');
+        assert.equal(seen.text, 'Screenshot of the element "#bar" captured — shown to you in the next message.' + LEGEND_LINE, "the legend the page host gave, formatted in the worker");
         assert.deepEqual(seen.labels, ['[Screenshot: element "#bar"]']);
         assert.equal(seen.images.length, 1);
-        assert.deepEqual(recipe(w.page.images, seen.images[0]), { w: 800, h: 160, draws: [["VIEWPORT", 560, 360, 800, 160, 0, 0, 800, 160]], ops: [] },
+        assert.deepEqual(recipe(w.wimages, seen.images[0]), { w: 800, h: 160, draws: [["VIEWPORT", 560, 360, 800, 160, 0, 0, 800, 160]], ops: [] },
             "#bar is 400×80 at (280,180): at dpr 2 the crop is the capture's (560,360) 800×160");
     } finally { w.page.close(); }
 });
 
 // --- look: a reader describes the pixels (delegated) ---
 
-test("delegated look: CAPTURE_TAB then FETCH_LLM to the run's reader; the driver gets its words and the page's DOM legend, never the image", T, async () => {
-    const w = await startVisionRun({ model: "text-driver", html: BTNS, before: placeBtns, turns: [{ name: "look", args: {} }], reader: () => "Two buttons." });
+test("delegated look: the worker captures and calls the run's reader; the driver gets its words and the DOM legend, never the image", T, async () => {
+    const w = await startVisionRun({ model: "text-driver", capture: () => PNG_VIEWPORT, html: BTNS, before: verifyPage, turns: [{ name: "look", args: {} }], reader: () => "Two buttons." });
     try {
-        assert.deepEqual(pageSent(w.page), ["CAPTURE_TAB", "FETCH_LLM"], "the capture, then the reader's call, both sent by the page");
-        const [call] = pageModelCalls(w.page);
-        assert.deepEqual(call, {
-            messages: [{ role: "user", content: "Describe the current page concisely — what is shown and what stands out.\n\nThen list a few EXACT on-screen text strings (quoted, verbatim — labels, badges, prices, delivery text) I could search for with findByText to locate the key items.", images: [VIEWPORT] }],
-            think: false, model: "reader-vl", extend: null, numCtx: 8192, numGpu: null, schema: null, toolIds: null, maxTokens: 512,
-            hint: { use: "agent", session: `wml-${w.hash}` },
-        }, "the reader call as the page builds it: the resolved reader (the config's OCR model), 512 tokens, an 8192 context, labelled as the run's");
+        assert.deepEqual(pageSent(w.page), [], "the page sends no CAPTURE_TAB and no FETCH_LLM");
         assert.equal(w.subs().length, 1);
-        assert.equal(w.subs()[0].body.model, "reader-vl");
-        assert.deepEqual(imagesIn(w.subs()[0].body), [VIEWPORT], "the reader sees the raw capture");
+        const [call] = w.subs();
+        assert.equal(call.body.model, "reader-vl", "the resolved reader (the config's OCR model)");
+        assert.equal(call.body.max_tokens, 512);
+        assert.equal(promptOf(call.body), "Describe the current page concisely — what is shown and what stands out.\n\nThen list a few EXACT on-screen text strings (quoted, verbatim — labels, badges, prices, delivery text) I could search for with findByText to locate the key items.");
+        assert.equal(call.body.hint.session, `wml-${w.hash}`, "labelled as the run's own sub-call");
+        assert.deepEqual(imagesIn(call.body), [PNG_VIEWPORT], "the reader sees the raw capture");
+        assert.doesNotMatch(JSON.stringify(toolCallsToPage(w.bg)), /Two buttons|reader-vl|Describe|data:image/, "neither the prompt, the model, the reply nor the image reached the page");
         const seen = seenByDriver(w);
-        assert.equal(seen.text, "Two buttons.\n\nDOM in view (use these selectors with click/type/findByText):\n• controls: «Save» `#save` · «Delete» `#del`",
-            "the reader's reply, then the DOM legend of what the shot covers, read from the page");
+        assert.equal(seen.text, "Two buttons." + LEGEND_LINE, "the reader's reply, then the DOM legend of what the shot covers");
         assert.deepEqual(seen.images, [], "no image reaches a driver that cannot see");
+        assert.equal(w.bg.context.__mlWorkerVisionForTest.spend(w.hash).calls, 1, "the reader's call is counted into the run");
     } finally { w.page.close(); }
 });
 
@@ -387,7 +406,7 @@ test("a capture that fails: the tool result is the error, and no model call is m
     for (const model of ["vlm-driver", "text-driver"]) {
         const w = await startVisionRun({ model, turns: [{ name: "look", args: {} }], capture: () => { throw new Error("Cannot capture a chrome:// page"); } });
         try {
-            assert.deepEqual(pageSent(w.page), ["CAPTURE_TAB"], model);
+            assert.deepEqual(pageSent(w.page), [], model);
             assert.equal(w.subs().length, 0, model);
             const seen = seenByDriver(w);
             assert.equal(seen.text, "Error: Cannot capture a chrome:// page", model);
@@ -458,19 +477,6 @@ test("locate by grid: the reader picks a cell on a gridded capture, and the cell
 // `verifyRequest`, and the CDP ring-backs never reach the page. These pinned the page's CAPTURE_TAB and FETCH_LLM before;
 // they now pin that the page sends neither and is asked geometry only, while the driver is shown the same text, the same
 // crop and the reader the same prompt.
-
-/** jsdom has no Range rects, so the DOM legend (which measures text nodes) throws on a page with text. The page's own
- *  verify swallowed that and showed no legend; the worker's vision host refuses a call whose geometry failed. Text here
- *  gets a box of no size, which the legend skips, so the legend of the controls is what a laid-out page gives. */
-const rangeRects = (p) => {
-    p.win.Range.prototype.getBoundingClientRect = function () { return { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0, x: 0, y: 0, toJSON() {} }; };
-    p.win.Range.prototype.getClientRects = function () { return []; };
-};
-const verifyPage = (p) => { placeBtns(p); rangeRects(p); };
-/** A worker→page payload by what it is: its option keys, and a geometry question's op. */
-const sendKind = (p) => p.geometry ? `geometry:${p.geometry.op}` : Object.keys(p).filter((k) => k !== "runId" && k !== "args" && k !== "name").join(",");
-/** The verify's geometry: what the worker asked the page after the call. */
-const LEGEND_LINE = "\n\nDOM in view (use these selectors with click/type/findByText):\n• controls: «Save» `#save` · «Delete» `#del`";
 
 test("click verify of a worker-built run, native: the worker crops 300 px around the element and the driver gets it inline; the page sends nothing", T, async () => {
     const w = await startVisionRun({ model: "vlm-driver", capture: () => PNG_VIEWPORT, html: BTNS, before: verifyPage, turns: [{ name: "click", args: { selector: "#save", verify: true } }] });
@@ -601,25 +607,29 @@ test("the navigate verify ring-back (verifyViewport), which the page still answe
 });
 
 // --- the sidebar is hidden for the shot ---
+// The page's own capture, which locate still takes for a worker-built run until it moves (part 3, PR 7), and every
+// vision tool of a page-built run takes. A worker-built look masks the extension's UI in the worker instead
+// (tests/worker-vision.test.mjs).
 
 /** The window messages around a capture: the sidebar handshake and the capture's request, in order. */
 const shotOrder = (page) => page.posted.map((d) => d.__mlSidebarShot ? `sidebar:${d.__mlSidebarShot}` : d.type).filter((t) => /^sidebar:|^CAPTURE_TAB/.test(t));
+/** A locate by Set-of-Marks, the one vision call of a worker-built run the page still captures for. */
+const LOCATE = { name: "locate", args: { description: "a blue button labelled Save", strategy: "marks" } };
 
 test("with the sidebar mounted, the page posts hide, waits for the shell's hidden, captures, then posts show", T, async () => {
-    const shell = (p) => p.win.addEventListener("message", (e) => { if (e.data && e.data.__mlSidebarShot === "hide") p.win.postMessage({ __mlSidebarShot: "hidden" }, "*"); });
-    const w = await startVisionRun({ model: "vlm-driver", html: '<div id="ml-sb-root"></div>', before: shell, turns: [{ name: "look", args: {} }] });
+    const shell = (p) => { placeBtns(p); p.win.addEventListener("message", (e) => { if (e.data && e.data.__mlSidebarShot === "hide") p.win.postMessage({ __mlSidebarShot: "hidden" }, "*"); }); };
+    const w = await startVisionRun({ model: "vlm-driver", html: '<div id="ml-sb-root"></div>' + BTNS, before: shell, turns: [LOCATE], reader: () => "1" });
     try {
         assert.deepEqual(shotOrder(w.page), ["sidebar:hide", "sidebar:hidden", "CAPTURE_TAB_REQUEST", "CAPTURE_TAB_RESPONSE", "sidebar:show"]);
     } finally { w.page.close(); }
 });
 
 test("with the sidebar mounted and no answer from the shell, the capture still goes after the wait; with none mounted there is no hide, and show is still posted", T, async () => {
-    const silent = await startVisionRun({ model: "vlm-driver", html: '<div id="ml-sb-root"></div>', turns: [{ name: "look", args: {} }] });
+    const silent = await startVisionRun({ model: "vlm-driver", html: '<div id="ml-sb-root"></div>' + BTNS, before: placeBtns, turns: [LOCATE], reader: () => "1" });
     try {
         assert.deepEqual(shotOrder(silent.page), ["sidebar:hide", "CAPTURE_TAB_REQUEST", "CAPTURE_TAB_RESPONSE", "sidebar:show"], "the 200 ms safety net, then the capture");
-        assert.equal(seenByDriver(silent).images.length, 1);
     } finally { silent.page.close(); }
-    const none = await startVisionRun({ model: "vlm-driver", turns: [{ name: "look", args: {} }] });
+    const none = await startVisionRun({ model: "vlm-driver", html: BTNS, before: placeBtns, turns: [LOCATE], reader: () => "1" });
     try {
         assert.deepEqual(shotOrder(none.page), ["CAPTURE_TAB_REQUEST", "CAPTURE_TAB_RESPONSE", "sidebar:show"]);
     } finally { none.page.close(); }
@@ -627,15 +637,18 @@ test("with the sidebar mounted and no answer from the shell, the capture still g
 
 // --- what the page's own scripts can see and do while the run lives ---
 
-test("every capture, every reader reply and every tool result crosses the page's window, where any script on the page reads it", T, async () => {
-    const w = await startVisionRun({ model: "text-driver", html: BTNS, before: placeBtns, turns: [{ name: "look", args: { question: "what is the secret?" } }], reader: () => "The secret is 42." });
+test("a worker-built look puts no capture, no reader prompt or reply and no tool result in the page's window: only the target and geometry cross it", T, async () => {
+    const w = await startVisionRun({ model: "text-driver", capture: () => PNG_VIEWPORT, html: BTNS, before: verifyPage, turns: [{ name: "look", args: { selector: "#bar", question: "what is the secret?" } }], reader: () => "The secret is 42." });
     try {
         const byType = (t) => w.page.posted.filter((d) => d.type === t);
-        assert.equal(byType("PAGE_TOOL_RUN").find((d) => !d.renderOnly && d.name === "look").args.question, "what is the secret?", "the call's arguments");
-        assert.equal(byType("CAPTURE_TAB_RESPONSE")[0].result, VIEWPORT, "the capture");
-        assert.ok(byType("LLM_REQUEST").some((d) => d.payload.model === "reader-vl" && d.payload.messages[0].images[0] === VIEWPORT), "the reader's request, image included");
-        assert.equal(byType("LLM_RESPONSE")[0].result, "The secret is 42.", "the reader's reply");
-        assert.ok(byType("PAGE_TOOL_RESULT").some((d) => String(d.envelope.result).startsWith("The secret is 42.") && d.envelope.renderOut?.image === VIEWPORT), "and the tool's result, with the image its render shows");
+        const runs = byType("PAGE_TOOL_RUN");
+        assert.deepEqual(plain(runs.filter((d) => !d.geometry && !d.finish).map((d) => [d.name, !!d.renderOnly, d.args])), [["look", true, { selector: "#bar" }]], "the call's preview only, with the target and never the question");
+        assert.ok(runs.filter((d) => d.geometry).length > 0, "geometry questions");
+        for (const t of ["CAPTURE_TAB_REQUEST", "CAPTURE_TAB_RESPONSE", "LLM_REQUEST", "LLM_RESPONSE"]) assert.equal(byType(t).length, 0, t);
+        const posted = JSON.stringify(w.page.posted);
+        // The reader's NAME still reaches the page in the run's rebuild config, which the page's locate needs until PR 7.
+        for (const secret of ["what is the secret", "The secret is 42", "data:image", "Describe"]) assert.ok(!posted.includes(secret), `the page's window saw "${secret}"`);
+        assert.ok(seenByDriver(w).text.startsWith("The secret is 42."), "the driver still gets the reader's words");
     } finally { w.page.close(); }
 });
 

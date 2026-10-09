@@ -119,7 +119,7 @@ on `pageVisionHost` (`src/dom/page-geometry.ts`), which answers from the DOM, CA
 before; the seam is what lets a worker host ask the same geometry of the page over a message instead
 (`tests/vision-host.test.mjs` drives the bodies over a fake host with no DOM in the process).
 
-**The worker's vision host** (`workerVisionHost`, `src/sw/worker-vision-host.ts`; the verify after an action runs on it). The
+**The worker's vision host** (`workerVisionHost`, `src/sw/worker-vision-host.ts`; `look` and the verify after an action run on it). The
 same bodies, with the capture (`workerShot`), the drawing (`workerRaster`) and the model call (`workerVisionChat`) in
 the worker, and only GEOMETRY asked of the page: `RUN_TOOL_IN_PAGE { runId, geometry: { seq, op, ...args } }` through
 `delegateSend`, pinned to one documentId for the whole call, answered by `answerGeometry` (page-geometry.ts) in
@@ -138,6 +138,19 @@ refused stitch is still ended while the document is the call's. The pixel ratio 
 what the page reported, the capture's wins and the run log notes `routing`/`dpr-mismatch`. The worker bounds a stitch
 itself (nine tiles, a canvas of at most 65536 device px). Tests: `tests/geometry-check.test.mjs`,
 `tests/worker-vision-host.test.mjs`.
+
+**The `look` of a worker-built run is the worker's** (`src/sw/worker-look.ts`). For a run the worker built or was
+handed, the run host never sends the page a `look` call: it builds the page's own tool (`buildNativeLookTool` when the
+driver sees, `buildLookTool` with the run's reader otherwise, from the run's carried vision facts) over a worker host
+pinned to the tab's top document once any navigation settles, and runs it through `executeTool`/`envelopeFrom` as the
+page would. So the model gets the same text, image(s) or reader's words; the capture, the crops, the `views`, the stitch's
+compose, the reader's prompt and reply, and the legend's wording (from structured `legend` geometry, with the run's
+per-document `boundariesSeen`) stay in the worker, and the reader's call is the call's `subUsage`. An `@tool:` image
+pointer (`_image`) asks the page nothing at all. A preview (an approval card, a pending step) still asks the page to draw
+the In label, sent the target only (`lookPreviewArgs`: `selector`, `index`), never the question. A refused call is
+`Error: ` and the host's fixed sentence, never half a result. A full-page look is bounded by the host (eight screens,
+nine tiles, a 65536 px canvas, each tile correlated to its stitch and question). Tests: `tests/worker-vision-host.test.mjs`
+(the look section), `tests/vision-characterize.test.mjs`.
 
 **The verify of a worker-built run is the worker's** (`src/sw/worker-verify.ts`). For a run the worker built or was
 handed, the run host sends the call itself with `verifyInWorker: true`; the page marks the call's context

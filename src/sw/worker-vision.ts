@@ -1,8 +1,8 @@
 // worker-vision.ts — the worker's half of a vision tool: a screenshot of the run's own tab and document with the extension's own UI masked out, and the vision model's sub-call metered into the run.
 
 // Built for the worker's VisionHost (docs/spec/SITE_ACCESS.md, slice 2 part 3): in a worker-built run the page sees no
-// capture, no change to its DOM around one, and no reader request. The verify after an action uses them (worker-verify.ts);
-// look and locate move onto them in later PRs.
+// capture, no change to its DOM around one, and no reader request. The verify after an action (worker-verify.ts) and
+// `look` (worker-look.ts) use them; locate moves onto them in a later PR.
 
 import type { Shot } from "../tools/vision-host";
 import { oneShotRequest } from "../ml/ml-chat";

@@ -7,8 +7,8 @@
 // reply, no model name. Every answer is rebuilt by `checkGeometry` before a body reads it, bounded by a per-question
 // timeout, and correlated to its question. A malformed or late answer, or a document change, refuses the WHOLE call:
 // the host remembers the first refusal and every later question gets it too (`refusal()`, `onWorkerHost`).
-// The verify after an action runs over it (worker-verify.ts); look and locate move onto it in later PRs (docs/spec/SITE_ACCESS.md,
-// slice 2 part 3).
+// The verify after an action (worker-verify.ts) and `look` (worker-look.ts) run over it; locate moves onto it in a later
+// PR (docs/spec/SITE_ACCESS.md, slice 2 part 3).
 
 import type { GeoView, Geometry, Shot, StitchBegin, TargetQuery, VisionHost } from "../tools/vision-host";
 import type { VisionMemory } from "../contract/contract-render";
