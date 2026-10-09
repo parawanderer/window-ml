@@ -141,9 +141,11 @@ export interface CurrentEnv {
      *  extension) and Debugger-based actions (on in Settings, with the debugger permission). Neither means an exec that
      *  needs isolation is refused. */
     isolation: { userScripts: boolean; cdp: boolean };
-    /** Where an approved `exec` would run now, by what it reads: `plain` reads neither `ml.current` nor a pointer. A
-     *  read-only survey is not one of these: it is read in place, without the page's world. */
-    exec: { plain: ExecWhere; readsCurrent: ExecWhere; readsPointer: ExecWhere };
+    /** Where an approved `exec` (one that is not read-only, e.g. it clicks) would run now. It goes by what the script
+     *  READS, not by whether it changes the page: one that clicks AND reads `ml.current` is `readsCurrent`.
+     *  `readsNeither` reads neither `ml.current` nor a pointer. A read-only survey is none of these: it is read in
+     *  place, without the page's world. */
+    exec: { readsNeither: ExecWhere; readsCurrent: ExecWhere; readsPointer: ExecWhere };
     /** Whether a read-only `exec` (a survey that changes nothing) runs without asking the person. */
     readonlyAutoApprove: boolean;
 }

@@ -81,7 +81,7 @@ test("ml.current.env's exec column is routeExec's own answer, for every page, me
         const label = `approved=${approved} userScripts=${us} cdp=${cdp}`;
         // Checked against real scripts of each kind, not the probes the module uses, so a probe that stops reading as its
         // kind (execNames changes) fails here.
-        assert.equal(env.exec.plain, where(routeExec(SCRIPTS.plain, approved, iso)), `plain, ${label}`);
+        assert.equal(env.exec.readsNeither, where(routeExec(SCRIPTS.plain, approved, iso)), `plain, ${label}`);
         assert.equal(env.exec.readsCurrent, where(routeExec(SCRIPTS.current, approved, iso)), `current, ${label}`);
         assert.equal(env.exec.readsPointer, where(routeExec(SCRIPTS.pointer, approved, iso)), `pointer, ${label}`);
         assert.equal(env.exec.readsPointer, where(routeExec(SCRIPTS.deref, approved, iso)), `deref, ${label}`);
@@ -92,10 +92,10 @@ test("ml.current.env's exec column is routeExec's own answer, for every page, me
     }
     assert.equal(n, 16);
     // The default an install has today (#467: Debugger-based actions on, user scripts not allowed), on an approved site.
-    assert.deepEqual(envOf("u", true, { userScripts: false, cdp: true }, true).exec, { plain: "page", readsCurrent: "isolated", readsPointer: "isolated" });
+    assert.deepEqual(envOf("u", true, { userScripts: false, cdp: true }, true).exec, { readsNeither: "page", readsCurrent: "isolated", readsPointer: "isolated" });
     // Nothing available: what the model would otherwise learn from a refusal.
-    assert.deepEqual(envOf("u", true, { userScripts: false, cdp: false }, true).exec, { plain: "page", readsCurrent: "refused", readsPointer: "page" });
-    assert.deepEqual(envOf("u", false, { userScripts: false, cdp: false }, true).exec, { plain: "refused", readsCurrent: "refused", readsPointer: "refused" });
+    assert.deepEqual(envOf("u", true, { userScripts: false, cdp: false }, true).exec, { readsNeither: "page", readsCurrent: "refused", readsPointer: "page" });
+    assert.deepEqual(envOf("u", false, { userScripts: false, cdp: false }, true).exec, { readsNeither: "refused", readsCurrent: "refused", readsPointer: "refused" });
 });
 
 // --- the wrapper, run as an isolated world runs it ---

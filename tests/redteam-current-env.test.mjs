@@ -159,8 +159,8 @@ test("env carries only the run's own tab: two concurrent runs each see their own
     ], { us: true, auto: false, local: APPROVED });
     const [a, b] = [envFrom(results[0][0]), envFrom(results[1][0])];
     // Exact shapes: an extra key (a list, a URL, a run) fails here.
-    assert.deepEqual(a, { page: { url: SITE, approved: true }, isolation: { userScripts: true, cdp: false }, exec: { plain: "page", readsCurrent: "isolated", readsPointer: "isolated" }, readonlyAutoApprove: false });
-    assert.deepEqual(b, { page: { url: OTHER, approved: false }, isolation: { userScripts: true, cdp: false }, exec: { plain: "isolated", readsCurrent: "isolated", readsPointer: "isolated" }, readonlyAutoApprove: false });
+    assert.deepEqual(a, { page: { url: SITE, approved: true }, isolation: { userScripts: true, cdp: false }, exec: { readsNeither: "page", readsCurrent: "isolated", readsPointer: "isolated" }, readonlyAutoApprove: false });
+    assert.deepEqual(b, { page: { url: OTHER, approved: false }, isolation: { userScripts: true, cdp: false }, exec: { readsNeither: "isolated", readsCurrent: "isolated", readsPointer: "isolated" }, readonlyAutoApprove: false });
     for (const [mine, other, otherHash] of [[results[0][0], OTHER, hashes[1]], [results[1][0], SITE, hashes[0]]]) {
         const raw = mine.split("\n")[0];
         for (const leak of ["sk-SECRET-KEY", "http://host", "unrelated-bank", "ml_site", other, otherHash])
@@ -173,11 +173,11 @@ test("env carries only the run's own tab: two concurrent runs each see their own
 test("computing env runs no probe: none is injected, evaluated or sent to the tab, and nothing reaches the backend but the model", T, async () => {
     const PROBE_SOURCES = ["document.title", "ml.current.run.step", "ml.dereference('x')"];
     for (const iso of [{ us: true, cdp: false }, { us: undefined, cdp: true }]) {
-        const scripts = ["window.__x = 1; return ml.current.env.exec.plain", "ml.current.env === undefined ? ml.current.run.id.length : 0", "window.__y = 2; return ml.current.env.isolation.cdp"];
+        const scripts = ["window.__x = 1; return ml.current.env.exec.readsNeither", "ml.current.env === undefined ? ml.current.run.id.length : 0", "window.__y = 2; return ml.current.env.isolation.cdp"];
         const { bg, results } = await envRuns([{ tab: { id: 7, url: SITE, title: "S" }, scripts }], { ...iso, local: APPROVED });
         const how = iso.us ? "userScripts" : "cdp";
         // Positive control: each exec read the env, by the mechanism under test.
-        assert.match(results[0][0], /^page/, `${how}: the exec read env.exec.plain`);
+        assert.match(results[0][0], /^page/, `${how}: the exec read env.exec.readsNeither`);
         assert.match(results[0][2], iso.us ? /^false/ : /^true/, `${how}: the exec read env.isolation.cdp`);
         const chat = bg.calls.filter((c) => c.url.includes("/chat/completions")).length;
         // A run's start asks the server for the model's capabilities (/api/show); nothing else but the model.
@@ -220,7 +220,7 @@ test("currentEnv touches only browser READS: no tab message, script, debugger, s
     try {
         const env = await currentEnv(7, true);
         // Positive control: each read happened and decided something.
-        assert.deepEqual(plain(env), { page: { url: SITE, approved: true }, isolation: { userScripts: true, cdp: true }, exec: { plain: "page", readsCurrent: "isolated", readsPointer: "isolated" }, readonlyAutoApprove: true });
+        assert.deepEqual(plain(env), { page: { url: SITE, approved: true }, isolation: { userScripts: true, cdp: true }, exec: { readsNeither: "page", readsCurrent: "isolated", readsPointer: "isolated" }, readonlyAutoApprove: true });
         assert.ok(calls.includes("tabs.get") && calls.includes("storage.local.get") && calls.includes("userScripts.getWorldConfigurations"), calls.join());
         const writes = calls.filter((c) => !READS.has(c));
         assert.deepEqual(writes, [], `currentEnv called ${writes.join(", ")}`);
@@ -240,8 +240,8 @@ test("after a navigation to an unapproved origin, the next read says approved:fa
         beforeCall: (_b, _run, n) => { if (n === 1) tab.url = OTHER; },
     });
     const [before, after] = [envFrom(results[0][0]), envFrom(results[0][1])];
-    assert.deepEqual([before.page, before.exec.plain], [{ url: SITE, approved: true }, "page"], "positive control: approved before");
-    assert.deepEqual([after.page, after.exec.plain], [{ url: OTHER, approved: false }, "isolated"], "read now, after the navigation");
+    assert.deepEqual([before.page, before.exec.readsNeither], [{ url: SITE, approved: true }, "page"], "positive control: approved before");
+    assert.deepEqual([after.page, after.exec.readsNeither], [{ url: OTHER, approved: false }, "isolated"], "read now, after the navigation");
     // And the plain exec after it went where env said: not the page's world.
     const toPage = bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE" && m.payload.name === "exec" && !m.payload.renderOnly && !m.payload.precheck && !m.payload.readonlyTry);
     assert.equal(toPage.length, 0, "no exec ran in the unapproved page's world");
@@ -252,7 +252,7 @@ test("a run on an unapproved page with no isolation: env says every exec is refu
     const { results, bg, hashes } = await envRuns([{ tab: { id: 8, url: OTHER, title: "O" }, scripts: ["document.title = 'x'; return 1", "window.__x = 1; return ml.current.env"] }], { auto: false, local: APPROVED });
     const dump = plain(await bg.send({ type: "DUMP_RUN_STATE", payload: { run: hashes[0] } }, PANEL));
     const env = dump.data.entries.find((e) => e.id === "run.env")?.value;
-    assert.deepEqual(env, { page: { url: OTHER, approved: false }, isolation: { userScripts: false, cdp: false }, exec: { plain: "refused", readsCurrent: "refused", readsPointer: "refused" }, readonlyAutoApprove: false });
+    assert.deepEqual(env, { page: { url: OTHER, approved: false }, isolation: { userScripts: false, cdp: false }, exec: { readsNeither: "refused", readsCurrent: "refused", readsPointer: "refused" }, readonlyAutoApprove: false });
     for (const r of results[0]) assert.match(r, /^Error: /, `refused: ${r}`);
     const toPage = bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE" && m.payload.name === "exec" && !m.payload.renderOnly && !m.payload.precheck && !m.payload.readonlyTry);
     assert.equal(toPage.length, 0, "nothing ran in the page");
@@ -284,7 +284,7 @@ test("fails closed: a tab with no URL, a gone tab, or a non-web URL is never app
     for (const url of ["about:blank", "data:text/html,<p>x", "file:///etc/passwd", "chrome://settings", "javascript:1", "chrome-extension://test/sidebar.html", "not a url"])
         assert.equal((await envWith({ id: 7, url }, { lists: odd })).page.approved, false, `${url} approved`);
     // With no approval and no isolation, every exec column is refused, never "page".
-    assert.deepEqual((await envWith(null)).exec, { plain: "refused", readsCurrent: "refused", readsPointer: "refused" });
+    assert.deepEqual((await envWith(null)).exec, { readsNeither: "refused", readsCurrent: "refused", readsPointer: "refused" });
 });
 
 test("fails closed: a tab that is GONE is not approved on the strength of the URL the worker last saw it at", T, async () => {

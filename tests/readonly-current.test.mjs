@@ -498,7 +498,7 @@ test("FAILURE: a survey that reads ml.current.debug and then falls out of dialec
 
 // --- every field of the snapshot reaches a survey, env included ---
 
-const ENV = { page: { url: "https://site.example/page", approved: true }, isolation: { userScripts: false, cdp: true }, exec: { plain: "page", readsCurrent: "isolated", readsPointer: "isolated" }, readonlyAutoApprove: true };
+const ENV = { page: { url: "https://site.example/page", approved: true }, isolation: { userScripts: false, cdp: true }, exec: { readsNeither: "page", readsCurrent: "isolated", readsPointer: "isolated" }, readonlyAutoApprove: true };
 const fullSnapshot = () => ({ ...sampleSnapshot(), debug: { userWatches: [] }, env: structuredClone(ENV) });
 
 test("a survey's ml.current has every field the snapshot has: one the facade forgets is silently absent", async () => {
@@ -511,7 +511,7 @@ test("a survey reads ml.current.env whole, and writing its own copy changes noth
     const snap = fullSnapshot();
     assert.deepEqual(JSON.parse((await inWorkerRealm("return JSON.stringify(ml.current.env)", snap)).value), ENV);
     assert.equal((await inWorkerRealm("return ml.current.env.exec.readsCurrent", snap)).value, "isolated");
-    await inWorkerRealm("ml.current.env.exec.plain = 'refused'; ml.current.env.page.approved = false; return 1", snap);
+    await inWorkerRealm("ml.current.env.exec.readsNeither = 'refused'; ml.current.env.page.approved = false; return 1", snap);
     assert.deepEqual(snap.env, ENV, "the snapshot the host made is untouched");
     // Absent where the host adds none (a page-hosted run): no field, not an empty one.
     assert.equal((await inWorkerRealm("return String(ml.current.env)", sampleSnapshot())).value, "undefined");

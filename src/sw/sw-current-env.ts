@@ -9,7 +9,7 @@ import { activeRuns, bgRuns, tabPageUrl } from "./sw-runs";
 import type { CurrentEnv, CurrentSnapshot, ExecWhere } from "../agent/current-context";
 
 /** One script for each thing routing tells apart: it reads neither, `ml.current`, or a pointer (execNames). */
-const PROBES = { plain: "document.title", readsCurrent: "ml.current.run.step", readsPointer: "ml.dereference('x')" } as const;
+const PROBES = { readsNeither: "document.title", readsCurrent: "ml.current.run.step", readsPointer: "ml.dereference('x')" } as const;
 
 /** The longest page URL `env` carries. */
 const MAX_URL = 2048;
@@ -45,7 +45,7 @@ export function envOf(url: string, approved: boolean, isolation: { userScripts: 
         // over what an approved exec is sent (EXEC_CURRENT_CHARS). Approval was decided on the whole URL above.
         page: { url: url.length > MAX_URL ? `${url.slice(0, MAX_URL)}…` : url, approved },
         isolation: { ...isolation },
-        exec: { plain: route(PROBES.plain), readsCurrent: route(PROBES.readsCurrent), readsPointer: route(PROBES.readsPointer) },
+        exec: { readsNeither: route(PROBES.readsNeither), readsCurrent: route(PROBES.readsCurrent), readsPointer: route(PROBES.readsPointer) },
         readonlyAutoApprove,
     };
 }
