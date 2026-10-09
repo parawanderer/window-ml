@@ -10,7 +10,7 @@ import { colorFor } from "../../../../src/sidebar/palette";
 import { FilterChips } from "../../../../src/sidebar/filter-chips";
 import type { BenchState, PackedSamples } from "./state";
 import { ResourceTracks } from "../../../../src/sidebar/resource/resource-chart";
-import { startBrush, BrushOverlay } from "../../../../src/sidebar/resource/resource-lane-ui";
+import { startBrush, BrushOverlay, LANE_KINDS } from "../../../../src/sidebar/resource/resource-lane-ui";
 import type { ResourceSample } from "../../../../src/resource/resource-model";
 import type { ResourceEvent } from "../../../../src/resource/resource-timeline";
 import { LaneRows, LaneAxis, laneWindow } from "./lane-view";
@@ -27,9 +27,20 @@ const readHidden = (name: string): string[] => { try { return JSON.parse(localSt
  * the drawn runs have it, the panel lane's filter chips (`.rc-lane-chip`). A run is hidden when any of its values is,
  * and the axis closes up around what is left.
  */
-function TimelineFilter({ values, hidden, toggle }: { values: Map<string, Map<string, number>>; hidden: Set<string>; toggle: (k: string) => void }) {
+function TimelineFilter({ values, kinds, hidden, toggle }: { values: Map<string, Map<string, number>>; kinds: Map<string, number>; hidden: Set<string>; toggle: (k: string) => void }) {
     return (
         <div class="tlfilter">
+            {/* Event kinds, as the panel's lane chips (`LANE_KINDS`): one set, obeyed by the box row, every run's lane and
+                the chart's marks alike, so no surface draws a kind another hides. */}
+            {kinds.size ? (
+                <div class="tlrow">
+                    <Tip tip="The kinds of event drawn, with how many of each the shown rows hold. Click one to hide or show it in the box row, every run's lane and the chart."><span class="dim">events</span></Tip>
+                    <FilterChips hidden={hidden} toggle={toggle} items={LANE_KINDS.filter((k) => kinds.has(k.kind)).map((k) => ({
+                        key: `kind=${k.kind}`, label: k.label, count: kinds.get(k.kind)!,
+                        tip: `${hidden.has(`kind=${k.kind}`) ? "Show" : "Hide"} ${k.label}.`,
+                    }))} />
+                </div>
+            ) : null}
             {[...values].map(([dim, vals]) => (
                 <div class="tlrow" key={dim}>
                     <Tip tip="A dimension of the spec. Click a value to hide or show the runs that used it."><span class="dim">{dim}</span></Tip>
@@ -73,8 +84,14 @@ export function SweepTimeline({ s }: { s: BenchState }) {
     // select on either moves both. A hidden model is hidden in the chart's bands too.
     const hiddenModels = new Set([...hidden].filter((k) => k.startsWith("model=")).map((k) => k.slice(6)));
     // The box's events (its stream), with a hidden model's left out as the chart leaves out its bands.
-    const boxEvents: ResourceEvent[] = (s.resources?.events ?? []).filter((e) => !(e.model && hiddenModels.has(e.model)));
-    const shownEvents: ResourceEvent[] = [...boxEvents, ...shown.flatMap((r) => r.events)];
+    const boxAll: ResourceEvent[] = (s.resources?.events ?? []).filter((e) => !(e.model && hiddenModels.has(e.model)));
+    // How many of each kind the shown rows hold (counted before the kind filter, so a hidden kind keeps its chip).
+    const kinds = new Map<string, number>();
+    for (const e of [...boxAll, ...shown.flatMap((r) => r.events)]) kinds.set(e.kind, (kinds.get(e.kind) ?? 0) + 1);
+    const kindShown = (e: ResourceEvent) => !hidden.has(`kind=${e.kind}`);
+    const boxEvents = boxAll.filter(kindShown);
+    const runLanes = shown.map((r) => ({ ...r, events: r.events.filter(kindShown) }));
+    const shownEvents: ResourceEvent[] = [...boxEvents, ...runLanes.flatMap((r) => r.events)];
     /** Each shown run's lane, labelled, on `axis`; with the time axis under them when no chart draws one. Called, never
      *  mounted as a component: a component defined here would be a new type each render and remount its rows. */
     const lanes = ({ axis, withAxis, rowAttrs, rowPrefix }: { axis: { from: number; to: number }; withAxis?: boolean; rowAttrs?: Parameters<typeof LaneRows>[0]["rowAttrs"]; rowPrefix?: () => ComponentChildren }) => (
@@ -84,7 +101,7 @@ export function SweepTimeline({ s }: { s: BenchState }) {
                 <div key="wbox" class="who box"><Tip tip="What the server itself reported over the sweep, from its event stream: model loads (weights, then context), evictions and unloads with its reason, serving spans and generations from any client, this sweep's or not. Hover a bar for what it was.">the box</Tip></div>,
                 <section key="lbox" class="wml-lane"><LaneRows events={boxEvents} axis={axis} now={t.now} maxRows={4} maxTotal={6} rowAttrs={rowAttrs} rowPrefix={rowPrefix} /></section>,
             ] : null}
-            {shown.map(({ index, events }) => {
+            {runLanes.map(({ index, events }) => {
                 const r = s.runs[index];
                 const name = runName(r, s.dims);
                 return [
@@ -102,7 +119,7 @@ export function SweepTimeline({ s }: { s: BenchState }) {
                 <h2><Tip tip="Each run's model calls, tool steps and model loads on one clock, under the box's memory when the harness could read it (the resource panel's chart: drag on it or on a lane to select a stretch, scroll or drag the strip to move along). Rows that overlap ran at the same time; on one GPU that is contention. Hover a bar for what it was. Also as text in timeline.md and memory.md.">Timeline</Tip></h2>
                 {cached ? <span class="sub">{cached} cached run(s) are not drawn: they ran in an earlier sweep.</span> : null}
             </header>
-            {values.size ? <TimelineFilter values={values} hidden={hidden} toggle={toggle} /> : null}
+            {values.size || kinds.size > 1 ? <TimelineFilter values={values} kinds={kinds.size > 1 ? kinds : new Map()} hidden={hidden} toggle={toggle} /> : null}
             {!axis ? <div class="empty">Every run is hidden: click a struck-out value to show it again.</div>
                 : mem ? <div class="tlchart">
                     <ResourceTracks samples={mem.samples} capacity={mem.samples.at(-1)!.capacity} hidden={hiddenModels} events={shownEvents}

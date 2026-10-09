@@ -165,7 +165,7 @@ test("the timeline draws each run that has events as its own lane, on one shared
     assert.equal(tl.querySelector(".rc-tip"), null, "and gone when the pointer leaves");
     // A chip per value of the dimension hides that value's runs, and shows them again.
     const chip = (v) => [...tl.querySelectorAll(".tlfilter .rc-lane-chip")].find((c) => c.textContent.startsWith(v));
-    assert.deepEqual([...tl.querySelectorAll(".tlfilter .rc-lane-chip")].map((c) => c.textContent), ["a 1", "b 1"]);
+    assert.deepEqual([...tl.querySelectorAll(".tlfilter .rc-lane-chip")].map((c) => c.textContent), ["runs 2", "calls 2", "a 1", "b 1"]);
     chip("b").click();
     await tick();
     assert.deepEqual([...tl.querySelectorAll(".who")].map((w) => w.textContent), ["t · a · r0"]);
@@ -173,6 +173,31 @@ test("the timeline draws each run that has events as its own lane, on one shared
     chip("b").click();
     await tick();
     assert.equal(tl.querySelectorAll(".who").length, 2);
+});
+
+test("an event-kind chip hides that kind in the box row and every run's lane at once, and shows it again", async () => {
+    const runs = [{ combo: { m: "a" }, who: "a", taskId: "t", repeat: 0, state: "done", ok: true }];
+    const doc = await dashboard({
+        dims: ["m"], runs,
+        resources: { samples: [], capacities: [], events: [ev("load", 0, 1000, { via: "server" }), ev("serve", 1000, 3000, { via: "server" })] },
+        timeline: { now: 4000, runs: [{ index: 0, events: [ev("run", 0, 4000), ev("gen", 1000, 3000), ev("load", 0, 1000)] }] },
+    });
+    const tl = card(doc, "Timeline");
+    const win = doc.defaultView;
+    const tick = () => new Promise((r) => win.setTimeout(r, 20));
+    const chips = () => [...tl.querySelectorAll(".tlfilter .rc-lane-chip")].map((c) => c.textContent);
+    // The panel's labels in the panel's order, each counted over the box row and the runs together.
+    assert.deepEqual(chips(), ["runs 1", "calls 1", "loads 2", "serving 1"]);
+    assert.equal(tl.querySelectorAll(".rc-ev-load").length, 2);
+    const loads = [...tl.querySelectorAll(".tlfilter .rc-lane-chip")].find((c) => c.textContent.startsWith("loads"));
+    loads.click();
+    await tick();
+    assert.equal(tl.querySelectorAll(".rc-ev-load").length, 0, "gone from the box row and the run's lane");
+    assert.equal(tl.querySelectorAll(".rc-ev-serve").length, 1, "other kinds stay");
+    assert.deepEqual(chips(), ["runs 1", "calls 1", "loads 2", "serving 1"], "a hidden kind keeps its chip and count");
+    loads.click();
+    await tick();
+    assert.equal(tl.querySelectorAll(".rc-ev-load").length, 2);
 });
 
 // --- a run's own page ---
