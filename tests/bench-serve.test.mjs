@@ -60,6 +60,32 @@ test("refuses to escape the sweep directory, including through encoded dots", as
     } finally { await d.stop(); }
 });
 
+// --- a reader that stops reading ---
+
+test("a page that stops reading is skipped until it drains, then sent the newest state: never every frame held in memory", async () => {
+    const net = await import("node:net");
+    const d = await startDashboard({ artifactRoot: await mkdtemp(join(tmpdir(), "slow-")) });
+    try {
+        const { port } = new URL(d.url);
+        const sock = net.connect(Number(port), "127.0.0.1");
+        let got = "";
+        sock.on("data", (b) => { got += b; });
+        await new Promise((r) => sock.once("connect", r));
+        sock.write("GET /events HTTP/1.1\r\nHost: x\r\n\r\n");
+        await new Promise((r) => setTimeout(r, 50));
+        sock.pause();   // the tab stops reading
+        // A big state, many times: what a long sweep's page pushes while the tab is in the background.
+        const pad = "x".repeat(1_000_000);
+        for (let i = 1; i <= 20; i++) { d.update({ name: "s", n: i, pad, runs: [] }); await new Promise((r) => setTimeout(r, 170)); }
+        sock.resume();
+        await new Promise((r) => setTimeout(r, 600));
+        const frames = [...got.matchAll(/"n":(\d+)/g)].map((m) => Number(m[1]));
+        assert.ok(frames.length < 8, `only a few frames reached it (${frames.length}), not all 20 held for it`);
+        assert.equal(frames.at(-1), 20, "and the last is the newest state");
+        sock.destroy();
+    } finally { await d.stop(); }
+});
+
 // --- the page itself ---
 
 test("the page is self-contained — no CDN and no external file; its script is bundled from source in memory", async () => {
