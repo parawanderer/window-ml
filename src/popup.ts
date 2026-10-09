@@ -412,9 +412,16 @@ $("openConfig").addEventListener("click", () => showConfig($("openConfig").getAt
 $("openChat").addEventListener("click", async () => {
     const url = chrome.runtime.getURL("chat.html");
     try {
-        const [open] = await chrome.tabs.query({ url });
-        if (open?.id != null) await chrome.tabs.update(open.id, { active: true });
-        else await chrome.tabs.create({ url });
+        // This extension's own open tabs, by their document URL: an open chat puts its route in the hash
+        // (`chat.html#/…`), and `chrome.tabs.query({ url })` matched only the bare URL, so it missed that page and
+        // opened a second one (a URL pattern did not match it either).
+        const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.TAB] });
+        const open = contexts.find((c) => c.tabId >= 0 && (c.documentUrl ?? "").split("#")[0] === url);
+        if (open) {
+            await chrome.tabs.update(open.tabId, { active: true });
+            // In another window, the tab is only active THERE; bring that window forward too.
+            if (open.windowId >= 0) await chrome.windows.update(open.windowId, { focused: true });
+        } else await chrome.tabs.create({ url });
         window.close();
     } catch { /* the browser refused; the popup stays open so the click can be repeated */ }
 });
