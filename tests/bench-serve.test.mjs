@@ -24,6 +24,8 @@ async function fixture() {
     return { base, sweep };
 }
 
+// --- serving files from the sweep, and nothing outside it ---
+
 test("serves an artifact inside the sweep, and 404s one that is not written yet", async () => {
     const { sweep } = await fixture();
     const d = await startDashboard({ artifactRoot: sweep });
@@ -58,14 +60,20 @@ test("refuses to escape the sweep directory, including through encoded dots", as
     } finally { await d.stop(); }
 });
 
-test("the page is self-contained — no build step, no CDN, no dependency", async () => {
+// --- the page itself ---
+
+test("the page is self-contained — no CDN and no external file; its script is bundled from source in memory", async () => {
     const { sweep } = await fixture();
     const d = await startDashboard({ artifactRoot: sweep });
     try {
         const html = await (await fetch(`${d.url}/`)).text();
         assert.match(html, /<!doctype html>/i);
         assert.match(html, /EventSource\("\/events"\)/, "it must subscribe to the stream");
-        assert.doesNotMatch(html, /https?:\/\/(?!127\.0\.0\.1)/, "a local dev view must not fetch from the internet");
+        // A local dev view must not fetch from the internet. (The bundle names XML namespaces, `http://www.w3.org/…`,
+        // which are identifiers, not requests, and highlight.js's deprecation warnings link its own GitHub pages in
+        // text it only ever prints; what would fetch is an element pointing elsewhere.)
+        assert.doesNotMatch(html, /<script[^>]+src=|<link[^>]+href=|<img[^>]+src="?https?:/i, "nothing is loaded from elsewhere");
+        assert.doesNotMatch(html.replace(/https?:\/\/www\.w3\.org\/[\w/.-]*|https:\/\/github\.com\/highlightjs\/highlight\.js\/[\w/.-]*/g, ""), /https?:\/\/(?!127\.0\.0\.1)/, "no other URL at all");
     } finally { await d.stop(); }
 });
 
@@ -121,5 +129,54 @@ test("the column set comes from metrics.mjs, so the page cannot show a different
             const state = JSON.parse(new TextDecoder().decode(value).replace(/^data: /, ""));
             assert.deepEqual(state.columns.map((c) => c.key), COLUMNS.map((c) => c.key));
         } finally { await reader.cancel().catch(() => {}); }
+    } finally { await d.stop(); }
+});
+
+// --- editing the page while it is open (the `watch` loop) ---
+
+/** The next named SSE event (`event: <name>`) on a dashboard's stream, or a timeout. */
+async function nextEvent(url, names, ms = 5000) {
+    const res = await fetch(`${url}/events`);
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    const until = Date.now() + ms;
+    try {
+        while (Date.now() < until) {
+            const { value, done } = await Promise.race([reader.read(), new Promise((r) => setTimeout(() => r({ value: null }), until - Date.now()))]);
+            if (done) break;
+            if (value) buf += dec.decode(value);
+            const m = new RegExp(`event: (${names.join("|")})\\ndata: (.*)\\n`).exec(buf);
+            if (m) return { name: m[1], data: JSON.parse(m[2]) };
+        }
+        return null;
+    } finally { await reader.cancel().catch(() => {}); }
+}
+
+test("a change to a watched source rebuilds the page and tells every open browser to reload onto it", async () => {
+    const { base, sweep } = await fixture();
+    let builds = 0;
+    const d = await startDashboard({ artifactRoot: sweep, port: 0, watch: [base], rebuild: async () => `<!doctype html>build ${++builds}` });
+    try {
+        const ev = nextEvent(d.url, ["reload", "build-error"]);
+        await new Promise((r) => setTimeout(r, 200));   // the stream is open before the edit
+        await writeFile(join(base, "page.css"), "h1 { color: red }");
+        assert.equal((await ev)?.name, "reload");
+        assert.equal(await (await fetch(`${d.url}/`)).text(), "<!doctype html>build 1", "the next load gets the new build");
+    } finally { await d.stop(); }
+});
+
+test("an edit that does not build is reported to the page, and the last good build keeps being served", async () => {
+    const { base, sweep } = await fixture();
+    const d = await startDashboard({ artifactRoot: sweep, port: 0, watch: [base], rebuild: async () => { throw new Error("app.tsx:3: Expected \";\""); } });
+    try {
+        const before = await (await fetch(`${d.url}/`)).text();
+        const ev = nextEvent(d.url, ["reload", "build-error"]);
+        await new Promise((r) => setTimeout(r, 200));
+        await writeFile(join(base, "app.tsx"), "broken(");
+        const got = await ev;
+        assert.equal(got?.name, "build-error");
+        assert.match(got.data.message, /app\.tsx:3/);
+        assert.equal(await (await fetch(`${d.url}/`)).text(), before);
     } finally { await d.stop(); }
 });

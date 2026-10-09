@@ -1,17 +1,16 @@
-// interview.mjs (the part panel.mjs, converse.mjs and the bench share) and the bench's answers view: the per-turn
-// report a model reads, the follow-up driver, a person's marks turned into checks, and the page that shows the answers
-// side by side. No browser and no model: every input is a fixture whose right reading is known.
+// interview.mjs (the part panel.mjs, converse.mjs and the bench share): the per-turn report a model reads, the
+// follow-up driver, a person's marks turned into checks, and the endpoint that stores a mark. No browser and no model:
+// every input is a fixture whose right reading is known. The page that shows the answers: bench-page.test.mjs.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { JSDOM } from "jsdom";
 import {
     turnReport, parseTurnReport, readTurns, interviewDriver, interviewBench, checkMarks, validMark, panelSummary, loadInterview,
 } from "../tests/e2e/interview.mjs";
-import { staticPage, startDashboard } from "../tests/e2e/bench/serve.mjs";
+import { startDashboard } from "../tests/e2e/bench/serve.mjs";
 import { cellKey } from "../tests/e2e/bench/cells.mjs";
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "interview-"));
@@ -108,7 +107,7 @@ test("a mark is checked against the same model's later answer at the same turn, 
     const mark = { id: "m1", taskId: "t", who: "a", turn: 2, quote: "The snapshot  EXCLUDES the current call", note: "it does not", hash: "h1" };
     const run = (hash, ans) => ({ taskId: "t", who: "a", hash, turns: [{ answer: "x" }, { answer: ans }] });
     assert.deepEqual(checkMarks(run("h1", "… the snapshot excludes the current call …"), [mark])[0],
-        { id: "m1", turn: 2, quote: mark.quote, note: "it does not", here: true, still: true });
+        { id: "m1", turn: 2, quote: mark.quote, note: "it does not", by: "unknown", at: null, here: true, still: true });
     const later = checkMarks(run("h2", "the snapshot\nexcludes the current call"), [mark])[0];
     assert.equal(later.here, false);
     assert.equal(later.still, true, "a line rewrapped is still the same line");
@@ -116,6 +115,20 @@ test("a mark is checked against the same model's later answer at the same turn, 
     assert.equal(checkMarks({ ...run("h4", ""), turns: [{ answer: "x" }] }, [mark])[0].still, null, "no answer at that turn: unknown, not passed");
     assert.deepEqual(checkMarks({ ...run("h5", "excludes"), who: "b" }, [mark]), [], "another model's answer is not checked");
     assert.deepEqual(checkMarks({ ...run("h6", "excludes"), taskId: "u" }, [mark]), [], "nor another interview's");
+});
+
+test("a quote selected from the RENDERED answer matches the raw markdown the model sent, and an old raw quote still does", () => {
+    const answer = "1. **Cut** the `title` clause: see [the docs](https://x.test/a_b).\n2. | col | _two_ |";
+    const run = { taskId: "t", who: "a", hash: "h", turns: [{ answer }] };
+    const mark = (quote) => ({ id: quote, taskId: "t", who: "a", turn: 1, quote, hash: null });
+    // What a browser's selection gives from the markdown view: no list number, no `**`, no backticks, the link's text.
+    const rendered = mark("Cut the title clause: see the docs.");
+    // UPGRADE: a mark made before answers rendered as markdown quoted the raw text, syntax and all.
+    const raw = mark("**Cut** the `title` clause");
+    const table = mark("col two");
+    const wrong = mark("Keep the title clause");
+    assert.deepEqual(checkMarks(run, [rendered, raw, table, wrong]).map((c) => [c.id, c.still]),
+        [[rendered.id, true], [raw.id, true], [table.id, true], [wrong.id, false]]);
 });
 
 test("a mark from the page is accepted only with its fields typed and bounded", () => {
@@ -138,45 +151,6 @@ test("the summary names skipped models, ends, and the checks on each answer", ()
     assert.match(md, /\| `a` \| 1 \/ 0 \| all turns \|/);
     assert.match(md, /\| `b` \| 0 \| after turn 1: timed out in turn 2 \|/);
     assert.match(md, /- still says a line marked wrong: "excludes x" \(wrong\)/);
-});
-
-// --- the answers view on the bench page ---
-
-/** The saved page for a state, with its script run. */
-function render(state) {
-    const dom = new JSDOM(staticPage({ name: "panel", runs: [], rows: [], jobs: 1, started: 0, finished: 1, ...state }), { runScripts: "dangerously" });
-    return dom.window.document;
-}
-
-test("the answers view sets each turn's answers side by side, models as columns, linked to each run", () => {
-    const doc = render({
-        dims: ["model"], interviews: { rev: ["do it", "review it"] },
-        runs: ["a", "b"].map((m) => ({ combo: { model: m }, who: m, taskId: "rev", repeat: 0, state: "done", ok: true, path: `rev/model-${m}/r0`,
-            turns: [{ answer: `${m} did it`, tools: ["exec"], capped: false }, { answer: `${m} reviewed`, tools: [], capped: false }], checks: [] })),
-    });
-    assert.equal(doc.getElementById("answers-wrap").hidden, false);
-    const cells = [...doc.querySelectorAll("#answers .ans .txt")].map((e) => e.textContent);
-    assert.deepEqual(cells, ["a did it", "b did it", "a reviewed", "b reviewed"], "row by turn, column by model");
-    assert.ok(doc.querySelector('#answers a.view[href="rev/model-a/r0/run.md.html"]'), "each answer opens its run in the viewer");
-    assert.equal(doc.querySelectorAll("#answers button.mark").length, 0, "a saved page cannot store a mark, so it offers none");
-});
-
-test("an answer is text: markup a model wrote (or copied off a hostile page) is shown, never run", () => {
-    const doc = render({
-        dims: ["model"], interviews: { rev: ["<b>q</b>"] },
-        runs: [{ combo: { model: "<i>m</i>" }, who: "<i>m</i>", taskId: "rev", repeat: 0, state: "done", ok: true, path: "p",
-            turns: [{ answer: "<img src=x onerror=\"window.__pwned=1\">", tools: ["<script>"], capped: false }],
-            checks: [{ turn: 1, quote: "<svg onload=1>", note: "<u>n</u>", here: true, still: true }] }],
-    });
-    const html = doc.getElementById("answers").innerHTML;
-    assert.equal(doc.querySelectorAll("#answers img, #answers svg, #answers i, #answers u, #answers script").length, 0, html);
-    assert.match(doc.querySelector("#answers .txt").textContent, /<img src=x/);
-    assert.equal(doc.defaultView.__pwned, undefined);
-});
-
-test("a page with no interview shows no answers section", () => {
-    const doc = render({ dims: [], runs: [] });
-    assert.equal(doc.getElementById("answers-wrap").hidden, true);
 });
 
 // --- storing a mark: POST /mark ---

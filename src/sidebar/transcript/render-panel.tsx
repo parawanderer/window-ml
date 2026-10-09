@@ -28,9 +28,10 @@ import { parseLooseJson } from "../../json-repair";
 import { notesByLine } from "../code/annotate";
 import { followDrag } from "../drag";
 import {
-    openCtxMenu, copyText, ClickableImg, Code, CopyBtn, SheetChip, inlineText, stepKey, displaySource, cursorTipOn, PointerChip, TipText,
+    openCtxMenu, ClickableImg, Code, CopyBtn, SheetChip, inlineText, stepKey, displaySource, cursorTipOn, PointerChip, TipText,
     highlightToken, highlightEl, clearHighlight, tokenHover, pickedHover,
 } from "../ui-kit";
+import { copyText } from "../copy-hash";
 
 /** A tool's returned DOM ELEMENTS, as a hoverable list. Each row carries the same stateless
  *  `clickSelector` the model was handed, so hovering outlines the node on the page and "copy reference"

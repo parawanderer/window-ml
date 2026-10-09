@@ -45,6 +45,19 @@ failing step, and pointing at one would send you to an innocent call. It is a SI
 server recomputes the table with the same `aggregate()` the report uses, so the page cannot disagree with
 `report.md`.
 
+The page is a set of cards: progress and timing, what is running now, an interview's Answers, the **Timeline** (every
+run on one clock, each as the resource panel's event lane: which runs overlapped, where the time went; cached runs are
+left out, they ran in an earlier sweep), Results and Runs. A run opened from it reloads as the run moves, keeping your
+place. Each `run.md.html` has the same lane as its own Timeline section. The page follows the system theme; its
+button switches light/dark. It is Preact under `tests/e2e/bench/page/`, bundled in memory each time the bench starts.
+
+**The page is editable while someone looks at it.** With `--serve`, the server watches the page's sources
+(`tests/e2e/bench/page/`, the lane modules it shares with the panel, `sidebar.css`, `palette.ts`): an edit rebuilds it and
+every open browser reloads onto the new build, keeping its scroll and getting its state straight back, while the sweep
+runs on. So a person, this session or any other agent can work on the page with a human watching it change. A build that
+fails shows the compiler's message on the page and the previous build stays up. Edits to `lane-static.ts` or
+`bundle.mjs` themselves are node modules of the server, so they need a restart.
+
 ```
 npm run build
 node --import tsx tests/e2e/bench/run.mjs tests/e2e/bench/specs/smoke.bench.ts --repeats 1
@@ -115,7 +128,7 @@ A task (or a cell, through `apply`) can set `surface: "hud"` to start the run th
 kit and prompt a UI run gets) instead of a console `ml.agent`; `tools`, `python`, `toolTokens`, `agentOptions` and
 `seed` are console knobs and do not apply to it. `sharedWatches`/`watchNotes` go to `ml.current` as in observe.
 
-## Interviews (a panel, read by a person)
+## Interviews (a panel, read by a person or a model)
 
 A task with `asks: [...]` is an INTERVIEW: each ask is sent once the turn before it ends, every turn's answer lands
 in `outbox/turn-<n>.md` and in the cell's `turns`, and the page gets an **Answers** view (turns as rows, runs as
@@ -128,8 +141,8 @@ USE_ENV=1 node --import tsx tests/e2e/bench/run.mjs tests/e2e/panel/bloat.json \
 
 One run per model, all at once (`--jobs` overrides), each model PROBED first exactly as `panel.mjs` does, and
 `summary.md` in the sweep directory is the file `panel.mjs` writes. On the live page a person selects a wrong line in
-an answer and presses **mark wrong**; marks are kept in the sweep's `marks.json`, and every later run of that model
-and turn is CHECKED: does its answer still contain the marked line (case and spacing folded)? The page and
+an answer and presses **mark wrong**; marks are kept in the sweep's `marks.jsonl` (an append-only log, each record saying who made it), and every later run of that model
+and turn is CHECKED: does its answer still contain the marked line (case, spacing and markdown syntax folded, so a line selected from the rendered answer matches the raw text)? Answers show as markdown, rendered as the panel renders one, or raw (the toggle on the Answers card). The page and
 `summary.md` say "still says" or "no longer says". A verbatim match is crude, but it turns a person's reading into
 something the next run is held to. For a model reading results, `panel.mjs` is the same thing without a page.
 
@@ -143,7 +156,7 @@ something the next run is held to. For a model reading results, `panel.mjs` is t
 | `--repeats N` | Override the spec's repeat count — use `--repeats 1` while iterating on a spec. |
 | `--dry` | Print the matrix and its cell keys, run nothing. Do this before any long sweep. |
 | `--no-cache` | Re-run cells that are already measured. |
-| `--serve` | Serve the live page and print its URL. Costs nothing when nobody opens it; SSE, no dependency, no build step. |
+| `--serve` | Serve the live page and print its URL. Costs nothing when nobody opens it; SSE, and the page is bundled from source in memory (no dist to rebuild). |
 | `--open` | `--serve` plus launch a browser. |
 | `--port N` | Serve on a specific port. The default (7331) is STABLE on purpose, so a browser tab can just reload between sweeps instead of needing a new URL. Falls back to any free port if taken. |
 | `--models a,b` | With an interview file (`.json`) in place of a spec: the models to put it to (or `PANEL_MODELS`). `--surface hud\|console` and `--turn-minutes N` as `panel.mjs` takes them. |
@@ -154,6 +167,19 @@ set one explicitly, and with neither it runs the scripted fake-LLM (which is wha
 deterministic). `apply()`'s `backend.model` overrides the model per cell.
 
 ## What it writes
+
+**Everything the page shows is also a file**, rendered from the same data, and the sweep's last lines in the terminal
+list them. A model driving the bench reads these; it never needs the page. Why, and the rules a new card or file follows (append-only
+logs, who and when on every edit): [docs/dev/bench-design.md](../../../docs/dev/bench-design.md).
+
+| On the page | In the sweep directory | From a terminal |
+| --- | --- | --- |
+| Results table | `report.md` (and `rows.json`) | read it |
+| Answers, side by side | `summary.md` (`summary-<task>.md` with several interviews) | read it |
+| "mark wrong" and its checks | `marks.jsonl` (append-only; who and when on each); each answer's checks in `summary.md` | add a mark: `node tests/e2e/bench/mark.mjs <sweep dir> --model <who> --turn <n> --quote "<line>" [--note "<why>"] --by "<who you are>"`; `--list` shows them. The next run of that model is checked for it. |
+| Spec: which spec version ran, who started the sweep, the diff against the sweep before | `spec.md`; the log of every sweep, `sweeps.jsonl` (append-only) | read it. Set `BENCH_BY="<who you are>"` when you start a sweep, so it says who did. |
+| Timeline | `timeline.md`: each run's start, end and busy time on one clock, which runs overlapped and for how long, then every span (model calls with their phases, tool steps, model loads, sub-calls) | read it |
+| all of it | `page.json`: the exact state `report.html` renders | `jq` it |
 
 `tests/e2e/artifacts/bench/<spec>/` (gitignored) holds `report.md`, `rows.json` (the aggregate AND every
 individual run, for further analysis), and one directory per RUN at

@@ -129,7 +129,7 @@ export function panelSummary(name, iv, results, skipped, surface) {
             // A person's marks from an earlier read (the bench's page): whether this answer still says the marked line.
             for (const c of (r.checks ?? []).filter((c) => c.turn === i + 1 && c.still != null)) {
                 const what = c.here ? "marked wrong" : c.still ? "still says a line marked wrong" : "no longer says a line marked wrong";
-                L.push(`- ${what}${c.quote ? `: "${c.quote.replace(/\s+/g, " ").slice(0, 200)}"` : ""}${c.note ? ` (${c.note.replace(/\s+/g, " ").slice(0, 200)})` : ""}`);
+                L.push(`- ${what}${c.quote ? `: "${c.quote.replace(/\s+/g, " ").slice(0, 200)}"` : ""}${c.note ? ` (${c.note.replace(/\s+/g, " ").slice(0, 200)})` : ""}${c.by ? `, marked by ${c.by}` : ""}`);
             }
             if ((r.checks ?? []).some((c) => c.turn === i + 1 && c.still != null)) L.push("");
         }
@@ -162,19 +162,27 @@ export function interviewBench(iv, models, { surface, turnMinutes = 15 } = {}) {
     };
 }
 
-/** Whitespace and case folded, so a quote copied out of a rendered answer still matches its source text. */
-const fold = (s) => String(s ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+/**
+ * Markdown syntax, whitespace and case folded, so a quote selected out of a RENDERED answer (where `**`, backticks,
+ * list markers and link targets are gone) still matches the raw text the model sent. Applied to both sides, so a quote
+ * taken from the raw text matches too.
+ */
+export const fold = (s) => String(s ?? "")
+    .replace(/\[([^\]]*)\]\([^)\s]*\)/g, "$1")             // [text](url) -> text
+    .replace(/^[ \t]*(?:#{1,6}|>|[-*+]|\d+[.)])[ \t]+/gm, "")  // heading, quote and list markers at a line's start
+    .replace(/[*_`|]/g, "")                                  // emphasis, code spans and fences, table pipes
+    .replace(/\s+/g, " ").trim().toLowerCase();
 
 /**
  * Turn a person's marks into CHECKS on a run's answers. A mark says "this answer, from this model at this turn, is
  * wrong", with the line it quoted; on any later run of the same model and turn the check is whether the answer still
  * says that line. It is the bridge from a panel (read by a person) back to something scored: crude, since a model
- * can restate a wrong claim in new words, but a quote that comes back verbatim is the same claim.
+ * can restate a wrong claim in new words, but a quote that comes back verbatim (markdown syntax, case and spacing aside: `fold`) is the same claim.
  *
  * @param {{ taskId: string, who: string, hash?: string|null, turns: { answer: string }[] }} run `who` is what a mark
  *   names the run by (the `model` value when the sweep has one, else its whole combination)
  * @param {Array<{ id: string, taskId: string, who: string, turn: number, quote: string, note?: string, hash?: string|null }>} marks
- * @returns {Array<{ id: string, turn: number, quote: string, note: string, here: boolean, still: boolean | null }>}
+ * @returns {Array<{ id: string, turn: number, quote: string, note: string, by: string, at: string | null, here: boolean, still: boolean | null }>}
  *   `here`: the mark was made on THIS run; `still`: the answer still contains the quote (null: that turn has no answer)
  */
 export function checkMarks(run, marks) {
@@ -183,7 +191,7 @@ export function checkMarks(run, marks) {
         if (m.taskId !== run.taskId || m.who !== run.who) continue;
         const t = run.turns?.[m.turn - 1];
         const here = !!m.hash && m.hash === run.hash;
-        out.push({ id: m.id, turn: m.turn, quote: m.quote, note: m.note ?? "", here,
+        out.push({ id: m.id, turn: m.turn, quote: m.quote, note: m.note ?? "", by: m.by ?? "unknown", at: m.at ?? null, here,
             still: t ? (m.quote ? fold(t.answer).includes(fold(m.quote)) : true) : null });
     }
     return out;

@@ -24,9 +24,10 @@ import { usageSamples, liveOutTokens } from "./usage";
 import { currentTurnSteps, liveShownByTranscript, orbStatus } from "./orb-status";
 import { fmtDur } from "../timestamps";
 import {
-    BusyBlob, Code, CopyBtn, SheetChip, Hash, Stamp, Dot, Disclosure,
+    BusyBlob, Code, CopyBtn, SheetChip, Stamp, Dot, Disclosure,
     decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText, cursorTipOn, PointerChip, TipText,
 } from "../ui-kit";
+import { Hash } from "../copy-hash";
 import { FeedbackBlock, ReusedBlock } from "./answer-render";
 import { foldStreaks, StepStreak } from "./step-streak";
 import { CALL_TITLE } from "../../tools/tool-params";

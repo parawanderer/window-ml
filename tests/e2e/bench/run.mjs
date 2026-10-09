@@ -36,11 +36,18 @@ import { mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { runOnce, resolveBackendFromEnv } from "../run-once.mjs";
+import { runOnce, resolveBackendFromEnv, renderRun } from "../run-once.mjs";
 import { measureRun, aggregate } from "./metrics.mjs";
 import { expandCells, cellKey, cellPath, comboLabel, buildGroups, parseSelector, slug } from "./cells.mjs";
 import { writeReport, mdSink, terminalSink } from "./sinks.mjs";
 import { startDashboard, staticPage } from "./serve.mjs";
+import { pageSources } from "./page/bundle.mjs";
+import { addMark, readMarks, defaultBy } from "./mark.mjs";
+import { recordSweep, specProvenance, specText } from "./sweeps.mjs";
+import { timelineText } from "./timeline-text.mjs";
+import { watch as watchFs } from "node:fs";
+// The sweep's timeline: each run's events as the resource panel derives them; the page draws them with its lane.
+const { eventsFrom } = await import("../../../src/sidebar/resource/model-stats.ts");
 import { loadInterview, interviewBench, interviewDriver, readTurns, probe, panelSummary, promptChars, checkMarks, validMark } from "../interview.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -121,7 +128,7 @@ async function buildVariant(group, fingerprint, log) {
  */
 let pdfBrowser = null;   // shared: launching one per cell would dominate the runtime of a sweep
 async function renderPdf(session, dir, name) {
-    const { sessionToHtml } = await import("../../../sidebar/export.ts");
+    const { sessionToHtml } = await import("../../../src/sidebar/export/export.ts");
     const html = sessionToHtml(session, name);
     await writeFile(path.join(dir, "run.html"), html);
     // `||=` on a promise, not on the browser: with --jobs N several cells reach here at once, and awaiting
@@ -152,7 +159,9 @@ async function runCell(cell, ctx, index) {
             }
         } catch { /* unreadable cache → re-run */ }
     }
-    ctx.report?.(index, "running");
+    // Where its artifacts land is known now, so the page can open a run WHILE it runs: they are rewritten on every
+    // event, and the open viewer reloads as the run moves.
+    ctx.report?.(index, "running", { path: path.relative(ctx.sweepDir, dir) });
     await rm(dir, { recursive: true, force: true });   // a re-run must not read a stale run.md as its own
     await mkdir(dir, { recursive: true });
 
@@ -203,6 +212,7 @@ async function runCell(cell, ctx, index) {
             // A sweep cell takes minutes; without this a running row is a spinner, and a slow step is
             // indistinguishable from a wedged one.
             onEvent: (ev) => {
+                ctx.rawOf?.(index)?.push(ev);
                 const live = { ...(ctx.liveOf?.(index) || {}) };
                 if (ev.kind === "agent") { live.maxSteps = ev.maxSteps; live.last = "started"; }
                 else if (ev.kind === "agent-step" && ev.tool) {
@@ -229,6 +239,7 @@ async function runCell(cell, ctx, index) {
     }
 
     const measurement = measureRun(run, t);
+    ctx.finalSession?.(index, run.session ?? null);
     // An interview's answers, turn by turn, kept with the cell so a cached one still sets them side by side.
     const turns = t.asks?.length ? readTurns(dir, t.asks.length + 1) : null;
     // Best-effort: a failed render must not lose the cell's measurement, which is the expensive part.
@@ -350,6 +361,10 @@ const main = async () => {
     const backend = await resolveBackendFromEnv();
     const sweepDir = path.join(ARTROOT, slug(spec.name));
     await mkdir(sweepDir, { recursive: true });
+    // Which spec this sweep ran and who started it, appended to the sweep's log; the page's Spec card, spec.md and
+    // page.json show it beside the diff against the sweep before (sweeps.mjs).
+    const specRel = path.relative(ROOT, path.resolve(args.specPath));
+    const provenance = specProvenance(await recordSweep(sweepDir, { specPath: specRel, source: await readFile(args.specPath, "utf8"), fingerprint, dirty, by: defaultBy() }));
 
     const ctx = {
         spec, fingerprint, sweepDir, backend, buildDirs, cache: args.cache,
@@ -365,35 +380,74 @@ const main = async () => {
     const runsState = cells.map((c) => ({ combo: c.combo, taskId: c.task.id, repeat: c.repeat, state: "pending", who: whoOf(c.combo) }));
     const results = new Array(cells.length);
     // A person's marks on interview answers, kept beside the sweep so the next run of it checks them.
-    const marksFile = path.join(sweepDir, "marks.json");
+    // marks.jsonl is the ONE store, an append-only log written by the page's button and by mark.mjs alike (both through
+    // `addMark`, each record saying who made it), re-read whenever it changes, so a mark made from the command line
+    // mid-sweep shows up on the page and neither side can overwrite the other's.
+    const marksFile = path.join(sweepDir, "marks.jsonl");
     let marks = [];
-    try { marks = JSON.parse(await readFile(marksFile, "utf8")); } catch { /* none yet */ }
+    const loadMarks = async () => { marks = await readMarks(sweepDir); };
+    await loadMarks();
     const recheck = (r) => { if (r.turns) r.checks = checkMarks(r, marks); };
     const onMark = async (body) => {
-        const m = validMark(body);
-        if (!m) return null;
-        const mark = { id: createHash("sha256").update(JSON.stringify(m) + Date.now()).digest("hex").slice(0, 10), ...m, at: new Date().toISOString() };
-        marks.push(mark);
-        await writeFile(marksFile, JSON.stringify(marks, null, 2));
+        if (!validMark(body)) return null;
+        // The page has no login, so a mark from it is by the person at the page, which is what it says.
+        const mark = await addMark(sweepDir, body, "person (page)");
+        await loadMarks();
         runsState.forEach(recheck);
         push();
         return mark;
     };
-    const dash = args.serve ? await startDashboard({ artifactRoot: sweepDir, onMark, ...(args.port != null ? { port: args.port } : {}) }) : null;
+    let marksTimer = null;
+    const marksWatch = (() => {
+        try {
+            return watchFs(sweepDir, (_, f) => {
+                if (f !== "marks.jsonl" && f !== "marks.json") return;
+                clearTimeout(marksTimer);
+                marksTimer = setTimeout(async () => { await loadMarks(); runsState.forEach(recheck); push(); }, 100);
+            });
+        } catch { return null; }
+    })();
+    // Watching the page's own sources makes the page editable while it is open: a person or an agent changes a file
+    // under bench/page/ (or the lane's shared modules) and every open browser reloads onto the new build.
+    const dash = args.serve ? await startDashboard({ artifactRoot: sweepDir, onMark, watch: pageSources(), ...(args.port != null ? { port: args.port } : {}) }) : null;
     const started = Date.now();
     // The question each turn of each interview asked, for the answers view's row headings.
     const interviews = Object.fromEntries(spec.tasks.filter((t) => t.asks?.length).map((t) => [t.id, [t.task, ...t.asks]]));
 
+    // The sweep timeline (page/timeline.tsx): every run on one clock, each its own event lane, so a sweep shows where the
+    // time went and which runs overlapped. A finished cell's events come from its final session; a running one's from
+    // its live event stream, rebuilt at most every 2 s (a session rebuild per event, per running cell, would be most of
+    // the CPU). Cached cells have none: their times belong to an earlier sweep and would stretch the axis across it.
+    const raw = cells.map(() => []);
+    const laneEvents = cells.map(() => null);
+    let ganttAt = 0, gantt = null;
+    ctx.rawOf = (i) => raw[i];
+    ctx.finalSession = (i, session) => { laneEvents[i] = session ? eventsFrom([session]) : []; raw[i] = []; ganttAt = 0; };
+    const sweepTimeline = () => {
+        if (Date.now() - ganttAt < 2000 && gantt) return gantt;
+        ganttAt = Date.now();
+        const now = Date.now();
+        const evs = cells.map((c, i) => {
+            if (runsState[i].cached) return null;
+            if (laneEvents[i]) return laneEvents[i];
+            if (runsState[i].state !== "running" || !raw[i].length) return null;
+            try { const { session } = renderRun(raw[i]); return session ? eventsFrom([session], now) : null; } catch { return null; }
+        });
+        const runs = evs.flatMap((events, index) => (events?.length ? [{ index, events }] : []));
+        gantt = runs.length ? { runs, now } : null;
+        return gantt;
+    };
     const push = () => dash?.update({
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
         runs: runsState, rows: aggregateRows(cells, results),
-        started, finished: null, jobs: args.jobs, dirty, interviews, skipped,
+        started, finished: null, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(),
     });
     ctx.liveOf = (i) => runsState[i].live;
     ctx.report = (i, state, info) => {
         const r = runsState[i];
         if (state === "running" && r.state !== "running") r.startedAt = Date.now();   // for the elapsed ticker
         r.state = state;
+        if (info?.path && state === "running") r.path = info.path;
         if (info?.live) { r.live = info.live; return push(); }
         if (info?.turns && state === "running") { r.turns = info.turns; recheck(r); return push(); }
         if (state === "done" && info) {
@@ -453,6 +507,8 @@ const main = async () => {
     const md = writeReport(sweep, mdSink());
     const reportPath = path.join(sweepDir, "report.md");
     await writeFile(reportPath, md);
+    // What the sweep wrote, for the terminal: a model driving the bench reads these rather than the page.
+    const files = [["report", "report.md", "the results table, per cell"]];
     // An interview's answers as panel.mjs writes them, so a model reading the sweep reads the same file either way.
     for (const t of spec.tasks.filter((t) => t.asks?.length)) {
         const res = runs.flatMap((r, i) => r.taskId === t.id && results[i] ? [{
@@ -463,28 +519,50 @@ const main = async () => {
         const iv = { task: t.task, asks: t.asks, about: spec.description };
         const file = spec.tasks.length === 1 ? "summary.md" : `summary-${slug(t.id)}.md`;
         await writeFile(path.join(sweepDir, file), panelSummary(t.id, iv, res, skipped, t.surface));
-        console.log(`  answers: ${path.relative(ROOT, path.join(sweepDir, file))}`);
+        files.push([`answers${spec.tasks.length === 1 ? "" : ` (${t.id})`}`, file, "each turn's answers side by side, and the checks of lines marked wrong (add one: bench/mark.mjs)"]);
     }
+    // EVERYTHING THE PAGE SHOWS IS ALSO A FILE, from the same object: report.html bakes `pageState` in, page.json is
+    // it verbatim, and timeline.md is its timeline as text, so a model reading the sweep from a terminal and a person
+    // reading the page see the same thing and cannot drift apart.
+    const pageState = {
+        name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
+        runs, rows, started, finished, jobs: args.jobs, dirty, fingerprint, pdf: args.pdf, interviews, skipped, spec: provenance,
+        timeline: (ganttAt = 0, sweepTimeline()),
+    };
     // report.html — the live page with the final state baked in. Written ALWAYS, not only with --serve:
     // the page is already an index of the runs, so archiving it is what makes the sweep directory
     // navigable on its own. Links are relative, so it works from disk with no server.
-    await writeFile(path.join(sweepDir, "report.html"), staticPage({
-        name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
-        runs, rows, started, finished, jobs: args.jobs, dirty, fingerprint, pdf: args.pdf, interviews, skipped,
-    }));
+    await writeFile(path.join(sweepDir, "report.html"), await staticPage(pageState));
+    await writeFile(path.join(sweepDir, "page.json"), JSON.stringify(pageState, null, 2));
+    const nameOf = (i) => [runs[i].taskId, ...Object.keys(spec.dimensions || {}).map((d) => runs[i].combo[d]), `r${runs[i].repeat}`].join(" · ");
+    await writeFile(path.join(sweepDir, "timeline.md"), timelineText(pageState.timeline, nameOf, { cached: runs.filter((r) => r.cached).length }));
+    await writeFile(path.join(sweepDir, "spec.md"), specText(provenance));
     await writeFile(path.join(sweepDir, "rows.json"), JSON.stringify({ fingerprint, dirty, started, finished, rows, runs }, null, 2));
-    console.log(`\n  report: ${path.relative(ROOT, reportPath)}\n  page:   ${path.relative(ROOT, path.join(sweepDir, "report.html"))}\n`);
+    files.push(
+        ["timeline", "timeline.md", "every run on one clock: spans, overlaps, model loads"],
+        ["spec", "spec.md", "which spec version ran, who started the sweep, the diff against the sweep before (log: sweeps.jsonl)"],
+        ["page data", "page.json", "everything the page shows, as JSON"],
+        ["page", "report.html", "the same, for a person (opens from disk)"],
+    );
+    if (existsSync(marksFile)) files.push(["marks", "marks.jsonl", "lines marked wrong, who marked each and when (append-only); later runs are checked for them"]);
+    console.log(`\n  ${path.relative(ROOT, sweepDir)}/`);
+    for (const [what, f, why] of files) console.log(`    ${f.padEnd(22)} ${what}: ${why}`);
+    console.log("");
+    // A live watcher holds the process open: without a page to keep current, stop watching marks.jsonl now.
+    const unwatchMarks = () => { clearTimeout(marksTimer); marksWatch?.close(); };
+    if (!dash) unwatchMarks();
 
     if (dash) {
         dash.update({
             name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
-            runs: runsState, rows, started, finished, jobs: args.jobs, dirty, interviews, skipped,
+            runs: runsState, rows, started, finished, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(),
         });
         // Held open on purpose: the page IS the result when you ran with --serve, and tearing the server
         // down the instant the last cell lands would blank it exactly when you look.
         console.log(`  live: ${dash.url} — still serving; Ctrl+C to stop.\n`);
         await new Promise((r) => process.on("SIGINT", r));
         await dash.stop();
+        unwatchMarks();
     }
 };
 

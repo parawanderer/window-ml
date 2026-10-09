@@ -110,8 +110,9 @@ From the memories and git, as of 2026-10-08:
   the live `--serve` page). Skill: `.claude/skills/bench/SKILL.md`; worked examples in `tests/e2e/bench/specs/`.
 - **The pointer-ID experiment** (`specs/pointer-ids.bench.ts`): its pilot found three bugs in the bench, all fixed;
   the real GPU run was never done.
-- **Paused**: drawing the bench's runs with the resource panel's event format (`ExportEvent`), deliberately waited on
-  the resource panel finishing. The panel has since shipped, so this can resume.
+- **Done (2026-10-09)**: the bench draws its runs with the resource panel's event lane: a Timeline section on each
+  run's page and a sweep timeline (every run on one clock) on the `--serve` page, both from `eventsFrom` and the
+  panel's own `LaneBars`.
 - **Gaps for this plan**:
   - ~~a cell cannot set `surface` yet~~: done, `surface` on a task or on `CellEffects` (2026-10-09);
   - `backend` is per cell already, so the panel models are a `model` dimension;

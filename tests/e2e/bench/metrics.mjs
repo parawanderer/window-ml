@@ -434,18 +434,18 @@ export function rate(values) {
 /**
  * The columns a report shows, in order. Each pulls one number out of a per-run measurement, so adding a
  * column is one entry here and nothing else. `agg` says how the repeats combine: a rate for booleans,
- * spread for numbers.
+ * spread for numbers. `about` is the column's tooltip on the page: what the number is, in a sentence.
  */
 export const COLUMNS = [
-    { key: "succeeded", label: "success", agg: "rate", get: (m) => m.succeeded, digits: 2, good: "high" },
-    { key: "reEmitRate", label: "re-emit", agg: "spread", get: (m) => m.reEmission.rate, digits: 2, good: "low" },
-    { key: "derefCalls", label: "deref", agg: "spread", get: (m) => m.pointers.derefCalls, digits: 1, good: "high" },
-    { key: "faultRate", label: "faults", agg: "spread", get: (m) => m.pointers.faultRate, digits: 2, good: "low" },
-    { key: "silentWrong", label: "silent-wrong", agg: "spread", get: (m) => m.pointers.silentWrong, digits: 2, good: "low" },
-    { key: "recoveryRate", label: "recovery", agg: "spread", get: (m) => m.recovery.rate, digits: 2, good: "high" },
-    { key: "steps", label: "steps", agg: "spread", get: (m) => m.steps, digits: 1 },
-    { key: "tokens", label: "tokens", agg: "spread", get: (m) => m.tokens.total, digits: 0, good: "low" },
-    { key: "runMs", label: "secs", agg: "spread", get: (m) => m.runMs / 1000, digits: 1, good: "low" },
+    { key: "succeeded", label: "success", about: "Share of runs the task's own predicate (in the spec) scored as right. Blank when the task has no predicate.", agg: "rate", get: (m) => m.succeeded, digits: 2, good: "high" },
+    { key: "reEmitRate", label: "re-emit", about: "Share of captured tool outputs the model later retyped (40+ characters verbatim, or most of its values) instead of citing them. Lower is better.", agg: "spread", get: (m) => m.reEmission.rate, digits: 2, good: "low" },
+    { key: "derefCalls", label: "deref", about: "Dereference calls per run: how often the model read a tool output back through its @tool: pointer.", agg: "spread", get: (m) => m.pointers.derefCalls, digits: 1, good: "high" },
+    { key: "faultRate", label: "faults", about: "Share of dereference calls that failed on a bad pointer (mistyped or invented).", agg: "spread", get: (m) => m.pointers.faultRate, digits: 2, good: "low" },
+    { key: "silentWrong", label: "silent-wrong", about: "Mistyped pointers that resolved to a DIFFERENT live output, with no error. Should be zero.", agg: "spread", get: (m) => m.pointers.silentWrong, digits: 2, good: "low" },
+    { key: "recoveryRate", label: "recovery", about: "After a pointer fault, the share where the next step got it right instead of giving up or retyping.", agg: "spread", get: (m) => m.recovery.rate, digits: 2, good: "high" },
+    { key: "steps", label: "steps", about: "Agent steps (tool calls and answers) per run.", agg: "spread", get: (m) => m.steps, digits: 1 },
+    { key: "tokens", label: "tokens", about: "Prompt plus completion tokens per run as the backend reported them, sub-calls included. Against the fake model these are its own chars/4 estimates.", agg: "spread", get: (m) => m.tokens.total, digits: 0, good: "low" },
+    { key: "runMs", label: "secs", about: "Wall-clock seconds per run. With several jobs at once, runs share the machine and this stretches.", agg: "spread", get: (m) => m.runMs / 1000, digits: 1, good: "low" },
 ];
 
 /** Aggregate the repeats of one cell into one row of the report. */

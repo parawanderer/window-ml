@@ -12,7 +12,7 @@ import { type ResourceEvent, type EventPlacement, loadEdges, eventsIn } from "..
 import { live, eventKey, hotEvent, barKey, eventHover, trackCursor, gapHover, snapUnder, litBy, hoverAt } from "./chart-interaction";
 import { resourceHistory } from "./panel-state";
 import { colorFor } from "../palette";
-import { phaseFill } from "./resource-lane-ui";
+import { phaseFill } from "./lane-paint";
 import { crosshair, timeGrid } from "../store";
 import { clockAt } from "../timestamps";
 import { hoverModel } from "./vram-focus";
