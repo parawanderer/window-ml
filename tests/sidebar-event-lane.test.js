@@ -361,28 +361,32 @@ test("tooltips: a chart tip reads the DATAPOINT under the cursor; the row tip re
 
     // A band needs two samples to have a shape at all.
     await untilTrue(w, () => w.shadow.querySelector(".rc-band"), "no model band was ever drawn");
+    const bandTip = () => [...w.shadow.querySelectorAll(".rc-tip")].find((e) => !e.classList.contains("vram-rowtip"))?.textContent || "";
+    const rowTip = () => w.shadow.querySelector(".vram-rowtip")?.textContent || "";
+    // ONE TIP AT A TIME, as one pointer gives: on the plot first, then on the row (a move off a plot closes its tip,
+    // chart.tsx's backstop, so the two are never both open).
     mouse(w, w.shadow.querySelector(".rc-band"), "pointerenter");
     mouse(w, w.shadow.querySelector(".rc-plot"), "pointermove", { clientX: 10, clientY: 10 });
+    await w.flush();
+    assert.match(bandTip(), /19\.00 GiB/, "the band tip opens on what is resident");
+    // The chart is a history, so a reading off it is only meaningful with the instant attached.
+    assert.match(bandTip(), /\d\d:\d\d:\d\d/, "the band tip stamps the datapoint it read");
+    // The model grows while it is open. The pointer is over the newest datapoint, which is that same reading, so the
+    // chart's tip follows. Reading an OLDER datapoint needs real layout (jsdom reports every element as zero-sized, so
+    // every fraction clamps to the right edge) and is asserted in tests/e2e/resource-panel.spec.mjs against a real plot.
+    w.setVram(growModel(31));
+    await untilTrue(w, () => bandTip().includes("31.00 GiB"), `hovering the newest point still read stale (${bandTip()})`);
+
+    // Now the row. It is a list of what is resident NOW, so its tip follows a change while it is open.
     const row = w.shadow.querySelector(".vram-row");
     mouse(w, row, "pointerenter");
     mouse(w, row, "pointermove", { clientX: 40, clientY: 40 });
     await w.flush();
-
-    const bandTip = () => [...w.shadow.querySelectorAll(".rc-tip")].find((e) => !e.classList.contains("vram-rowtip"))?.textContent || "";
-    const rowTip = () => w.shadow.querySelector(".vram-rowtip")?.textContent || "";
-    assert.match(bandTip(), /19\.00 GiB/, "the band tip opens on what is resident");
-    assert.match(rowTip(), /19\.00 GiB/, "so does the row tip");
-    // The chart is a history, so a reading off it is only meaningful with the instant attached.
-    assert.match(bandTip(), /\d\d:\d\d:\d\d/, "the band tip stamps the datapoint it read");
-
-    // The model grows while both are open. The ROW is a list of what is resident NOW, so its tip follows; the
-    // pointer is over the newest datapoint, which is that same reading, so the chart's does too. Reading an
-    // OLDER datapoint needs real layout (jsdom reports every element as zero-sized, so every fraction clamps
-    // to the right edge) and is asserted in tests/e2e/resource-panel.spec.mjs against a real plot.
-    w.setVram(growModel(31));
-    await untilTrue(w, () => rowTip().includes("31.00 GiB"), `the row tip froze at hover time (${rowTip()})`);
-    assert.doesNotMatch(rowTip(), /19\.00 GiB/);
-    await untilTrue(w, () => bandTip().includes("31.00 GiB"), `hovering the newest point still read stale (${bandTip()})`);
+    assert.equal(bandTip(), "", "moving onto the row closed the chart's tip");
+    assert.match(rowTip(), /31\.00 GiB/, "the row tip opens on what is resident");
+    w.setVram(growModel(40));
+    await untilTrue(w, () => rowTip().includes("40.00 GiB"), `the row tip froze at hover time (${rowTip()})`);
+    assert.doesNotMatch(rowTip(), /31\.00 GiB/);
 });
 
 test("tooltips: the overview pool tip reads its datapoint, and carries the line's own swatch", async () => {

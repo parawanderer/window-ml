@@ -25,14 +25,14 @@ import { type Axis, segments, chartWindow, axisOf, scrubExtent, scrubPinch, wind
 import { scopeToSpan, filterEvents, sessionWindow } from "../../resource/resource-lane";
 import { deviceBands, hostBands, residualRank } from "../../resource/resource-bands";
 import { editLayout, VRAM_POLL_MS, laneFilter, layout, sampleGapMs } from "./panel-state";
-import { chartHeld, HOLD_LAPSE_MS, holdAxis, holdKey, hoverAt, lastPointerAt, live, readingIsOverlay, releaseAxis, stepPool, tipMuted } from "./chart-interaction";
+import { chartHeld, HOLD_LAPSE_MS, holdAxis, holdKey, hoverAt, lastPointerAt, live, readingIsOverlay, releaseAxis, stepPool, tipMuted, eventHover, leavePool, poolHover } from "./chart-interaction";
 import { scopedHash, resWindowS, zoomRange, laneScoped, laneEnabled, crosshair } from "../store";
 import { EventLane } from "./resource-lane-ui";
 import { AXIS_TICK_MS } from "./resource-overlays";
 import { settleScrub, ScrubStrip } from "./resource-scrub";
 import { DeviceView } from "./resource-device-view";
 import { UtilView, BoxView, OverlayView } from "./resource-box-views";
-import { kbFocus, hoverModel, stepFocus, stepDepth } from "./vram-focus";
+import { kbFocus, kbPool, hoverModel, stepFocus, stepDepth } from "./vram-focus";
 
 /** Mute the cursor tip if one is showing, and say whether that happened — so the Esc handler can fall through
  *  to leaving the zoom when there was nothing to hide. The decision lives HERE, beside the signals it reads,
@@ -112,7 +112,17 @@ function TrackView({ def, samples, latest, hidden, events = [] }: { def: TrackDe
 // the panel's iframe for the page: moving anywhere in the panel off the chart; the shell saying the pointer is on the
 // page; and the lapse, in the chart's tick.
 if (typeof document !== "undefined") document.addEventListener("pointermove", (e) => {
-    if (chartHeld.value && !(e.target as Element | null)?.closest?.(".rc, .rc-lane")) chartHeld.value = null;
+    const on = e.target as Element | null;
+    if (chartHeld.value && !on?.closest?.(".rc, .rc-lane")) chartHeld.value = null;
+    // THE SAME BACKSTOP FOR A PLOT'S HOVER (its crosshair, its readout, a pool lit, a rule's tip). A plot clears them on
+    // its own pointerleave, but a plot redrawn under a still pointer (a live page's next state) can be a new element
+    // that never sees the pointer go, and its readout stayed up wherever the pointer went next. Anywhere that is not a
+    // plot, a plot's hover is over: unless the keyboard holds a line, and except the lane's own (it clears it itself).
+    if (on?.closest?.(".rc-plot") || kbFocus.value || kbPool.value) return;
+    if (crosshair.value) crosshair.value = null;
+    if (hoverAt.value && hoverAt.value.surface !== "lane") hoverAt.value = null;
+    if (eventHover.value && eventHover.value.scope !== "lane") eventHover.value = null;
+    if (poolHover.value) leavePool();
 }, { passive: true });
 
 /** THE CHART itself: one track per memory pool on a shared segmented axis, the scrub strip above and the
