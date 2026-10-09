@@ -288,6 +288,9 @@ model, and call `ml.agent`. What's built in:
 - **DOM recon tools** — `findByText`, `describeElement`, `ancestors`,
   `countMatches`, `sampleText`, plus an `exec` escape hatch. Small, structured
   output (never raw HTML), so context stays cheap.
+- **Acting** — `click` and `type`, each asking you before it runs. A run given
+  its own `tools` list gets only what it lists, except that `exec` always brings
+  `agent_api_docs` with it (the reference to what `ml` holds, read in capped pieces).
 - **Eyes, auto-wired — natively when possible.** If your model reports vision
   capability (or your configured [OCR](#ocr) model does), a `look` tool is added
   automatically so the agent can orient and *visually verify* its work. **When the

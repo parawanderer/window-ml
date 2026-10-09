@@ -2799,7 +2799,7 @@ test("the async/wait advice is the wait tool's own, not repeated in the prompt",
     assert.match(wait.description, /Use it generously before you look\/read again/);
 });
 
-test("the shadow-DOM sentence names only the piercing tools the run has: a console run has no click or type", async () => {
+test("the shadow-DOM sentence names only the piercing tools the run has: a hand-picked toolset without click or type", async () => {
     const seen = [];
     const world = loadPageWorld({
         onRuntimeMessage: (m) => {
@@ -2808,11 +2808,33 @@ test("the shadow-DOM sentence names only the piercing tools the run has: a conso
         }
     });
     const named = (p) => p.match(/the DOM tools \(([^)]*)\) pierce/)[1].split(" / ");
-    await world.ml.agent("t", { vision: false });   // the console's default toolset
+    const picked = world.ml.domTools.filter(t => ["findByText", "describeElement", "wait"].includes(t.name));
+    await world.ml.agent("t", { vision: false, tools: picked });
     assert.ok(named(seen[0]).includes("findByText"));
     assert.ok(!named(seen[0]).includes("click") && !named(seen[0]).includes("type"), named(seen[0]).join(","));
-    await world.ml.agent("t", { vision: false, extraTools: [world.ml.clickTool(), world.ml.typeTool()] });
+    await world.ml.agent("t", { vision: false });   // the default kit, which has them since 2026-10-09
     assert.ok(named(seen[1]).includes("click") && named(seen[1]).includes("type"), "a run that has them is told they pierce");
+});
+
+test("the default kit has click and type (asking before they act); a hand-picked list gets agent_api_docs beside exec, never click", async () => {
+    const tools = [];
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type === "GET_CONFIG" || m.type === "MODEL_CAPS") return undefined;
+            tools.push((m.payload.tools || []).map(t => t.function?.name ?? t.name)); return { data: reply("done") };
+        }
+    });
+    await world.ml.agent("t", { vision: false });
+    assert.ok(tools[0].includes("click") && tools[0].includes("type"), tools[0].join(","));
+    assert.equal(tools[0].filter(n => n === "click").length, 1, "once");
+    assert.equal(world.ml.clickTool().requiresApproval, true);
+    assert.equal(world.ml.typeTool().requiresApproval, true);
+    const exec = world.ml.domTools.find(t => t.name === "exec");
+    await world.ml.agent("t", { vision: false, tools: [exec] });
+    assert.deepEqual([...tools[1]].filter(n => n !== "navigate").sort(), ["agent_api_docs", "exec"], "exec brings the docs; a hand-picked list gets no click/type");
+    const find = world.ml.domTools.find(t => t.name === "findByText");
+    await world.ml.agent("t", { vision: false, tools: [find] });
+    assert.ok(!tools[2].includes("agent_api_docs"), "no exec, no docs added");
 });
 
 test("wait tool: fixed ms pause and wait-for-selector resolve", async () => {
