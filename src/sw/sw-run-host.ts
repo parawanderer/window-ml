@@ -691,6 +691,13 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                         const cfg = await getConfig();
                         if (!cfg.cdp) return { result: `${env.result || ""}\n\nTrusted keyboard input (for a canvas / WebGL / remote-desktop / sealed target) needs a debugger (CDP), which is OFF — enable "Debugger-based actions (CDP)" in window.ml Settings → Advanced.`, renderIn: env.renderIn, renderOut: env.renderOut };
                         const t = env.cdpType;
+                        // WHAT is typed is the MODEL's: `args.text` and `args.submit`, the call the human approved. The
+                        // page's reply only says WHERE (focus / a point / a sealed selector); its `text`/`submit` are an
+                        // echo the page could change, so they are never read. The page's type tool hands `text` over
+                        // verbatim, so an honest page types exactly the same keys.
+                        const own = args as { text?: unknown; submit?: unknown };
+                        if (name !== "type" || typeof own.text !== "string") return { result: `Error: the page asked for a trusted (debugger) type the "${name}" call did not make; nothing was typed.`, renderIn: env.renderIn, renderOut: env.renderOut };
+                        const text = own.text, submit = own.submit === true;
                         let fx = t.x, fy = t.y, where = "the page's current focus";
                         if (t.selector) {
                             const resolved = await cdpShadowResolve(tabId, t.selector);
@@ -704,7 +711,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                             const c = await cdpClick(tabId, fx, fy);
                             if (!("ok" in c)) return { result: (c as { error: string }).error, renderIn: env.renderIn, renderOut: env.renderOut };
                         }
-                        const typed = await cdpKeyType(tabId, t.text, t.submit);
+                        const typed = await cdpKeyType(tabId, text, submit);
                         if (!("ok" in typed)) return { result: (typed as { error: string }).error, renderIn: env.renderIn, renderOut: env.renderOut };
                         let vres = "", vimg: string | undefined, vimgLabel: string | undefined, vfeedback: import("../contract").ToolFeedback | undefined;
                         if (t.verify) {
@@ -717,9 +724,9 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                             const venv = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload }).catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
                             if (venv) { vres = venv.result || ""; vimg = venv.image; vimgLabel = venv.imageLabel; vfeedback = venv.feedback; addSub(venv.subUsage); }
                         }
-                        const shown = t.text.length > 60 ? t.text.slice(0, 60) + "…" : t.text;
+                        const shown = text.length > 60 ? text.slice(0, 60) + "…" : text;
                         const tail = t.verify ? "" : " Re-run look to see the result.";
-                        return { result: `Typed "${shown}" into ${where} via the debugger (trusted keyboard, additive).${t.submit ? " Submitted (Enter)." : ""}${tail}${vres}`, image: vimg, imageLabel: vimgLabel, feedback: vfeedback, renderIn: env.renderIn, renderOut: env.renderOut };
+                        return { result: `Typed "${shown}" into ${where} via the debugger (trusted keyboard, additive).${submit ? " Submitted (Enter)." : ""}${tail}${vres}`, image: vimg, imageLabel: vimgLabel, feedback: vfeedback, renderIn: env.renderIn, renderOut: env.renderOut };
                     }
                     // STRICT-PAGE exec: main-world eval was CSP/TT-blocked and the page handed back a cdpExec
                     // signal. UNFORGEABLE: we re-run the exact source the human APPROVED — `args.js`, from the

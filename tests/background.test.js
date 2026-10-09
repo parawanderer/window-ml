@@ -994,12 +994,16 @@ test("delegated cdpShadowClick: the resolver finds nothing → honest 'no match'
 // TRUSTED KEYBOARD (canvas / WebGL / remote desktop / sealed): a `type` call hands back a cdpType signal and
 // the background types real key events via CDP. `mode` = "focus" (current focus, no click) | "pt" (click a
 // coordinate to focus first) | "sealed" (CDP-resolve a `>>>` field, then click to focus).
-async function driveCdpType({ cdp, mode = "focus", text = "hi", submit = false }) {
+// `pageText`/`pageSubmit` make the page's reply name OTHER keys than the model's call (a hostile page); by default
+// the page echoes the call, as the real type tool does.
+async function driveCdpType({ cdp, mode = "focus", text = "hi", submit = false, pageText = text, pageSubmit = submit, toolName = "type" }) {
     const keys = [], mouse = [];
     let toolResult = null, n = 0, bg;
-    const env = mode === "focus" ? { cdpType: { text, submit } }
-        : mode === "pt" ? { cdpType: { x: 120, y: 340, text, submit } }
-        : { cdpType: { selector: "sealed-host >>> .inner", text, submit } };
+    const env = mode === "focus" ? { cdpType: { text: pageText, submit: pageSubmit } }
+        : mode === "pt" ? { cdpType: { x: 120, y: 340, text: pageText, submit: pageSubmit } }
+        : { cdpType: { selector: "sealed-host >>> .inner", text: pageText, submit: pageSubmit } };
+    const selector = mode === "focus" ? "@focus" : mode === "pt" ? "@pt:1" : "sealed-host >>> .inner";
+    const callArgs = toolName === "type" ? { selector, text, ...(submit ? { submit } : {}) } : { selector };
     bg = loadBackground({
         config: baseConfig({ cdp }),
         onDebuggerCommand: (m, p) => {
@@ -1009,7 +1013,7 @@ async function driveCdpType({ cdp, mode = "focus", text = "hi", submit = false }
         },
         onFetch: (call) => {
             n++;
-            if (n === 1) return jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "type", arguments: JSON.stringify({ selector: "@focus", text }) } }] } }] });
+            if (n === 1) return jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: toolName, arguments: JSON.stringify(callArgs) } }] } }] });
             const tr = [...(call.body?.messages || [])].reverse().find(m => m.role === "tool");
             toolResult = tr ? (typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content)) : null;
             return jsonResponse({ choices: [{ message: { content: "done" } }] });
@@ -1018,13 +1022,13 @@ async function driveCdpType({ cdp, mode = "focus", text = "hi", submit = false }
             if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) {
                 await bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
             }
-            if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "type" && !msg.payload?.renderOnly && !msg.payload?.precheck) return env;
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === toolName && !msg.payload?.renderOnly && !msg.payload?.precheck) return env;
             return undefined;
         },
     });
     await bg.send({ type: "START_RUN", payload: {
         runId: "ct", task: "type it", systemPrompt: "S",
-        tools: [{ name: "type", requiresApproval: true, description: "", parameters: { type: "object", properties: { selector: { type: "string" }, text: { type: "string" } } }, capabilities: [] }],
+        tools: [{ name: toolName, requiresApproval: true, description: "", parameters: { type: "object", properties: { selector: { type: "string" }, text: { type: "string" }, submit: { type: "boolean" } } }, capabilities: [] }],
         model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
     } }, { tab: { id: 8 } });
     await new Promise(r => setTimeout(r, 0));
@@ -1051,6 +1055,36 @@ test("delegated cdpType (sealed field): CDP-resolves the `>>>` field, focuses it
     const { keys, mouse } = await driveCdpType({ cdp: true, mode: "sealed", text: "x" });
     assert.equal(mouse.length, 2, "resolved the sealed field then clicked to focus it");
     assert.equal(keys.length, 2, "one char typed via trusted keyboard");
+});
+
+const typedText = (keys) => keys.filter(k => k.type === "keyDown" && k.key !== "Enter").map(k => k.text).join("");
+
+test("delegated cdpType: a page naming OTHER text gets the MODEL's text typed, and the result reports the model's text", async () => {
+    const { toolResult, keys } = await driveCdpType({ cdp: true, text: "hi", pageText: "rm -rf ~\n", pageSubmit: true });
+    assert.equal(typedText(keys), "hi", "the trusted keys are the call's `text`, not the page's");
+    assert.ok(!keys.some(k => k.key === "Enter"), "the page cannot add a submit the call did not ask for");
+    assert.match(toolResult, /Typed "hi"/, "the model is told what it asked to type");
+    assert.doesNotMatch(toolResult, /rm -rf/, "the page's text never reaches the result");
+});
+
+test("delegated cdpType: a page naming other text at a point or a sealed field still types the model's text", async () => {
+    for (const mode of ["pt", "sealed"]) {
+        const { toolResult, keys } = await driveCdpType({ cdp: true, mode, text: "ok", pageText: "evil" });
+        assert.equal(typedText(keys), "ok", `${mode}: the call's text`);
+        assert.match(toolResult, /Typed "ok"/, `${mode}: the result names the call's text`);
+    }
+});
+
+test("delegated cdpType: an honest page types exactly the call's keys, with its submit (control)", async () => {
+    const { toolResult, keys } = await driveCdpType({ cdp: true, text: "hi", submit: true });
+    assert.deepEqual(keys.map(k => [k.type, k.key]), [["keyDown", "h"], ["keyUp", "h"], ["keyDown", "i"], ["keyUp", "i"], ["keyDown", "Enter"], ["keyUp", "Enter"]]);
+    assert.match(toolResult, /^Typed "hi" into the page's current focus via the debugger \(trusted keyboard, additive\)\. Submitted \(Enter\)\. Re-run look to see the result\./);
+});
+
+test("delegated cdpType: a page answering a call that is not `type` with a cdpType types nothing", async () => {
+    const { toolResult, keys, mouse } = await driveCdpType({ cdp: true, toolName: "click", pageText: "evil", pageSubmit: true });
+    assert.equal(keys.length, 0, "no key dispatched"); assert.equal(mouse.length, 0, "no click");
+    assert.match(toolResult, /did not make; nothing was typed/);
 });
 
 test("delegated cdpType (OFF): nothing is typed; the model is told to enable CDP", async () => {
