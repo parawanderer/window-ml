@@ -39,6 +39,14 @@ stops it, and `serve.mjs <sweep dir>` serves any finished sweep again.
 the page, `rate_limited=` in the final line), however it arrives: Open WebUI passes OpenRouter's as a 400. Its fix is
 fewer at once: a lower `--jobs`, or `--lanes`, which runs a cloud model one run at a time.
 
+**Local models in parallel: `--lanes`.** One lane per model: each model's runs in turn, different models at once when
+the box says the next one fits beside what is loaded (`/api/fits` on the patched Ollama, `/ollama/api/fits` through
+Open WebUI), asked before every run since another client can change the answer. A lane that does not fit waits, and
+still runs once nothing else is running, as `--jobs 1` would. A cloud model is not on the box and always goes, one at a
+time per model (a provider's rate limit is per model). Without `/api/fits` the local lanes take turns. `--jobs N` caps
+the lanes at once; an interview runs in lanes unless `--jobs` is given. Two runs of ONE model gain nothing by running at
+once: the box has one generation slot per model, so they take turns.
+
 **In VS Code, that URL docks as an editor tab.** Cmd-click it in the terminal and VS Code offers a picker
 — choose **Simple Browser** and the page opens beside the code, TensorBoard-style. Simple Browser is
 built in (it registers an external URI opener for http), so nothing needs installing. The port is stable,

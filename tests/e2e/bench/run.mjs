@@ -2,6 +2,9 @@
 //
 //   node --import tsx tests/e2e/bench/run.mjs tests/e2e/bench/specs/pointer-ids.bench.ts
 //   … --jobs 4            run 4 browsers at once (a hosted API; NOT a local GPU — see below)
+//   … --lanes             one lane per model: each model's runs in turn, different models at once when the box says
+//                         the next fits beside what is loaded (/api/fits); a cloud model always goes. `--jobs N` caps
+//                         the lanes running at once. An interview runs this way unless --jobs is given
 //   … --only idFormat=label --only task=two-tables      re-measure a subset
 //   … --repeats 2 --dry   print the matrix and stop
 //   … --no-cache          re-run cells that are already measured
@@ -49,6 +52,7 @@ import { startDashboard, staticPage, servedSweep } from "./serve.mjs";
 import { pageSources } from "./page/bundle.mjs";
 import { addMark, readMarks, defaultBy } from "./mark.mjs";
 import { recordSweep, specProvenance, specText } from "./sweeps.mjs";
+import { runLanes, fitsGate, settleUntilResident } from "./lanes.mjs";
 import { timelineText, labelSeed, seedEndOf, SEED_LABEL } from "./timeline-text.mjs";
 import { memoryText } from "./resource-poll.mjs";
 import { startBox, openBoxLog, BOX_DB } from "./box-stream.mjs";
@@ -65,10 +69,11 @@ const ARTROOT = path.join(ROOT, "tests/e2e/artifacts/bench");
 const BUILDROOT = path.join(ROOT, "tests/e2e/artifacts/builds");
 
 function parseArgv(argv) {
-    const args = { specPath: null, models: (process.env.PANEL_MODELS || "").split(",").map((m) => m.trim()).filter(Boolean), surface: undefined, turnMinutes: 15, jobs: 1, only: [], skip: [], repeats: undefined, dry: false, cache: true, pdf: false, serve: false, open: false, port: undefined, capture: undefined };
+    const args = { specPath: null, models: (process.env.PANEL_MODELS || "").split(",").map((m) => m.trim()).filter(Boolean), surface: undefined, turnMinutes: 15, jobs: 1, jobsSet: false, lanes: false, only: [], skip: [], repeats: undefined, dry: false, cache: true, pdf: false, serve: false, open: false, port: undefined, capture: undefined };
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
-        if (a === "--jobs") args.jobs = Math.max(1, Number(argv[++i]) || 1);
+        if (a === "--jobs") { args.jobs = Math.max(1, Number(argv[++i]) || 1); args.jobsSet = true; }
+        else if (a === "--lanes") args.lanes = true;
         else if (a === "--only") args.only.push(argv[++i]);
         else if (a === "--skip") args.skip.push(argv[++i]);
         else if (a === "--repeats") args.repeats = Math.max(1, Number(argv[++i]) || 1);
@@ -349,7 +354,7 @@ const main = async () => {
         }
         spec = interviewBench(iv, models, { surface: args.surface, turnMinutes: args.turnMinutes });
         // One browser per model, as panel.mjs runs them, unless --jobs says otherwise.
-        if (!process.argv.includes("--jobs")) args.jobs = models.length;
+        if (!args.jobsSet) args.lanes = true;
     } else {
         const specMod = await import(pathToFileURL(path.resolve(args.specPath)).href);
         spec = specMod.default || specMod.spec;
@@ -361,7 +366,12 @@ const main = async () => {
     if (!cells.length) throw new Error("no cells selected — check --only/--skip");
 
     const groups = buildGroups(cells);
-    console.log(`\n  ${spec.name}\n  ${cells.length} runs · ${groups.length} build${groups.length > 1 ? "s" : ""} · jobs ${args.jobs}${dirty ? " · DIRTY TREE" : ""}\n`);
+    // With lanes, the most that can run at once: one per model, under --jobs when given (the page's "N jobs").
+    if (args.lanes) {
+        const models = new Set(cells.map((c) => c.effects.backend?.model ?? "")).size;
+        args.jobs = args.jobsSet ? Math.min(args.jobs, models) : models;
+    }
+    console.log(`\n  ${spec.name}\n  ${cells.length} runs · ${groups.length} build${groups.length > 1 ? "s" : ""} · ${args.lanes ? `lanes ${args.jobs} (one per model, as the box has room)` : `jobs ${args.jobs}`}${dirty ? " · DIRTY TREE" : ""}\n`);
     if (args.dry) {
         for (const c of cells) console.log(`  ${comboLabel(c.combo)} · ${c.task.id} · r${c.repeat}  [${cellKey(c, fingerprint)}]`);
         console.log(`\n  (dry run — nothing executed)\n`);
@@ -522,7 +532,17 @@ const main = async () => {
     }
     push();
 
-    await pool(cells, args.jobs, (cell, i) => runCell(cell, ctx, i));
+    // Per-model LANES (lanes.mjs): each model's cells in turn, different models at once when the box says the next one
+    // fits beside what is loaded. Without a real backend every cell is the fake's, so it is one lane.
+    if (args.lanes) {
+        const gate = backend ? fitsGate(backend, info) : async () => ({ go: true, local: false, why: "the fake model" });
+        await runLanes(cells, {
+            modelOf: (c) => c.effects.backend?.model ?? backend?.model ?? "",
+            gate, settle: backend ? settleUntilResident(gate) : async () => {},
+            fn: (cell, i) => runCell(cell, ctx, i),
+            maxLanes: args.jobsSet ? args.jobs : Infinity, log: (s) => console.log(s),
+        });
+    } else await pool(cells, args.jobs, (cell, i) => runCell(cell, ctx, i));
     const finished = Date.now();
     resPoll?.stop();
     if (pdfBrowser) await (await pdfBrowser).close().catch(() => {});
