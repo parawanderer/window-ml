@@ -74,7 +74,7 @@ export function s3Client({ endpoint, bucket, keyId, secret, region = "garage", f
             const out = [];
             let token = null;
             do {
-                const res = await request("GET", "", { query: { "list-type": "2", prefix, ...(token ? { "continuation-token": token } : {}) } });
+                const res = await request("GET", "", { query: { "list-type": "2", ...(prefix ? { prefix } : {}), ...(token ? { "continuation-token": token } : {}) } });
                 if (!res.ok) await fail(`list ${prefix}`, res);
                 const xml = await res.text();
                 for (const m of xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {
