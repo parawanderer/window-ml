@@ -359,7 +359,7 @@ test("locate by grounding: the capture is letterboxed top-left into a 1000 squar
         assert.deepEqual(square.draws[0].slice(1), [0, 0, 1000, 750], "the viewport, scaled to fit, at the square's TOP-LEFT (padding below)");
         assert.deepEqual(recipe(w.page.images, "data:image/png;base64," + square.draws[0][0]).draws, [["VIEWPORT", 0, 0, 1024, 768, 0, 0, 1024, 768]], "drawn from the whole capture, unscoped");
         const seen = seenByDriver(w);
-        assert.equal(seen.text, 'Grounded "a blue button labelled Save" → [button] "Save" → #save\n(verify it with look() first, then click/type/answer with this selector)\n\nOther elements in that region:\n#1 [button] "Save"  →  #save\n\n Marked crop shown in the next prompt. If it\'s on target, act now (no need to look() first).');
+        assert.equal(seen.text, 'Grounded "a blue button labelled Save" → [button] "Save" → #save\n(verify it with look() first, then click/type/answer with this selector)\n\nOther elements in that region:\n#1 [button] "Save" → #save\n\n Marked crop shown in the next prompt. If it\'s on target, act now (no need to look() first).');
         assert.deepEqual(seen.labels, ["[Screenshot: grounded element]"]);
         assert.deepEqual(recipe(w.page.images, seen.images[0]), { w: 120, h: 40, draws: [["VIEWPORT", 300, 200, 120, 40, 0, 0, 120, 40]], ops: [] },
             "verify:true on a vision driver: a plain crop of the snapped element, from a fresh capture");
@@ -378,7 +378,7 @@ test("locate by Set-of-Marks (no grounding model): one capture, numbered badges 
         assert.deepEqual(badged.draws, [["VIEWPORT", 0, 0]], "the whole capture, drawn as is");
         assert.deepEqual(badged.ops.sort(), ["fillRect", "fillText", "strokeRect"], "with the badges drawn over it");
         assert.deepEqual(w.page.images.get(call.messages[0].images[0]).ops.filter((o) => o[0] === "fillText").map((o) => o.slice(1)), [["1", 303, 184], ["2", 503, 184]], "badge 1 on #save, badge 2 on #del");
-        assert.equal(seenByDriver(w).text, 'Matched "a blue button labelled Save" → #1 [button] "Save" → #save\n(verify it with look() first, then click/type/answer with this selector)\n\nAll candidates:\n#1 [button] "Save"  →  #save\n#2 [button] "Delete"  →  #del');
+        assert.equal(seenByDriver(w).text, 'Matched "a blue button labelled Save" → #1 [button] "Save" → #save\n(verify it with look() first, then click/type/answer with this selector)\n\nAll candidates:\n#1 [button] "Save" → #save\n#2 [button] "Delete" → #del');
         assert.deepEqual(seenByDriver(w).images, []);
     } finally { w.page.close(); }
 });
@@ -393,7 +393,7 @@ test("locate by grid: the reader picks a cell on a gridded capture, and the cell
         assert.equal(grid.w, 1024); assert.equal(grid.h, 768);
         assert.ok(grid.ops.includes("lineTo") && grid.ops.includes("fillText"), "grid lines and cell numbers drawn in the page");
         assert.deepEqual(pageSent(w.page), ["CAPTURE_TAB", "FETCH_LLM"], "one capture, one cell pick; the snap to #save is a DOM read in the page");
-        assert.equal(seenByDriver(w).text, 'Grid cell 2 → [button] "Save" → #save\n(verify it with look() first, then click/type/answer with this selector)\n\nzoom in — locate({ description: "a blue button labelled Save", strategy: "grid", cells: [2] }) draws a fresh grid inside that cell. If it\'s actually in a neighbouring cell, try — left 1, right 3, bottom 7 — e.g. locate({ description: "a blue button labelled Save", strategy: "grid", cells: [1] }).\n\nCandidates in that region:\n#1 [button] "Save"  →  #save');
+        assert.equal(seenByDriver(w).text, 'Grid cell 2 → [button] "Save" → #save\n(verify it with look() first, then click/type/answer with this selector)\n\nzoom in — locate({ description: "a blue button labelled Save", strategy: "grid", cells: [2] }) draws a fresh grid inside that cell. If it\'s actually in a neighbouring cell, try — left 1, right 3, bottom 7 — e.g. locate({ description: "a blue button labelled Save", strategy: "grid", cells: [1] }).\n\nCandidates in that region:\n#1 [button] "Save" → #save');
         assert.deepEqual(seenByDriver(w).images, []);
     } finally { w.page.close(); }
 });

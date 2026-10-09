@@ -310,7 +310,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
     // The page's host unless one is given, made when the tool RUNS (see buildLookTool).
     const hostOf = (): VisionHost => host || pageVisionHost(ml, memory);
     const listOf = (marks: { id: number; role: string; name: string; selector: string }[]) =>
-        marks.map(m => `#${m.id} [${m.role}] ${m.name ? `"${truncate(m.name, 50)}"` : "(no accessible name)"}  →  ${m.selector}`).join("\n");
+        marks.map(m => `#${m.id} [${m.role}] ${m.name ? `"${truncate(m.name, 50)}"` : "(no accessible name)"} → ${m.selector}`).join("\n");
     // Per-run cache of the grounding call (undefined = not asked; null = it errored).
     // The tool lives for one ml.agent run, so a `margin` retry reuses the cached
     // coords + prompt/image and re-runs only the cheap DOM sweep — no 2nd VLM call.
