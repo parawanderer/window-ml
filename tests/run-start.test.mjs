@@ -867,16 +867,16 @@ test("a worker python_exec's live stdout reaches only the run, even when a page 
 /**
  * A worker-built run on tab 7 of a host the PERSON put on the approval whitelist (`cfg.pageApprovalDomains`), whose
  * model calls python_exec with `args`. Like `pythonRun`, but it COUNTS how often a person was actually asked (the
- * `awaitingApproval` events the page saw) before the sandbox ran the call. Returns what the sandbox was given, what
- * went to the page, and the count.
+ * `awaitingApproval` events the page saw) and how often the sheet itself was fetched with the person's cookies.
+ * Returns what the sandbox was given, what went to the page, and the two counts.
  */
 async function askedPythonRun(args, cfg) {
-    let turns = 0, bg, asked = 0;
+    let turns = 0, bg, asked = 0, reads = 0;
     const runs = [];
     bg = loadBackground({
         config: cfg, openTabs: [SITE], siteGate: true,
         onFetch: (call) => {
-            if (call.url.startsWith("https://docs.google.com/")) return { ok: true, status: 200, url: call.url, headers: { get: () => "text/csv" }, text: async () => "name,salary\nAda,999999\n" };
+            if (call.url.startsWith("https://docs.google.com/")) { reads++; return { ok: true, status: 200, url: call.url, headers: { get: () => "text/csv" }, text: async () => "name,salary\nAda,999999\n" }; }
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
             return ++turns === 1
                 ? jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "python_exec", arguments: JSON.stringify(args) } }] } }] })
@@ -900,23 +900,31 @@ async function askedPythonRun(args, cfg) {
     for (let i = 0; i < 400 && turns < 2; i++) await new Promise((r) => setTimeout(r, 0));
     await flush(30);
     const toPage = bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE" && m.payload.name === "python_exec" && !m.payload.renderOnly).map(([, m]) => m.payload);
-    return { runs, asked, toPage };
+    return { runs, asked, toPage, reads };
 }
 
-test("OPEN — a python_exec reading an external Google Sheet always asks the person, whatever shape `tables` has", { ...T, todo: "externalSheetIds (dom.ts:1150-1157) keeps only TOP-LEVEL string values of `tables`, so an array-wrapped sheet URL is invisible to auto-approve (auto-approve.ts:29 answers \"sandbox\", the gate is skipped) and to the worker call grant (sw-run-host.ts:476); the worker then re-derives the URL with String(src) (worker-tools.ts:152) and skips its own grant check when the tab's host is in pageApprovalDomains (worker-tools.ts:157-158, sw-consent.ts:169-173) — a credentialed sheet read with nobody asked" }, async () => {
+test("a python_exec reading an external Google Sheet always asks the person, whatever shape `tables` has", T, async () => {
     const cfg = { ...config, autoApprovePython: true, pageApprovalDomains: ["site.example"] };
     const control = await askedPythonRun({ code: "return len(s)", tables: { s: SHEET_EDIT } }, cfg);
-    assert.equal(control.runs.length, 1, "positive control: the plain-string form ran in the worker");
-    assert.match(JSON.stringify(control.runs[0].tables), /Ada/, "positive control: its sheet rows reached the sandbox");
     assert.ok(control.asked >= 1, `positive control: the plain-string form asked the person first (asked ${control.asked})`);
-    const unasked = [];
-    for (const [label, tables] of [["map-of-array", { s: [SHEET_EDIT] }], ["nested-array", [[SHEET_EDIT]]], ["array-of-one-array", { s: [[SHEET_EDIT]] }]]) {
+    assert.equal(control.runs.length, 1, "positive control: the approved call ran in the worker");
+    assert.match(JSON.stringify(control.runs[0].tables), /Ada/, "positive control: its sheet rows reached the sandbox");
+    for (const [label, tables, workerRefuses] of [
+        ["map-of-array", { s: [SHEET_EDIT] }, true],
+        ["nested-array", [[SHEET_EDIT]], false],   // one-element arrays normalize to the string (as the page loader does)
+        ["array-of-one-array", { s: [[SHEET_EDIT]] }, true],
+    ]) {
         const r = await askedPythonRun({ code: "return len(df)", tables }, cfg);
-        assert.equal(r.runs.length, 1, `positive control: the call with ${label} still ran (worker path, not the page): ${JSON.stringify(r.toPage).slice(0, 120)}`);
-        assert.match(JSON.stringify(r.runs[0].tables), /Ada/, `positive control: with ${label} the sheet was read with the person's cookies`);
-        if (!r.asked) unasked.push(label);
+        assert.ok(r.asked >= 1, `the ${label} form hid its sheet from the gate (externalSheetIds must see a URL at any depth) and auto-approved without asking`);
+        if (workerRefuses) {
+            // The worker also refuses a source that is neither a string nor a table, so the wrapper never becomes
+            // a read through String(src): even approved, this call loads nothing.
+            assert.equal(r.runs.length, 0, `the ${label} form reached the sandbox anyway: ${JSON.stringify(r.runs).slice(0, 160)}`);
+            assert.equal(r.reads, 0, `the ${label} form fetched the sheet with the person's cookies`);
+        } else {
+            assert.equal(r.reads, 1, `the normalized ${label} form read the sheet ${r.reads} times after the ask`);
+        }
     }
-    assert.deepEqual(unasked, [], `these shapes read the external sheet with the person's cookies and never asked: ${unasked.join(", ")}`);
 });
 
 /**

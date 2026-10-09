@@ -297,6 +297,15 @@ test("externalSheetIds: finds sheets in a string, a map, AND an array", () => {
     assert.deepEqual(externalSheetIds({ tables: ["current"] }), [], "'current' is the page you are on, not external");
     assert.deepEqual(externalSheetIds({ tables: "#sales" }), []);
     assert.deepEqual(externalSheetIds({}), []);
+    // Any DEPTH, not just one level (red-team T2 on #442: an array-wrapped URL auto-approved as "sandbox").
+    assert.deepEqual(externalSheetIds({ tables: { a: [A] } }), ["ABC123"], "a map of arrays");
+    assert.deepEqual(externalSheetIds({ tables: [[A]] }), ["ABC123"], "a nested array");
+    assert.deepEqual(externalSheetIds({ tables: { a: [[A, B]] } }), ["ABC123", "XYZ789"], "two sheets, two deep");
+    // A table BY VALUE stops the walk: its cells are data, and a sheet URL a cell happens to mention is not a
+    // source this call reads. A table value still contributes nothing (it loads without consent of its own).
+    const byValue = { columns: ["link"], rows: [[A]] };
+    assert.deepEqual(externalSheetIds({ tables: { t: byValue } }), [], "a URL inside a by-value table's CELLS is not a sheet this call reads");
+    assert.deepEqual(externalSheetIds({ tables: { s: A, t: byValue } }), ["ABC123"], "a string source beside a by-value table");
 });
 
 // The third rung of the Markdown ladder: the DERIVED sibling, tried only when negotiation missed and the page

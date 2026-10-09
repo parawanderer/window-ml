@@ -149,7 +149,12 @@ function runMl(ctx: RunCtx): MlApi {
  *  approved for it. */
 async function workerTable(ctx: RunCtx, name: string, src: unknown, raw: boolean): Promise<Awaited<ReturnType<typeof _loadTable>>> {
     if (isTableValue(src)) return _loadTable.call({} as MlApi, name, src, raw);   // the by-value branch reads no DOM
-    const url = String(src);
+    // A source is a URL string or nothing: a wrapped one (`[url]`, `{s:[url]}`) is NOT coerced back with
+    // String(src). The gate's scan finds a sheet at any depth now (externalSheetIds), so the person sees it
+    // before this runs; this refusal is the second line — a shape no loader was written for must not become a
+    // credentialed read through a coercion nobody approved (red-team T2 on #442).
+    if (typeof src !== "string") throw new Error(`pythonExec tables — "${name}" is not a loadable source: pass a URL string or a table value, not a ${Array.isArray(src) ? "list" : typeof src}.`);
+    const url = src;
     const csvUrl = googleSheetCsvUrl(url);
     if (csvUrl) {
         const id = googleSheetId(url);
