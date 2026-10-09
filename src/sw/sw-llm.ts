@@ -497,16 +497,21 @@ const NET_RETRIES = 6;
 // ~6 × 4s ≈ 24s of outage ridden out before giving up. Overridable (tests set 0 so the retry path runs
 // instantly instead of adding 24s of real waits per down-backend test).
 const NET_RETRY_WAIT_MS: number = ((): number => { try { return (globalThis as { __ML_NET_RETRY_WAIT_MS?: number }).__ML_NET_RETRY_WAIT_MS ?? 4000; } catch { return 4000; } })();
-/** How long to pause before retrying a 429: the `Retry-After` header (seconds) if present, else a
- *  "try again in Xs" hint in the body, else a default. +250ms slack so we clear the window; bounded by
- *  RATE_LIMIT_MAX_WAIT_MS. Pure (header + body strings in) → unit-tested in tests/background.test.js. */
-function rateLimitWaitMs(retryAfter: string | null, body: string): number {
+/** How long to pause before retrying a rate-limited call: the `Retry-After` header (seconds) if present, else a
+ *  "try again in Xs" hint in the body, else a default that DOUBLES per attempt (3, 6, 12, 24 s): a limit counted per
+ *  minute ("20 requests per minute") with no hint is ridden out within the retries instead of failing on the fourth
+ *  3 s wait. +250ms slack so we clear the window; bounded by RATE_LIMIT_MAX_WAIT_MS. Pure → tests/background.test.js. */
+function rateLimitWaitMs(retryAfter: string | null, body: string, attempt = 0): number {
     const cap = (ms: number) => Math.min(Math.max(ms, 0), RATE_LIMIT_MAX_WAIT_MS);
     if (retryAfter) { const s = parseFloat(retryAfter); if (!isNaN(s)) return cap(s * 1000 + 250); }
     const m = body.match(/try again in ([\d.]+)\s*s/i);
     if (m) return cap(parseFloat(m[1]) * 1000 + 250);
-    return 3000;
+    return cap(3000 * 2 ** attempt);
 }
+/** A 400 that is really a rate limit. OpenWebUI relays an upstream provider's limit as a 400 with the reason in
+ *  `detail` (OpenRouter's "Rate limit exceeded: new-account-rpm/… limited to 20 requests per minute"), never as a 429,
+ *  so the status alone would fail the run on a limit a few seconds' wait clears. */
+const RATE_LIMITED_400 = /rate.?limit(ed)? (exceeded|reached)|too many requests/i;
 
 // Shared setup for a chat request: resolves the model, runs the vision
 // fail-fast, builds the wire body, and returns a `send(body, stream)` that does
@@ -720,17 +725,19 @@ export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSig
                     `Is OpenWebUI / Ollama running there? Check the Server URL, API key, and API format in the extension settings.`
                 );
             }
-            if (res.status === 429 && attempt < RATE_LIMIT_RETRIES) {
-                const text = await res.text().catch(() => "");
-                await abortableWait(rateLimitWaitMs(res.headers?.get("retry-after") ?? null, text));
+            // The body is read once, here, for a 429 or a 400 (RATE_LIMITED_400), and reused by the error path below.
+            let text: string | null = res.status === 429 || res.status === 400 ? await res.text().catch(() => "") : null;
+            const rateLimited = res.status === 429 || (res.status === 400 && RATE_LIMITED_400.test(text ?? ""));
+            if (rateLimited && attempt < RATE_LIMIT_RETRIES) {
+                await abortableWait(rateLimitWaitMs(res.headers?.get("retry-after") ?? null, text ?? "", attempt));
                 continue;   // retry the same request after the advised pause
             }
             if (!res.ok) {
-                const text = await res.text().catch(() => "");
+                text ??= await res.text().catch(() => "");
                 // A STRICT server refusing the unfamiliar `hint`: ask once more without it. Not when the refusal
                 // names the running-count keys instead — those have their own retry (streamAgentTurn), and blaming
                 // the hint first would spend a request on the wrong field.
-                if ((res.status === 400 || res.status === 422) && requestBody.hint && !hintDropped
+                if ((res.status === 400 || res.status === 422) && requestBody.hint && !hintDropped && !rateLimited
                     && !/stream_options|continuous_usage_stats|stream_metrics/.test(text)) {
                     const { hint: _unsent, ...plain } = requestBody;
                     requestBody = plain as ChatBody;
