@@ -8,7 +8,8 @@
 
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { IconChevron, IconCheck, IconCompose, IconCopy } from "../icons";
-import { ClickableImg, cursorTipOn, openCtxMenu, useCopy } from "../ui-kit";
+import { ClickableImg, cursorTipOn, openCtxMenu } from "../ui-kit";
+import { useCopy } from "../copy-hash";
 
 /** How tall a message may be before it folds, in lines of its own text. Past this it shows `FOLD_LINES` and fades. */
 const FOLD_LINES = 8;

@@ -5,6 +5,7 @@
 import { useState, useRef } from "preact/hooks";
 import type { BenchState, RunState } from "./state";
 import { Outcome, runDir } from "./runs";
+import { Hash } from "../../../../src/sidebar/copy-hash";
 
 type Target = { taskId: string; who: string; turn: number; hash: string | null };
 
@@ -95,7 +96,7 @@ export function Answers({ s, base, live }: { s: BenchState; base: string; live: 
                     <div key={id} class="answers">
                         {ids.length > 1 ? <h3>{id}</h3> : null}
                         <div class="agrid" style={{ gridTemplateColumns: `repeat(${runs.length}, minmax(320px, 1fr))` }}>
-                            {runs.map((r) => <div key={`h${r.who}${r.repeat}`} class="ah"><code>{r.who}{repeats ? ` r${r.repeat}` : ""}</code><Outcome r={r} /></div>)}
+                            {runs.map((r) => <div key={`h${r.who}${r.repeat}`} class="ah"><code>{r.who}{repeats ? ` r${r.repeat}` : ""}</code>{r.hash ? <Hash hash={r.hash} /> : null}<Outcome r={r} /></div>)}
                             {ivs[id].map((q, n) => [
                                 <div key={`q${n}`} class="q"><span class="turn">Turn {n + 1}</span>{q.length > 600 ? `${q.slice(0, 600)} …` : q}</div>,
                                 ...runs.map((r) => <AnswerCell key={`a${n}${r.who}${r.repeat}`} r={r} turn={n + 1} base={base} live={live} onMark={(target, quote) => setMarking({ target, quote })} />),

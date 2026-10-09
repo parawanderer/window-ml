@@ -14,6 +14,7 @@ import { SweepTimeline } from "./timeline";
 import { Flight, Stats, Results, Runs } from "./runs";
 import { Viewer } from "./viewer";
 import { SpecCard } from "./spec";
+import { installTooltipLayer } from "../../../../src/sidebar/tooltip-layer";
 
 declare global { interface Window { __BENCH_STATE__?: BenchState } }
 
@@ -134,4 +135,6 @@ function App() {
 }
 
 applyTheme(readTheme());
+// The panel's tooltip layer, so a `Hash` chip shows the tip it shows in the panel.
+installTooltipLayer(document);
 render(<App />, document.getElementById("app")!);

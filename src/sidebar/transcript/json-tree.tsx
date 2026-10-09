@@ -5,7 +5,8 @@ import { useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { IconChevron, IconCopy } from "../icons";
 import { fmtAge } from "../timestamps";
-import { TipText, copyText, cursorTipOn, openCtxMenu, type CtxItem } from "../ui-kit";
+import { TipText, cursorTipOn, openCtxMenu, type CtxItem } from "../ui-kit";
+import { copyText } from "../copy-hash";
 
 /** Marks where a CUT-OFF value ended: a JSON value whose text was clipped is drawn as the part that arrived, and this
  *  sentinel, placed as the last member of the innermost container open at the cut, draws a "truncated" row there. */

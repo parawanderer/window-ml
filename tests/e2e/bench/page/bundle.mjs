@@ -31,7 +31,7 @@ export const invalidate = () => cache.clear();
 
 /**
  * What the pages are built from, for a server that watches them: this directory, the lane modules the bundle shares
- * with the panel, and the stylesheet and palette whose rules and colours it lifts.
+ * with the panel (the lane, the hash chip and its tooltip), and the stylesheet and palette whose rules and colours it lifts.
  */
 export const pageSources = () => [
     HERE,
@@ -39,6 +39,9 @@ export const pageSources = () => [
     path.join(ROOT, "src/sidebar/resource"),
     path.join(ROOT, "src/sidebar/sidebar.css"),
     path.join(ROOT, "src/sidebar/palette.ts"),
+    path.join(ROOT, "src/sidebar/copy-hash.tsx"),
+    path.join(ROOT, "src/sidebar/tooltip-layer.ts"),
+    path.join(ROOT, "src/sidebar/tip.ts"),
 ];
 
 /** The dashboard's script. */
@@ -54,7 +57,7 @@ export const sidebarCss = () => readFileSync(path.join(ROOT, "src/sidebar/sideba
  * toggle set `data-theme`), the lane's rules from sidebar.css, and the page's own layout (page.css).
  */
 export async function appCss() {
-    const { themeVars, laneCss } = await import("../../../../src/sidebar/resource/lane-static.ts");
+    const { themeVars, laneCss, sidebarRules } = await import("../../../../src/sidebar/resource/lane-static.ts");
     const css = sidebarCss();
     const { dark, light } = themeVars(css);
     return [
@@ -62,6 +65,8 @@ export async function appCss() {
         `@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){${light}}}`,
         `:root[data-theme="light"]{${light}}`,
         laneCss(css, { scoped: false }),
+        // The panel's click-to-copy hash chip and the tooltip layer it shows its tip in (page/app.tsx installs it).
+        sidebarRules(css, /\.hash\b|\.tt\b|\.tt-pop\b|\.tt-layer\b/),
         readFileSync(path.join(HERE, "page.css"), "utf8"),
     ].join("\n");
 }

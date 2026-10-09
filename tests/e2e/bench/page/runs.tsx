@@ -1,6 +1,7 @@
 // runs.tsx — the sweep's tables and the pieces that describe one run: its outcome badge, its artifacts, what is in
 // flight, and the aggregate results.
 
+import { Hash } from "../../../../src/sidebar/copy-hash";
 import type { BenchState, RunState, Agg } from "./state";
 import { dur } from "./format";
 
@@ -123,7 +124,7 @@ export function Runs({ s, base }: { s: BenchState; base: string }) {
                             <tr key={i} class={r.state === "running" ? "live" : i === nextUp ? "next" : ""}>
                                 {s.dims.map((d) => <td key={d} class="l"><code>{String(r.combo[d])}</code></td>)}
                                 <td class="l">{r.taskId}</td><td class="l">r{r.repeat}</td>
-                                <td class="l">{r.hash ? <span class="hash">{r.hash.slice(0, 12)}</span> : <span class="dim">–</span>}</td>
+                                <td class="l">{r.hash ? <Hash hash={r.hash} stop /> : <span class="dim">–</span>}</td>
                                 <td class="l"><OutcomeLink r={r} dir={dir} dims={s.dims} /></td>
                                 <td>{r.steps ?? <span class="dim">–</span>}</td>
                                 <td>{r.secs != null ? r.secs.toFixed(1) : <span class="dim">–</span>}</td>

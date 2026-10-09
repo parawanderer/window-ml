@@ -21,6 +21,14 @@ function varsOf(rules: string[], selector: string): string {
     return [...r.matchAll(/(--[\w-]+)\s*:\s*([^;}]+)/g)].map(([, k, v]) => `${k}:${v.trim()}`).join(";");
 }
 
+/**
+ * The sidebar's rules (sidebar.css) whose selector matches `selector`, for a page with no panel that renders one of the
+ * panel's components (the bench's `Hash` chip and its tooltip) and must style it with the panel's rules, not a copy.
+ */
+export function sidebarRules(sidebarCss: string, selector: RegExp): string {
+    return cssRules(sidebarCss).filter((r) => !r.startsWith("@") && selector.test(r.slice(0, r.indexOf("{")))).join("\n");
+}
+
 /** The sidebar's theme colours as declarations: `dark` (its default) and `light`. */
 export function themeVars(sidebarCss: string): { dark: string; light: string } {
     const rules = cssRules(sidebarCss);

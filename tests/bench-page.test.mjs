@@ -56,6 +56,23 @@ test("a sweep with no interview has no Answers card, and one with nothing run sh
     assert.match(card(doc, "Runs").textContent, /queued/);
 });
 
+// --- the dashboard's run identity: models and hash ---
+
+test("each run's models are one group (driver, vision, utility), and its hash is the panel's short click-to-copy chip", async () => {
+    const hash = "7379c07c91cbe0d986e7bd2e014b4d6e";
+    const doc = await dashboard({
+        dims: ["model"], interviews: { rev: ["q"] },
+        runs: ["a", "b"].map((m) => ({ combo: { model: m }, who: m, taskId: "rev", repeat: 0, state: "done", ok: true, path: `p/${m}`, hash,
+            models: { driver: m, vision: "v", utility: null }, turns: [{ answer: "x", tools: [], capped: false }], checks: [] })),
+    });
+    assert.deepEqual([...doc.querySelectorAll(".models .mset")].map((g) => [...g.querySelectorAll(".role")].map((r) => r.textContent)),
+        [["drivera", "visionv", "utilitynone"], ["driverb", "visionv", "utilitynone"]]);
+    const chip = card(doc, "Answers").querySelector(".ah .hash.copyable");
+    assert.equal(chip.textContent, hash.slice(0, 8), "shown short, as git does");
+    assert.equal(chip.parentElement.querySelector(".tt-pop").textContent, `click to copy ${hash}`, "the tip names the whole hash, which is what a click copies");
+    assert.ok(card(doc, "Runs").querySelector("td .hash.copyable"));
+});
+
 // --- the dashboard's Timeline card ---
 
 test("the timeline draws each run that has events as its own lane, on one shared axis, and leaves out cached runs", async () => {

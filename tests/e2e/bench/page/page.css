@@ -7,7 +7,7 @@ html { color-scheme: dark light }
 :root[data-theme="light"] { color-scheme: light } :root[data-theme="dark"] { color-scheme: dark }
 body { margin: 0; background: var(--bg); color: var(--fg);
        font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif }
-code, .hash { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace }
+code { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace }
 a { color: var(--accent); text-decoration: none } a:hover { text-decoration: underline }
 .dim { color: var(--fg-dim) }
 
@@ -40,8 +40,13 @@ h2, h3 { margin: 0; font-size: 13px; font-weight: 650 }
 .tile { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--panel) }
 .tile b { display: block; font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums }
 .tile span { color: var(--fg-dim); font-size: 11px; text-transform: uppercase; letter-spacing: .05em }
-.models { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 12px; font-size: 12px }
-.role { margin-right: 12px } .role .rk { color: var(--fg-faint); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; margin-right: 5px }
+.models { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-top: 12px; font-size: 12px }
+/* One run's models as one pill: ( DRIVER x | VISION y | UTILITY z ). */
+.mset { display: inline-flex; flex-wrap: wrap; align-items: center; row-gap: 2px; padding: 3px 4px; max-width: 100%;
+        border: 1px solid var(--border); border-radius: 13px; background: var(--panel) }
+.mset .role { padding: 0 9px; white-space: nowrap }
+.mset .role + .role { border-left: 1px solid var(--border) }
+.role .rk { color: var(--fg-faint); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; margin-right: 5px }
 .role.none { color: var(--fg-faint); font-style: italic }
 
 /* BADGES: one shape for every status, tinted by what it says. */
@@ -80,7 +85,7 @@ tbody tr:last-child td { border-bottom: none }
 tr.live { background: color-mix(in srgb, var(--accent) 8%, transparent) }
 tr.next td:first-child::before { content: "▸ "; color: var(--accent) }
 td.links a { margin-right: 10px }
-.hash { color: var(--fg-faint) }
+.ah .tt, td .tt { vertical-align: middle }
 a.plain:hover { text-decoration: none } a.plain:hover .badge { border-color: var(--fg-faint) }
 
 /* Answers: a grid, a column per run; each answer its own bordered box. */

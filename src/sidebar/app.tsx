@@ -19,7 +19,8 @@ import {
     vramOpen, sidebarOpen, backendError, backendLoading, surface, atBottom, resWindowS, vramH } from "./store";
 import { installTooltipLayer } from "./tooltip-layer";
 import { trackPointer, pointerGone } from "./pointer-gone";
-import { ContextMenu, CursorTipLayer, Hash, highlightPos } from "./ui-kit";
+import { ContextMenu, CursorTipLayer, highlightPos } from "./ui-kit";
+import { Hash } from "./copy-hash";
 import { forgetSessionReduced, onDebug, maybeGenerateTitles, titleTried } from "./debug-reducer";
 import { installServices } from "./services";
 import { extensionServices } from "./services-ext";
