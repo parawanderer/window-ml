@@ -155,7 +155,8 @@ export function runRow(saved, task, sweep) {
     };
 }
 
-const COLS = ["run", "at", "by", "sweep", "spec", "spec_hash", "task", "task_hash", "task_text", "variant", "scored", "model", "digest", "quant", "params", "local", "vision", "utility", "backend", "build", "dirty", "passed", "error", "hit_cap", "prompt_tokens", "completion_tokens", "sub_tokens", "tokens", "steps", "secs"];
+/** The runs table's columns, in the order a row is written (the store's Parquet files carry the same). */
+export const COLS = ["run", "at", "by", "sweep", "spec", "spec_hash", "task", "task_hash", "task_text", "variant", "scored", "model", "digest", "quant", "params", "local", "vision", "utility", "backend", "build", "dirty", "passed", "error", "hit_cap", "prompt_tokens", "completion_tokens", "sub_tokens", "tokens", "steps", "secs"];
 
 /** Insert rows; one already logged (the same run hash) is left as it is. Returns how many were new. */
 export function logRuns(db, rows) {

@@ -85,6 +85,8 @@ as in AGENTS.md — they are all under `src/`.
   caller that ran it in the background learns it finished; with `--serve` it first hands the page to a detached
   `serve.mjs <sweep dir>` on the same port, which serves the final state from `page.json` and gives the port back to
   the next sweep (`artifacts/bench/server.json` names it; `serve.mjs --stop` stops it).
+  With a bench store configured (`BENCH_STORE_*` in `.env`), a sweep then pushes its rows and run directories to it
+  (`bench/sync.mjs`: S3, Parquet, at-least-once and deduped on read; `sync: false` keeps a spec's or task's traces here).
   **`--serve`** prints a banner URL for a live page a human watches — every run's state and what is
   queued, the in-flight run's step against its budget and the tool it is in, elapsed / mean-per-run /
   mean-per-step / ETA, and links to each `run.md`. Served by node:http + SSE; the page is Preact

@@ -89,6 +89,8 @@ export interface BenchTask {
      * how many stream deltas it saw (`measurement.stream`).
      */
     stream?: boolean;
+    /** `false` keeps this task's run directories (screenshots, page text) off the bench store (sync.mjs); its rows still go */
+    sync?: boolean;
     /** how long one run of this task may take before it is recorded as a timeout */
     timeoutMs?: number;
     /**
@@ -140,6 +142,8 @@ export interface BenchSpec<D extends Dimensions = Dimensions> {
     repeats?: number;
     /** default per-run timeout, overridable per task */
     timeoutMs?: number;
+    /** `false` keeps every run directory of this sweep off the bench store (sync.mjs): for sweeps against private pages */
+    sync?: boolean;
     /** approval policy for every run in the sweep */
     approve?: ApprovePolicy;
     /**

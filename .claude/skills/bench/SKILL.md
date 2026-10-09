@@ -47,6 +47,13 @@ time per model (a provider's rate limit is per model). Without `/api/fits` the l
 the lanes at once; an interview runs in lanes unless `--jobs` is given. Two runs of ONE model gain nothing by running at
 once: the box has one generation slot per model, so they take turns.
 
+**The bench store pools results off the laptop (`sync.mjs`), opt-in.** With `BENCH_STORE_URL`, `BENCH_STORE_KEY_ID` and
+`BENCH_STORE_SECRET` in `.env`, a sweep ends by pushing its new scoreboard rows and box frames (Parquet) and its run
+directories to the bucket; `--no-sync` skips that once, `--only-db` sends rows only, and `sync: false` on a spec or a task
+keeps run directories (screenshots, page text, logged-in pages included) on this machine. `sync.mjs push | pull |
+status [--json]` by hand; `pull` fills `artifacts/bench-pool/`, deduped. The store is AT-LEAST-ONCE: read it through
+`pull` or the `views.sql` views, never the raw objects. The pool and pulled copies are the only copies.
+
 **In VS Code, that URL docks as an editor tab.** Cmd-click it in the terminal and VS Code offers a picker
 — choose **Simple Browser** and the page opens beside the code, TensorBoard-style. Simple Browser is
 built in (it registers an external URI opener for http), so nothing needs installing. The port is stable,
