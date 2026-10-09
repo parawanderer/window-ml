@@ -216,7 +216,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     const f = grp[0], label = f.name ? `"${truncate(f.name, 60)}"` : "(no accessible name)";
                     const sameAl = !!f.al && !f.al.includes('"') && grp.every(g => g.al === f.al);
                     if (grp.length > 3 && sameAl) {   // collapse only real floods; keep small dup sets (e.g. 2 Edits) itemised with per-element state
-                        out.push(`#${n++} [${f.role}] ${label} ×${grp.length}  →  ${f.el.tagName.toLowerCase()}[aria-label="${f.al}"] · index 0–${grp.length - 1}`);
+                        out.push(`#${n++} [${f.role}] ${label} ×${grp.length} → ${f.el.tagName.toLowerCase()}[aria-label="${f.al}"] · index 0–${grp.length - 1}`);
                         els.push(...grp.map(g => g.el));
                     } else for (const it of grp) {
                         if (out.length >= limit) break;
@@ -231,7 +231,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                         // Show the placeholder when it's not already the name — it's what the model sees on screen
                         // (e.g. Gemini's "Ask Gemini") and bridges the gap when the accessible name differs.
                         const phNote = it.ph && it.ph.toLowerCase() !== it.name.toLowerCase() ? ` · placeholder "${truncate(it.ph, 40)}"` : "";
-                        out.push(`#${n++} [${it.role}] ${it.name ? `"${truncate(it.name, 60)}"` : "(no accessible name)"}${phNote}${it.state ? ` — ${it.state}` : ""}  →  ${sel}`);
+                        out.push(`#${n++} [${it.role}] ${it.name ? `"${truncate(it.name, 60)}"` : "(no accessible name)"}${phNote}${it.state ? ` — ${it.state}` : ""} → ${sel}`);
                         els.push(it.el);
                     }
                 }

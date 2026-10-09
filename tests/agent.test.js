@@ -641,7 +641,7 @@ test("interactives skips the sidebar chrome and collapses flooded duplicates", (
     // Without a <main>, the sidebar is skipped and its 8 'Chat Menu' buttons collapse.
     const { ml: ml2 } = loadDomWorld(sidebar + '<div><button aria-label="Good Response">Like</button></div>');
     const out2 = run(ml2, "interactives", { includeNav: true }).content;
-    assert.match(out2, /"Chat Menu" ×8  →  button\[aria-label="Chat Menu"\] · index 0–7/);
+    assert.match(out2, /"Chat Menu" ×8 → button\[aria-label="Chat Menu"\] · index 0–7/);
 
     // OpenWebUI case: a broad role="main" wraps BOTH the sidebar and the content —
     // the sidebar must STILL be skipped (skipNav applies inside main too).
@@ -670,12 +670,12 @@ test("interactives finds the aria-labeled edit button and disambiguates duplicat
 
 test("interactives selectors are short + valid: unique id anchor, else nth-of-type (no Tailwind spam)", () => {
     const { ml } = loadDomWorld('<main><div class="wrap"><span><button id="menu-btn"><svg></svg></button></span></div></main>');
-    assert.match(run(ml, "interactives", {}).content, /→ {2}#menu-btn$/m, "unique id → one-segment selector");
+    assert.match(run(ml, "interactives", {}).content, /→ #menu-btn$/m, "unique id → one-segment selector");
 
     // No id/aria → tag:nth-of-type, NOT a giant ancestor class chain.
     const { ml: ml2 } = loadDomWorld('<main><div class="a b c d e"><button>A</button><button>B</button></div></main>');
     const out = run(ml2, "interactives", {}).content;
-    assert.match(out, /→ {2}(main > )?button:nth-of-type\(1\)/);
+    assert.match(out, /→ (main > )?button:nth-of-type\(1\)/);
     assert.ok(!/> div\.a\.b/.test(out), "no class-chain ancestor path");
 });
 
