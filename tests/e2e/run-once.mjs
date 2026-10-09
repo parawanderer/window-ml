@@ -523,38 +523,45 @@ export async function runOnce(cfg = {}) {
         const t0 = Date.now();
         // The run a UI run became, once its first turn started: later turns are sent into it by its hash.
         let uiHash = null;
+        /** Start a console run in the page: an `ml.createAgent` handle for a multi-turn run, else one `ml.agent` call.
+         *  Self-contained (it runs in the page), so the same function can rebuild the handle in a new document. */
+        const launchInPage = ({ task, needsHandle, toolNames, toolTokens, python, extra, resume }) => {
+            const opts = {
+                toolTokens,
+                approvalRouting: "both",   // gates show in the UI AND are resolvable via the __mlApprovals channel
+                onStep: (s) => window.__obsStep({
+                    tool: s.tool || null, thought: s.thought || null,
+                    args: s.arguments ? JSON.parse(JSON.stringify(s.arguments)) : null,
+                    result: typeof s.result === "string" ? s.result : (s.result != null ? JSON.stringify(s.result) : null),
+                    approval: s.approval || null,
+                }),
+            };
+            // A tools subset shrinks the system prompt + schemas (far fewer tokens/turn, so a rate-limited
+            // free tier fits). vision:false stops look/locate from auto-wiring back in.
+            if (toolNames && toolNames.length) {
+                opts.tools = (window.ml.domTools || []).filter((t) => toolNames.includes(t.name));
+                opts.vision = false;
+            }
+            // python_exec is an extraTool, so it survives the tools subset filter above.
+            if (python) opts.extraTools = [window.ml.pythonTool()];
+            Object.assign(opts, extra);   // caller-supplied options win (the bench's dimension knob)
+            // ALWAYS fire a turn NON-blocking — stash the promise, return immediately — so the caller can
+            // open the sidebar and click into the live session WHILE it runs. The result is picked up from
+            // the event stream, so nothing is lost by not awaiting here.
+            // A handle rebuilt in a NEW document (turn 1 navigated, which dropped the old one) continues the same
+            // session by its hash.
+            if (resume) opts.resume = resume;
+            if (needsHandle) {
+                // One handle, many turns, ONE session (createAgent persists the run hash across run()s).
+                window.__mlAgent = window.ml.createAgent(opts);
+            } else {
+                window.__mlObsRun = window.ml.agent(task, opts);
+            }
+            return null;
+        };
+        const launchArgs = { task, needsHandle, toolNames: tools, toolTokens, python, extra: agentOptions };
         if (!surface) try {
-            await page.evaluate(({ task, needsHandle, toolNames, toolTokens, python, extra }) => {
-                const opts = {
-                    toolTokens,
-                    approvalRouting: "both",   // gates show in the UI AND are resolvable via the __mlApprovals channel
-                    onStep: (s) => window.__obsStep({
-                        tool: s.tool || null, thought: s.thought || null,
-                        args: s.arguments ? JSON.parse(JSON.stringify(s.arguments)) : null,
-                        result: typeof s.result === "string" ? s.result : (s.result != null ? JSON.stringify(s.result) : null),
-                        approval: s.approval || null,
-                    }),
-                };
-                // A tools subset shrinks the system prompt + schemas (far fewer tokens/turn, so a rate-limited
-                // free tier fits). vision:false stops look/locate from auto-wiring back in.
-                if (toolNames && toolNames.length) {
-                    opts.tools = (window.ml.domTools || []).filter((t) => toolNames.includes(t.name));
-                    opts.vision = false;
-                }
-                // python_exec is an extraTool, so it survives the tools subset filter above.
-                if (python) opts.extraTools = [window.ml.pythonTool()];
-                Object.assign(opts, extra);   // caller-supplied options win (the bench's dimension knob)
-                // ALWAYS fire a turn NON-blocking — stash the promise, return immediately — so the caller can
-                // open the sidebar and click into the live session WHILE it runs. The result is picked up from
-                // the event stream, so nothing is lost by not awaiting here.
-                if (needsHandle) {
-                    // One handle, many turns, ONE session (createAgent persists the run hash across run()s).
-                    window.__mlAgent = window.ml.createAgent(opts);
-                } else {
-                    window.__mlObsRun = window.ml.agent(task, opts);
-                }
-                return null;
-            }, { task, needsHandle, toolNames: tools, toolTokens, python, extra: agentOptions });
+            await page.evaluate(launchInPage, launchArgs);
         } catch (e) { error = String(e); }
         if (error) log(`  [launch error] ${error.slice(0, 400)}`);
 
@@ -574,13 +581,30 @@ export async function runOnce(cfg = {}) {
                     if (outcome !== "turn") log(`  (the message started no new turn: ${outcome})`);
                 }
             } catch (e) { error = error || String(e); }
-        } : (t) => page.evaluate((t) => {
-            window.__mlObsRun = window.__mlAgent.run(t).catch((e) => { window.__obsErr = String((e && e.stack) || e); });
-            return null;
-        }, t).catch((e) => { error = error || String(e); });
-        /** Wait until `n` turns have reported a terminal agent-result, or the deadline passes. */
+        } : async (t) => {
+            const run = (t) => page.evaluate((t) => {
+                // A navigation in the turn before reloads the page, and the handle stashed on its `window` goes with it.
+                if (!window.__mlAgent) return "lost";
+                window.__mlObsRun = window.__mlAgent.run(t).catch((e) => { window.__obsErr = String((e && e.stack) || e); });
+                return null;
+            }, t);
+            try {
+                if (await run(t) !== "lost") return;
+                // The worker still holds the session: rebuild the handle on this document, continuing it by its hash.
+                const hash = [...events].reverse().find((e) => e.session?.hash)?.session.hash;
+                if (!hash) throw new Error("the page reloaded and the run's hash is unknown, so the next turn cannot continue it");
+                log(`  (the page reloaded during the last turn; continuing session ${hash} on the new page)`);
+                await page.evaluate(launchInPage, { ...launchArgs, needsHandle: true, resume: hash });
+                if (await run(t) === "lost") throw new Error("the rebuilt agent handle was lost again");
+            } catch (e) { error = error || String(e); }
+        };
+        /** An error that ends the run: not a navigation tearing down the caller's context, which a run that goes on in the
+         *  background survives (see the check after the turns). */
+        const failed = () => !!error && !/context was destroyed|Execution context/i.test(error);
+        /** Wait until `n` turns have reported a terminal agent-result, a turn fails to start, or the deadline passes. */
         const awaitResults = async (n, deadline) => {
-            while (Date.now() < deadline && results() < n) await new Promise((r) => setTimeout(r, 250));
+            // A turn that failed to start never reports, so waiting out the deadline for it only burns the time.
+            while (Date.now() < deadline && results() < n && !failed()) await new Promise((r) => setTimeout(r, 250));
             return results() >= n;
         };
 

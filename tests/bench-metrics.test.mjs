@@ -249,6 +249,22 @@ test("measureRun: a predicate that THROWS fails that run rather than the sweep",
     assert.equal(measureRun({ events: ev }, { succeeded: () => { throw new Error("bad predicate"); } }).succeeded, false);
 });
 
+// --- a run of several turns that did not finish ---
+
+test("measureRun: a task with a follow-up whose run errored before the follow-up answered is not scored", () => {
+    const one = [start(), ...step(1, "answer", {}, "ok"), end("42")];
+    const task = { followup: "and again", succeeded: ({ answer }) => answer === "42" };
+    // Turn 1 passed, turn 2 never ran: the predicate would call it right, which the task is not about.
+    assert.equal(measureRun({ events: one, error: "TypeError: the next turn could not start" }, task).succeeded, null);
+    // Both turns answered: scored, error or not.
+    const two = [...one, end("43")];
+    assert.equal(measureRun({ events: two }, task).succeeded, true);
+    // One turn and an error, with no follow-up expected: scored as before.
+    assert.equal(measureRun({ events: one, error: "late" }, { succeeded: task.succeeded }).succeeded, true);
+    // An interview's asks count as turns the same way.
+    assert.equal(measureRun({ events: one, error: "x" }, { asks: ["q2"], succeeded: task.succeeded }).succeeded, null);
+});
+
 test("spread / rate: nulls are skipped, never counted as zero", () => {
     assert.deepEqual(spread([2, 4, 6]), { mean: 4, sd: 2, n: 3 });
     assert.deepEqual(spread([]), { mean: null, sd: null, n: 0 });
