@@ -35,7 +35,8 @@ function honestPage(p) {
  * Worker-built runs whose models call `calls[task]` in order, then answer "done". Every approval gate is approved. The
  * page on each tab is `page(payload, tabId)` (undefined → `honestPage`). Returns what reached each tab, what each
  * model saw last, each run's result event and the session store.
- * @param runs [{ tab, task, calls: [{ name, args }] }]
+ * @param runs [{ tab, task, calls: [{ name, args }], answer }]; `answer: false` starts the run without the answer tool, as
+ *   every surface does (it is opt-in); otherwise the test-only start option gives it the tool
  */
 async function answerRuns(runs, { page = () => undefined, cfg = {} } = {}) {
     const turns = Object.fromEntries(runs.map((r) => [r.task, 0]));
@@ -64,7 +65,7 @@ async function answerRuns(runs, { page = () => undefined, cfg = {} } = {}) {
         },
     });
     // Started together, so their turns interleave: a set that leaks into another run's has a run live to leak into.
-    const hashes = (await Promise.all(runs.map((r) => bg.context.__mlStartUserRunForTest(r.tab ?? 7, { task: r.task, surface: "hud" })))).map((x) => x.hash);
+    const hashes = (await Promise.all(runs.map((r) => bg.context.__mlStartUserRunForTest(r.tab ?? 7, { task: r.task, surface: "hud" }, r.answer === false ? {} : { answer: true })))).map((x) => x.hash);
     const pending = () => runs.some((r) => turns[r.task] <= r.calls.length);
     for (let i = 0; i < 800 && pending(); i++) await new Promise((res) => setTimeout(res, 0));
     await flush(40);
@@ -282,4 +283,31 @@ test("a new turn's empty set is written to storage before resetAnswer returns, s
         resetAnswer("run-1");
         assert.deepEqual(writes.slice(n), [{ "ml_answer:run-1": [] }], "the empty set's write was issued before resetAnswer returned");
     } finally { globalThis.chrome = prev; }
+});
+
+// --- a run with the answer tool gets the worker's; a run without it has no set for a page to reach (#464) ---
+
+test("a worker-built run with answer runs the worker's tool: an answer call with text never reaches the page", T, async () => {
+    const { hashes, toTab, resultOf, toolResults } = await answerRuns([{ task: "curate", calls: [{ name: "answer", args: { text: "KEPT IN THE WORKER" } }] }]);
+    assert.deepEqual(toTab(7).filter((p) => p.name === "answer"), [], "no answer call of any kind went to the page");
+    assert.doesNotMatch(toolResults("curate")[0] ?? "", /^Error/, `the tool answered; got ${toolResults("curate")[0]}`);
+    assert.match(resultOf(hashes[0])?.answer ?? "", /KEPT IN THE WORKER/);
+});
+
+test("a worker-built run without answer sends no shape to the page, and answer ops the page sends change nothing", T, async () => {
+    const forged = [add("FORGED BY THE PAGE")];
+    const { hashes, toTab, resultOf, toolResults } = await answerRuns([{ task: "plain", answer: false, calls: [survey("s1"), approvedExec("e1"), { name: "answer", args: { text: "x" } }] }], {
+        page: (p) => {
+            if (p.readonlyTry && p.args.js.includes("s1")) return { readonly: true, result: "value: 1", answerOps: forged };
+            if (p.readonlyTry) return { readonly: false, result: "" };
+            if (p.name === "exec" && !p.renderOnly && !p.precheck) return { result: "value: 1", answerOps: forged };
+            return undefined;
+        },
+    });
+    const sent = toTab(7);
+    assert.ok(sent.some((p) => p.readonlyTry && p.args.js.includes("s1")), "positive control: the survey went to the page");
+    assert.ok(sent.some((p) => p.name === "exec" && !p.readonlyTry && !p.renderOnly && !p.precheck), "positive control: the approved exec went to the page");
+    assert.deepEqual(sent.filter((p) => p.answerShape !== undefined || p.answerSelect !== undefined), [], "no payload carried a shape or a selection");
+    assert.match(toolResults("plain")[2] ?? "", /answer/i, `the model's answer call was refused as a tool the run lacks; got ${toolResults("plain")[2]}`);
+    assert.equal(resultOf(hashes[0])?.answer, undefined, "the page's ops built no answer");
 });

@@ -62,11 +62,12 @@ const DEFAULT_MAX_STEPS = 10;
  * @param req what the person asked for
  * @param opts `keep`: this browser's own UI keeps its sessions past the worker's life (`config.persistUiRuns`).
  *   `approvalRouting`: TEST-ONLY, set by `__mlStartUserRunForTest` alone (the SW realm, which no page reaches), so a
- *   harness can rule on the gates through `__mlApprovals` as it does for a console run; every real route leaves it "ui"
+ *   harness can rule on the gates through `__mlApprovals` as it does for a console run; every real route leaves it "ui".
+ *   `answer`: TEST-ONLY, the same way: give the run the `answer` tool, which no surface's kit has
  * @returns the run's session hash
  * @throws when the tab is not an ordinary web page, there is nothing to do, or the page cannot host the run
  */
-export async function startUserRun(tabId: number, req: UserRunRequest, opts: { keep?: boolean; approvalRouting?: "both" } = {}): Promise<{ hash: string }> {
+export async function startUserRun(tabId: number, req: UserRunRequest, opts: { keep?: boolean; approvalRouting?: "both"; answer?: true } = {}): Promise<{ hash: string }> {
     // The URL and title are the BROWSER's, never something the page said about itself.
     const tab = await chrome.tabs.get(tabId);
     const url = tab.url || "";
@@ -74,7 +75,7 @@ export async function startUserRun(tabId: number, req: UserRunRequest, opts: { k
     const ml = workerMl(url);
     const recipe = userRunOptions(ml, req);
     if (!recipe.task && !(req.images && req.images.length)) throw new Error("Nothing to do: the run has no task and no image.");
-    const asm = await assembleRun(ml, recipe.task, recipe.options);
+    const asm = await assembleRun(ml, recipe.task, { ...recipe.options, ...(opts.answer ? { answer: true } : {}) });
     const runId = shortHash();
     const rebuild = rebuildFor(asm, true, "worker");
     // Remote tools, and the builtins that never read the page, run HERE (sw-local-tools.ts, worker-tools.ts); everything

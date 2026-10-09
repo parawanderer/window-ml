@@ -45,7 +45,7 @@ async function answerRun(turns, { listen = false } = {}) {
         for (const [i, turn] of turns.entries()) {
             const before = fake.calls().length;
             fake.setScript(turn.script);
-            if (i === 0) ({ hash } = await ext.sw.evaluate(({ tabId, req }) => globalThis.__mlStartUserRunForTest(tabId, req, { approvalRouting: "both" }), { tabId, req: { task: turn.task, surface: "hud", hud: "quiet" } }));
+            if (i === 0) ({ hash } = await ext.sw.evaluate(({ tabId, req }) => globalThis.__mlStartUserRunForTest(tabId, req, { approvalRouting: "both", answer: true }), { tabId, req: { task: turn.task, surface: "hud", hud: "quiet" } }));
             else await ext.sw.evaluate(({ h, t }) => globalThis.__mlUserRunActionForTest(h, "send", { text: t, surface: "hud" }), { h: hash, t: turn.task });
             for (let k = 0; k < 300 && events.filter((e) => e.kind === "agent-result").length <= i; k++) await sleep(100);
             results.push(events.filter((e) => e.kind === "agent-result")[i]);

@@ -423,7 +423,10 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     /** The run's context snapshot (`contextSink`), for `ml.current` in a survey the worker evaluates. */
     // A run the worker built keeps its curated answer here (worker-answer.ts): a new turn starts it empty (a run resurrected
     // after an eviction continues its turn, so keeps it), and its `answer` tool asks this tab for a selector's elements.
-    if (p.builtBy === "worker") {
+    // Only a run that has `answer` has a set to send: without it `ml.answer` is absent (ml-member-tools.ts), and a shape
+    // would hand the page script an `AnswerLog` the run never offered.
+    const workerAnswer = p.builtBy === "worker" && p.tools.some((t) => t.name === "answer");
+    if (workerAnswer) {
         if (!resurrected) resetAnswer(runId);
         setAnswerSelector(runId, async (a) => {
             const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name: "answer", args: {}, answerSelect: a } })
@@ -573,9 +576,9 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     try {
                         // A worker-built run's answer set is the worker's: the script is sent its shape, and what it changed
                         // comes back to be replayed (worker-answer.ts).
-                        const answerShape = js !== undefined ? await answerShapeFor(runId) : undefined;
+                        const answerShape = js !== undefined && workerAnswer ? await answerShapeFor(runId) : undefined;
                         env = await sendTool({ runId, name, args, stream: !!onStream, ...(reads ? { reads } : {}), ...(answerShape ? { answerShape } : {}) }, onStream, execDoc) as Partial<import("../contract").PageToolEnvelope>;
-                        if (js !== undefined && env?.answerOps !== undefined) await replayOps(env.answerOps);
+                        if (answerShape && env?.answerOps !== undefined) await replayOps(env.answerOps);
                     } catch (e) {
                         const emsg = (e as Error)?.message || String(e);
                         if (!CHANNEL_GONE.test(emsg)) {
@@ -806,7 +809,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 // discard: it finds no sink.
                 if (live) delegateStreams.set(runId, live.push);
                 try {
-                    const answerShape = p.builtBy === "worker" ? await answerShapeFor(runId) : undefined;
+                    const answerShape = workerAnswer ? await answerShapeFor(runId) : undefined;
                     const env = await sendTool({ runId, name, args, readonlyTry: true, stream: !!live, ...(answerShape ? { answerShape } : {}) }, live?.push)
                         .catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
                     // Only an answered survey's changes count: a refused try leaves nothing behind, as on the page.
