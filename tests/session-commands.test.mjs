@@ -70,7 +70,7 @@ function world(over = {}, indexOpts = {}) {
         startPage: () => "https://start.example/",
         utilityConfigured: () => true,
         sideCall: rec("sideCall", async () => ({ content: "a title", usage: { totalTokens: 5 } })),
-        captureVisible: rec("captureVisible", async () => png(1280, 720)),
+        captureTab: rec("captureTab", async () => png(1280, 720)),
         now: () => 42,
         ...over,
     };
@@ -330,16 +330,19 @@ test("side.call: the utility profile only, a capped token budget, the session on
 
 test("tab.screenshot: only a tab in front, stepped down to JPEG under the size ceiling, with its real pixel size", async () => {
     const shots = [png(1280, 720, 3000), jpeg(1280, 720)];
-    const w = world({ captureVisible: async (win, opts) => { w.calls.push(["capture", win, opts]); return opts.format === "png" ? shots[0] : shots[1]; } });
+    const w = world({ captureTab: async (tabId, opts) => { w.calls.push(["capture", tabId, opts]); return opts.format === "png" ? shots[0] : shots[1]; } });
     w.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
     const r = await w.run({ type: "tab.screenshot", runtime: "local", target: { session: sid("aaaa0001") }, maxBytes: 1000 });
     assert.deepEqual(r, { ok: true, data: { image: shots[1], width: 1280, height: 720, ts: 42 } });
-    assert.deepEqual(w.named("capture").map((c) => c[2].format), ["png", "jpeg"]);
+    assert.deepEqual(w.named("capture").map((c) => [c[1], c[2].format]), [[TAB, "png"], [TAB, "jpeg"]], "the session's tab, by id");
 
     assert.equal(code(await w.run({ type: "tab.screenshot", runtime: "local", target: { tabId: 999 } })), "not-found");
     const hidden = createCommandHandler({ ...w.deps, getTab: async () => ({ tabId: TAB, url: "", title: "", active: false, windowId: 1 }) });
     assert.equal(code(await hidden({ type: "tab.screenshot", runtime: "local", target: { tabId: TAB } })), "conflict");
-    const huge = createCommandHandler({ ...w.deps, captureVisible: async () => png(1, 1, 5000) });
+    // In front when asked, but not while the shot was taken (the window switched tabs): refused, never another tab's image.
+    const switched = createCommandHandler({ ...w.deps, captureTab: async () => null });
+    assert.equal(code(await switched({ type: "tab.screenshot", runtime: "local", target: { tabId: TAB } })), "conflict");
+    const huge = createCommandHandler({ ...w.deps, captureTab: async () => png(1, 1, 5000) });
     assert.equal(code(await huge({ type: "tab.screenshot", runtime: "local", target: { tabId: TAB }, maxBytes: 100 })), "failed");
     assert.equal(code(await w.run({ type: "tab.screenshot", runtime: "local", target: {} })), "invalid");
 });
