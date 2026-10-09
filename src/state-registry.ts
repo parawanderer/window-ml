@@ -39,6 +39,9 @@ export interface StateDecl {
     /** Where the MODEL actually reads it (`ml.current.messages`), once it does. Absent for a `model` member means meant
      *  for the model and not given to it yet: the inspector says so rather than claim a path that does not exist. */
     exposedAs?: string;
+    /** List the member only for a run whose read holds something, so a run another realm holds it for (the page's
+     *  `run.answer` of a run the page built) shows that realm's member instead of an empty one here. */
+    heldOnly?: true;
     /** Plain data for one run, or undefined when the store holds nothing for it. Never a live reference: the result is
      *  handed to a reader that must not be able to reach the store through it. A store kept in storage reads async. */
     read?: (key: StateKey) => unknown;
@@ -112,13 +115,22 @@ export interface StateMember {
     describe: string;
     /** See {@link StateDecl.exposedAs}. */
     exposedAs?: string;
+    /** See {@link StateDecl.heldOnly}. */
+    heldOnly?: true;
 }
 
 /** Every readable member one realm declares, in id order. */
 export const readableMembers = (realm: StateRealm): StateMember[] => declaredState()
     .filter((d) => d.read && d.audience !== "never" && d.realm === realm)
     .map((d) => ({ id: d.id, realm: d.realm, scope: d.scope, audience: d.audience as "model" | "human", lostOn: [...d.lostOn], describe: d.describe,
-        ...(d.exposedAs ? { exposedAs: d.exposedAs } : {}) }));
+        ...(d.exposedAs ? { exposedAs: d.exposedAs } : {}), ...(d.heldOnly ? { heldOnly: true as const } : {}) }));
+
+/** The members one realm lists for a run, given what it read for that run: a {@link StateDecl.heldOnly} member only
+ *  where the run has an entry for it. */
+export const membersFor = (realm: StateRealm, entries: readonly StateEntry[]): StateMember[] => {
+    const held = new Set(entries.map((e) => e.id));
+    return readableMembers(realm).filter((m) => !m.heldOnly || held.has(m.id));
+};
 
 /** Forget every declaration. Tests only: a module's declarations run once per load. */
 export function resetStateRegistry(): void { registry.clear(); }

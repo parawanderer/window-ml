@@ -55,10 +55,16 @@ const GENRES = {
         files: ["readonly-exec.test.mjs", "readonly-pipe.test.mjs", "readonly-jsonpath.test.mjs", "readonly-current.test.mjs",
             "readonly-stream.test.mjs", "readonly-globals.test.mjs", "readonly-dates.test.mjs"],
     },
+    // The run's curated answer: the set and its tool's core, the pointers it designates and their dedup against the
+    // prose, and the worker-held set's page-side view (`AnswerLog`) with the replay of what a page-side script reports.
+    answer: {
+        about: "the run's curated answer (answer-set.ts): the set, its designated outputs, and the worker-held set's page-side log",
+        files: ["answer-set.test.mjs", "answer-tokens.test.mjs", "answer-dedup.test.mjs", "answer-log.test.mjs"],
+    },
     ext: {
         about: "the extension's own worlds — background, relay, CDP, the page loop",
         files: ["background.test.js", "relay.test.js", "agent.test.js", "cdp-stream.test.mjs",
-            "delegation.test.mjs", "redteam.test.js", "trusted-input.test.mjs", "dom-query.test.mjs",
+            "delegation.test.mjs", "redteam.test.js", "redteam-answer.test.mjs", "trusted-input.test.mjs", "dom-query.test.mjs",
             "tools-shadow.test.mjs", "bgrun.test.mjs", "replay.test.mjs"],
     },
     // The chat page's own logic (the client store, the view prefs, the local host) and the check that its web build

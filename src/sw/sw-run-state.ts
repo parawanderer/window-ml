@@ -3,7 +3,7 @@
 // the tab the run is on. Extension pages only, like DUMP_RUN_LOG: the grants and the mailbox are the person's to see,
 // and a page could otherwise read another tab's run.
 
-import { readState, readableMembers, withPageState, type StateEntry, type StateMember } from "../state-registry";
+import { readState, readableMembers, membersFor, withPageState, type StateEntry, type StateMember } from "../state-registry";
 import { contextByRun, hydrationDone, stateKeyFor } from "./sw-runs";
 import { senderOrigin } from "./sw-housekeeping";
 import { CONSOLE_STEPS, evalConsole, evalWatch, stateTree, treeShape, WATCH_STEPS, watchList, type ConsoleJs, type ConsoleResult, type WatchJs, type WatchResult, type WatchShape } from "../state-watch";
@@ -92,10 +92,10 @@ export async function handleRunStateDump(payload: unknown, sender: chrome.runtim
 
 /** One run's members and what they hold: the worker's, and the page's when the run has a tab that answers. */
 async function snapshot(run: string): Promise<{ members: StateMember[]; entries: StateEntry[]; pageError?: string }> {
-    const members = readableMembers("worker");
-    if (!run) return { members, entries: [] };
+    if (!run) return { members: readableMembers("worker"), entries: [] };
     const key = stateKeyFor(run);
     const entries = await readState(key, "human", "worker");
+    const members = membersFor("worker", entries);
     // WHO HOSTS THE LOOP is the session index's word, from where each event came from (session-index.ts), never the
     // page's. A page-hosted run's messages, pointers and mailbox are the page's: it may answer for those worker ids,
     // but only where the worker itself holds nothing for this run, and the row says it came from the page.

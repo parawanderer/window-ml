@@ -33,6 +33,8 @@ import { noteRunMechanic } from "./sw-runs";
 import { ensureLocalTools, runLocalTool, runsInWorker } from "./sw-local-tools";
 import { withUserWatches } from "./sw-shared-watches";
 import { routeExec, execNames } from "./exec-routing";
+import { answerFor, answerShapeFor, applyAnswerOps, resetAnswer, setAnswerSelector } from "./worker-answer";
+import { finalizeAnswer, type AnswerShapeItem } from "../pointers/answer-set";
 import { isolationAvailable, pageApproved, runIsolatedExec } from "./sw-isolated-exec";
 import { grantRunFetch, runFetchConsented, grantRunPython, pageOnlyPython } from "./worker-tools";
 import { navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
@@ -233,7 +235,12 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     // Every tool send that names a tool goes through here. A run the worker built (sw-run-start.ts) runs its REMOTE tools
     // and the builtins that never read the page itself (sw-local-tools.ts, worker-tools.ts); everything else, and every
     // run a page built, goes to the page as before.
-    const sendTool = async (payload: { runId: string; name: string; args: Record<string, unknown>; stream?: boolean; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; reads?: PreRead[] }, onStream?: (chunk: string, ts?: number) => void, documentId?: string): Promise<unknown> => {
+    /** Replay what a page-side script changed in the worker's answer set; a report it refuses is logged, never applied. */
+    const replayOps = async (ops: unknown): Promise<void> => {
+        const refused = await applyAnswerOps(runId, ops);
+        if (refused) recordRunLog(runId, { level: "warn", subsystem: "routing", kind: "answer-ops-refused", reason: refused, detail: {} });
+    };
+    const sendTool = async (payload: { runId: string; name: string; args: Record<string, unknown>; stream?: boolean; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[] }, onStream?: (chunk: string, ts?: number) => void, documentId?: string): Promise<unknown> => {
         // A worker-built run's REMOTE tool never goes to the page, which has no such tool. If this worker does not hold
         // it (rehydrated after an eviction, or a resumed session), it is rebuilt first.
         const tabUrl = (): string => tabPageUrl.get(tabId) || p.pageUrl || "";
@@ -414,6 +421,19 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     // a handle's setter fans page-side, and the reducer already folds it into the session.
     else if (capRaised) fanEvent({ kind: "agent-cap", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, maxSteps: p.maxSteps });
     /** The run's context snapshot (`contextSink`), for `ml.current` in a survey the worker evaluates. */
+    // A run the worker built keeps its curated answer here (worker-answer.ts): a new turn starts it empty (a run resurrected
+    // after an eviction continues its turn, so keeps it), and its `answer` tool asks this tab for a selector's elements.
+    // Only a run that has `answer` has a set to send: without it `ml.answer` is absent (ml-member-tools.ts), and a shape
+    // would hand the page script an `AnswerLog` the run never offered.
+    const workerAnswer = p.builtBy === "worker" && p.tools.some((t) => t.name === "answer");
+    if (workerAnswer) {
+        if (!resurrected) resetAnswer(runId);
+        setAnswerSelector(runId, async (a) => {
+            const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name: "answer", args: {}, answerSelect: a } })
+                .catch((e) => ({ result: `Error: ${(e as Error)?.message || e}` })) as Partial<import("../contract").PageToolEnvelope> | null;
+            return env?.answerSelection ?? { count: 0, error: String(env?.result || "the page did not answer").replace(/^Error: /, "") };
+        });
+    }
     runBackgroundAgent(
         { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSameOriginAuth: p.autoApproveSameOriginAuth, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, ...(p.origin ? { origin: p.origin } : {}), runId, seqBase, tokenStore: sessionTokens(runId), labelMatch: p.labelMatch, resumeMessages, images: p.images,
           // A resumed turn follows a PERSON (a follow-up, Continue, Retry) — except a run resurrected after the
@@ -554,7 +574,11 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                         return r && (sentTo === undefined || r.doc !== sentTo) ? r.info : undefined;
                     };
                     try {
-                        env = await sendTool({ runId, name, args, stream: !!onStream, ...(reads ? { reads } : {}) }, onStream, execDoc) as Partial<import("../contract").PageToolEnvelope>;
+                        // A worker-built run's answer set is the worker's: the script is sent its shape, and what it changed
+                        // comes back to be replayed (worker-answer.ts).
+                        const answerShape = js !== undefined && workerAnswer ? await answerShapeFor(runId) : undefined;
+                        env = await sendTool({ runId, name, args, stream: !!onStream, ...(reads ? { reads } : {}), ...(answerShape ? { answerShape } : {}) }, onStream, execDoc) as Partial<import("../contract").PageToolEnvelope>;
+                        if (answerShape && env?.answerOps !== undefined) await replayOps(env.answerOps);
                     } catch (e) {
                         const emsg = (e as Error)?.message || String(e);
                         if (!CHANNEL_GONE.test(emsg)) {
@@ -785,8 +809,11 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 // discard: it finds no sink.
                 if (live) delegateStreams.set(runId, live.push);
                 try {
-                    const env = await sendTool({ runId, name, args, readonlyTry: true, stream: !!live }, live?.push)
+                    const answerShape = workerAnswer ? await answerShapeFor(runId) : undefined;
+                    const env = await sendTool({ runId, name, args, readonlyTry: true, stream: !!live, ...(answerShape ? { answerShape } : {}) }, live?.push)
                         .catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
+                    // Only an answered survey's changes count: a refused try leaves nothing behind, as on the page.
+                    if (answerShape && env?.readonly && env.answerOps !== undefined) await replayOps(env.answerOps);
                     recordRunLog(runId, { subsystem: "routing", kind: "readonly-page", reason: env?.readonly ? "reads-page" : "refused-in-page", detail: { tool: name } });
                     return env && env.readonly ? { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut, reused: env.reused } : null;
                 } finally {
@@ -970,7 +997,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             // The same snapshot `bgRuns` holds, where it outlives the run: `resumeP` so a later turn continues
             // AFTER this one's steps rather than colliding with them.
             saveRunHistory(runId, { messages, payload: resumeP, sub: snapSub() });
-            const answerMedia = runAnswerMedia.length ? runAnswerMedia : undefined;
+            let answerMedia = runAnswerMedia.length ? runAnswerMedia : undefined;
             // A run the WORKER built has no page-side caller to assemble the turn's curated answer from the page's
             // answer set, so it is asked for here. Page data, exactly as a tool result is; absent if the page is gone.
             // Close the inbox FIRST: a message sent while the page is asked for the answer must not be reported as a
@@ -979,7 +1006,10 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             const fin = p.builtBy === "worker"
                 ? await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, finish: true, summary: res.summary } }).catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null
                 : null;
-            const answer = typeof fin?.answer === "string" && fin.answer ? fin.answer : undefined;
+            // A worker-built run's answer is the worker's set (worker-answer.ts); the page's finish only ends its registration.
+            const own = p.builtBy === "worker" ? await answerFor(runId) : undefined;
+            const answer = own ? (finalizeAnswer(own, res.summary) || undefined) : typeof fin?.answer === "string" && fin.answer ? fin.answer : undefined;
+            if (own) { const m = own.media(); answerMedia = m.length ? m : undefined; }
             emitLifecycle({
                 kind: "agent-result", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: res.steps },
                 summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled, answerMedia,

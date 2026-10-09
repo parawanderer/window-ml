@@ -242,3 +242,189 @@ export function makeAnswerFacade(set: AnswerSet, previewEl: (el: any) => string 
     Object.defineProperty(f, "length", { get: () => set.length, enumerable: true });
     return f;
 }
+
+/** A compact, model-facing echo of the current answer set (indexed, clamped previews — never the
+ *  heavy media/nodes). Shown after every `answer` op so the model can see what it's curating. */
+export const answerEcho = (set: AnswerSet): string =>
+    set.length ? set.dump().map(d => `  [${d.i}] ${d.kind}: ${d.preview}`).join("\n") : "  (empty)";
+
+/* ------------------------------ the answer tool's core ------------------------------ */
+
+/** The `answer` tool's arguments. */
+export interface AnswerArgs {
+    selector?: string; index?: number; note?: string; show?: "inline" | "highlight";
+    text?: string; remove?: number | number[]; clear?: boolean;
+}
+
+/** What a selector designation found where it was resolved: how many matched, and the element item's parts. */
+export interface AnswerSelection { count: number; nodes?: unknown[]; preview?: string; media?: AnswerMedia[] }
+
+/**
+ * Apply one `answer` tool call to a set and say what it did, the way the model is echoed it. Shared by the page's tool
+ * and the worker's, which differ only in where a selector is resolved (`select`, which may throw a selector error).
+ * `clear` first, then whatever else the call carries: `{ clear: true, text }` is "replace the answer with this" (it used
+ * to return early, and Gemini Flash's text was dropped on two turns running). Every op the call carries is applied in
+ * order — models send `{ text, selector }` to add both at once — and a bad selector is noted, not fatal.
+ * @param set the run's answer set
+ * @param args the call
+ * @param select resolves a selector to the element item's parts
+ * @returns the model's echo, and the media a selector added
+ */
+export async function answerCall(set: AnswerSet, args: AnswerArgs, select: (selector: string, index: number | undefined, note: string | undefined, show: AnswerArgs["show"]) => Promise<AnswerSelection>): Promise<{ content: string; media?: AnswerMedia[] }> {
+    const { selector, index, note, show, text, remove, clear } = args;
+    if (clear) set.clear();
+    if (clear && text == null && selector == null) return { content: "Answer cleared.\n  (empty)" };
+    const notes: string[] = clear ? ["cleared"] : [];
+    if (remove != null) {
+        const idxs = Array.isArray(remove) ? remove : [remove];
+        let removed = 0;
+        for (const i of idxs.slice().sort((a, b) => b - a)) removed += set.remove(i);   // high→low: indices stay valid
+        notes.push(`removed ${removed}`);
+    }
+    if (text != null) {
+        // A `@tool:` string → a token designation (its output renders at the BOTTOM of the answer);
+        // `note` becomes its caption there. Anything else → a literal text line.
+        set.add(answerItemFromString(text, note));
+        notes.push(text.startsWith("@tool:") ? "added output" : "added text");
+    }
+    let media: AnswerMedia[] | undefined;
+    if (selector != null) {
+        let found: AnswerSelection | null = null;
+        try { found = await select(selector, index, note, show); } catch (e) { notes.push(`selector error: ${(e as Error).message}`); }
+        if (found) {
+            if (!found.count) notes.push(`"${selector}" matched nothing`);
+            else {
+                media = found.media && found.media.length ? found.media : undefined;
+                set.add({ kind: "element", nodes: found.nodes ?? [], preview: found.preview ?? `${found.count} element(s)`, ...(media ? { media } : {}), ...(note ? { note } : {}) });
+                notes.push(`added ${found.count} element(s)${note ? ` — ${note}` : ""}`);
+            }
+        }
+    }
+    return { content: `${notes.length ? notes.join("; ") + ". " : ""}Answer set (${set.length}):\n${answerEcho(set)}`, ...(media ? { media } : {}) };
+}
+
+/* ------------------------- the worker's set, as a page-side script sees it ------------------------- */
+
+/** One item of a worker-held set as it is sent to the page with an approved exec: its kind, and what the page may
+ *  see of it. A text item's content is the run's (the model may have written it from another site), and so is an
+ *  output pointer's: its caption is the model's note, and a `@tool:` string may carry the model's own words. Neither is
+ *  sent. An element's preview is the page's own DOM. */
+export type AnswerShapeItem = { kind: "text" } | { kind: "token" } | { kind: "element"; preview: string };
+
+/** An item as an operation carries it back: an element by its preview, never its nodes, which stay on the page. */
+export type AnswerOpItem = { kind: "text"; text: string } | { kind: "token"; ref: string; preview?: string } | { kind: "element"; preview: string; note?: string };
+
+/** One change a page-side script made to the set, replayed by the worker on the real one. */
+export type AnswerOp = { op: "add"; item: AnswerOpItem } | { op: "remove"; which: number | string } | { op: "clear" };
+
+/** What a page-side script reads for a text item it cannot see. */
+const HIDDEN_PREVIEW = "(text, kept by the worker)";
+/** …and for an output pointer it cannot see. */
+const HIDDEN_OUTPUT = "(output, kept by the worker)";
+
+/**
+ * The set an approved exec of a worker-built run is given on the page: the worker's set as far as the page may see it,
+ * recording every change in order for the worker to replay (worker-answer.ts). `.length` and indices are answered here,
+ * synchronously, as before. A text or output item the page was not shown has no content here, so a `remove("…")` by
+ * text or ref matches only what this script added; the worker's replay matches exactly the same, so a forged removal
+ * cannot test a guess against a hidden item.
+ */
+export class AnswerLog extends AnswerSet {
+    readonly ops: AnswerOp[] = [];
+    readonly #hidden = new WeakSet<AnswerItem>();
+
+    constructor(shape: readonly AnswerShapeItem[]) {
+        super();
+        for (const s of shape) {
+            if (s.kind === "element") { this.items.push({ kind: "element", nodes: [], preview: s.preview }); continue; }
+            const it: AnswerItem = s.kind === "text" ? { kind: "text", text: "\u0000" } : { kind: "token", ref: "\u0000" };
+            this.#hidden.add(it);
+            this.items.push(it);
+        }
+    }
+
+    override add(item: AnswerItem): number {
+        this.ops.push({ op: "add", item: item.kind === "element" ? { kind: "element", preview: item.preview, ...(item.note ? { note: item.note } : {}) } : item.kind === "token" ? { kind: "token", ref: item.ref, ...(item.preview ? { preview: item.preview } : {}) } : { kind: "text", text: item.text } });
+        return super.add(item);
+    }
+
+    override remove(which: number | string | ((it: AnswerItem, i: number) => boolean)): number {
+        if (typeof which === "number" || typeof which === "string") this.ops.push({ op: "remove", which });
+        return super.remove(typeof which === "string" ? (it: AnswerItem) => !this.#hidden.has(it) && ((it.kind === "token" && it.ref === which) || (it.kind === "text" && it.text === which)) : which);
+    }
+
+    override clear(): void { this.ops.push({ op: "clear" }); super.clear(); }
+
+    override checkpoint(): () => void {
+        const restore = super.checkpoint(), n = this.ops.length;
+        return () => { restore(); this.ops.length = n; };
+    }
+
+    override dump(): AnswerItemView[] {
+        return super.dump().map((v) => (this.#hidden.has(this.items[v.i]) ? { ...v, preview: v.kind === "token" ? HIDDEN_OUTPUT : HIDDEN_PREVIEW } : v));
+    }
+}
+
+/** The shape of a set, as {@link AnswerLog} is built from it. */
+export function answerShape(set: AnswerSet): AnswerShapeItem[] {
+    return set.items.map((it) => (it.kind === "element" ? { kind: "element" as const, preview: it.preview } : { kind: it.kind }));
+}
+
+/** The most operations one call may report, the longest string an operation may carry, and how large the set may grow
+ *  through replays (well inside `chrome.storage.session`'s quota, where the worker keeps it). */
+const MAX_OPS = 200, MAX_TEXT = 20_000, MAX_SHORT = 1_000, MAX_ITEMS = 500, MAX_SET_CHARS = 2_000_000;
+
+/**
+ * Replay what a page-side script did to the set on the real one. The operations are the PAGE's report: it can forge or
+ * edit them, which changes only the person-facing answer, as any script in an approved exec's world could already. So
+ * each is checked for shape and size, and a report with one malformed operation is dropped whole.
+ * @param set the worker's set
+ * @param ops what the page reported
+ * @returns how many were applied, or the reason none were
+ */
+export function replayAnswerOps(set: AnswerSet, ops: unknown): { applied: number } | { refused: string } {
+    if (!Array.isArray(ops)) return { refused: "not a list" };
+    if (ops.length > MAX_OPS) return { refused: `${ops.length} operations, over ${MAX_OPS}` };
+    const str = (x: unknown, max: number): x is string => typeof x === "string" && x.length <= max;
+    const okItem = (it: unknown): it is AnswerOpItem => {
+        const i = it as Record<string, unknown> | null;
+        if (!i || typeof i !== "object") return false;
+        if (i.kind === "text") return str(i.text, MAX_TEXT);
+        if (i.kind === "token") return str(i.ref, MAX_SHORT) && i.ref.startsWith(TOOL_TOKEN_PREFIX) && (i.preview === undefined || str(i.preview, MAX_SHORT));
+        if (i.kind === "element") return str(i.preview, MAX_SHORT) && (i.note === undefined || str(i.note, MAX_SHORT));
+        return false;
+    };
+    const ok = (o: unknown): o is AnswerOp => {
+        const x = o as Record<string, unknown> | null;
+        if (!x || typeof x !== "object") return false;
+        if (x.op === "clear") return true;
+        if (x.op === "remove") return (Number.isInteger(x.which) && (x.which as number) >= 0) || str(x.which, MAX_TEXT);
+        if (x.op === "add") return okItem(x.item);
+        return false;
+    };
+    if (!ops.every(ok)) return { refused: "a malformed operation" };
+    // Replayed on a copy, committed only if the result is within bounds. A removal by text or ref matches only what
+    // this report added, as the script's own view (AnswerLog) did: matching hidden items would let a forged removal
+    // test a guess against them, read back through the next shape's length.
+    const next = new AnswerSet();
+    next.items.push(...set.items);
+    const added = new Set<AnswerItem>();
+    for (const o of ops as AnswerOp[]) {
+        if (o.op === "clear") next.clear();
+        else if (o.op === "remove") next.remove(typeof o.which === "number" ? o.which : (it: AnswerItem) => added.has(it) && ((it.kind === "token" && it.ref === o.which) || (it.kind === "text" && it.text === o.which)));
+        else {
+            const it = o.item;
+            const item: AnswerItem = it.kind === "element" ? { kind: "element", nodes: [], preview: it.preview, ...(it.note ? { note: it.note } : {}) }
+                : it.kind === "token" ? { kind: "token", ref: it.ref, ...(it.preview ? { preview: it.preview } : {}) }
+                    : { kind: "text", text: it.text };
+            added.add(item);
+            next.add(item);
+        }
+    }
+    if (next.length > MAX_ITEMS) return { refused: `the set would hold ${next.length} items, over ${MAX_ITEMS}` };
+    const chars = JSON.stringify(next.items.map((it) => (it.kind === "element" ? { ...it, nodes: [] } : it))).length;
+    if (chars > MAX_SET_CHARS) return { refused: `the set would be ${chars} characters, over ${MAX_SET_CHARS}` };
+    set.items.length = 0;
+    set.items.push(...next.items);
+    return { applied: ops.length };
+}

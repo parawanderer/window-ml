@@ -5,6 +5,7 @@
 import { dropAllLocalTools } from "./sw/sw-local-tools";
 import { invocationInfo } from "./sw/sw-invocation";
 import { onIsolatedStream } from "./sw/sw-isolated-exec";
+import { dropAllAnswerMemory } from "./sw/worker-answer";
 import { LOAD_RECORDS_KEY } from "./resource/load-records";
 import type { ApprovalDecision } from "./contract/contract-agent";
 import type { StartRunPayload, SetApprovalPayload, CancelRunPayload, InjectMessagePayload } from "./contract/contract-messages";
@@ -82,6 +83,7 @@ startValueSweeps();
     runControllers.clear(); runInboxes.clear(); bgRuns.clear(); activeRuns.clear();
     runRebuilds.clear(); runReplayBuffer.clear(); pendingApprovals.clear(); hydratedRuns.clear(); resurrectedRuns.clear(); readoptPageInfo.clear();
     dropAllLocalTools();
+    dropAllAnswerMemory();
     await hydratePersistedRuns();
 };
 // TEST-ONLY: seed a minimal resumable bgRun for a tab, so a unit test can exercise the "don't wipe a tab that
@@ -102,7 +104,7 @@ startValueSweeps();
 // TEST-ONLY (SW realm only): start a run as the HUD Commander's Send does (sw-run-start.ts). The real route is the
 // extension's own frame through the content-script shell, which a spec cannot click without driving the whole
 // composer; a page cannot reach this, so it is no way in for one.
-(globalThis as unknown as { __mlStartUserRunForTest?: unknown }).__mlStartUserRunForTest = (tabId: number, req: import("./agent/run-assembly").UserRunRequest, opts?: { keep?: boolean; approvalRouting?: "both" }) => startUserRun(tabId, req, opts);
+(globalThis as unknown as { __mlStartUserRunForTest?: unknown }).__mlStartUserRunForTest = (tabId: number, req: import("./agent/run-assembly").UserRunRequest, opts?: { keep?: boolean; approvalRouting?: "both"; answer?: true }) => startUserRun(tabId, req, opts);
 // TEST-ONLY (SW realm only): send a person's message into, or Continue, a run the worker built, as the sidebar and the
 // HUD do (`userRunAction`). The harness's conversations with a UI-started run (converse.mjs, SURFACE=…) go through it.
 (globalThis as unknown as { __mlUserRunActionForTest?: unknown }).__mlUserRunActionForTest = (hash: string, action: "send" | "continue", body: { text?: string; surface?: string }) => userRunAction(hash, action, body);

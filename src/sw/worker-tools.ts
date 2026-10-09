@@ -17,6 +17,8 @@ import { hintSession } from "../contract/contract-run";
 import { isCurrentPage } from "../dom/dom";
 import { fetchUrlFor } from "./sw-fetch-url";
 import { apiDocsTool } from "../tools/api-docs-tool";
+import { makeDomTools } from "../tools/tools";
+import { workerAnswerTool } from "./worker-answer";
 import { publicConfig } from "../contract/contract-config";
 import { invocationInfo } from "./sw-invocation";
 import { senderTrust } from "./sw-consent";
@@ -24,7 +26,7 @@ import { htmlToMarkdownOffscreen } from "./sw-offscreen";
 import { fetchLLM, getConfig } from "./sw-llm";
 
 /** The builtin tools a worker-built run executes in the worker rather than the page. */
-export const WORKER_TOOL_NAMES: ReadonlySet<string> = new Set(["fetch_url", "python_exec", "agent_api_docs"]);
+export const WORKER_TOOL_NAMES: ReadonlySet<string> = new Set(["fetch_url", "python_exec", "agent_api_docs", "answer"]);
 
 /** What one run's worker tools share: the tab they act for, its fetch cache, and the spend of their model calls. */
 interface RunCtx {
@@ -224,5 +226,7 @@ export function buildWorkerTools(runId: string, tabId: number, tabUrl: () => str
     const ml = runMl(ctx);
     // agent_api_docs reads the shortcut and the config here, where the page would have asked for them by message.
     const docs = { invocation: invocationInfo, config: async () => publicConfig(await getConfig(), ctx.tabUrl()) };
-    return wanted.map((n) => (n === "fetch_url" ? fetchTool.call(ml) : n === "python_exec" ? pythonTool.call(ml) : n === "agent_api_docs" ? apiDocsTool(defineTool, docs) : null)).filter((t): t is MlTool => !!t);
+    // answer keeps the run's set here, with the page's descriptor (what the model is shown); worker-answer.ts.
+    const pageAnswer = () => makeDomTools(defineTool).find((t) => t.name === "answer")!;
+    return wanted.map((n) => (n === "fetch_url" ? fetchTool.call(ml) : n === "python_exec" ? pythonTool.call(ml) : n === "agent_api_docs" ? apiDocsTool(defineTool, docs) : n === "answer" ? workerAnswerTool(runId, pageAnswer()) : null)).filter((t): t is MlTool => !!t);
 }

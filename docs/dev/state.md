@@ -40,7 +40,7 @@ page-hosted one. Several stores exist once per host.
 | `@tool:` values | `tokensByRun` TokenStore (`sw-runs.ts`, memory, 200 per session); page-hosted: `control.tokens` | no | `pointers` |
 | Large stored values (fetched tables) | `ml-values` IndexedDB (`ValueStore`), claimed per session | yes | `pointers` (the join reads both stores) |
 | `@pt` / `@box` tokens | `pointRegistry`, `boxRegistry` (`util.ts`, page) | no; die on navigation, unannounced | `page.points`, `page.boxes` (page realm) |
-| The answer set (what the run hands the person) | `answerSets` (`tool-exec.ts`, page), reset each turn | no | `run.answer` (page realm, while a turn runs) |
+| The answer set (what the run hands the person) | page-hosted run: `answerSets` (`tool-exec.ts`, page), reset each turn; worker-built run: `sets` (`worker-answer.ts`, worker), reset each turn | worker-built: `ml_answer:<runId>` (session storage) | `run.answer` (page realm for a page-hosted run, worker realm for a worker-built one) |
 | Queued steering messages (the mailbox) | background: `runInboxes` (live turn only); page: `AgentControl.inbox` | no | `mailbox` |
 | Open approval gates | `pendingApprovals` (`sw-consent.ts`); client mirrors `AgentStep.awaitingApproval`, `SessionSummary.pendingApprovals` | no | `approvals` (new) |
 | Model switched mid-run | `runModels` | `ml_run_models` (LRU 200) | `run.model` |
@@ -139,7 +139,7 @@ hold live network handles: neither shown nor evaluated).
 Each realm's bundle has its own registry (`src/state-registry.ts`); a snapshot asks the realm that holds the run.
 Declared so far, in the worker: `run.init`, `run.sub`, `run.model`, `run.interrupted`, `run.mailbox`, `run.pointers`,
 `run.page`, `run.messages`, `run.input`, `grants.turn` (`sw-runs.ts`), `run.values` (`sw-values.ts`), `run.approvals`, `grants.call`, `grants.fetch`, `grants.credentialedFetch` (`sw-consent.ts`),
-`run.log` (`sw-run-log.ts`), `session.title` (`sw-sessions.ts`), `run.meta` and `run.current` (`sw-runs.ts`). In the page: `run.answer` (`run-delegation.ts`),
+`run.log` (`sw-run-log.ts`), `session.title` (`sw-sessions.ts`), `run.meta` and `run.current` (`sw-runs.ts`). In the worker also `run.answer` (`worker-answer.ts`) for a run it built, declared `heldOnly` so the panel lists it only for a run whose set it holds, and a page-built run's row is the page's. In the page: `run.answer` (`run-delegation.ts`),
 `page.points`, `page.boxes` (`util.ts`), and for a page-hosted run `run.messages`, `run.pointers`, `run.mailbox`
 (`page-run-state.ts`), asked of the run's tab with `RUN_STATE_IN_PAGE` (`sw-run-state.ts`). An id is unique per realm,
 not overall: both hosts declare the same member of a run. Each realm

@@ -102,6 +102,19 @@ the live shortcut (`invocationInfo`, `sw-invocation.ts`) and the config itself, 
 keyed by the run's local tools, so `runLocalTool` counts each call the page runs towards its streak (`countDocsStreak`),
 which the page's `executeTool` used to do; a read-only try counts on neither side.
 
+`answer` runs there too, and the run's curated answer set lives there (`src/sw/worker-answer.ts`, kept in session
+storage, so an eviction or a navigation mid-turn does not lose it). The tool is the page's descriptor with the shared
+core (`answerCall`, `answer-set.ts`); only a `selector` asks the page, which resolves it in its DOM and returns a
+preview and crops (`answerSelect`). An approved exec in the page's world, and a read-only survey that reaches the page,
+is sent the set's SHAPE (`answerShape`: kinds and an element's preview, never a text's content or an output's ref or
+caption) and given
+an `AnswerLog`, which answers `.length` and indices at once and records what the script changed; the worker replays it
+(`replayAnswerOps`). That report is the page's, so it is checked for shape and size, refused whole if any operation
+is malformed or the set would pass its bounds, and a removal by text matches only what the same report added (as the
+script's own view did), so it cannot probe a hidden item. A selector's answer from the page is rebuilt field by field
+(`checkSelection`), and the model's note for it never leaves the worker. It can change only the person-facing answer, which a script in that world could already do. The page's
+answer at `finish` is ignored for a worker-built run.
+
 ## Where an approved exec of a worker-built run runs
 
 `delegateTool` (`sw-run-host.ts`) asks `routeExec` (`src/sw/exec-routing.ts`) before it mints any grant on the tab. The
