@@ -70,7 +70,7 @@ const MOBILE = "mobile/";
 /** What under `mobile/` is not source: generated native projects, dependencies, build output. */
 const SKIP_DIRS = new Set(["node_modules", "android", "ios", ".expo", "dist", "build"]);
 /** The stylesheets whose classes are indexed and ratcheted. */
-const CSS_FILES = ["src/sidebar/sidebar.css", "src/chat/chat.css"];
+const CSS_FILES = ["src/sidebar/sidebar.css", "src/chat/chat.css", "src/sidebar/page-kit.css"];
 /** Generated files: indexing them is noise, and their headers are written by a generator. */
 const SKIP = /\.gen\.ts$|\.d\.ts$/;
 

@@ -38,6 +38,8 @@ export const pageSources = () => [
     path.join(ROOT, "src/resource"),
     path.join(ROOT, "src/sidebar/resource"),
     path.join(ROOT, "src/sidebar/sidebar.css"),
+    path.join(ROOT, "src/sidebar/page-kit.css"),
+    path.join(ROOT, "src/sidebar/fold-card.tsx"),
     path.join(ROOT, "src/sidebar/palette.ts"),
     path.join(ROOT, "src/sidebar/copy-hash.tsx"),
     path.join(ROOT, "src/sidebar/format.ts"),
@@ -85,7 +87,8 @@ async function codeThemeCss() {
 
 /**
  * The dashboard's stylesheet: the sidebar's colour tokens for both themes (following the system unless the page's
- * toggle set `data-theme`), the lane's rules from sidebar.css, and the page's own layout (page.css).
+ * toggle set `data-theme`), the lane's rules from sidebar.css, the standalone page's pieces (page-kit.css), and the page's
+ * own layout (page.css).
  */
 export async function appCss() {
     const { themeVars, laneCss, sidebarRules } = await import("../../../../src/sidebar/resource/lane-static.ts");
@@ -112,6 +115,8 @@ export async function appCss() {
         sidebarRules(css, /\.md\b|\.md-|(^|[\s,])\.code\b|pre\.code|\.hljs|\.cline\b/),
         // A diff's rows with their gutter (code-diff.tsx), the spec card's "What changed".
         sidebarRules(css, /\.dline\b|\.dline-|\.dno\b|\.dsign\b|\.dtext\b/),
+        // The standalone page's pieces (cards that fold, tiles, badges, buttons), shared in src/sidebar, then this page's own.
+        readFileSync(path.join(ROOT, "src/sidebar/page-kit.css"), "utf8"),
         readFileSync(path.join(HERE, "page.css"), "utf8"),
     ].join("\n");
 }

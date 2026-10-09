@@ -16,7 +16,7 @@ import type { ResourceSample } from "../../../../src/resource/resource-model";
 import type { ResourceEvent } from "../../../../src/resource/resource-timeline";
 import { LaneRows, LaneAxis, laneWindow } from "./lane-view";
 import { runName } from "./runs";
-import { Card } from "./card";
+import { Card } from "../../../../src/sidebar/fold-card";
 // The page's one clock, ticking while the sweep runs: the chip's "all · N" grows with it between pushes, and on a saved
 // report of a sweep that was still running, where no push ever comes.
 import { now } from "./clock";

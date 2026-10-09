@@ -10,7 +10,7 @@ import { Hash } from "../../../../src/sidebar/copy-hash";
 import type { BenchState, RunState, Agg } from "./state";
 import { dur } from "./format";
 import { now } from "./clock";
-import { Card } from "./card";
+import { Card } from "../../../../src/sidebar/fold-card";
 
 /** A run's directory as a link base, or "" before it has one. */
 export const runDir = (r: RunState, base: string): string => (r.path ? base + encodeURI(r.path) : "");

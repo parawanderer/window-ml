@@ -6,7 +6,7 @@ import { CodeBlock } from "../../../../src/sidebar/code-block";
 import { DiffLines } from "../../../../src/sidebar/code-diff";
 import { Tip } from "../../../../src/sidebar/help-tip";
 import type { BenchState, SpecState } from "./state";
-import { Card } from "./card";
+import { Card } from "../../../../src/sidebar/fold-card";
 
 const when = (iso: string) => { const d = new Date(iso); return isNaN(+d) ? iso : d.toLocaleString(); };
 
