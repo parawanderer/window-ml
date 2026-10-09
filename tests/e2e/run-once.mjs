@@ -357,6 +357,10 @@ export function decideApproval(policy, gate) {
  * @param {number} [cfg.timeoutMs] how long to wait for the terminal agent-result
  * @param {(s: string) => void} [cfg.log] where progress lines go
  * @param {(ev: object) => void} [cfg.onEvent] called with every debug event as it arrives
+ * @param {string|null} [cfg.surface] start the run as a person does from that UI ("hud", "overlay", "chat"…): built by
+ *   the worker, with the kit a UI run gets (click, type, python_exec, chat_metadata) and its prompt clauses, and each
+ *   later turn sent as that person's message. Null (the default) is a console run, `ml.agent` from the page. `tools`,
+ *   `python`, `toolTokens`, `agentOptions` and `seed` are the console run's knobs and do not apply.
  * @returns {Promise<{events, session, runMd, runJson, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, models, seedBoundaryStep, captured}>}
  */
 export async function runOnce(cfg = {}) {
@@ -365,7 +369,7 @@ export async function runOnce(cfg = {}) {
         python = false, toolTokens = false, agentOptions = {},
         backend = null, script = DEFAULT_SCRIPT, warm = true, warmAll = false,
         dist = null, artDir = null, approve = "auto", capture = "failure",
-        focusSidebar = true, hold = false, synthetic = true, sharedWatches = [], nextTurn = null, decide = null,
+        focusSidebar = true, hold = false, synthetic = true, sharedWatches = [], watchNotes = {}, nextTurn = null, decide = null, surface = null,
         timeoutMs = followup ? 240000 : 120000,
         log = () => {}, onEvent = null,
     } = cfg;
@@ -407,7 +411,8 @@ export async function runOnce(cfg = {}) {
         if (synthetic) await ext.sw.evaluate(() => chrome.storage.local.set({ ml_synthetic_traffic: true }));
         // Watches SHARED with the model, as the Run state panel stores them when its eye is clicked: the run's
         // `ml.current.debug.userWatches` then carries them (src/sw/sw-shared-watches.ts).
-        if (sharedWatches.length) await ext.sw.evaluate((w) => chrome.storage.local.set({ ml_runstate_watches: w, ml_runstate_shared: w }), sharedWatches);
+        if (sharedWatches.length) await ext.sw.evaluate(([w, n]) => chrome.storage.local.set({ ml_runstate_watches: w, ml_runstate_shared: w, ml_runstate_watch_notes: n }),
+            [sharedWatches, watchNotes]);
         await configureExtension(ext.sw, {
             ...(seedCfg || realCfg),
             apiFormat: backend?.apiFormat || "openai",
@@ -498,9 +503,13 @@ export async function runOnce(cfg = {}) {
         // A seeded or multi-turn run is driven from NODE, one turn at a time, so the backend can be swapped
         // between turns and the seed boundary recorded. A plain single-turn run still goes through
         // ml.agent() exactly as before — the path observe.mjs exercises stays untouched.
-        const needsHandle = !!(seed || followup || nextTurn);
+        if (surface && seed) throw new Error("runOnce: `seed` is a console run's knob; a UI run (`surface`) cannot be seeded");
+        // A UI run is always driven turn by turn from here, even a single turn: its turns are the worker's to start.
+        const needsHandle = !!(seed || followup || nextTurn || surface);
         const t0 = Date.now();
-        try {
+        // The run a UI run became, once its first turn started: later turns are sent into it by its hash.
+        let uiHash = null;
+        if (!surface) try {
             await page.evaluate(({ task, needsHandle, toolNames, toolTokens, python, extra }) => {
                 const opts = {
                     toolTokens,
@@ -537,8 +546,21 @@ export async function runOnce(cfg = {}) {
 
         const results = () => events.filter((e) => e.kind === "agent-result").length;
         const maxStep = () => Math.max(-1, ...events.filter((e) => e.kind === "agent-step" && e.step != null).map((e) => e.step));
-        /** Fire one turn on the stashed handle, without awaiting it. */
-        const startTurn = (t) => page.evaluate((t) => {
+        /** Fire one turn without awaiting it: on the stashed handle (a console run), or as a person's Send (a UI run). */
+        const startTurn = surface ? async (t) => {
+            try {
+                if (uiHash == null) {
+                    const tabId = await ext.sw.evaluate(async (u) => (await chrome.tabs.query({})).find((x) => x.url?.startsWith(u))?.id, site.url);
+                    // approvalRouting "both": the gates stay in the UI and are ALSO ruled on through __mlApprovals, as a
+                    // console run's are here. Only the SW-realm test hook can ask for it.
+                    ({ hash: uiHash } = await ext.sw.evaluate(({ tabId, req }) => globalThis.__mlStartUserRunForTest(tabId, req, { approvalRouting: "both" }),
+                        { tabId, req: { task: t, surface, hud: "quiet" } }));
+                } else {
+                    const outcome = await ext.sw.evaluate(({ h, t, surface }) => globalThis.__mlUserRunActionForTest(h, "send", { text: t, surface }), { h: uiHash, t, surface });
+                    if (outcome !== "turn") log(`  (the message started no new turn: ${outcome})`);
+                }
+            } catch (e) { error = error || String(e); }
+        } : (t) => page.evaluate((t) => {
             window.__mlObsRun = window.__mlAgent.run(t).catch((e) => { window.__obsErr = String((e && e.stack) || e); });
             return null;
         }, t).catch((e) => { error = error || String(e); });

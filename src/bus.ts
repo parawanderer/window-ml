@@ -62,7 +62,7 @@ export const exitAgentRun = (): void => { inAgentRun = Math.max(0, inAgentRun - 
 // ml.chat() vision calls; those emit chat-result events we SUPPRESS below (they're not real sessions).
 // But their tokens are real spend the main loop never sees (a separate context, gone after the call) —
 // so we tally them HERE, at the exact point we throw the event away, and the agent's meta tool + the UI
-// report the otherwise-invisible cost. Per-turn (reset by injected.ts's drive), matching `genTotal`.
+// report the otherwise-invisible cost. Per SESSION: reset once on its first turn (ml-agent-run.ts), never per turn.
 let subUsage = { prompt: 0, completion: 0, calls: 0 };
 // Per-vision-model breakdown of that spend (chat_metadata's "which model cost what"). The suppressed
 // chat-result events carry the resolved model, so keying by it is free at the point we already tally.

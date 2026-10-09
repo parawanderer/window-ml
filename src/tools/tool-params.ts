@@ -42,13 +42,18 @@ export function retryParams(toolName: string): Record<string, JsonSchema> {
  *  `example` is the label a caller suggests, so a server tool can say "the weather results" where a generic
  *  tool says "the pricing table". `withBoolean` is false for a tool whose token is a label only. */
 export function citeParam(example: string, withBoolean = true): JsonSchema {
-    const type = withBoolean ? (["boolean", "string"] as const) : "string";
-    const lead = withBoolean
-        ? "Keep a handle to this call's output. `true`, or better a SHORT LABEL for yourself"
-        : "Optional: a SHORT LABEL for this output";
+    // A BUILTIN's token arrives only in a run with tool tokens on, which is also when the prompt carries
+    // TOOLTOKENS_CLAUSE + DEREF_CLAUSE (run-assembly.ts): the handle, its label, embedding and `dereference` are said
+    // there once, so the parameter only points at it (the PIPE_CLAUSE pattern). It was the same ~450 characters on
+    // every citable tool. A SERVER tool's label-only token rides whether or not tool tokens are on, so it keeps the
+    // whole explanation.
+    if (withBoolean) return {
+        type: ["boolean", "string"] as unknown as JsonSchema["type"],
+        description: `Keep a handle to this output: \`true\`, or better a SHORT LABEL ("${example}"). See TOOL OUTPUT TOKENS in your instructions.`,
+    };
     return {
-        type: type as unknown as JsonSchema["type"],
-        description: `${lead} ("${example}") — the label is how you'll recognise it a dozen steps later, and you can find it by that name. The result then ends with an @tool:<id>: embed it in your answer with \`![caption](@tool:<id>:out)\`, and/or read it back with \`dereference\`. Opt in whenever the output is worth keeping — to show OR to reuse; off for exploratory steps.`,
+        type: "string",
+        description: `Optional: a SHORT LABEL for this output ("${example}") — the label is how you'll recognise it a dozen steps later, and you can find it by that name. The result then ends with an @tool:<id>: embed it in your answer with \`![caption](@tool:<id>:out)\`, and/or read it back with \`dereference\`. Opt in whenever the output is worth keeping — to show OR to reuse; off for exploratory steps.`,
     };
 }
 
@@ -128,3 +133,9 @@ export function takeCallTitle(args: Record<string, unknown>): { args: Record<str
     delete rest[CALL_TITLE];
     return { args: rest, title: v.trim() };
 }
+
+// The tools whose output is CITABLE with an `@tool:` token — they expose the opt-in `token` param, and (when
+// tool tokens are on) get a stable id minted onto every non-failed call so the answer renderer can resolve a
+// reference to it. Shared with injected.ts's per-call param injection so the two can't drift.
+/** The builtins whose output can be kept as an `@tool:` pointer, so a run with tool tokens offers them `token`. */
+export const CITABLE_TOOLS = new Set(["exec", "python_exec", "look", "locate", "fetch_url", "agent_api_docs"]);   // agent_api_docs is here for the POINTER, not for citation: the reference is ~120 KB and it was the one output the pipe dialect could not reach

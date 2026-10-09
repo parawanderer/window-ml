@@ -10,6 +10,9 @@
 //                         just the failures — the default is `failure`, and `never` turns it off
 //   … --serve             serve a live page: every run's state, what is queued, the table filling in
 //   … --serve --open      …and open it in a browser
+//   … tests/e2e/panel/bloat.json --models a,b,c    an INTERVIEW file instead of a spec: one run per model, each
+//                         follow-up sent as the turn before it ends, the answers side by side on the page (where a
+//                         person can mark one wrong) and in summary.md; `--surface hud|console` as panel.mjs takes it
 //   … --port 7400         serve on a specific port (the default is stable, so a browser tab can just
 //                         reload between sweeps — in VS Code, cmd-click the URL and pick "Simple
 //                         Browser" to dock the page as an editor tab)
@@ -38,6 +41,7 @@ import { measureRun, aggregate } from "./metrics.mjs";
 import { expandCells, cellKey, cellPath, comboLabel, buildGroups, parseSelector, slug } from "./cells.mjs";
 import { writeReport, mdSink, terminalSink } from "./sinks.mjs";
 import { startDashboard, staticPage } from "./serve.mjs";
+import { loadInterview, interviewBench, interviewDriver, readTurns, probe, panelSummary, promptChars, checkMarks, validMark } from "../interview.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../../..");
@@ -45,7 +49,7 @@ const ARTROOT = path.join(ROOT, "tests/e2e/artifacts/bench");
 const BUILDROOT = path.join(ROOT, "tests/e2e/artifacts/builds");
 
 function parseArgv(argv) {
-    const args = { specPath: null, jobs: 1, only: [], skip: [], repeats: undefined, dry: false, cache: true, pdf: false, serve: false, open: false, port: undefined, capture: undefined };
+    const args = { specPath: null, models: (process.env.PANEL_MODELS || "").split(",").map((m) => m.trim()).filter(Boolean), surface: undefined, turnMinutes: 15, jobs: 1, only: [], skip: [], repeats: undefined, dry: false, cache: true, pdf: false, serve: false, open: false, port: undefined, capture: undefined };
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
         if (a === "--jobs") args.jobs = Math.max(1, Number(argv[++i]) || 1);
@@ -56,6 +60,9 @@ function parseArgv(argv) {
         else if (a === "--no-cache") args.cache = false;
         else if (a === "--pdf") args.pdf = true;
         else if (a === "--capture") args.capture = argv[++i];
+        else if (a === "--models") args.models = argv[++i].split(",").map((m) => m.trim()).filter(Boolean);
+        else if (a === "--surface") args.surface = argv[++i];
+        else if (a === "--turn-minutes") args.turnMinutes = Number(argv[++i]) || 15;
         else if (a === "--serve") args.serve = true;
         else if (a === "--port") { args.serve = true; args.port = Number(argv[++i]) || 0; }
         else if (a === "--open") { args.serve = true; args.open = true; }
@@ -155,6 +162,15 @@ async function runCell(cell, ctx, index) {
     const label = `${comboLabel(cell.combo)} · ${t.id} · r${cell.repeat}`;
     ctx.log(`  ▶ ${label}`);
 
+    const surface = e.surface !== undefined ? e.surface : (t.surface ?? null);
+    // An interview: each ask is sent once the turn before it ends, and every turn's answer lands in outbox/, read
+    // back as the run goes so the page fills in turn by turn rather than at the end.
+    const driver = t.asks?.length ? interviewDriver({ asks: t.asks, dir }) : null;
+    const nextTurn = driver && (async (info) => {
+        const next = await driver.nextTurn(info);
+        ctx.report?.(index, "running", { turns: readTurns(dir) });
+        return next;
+    });
     let run;
     try {
         run = await runOnce({
@@ -167,6 +183,9 @@ async function runCell(cell, ctx, index) {
             agentOptions: { ...(t.agentOptions || {}), ...(e.agentOptions || {}) },
             seed: t.seed || null,
             ...(t.script ? { script: t.script } : {}),
+            surface,
+            sharedWatches: t.sharedWatches ?? [], watchNotes: t.watchNotes ?? {},
+            ...(nextTurn ? { nextTurn } : {}),
             backend,
             dist: ctx.buildDirs.get(cell) ?? null,
             artDir: dir,
@@ -210,6 +229,8 @@ async function runCell(cell, ctx, index) {
     }
 
     const measurement = measureRun(run, t);
+    // An interview's answers, turn by turn, kept with the cell so a cached one still sets them side by side.
+    const turns = t.asks?.length ? readTurns(dir, t.asks.length + 1) : null;
     // Best-effort: a failed render must not lose the cell's measurement, which is the expensive part.
     if (ctx.pdf && run.session) {
         await renderPdf(run.session, dir, `${slug(ctx.spec.name)}-${t.id}-r${cell.repeat}`)
@@ -223,10 +244,11 @@ async function runCell(cell, ctx, index) {
         // WHICH MODEL produced this. A sweep can vary the model as a dimension, and even when it does
         // not, "which model was this run against" is the first question asked of any result and was
         // previously answerable only by reading a run.md. Saved with the cell so a cached one keeps it.
-        backend: run.backendLabel ?? null, models: run.models ?? null };
+        backend: run.backendLabel ?? null, models: run.models ?? null,
+        ...(turns ? { turns, prompt: promptChars(dir), statuses: driver.statuses } : {}) };
     await writeFile(cacheFile, JSON.stringify(saved, null, 2));
     ctx.ran++;
-    ctx.report?.(index, "done", { measurement, dir, fromCache: false });
+    ctx.report?.(index, "done", { ...saved, dir, fromCache: false });
     ctx.log(`  ${measurement.ok ? "✔" : "✖"} ${label} — ${measurement.steps} steps, ${(measurement.runMs / 1000).toFixed(1)}s${measurement.succeeded === null ? "" : measurement.succeeded ? ", correct" : ", WRONG"}${measurement.error ? ` — ${String(measurement.error).slice(0, 80)}` : ""}`);
     return { ...saved, dir, fromCache: false };
 }
@@ -251,6 +273,14 @@ function aggregateRows(cells, results) {
     }));
 }
 
+/**
+ * What a person's mark names a run by: the `model` value when the sweep has that dimension (so a mark carries over
+ * to the same model in another variant of the build), else the whole combination.
+ */
+function whoOf(combo) {
+    return combo.model != null ? String(combo.model) : comboLabel(combo);
+}
+
 /** Run `cells` with at most `jobs` in flight, preserving nothing about order beyond scheduling fairness. */
 async function pool(cells, jobs, fn) {
     const out = new Array(cells.length);
@@ -270,9 +300,32 @@ const main = async () => {
         console.error("usage: node --import tsx tests/e2e/bench/run.mjs <spec.bench.ts> [--jobs N] [--only k=v] [--skip k=v] [--repeats N] [--dry] [--no-cache]");
         process.exit(2);
     }
-    const specMod = await import(pathToFileURL(path.resolve(args.specPath)).href);
-    const spec = specMod.default || specMod.spec;
-    if (!spec?.name || !spec?.tasks?.length) throw new Error(`${args.specPath} does not export a bench spec (default export with name + tasks)`);
+    // An interview file is a spec too: one task over a `model` dimension. Every model is PROBED first, as panel.mjs
+    // does, and one that cannot make a tool call is listed as skipped instead of read later as a model that ignored
+    // the task.
+    let spec, skipped = [];
+    if (args.specPath.endsWith(".json")) {
+        const iv = loadInterview(args.specPath);
+        if (!args.models.length) throw new Error("an interview file needs --models a,b,c (or PANEL_MODELS)");
+        let models = args.models;
+        if (!args.dry) {
+            const backend = await resolveBackendFromEnv();
+            if (!backend) throw new Error("an interview needs a real backend (USE_ENV=1 with .env, or E2E_BACKEND)");
+            console.log(`  probing ${models.length} model(s) for a tool call…`);
+            const probed = await Promise.all(models.map(async (model) => ({ model, why: await probe(backend, model) })));
+            skipped = probed.filter((p) => p.why);
+            for (const p of skipped) console.log(`  ✗ ${p.model}: ${p.why}`);
+            models = probed.filter((p) => !p.why).map((p) => p.model);
+            if (!models.length) throw new Error("no model passed the tool-call probe");
+        }
+        spec = interviewBench(iv, models, { surface: args.surface, turnMinutes: args.turnMinutes });
+        // One browser per model, as panel.mjs runs them, unless --jobs says otherwise.
+        if (!process.argv.includes("--jobs")) args.jobs = models.length;
+    } else {
+        const specMod = await import(pathToFileURL(path.resolve(args.specPath)).href);
+        spec = specMod.default || specMod.spec;
+        if (!spec?.name || !spec?.tasks?.length) throw new Error(`${args.specPath} does not export a bench spec (default export with name + tasks)`);
+    }
 
     const { fingerprint, dirty } = buildFingerprint();
     const cells = expandCells(spec, { only: parseSelector(args.only), skip: parseSelector(args.skip), repeats: args.repeats });
@@ -309,15 +362,32 @@ const main = async () => {
     };
     // The live page, when asked for. Every cell is seeded as QUEUED so the whole matrix is visible from the
     // start — what is running, what is next, and what is left is the question a long sweep actually raises.
-    const runsState = cells.map((c) => ({ combo: c.combo, taskId: c.task.id, repeat: c.repeat, state: "pending" }));
+    const runsState = cells.map((c) => ({ combo: c.combo, taskId: c.task.id, repeat: c.repeat, state: "pending", who: whoOf(c.combo) }));
     const results = new Array(cells.length);
-    const dash = args.serve ? await startDashboard({ artifactRoot: sweepDir, ...(args.port != null ? { port: args.port } : {}) }) : null;
+    // A person's marks on interview answers, kept beside the sweep so the next run of it checks them.
+    const marksFile = path.join(sweepDir, "marks.json");
+    let marks = [];
+    try { marks = JSON.parse(await readFile(marksFile, "utf8")); } catch { /* none yet */ }
+    const recheck = (r) => { if (r.turns) r.checks = checkMarks(r, marks); };
+    const onMark = async (body) => {
+        const m = validMark(body);
+        if (!m) return null;
+        const mark = { id: createHash("sha256").update(JSON.stringify(m) + Date.now()).digest("hex").slice(0, 10), ...m, at: new Date().toISOString() };
+        marks.push(mark);
+        await writeFile(marksFile, JSON.stringify(marks, null, 2));
+        runsState.forEach(recheck);
+        push();
+        return mark;
+    };
+    const dash = args.serve ? await startDashboard({ artifactRoot: sweepDir, onMark, ...(args.port != null ? { port: args.port } : {}) }) : null;
     const started = Date.now();
+    // The question each turn of each interview asked, for the answers view's row headings.
+    const interviews = Object.fromEntries(spec.tasks.filter((t) => t.asks?.length).map((t) => [t.id, [t.task, ...t.asks]]));
 
     const push = () => dash?.update({
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
         runs: runsState, rows: aggregateRows(cells, results),
-        started, finished: null, jobs: args.jobs, dirty,
+        started, finished: null, jobs: args.jobs, dirty, interviews, skipped,
     });
     ctx.liveOf = (i) => runsState[i].live;
     ctx.report = (i, state, info) => {
@@ -325,13 +395,16 @@ const main = async () => {
         if (state === "running" && r.state !== "running") r.startedAt = Date.now();   // for the elapsed ticker
         r.state = state;
         if (info?.live) { r.live = info.live; return push(); }
+        if (info?.turns && state === "running") { r.turns = info.turns; recheck(r); return push(); }
         if (state === "done" && info) {
             const m = info.measurement;
             Object.assign(r, {
                 ok: m.ok, succeeded: m.succeeded, steps: m.steps, secs: m.runMs / 1000,
                 cached: info.fromCache, path: path.relative(sweepDir, info.dir), live: undefined,
                 hash: info.hash ?? null, backend: info.backend ?? null, models: info.models ?? null,
+                ...(info.turns ? { turns: info.turns, statuses: info.statuses ?? [] } : {}),
             });
+            recheck(r);
             results[i] = info;
         }
         push();
@@ -371,6 +444,8 @@ const main = async () => {
         models: results[i]?.models ?? null,
         path: results[i] ? path.relative(sweepDir, results[i].dir) : "",
         repoPath: results[i] ? path.relative(ROOT, results[i].dir) : "",
+        who: runsState[i].who,
+        ...(runsState[i].turns ? { turns: runsState[i].turns, checks: runsState[i].checks ?? [] } : {}),
     }));
 
     const sweep = { spec, rows, runs, fingerprint, dirty, started, finished, sweepDir: path.relative(ROOT, sweepDir), cached: ctx.cached, ran: ctx.ran, jobs: args.jobs, pdf: args.pdf };
@@ -378,12 +453,24 @@ const main = async () => {
     const md = writeReport(sweep, mdSink());
     const reportPath = path.join(sweepDir, "report.md");
     await writeFile(reportPath, md);
+    // An interview's answers as panel.mjs writes them, so a model reading the sweep reads the same file either way.
+    for (const t of spec.tasks.filter((t) => t.asks?.length)) {
+        const res = runs.flatMap((r, i) => r.taskId === t.id && results[i] ? [{
+            model: spec.dimensions?.model && Object.keys(spec.dimensions).length === 1 ? r.combo.model : `${comboLabel(r.combo)}${r.repeat ? ` r${r.repeat}` : ""}`,
+            turns: r.turns ?? [], statuses: results[i].statuses ?? [], prompt: results[i].prompt ?? "?", expected: t.asks.length + 1,
+            checks: r.checks ?? [],
+        }] : []);
+        const iv = { task: t.task, asks: t.asks, about: spec.description };
+        const file = spec.tasks.length === 1 ? "summary.md" : `summary-${slug(t.id)}.md`;
+        await writeFile(path.join(sweepDir, file), panelSummary(t.id, iv, res, skipped, t.surface));
+        console.log(`  answers: ${path.relative(ROOT, path.join(sweepDir, file))}`);
+    }
     // report.html — the live page with the final state baked in. Written ALWAYS, not only with --serve:
     // the page is already an index of the runs, so archiving it is what makes the sweep directory
     // navigable on its own. Links are relative, so it works from disk with no server.
     await writeFile(path.join(sweepDir, "report.html"), staticPage({
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
-        runs, rows, started, finished, jobs: args.jobs, dirty, fingerprint, pdf: args.pdf,
+        runs, rows, started, finished, jobs: args.jobs, dirty, fingerprint, pdf: args.pdf, interviews, skipped,
     }));
     await writeFile(path.join(sweepDir, "rows.json"), JSON.stringify({ fingerprint, dirty, started, finished, rows, runs }, null, 2));
     console.log(`\n  report: ${path.relative(ROOT, reportPath)}\n  page:   ${path.relative(ROOT, path.join(sweepDir, "report.html"))}\n`);
@@ -391,7 +478,7 @@ const main = async () => {
     if (dash) {
         dash.update({
             name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
-            runs: runsState, rows, started, finished, jobs: args.jobs, dirty,
+            runs: runsState, rows, started, finished, jobs: args.jobs, dirty, interviews, skipped,
         });
         // Held open on purpose: the page IS the result when you ran with --serve, and tearing the server
         // down the instant the last cell lands would blank it exactly when you look.

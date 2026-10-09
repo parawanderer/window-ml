@@ -4,7 +4,6 @@
 // `ml`/bus state), so the whole set lifts out cleanly. `makeDomTools` takes the
 // (detached, `this`-free) `defineTool` and returns the array.
 
-import type { MlPublicConfig } from "../contract/contract-config";
 import type { MlTool, ToolResult, ToolContext } from "../contract/contract-agent";
 import type { AnswerMedia } from "../contract/contract-render";
 import type { VerifyArea } from "./builtin-tools";
@@ -24,25 +23,17 @@ import { outputCapParams, retryParams } from "./tool-params";
 import { DEREF_TOOL, type DerefRead } from "../pointers/token-pipe";
 import { DerefText } from "./deref-read";
 import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "../dom/a11y";
-import { pageContext, browserInfo, agentState } from "../util";
-import { makeBackgroundTaskPromise } from "../bridge";
-import type { InvocationInfo } from "../contract/contract-server";
-import { ML_READONLY_METHODS } from "../readonly-exec";
-// Generated from contract.ts at build time (scripts/gen-api-docs.mjs) — the public MlApi
-// surface, so the doc the model reads can never drift from the interface it describes.
+import { pageContext, agentState } from "../util";
 import { resolveOutputCap, outputCapPrecheck, OUTPUT_CAP } from "../contract/contract-pointers";
 import { UI_OUT_CAP } from "../contract/contract-chat";
 import { clipHeadTail, panelHead, boundedLines, ceilingNote } from "../agent/output-clip";
-import { ML_API_PARTS } from "../api-docs.gen";
-import { queryApiDocs, isDefaultQuery, type ApiDocsQuery } from "./api-docs-query";
 import { answerItemFromString, type AnswerSet } from "../pointers/answer-set";
 
 /** A compact, model-facing echo of the current answer set (indexed, clamped previews — never the
  *  heavy media/nodes). Shown after every `answer` op so the model can see what it's curating. */
 const answerEcho = (set: AnswerSet): string =>
     set.length ? set.dump().map(d => `  [${d.i}] ${d.kind}: ${d.preview}`).join("\n") : "  (empty)";
-import { BUILD_INFO } from "../build-info.gen";
-import { BUILD_DIFF } from "../build-diff.gen";
+import { apiDocsTool, pageDocsSource } from "./api-docs-tool";
 
 /**
  * Wrap a pre-resolved pointer read as the SAME value the asynchronous `ml.dereference` returns.
@@ -66,119 +57,6 @@ function derefValue(read: DerefRead): DerefText {
 
 // A single-element tool (describeElement/ancestors) uses the FIRST of N matches — say so, so
 // a loose selector's wrong pick doesn't silently mislead the run (the model can narrow it).
-// How long invocationSection waits for the background's shortcut reply before answering
-// generically. Short: it's one section of a docs lookup, never worth stalling a step for.
-const INVOCATION_TIMEOUT_MS = 1500;
-
-/**
- * Await a background lookup, giving up with `null` after {@link INVOCATION_TIMEOUT_MS} — a docs
- * lookup must never stall an agent step on a slow/torn-down relay, and every caller here degrades
- * to generic advice. The timer is cleared on the fast path so a resolved lookup leaves nothing
- * pending on the event loop.
- *
- * @param p The in-flight background promise.
- * @returns Its value, or null on timeout/rejection.
- */
-const bounded = async <T>(p: Promise<T>): Promise<T | null> => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-        return await Promise.race([p, new Promise<null>(r => { timer = setTimeout(() => r(null), INVOCATION_TIMEOUT_MS); })]);
-    } catch {
-        return null;
-    } finally {
-        if (timer !== undefined) clearTimeout(timer);
-    }
-};
-
-/**
- * The "how the user opens the HUD here" section of agent_api_docs — resolved at RUN TIME, not
- * baked into the generated reference, because the keyboard shortcut is user-rebindable: a
- * hardcoded "Alt+Space" sends them to a key that may do nothing. Reports what is bound right
- * now, whether they changed it, and the settings URL for THEIR browser (the scheme differs on
- * Edge/Brave/…). Degrades to the generic instructions if the background can't be reached.
- *
- * @returns {Promise<string>} A markdown section for the tool's output.
- */
-const invocationSection = async (): Promise<string> => {
-    const b = browserInfo();
-    const shortcutsUrl = `${b.scheme}://extensions/shortcuts`;
-    const lines = [`## Opening the HUD (this browser: ${b.name}${b.version ? ` ${b.version}` : ""})`, ""];
-    // Bounded: makeBackgroundTaskPromise waits forever for its reply, and a missing/slow relay
-    // (torn-down content script, sleeping worker) must degrade to generic advice rather than
-    // stall the agent step on a docs lookup.
-    const info = await bounded(makeBackgroundTaskPromise<InvocationInfo>("INVOCATION_REQUEST", "INVOCATION_RESPONSE", {}));
-    if (info?.shortcut) {
-        lines.push(`- **Keyboard: \`${info.shortcut}\`** — the shortcut bound RIGHT NOW` +
-            (info.isDefault ? " (the extension's default)." : ` (the user CHANGED this from the default \`${info.defaultShortcut}\`).`));
-    } else if (info) {
-        lines.push(`- **Keyboard: not assigned.** The default (\`${info.defaultShortcut || "Alt+Space"}\`) is not bound — ` +
-            "either the user cleared it or it collided with another extension. They must set one to open the HUD by keyboard.");
-    } else {
-        lines.push("- **Keyboard:** a shortcut opens the HUD, but the live binding could not be read here — " +
-            "tell the user to check the shortcuts page below rather than guessing a key.");
-    }
-    lines.push(`- **Rebinding it:** the user opens \`${shortcutsUrl}\` and edits "Open the window.ml command bar". ` +
-        "Chromium reserves that page for the user — neither you nor the extension can set a shortcut for them, " +
-        "and you cannot navigate there yourself (tools don't act on browser-internal pages), so hand them the URL.");
-    if (info?.contextMenu) lines.push("- **Right-click** anywhere on the page and pick window.ml from the context menu.");
-    lines.push("- **Toolbar:** the extension's icon opens the popup (settings, model picker), not the HUD.");
-    return lines.join("\n");
-};
-
-/**
- * The "you can read your own setup for free" section of agent_api_docs. Like the HUD shortcut,
- * this is RUNTIME state the generated reference can't hold: it's true only while
- * `autoApproveReadonly` is on, so it's resolved here rather than stated unconditionally — and it
- * lives behind this tool call rather than in the system prompt, which every run pays for.
- *
- * @returns {Promise<string>} A markdown section, or "" when the flag is off (then these calls
- *          go through the normal approval gate and there is nothing special to say).
- */
-const selfIntrospectionSection = async (): Promise<string> => {
-    // Unreadable → say nothing: the approval gate is the safe default to describe.
-    const cfg = await bounded(makeBackgroundTaskPromise<MlPublicConfig>("CONFIG_REQUEST", "CONFIG_RESPONSE", {}));
-    if (!cfg?.autoApproveReadonly) return "";
-    return ["## Reading your own setup (no approval needed)", "",
-        `\`${ML_READONLY_METHODS.map(m => `ml.${m}()`).join("`, `")}\` are read-only, so calling them ` +
-        "from `exec` runs with NO approval prompt — that's how to answer \"which model am I?\" and the like. " +
-        "`ml.pipe(text, stages)` and `ml.jsonPath(data, \"$..id\")` are free too, unless a pattern (`grep`/`sed`, `match()`/`search()`) could backtrack. " +
-        "Every other `ml` method still asks the user first."].join("\n");
-};
-
-/**
- * The "here's my source" section of agent_api_docs: the public repo, the exact commit this harness was
- * built from + when that commit was made, and the build time. Lets the agent READ ITS OWN CODE (e.g. clone
- * or browse the repo at this commit) instead of guessing how it works. Build-time git provenance (the
- * extension can't run git live); fields it doesn't have are simply omitted, so a git-less build says less.
- * @returns {string} A markdown section, or "" when no provenance was captured.
- */
-const sourceSection = (): string => {
-    const b = BUILD_INFO;
-    const lines: string[] = [];
-    if (b.repoUrl) lines.push(`- Public repository: ${b.repoUrl}`);
-    if (b.shortCommit) lines.push(`- This harness is built from commit \`${b.shortCommit}\`${(b as { dirty?: boolean }).dirty ? " PLUS uncommitted local changes (NOT a clean build of that commit — the source at this commit won't match exactly)" : ""}${b.commitDate ? ` (committed ${b.commitDate})` : ""}${b.commitUrl ? ` — ${b.commitUrl}` : ""}`);
-    // The specific files that differ from `commit` in THIS build — so if you read the repo at that commit,
-    // you know which files won't match what's actually running here (the rest DO match the commit).
-    const dirtyFiles = (b as { dirtyFiles?: readonly string[] }).dirtyFiles;
-    if (dirtyFiles && dirtyFiles.length) lines.push(`- Files changed since that commit in this build (so they WON'T match the repo at \`${b.shortCommit}\`): ${dirtyFiles.map(f => `\`${f}\``).join(", ")}`);
-    if (b.buildTime) lines.push(`- Built: ${b.buildTime}`);
-    if (!lines.length) return "";
-    return ["## My source", "",
-        "You are open source — you can read your own implementation to answer questions about how you work:",
-        ...lines].join("\n");
-};
-
-/** The `agent_api_docs({ diff: true })` section: this build's EXACT uncommitted diff (captured at build time,
- *  the extension can't run git live). Kept behind an explicit arg — it's large and rarely needed. */
-const dirtyDiffSection = (): string => {
-    const b = BUILD_INFO as { dirty?: boolean; shortCommit?: string };
-    if (!b.dirty) return `This build is a CLEAN checkout of \`${b.shortCommit || "its commit"}\` — no uncommitted changes, so the repo at that commit matches exactly.`;
-    if (!BUILD_DIFF) return `This build has uncommitted changes, but no diff was captured (a git-less build). See the file list in the source section.`;
-    return ["## Local changes (uncommitted diff vs `" + (b.shortCommit || "commit") + "`)", "",
-        "This is exactly what differs in THIS build from the repo at its commit — everything else matches.",
-        "", "```diff", BUILD_DIFF, "```"].join("\n");
-};
-
 const firstOfNote = (selector: string, count: number): string =>
     count > 1 ? `⚠ "${selector}" matched ${count} elements — using the FIRST (#0). Narrow it (an id, or :nth-of-type(N)), or countMatches to list them.\n\n` : "";
 
@@ -500,7 +378,9 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 "(e.g. `const r = await fetch('/api').then(x => x.json()); return r.length`). " +
                 `The returned value AND the console output are EACH truncated to ${OUTPUT_CAP.exec.default} chars, and the note at the cut says how much of how much you got, so ` +
                 "don't dump whole elements/pages — return a compact, filtered summary (counts, a " +
-                "handful of fields, the few items you actually need), not a full outerHTML dump. " +
+                "handful of fields, the few items you actually need), not a full outerHTML dump. When a value is too large " +
+                "to return whole, return its SHAPE: `ml.schema(x)` gives the TS-like type of any JSON, then read only the " +
+                "fields you need. " +
                 `If you GENUINELY need more room for ONE call, pass \`maxChars\` (up to ${OUTPUT_CAP.exec.ceiling}) WITH a ` +
                 "`maxCharsReason` — that raise asks the human first (a bigger dump costs your own context). " +
                 // Define "read-only" so the model writes qualifying code instead of guessing why some
@@ -518,7 +398,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 // The macro is advertised HERE for the same reason ml.pipe is: exec is where you would write it,
                 // and it exists nowhere else. Naming it as a PROMISE is the load-bearing half — a model that
                 // thinks `@tool:x` is a value writes `.length` on a Promise and gets `undefined` with no error.
-                "POINTERS: write `@tool:abc1234` (or `@tool:python_exec`, or `@tool:\"a label\"`) directly in the " +
+                "POINTERS: write `@tool:abc1234` (or `@tool:fetch_url`, or `@tool:\"a label\"`) directly in the " +
                 "code — it is real syntax here and reads that output. It is a plain VALUE, not a promise: no " +
                 "`await`, no `.then`. `const rows = @tool:abc1234.split(\"\\n\");` works as written, because " +
                 "every pointer you name is resolved before the script starts. Inside a string or a comment it " +
@@ -821,93 +701,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
             parameters: { type: "object", properties: {} },
             run: (_args: unknown, ctx?: ToolContext): string => pageContext(n => !!ctx?.hasTool(n))
         }),
-        T({
-            name: "agent_api_docs",
-            summary: "Looks up the window.ml extension's own API reference.",
-            // Deliberately terse: this is a "when you need it" escape hatch, not a step in the
-            // method. The reference is LARGE, so it's served ctags-style (api-docs-query.ts): the
-            // default call is MlApi + a type index; drill into a type or scan by term on demand.
-            // The system prompt's SELF_CLAUSE is what tells the model the tool is worth reaching for.
-            description: "Your own implementation details: the public API of window.ml, the browser " +
-                "extension you run inside, and how a user invokes you — the devtools console, or the " +
-                "in-page HUD and the keyboard shortcut currently bound to it. Also gives the public repo " +
-                "link + the exact commit this build is on, so you can read your own source. Call it when " +
-                "asked about yourself, how to reach you, or the API, instead of guessing. This reference is " +
-                "LARGE, so it comes in pieces: call with NO args first to get the `ml` object (its methods) and " +
-                "an index of the type names they reference. Then drill down — usually by METHOD (`members`), " +
-                "which also pulls in the types that method's signature uses, so one call gives you everything " +
-                "you need to call it. Start shallow, go deeper only as needed.",
-            parameters: {
-                type: "object",
-                properties: {
-                    members: {
-                        type: "array",
-                        items: { type: "string" },
-                        description: "Expand these `ml` methods (e.g. [\"fetch\", \"agent\"]): each one's " +
-                            "signature/JSDoc PLUS the type sections its signature references. The usual drill-down."
-                    },
-                    types: {
-                        type: "array",
-                        items: { type: "string" },
-                        description: "Expand these referenced types in full by name (e.g. [\"FetchResult\"]). " +
-                            "Names come from the index or from a method you expanded. For a type you already spotted."
-                    },
-                    search: {
-                        type: "string",
-                        description: "Scan every member and type section for this term (e.g. \"screenshot\") " +
-                            "and return what mentions it. Use it when you don't know the method or type name."
-                    },
-                    fresh: {
-                        type: "boolean",
-                        description: "If you used this tool before but you critically need to re-read a definition, " +
-                            "set this to force a fresh full re-print. Do NOT set it if you recently checked the " +
-                            "definitions you need (repeats within a dig are collapsed to save space). Default off."
-                    },
-                    pipe: {
-                        type: "string",
-                        description: "Reduce what this call returns, e.g. 'grep -i signal', 'grep -n fetch | head 20'. " +
-                            "Applied LAST, to whatever the other args selected. Reach for it when you want LINES rather " +
-                            "than sections: `search` returns every section that mentions a term, which is the wrong grain " +
-                            "for a question like \"which methods take a signal\". " + PIPE_REF
-                    },
-                    diff: {
-                        type: "boolean",
-                        description: "Return the EXACT local diff of this build's uncommitted changes (vs its commit) " +
-                            "— use it after the source section tells you the build is dirty, to see precisely what " +
-                            "differs from the repo at that commit. Standalone; ignores the other args. Default off."
-                    }
-                }
-            },
-            // The reference itself is build-time (sliced here per the query). The source provenance (repo/commit),
-            // the live HUD shortcut, and the read-only-exec note are RUNTIME state the user owns — resolved here and
-            // handed to the slicer as searchable env sections. Resolved for the default view (which shows them) and
-            // for a `search` (the model hunts the HUD shortcut via search, as observed) — but NOT for a member/type
-            // drill, which shouldn't pay two background round-trips for context it didn't ask for.
-            run: async (args: ApiDocsQuery & { diff?: boolean; pipe?: string } = {}, ctx?: ToolContext): Promise<string> => {
-                if (args.diff) return dirtyDiffSection();   // explicit: the exact local diff (never in the default view)
-                const wantEnv = isDefaultQuery(args) || !!(args.search && args.search.trim());
-                const env = wantEnv
-                    ? [
-                        { name: "Opening the HUD", body: await invocationSection() },
-                        { name: "My source", body: sourceSection() },
-                        { name: "Reading your own setup", body: await selfIntrospectionSection() },
-                    ].filter(e => e.body)
-                    : [];
-                // Within-burst dedup: this call IS the docs streak, so reset the leniency counter; `fresh`
-                // purges what was shown so the model re-reads in full. `shown` (undefined on a legacy ctx-less
-                // path) collapses chunks already printed earlier in the dig to one-line stubs.
-                const mem = ctx?.docsMemory;
-                if (mem) { mem.sinceDocs = 0; if (args.fresh) mem.shown.clear(); }
-                const view = queryApiDocs(ML_API_PARTS, args, env, mem?.shown);
-                // The reduction lives HERE rather than in api-docs-query.ts, which has no imports on purpose, and it
-                // goes through `runPipe` rather than growing a second one: PIPE_CMDS is the single source for every
-                // description of the dialect, and a private reduction in one tool is how that stops being true.
-                const pipe = typeof args.pipe === "string" ? args.pipe.trim() : "";
-                if (!pipe) return view;
-                try { return `${runPipe(view, pipe)}\n\n(piped through \`${pipe}\`)`; }
-                catch (e) { const msg = errText(e as Error); return `Pipe error: ${msg}${pipeHint(msg)}`; }
-            }
-        }),
+        apiDocsTool(T, pageDocsSource),
         T({
             name: "scroll",
             summary: "Scrolls the page or an element into view.",
@@ -968,7 +762,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     selector: { type: "string", description: "Wait until an element matching this appears (up to `timeout`)." },
                     ms: { type: "integer", description: "Fixed pause in milliseconds (used when no selector; default 500)." },
                     timeout: { type: "integer", description: "Max wait for a selector, in ms (default 5000)." },
-                    verify: { type: "boolean", description: "Set true if you'd call look() right after — it returns a screenshot of the settled VIEWPORT in THIS call, so you skip the separate look and see the updated page immediately." }
+                    verify: { type: "boolean", description: "Return a screenshot of the settled VIEWPORT in THIS call, instead of a separate look()." }
                 }
             },
             run: async ({ selector, ms, timeout = 5000, verify = false }: { selector?: string; ms?: number; timeout?: number; verify?: boolean } = {}, ctx?: ToolContext): Promise<string | ToolResult> => {
@@ -1009,7 +803,9 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 "everything you touched. Add a result: `text` (a fact/summary line), or `selector` (+`index`) to " +
                 "designate element(s) (handed back to the caller, hoverable, shown in the card). Manage it: " +
                 "`remove` an item by its index (from the echo), or `clear` to start over. Each call echoes the " +
-                "current set so you can see what's in it. Call with no fields to just view it.",
+                "current set so you can see what's in it. Call with no fields to just view it. If the task is to " +
+                "FIND / LOCATE an element, designate it here so the real node reaches the caller. From `exec` the same " +
+                "set is `ml.answer` (`.add(el | \"text\")`, `.remove(i)`, `.clear()`, `.length`), with no approval.",
             parameters: {
                 type: "object",
                 properties: {
@@ -1019,7 +815,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     note: { type: "string", description: "Optional note about what the added element(s) are." },
                     show: { type: "string", enum: ["inline", "highlight"], description: "How the HUD shows an added element: 'inline' renders its image/screenshot in the card; 'highlight' shows a chip that spotlights the live element. Default: <img> → inline, else highlight." },
                     remove: { type: ["integer", "array"], items: { type: "integer" }, description: "Remove item(s) from the set by index (from the echo). A single index or a list." },
-                    clear: { type: "boolean", description: "Empty the answer set." }
+                    clear: { type: "boolean", description: "Empty the answer set first; with `text` or `selector`, replace it with that." }
                 }
             },
             run: async (
@@ -1029,12 +825,15 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
             ): Promise<string | ToolResult> => {
                 const set = ctx?.answer;
                 if (!set) return "Error: no active run to answer into.";
-                if (clear) { set.clear(); return "Answer cleared.\n  (empty)"; }
+                // `clear` first, then whatever else the call carries: `{ clear: true, text }` is "replace the answer
+                // with this". It used to return here, and Gemini Flash's text was dropped on two turns running.
+                if (clear) set.clear();
+                if (clear && text == null && selector == null) return "Answer cleared.\n  (empty)";
 
                 // Apply every op the call carries, in order — models naturally send `{ text, selector }` to add
                 // BOTH at once, so don't make them do two round-trips. A bad selector is NOTED, not fatal (any
-                // text still lands). `clear` above is exclusive.
-                const notes: string[] = [];
+                // text still lands).
+                const notes: string[] = clear ? ["cleared"] : [];
                 if (remove != null) {
                     const idxs = Array.isArray(remove) ? remove : [remove];
                     let removed = 0;

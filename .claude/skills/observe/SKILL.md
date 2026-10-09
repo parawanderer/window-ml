@@ -30,6 +30,8 @@ Configure everything with **env vars** (all optional):
 | `E2E_MODEL=<id>` | Override the model (e.g. `deepseek.deepseek-v4-pro`, `gemma4:31b`, `dsv4-flash:q4kxl`). With no backend vars → the deterministic **fake-LLM**. |
 | `TOOLTOKENS=1` | Enable tool tokens (the `@tool:` embed/answer feature). |
 | `SHARED_WATCHES='["ml.current.run.step"]'` | Watches shared with the model before the run, as the Run state panel's eye stores them: the run reads them in `ml.current.debug.userWatches`. |
+| `WATCH_NOTES='{"ml.current.run.step":"is it moving?"}'` | The person's note on a shared watch, by expression: handed to the model as that watch's `note`. |
+| `SURFACE=hud` (`overlay`, `chat`…) | Start the run as a person does from that UI: the worker builds it with the UI kit (`click`, `type`, `python_exec`, `chat_metadata`) and that surface's prompt clauses. Without it the run is a CONSOLE run (`ml.agent` from the page), which has none of those tools. `TOOLS`/`PYTHON`/`TOOLTOKENS` are console knobs and do not apply. |
 | `PYTHON=1` | Wire `python_exec` (for `{ tables }`→DataFrame / sympy / numpy work). |
 | `TOOLS=findByText,answer` | Limit to a subset of `ml.domTools` — smaller system prompt + fewer schemas = far fewer tokens/turn. |
 | `FOLLOWUP="…"` | Run a SECOND turn in the SAME session (via `createAgent` + two `run()`s, so both turns share the run hash). Reproduces multi-turn behaviour a single `ml.agent()` can't — e.g. a "…now show the work" follow-up, or the cross-turn token-id collision. `TASK` is turn 1, `FOLLOWUP` is turn 2. |

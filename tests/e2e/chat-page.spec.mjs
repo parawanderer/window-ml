@@ -60,7 +60,7 @@ test("a page's own chat appears in the extension's chat page, and can be answere
     } finally { await ext.context.close(); await fake.stop(); await site.stop(); }
 });
 
-test("the popup opens the chat page, and opening it again focuses the one that is already there", async () => {
+test("the popup opens the chat page, and opening it again focuses the one that is already there, a chat open in it or not", async () => {
     const ext = await launchExtension();
     try {
         await configureExtension(ext.sw, { chatUrl: "http://127.0.0.1:1/", apiKey: "", apiFormat: "openai", model: "m" });
@@ -78,6 +78,16 @@ test("the popup opens the chat page, and opening it again focuses the one that i
         await popup2.locator("#openChat").click();
         await expect.poll(() => ext.context.pages().filter((p) => p.url().endsWith("popup.html")).length).toBe(0);
         expect(ext.context.pages().filter((p) => p.url() === url).length).toBe(1);
+
+        // With a chat OPEN its route is in the hash (`chat.html#/…`), and an exact-URL lookup missed the page and
+        // opened a second one. Still one page.
+        const chat = ext.context.pages().find((p) => p.url() === url);
+        await chat.evaluate(() => { location.hash = "#/session/local/abc"; });
+        const popup3 = await ext.context.newPage();
+        await popup3.goto(`chrome-extension://${ext.extensionId}/popup.html`);
+        await popup3.locator("#openChat").click();
+        await expect.poll(() => ext.context.pages().filter((p) => p.url().endsWith("popup.html")).length).toBe(0);
+        expect(ext.context.pages().filter((p) => p.url().startsWith(url)).length, "the open chat page is reused").toBe(1);
     } finally { await ext.context.close(); }
 });
 
@@ -661,6 +671,17 @@ test("the run state panel shows the LIVE turn: what it was asked, the gate it wa
         await watchInput.press("Tab");
         await expect(watchInput).toHaveValue("ml.current.messages");
         await watchInput.press("Escape");
+        // THE CONSOLE: the same language as a program, run once by the worker over this read's snapshot. It prints, it
+        // answers, and it cannot write.
+        const consoleInput = panel.locator(".rstate-console-input");
+        await consoleInput.fill("let n = 0; for (const m of ml.current.messages) { console.log(m.role); n++ } n === ml.current.messages.length");
+        await consoleInput.press("Enter");
+        const ran = panel.locator(".rstate-console-entry").last();
+        await expect(ran.locator(".rstate-console-log").first()).toHaveText(/system|user/);
+        await expect(ran).toContainText("true");
+        await consoleInput.fill("inspector.grants.turn.origins.push('https://evil.test')");
+        await consoleInput.press("Enter");
+        await expect(panel.locator(".rstate-console-entry").last().locator(".rstate-watch-err")).toContainText(/push/);
         await chat.getByPlaceholder(/Steer this run/).fill("also check the totals");
         await chat.getByPlaceholder(/Steer this run/).press("Enter");
         await expect(mailbox.locator(".jt-preview")).toHaveText("[ 1 item ]", { timeout: 10_000 });

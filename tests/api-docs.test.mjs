@@ -211,7 +211,7 @@ test("ml.current's prompt signature names every top-level member and, after each
     for (const m of ["run:", "messages:", "meta:", "log:", "debug?:"]) assert.ok(sig.includes(m), m);
     // The field lists come from the declarations: a field added to MessageMeta shows up here without anyone editing it.
     const meta = /meta: MessageMeta\[\] \(([^)]*)\)/.exec(sig)?.[1].split(", ");
-    for (const f of ["id", "tokens", "tokensBasis", "tool", "truncated"]) assert.ok(meta?.includes(f), `meta lists ${f}`);
+    for (const f of ["id", "tokens", "estimatedTokens", "tool", "truncated"]) assert.ok(meta?.includes(f), `meta lists ${f}`);
     assert.match(sig, /log: CurrentLog \([^)]*\btext\b[^)]*\)/, "an alias's inline key (`text`) is listed with its records' fields");
     const watch = /UserWatch\[\] \(([^)]*)\)/.exec(sig)?.[1].split(", ");
     for (const f of ["expression", "value", "error"]) assert.ok(watch?.includes(f), `UserWatch lists ${f}`);

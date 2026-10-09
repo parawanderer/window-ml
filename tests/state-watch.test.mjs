@@ -102,3 +102,39 @@ test("a JS watch is any dialect expression; a plain path keeps its path, a compu
     assert.match((await ask("inspector.n = 1")).error, /assign/, "a watch cannot write");
     assert.ok((await ask("$.inspector.run.init.task")).nodes, "$ is still JSONPath");
 });
+
+// --- the console: the same dialect over the same tree, as a program run once ---
+
+test("a console entry is a program: statements, loops and console.log, its value the last expression; it cannot write", async () => {
+    const { evalReadonly } = await import("../src/readonly-exec.ts");
+    const { snapshotCurrent } = await import("../src/agent/current-context.ts");
+    const current = snapshotCurrent({ run: { id: "r1", model: "m", step: 2, maxSteps: 5, startedTs: 0 }, messages: [{ role: "user", content: "hi" }], recorded: [], now: 1 });
+    const js = async (code, inspector, onLog) => (await evalReadonly(code, null, {}, undefined, { realm: "worker", current, globals: { inspector }, stepBudget: W.CONSOLE_STEPS, onLog })).value;
+    const t = W.stateTree(MEMBERS, ENTRIES, JSON.parse(JSON.stringify(current)));
+    const run = (code) => W.evalConsole(t, code, js);
+    const r = await run("let n = 0; for (const x of inspector.run.init.tools) { console.log(x); n++ } n");
+    assert.deepEqual(r, { expr: "let n = 0; for (const x of inspector.run.init.tools) { console.log(x); n++ } n", value: 2, logs: ["exec", "look"] });
+    assert.deepEqual(await run("inspector.run.init.task"), { expr: "inspector.run.init.task", value: "count the widgets", at: "inspector.run.init.task" });
+    assert.equal((await run("ml.current.run.step")).value, 2, "ml.current is the model's own snapshot");
+    assert.deepEqual((await run("$.inspector.run.init.tools[*]")).nodes.map((n) => n.value), ["exec", "look"], "$ is JSONPath, as in a watch");
+    const thrown = await run("console.log('before'); inspector.n = 1");
+    assert.match(thrown.error, /assign/, "the console cannot write");
+    assert.deepEqual(thrown.logs, ["before"], "what it printed before it threw is kept");
+    assert.match((await run("ml.current.messages.push(1)")).error, /read-only/, "nor mutate the model's snapshot");
+    assert.match((await run("document.title")).error, /document/, "and has no page");
+    assert.match((await run("fetch('https://a.test')")).error, /not available/, "and spends nothing");
+    assert.match((await run("  ")).error, /nothing to run/);
+    assert.match((await run("x".repeat(W.MAX_CONSOLE_CHARS + 1))).error, /longer than/);
+});
+
+test("a console entry that does not end is stopped by its step budget, with a sentence", async () => {
+    const { evalReadonly } = await import("../src/readonly-exec.ts");
+    const js = async (code, inspector, onLog) => (await evalReadonly(code, null, {}, undefined, { realm: "worker", globals: { inspector }, stepBudget: W.CONSOLE_STEPS, onLog })).value;
+    const t = { inspector: { big: Array.from({ length: 1000 }, (_, i) => i) } };
+    const started = Date.now();
+    const r = await W.evalConsole(t, "let n = 0; for (const a of inspector.big) for (const b of inspector.big) for (const c of inspector.big) n++; n", js);
+    assert.match(r.error, /step/i, "a billion steps are stopped by the budget, not run");
+    assert.match((await W.evalConsole(t, "while (true) {}", js)).error, /while/, "and an unbounded loop is not in the dialect at all");
+    assert.ok(Date.now() - started < 10_000, "within seconds");
+    assert.match((await W.evalConsole(t, "ml.current.run", js)).error, /'ml' is not available/, "between turns there is no ml.current");
+});

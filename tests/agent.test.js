@@ -240,7 +240,7 @@ test("agent_api_docs: a bad pipe stage is an actionable message, never a lost st
 test("agent_api_docs is CITABLE, so its output can be named by a pointer and read back later", async () => {
     // The other half of the same gap: with a `token` the result mints an @tool:<id>, so `dereference` can pipe
     // it on a LATER step instead of only at the moment of the call.
-    const { CITABLE_TOOLS } = await import("../src/agent/agent-loop.ts");
+    const { CITABLE_TOOLS } = await import("../src/tools/tool-params.ts");
     assert.ok(CITABLE_TOOLS.has("agent_api_docs"),
         "without this, the reference is the one output no pointer can name");
 });
@@ -880,8 +880,14 @@ test("answer tool curates the answer set (add element/text, remove, clear)", asy
 
     // no-op echo shows the set; clear empties it
     assert.match(await call({}), /the total is 42/);
-    await call({ clear: true });
+    assert.match(await call({ clear: true }), /^Answer cleared\./);
     assert.equal(set.length, 0, "clear empties the set");
+
+    // clear WITH text replaces the set with it, rather than dropping the text (Gemini Flash sent this twice in a row)
+    await call({ text: "an old draft" });
+    const replaced = await call({ clear: true, text: "the final answer" });
+    assert.match(replaced, /^cleared; added text\./);
+    assert.deepEqual(set.items.map(i => i.text), ["the final answer"]);
 });
 
 test("pageInfo grounds time/locale for time-relative tasks", () => {
@@ -1585,6 +1591,21 @@ test("a soft schema issue (unknown extra prop) prepends a note but still runs th
     assert.equal(ran, 1, "the tool still ran (a lenient validator must not block a legit call)");
     // Note APPENDS, so a real Error:/Denied prefix would stay at position 0.
     assert.match(res.transcript[0].result, /^ran\n\n⚠ Argument schema issue\(s\): unknown property "extra"$/);
+});
+
+test("the run's own parameters are never 'unknown': `title` on any tool, `token` on a citable one; a real stray still is", async () => {
+    // GPT-6 Luna (2026-10-09) was told "unknown property \"title\"" on page tools, for a parameter every tool is offered.
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([
+        toolCall("t", { x: "a", title: "check x" }, "c1"),
+        toolCall("exec", { js: "1", token: "the one" }, "c2"),
+        toolCall("t", { x: "a", token: "not citable" }, "c3"),
+        reply("ok")]) });
+    const t = world.ml.defineTool({ name: "t", parameters: { type: "object", properties: { x: { type: "string" } }, required: ["x"] }, run: () => "ran" });
+    const exec = world.ml.defineTool({ name: "exec", parameters: { type: "object", properties: { js: { type: "string" } }, required: ["js"] }, run: () => "1" });
+    const res = await world.ml.agent("x", { tools: [t, exec], maxSteps: 5 });
+    assert.doesNotMatch(String(res.transcript[0].result), /schema issue/, "title is offered on every tool");
+    assert.doesNotMatch(String(res.transcript[1].result), /schema issue/, "token is offered on a citable tool");
+    assert.match(String(res.transcript[2].result), /unknown property "token"/, "on a tool that is not citable it is a real mistake");
 });
 
 test("a schema-less tool (no declared properties) is never flagged for its args", async () => {
@@ -2745,7 +2766,7 @@ test("result.elements is empty for a plain action task", async () => {
     assert.deepEqual(res.elements, []);
 });
 
-test("agent adds tool-aware clauses to the DEFAULT prompt (vision/answer), not a custom one", async () => {
+test("agent adds tool-aware clauses to the DEFAULT prompt (vision), not a custom one", async () => {
     const seen = [];
     const world = loadPageWorld({
         onRuntimeMessage: (m) => {
@@ -2759,7 +2780,12 @@ test("agent adds tool-aware clauses to the DEFAULT prompt (vision/answer), not a
 
     await world.ml.agent("t", { tools: [look, answer] });       // default system → clauses added
     assert.match(seen[0], /VISION tool/);
-    assert.match(seen[0], /`answer` tool curates/);
+    // The answer paragraph repeated the answer tool's own description (a model-panel review, 2026-10-08): it is said
+    // once, in the tool, which carries the two lines only the prompt had.
+    assert.doesNotMatch(seen[0], /`answer` tool curates/);
+    const answerDesc = world.ml.domTools.find(t => t.name === "answer").description;
+    assert.match(answerDesc, /FIND \/ LOCATE an element, designate it here/);
+    assert.match(answerDesc, /From `exec` the same set is `ml.answer`/);
 
     await world.ml.agent("t", { tools: [plain] });              // no vision/answer capability
     assert.doesNotMatch(seen[1], /VISION tool/);
@@ -2770,7 +2796,7 @@ test("agent adds tool-aware clauses to the DEFAULT prompt (vision/answer), not a
     assert.doesNotMatch(seen[2], /VISION tool/);
 });
 
-test("agent adds the async/wait clause when a wait tool is present", async () => {
+test("the async/wait advice is the wait tool's own, not repeated in the prompt", async () => {
     const seen = [];
     const world = loadPageWorld({
         onRuntimeMessage: (m) => {
@@ -2779,14 +2805,51 @@ test("agent adds the async/wait clause when a wait tool is present", async () =>
         }
     });
     const wait = world.ml.domTools.find(t => t.name === "wait");
-    const plain = world.ml.defineTool({ name: "plain", run: () => "" });
 
+    // The prompt paragraph said what the tool's description says (a model-panel review, 2026-10-08), so only the tool
+    // says it, and it arrives exactly when the tool does.
     await world.ml.agent("t", { tools: [wait], vision: false });
-    assert.match(seen[0], /updates ASYNCHRONOUSLY/);
-    assert.match(seen[0], /`wait`/);
+    assert.doesNotMatch(seen[0], /updates ASYNCHRONOUSLY/);
+    assert.match(wait.description, /async update/);
+    assert.match(wait.description, /Use it generously before you look\/read again/);
+});
 
-    await world.ml.agent("t", { tools: [plain], vision: false });   // no wait tool → no clause
-    assert.doesNotMatch(seen[1], /updates ASYNCHRONOUSLY/);
+test("the shadow-DOM sentence names only the piercing tools the run has: a hand-picked toolset without click or type", async () => {
+    const seen = [];
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type === "GET_CONFIG" || m.type === "MODEL_CAPS") return undefined;
+            seen.push(m.payload.messages[0].content); return { data: reply("done") };
+        }
+    });
+    const named = (p) => p.match(/the DOM tools \(([^)]*)\) pierce/)[1].split(" / ");
+    const picked = world.ml.domTools.filter(t => ["findByText", "describeElement", "wait"].includes(t.name));
+    await world.ml.agent("t", { vision: false, tools: picked });
+    assert.ok(named(seen[0]).includes("findByText"));
+    assert.ok(!named(seen[0]).includes("click") && !named(seen[0]).includes("type"), named(seen[0]).join(","));
+    await world.ml.agent("t", { vision: false });   // the default kit, which has them since 2026-10-09
+    assert.ok(named(seen[1]).includes("click") && named(seen[1]).includes("type"), "a run that has them is told they pierce");
+});
+
+test("the default kit has click and type (asking before they act); a hand-picked list gets agent_api_docs beside exec, never click", async () => {
+    const tools = [];
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type === "GET_CONFIG" || m.type === "MODEL_CAPS") return undefined;
+            tools.push((m.payload.tools || []).map(t => t.function?.name ?? t.name)); return { data: reply("done") };
+        }
+    });
+    await world.ml.agent("t", { vision: false });
+    assert.ok(tools[0].includes("click") && tools[0].includes("type"), tools[0].join(","));
+    assert.equal(tools[0].filter(n => n === "click").length, 1, "once");
+    assert.equal(world.ml.clickTool().requiresApproval, true);
+    assert.equal(world.ml.typeTool().requiresApproval, true);
+    const exec = world.ml.domTools.find(t => t.name === "exec");
+    await world.ml.agent("t", { vision: false, tools: [exec] });
+    assert.deepEqual([...tools[1]].filter(n => n !== "navigate").sort(), ["agent_api_docs", "exec"], "exec brings the docs; a hand-picked list gets no click/type");
+    const find = world.ml.domTools.find(t => t.name === "findByText");
+    await world.ml.agent("t", { vision: false, tools: [find] });
+    assert.ok(!tools[2].includes("agent_api_docs"), "no exec, no docs added");
 });
 
 test("wait tool: fixed ms pause and wait-for-selector resolve", async () => {

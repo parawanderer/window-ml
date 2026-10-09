@@ -15,6 +15,8 @@ const T = { timeout: 10000 };
 const config = { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "default-model", apiFormat: "openai", ocrModel: "", debugMode: "off" };
 const flush = async (n = 8) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
 const SITE = { id: 7, url: "https://site.example/page", title: "Site" };
+/** SITE's origin on the person's approved list. */
+const SITE_APPROVED = { ml_site_always: ["https://site.example"] };
 
 /** Stand-in factories for the kit's extra tools: the recipe only needs their names. */
 const kit = { clickTool: () => ({ name: "click" }), typeTool: () => ({ name: "type" }), pythonTool: () => ({ name: "python_exec" }), chatMetaTool: () => ({ name: "chat_metadata" }) };
@@ -435,7 +437,7 @@ test("an approved exec is sent the values of the pointers its script names, and 
     const scripts = ["window.a = 1; return 'FIRST OUTPUT'", "window.b = 1; return @tool:exec.length + ml.dereference(String.fromCharCode(64) + 'tool:exec').length"];
     let n = 0, bg;
     bg = loadBackground({
-        config: { ...config, autoApproveReadonly: false }, openTabs: [SITE],
+        config: { ...config, autoApproveReadonly: false }, openTabs: [SITE], local: SITE_APPROVED,
         onFetch: (call) => {
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
             const js = scripts[n++];
@@ -543,6 +545,58 @@ test("a survey re-reading what the run's fetch_url read is answered from the wor
     assert.ok(!JSON.stringify(toPage).includes("SECRET OTHER SITE"));
 });
 
+/** A worker-built run on SITE whose model calls `calls` in turn, every gate approved, with chrome.commands binding the
+ *  HUD to `shortcut`. The page answers any tool it is sent with `PAGE <name>`. Returns what reached the page and what
+ *  the model read back from each call. */
+async function toolsRun(calls, { shortcut = "Ctrl+Shift+K" } = {}) {
+    let turns = 0, bg;
+    const seenByModel = [];
+    bg = loadBackground({
+        config: { ...config, autoApproveReadonly: true }, openTabs: [SITE], commandShortcut: shortcut,
+        onFetch: (call) => {
+            if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            seenByModel.push(call.body.messages);
+            const next = calls[turns++];
+            return next
+                ? jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: `c${turns}`, type: "function", function: { name: next.name, arguments: JSON.stringify(next.args ?? {}) } }] } }] })
+                : jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (_t, msg) => {
+            if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
+            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+            if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
+            if (msg.payload.finish) return { result: "" };
+            return msg.payload.renderOnly || msg.payload.precheck || msg.payload.readonlyTry ? {} : { result: `PAGE ${msg.payload.name}` };
+        },
+    });
+    await bg.context.__mlStartUserRunForTest(7, { task: "tell me about yourself", surface: "hud" });
+    for (let i = 0; i < 600 && turns <= calls.length; i++) await new Promise((r) => setTimeout(r, 0));
+    await flush(30);
+    const toPage = bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE" && !m.payload.finish).map(([, m]) => JSON.parse(JSON.stringify(m.payload)));
+    const toolResults = (seenByModel.at(-1) ?? []).filter((m) => m.role === "tool").map((m) => m.content);
+    return { bg, toPage, toolResults };
+}
+
+test("agent_api_docs of a worker-built run runs in the worker, with the live shortcut and config read there", T, async () => {
+    const { toPage, toolResults } = await toolsRun([{ name: "agent_api_docs" }]);
+    assert.equal(toPage.filter((p) => p.name === "agent_api_docs").length, 0, "not even a preview of it went to the page");
+    const out = toolResults[0] ?? "";
+    assert.match(out, /Keyboard: `Ctrl\+Shift\+K`/, `the shortcut bound now, read from chrome.commands; got ${out.slice(-600)}`);
+    assert.match(out, /Reading your own setup \(no approval needed\)/, "autoApproveReadonly read from the worker's config");
+});
+
+test("agent_api_docs in the worker still counts the run's page steps: one detour keeps the dig, a second ends it", T, async () => {
+    const docs = { name: "agent_api_docs", args: { types: ["FetchResult"] } };
+    const page = { name: "scroll", args: { to: "top" } };
+    const { toPage, toolResults } = await toolsRun([docs, page, docs, page, page, docs]);
+    assert.deepEqual(toPage.filter((p) => !p.renderOnly && !p.precheck && !p.readonlyTry).map((p) => p.name), ["scroll", "scroll", "scroll"], "the scrolls ran in the page");
+    const fetchResult = /interface FetchResult|type FetchResult/;
+    assert.match(toolResults[0], fetchResult, "the first read prints it");
+    assert.match(toolResults[2], /already seen/, `within one detour it is collapsed; got ${toolResults[2]?.slice(0, 300)}`);
+    assert.doesNotMatch(toolResults[5], /already seen/, "after two page steps the dig is over and it is printed again");
+    assert.match(toolResults[5], fetchResult);
+});
+
 // --- WORKER TOOLS: what a page can still get from a fetch_url the worker ran (red team) ---
 
 const OTHER = "https://other.example/private";
@@ -555,12 +609,12 @@ const RUN_TAB = { tab: { id: 7, url: SITE.url }, url: SITE.url, origin: "https:/
  * tab 7 is hostile: `atApproval(bg)` runs the instant the person's approval is sent, and `inPage(bg, msg)` whenever the
  * run sends a tool to the page. `siteGate` applies the real origin gate, so site.example is NOT approved.
  */
-async function attackRun(args, { then = [], siteGate = true, atApproval, inPage, evictAtFirstGate = false } = {}) {
+async function attackRun(args, { then = [], siteGate = true, atApproval, inPage, evictAtFirstGate = false, local = {} } = {}) {
     let turns = 0, bg, evicted = false;
     const calls = [{ name: "fetch_url", args }, ...then];
     const seenByModel = [];
     bg = loadBackground({
-        config: { ...config, autoApproveReadonly: true }, openTabs: [SITE], siteGate,
+        config: { ...config, autoApproveReadonly: true }, openTabs: [SITE], siteGate, local,
         onFetch: (call) => {
             if (call.url.startsWith("https://other.example/")) return { ok: true, status: 200, url: call.url, headers: { get: (h) => (/content-type/i.test(h) ? "text/html; charset=utf-8" : null) }, text: async () => SECRET, arrayBuffer: async () => new TextEncoder().encode(SECRET).buffer, body: null };
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
@@ -634,7 +688,9 @@ test("a page cannot spend the one-time as-you grant the person minted for the ru
 
 test("while an approved exec runs, the page cannot fetch a URL the exec never named", T, async () => {
     let stolen;
+    // An approved exec runs in the page's world only on an approved site (exec-routing.ts); elsewhere it is isolated.
     const { toolResults } = await attackRun({ url: OTHER }, {
+        local: SITE_APPROVED,
         then: [{ name: "exec", args: { js: "document.title = 'x'; return 1" } }],
         inPage: async (bg, msg) => {
             if (msg.payload.name !== "exec" || msg.payload.renderOnly || msg.payload.readonlyTry || msg.payload.precheck) return undefined;
@@ -651,18 +707,34 @@ test("while an approved exec runs, the page cannot fetch a URL the exec never na
 
 const { CURRENT_SIGNATURE } = await import("../src/api-docs.gen.ts");
 
-test("UPGRADE: a stored config from before the flag reads as ON: the prompt shows ml.current's shape, and a survey reads it", T, async () => {
+test("UPGRADE: a stored config from before the flag reads as ON: the prompt names ml.current in one sentence, and a survey reads it", T, async () => {
     // `config` above has no `selfIntrospection` key, exactly as a config saved by an older build.
     assert.equal("selfIntrospection" in config, false);
     const { system, toPage, results, log } = await surveyRun(["ml.current.run.step"]);
-    assert.ok(system.includes(`\`ml.current\` in a read-only \`exec\` is \`${CURRENT_SIGNATURE}\``), "the generated signature, verbatim");
-    assert.match(system, /agent_api_docs` has every type/);
-    // What two real models got wrong from the shape alone (converse sessions, 2026-10-08): a per-turn step read as
-    // session-wide, and a shared watch read as a snapshot from when it was shared.
-    assert.match(system, /`run\.step`, `maxSteps` and `startedTs` are THIS turn's/);
-    assert.match(system, /a shared watch is re-evaluated on every read, so its value is now/);
+    // With agent_api_docs, ONE sentence (Shane, 2026-10-08: most runs never need it): what it is, and where to learn it.
+    assert.match(system, /`ml\.current`, read in a read-only `exec`, is your own run as data/);
+    // DeepSeek V4 Pro and Kimi K3 summed only `estimatedTokens` until the sentence named both (2026-10-09).
+    assert.match(system, /what each costs \(`meta\[i\]\.tokens \?\? meta\[i\]\.estimatedTokens`\)/);
+    assert.match(system, /`ml\.current\.debug\.userWatches`\)\. Most tasks never need it; `agent_api_docs` documents it\./);
+    // The one fact a real model got wrong with the sentence alone, without looking it up (DeepSeek V4 Pro, 2026-10-08).
+    assert.match(system, /A shared watch is re-evaluated on every read, so its value is now, and its `note` is the user's question to answer\./);
+    assert.ok(!system.includes(CURRENT_SIGNATURE), "the shape is the docs' to give");
     assert.deepEqual(toPage, [], "answered in the worker");
     assert.equal(results[0], "1", JSON.stringify({ results, log }));
+});
+
+test("what real models got wrong about ml.current is said where agent_api_docs serves it, and in the prompt of a run without the docs", async () => {
+    const { ML_API_DOCS } = await import("../src/api-docs.gen.ts");
+    const { currentClause } = await import("../src/agent/prompts.ts");
+    // From converse sessions, 2026-10-08: a per-turn step read as session-wide, a shared watch read as a snapshot from
+    // when it was shared, an estimated token total called exact, a note's question answered with the number.
+    for (const fact of ["1 on a turn's first call", "re-evaluated for every read", "m.tokens ?? m.estimatedTokens", "often their question", "the system prompt first"])
+        assert.ok(ML_API_DOCS.includes(fact), `agent_api_docs says: ${fact}`);
+    const bare = currentClause(false);
+    assert.ok(bare.includes(`\`ml.current\` in a read-only \`exec\` is \`${CURRENT_SIGNATURE}\``), "no docs: the generated signature, verbatim");
+    assert.match(bare, /`run\.step` \(1 on this turn's first call\), `maxSteps` and `startedTs` are THIS turn's/);
+    assert.match(bare, /system prompt first; a message's size is `tokens` when the engine counted it, else `estimatedTokens`/);
+    assert.match(bare, /its `note` is the user's question about it, so answer that/);
 });
 
 test("the flag OFF: no word of ml.current in the prompt, and a survey naming it is not answered from the run's context", T, async () => {
@@ -697,6 +769,7 @@ test("an approved exec may fetch the URLs its code spells out, and a computed on
     const named = "https://other.example/named";
     let literal, computed;
     await attackRun({ url: OTHER }, {
+        local: SITE_APPROVED,
         then: [{ name: "exec", args: { js: `document.title = 'x'; return (await ml.fetch("${named}")).status` } }],
         inPage: async (bg, msg) => {
             if (msg.payload.name !== "exec" || msg.payload.renderOnly || msg.payload.readonlyTry || msg.payload.precheck) return undefined;

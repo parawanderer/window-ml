@@ -16,12 +16,15 @@ import { derivedFetchFields, cacheCopy } from "../ml/fetch-result";
 import { hintSession } from "../contract/contract-run";
 import { isCurrentPage } from "../dom/dom";
 import { fetchUrlFor } from "./sw-fetch-url";
+import { apiDocsTool } from "../tools/api-docs-tool";
+import { publicConfig } from "../contract/contract-config";
+import { invocationInfo } from "./sw-invocation";
 import { senderTrust } from "./sw-consent";
 import { htmlToMarkdownOffscreen } from "./sw-offscreen";
-import { fetchLLM } from "./sw-llm";
+import { fetchLLM, getConfig } from "./sw-llm";
 
 /** The builtin tools a worker-built run executes in the worker rather than the page. */
-export const WORKER_TOOL_NAMES: ReadonlySet<string> = new Set(["fetch_url", "python_exec"]);
+export const WORKER_TOOL_NAMES: ReadonlySet<string> = new Set(["fetch_url", "python_exec", "agent_api_docs"]);
 
 /** What one run's worker tools share: the tab they act for, its fetch cache, and the spend of their model calls. */
 interface RunCtx {
@@ -219,5 +222,7 @@ export function buildWorkerTools(runId: string, tabId: number, tabUrl: () => str
     ctx.tabId = tabId; ctx.tabUrl = tabUrl;
     runs.set(runId, ctx);
     const ml = runMl(ctx);
-    return wanted.map((n) => (n === "fetch_url" ? fetchTool.call(ml) : n === "python_exec" ? pythonTool.call(ml) : null)).filter((t): t is MlTool => !!t);
+    // agent_api_docs reads the shortcut and the config here, where the page would have asked for them by message.
+    const docs = { invocation: invocationInfo, config: async () => publicConfig(await getConfig(), ctx.tabUrl()) };
+    return wanted.map((n) => (n === "fetch_url" ? fetchTool.call(ml) : n === "python_exec" ? pythonTool.call(ml) : n === "agent_api_docs" ? apiDocsTool(defineTool, docs) : null)).filter((t): t is MlTool => !!t);
 }

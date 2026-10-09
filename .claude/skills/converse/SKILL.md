@@ -28,10 +28,13 @@ until grep -q "waiting for inbox\|^done\|^gate" $D/status 2>/dev/null; do sleep 
 ```
 
 Without `TASK`, the first message is the first inbox file. Everything else is observe's env (`START`, `TOOLS`,
-`PYTHON`, `TOOLTOKENS`, `SHARED_WATCHES`, `WATCH`, `HEADFUL`, `WARM`, `APPROVE`). Each turn gets runOnce's
+`PYTHON`, `TOOLTOKENS`, `SHARED_WATCHES`, `WATCH_NOTES`, `SURFACE`, `WATCH`, `HEADFUL`, `WARM`, `APPROVE`). Each turn gets runOnce's
 `timeoutMs`; a session with no inbox message for `CONVERSE_IDLE_MS` (default 30 min) ends on its own.
 
 ## Gotchas
+
+- **Console run unless `SURFACE` is set.** The default is `ml.agent` from the page: no `click`, `type` or
+  `python_exec`. A review of "the toolset" or "the prompt" should say which it saw; `SURFACE=hud` is what a person gets.
 
 - **One driver per directory.** Two drivers on one inbox take turns' messages from each other.
 - **`turn-<n>.md` is clipped** (arguments 800, results 1200 characters). Read `run.md` for the full record.

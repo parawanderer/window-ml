@@ -570,7 +570,7 @@ describe("the pipe dialect is described once", () => {
     const dialectish = (s) => /grep PATTERN|chained with/.test(s);
 
     test("no tool PARAMETER carries the dialect verbatim any more", async () => {
-        const files = ["../src/tools/tools.ts", "../src/tools/builtin-tools.ts", "../src/python/python-tool.ts", "../src/injected.ts", "../src/ml/ml-server.ts", "../src/ml/ml-tool-factories.ts", "../src/ml/ml-vision.ts", "../src/ml/ml-python.ts", "../src/ml/ml-chat.ts", "../src/ml/ml-agent-run.ts", "../src/agent/run-assembly.ts", "../src/ml/ml-agent-handle.ts"];
+        const files = ["../src/tools/tools.ts", "../src/tools/api-docs-tool.ts", "../src/tools/builtin-tools.ts", "../src/python/python-tool.ts", "../src/injected.ts", "../src/ml/ml-server.ts", "../src/ml/ml-tool-factories.ts", "../src/ml/ml-vision.ts", "../src/ml/ml-python.ts", "../src/ml/ml-chat.ts", "../src/ml/ml-agent-run.ts", "../src/agent/run-assembly.ts", "../src/ml/ml-agent-handle.ts"];
         for (const f of files) {
             const src = await readFile(new URL(f, import.meta.url), "utf8");
             for (const line of src.split("\n")) {
@@ -597,4 +597,19 @@ describe("the pipe dialect is described once", () => {
         assert.ok(PIPE_CLAUSE.length + 4 * PIPE_REF.length < 4 * PIPE_SYNTAX.length,
             "the indirection has to actually save context");
     });
+});
+
+// --- the `token` parameter points at the clause instead of repeating it ---------------------------------------------
+
+test("a builtin's `token` names the TOOL OUTPUT TOKENS section, which the prompt has whenever the parameter is wired", async () => {
+    const { citeParam } = await import("../src/tools/tool-params.ts");
+    const { TOOLTOKENS_CLAUSE } = await import("../src/agent/prompts.ts");
+    const builtin = citeParam("the pricing table").description;
+    // It was the same ~450 characters on every citable tool (a model-panel review, 2026-10-08); the run that wires it
+    // (run-assembly.ts, `toolTokens`) is the run that appends TOOLTOKENS_CLAUSE, so a pointer is enough.
+    assert.match(builtin, /See TOOL OUTPUT TOKENS in your instructions\./);
+    assert.match(TOOLTOKENS_CLAUSE, /TOOL OUTPUT TOKENS\./, "the section it points at exists");
+    assert.ok(builtin.length < 200, `short: ${builtin.length}`);
+    // A server tool's label-only token is offered whether or not tool tokens are on, so it explains itself.
+    assert.match(citeParam("the weather results", false).description, /dereference/);
 });

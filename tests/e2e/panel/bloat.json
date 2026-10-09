@@ -1,0 +1,8 @@
+{
+  "about": "Review your own system prompt and tools for bloat, duplication, contradictions and gaps, after one small page task. The PROMPT_BUDGET.md panel.",
+  "surface": "hud",
+  "task": "What code is shown on this page? Use findByText to locate it, then answer with just the code.",
+  "asks": [
+    "Thanks. Different job now: review your own setup for BLOAT, for the people trimming it. You have your system prompt (it is also readable, verbatim, as ml.current.messages[0].content in a read-only exec) and your tool definitions (names, descriptions, parameters).\n\n1. SYSTEM PROMPT: list each part you would cut or shorten. For each: quote its first ~10 words, say why (redundant with another part, never relevant to a task like this, unclear, contradicts something), and roughly how much it would save.\n2. TOOLS: which tools or parameters overlap, are redundant, or you would never reach for, and which descriptions are much longer than what they say. Quote.\n3. MISSING: anything you needed and had to guess.\n4. CONFUSING or CONTRADICTORY: quote both sides.\n5. Finally: if you could keep only HALF of the system prompt, which half, and why.\n\nBe concrete and quote; no preamble, no praise. Do not propose removing a safety or approval rule unless another rule already says the same thing."
+  ]
+}

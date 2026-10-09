@@ -35,11 +35,6 @@ export function recordAppended(recorded: (RecordedMeta | undefined)[], from: num
     for (let i = from; i < to; i++) recorded[i] = { ...UNRECORDED, ...fact };
 }
 
-/** How a message's size was arrived at. `counted`: the engine reported it. `estimated`: characters over
- *  {@link CHARS_PER_TOKEN}, which is all there is for every user, system and tool message. A bare number would be
- *  read as counted, and usually is not (the same reason `RunStats.genBasis` exists). */
-export type TokensBasis = "counted" | "estimated";
-
 /** Characters per token for an estimate. No tokenizer is involved: good for comparing messages, rough for budgets. */
 export const CHARS_PER_TOKEN = 4;
 
@@ -57,10 +52,15 @@ export interface MessageMeta {
     gapMs: number | null;
     /** Where a user message was typed. Null for every other role, and for history. */
     surface: PromptSurface | null;
-    /** The size of this message: what compacting it would reclaim. Text only; see `images`. */
-    tokens: number;
-    tokensBasis: TokensBasis;
-    /** Images the message carries, which `tokens` does NOT include: an image's cost depends on the model, and
+    /** The size of this message as the ENGINE counted it: what compacting it would reclaim. Text only; see `images`.
+     *  Present only when there is a count (a reply the model produced); otherwise `estimatedTokens` is, never both,
+     *  so a message's size is `m.tokens ?? m.estimatedTokens`. Two names because a bare `tokens` was read as exact
+     *  when it was an estimate (a real model summed them and called the total exact, 2026-10-08). */
+    tokens?: number;
+    /** The size of this message ESTIMATED from its characters ({@link CHARS_PER_TOKEN}), when the engine gave no count:
+     *  every system, user and tool message. A total that includes one is an estimate. */
+    estimatedTokens?: number;
+    /** Images the message carries, which neither size includes: an image's cost depends on the model, and
      *  estimating its data URL by characters would be wrong by orders of magnitude. */
     images: number;
     /** The step that produced it, and the call within the run, so it joins up with the transcript and `@tool:` ids. */
@@ -77,8 +77,9 @@ export interface CurrentRun {
     /** The run's session hash: the same in every turn of the conversation. */
     id: string;
     model: string | null;
-    /** Model calls so far in THIS TURN. It restarts when a new message starts a turn, so it is not a session-wide count:
-     *  a real model read 2, then 1 after the next message, and took the watch it was reading for a stale snapshot. */
+    /** Model calls so far in THIS TURN, counting the one that is reading it: 1 on a turn's first call. It restarts when a
+     *  new message starts a turn, so it is not a session-wide count (a real model read 2, then 1 after the next message,
+     *  and took the watch it was reading for a stale snapshot). */
     step: number;
     /** THIS TURN's step budget. */
     maxSteps: number;
@@ -103,10 +104,12 @@ export interface CurrentLogRecord {
 /** The records, and the same log as greppable lines on `.text`, for `ml.pipe`. One member, two views. */
 export type CurrentLog = CurrentLogRecord[] & { text: string };
 
-/** Everything `ml.current` is, at one instant. */
+/** Everything `ml.current` is, at one instant: the moment the exec reading it runs. So it holds the assistant message
+ *  that made that call, and not the call's result, and every later read has more messages than this one. */
 export interface CurrentSnapshot {
     run: CurrentRun;
-    /** The NeutralMessage[] the next model call gets, verbatim: a COPY, so nothing a script does reaches the loop's. */
+    /** The NeutralMessage[] the next model call gets, verbatim: the system prompt first, then every user and assistant
+     *  message, tool call and tool result. A COPY, so nothing a script does reaches the loop's. */
     messages: NeutralMessage[];
     /** Parallel to `messages`: same length, same order. */
     meta: MessageMeta[];
@@ -120,7 +123,8 @@ export interface CurrentSnapshot {
  *  failed or its value was too large to hand over. */
 export interface UserWatch {
     expression: string;
-    /** What the person wrote about WHY they shared it ("is this growing?"), when they wrote anything. Their words. */
+    /** What the person wrote about WHY they shared it ("is this growing?"), when they wrote anything. Their words, and
+     *  often their question: answer it, not just the value (a real model read "is it climbing?" and reported the number). */
     note?: string;
     value?: unknown;
     error?: string;
@@ -175,8 +179,7 @@ export function snapshotCurrent(src: {
             ageMs: r.ts == null ? null : Math.max(0, src.now - r.ts),
             gapMs: r.ts == null || prev == null ? null : Math.max(0, r.ts - prev),
             surface: m.role === "user" ? r.surface : null,
-            tokens: counted ?? Math.ceil(textChars(m) / CHARS_PER_TOKEN),
-            tokensBasis: counted != null ? "counted" : "estimated",
+            ...(counted != null ? { tokens: counted } : { estimatedTokens: Math.ceil(textChars(m) / CHARS_PER_TOKEN) }),
             images: m.images?.length ?? 0,
             step: r.step,
             seq: r.seq,

@@ -18,8 +18,8 @@ script's promise settles. The streaming port (`LLM_STREAM`) checks the same gate
 
 1. A tab hosting a live background run (`activeRuns`) may send `RUN_TAB_TYPES` (page-relay.ts) from its top frame,
    whatever its origin: what that run's delegated tools send while they still run in the page (a vision tool's model
-   call and screenshot, `fetch_url`, `python_exec`, a sheet, a server tool, a shadow resolve, the config reads of
-   `agent_api_docs`). Never run control, a model change, an unload, a session, an embedding or a dump. The list
+   call and screenshot, `fetch_url`, `python_exec`, a sheet, a server tool, a shadow resolve, the config a vision tool
+   or an exec reads). An isolated exec sends none of them: its `ml` has nothing that sends. Never run control, a model change, an unload, a session, an embedding or a dump. The list
    shrinks as slice 2 moves tools to the worker, and goes with the last one. It is also why a run on a local `file:`
    page keeps working.
 2. Otherwise the sender must be grantable (`grantableOrigin`: top frame, http(s), not opaque) and its origin approved
@@ -96,6 +96,33 @@ the caller. Its approval is the run's CALL grant (`grantRunPython`: the external
 around the one call and never on the tab, so a page cannot read the sheet with the person's cookies or run the approved
 full-mode code itself while it runs. Live stdout goes straight to the call's output.
 
+`agent_api_docs` runs there too (`apiDocsTool` in `src/tools/api-docs-tool.ts`, given a `DocsSource`): the worker reads
+the live shortcut (`invocationInfo`, `sw-invocation.ts`) and the config itself, so `GET_INVOCATION` left
+`RUN_TAB_TYPES`. `GET_CONFIG` stays until the vision tools move (part 3). Its within-dig dedup memory is the worker's,
+keyed by the run's local tools, so `runLocalTool` counts each call the page runs towards its streak (`countDocsStreak`),
+which the page's `executeTool` used to do; a read-only try counts on neither side.
+
+## Where an approved exec of a worker-built run runs
+
+`delegateTool` (`sw-run-host.ts`) asks `routeExec` (`src/sw/exec-routing.ts`) before it mints any grant on the tab. The
+rule is pure, and its tests enumerate every input (`tests/isolated-exec.test.mjs`):
+
+- A plain script on an approved page: the page's main world, full parity.
+- A script naming `ml.current` or a pointer (read lexically by `execNames`; a miss fails closed, since an unnamed
+  read is not sent and the main world has no `ml.current`), or any script on a page that is not approved: an
+  isolated world (`runIsolatedExec`, `src/sw/sw-isolated-exec.ts`). That is `chrome.userScripts.execute` in the run's
+  world `wml-<runId>` when the person has allowed user scripts, else a CDP isolated world when the CDP setting is on.
+- Neither available: refused on an unapproved page and for `ml.current`; a pointer script on an approved page runs in
+  the main world with a note (owner's decision).
+
+The isolated script runs inside one wrapper built as source (`isolatedWrapper`): it binds `ml` (`current` deep-frozen,
+`dereference` answering only the reads sent with the call), captures the console, and returns plain data. Live lines
+come back through `chrome.runtime.onUserScriptMessage` (reachable only from a world this extension configured), checked
+against the run's tab, the top frame and the call's nonce, or through a CDP binding added with `executionContextName`,
+so only that world has it, checked against the world's context id. The route is decided for one document (read
+before its URL, so a navigation in between fails the send rather than redirecting it) and every send is pinned to it. Every decision is in the execution log
+(`subsystem: routing`, `kind: exec-main|exec-isolated|exec-refused`, `detail.how`).
+
 ## What the content script sends outside the gate
 
 Four types the content script sends on a page's word are not in `PAGE_STARTED_TYPES`, so the origin gate passes them
@@ -126,10 +153,10 @@ called".
 
 ## Adding a tool, a member or a message
 
-The red-team pass AGENTS.md requires. Run it as its own agent, told to attack rather than review; every attack it
-finds becomes a test that fails before the fix. The threat is a page that shares the main world with `window.ml` and
-with any tool code run there, posts any window message, reaches the extension's open shadow roots, and knows every run
-id. Cover:
+The red-team pass AGENTS.md requires. Run it as its own agent, told to find where a property does not hold rather
+than to review; each gap it finds becomes a test titled by the property, failing before the fix. The threat is a page
+that shares the main world with `window.ml` and with any tool code run there, posts any window message, reaches the
+extension's open shadow roots, and knows every run id. Cover:
 
 - **Where it runs.** A tool run in the page puts its inputs and results into the page's world. Prefer the worker; if
   it must run in the page, name what of the run it puts there (another site's content, a pointer's value, the system
@@ -144,8 +171,8 @@ id. Cover:
   the worker facade on purpose.
 - **A message type.** In `PAGE_STARTED_TYPES`, or sent by the content script outside `HANDLE_MAP`, where its handler
   must bind it to the sender itself (the run's tab, frame 0, the document) and the UNGATED ratchet lists it.
-- **A blocked attack.** If a safety classifier stops an attack test, stop on that case and hand it to the owner,
-  whose other model writes attack sides; this side writes the defence.
+- **A blocked case.** If a safety classifier stops a test, stop on that case and hand it to the owner, whose other
+  model writes the test; this side writes the defence.
 
 ## Tests
 

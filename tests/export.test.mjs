@@ -40,7 +40,7 @@ test("fetch_url `ask`: the question + who-answered + tokens export in BOTH Markd
     // The HTML sink syntax-highlights the In block, so strip tags to compare the TEXT (parity is about content).
     const htmlText = sessionToHtml(s, "run").replace(/<[^>]+>/g, "").replace(/&quot;/g, '"');
     for (const [fmt, out] of [["markdown", md], ["pdf/html", htmlText]]) {
-        assert.match(out, /Asked: Does it look like a valid anisette token/, `${fmt} shows the full question`);
+        assert.match(out, /Model asked: “Does it look like a valid anisette token/, `${fmt} shows the full question`);
         assert.match(out, /Answered by gemma4:e2b/, `${fmt} shows who answered`);
         assert.match(out, /572 tokens/, `${fmt} shows the tokens the answer spent`);
         // The in-the-middle step: the raw content the reader saw is exported in BOTH sinks.

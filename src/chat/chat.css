@@ -463,6 +463,18 @@ html, body, #root { height: 100%; }
     display: inline-flex; align-items: center; gap: 3px;
 }
 .chat.calm .chat-row .agent-badge svg { flex: 0 0 auto; }
+/* THE ROBOT ALONE in a calm row (Shane, 2026-10-09): most sessions are agent runs, so the word repeated down the whole
+   list. Hidden from the eye, not from a screen reader; the badge's tip says what it means. */
+.chat.calm .chat-row .agent-badge { font-weight: 400; }
+.chat.calm .chat-row .agent-badge-word { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* CALM WEIGHTS (Shane, 2026-10-09: "much cleaner … they don't use so much extra bold"). A list where every title,
+   machine and heading is bold has no emphasis left; medium is enough to be a title against the grey meta line. In an
+   answer, the model's own **bold** and headings keep their emphasis at semibold rather than the browser's 700. */
+.chat.calm .row-title, .chat.calm .chat-rt-name { font-weight: 500; }
+.chat.calm .chat-group-label { font-weight: 500; }
+.chat.calm .md strong, .chat.calm .md b { font-weight: 600; }
+.chat.calm .md h1, .chat.calm .md h2, .chat.calm .md h3, .chat.calm .md h4 { font-weight: 600; }
 .chat.calm .chat-row .time { opacity: .55; }
 /* A runtime's fold chevron, calm: after EVERYTHING the heading says instead of before it, and only while the pointer
    (or focus) is on the heading, so a quiet list shows no furniture but a fold is still discoverable where you would

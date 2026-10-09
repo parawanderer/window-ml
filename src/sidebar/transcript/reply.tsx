@@ -252,7 +252,11 @@ export const ProfileBadge = ({ profile }: { profile?: ExtendProfile | null }) =>
 // It must NOT read a signal itself: @preact/signals auto-memoizes a
 // signal-reading child, which (with our in-place session mutation → unchanged
 // `s` reference) would make it skip the parent re-render and freeze on pending.
-export const AgentBadge = () => <span class="agent-badge"><IconAgent />agent</span>;
+/** An AGENT session (the model has tools): the robot and the word. The calm list shows the robot alone, since most
+ *  sessions are agents and the word on every row was noise; the tip says what it means, and the word stays for a
+ *  screen reader. */
+export const AgentBadge = () => <span class="agent-badge" {...cursorTipOn("Agent session: the model can use tools on a page")}>
+    <IconAgent /><span class="agent-badge-word">agent</span></span>;
 /** An `ml.embed()` session. Without it the row fell back to the generic "session" tag, so the one kind of
  *  session that is NOT a conversation was the one the list refused to name — leaving you to work out from
  *  the title that "embed 24 inputs" was not something somebody typed. */

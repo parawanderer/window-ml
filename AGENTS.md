@@ -119,9 +119,9 @@ contract, not just the new surface: HALTING tests (in a worker with a timeout), 
 dialect leaves nothing behind), and an update to the doc. Why, with the `for…of` that broke: the doc's last section.
 
 **RULE — a new agent tool, `ml.*` member or page-started message type gets a RED-TEAM PASS, without being asked.**
-Before the PR, run a separate agent whose only job is to attack it from a hostile page (shares the main world, posts
-any window message, knows every run id), writing tests that fail first in `tests/redteam.test.js` or
-`tests/e2e/site-access.spec.mjs`; the change lands with them passing. What to attack: `docs/dev/site-access.md`,
+Before the PR, run a separate agent whose only job is what a hostile page (shares the main world, posts any window
+message, knows every run id) must NOT get from it, each property a test that fails first in `tests/redteam.test.js` or
+`tests/e2e/site-access.spec.mjs`; the change lands with them passing. What to check: `docs/dev/site-access.md`,
 "Adding a tool, a member or a message"; how: the `redteam` skill.
 
 ## Where the implementation notes live — read the one you are about to change
@@ -316,7 +316,8 @@ every demo: `docs/dev/e2e-harness.md`.
 - **RULE — a demo about what happens INSIDE a run calls `openRunInSidebar(page)`**: the panel opens on the
   sessions list, not the run.
 - **The self-tools**, each with a skill in `.claude/skills/`: `observe.mjs` (one agent run → `run.md`/`run.json`),
-  `converse.mjs` (a run you talk to turn by turn through files: answer, steer, rule on gates),
+  `converse.mjs` (a run you talk to turn by turn through files: answer, steer, rule on gates), `panel.mjs` (one
+  interview put to several models at once, to read where they agree),
   `run-once.mjs`, `bench/`, the live probes (`server-tool-live`, `md-ladder-live`, `proto-stream-live`,
   `capture-frames`), `chat-shots.mjs` + `window.__chatFake` (chat-web), `scripts/probe.mjs` (one look at a page),
   `scripts/android.mjs`/`scripts/ios.mjs` (phone), `scripts/hub-root.mjs` + `dev-hub-pair.html` (hub-pairing),
@@ -353,6 +354,9 @@ reported". **Read `docs/FORKED-BACKENDS.md` before assuming a resource-panel fie
 - **A page uses `window.ml` only once its ORIGIN is approved**: the router refuses every page-started type
   (`page-relay.ts`) from an unapproved origin, reading `sender`, never anything the page says; a run the USER starts is
   built by the worker and works on any page. → site-access.md
+
+- **An approved exec of a run the worker built runs in an isolated world** when it names a pointer or `ml.current`, or
+  the page is not approved (`exec-routing.ts`): never hand either to the page's main world. → site-access.md
 
 - **Config overrides (URL/key) are accepted only from the popup.** Page-relayed
   messages have `sender.tab` set; `background.js` strips overrides when it's set,

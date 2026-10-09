@@ -32,11 +32,11 @@ today and both come up constantly:
 ## The shape
 
 ```js
-ml.current.run        // { id, model, step, maxSteps, startedTs } — which run this is; step, maxSteps and startedTs are THIS turn's
-ml.current.messages   // `NeutralMessage[]` VERBATIM — the exact array `ml.step()` takes
+ml.current.run        // { id, model, step, maxSteps, startedTs } — which run this is; step (1 on a turn's first call), maxSteps and startedTs are THIS turn's
+ml.current.messages   // `NeutralMessage[]` VERBATIM — the exact array `ml.step()` takes, system prompt first, as of the exec reading it (its own call in, its result not)
 ml.current.meta       // a PARALLEL array, same length and order: what we KNOW about each message
 ml.current.log        // this run's execution log: records, carrying `.text` for ml.pipe
-ml.current.debug      // { userWatches: [{ expression, value | error }] }: watches the person shared (worker-hosted runs)
+ml.current.debug      // { userWatches: [{ expression, note?, value | error }] }: watches the person shared (worker-hosted runs); a note is their question
 ```
 
 Five decisions make it survive the write half. Each is the non-obvious choice.
@@ -187,8 +187,9 @@ distinction is what decides whether the natural join runs or escalates to a huma
 const meta = ml.current.meta;
 const stale = ml.current.messages
     .map((m, i) => ({ m, meta: meta[i] }))            // zip by index: same length, same order
-    .filter(x => x.meta.tokens > 500 && x.meta.ageMs > 10 * 60_000)
-    .map(x => `${x.meta.id} ${x.m.role} ${x.meta.tokens}t ${Math.round(x.meta.ageMs / 60_000)}m ago`);
+    .map(x => ({ ...x, size: x.meta.tokens ?? x.meta.estimatedTokens }))   // one of the two, never both
+    .filter(x => x.size > 500 && x.meta.ageMs > 10 * 60_000)
+    .map(x => `${x.meta.id} ${x.m.role} ${x.size}t ${Math.round(x.meta.ageMs / 60_000)}m ago`);
 ```
 
 Resolving up front also makes the facade a SNAPSHOT for free: every row and every record describes the same
@@ -212,7 +213,7 @@ First set, in rough order of how much a model can do with it. All of it is deriv
 | `id` | the STABLE handle (decision 2), minted like a `@tool:` id with a check character. It lives here rather than on the message because the message is the wire shape and nothing derived belongs on it; within a snapshot the index already addresses a row, and this is what carries identity across a filter, a later read, or a mutation |
 | `ts`, `ageMs`, `gapMs` | wall clock; how long ago that was, at the snapshot's instant; and the GAP since the previous message (a long one is someone going away between turns). Pre-computed, since a model doing arithmetic on two stamps pays tokens to get it slightly wrong. The first draft had one `sinceMs` that its table defined as the gap and its own example used as the age; these are both, under names that cannot be confused. Null for history carried in from an earlier turn, whose moment of arrival is gone |
 | `surface` | where a user message was typed (`PromptSurface`, contract-run.ts) and what that implies: whether anyone can see the page. Already recorded per message |
-| `tokens`, `tokensBasis` | the size of THIS message — what compaction would actually reclaim — and WHICH KIND of number it is: `counted` where the engine's count measures it, `estimated` where nothing did and it falls back to ~chars/4. The precedent is `RunStats.genBasis`, which carries the same distinction for timing "so a surface can be honest about what the rate measures"; a bare number here would be read as counted, and usually is not. **Counted only when the turn produced no reasoning**: the completion count is the whole generation, reasoning included, and reasoning is not re-sent in history, so for a thinking model it would overstate what compacting the message reclaims. A model whose reasoning is hidden entirely cannot be told apart and is counted |
+| `tokens` or `estimatedTokens` | the size of THIS message — what compaction would actually reclaim — under a name that says WHICH KIND of number it is: `tokens` where the engine's count measures it, `estimatedTokens` where nothing did and it falls back to ~chars/4. Exactly one is present, so a size is `tokens ?? estimatedTokens`. The precedent is `RunStats.genBasis`, which carries the same distinction for timing "so a surface can be honest about what the rate measures". It was `tokens` plus a `tokensBasis` label until 2026-10-09: a real model (DeepSeek V4 Pro) summed the bare `tokens`, never read the label, and called the total exact, so the kind moved into the name (Shane's call). That rename is the one non-additive change this shape has had, made while nothing outside a model's own scripts read it. **Counted only when the turn produced no reasoning**: the completion count is the whole generation, reasoning included, and reasoning is not re-sent in history, so for a thinking model it would overstate what compacting the message reclaims. A model whose reasoning is hidden entirely cannot be told apart and is counted |
 | `images` | how many images the message carries, which `tokens` does NOT include: an image's cost depends on the model, and estimating a data URL by its characters would be wrong by orders of magnitude. Added in the build |
 | `step`, `seq` | which step produced it, so a message joins up with the transcript, the exports and a `@tool:` pointer |
 | `tool` | the tool a tool-result message came from |
@@ -366,7 +367,7 @@ evaluating in the worker protects the snapshot, and only closing that channel pr
 
 Leaving a field out is only safe if adding it later is. The split:
 
-**Additive, so it can wait.** A new key on `meta`; a new member on `ml.current`; a new `tokensBasis` value; a new
+**Additive, so it can wait.** A new key on `meta`; a new member on `ml.current`; a new
 VIEW on an existing member, the way `text` sits on `log`. `meta` is derived, read-only, flat JSON, so a later key
 cannot collide with anything a model wrote against the earlier shape, and nothing has to be versioned for it.
 
@@ -421,13 +422,13 @@ later rather than now:
   for convenience is what would need a budget in front of it.
 - Nothing here says which messages the cap is ABOUT to drop. An earlier draft had a `dropsNext` field; it is
   out, because its semantics have not been looked at and a guessed field in a contract is the one thing this
-  document is otherwise careful not to do. It is also the field that can most afford to wait: `tokens` +
-  `tokensBasis` already let a model reason about size, and an eviction rule can be added once it is a
+  document is otherwise careful not to do. It is also the field that can most afford to wait: `tokens` /
+  `estimatedTokens` already let a model reason about size, and an eviction rule can be added once it is a
   decision rather than a hunch.
 - How good the numbers under such a field would be is already a split question: the `counted` messages are
   exact, and the `estimated` ones — every user and tool message, so most of the context — are ~chars/4 with
   no tokenizer. An estimate is probably right for deciding WHAT to drop and wrong for deciding WHETHER to.
-  `tokensBasis` is what makes that measurable at all rather than one number nobody can audit.
+  The two names are what make that measurable at all rather than one number nobody can audit.
 - **The wiring.** The host calling `evalReadonlyInWorker` first, and handing the worker's `ml` a `dereference`, is the
   site-access work's slice 2. The contract type, and with it `agent_api_docs`, lands with that, not before.
 - Nothing is specified about a message arriving over the hub from a REMOTE runtime, where the context lives on

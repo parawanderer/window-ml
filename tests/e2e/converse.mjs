@@ -18,6 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runOnce, resolveBackendFromEnv } from "./run-once.mjs";
+import { turnReport } from "./interview.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIR = path.resolve(process.env.CONVERSE_DIR || path.join(HERE, "artifacts", `converse-${Date.now()}`));
@@ -45,19 +46,6 @@ async function nextMessage() {
     return null;
 }
 
-/** One turn's steps, as text an agent reads: what was called, with what, what came back, and who approved it. */
-function turnReport(n, events, fromTs, result) {
-    // By time, not `seq`: a reasoning step carries none.
-    const steps = events.filter((e) => e.kind === "agent-step" && !e.pending && (e.ts ?? 0) > fromTs);
-    const clip = (v, n) => { const s = typeof v === "string" ? v : JSON.stringify(v); return s && s.length > n ? s.slice(0, n) + " …" : s; };
-    const lines = [`# Turn ${n}`, "", "## Answer", "", result?.summary ?? "(no answer: the turn did not finish)", "", "## Steps", ""];
-    for (const s of steps) {
-        if (!s.tool) { const t = s.thought || s.reasoning; if (t) lines.push(`- thought: ${clip(t, 600)}`); continue; }
-        lines.push(`- **${s.tool}**${s.approval ? ` (${s.approval})` : ""} ${clip(s.arguments, 800)}`, `  → ${clip(s.result, 1200)}`);
-    }
-    return lines.join("\n") + "\n";
-}
-
 const task = process.env.TASK || await (async () => { status("waiting for the first message in inbox/"); return nextMessage(); })();
 if (!task) { status("done: no first message"); process.exit(0); }
 const askGates = (process.env.APPROVE || "").toLowerCase() === "ask";
@@ -71,6 +59,10 @@ const r = await runOnce({
     python: !!process.env.PYTHON,
     toolTokens: !!process.env.TOOLTOKENS,
     sharedWatches: process.env.SHARED_WATCHES ? JSON.parse(process.env.SHARED_WATCHES) : [],
+    // WATCH_NOTES='{\"ml.current.run.step\":\"is it moving?\"}' → the person's note on a shared watch, by expression.
+    watchNotes: process.env.WATCH_NOTES ? JSON.parse(process.env.WATCH_NOTES) : {},
+    // SURFACE=hud|overlay|chat → a run started as a person does from that UI (click, type, python_exec), not a console ml.agent.
+    surface: process.env.SURFACE || null,
     backend: await resolveBackendFromEnv(),
     warm: process.env.WARM !== "0",
     artDir: DIR,

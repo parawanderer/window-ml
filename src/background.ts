@@ -3,6 +3,8 @@
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
 import { dropAllLocalTools } from "./sw/sw-local-tools";
+import { invocationInfo } from "./sw/sw-invocation";
+import { onIsolatedStream } from "./sw/sw-isolated-exec";
 import { LOAD_RECORDS_KEY } from "./resource/load-records";
 import type { ApprovalDecision } from "./contract/contract-agent";
 import type { StartRunPayload, SetApprovalPayload, CancelRunPayload, InjectMessagePayload } from "./contract/contract-messages";
@@ -100,7 +102,10 @@ startValueSweeps();
 // TEST-ONLY (SW realm only): start a run as the HUD Commander's Send does (sw-run-start.ts). The real route is the
 // extension's own frame through the content-script shell, which a spec cannot click without driving the whole
 // composer; a page cannot reach this, so it is no way in for one.
-(globalThis as unknown as { __mlStartUserRunForTest?: unknown }).__mlStartUserRunForTest = (tabId: number, req: import("./agent/run-assembly").UserRunRequest, opts?: { keep?: boolean }) => startUserRun(tabId, req, opts);
+(globalThis as unknown as { __mlStartUserRunForTest?: unknown }).__mlStartUserRunForTest = (tabId: number, req: import("./agent/run-assembly").UserRunRequest, opts?: { keep?: boolean; approvalRouting?: "both" }) => startUserRun(tabId, req, opts);
+// TEST-ONLY (SW realm only): send a person's message into, or Continue, a run the worker built, as the sidebar and the
+// HUD do (`userRunAction`). The harness's conversations with a UI-started run (converse.mjs, SURFACE=…) go through it.
+(globalThis as unknown as { __mlUserRunActionForTest?: unknown }).__mlUserRunActionForTest = (hash: string, action: "send" | "continue", body: { text?: string; surface?: string }) => userRunAction(hash, action, body);
 
 // captureVisibleTab quota backoff: retry a rate-limited screenshot (~2/sec cap) rather than failing the step.
 const CAPTURE_RETRIES = 5;       // ~5 tries…
@@ -170,6 +175,10 @@ function dropPrintDoc(key: string): void {
 // THE ORIGIN GATE (docs/spec/SITE_ACCESS.md). Every message a PAGE can start (page-relay.ts) is checked against the
 // sender's origin before any handler runs: the browser sets `sender`, a page cannot. A refused request is answered
 // with the refusal; a fire-and-forget one is simply dropped. Everything else goes straight to the router.
+// A user-script world's live console lines for an isolated exec (sw-isolated-exec.ts). Only worlds this extension
+// configured can send here; the page's cannot.
+(chrome.runtime as unknown as { onUserScriptMessage?: chrome.events.Event<(m: unknown, s: chrome.runtime.MessageSender) => void> }).onUserScriptMessage?.addListener((m, s) => onIsolatedStream(m, s));
+
 chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     housekeeping.beat();   // a message is the worker being alive: the heartbeat an eviction is inferred from (throttled)
     if (!PAGE_STARTED_TYPES.has(message?.type) || isExtensionSender(sender) || sender.tab == null) return route(message, sender, sendResponse);
@@ -740,25 +749,8 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         return true;
 
     } else if (message.type === "GET_INVOCATION") {
-        // How to open the HUD on THIS install. The shortcut is user-rebindable at
-        // chrome://extensions/shortcuts, so we report what chrome.commands says is bound RIGHT NOW
-        // (and whether that still matches the manifest) rather than letting anything hardcode
-        // "Alt+Space" — a stale answer sends the user to a key that does nothing. Non-secret:
-        // it's the user's own UI affordance, so no sender gating.
-        const manifest = chrome.runtime.getManifest?.() || {} as chrome.runtime.Manifest;
-        const suggested = manifest.commands?.["open-composer"]?.suggested_key;
-        const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent || "");
-        const defaultShortcut = (typeof suggested === "string" ? suggested
-            : (isMac ? suggested?.mac : suggested?.default) || suggested?.default) || "";
-        // contextMenus is a permission-gated API, so the manifest declaring it is a truthful proxy
-        // for "the right-click entry exists" — this line turns itself on when that feature lands.
-        const contextMenu = (manifest.permissions || []).includes("contextMenus");
-        Promise.resolve(chrome.commands?.getAll?.() ?? [])
-            .then((cmds: chrome.commands.Command[]) => {
-                const shortcut = cmds.find(c => c.name === "open-composer")?.shortcut || "";
-                sendResponse({ data: { shortcut, defaultShortcut, isDefault: !!shortcut && shortcut === defaultShortcut, contextMenu } });
-            })
-            .catch(() => sendResponse({ data: { shortcut: "", defaultShortcut, isDefault: false, contextMenu } }));
+        // How to open the HUD on THIS install (sw-invocation.ts). Non-secret, so no sender gating.
+        invocationInfo().then(data => sendResponse({ data }));
         return true;
 
     } else if (message.type === "GET_CONFIG") {

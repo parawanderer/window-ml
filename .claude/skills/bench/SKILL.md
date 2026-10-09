@@ -13,6 +13,9 @@ Reach for **observe** to understand ONE run. Reach for **bench** when the questi
 does this model follow the rules better than that one, does this prompt change help, does an
 experimental identifier format reduce re-emission.
 
+The next planned experiment is the prompt budget (cuts to the system prompt and tool schemas as build-time
+variants): [docs/spec/PROMPT_BUDGET.md](../../../docs/spec/PROMPT_BUDGET.md), including where the bench was left off.
+
 **Two audiences, one run.** You define the experiment in code, run it, and read the terminal. A human
 watching over your shoulder opens the live page (`--serve`). Same data, rendered for whoever is looking —
 so START A SWEEP WITH `--serve` AND HAND THE HUMAN THE URL. It prints as a banner for exactly that:
@@ -108,6 +111,28 @@ export default defineBench({
 A task without `succeeded` reports `—` (not scored) rather than counting as a failure — which keeps a
 task usable for measuring behaviour when correctness is not the question.
 
+A task (or a cell, through `apply`) can set `surface: "hud"` to start the run the way a person does from the UI (the
+kit and prompt a UI run gets) instead of a console `ml.agent`; `tools`, `python`, `toolTokens`, `agentOptions` and
+`seed` are console knobs and do not apply to it. `sharedWatches`/`watchNotes` go to `ml.current` as in observe.
+
+## Interviews (a panel, read by a person)
+
+A task with `asks: [...]` is an INTERVIEW: each ask is sent once the turn before it ends, every turn's answer lands
+in `outbox/turn-<n>.md` and in the cell's `turns`, and the page gets an **Answers** view (turns as rows, runs as
+columns, each answer linked to its run). A panel interview file runs as a sweep directly:
+
+```bash
+USE_ENV=1 node --import tsx tests/e2e/bench/run.mjs tests/e2e/panel/bloat.json \
+    --models deepseek.deepseek-v4-pro,litellm.google/gemini-flash-latest --serve
+```
+
+One run per model, all at once (`--jobs` overrides), each model PROBED first exactly as `panel.mjs` does, and
+`summary.md` in the sweep directory is the file `panel.mjs` writes. On the live page a person selects a wrong line in
+an answer and presses **mark wrong**; marks are kept in the sweep's `marks.json`, and every later run of that model
+and turn is CHECKED: does its answer still contain the marked line (case and spacing folded)? The page and
+`summary.md` say "still says" or "no longer says". A verbatim match is crude, but it turns a person's reading into
+something the next run is held to. For a model reading results, `panel.mjs` is the same thing without a page.
+
 ## Flags
 
 | Flag | What it does |
@@ -121,6 +146,7 @@ task usable for measuring behaviour when correctness is not the question.
 | `--serve` | Serve the live page and print its URL. Costs nothing when nobody opens it; SSE, no dependency, no build step. |
 | `--open` | `--serve` plus launch a browser. |
 | `--port N` | Serve on a specific port. The default (7331) is STABLE on purpose, so a browser tab can just reload between sweeps instead of needing a new URL. Falls back to any free port if taken. |
+| `--models a,b` | With an interview file (`.json`) in place of a spec: the models to put it to (or `PANEL_MODELS`). `--surface hud\|console` and `--turn-minutes N` as `panel.mjs` takes them. |
 | `--pdf` | Also render each run to `run.html` + `run.pdf`. Off by default: it roughly triples a cell's disk and adds a render per run. The HTML is written alongside deliberately — it is searchable and diffable where a PDF is neither, and it is the only way to see why a PDF looks wrong. |
 
 Backend selection is the same as observe: `USE_ENV=1` reads `.env`, `E2E_BACKEND`/`E2E_MODEL`/`E2E_KEY`

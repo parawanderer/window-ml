@@ -164,7 +164,9 @@ function Row({ s: x, runtimeName, onPress, onLongPress }: { s: SessionSummary; r
                     {x.pendingApprovals > 0
                         ? <Badge n={x.pendingApprovals} text={approvalsPending(x.pendingApprovals)} />
                         : label ? <Text style={[s.rowState, { color: tone === "err" ? p.err : tone === "stopped" ? p.warn : p.fgDim }]}>{label}</Text> : null}
-                    {x.kind === "agent" ? <View style={s.kind}><Bot size={13} color={p.fgFaint} /><Text style={[s.metaText, { color: p.fgFaint }]}>agent</Text></View> : null}
+                    {/* The robot alone, as on the calm page (2026-10-09): most sessions are agent runs, and the word down every
+                        row was noise. A phone has no hover, so the meaning rides the accessibility label. */}
+                    {x.kind === "agent" ? <View style={s.kind} accessible accessibilityLabel="Agent session"><Bot size={13} color={p.fgFaint} /></View> : null}
                     {/* Out of its runtime's section, the machine is what the row is missing; the page host is what
                         it can spare, since the transcript says that on the next tap. */}
                     {runtimeName
@@ -214,12 +216,13 @@ const s = StyleSheet.create({
     // Title and meta, taking the row's width.
     rowBody: { flex: 1, minWidth: 0 },
     // The session's title, one line, the heaviest thing in the row.
-    rowTitle: { fontSize: SIZE.text, fontWeight: "600" },
+    // Medium, as the calm page's titles (2026-10-09): a list where every title is bold has no emphasis left.
+    rowTitle: { fontSize: SIZE.text, fontWeight: "500" },
     // Where the session stands, first on the meta line and never shrunk: the row's one fixed landmark.
     rowState: { fontSize: 13, fontWeight: "600" },
     // Kind, page, status: the second line.
     rowMeta: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 3 },
-    // "agent", with its icon.
+    // The agent robot.
     kind: { flexDirection: "row", alignItems: "center", gap: 3 },
     // Every small grey word in a row.
     metaText: { fontSize: 13 },

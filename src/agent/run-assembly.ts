@@ -8,21 +8,20 @@
 // Nothing here may touch the page. The page context goes into the system prompt AFTER assembly (`withPageContext`),
 // because on the worker path it is the page's answer to a question asked once the toolset exists.
 
-import { CITABLE_TOOLS } from "./agent-loop";
+import { CITABLE_TOOLS, citeParam, withCallTitle } from "../tools/tool-params";
 import { buildServerTools } from "../tools/builtin-tools";
 import { type MlApi, type MlTool, type MlPublicConfig, DEFAULT_GROUNDING_RANGE, type VisionMemory, detectGroundingModel, type LexicalMetric, type ElementContext } from "../contract";
 import type { PromptOrigin } from "../contract/contract-run";
 import type { StartRunPayload, RebuildConfig } from "../contract/contract-messages";
 import { promptSurfaceClause, promptSurfaceOf } from "./prompt-surface";
 import { stepBudget } from "./step-budget";
-import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_CLOSED_NOTE, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, askAboutTask } from "./prompts";
-import { citeParam, withCallTitle } from "../tools/tool-params";
+import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, shadowClause, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_CLOSED_NOTE, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, askAboutTask } from "./prompts";
 import { buildDereferenceTool } from "../tools/tools";
 
 /** The part of `window.ml` assembly reads: config and capability probes, the model and server-tool lists, the tool
  *  factories, and the OCR reader for a pasted image. The worker's adapter implements exactly this. */
 export type AssemblyMl = Pick<MlApi, "domTools" | "defineTool" | "config" | "models" | "serverTools" | "read" | "_imageToDataUrl"
-    | "_resolveVisionModel" | "_nativeLookTool" | "lookTool" | "locateTool" | "navigateTool" | "fetchTool">;
+    | "_resolveVisionModel" | "_nativeLookTool" | "lookTool" | "locateTool" | "navigateTool" | "fetchTool" | "clickTool" | "typeTool">;
 
 /** The options of `ml.agent` that decide what a run CONTAINS, as opposed to how it is driven or observed. */
 export interface AssemblyOptions {
@@ -202,6 +201,22 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
     // what they list (add `ml.fetchTool()` to include it) — unlike the vision tools, which augment any
     // driver because they're capability-probed. requiresApproval, so default-on is safe.
     if (!tools && !toolset.some(t => t.name === "fetch_url")) toolset.push(ml.fetchTool());
+    // click and type: in the DEFAULT kit too, as a run the user starts from a surface already has them
+    // (userRunOptions' extraTools, so they are not added twice). A console run without them was told about them
+    // anyway, by every tool that hands back a selector "to pass to click/type" (a model-panel review, 2026-10-08).
+    // Both ask before they act. A caller who hand-picks `tools` gets exactly what they list, as with fetch_url.
+    if (!tools) for (const make of [ml.clickTool, ml.typeTool]) {
+        if (typeof make !== "function") continue;
+        const t = make.call(ml);
+        if (!toolset.some(x => x.name === t.name)) toolset.push(t);
+    }
+    // agent_api_docs whenever exec is wired, even into a hand-picked list (like the vision tools): exec reaches
+    // `ml`, and the reference is how a model learns what `ml` (and `ml.current`) holds. It reads a static
+    // document in capped pieces, so it can neither act nor flood the context.
+    if (toolset.some(t => t.name === "exec") && !toolset.some(t => t.name === "agent_api_docs")) {
+        const docs = (ml.domTools || []).find(t => t.name === "agent_api_docs");
+        if (docs) toolset.push(docs);
+    }
     // Composer attachments for THIS turn's first user message (a screenshot pasted/uploaded into the
     // HUD/sidebar). A vision-capable driver sees them natively; otherwise transcribe via the reader
     // (ml.read → the OCR model) and fold the text into the task, so a text-only agent still gets the
@@ -271,15 +286,13 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
         // Adapt the default prompt to what the toolset can actually do.
         systemPrompt += CALL_TITLE_CLAUSE;   // every tool carries the param, so the instruction is unconditional
         if (hasCap("vision")) systemPrompt += VISION_CLAUSE;
-        if (hasCap("answer")) systemPrompt += ANSWER_CLAUSE;
         if (toolTokens) systemPrompt += TOOLTOKENS_CLAUSE + DEREF_CLAUSE;   // rich results carry an @tool: id — to cite verbatim, and to read back
-        if (toolset.some(t => t.name === "wait")) systemPrompt += WAIT_CLAUSE;
         // The DOM tools all pierce open shadow roots + resolve `>>>` — tell the model, plus (only when
         // exec is wired) how the notation maps to JS. Gated on a representative DOM tool being present.
         if (toolset.some(t => ["findByText", "describeElement", "interactives", "click", "type"].includes(t.name))) {
             // The closed-root sentence differs by whether piercing is enabled (reachable via `>>>` vs
             // visual-only). SHADOW_EXEC_NOTE (`>>>` → JS) is still accurate either way.
-            systemPrompt += SHADOW_CLAUSE + (pierceClosed ? SHADOW_CLOSED_PIERCE_NOTE : SHADOW_CLOSED_NOTE) + IFRAME_CLAUSE;
+            systemPrompt += shadowClause(toolset.map(t => t.name)) + (pierceClosed ? SHADOW_CLOSED_PIERCE_NOTE : SHADOW_CLOSED_NOTE) + IFRAME_CLAUSE;
             if (toolset.some(t => t.name === "exec")) systemPrompt += SHADOW_EXEC_NOTE;
         }
         if (toolset.some(t => t.name === "agent_api_docs")) systemPrompt += SELF_CLAUSE;
@@ -297,7 +310,6 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
         else if (toolset.some(t => t.name === "exec")) systemPrompt += EXEC_COMPUTE_CLAUSE;
         // exec (JS) style: functional idioms + ml.range instead of loops/mutation. Independent of the
         // compute clause above (applies even alongside python_exec, since it's about exec JS specifically).
-        if (toolset.some(t => t.name === "exec")) systemPrompt += EXEC_RANGE_CLAUSE;
         // Its own run, as data: only where a survey reaches `ml.current`, which needs the read-only path to auto-run.
         if (selfIntro && autoRO && toolset.some(t => t.name === "exec")) systemPrompt += currentClause(toolset.some(t => t.name === "agent_api_docs"));
         // Headless run: tell the model upfront it's unattended (read-only only), so it doesn't

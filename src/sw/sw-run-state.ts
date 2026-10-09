@@ -6,7 +6,7 @@
 import { readState, readableMembers, withPageState, type StateEntry, type StateMember } from "../state-registry";
 import { contextByRun, hydrationDone, stateKeyFor } from "./sw-runs";
 import { senderOrigin } from "./sw-housekeeping";
-import { evalWatch, stateTree, treeShape, WATCH_STEPS, watchList, type WatchJs, type WatchResult, type WatchShape } from "../state-watch";
+import { CONSOLE_STEPS, evalConsole, evalWatch, stateTree, treeShape, WATCH_STEPS, watchList, type ConsoleJs, type ConsoleResult, type WatchJs, type WatchResult, type WatchShape } from "../state-watch";
 import { evalReadonly, NeedsPage } from "../readonly-exec";
 import { runLog } from "./sw-run-log";
 import { sessionServer } from "./sw-sessions";
@@ -34,6 +34,8 @@ export interface RunStateDump {
     /** The shape of what a watch reads (`inspector`, and `ml.current` while a turn runs), for completing one as it is
      *  typed. Keys and kinds only: the live context's values reach the panel only through a watch the person wrote. */
     shape?: WatchShape;
+    /** The console entry sent with this read, run once over the same snapshot as the watches. */
+    console?: ConsoleResult;
 }
 
 /** Ask the run's tab what its page holds for the run. Never wakes a discarded tab: reading state must not reload a
@@ -55,7 +57,7 @@ async function askPage(tabId: number, runId: string): Promise<{ raw: unknown } |
 /** DUMP_RUN_STATE: every readable member of one run's state, as of now, and the panel's watches over it. */
 export async function handleRunStateDump(payload: unknown, sender: chrome.runtime.MessageSender): Promise<{ data?: RunStateDump; error?: string }> {
     if (senderOrigin(sender) === "page") return { error: "Refused: the run's state is for extension pages." };
-    const p = (payload ?? {}) as { run?: unknown; watches?: unknown };
+    const p = (payload ?? {}) as { run?: unknown; watches?: unknown; console?: unknown };
     const run = typeof p.run === "string" ? p.run : "";
     // On a fresh worker the run maps are empty until hydration settles, which would read as "this run holds nothing".
     await hydrationDone;
@@ -63,24 +65,29 @@ export async function handleRunStateDump(payload: unknown, sender: chrome.runtim
     // Evaluated HERE, over exactly what the panel is about to draw: the person's whole snapshot, since the panel is theirs.
     // A watch shared with the model will be evaluated over the model's members only (spec, "Watches").
     const watches = watchList(p.watches);
+    const entry = typeof p.console === "string" ? p.console : undefined;
     // `ml.current` in a watch is the LIVE snapshot, the object the model reads, made once for every watch of this read.
     const live = run ? contextByRun.get(run) : undefined;
     // With the shared watches in it, as the model's own read has them (sw-shared-watches.ts).
     const current = live ? await withUserWatches(live({ log: await runLog.forRun(run) })) : undefined;
     const tree = stateTree(snap.members, snap.entries, current === undefined ? undefined : JSON.parse(JSON.stringify(current)));
     const shape = treeShape(tree);
-    if (!watches.length) return { data: { ts: Date.now(), ...snap, shape } };
-    const js: WatchJs = async (code, inspector) => {
+    if (!watches.length && entry === undefined) return { data: { ts: Date.now(), ...snap, shape } };
+    // Neither a watch nor the console has a page: what it reads is the run's state, in this realm.
+    const dialect = async (code: string, inspector: unknown, stepBudget: number, onLog?: (line: string) => void) => {
         try {
-            return (await evalReadonly(code, null, {}, undefined, { realm: "worker", current, globals: { inspector }, stepBudget: WATCH_STEPS })).value;
+            return (await evalReadonly(code, null, {}, undefined, { realm: "worker", current, globals: { inspector }, stepBudget, onLog })).value;
         } catch (e) {
-            if (e instanceof NeedsPage) throw new Error("a watch reads the run's state, not the page");
+            if (e instanceof NeedsPage) throw new Error("this reads the run's state, not the page: the page is not reachable from here");
             throw e;
         }
     };
+    const js: WatchJs = (code, inspector) => dialect(code, inspector, WATCH_STEPS);
     const results: WatchResult[] = [];
     for (const w of watches) results.push(await evalWatch(tree, w, js));   // one at a time: each has its own step budget
-    return { data: { ts: Date.now(), ...snap, watches: results, shape } };
+    const runEntry: ConsoleJs = (code, inspector, onLog) => dialect(code, inspector, CONSOLE_STEPS, onLog);
+    const consoleResult = entry === undefined ? undefined : await evalConsole(tree, entry, runEntry);
+    return { data: { ts: Date.now(), ...snap, ...(watches.length ? { watches: results } : {}), shape, ...(consoleResult ? { console: consoleResult } : {}) } };
 }
 
 /** One run's members and what they hold: the worker's, and the page's when the run has a tab that answers. */

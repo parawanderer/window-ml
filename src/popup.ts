@@ -52,7 +52,15 @@ async function loadForm() {
     // Connection block: expanded (and flagged) when unconfigured — it's the first thing
     // to do; collapsed once a URL is set.
     (document.getElementById("conn") as HTMLDetailsElement).open = !config.chatUrl.trim();
+    // The settings live behind the header's gear; with no connection yet there is nothing else to do, so show them.
+    if (!config.chatUrl.trim()) showConfig(true);
     updateConnSummary();
+}
+
+/** Show or hide the settings (connection, permissions, appearance) behind the header's gear. */
+function showConfig(on: boolean) {
+    document.getElementById("config")!.hidden = !on;
+    $("openConfig").setAttribute("aria-expanded", String(on));
 }
 
 // The <summary> of the connection block reflects its state: a call-to-action when unset,
@@ -60,6 +68,8 @@ async function loadForm() {
 function updateConnSummary() {
     const url = $("chatUrl").value.trim();
     const el = document.getElementById("connStatus")!;
+    // The gear says so too while the settings are hidden: there is something there still to do.
+    document.getElementById("configPending")!.hidden = !!url;
     if (!url) { el.innerHTML = `<span class="todo">① Set up your connection</span>`; return; }
     let host = url;
     try { host = new URL(url).host || url; } catch { /* keep the raw string */ }
@@ -396,14 +406,22 @@ $("chatUrl").addEventListener("input", updateConnSummary);
 $("save").addEventListener("click", save);
 $("unload").addEventListener("click", freeVram);
 $("stopAllRuns").addEventListener("click", stopAllRuns);
+$("openConfig").addEventListener("click", () => showConfig($("openConfig").getAttribute("aria-expanded") !== "true"));
 // The chat page, in a tab of its own. Focused if it is already open, rather than opened twice: it is one view of
 // this browser's sessions, and two of them would each hold their own port and their own scroll position.
 $("openChat").addEventListener("click", async () => {
     const url = chrome.runtime.getURL("chat.html");
     try {
-        const [open] = await chrome.tabs.query({ url });
-        if (open?.id != null) await chrome.tabs.update(open.id, { active: true });
-        else await chrome.tabs.create({ url });
+        // This extension's own open tabs, by their document URL: an open chat puts its route in the hash
+        // (`chat.html#/…`), and `chrome.tabs.query({ url })` matched only the bare URL, so it missed that page and
+        // opened a second one (a URL pattern did not match it either).
+        const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.TAB] });
+        const open = contexts.find((c) => c.tabId >= 0 && (c.documentUrl ?? "").split("#")[0] === url);
+        if (open) {
+            await chrome.tabs.update(open.tabId, { active: true });
+            // In another window, the tab is only active THERE; bring that window forward too.
+            if (open.windowId >= 0) await chrome.windows.update(open.windowId, { focused: true });
+        } else await chrome.tabs.create({ url });
         window.close();
     } catch { /* the browser refused; the popup stays open so the click can be repeated */ }
 });

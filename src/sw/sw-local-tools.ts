@@ -11,7 +11,7 @@ import type { MlApi, MlTool, PageToolEnvelope, StartRunPayload } from "../contra
 import { buildServerTools } from "../tools/builtin-tools";
 import { descriptorFor } from "../tools/render-descriptor";
 import { envelopeFrom } from "../agent/run-delegation";
-import { executeTool, toolContext } from "../tools/tool-exec";
+import { countDocsStreak, executeTool, toolContext } from "../tools/tool-exec";
 import { listServerTools } from "./sw-llm";
 import { workerMl } from "./worker-ml";
 import { buildWorkerTools, dropWorkerTools, pageOnlySend, workerSpend, WORKER_TOOL_NAMES } from "./worker-tools";
@@ -77,11 +77,15 @@ interface ToolSend { runId: string; name?: string; args?: Record<string, unknown
 export async function runLocalTool(send: ToolSend, onStream?: (text: string, ts?: number) => void): Promise<PageToolEnvelope | null> {
     const set = localToolsets.get(send.runId);
     const tool = send.name ? set?.byName[send.name] : undefined;
-    if (!set || !tool) return null;
     const args = send.args || {};
     // What the page answers itself: a session render of the page the run is on (its live DOM), and a python_exec that
     // needs a screenshot or a page table. The approval preview is drawn here either way.
-    if (!send.renderOnly && send.tabUrl !== undefined && pageOnlySend(send.name, args, send.tabUrl)) return null;
+    const toPage = !tool || (!send.renderOnly && send.tabUrl !== undefined && pageOnlySend(send.name, args, send.tabUrl));
+    if (!set || toPage) {
+        // A call the page runs is still a step of this run: agent_api_docs, run here, counts it towards its dedup.
+        if (set && send.name && !send.renderOnly && !send.precheck && !send.readonlyTry) countDocsStreak(toolContext(set.byName).docsMemory!, send.name);
+        return null;
+    }
     if (send.renderOnly) return { result: "", renderIn: descriptorFor(tool, { result: "" }, args).in };
     if (send.precheck) return { result: "", precheckFailed: false };   // a remote tool has no doomed-action precheck
     if (send.readonlyTry) return { result: "", readonly: false };     // only `exec` has a read-only try

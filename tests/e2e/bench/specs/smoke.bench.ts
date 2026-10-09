@@ -115,6 +115,20 @@ export default defineBench({
             ],
         },
         {
+            // An INTERVIEW (a panel's cell): a task, then a follow-up sent once it ends. Each turn's answer must
+            // land in outbox/ and in the cell's `turns`, so the page and summary.md can set them side by side.
+            id: "interview",
+            start: "/step3",
+            task: "Find the code on this page and report it.",
+            asks: ["Which tool did you use?"],
+            tools: ["findByText", "answer"],
+            script: [
+                { tool: "findByText", args: { text: "CROSSPAGE" } },
+                { content: "The code is on the page." },
+                { content: "I used findByText." },
+            ],
+        },
+        {
             id: "seeded",
             start: "/step3",
             task: "Now summarise, without repeating the raw output.",

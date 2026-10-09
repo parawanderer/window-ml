@@ -385,6 +385,10 @@ Recorded as each slice lands, with the reason.
   `fetch_url` minted its consent, and its one-time as-you grant, on the TAB, so a page on that tab could read the
   approved URL through its own `FETCH_URL`, or spend the as-you grant first and read the private page with the
   person's cookies. A worker-built run's approvals are now the run's.
+- **Slice 2 part 2: `agent_api_docs` of a worker-built run runs in the worker.** The tool is one factory
+  (`apiDocsTool`) given where it reads the shortcut and the config; the worker reads both directly, so `GET_INVOCATION`
+  is no longer a run-tab type. `GET_CONFIG` stays one until part 3, because the vision tools and an exec's
+  `ml.config()` still read it in the page.
 - **An approved exec fetches only the URLs its code spells out (owner's decision).** While an approved exec ran, the
   tab could fetch ANY URL uncredentialed (`fetchOpen`), and the page shares the tab: a hostile page waited for the
   person to approve any exec, then read whatever the browser reaches. The grant is now the script's literal
@@ -410,6 +414,34 @@ Recorded as each slice lands, with the reason.
   isolated run is known not to behave as the page's world would, the tool result carries one terse note naming the
   method, the reason and the difference, and nothing when parity is full. The routing decision and its reason go to
   the execution log.
+- **Part 4 (first part): an approved exec of a worker-built run runs isolated where it must** (`exec-routing.ts`,
+  `sw-isolated-exec.ts`). Isolated when the page is not approved, or when the script names `ml.current` or a pointer;
+  otherwise the page's main world, as before. The mechanism is a user-script world of the run's own
+  (`wml-<runId>`), else a CDP isolated world created per call. Owner's decision (2026-10-08) for when neither is
+  available, which is a default install (the "Allow User Scripts" toggle and the CDP setting are both off): refuse on
+  an unapproved page and for `ml.current` (which the main world never had), but run a pointer-naming script on an
+  approved page in the main world as before, with a note in the result and the routing in the execution log, so
+  nothing that works today breaks. Differences from the spec and the page's world, each told to the model in one line:
+  - The isolated world's `ml` has only `current` (a deep-frozen copy, `currentForExec`) and `dereference` (the values
+    the script names, sent with the call). `ml.*` bound to the worker, as the spec has it, is not built: anything else
+    throws a sentence. A pointer value has the page's shape (a `String` with `json`, `meta`'s facts), but `.table`,
+    `.pipe()` and `.schema()` need the worker mid-script and throw a sentence pointing at a read-only exec (part 4b).
+  - The script runs as one source, with no `eval` in the page, so neither the page's CSP nor the world's matters. Like
+    `cdpEval`, it is tried as an expression, then as a statement body: a multi-statement script's value is what it
+    `return`s, where the main world's `eval` gives the last statement's.
+  - `state` persists across calls in the user-script world, not in a CDP world (a new one per call), and is never the
+    page's `state`.
+  - Found by the red-team pass on it: the route was decided on one page and the exec delivered to whichever document
+    the tab held at send time, so a navigation in between put an approved script (or a pointer fallback's values) in
+    an unapproved page's main world, and a stopped isolated script was run again on the next page. The route now reads
+    the tab's document first, then the browser's URL for it (not the run's start page, which a restarted worker fell
+    back to), and every send is pinned to that document (`tabs.sendMessage` `documentId`, `userScripts.execute`
+    `documentIds`, a CDP world checked against it after it is made). An isolated exec with no known document does not
+    run. Still open, and older than part 4: a main-world CDP exec's live output can be written by the page
+    (`__mlCdpStream`), which shares that world and its console.
+  - Untested against a real browser: how `userScripts.execute` reports a script that does not parse (handled as
+    "no result": a probe of a start marker decides whether to try the body form, so a script is never run twice).
+    The e2e browser has no "Allow User Scripts" toggle set, so only the vm tests cover that path.
 - **Not fixed, noticed:** `GET_CONFIG` never sent `labelMatch`, so a page-built run always used the default metric.
   `publicConfig` keeps that behaviour; the worker path inherits it.
 
