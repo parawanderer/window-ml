@@ -109,8 +109,9 @@ export type CurrentLog = CurrentLogRecord[] & { text: string };
  *
  *  Read it in a read-only `exec`, where it is read in place. In an approved `exec` of a run the extension's UI started,
  *  `ml.current` is a deep-frozen copy, and the exec runs in an isolated world: it shares the page's DOM but not the
- *  page's own globals, and of `ml` it has only `current` and `dereference`. Where no isolated world is available (the
- *  default), such an exec is refused: read `ml.current` in a read-only exec, and act on the page in the next. */
+ *  page's own globals, and of `ml` it has only `current` and `dereference`. Where no isolated world is available
+ *  (Debugger-based actions turned off and user scripts not allowed), such an exec is refused: read `ml.current` in a
+ *  read-only exec, and act on the page in the next. */
 export interface CurrentSnapshot {
     run: CurrentRun;
     /** The NeutralMessage[] the next model call gets, verbatim: the system prompt first, then every user and assistant
