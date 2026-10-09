@@ -158,3 +158,25 @@ test("a follow-up turn still runs when the first turn navigated, and the run is 
     expect(Date.now() - t0, "it did not wait out the deadline").toBeLessThan(80000);
 });
 
+
+// --- pointer-ids' read-back seed ---
+
+test("read-back's seed reads the real table and leaves the measured turn only its head and a pointer to the rest", async () => {
+    // The seed is the spec's own, so this guards the task as it runs: with the whole table in context no model needed
+    // `dereference`, and a seed whose code was the data itself read as fabricated to a careful model.
+    // Playwright's TypeScript transform can hand the default export back one level down.
+    const mod = await import("./bench/specs/pointer-ids.bench.ts");
+    const spec = mod.default?.tasks ? mod.default : mod.default?.default;
+    const t = spec.tasks.find((x) => x.id === "read-back");
+    let sent = null;
+    const run = await runOnce({
+        ...base, start: t.start, tools: t.tools, toolTokens: true, seed: t.seed, task: t.task,
+        script: [(req) => { sent = req.messages; return { content: "6260" }; }],
+    });
+    expect(run.error, `run failed: ${run.error}`).toBeFalsy();
+    const toolMsg = (sent ?? []).filter((m) => m.role === "tool").map((m) => String(m.content)).join("\n");
+    expect(toolMsg).toContain("Rep,Region,Q1,Q2,Q3,Q4");
+    expect(toolMsg).toContain("Ada,North,120,150,130,160");
+    expect(toolMsg, "the last row is behind the cut").not.toContain("Leo,West");
+    expect(toolMsg, "the cut note names the pointer to the rest").toMatch(/@tool:/);
+});

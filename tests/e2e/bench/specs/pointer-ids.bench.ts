@@ -23,8 +23,15 @@
 
 import { defineBench } from "../spec";
 
-/** A tool result the model has just been handed, verbatim — what it would have to retype. */
-const CAPTURED = "Region,Revenue,Units\nNorth,182340.55,4821\nSouth,99120.10,2610\nEast,143870.25,3902\nWest,77650.00,1904";
+/**
+ * The seed's read of the page's `#sales` table as CSV: the page really read, by the code the model's history shows. A
+ * seed whose code was the literal data read as made up to a careful model ("the captured numbers were fabricated"),
+ * which then declined to use them, and that honest suspicion scored as a failure.
+ */
+const READ_SALES = `(() => { const t = document.querySelector("#sales"); return [...t.rows].map((r) => [...r.cells].map((c) => c.textContent.trim()).join(",")).join("\\n"); })()`;
+/** How much of that output the seeded turn KEEPS in context: the header and about two rows. The rest is behind the cut
+ *  note's pointer, so the measured turn cannot total it from what it already holds and has to read it back. */
+const SEED_KEEPS = 120;
 
 export default defineBench({
     name: "pointer-ids",
@@ -57,37 +64,40 @@ export default defineBench({
             task: "Read the sales table and tell me which region had the highest revenue.",
             followup: "Now show me the underlying rows you used.",
             tools: ["findByText", "sampleText", "exec", "answer"],
-            // EAST, not North. The page's own answer key says East=2440 is the top region; the North in
-            // CAPTURED belongs to the SEEDED table, which this task never loads. Writing the predicate
-            // against the wrong dataset would have scored every run in both arms incorrect — the same
-            // silent failure the read-back total had. tests/bench-specs.test.mjs now reads the region out
-            // of examples/spreadsheet.html rather than restating it, so the page is the source of truth.
+            // EAST, not North. The page's own answer key says East=2440 is the top region; North won in the table
+            // the read-back seed used to type in, which this task never loads. Writing the predicate against the
+            // wrong dataset would have scored every run in both arms incorrect — the same silent failure the old
+            // read-back total had. tests/bench-specs.test.mjs reads the region out of examples/spreadsheet.html
+            // rather than restating it, so the page is the source of truth.
             succeeded: ({ answer }) => /east/i.test(answer),
         },
         {
             // RECOVERY, measured directly rather than waited for. The seeded turn ends holding a pointer;
             // the measured turn has to read it back. Without a seed this behaviour appears only when a
             // model happens to mistype an id, which takes hundreds of runs to collect.
+            //
+            // The seed reads the page's table (READ_SALES) with its output CUT to SEED_KEEPS characters, as a
+            // long output is cut: the history shows real code reading the page, a couple of rows, and the cut
+            // note naming the pointer to the rest. With the whole table in context every model answered in one
+            // step without `dereference` (deref 0 across six models and both arms, window-ml-3a's step 3 sweep).
             id: "read-back",
             start: "/spreadsheet",
             seed: {
                 task: "Capture the sales table.",
                 script: [
-                    { tool: "exec", args: { js: `(${JSON.stringify(CAPTURED)})` } },
-                    { content: "Captured the table." },
+                    { tool: "exec", args: { js: READ_SALES, maxChars: SEED_KEEPS } },
+                    { content: "Captured the sales table." },
                 ],
             },
-            task: "Using the data you already captured — do not read the page again — what is the total revenue?",
+            task: "Using the data you already captured — do not read the page again — what is the total of Q1 to Q4 across all reps?",
             tools: ["exec", "dereference", "answer"],
-            // 182340.55 + 99120.10 + 143870.25 + 77650.00 = 502980.90. Accepts the rounded 502981 too: the
-            // task asks for a total, and rounding it is not a wrong answer. Commas and spaces are stripped
-            // first, since a model formats large numbers however it likes.
-            //
-            // This predicate was WRONG on its first writing — it looked for 502981 only, which no exact
-            // answer matches — and would have scored every run in both arms as incorrect, reading like a
-            // task that is too hard rather than a broken bench. Predicates are code; they are tested in
-            // tests/bench-specs.test.mjs for exactly this reason.
-            succeeded: ({ answer }) => /502980(\.9\d?)?|502981/.test(answer.replace(/[\s,]/g, "")),
+            // 6260: the page's grand total (examples/spreadsheet.answers.md; tests/bench-specs.test.mjs sums the
+            // table's own cells). The table is in $k, so 6.26 million is the same answer. Commas and spaces are
+            // stripped first, since a model formats large numbers however it likes.
+            succeeded: ({ answer }) => {
+                const a = answer.replace(/[\s,]/g, "");
+                return /(^|[^\d.])6260(?![\d])/.test(a) || /\$?6\.26(0)*(m|million)/i.test(a);
+            },
         },
     ],
 });

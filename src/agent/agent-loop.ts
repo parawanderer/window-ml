@@ -976,7 +976,9 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 // already has — useless. The render descriptor kept far more (UI_OUT_CAP), and reaching THAT is
                 // the main reason to dereference at all.
                 // `capture` when the panel's copy dropped a middle part: the pointer keeps one contiguous piece (contract-render.ts).
-                const fuller = (r?.type === "python-out" || r?.type === "exec-out") ? (r.capture ?? r.stdout) : undefined;
+                // An exec that printed nothing and RETURNED a long value has only `value`: without it, a cut return value
+                // got a pointer holding exactly the clipped part the model already had, and no note saying it was cut.
+                const fuller = (r?.type === "python-out" || r?.type === "exec-out") ? (r.capture ?? r.stdout ?? (r.type === "exec-out" ? r.value : undefined)) : undefined;
                 const full = fuller && fuller.length > result.length ? fuller : undefined;
                 if (full) heldChars = full.length;
                 // Carry the typed PAYLOADS too, not just the kind — an image pointer with no image is what

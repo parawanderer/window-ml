@@ -4,8 +4,8 @@
 // a finding ("this task is too hard for both models") instead of a bug. That is only discovered after the
 // GPU time is spent.
 //
-// This caught a real one before it ran: pointer-ids' read-back predicate looked for a total of 502981 when
-// the columns sum to 502980.90, so no correct answer could ever have matched.
+// This caught a real one before it ran: pointer-ids' read-back predicate (on the table its seed used to type in)
+// looked for a total of 502981 when the columns summed to 502980.90, so no correct answer could ever have matched.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -30,27 +30,45 @@ test("every spec is well formed, and every task id is unique", async () => {
     }
 });
 
-test("pointer-ids/read-back accepts the real total, in the shapes a model writes it", async () => {
+test("pointer-ids/read-back accepts the page's grand total, in the shapes a model writes it", async () => {
     const t = task(await load("pointer-ids"), "read-back");
     for (const ok of [
-        "502980.90", "502980.9", "502,980.90", "The total revenue is 502,980.90.",
-        "502981", "≈ 502,981", "Total: 502 980.90",
+        "6260", "6,260", "The total is 6,260.", "Total: 6 260 ($k)", "$6,260k", "about $6.26 million", "6.26M",
     ]) assert.ok(scores(t, ok), `should accept ${JSON.stringify(ok)}`);
 });
 
 test("pointer-ids/read-back rejects a plausible WRONG total", async () => {
-    // Without this the predicate could be `() => true` and every test above would pass.
+    // Without this the predicate could be `() => true` and every test above would pass. 1455 is the Q1 column alone,
+    // 2440 East alone, 62600 a slipped digit, 502980.90 the total of the table the seed used to type in.
     const t = task(await load("pointer-ids"), "read-back");
     for (const bad of [
-        "502,000", "The total is 425330.90", "182340.55", "I could not compute it", "",
+        "1455", "The total is 2440", "62600", "502,980.90", "I could not compute it", "",
     ]) assert.equal(scores(t, bad), false, `should reject ${bad}`);
+});
+
+test("pointer-ids/read-back's total is the page's own: the seed reads #sales, and the predicate's figure is its cells summed", async () => {
+    // Ground truth from the page, not restated: the seed's code reads the live table, so the answer is what its cells add
+    // up to, and the answers file beside the page has to agree.
+    const html = await readFile(new URL("../examples/spreadsheet.html", import.meta.url), "utf8");
+    const table = /<table id="sales">([\s\S]*?)<\/table>/.exec(html)?.[1] ?? "";
+    const total = [...table.matchAll(/<td class="num">(\d+)<\/td>/g)].reduce((n, m) => n + Number(m[1]), 0);
+    assert.equal(total, 6260);
+    const answers = await readFile(new URL("../examples/spreadsheet.answers.md", import.meta.url), "utf8");
+    assert.match(answers, new RegExp(`Grand total of Q1–Q4 across all reps \\| ${total}`));
+    const t = task(await load("pointer-ids"), "read-back");
+    assert.ok(scores(t, String(total)));
+    // The seed reads the page (no figure from the table typed into its code), and keeps only part of the output.
+    const call = t.seed.script[0];
+    assert.match(call.args.js, /document\.querySelector\("#sales"\)/);
+    for (const n of ["6260", "850", "215"]) assert.ok(!call.args.js.includes(n), `the seed's code types in ${n}`);
+    assert.ok(call.args.maxChars > 0 && call.args.maxChars < 200, "cut, so the rest is behind a pointer");
 });
 
 test("pointer-ids/cite-or-retype scores the region the PAGE says wins", async () => {
     // The ground truth is read out of the example page, not restated here. A predicate test can only ever
     // catch internal inconsistency — the read-back total was caught that way, because 502981 contradicts
     // its own arithmetic — and is blind to a predicate that is coherent but describes the wrong DATA.
-    // This one was: it looked for North, which is the top region in the SEEDED table (CAPTURED), while
+    // This one was: it looked for North, the top region in the table read-back's seed used to type in, while
     // this task loads /spreadsheet, where East wins. Both arms would have scored 0 and it would have read
     // as a task too hard rather than a broken bench. Restating the answer here would have re-encoded
     // exactly the same assumption, so the page is asked instead.
