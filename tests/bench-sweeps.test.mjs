@@ -30,6 +30,18 @@ test("each sweep appends one record saying which spec text ran and who started i
     assert.deepEqual(await readSweeps(path.join(dir, "none")), []);
 });
 
+test("a sweep records where its spec was on disk; a record from before that was kept reads as having none (an upgrade)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bench-sweeps-"));
+    // What the code before this wrote: no `onDisk`.
+    fs.writeFileSync(path.join(dir, "sweeps.jsonl"), JSON.stringify({ op: "sweep", at: "2026-10-09T09:00:00.000Z", by: "old", spec: "tests/e2e/bench/specs/x.bench.ts", specHash: specHash(SPEC_A), fingerprint: "f", dirty: false, specSource: SPEC_A }) + "\n");
+    const all = await sweep(dir, SPEC_A, "new", { onDisk: "/home/a/clone/tests/e2e/bench/specs/x.bench.ts" });
+    const p = specProvenance(all);
+    assert.equal(p.onDisk, "/home/a/clone/tests/e2e/bench/specs/x.bench.ts");
+    assert.equal(p.previous.onDisk, null);
+    assert.match(specText(p), /^This sweep ran `\/home\/a\/clone\/tests\/e2e\/bench\/specs\/x\.bench\.ts`/m);
+    assert.match(specText(specProvenance(all.slice(0, 1))), /^This sweep ran `tests\/e2e\/bench\/specs\/x\.bench\.ts`/m);
+});
+
 // --- what the page and spec.md say ---
 
 test("provenance: the first sweep says so; an unchanged spec says unchanged; a changed one carries its diff", () => {

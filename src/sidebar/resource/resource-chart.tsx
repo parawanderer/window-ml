@@ -25,13 +25,14 @@ import { type Axis, segments, chartWindow, axisOf, scrubExtent, scrubPinch, wind
 import { scopeToSpan, filterEvents, sessionWindow } from "../../resource/resource-lane";
 import { deviceBands, hostBands, residualRank } from "../../resource/resource-bands";
 import { editLayout, VRAM_POLL_MS, laneFilter, layout, sampleGapMs } from "./panel-state";
-import { chartHeld, HOLD_LAPSE_MS, holdAxis, holdKey, hoverAt, lastPointerAt, live, releaseAxis, tipMuted } from "./chart-interaction";
-import { scopedHash, resWindowS, zoomRange, laneScoped, laneEnabled } from "../store";
+import { chartHeld, HOLD_LAPSE_MS, holdAxis, holdKey, hoverAt, lastPointerAt, live, readingIsOverlay, releaseAxis, stepPool, tipMuted } from "./chart-interaction";
+import { scopedHash, resWindowS, zoomRange, laneScoped, laneEnabled, crosshair } from "../store";
 import { EventLane } from "./resource-lane-ui";
 import { AXIS_TICK_MS } from "./resource-overlays";
 import { settleScrub, ScrubStrip } from "./resource-scrub";
 import { DeviceView } from "./resource-device-view";
 import { UtilView, BoxView, OverlayView } from "./resource-box-views";
+import { kbFocus, hoverModel, stepFocus, stepDepth } from "./vram-focus";
 
 /** Mute the cursor tip if one is showing, and say whether that happened — so the Esc handler can fall through
  *  to leaving the zoom when there was nothing to hide. The decision lives HERE, beside the signals it reads,
@@ -302,3 +303,55 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [],
 /** Models resident on the CPU — they hold no VRAM, so they never appear in a device track and would otherwise
  *  vanish from the panel entirely. */
 export const cpuResident = (s: ResourceSample | undefined) => (s?.models ?? []).filter(isCpuResident);
+
+/**
+ * ONE KEY, READ BY THE CHART — whether it arrived at this frame's own document or was relayed in from the page.
+ * Returns whether the key was used, so the caller calls `preventDefault` only then: the panel must not eat
+ * scrolling it had no use for.
+ *
+ * Esc unwinds ONE RUNG AT A TIME, most transient first: the tooltip, then a keyboard focus, then the zoom. They
+ * are different kinds of thing — the tip is in the way right now, the focus is a reading you are taking, the zoom
+ * is state you chose — and dismissing a popup should never be what throws away a selection two rungs below it.
+ *
+ * The arrows only answer while the pointer is ON the chart (`crosshair` is set by the plot's own pointermove and
+ * cleared when it leaves), because the whole point is reading the instant you are already pointing at without
+ * moving off it. Elsewhere they stay the page's arrows.
+ */
+export function chartKey(key: string): boolean {
+    if (key === "Escape") {
+        if (muteTip()) return true;
+        if (kbFocus.value) { kbFocus.value = null; hoverModel.value = null; return true; }
+        if (zoomRange.value) { zoomRange.value = null; return true; }
+        return false;
+    }
+    if (!crosshair.value) return false;                       // the pointer is not on the chart
+    if (key === "ArrowDown" || key === "ArrowUp") {
+        // THE SAME KEY, THE THING THIS VIEW DRAWS. Overview draws pool LINES and the stacked view draws model
+        // bands, so the noun differs while the question the key answers does not. Leaving it working in one view
+        // and dead in the other was the worse option: the same key would mean "change what I am reading" or
+        // "scroll the page" depending on where the pointer happened to be.
+        if (readingIsOverlay()) stepPool(key === "ArrowDown" ? 1 : -1);
+        else stepFocus(key === "ArrowDown" ? 1 : -1);
+        return true;
+    }
+    if (key === "ArrowRight" || key === "ArrowLeft") {
+        // NO DEPTH IN THE OVERLAID VIEW — a pool has no breakdown of its own, the decomposition is per model — so
+        // these are left to the page there rather than swallowed doing nothing.
+        return !readingIsOverlay() && stepDepth(key === "ArrowRight" ? 1 : -1);
+    }
+    return false;
+}
+
+/**
+ * The chart's keys on a document: `chartKey` for each keydown, `preventDefault` only when it used the key, so the page
+ * keeps scrolling it had no use for; a modified key (other than Esc) is left alone. The panel installs it while it is
+ * open, and a page that draws the chart with no panel (the bench's) installs it once. Returns the remover.
+ */
+export function installChartKeys(doc: Document): () => void {
+    const onKey = (e: KeyboardEvent) => {
+        if (e.key !== "Escape" && (e.altKey || e.ctrlKey || e.metaKey)) return;
+        if (chartKey(e.key)) e.preventDefault();
+    };
+    doc.addEventListener("keydown", onKey);
+    return () => doc.removeEventListener("keydown", onKey);
+}

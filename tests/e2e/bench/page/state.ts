@@ -31,7 +31,9 @@ export interface RunState {
 }
 
 /** One sweep's record, as sweeps.mjs keeps it (without the spec's text). */
-export interface SweepRecord { at: string; by: string; specHash: string; fingerprint: string; dirty: boolean; spec: string }
+export interface SweepRecord { at: string; by: string; specHash: string; fingerprint: string; dirty: boolean; spec: string;
+    /** where the spec file was on disk; null for a record from before it was kept */
+    onDisk?: string | null }
 
 /** Which spec this sweep ran and what changed since the sweep before (sweeps.mjs `specProvenance`). */
 export interface SpecState extends SweepRecord {
@@ -68,6 +70,10 @@ export interface BenchState {
     artifactBase?: string;
     /** the scoreboard's line for each driver model of the sweep, when the runs are logged */
     scores?: SweepScores | null;
+    /** models the server lists as cloud (not Ollama's), drawn in their own shade (palette.ts `cloudModels`) */
+    cloud?: string[];
+    /** the repository's web URL (origin's, as gen-build-info reads it), for links to a commit and a file at it */
+    repo?: string | null;
     /** the box's memory over the sweep (resource-poll.mjs), each distinct capacity once; null without readings */
     resources?: PackedSamples | null;
 }

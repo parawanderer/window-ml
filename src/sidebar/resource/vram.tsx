@@ -30,12 +30,12 @@ import { isGpuFault, gpuFaultNote } from "../../resource/resource-capacity";
 import { presetsFor } from "../../resource/resource-presets";
 import { chartWindow, windowSamples } from "../../resource/resource-axis";
 import { sessionWindow } from "../../resource/resource-lane";
-import { ResourceTracks, muteTip } from "./resource-chart";
-import { stepPool, readingIsOverlay } from "./chart-interaction";
+import { ResourceTracks, installChartKeys } from "./resource-chart";
+import { readingIsOverlay } from "./chart-interaction";
 import { ScopeSwitch } from "./resource-lane-ui";
 
 import { RenderPanel } from "../transcript/render-panel";
-import { hoverModel, kbFocus, stepFocus, stepDepth, noteFocusOrder } from "./vram-focus";
+import { kbFocus, noteFocusOrder } from "./vram-focus";
 import { capacity, resourceHistory, layout, streamLive, frameFocused, VRAM_HISTORY, sessionModels, choosePreset, customTracks, presetId, restoreLayout, hiddenModels } from "./panel-state";
 import { loadSeenCards, unavailableGpus, seenCards, machineEvents, servingSince, pollPs, fetchCapacity, loadingModels, psLoading, capacityAsked } from "./resource-feed";
 import { probeCaps } from "./model-status";
@@ -169,44 +169,6 @@ function withGenCtx(e: ResourceEvent): ResourceEvent {
     return e;
 }
 
-/**
- * ONE KEY, READ BY THE CHART — whether it arrived at this frame's own document or was relayed in from the page.
- * Returns whether the key was used, so the caller calls `preventDefault` only then: the panel must not eat
- * scrolling it had no use for.
- *
- * Esc unwinds ONE RUNG AT A TIME, most transient first: the tooltip, then a keyboard focus, then the zoom. They
- * are different kinds of thing — the tip is in the way right now, the focus is a reading you are taking, the zoom
- * is state you chose — and dismissing a popup should never be what throws away a selection two rungs below it.
- *
- * The arrows only answer while the pointer is ON the chart (`crosshair` is set by the plot's own pointermove and
- * cleared when it leaves), because the whole point is reading the instant you are already pointing at without
- * moving off it. Elsewhere they stay the page's arrows.
- */
-export function chartKey(key: string): boolean {
-    if (key === "Escape") {
-        if (muteTip()) return true;
-        if (kbFocus.value) { kbFocus.value = null; hoverModel.value = null; return true; }
-        if (zoomRange.value) { zoomRange.value = null; return true; }
-        return false;
-    }
-    if (!crosshair.value) return false;                       // the pointer is not on the chart
-    if (key === "ArrowDown" || key === "ArrowUp") {
-        // THE SAME KEY, THE THING THIS VIEW DRAWS. Overview draws pool LINES and the stacked view draws model
-        // bands, so the noun differs while the question the key answers does not. Leaving it working in one view
-        // and dead in the other was the worse option: the same key would mean "change what I am reading" or
-        // "scroll the page" depending on where the pointer happened to be.
-        if (readingIsOverlay()) stepPool(key === "ArrowDown" ? 1 : -1);
-        else stepFocus(key === "ArrowDown" ? 1 : -1);
-        return true;
-    }
-    if (key === "ArrowRight" || key === "ArrowLeft") {
-        // NO DEPTH IN THE OVERLAID VIEW — a pool has no breakdown of its own, the decomposition is per model — so
-        // these are left to the page there rather than swallowed doing nothing.
-        return !readingIsOverlay() && stepDepth(key === "ArrowRight" ? 1 : -1);
-    }
-    return false;
-}
-
 /** The pointer is over a PLOT right now — not merely that a reading is anchored (`crosshair` outlives the
  *  pointer while the keyboard holds a focus). What gates relaying the page's keys: once the mouse is on the
  *  page, the page's arrows are the page's again. */
@@ -289,11 +251,7 @@ export function VramPanel() {
     // pointing at without moving off it. Elsewhere they stay the page's arrows, and `preventDefault` is
     // called ONLY when a key was actually used — the panel must not eat scrolling it had no use for.
     useEffect(() => {
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key !== "Escape" && (e.altKey || e.ctrlKey || e.metaKey)) return;
-            if (chartKey(e.key)) e.preventDefault();
-        };
-        document.addEventListener("keydown", onKey);
+        const offKeys = installChartKeys(document);
         // WHILE THE POINTER IS OVER A PLOT, tell the parent which keys the chart would use, so a shell that can
         // see the PAGE's keys relays them in (see `chartKey`). Hovering does not move focus, and the browser
         // delivers keys only to the focused document, so without this the hint offered keys that went to the
@@ -311,7 +269,7 @@ export function VramPanel() {
             try { toHost({ __mlSidebarApp: "chartKeys", keys }); } catch { /* no parent */ }
         });
         return () => {
-            document.removeEventListener("keydown", onKey);
+            offKeys();
             document.removeEventListener("pointerover", onOver);
             document.removeEventListener("pointerout", onOut);
             stop();

@@ -5,6 +5,7 @@
 import { CodeBlock } from "../../../../src/sidebar/code-block";
 import { Tip } from "../../../../src/sidebar/help-tip";
 import type { BenchState, SpecState } from "./state";
+import { Card } from "./card";
 
 const when = (iso: string) => { const d = new Date(iso); return isNaN(+d) ? iso : d.toLocaleString(); };
 
@@ -21,17 +22,25 @@ function DiffRows({ rows }: { rows: NonNullable<SpecState["diff"]> }) {
 
 export function SpecCard({ s }: { s: BenchState }) {
     const p = s.spec;
+    // Links into the repository at the build's commit, when the sweep knows the repo and the build is a commit.
+    const commit = p && /^[0-9a-f]{40}/.exec(p.fingerprint)?.[0];
+    const commitUrl = p && s.repo && commit ? `${s.repo}/commit/${commit}` : null;
+    const fileUrl = p && s.repo && commit ? `${s.repo}/blob/${commit}/${p.spec.split("/").map(encodeURIComponent).join("/")}` : null;
     if (!p) return null;
     const prev = p.previous;
     return (
-        <section class="card spec" id="spec">
+        <Card id="spec" label="the spec" anchor class="spec">
             <header>
                 <h2><Tip tip="Which version of the spec this sweep ran, who started it, and what changed since the sweep before. Also in spec.md; every sweep is in sweeps.jsonl.">Spec</Tip></h2>
             </header>
             <dl class="kv">
-                <dt><Tip tip="The spec file this sweep ran, and a hash of its text: the same hash is the same question.">file</Tip></dt><dd><code>{p.spec}</code> <span class="badge">spec {p.specHash}</span></dd>
+                <dt><Tip tip="The spec file this sweep ran, where it was on disk, and a hash of its text: the same hash is the same question.">file</Tip></dt><dd>{fileUrl
+                    ? <a class="tt" href={fileUrl} target="_blank" rel="noopener noreferrer" data-tip={`${p.onDisk ? `In the repo: ${p.spec}. ` : ""}Opens the file at the build's commit in ${s.repo}.${p.dirty ? " The build had uncommitted changes, so the text that ran may differ from it: that text is under \"The spec as it ran\"." : ""}`}><code>{p.onDisk ?? p.spec}</code></a>
+                    : <span class="tt" data-tip={p.onDisk ? `In the repo: ${p.spec}` : "Recorded before sweeps kept the path on disk: this is the path in the repo."}><code>{p.onDisk ?? p.spec}</code></span>} <span class="badge">spec {p.specHash}</span></dd>
                 <dt><Tip tip="Who started the sweep: BENCH_BY when it was set, else &quot;command line&quot;.">started by</Tip></dt><dd>{p.by} <span class="dim">· {when(p.at)}</span></dd>
-                <dt><Tip tip="The commit the extension was built from, plus a hash of any uncommitted changes. Runs are cached per build.">build</Tip></dt><dd><code>{p.fingerprint}</code>{p.dirty ? <span class="badge warn">uncommitted changes</span> : null}</dd>
+                <dt><Tip tip="The commit the extension was built from, plus a hash of any uncommitted changes. Runs are cached per build.">build</Tip></dt><dd>{commitUrl
+                    ? <a class="tt" href={commitUrl} target="_blank" rel="noopener noreferrer" data-tip={`Opens commit ${commit!.slice(0, 12)} in ${s.repo}.${p.dirty ? " The build also had uncommitted changes (the hash after +), which are not in that commit." : ""}`}><code>{p.fingerprint}</code></a>
+                    : <code>{p.fingerprint}</code>}{p.dirty ? <span class="badge warn">uncommitted changes</span> : null}</dd>
                 <dt><Tip tip="Whether the spec text differs from the previous sweep's in this directory.">since last</Tip></dt>
                 <dd>{!prev ? <span class="dim">the first sweep recorded here</span>
                     : !p.changed ? <><span class="badge ok">unchanged</span> <span class="dim">since {prev.by}'s sweep, {when(prev.at)}</span></>
@@ -48,7 +57,7 @@ export function SpecCard({ s }: { s: BenchState }) {
                 </details>
             ) : null}
             <details><summary>The spec as it ran</summary><SpecSource source={p.source} file={p.spec} /></details>
-        </section>
+        </Card>
     );
 }
 

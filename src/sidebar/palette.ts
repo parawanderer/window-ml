@@ -40,8 +40,17 @@ export const vramPalette = signal<string>("vivid");
  *  the setting is "Colour palette" rather than "Model colours". */
 export const colorFor = (name: string) => {
     const p = VRAM_PALETTES[vramPalette.value] ?? VRAM_PALETTES.vivid;
-    return p[[...name].reduce((a, c) => a + c.charCodeAt(0), 0) % p.length];
+    const base = p[[...name].reduce((a, c) => a + c.charCodeAt(0), 0) % p.length];
+    // A CLOUD model shares the eight hues with the local ones, so on its own a hue cannot say which it is. Mixed
+    // toward the text colour it is a lighter shade on a dark theme and a darker one on a light theme: the same family,
+    // never mistaken for the local model that hashed to the same hue.
+    return cloudModels.value.has(name) ? `color-mix(in srgb, ${base} 55%, var(--fg))` : base;
 };
+
+/** Models known to run OFF the box (a cloud API), which `colorFor` draws in their own shade. Set by whoever knows: the
+ *  panel from the server's model list (`fetchModels`, the same rule as its "cloud" chip), the bench's pages from the
+ *  sweep's model list. Unknown is not cloud: a model is only here when something said so. */
+export const cloudModels = signal<ReadonlySet<string>>(new Set());   // state: cache
 
 /** A POOL's colour. Pools are an ordered set, not names to hash, so they get distinct colours by construction
  *  — which `VRAM_COLORS[i % 8]` stopped doing on a box with more than eight pools: an 8-GPU node (eight cards

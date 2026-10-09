@@ -218,3 +218,16 @@ a.role.score { color: inherit } a.role.score:hover { text-decoration: none; back
 /* The spec's source is a panel code block (spec.tsx `SpecSource`): its theme paints the surface, so no second box. */
 .spec .ssrc { max-height: 32em; overflow: auto; margin: 6px 0 0 }
 .spec .ssrc pre.code { margin: 0 }
+
+/* A card that folds (card.tsx): the chevron in its top-right corner, pointing down while open and right while folded;
+   folded, only the header line stays. */
+.card.fold { position: relative }
+.card.fold > header { padding-right: 30px }
+.foldbtn { position: absolute; top: 10px; right: 10px; width: 24px; height: 24px; display: inline-flex; align-items: center;
+           justify-content: center; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--fg-dim); cursor: pointer }
+.foldbtn:hover { background: var(--panel); color: var(--fg) }
+.foldbtn svg { width: 14px; height: 14px; transform: rotate(90deg); transition: transform .15s ease }
+.card.folded .foldbtn svg { transform: none }
+.card.folded > :not(header):not(.foldbtn) { display: none }
+.card.folded > header { margin-bottom: 0 }
+@media (prefers-reduced-motion: reduce) { .foldbtn svg { transition: none } }

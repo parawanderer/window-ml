@@ -18,7 +18,9 @@ import { FromSpec, specSource } from "./from-spec";
 import { installTooltipLayer } from "../../../../src/sidebar/tooltip-layer";
 import { ThemeToggle, applyTheme, readTheme } from "./theme";
 import { signed } from "../../../../src/sidebar/interval-bar";
-import { laneScoped, resWindowS } from "../../../../src/sidebar/store";
+import { laneScoped, resWindowS, zoomRange } from "../../../../src/sidebar/store";
+import { installChartKeys } from "../../../../src/sidebar/resource/resource-chart";
+import { cloudModels } from "../../../../src/sidebar/palette";
 
 declare global { interface Window { __BENCH_STATE__?: BenchState } }
 
@@ -95,7 +97,7 @@ function App() {
         // A SAVED page has its state already; subscribing would sit on a dead port and report a complete sweep as lost.
         if (baked) return;
         const src = new EventSource("/events");
-        src.onmessage = (e) => { setS(JSON.parse(e.data)); setDisconnected(false); };
+        src.onmessage = (e) => { const next = JSON.parse(e.data); markCloud(next); fitFinished(next); setS(next); setDisconnected(false); };
         src.onerror = () => setDisconnected(true);
         // The page's own source changed and the server rebuilt it (serve.mjs `watch`): reload onto the new build, keeping
         // the place. The state comes straight back on the stream.
@@ -146,11 +148,35 @@ function App() {
     );
 }
 
+/** A finished sweep's chart framed to the sweep, once: from its start (or the first reading, when the box's stream
+ *  backfilled the minutes before it) to its end. Not over a zoom someone already made. */
+let fitted = false;
+function fitFinished(s: BenchState | null | undefined) {
+    if (fitted || !s?.finished || zoomRange.value) return;
+    const first = s.resources?.samples[0]?.t;
+    zoomRange.value = { from: Math.min(s.started, first ?? s.started), to: s.finished };
+    fitted = true;
+}
+
+/** The sweep's cloud models get their own shade wherever a model is coloured (palette.ts `cloudModels`); set before the
+ *  state renders, and only when the list changed, so a live update does not recolour every bar for nothing. */
+function markCloud(s: BenchState | null | undefined) {
+    const next = s?.cloud ?? [];
+    const cur = cloudModels.value;
+    if (next.length !== cur.size || next.some((m) => !cur.has(m))) cloudModels.value = new Set(next);
+}
+
 applyTheme(readTheme());
-// The resource panel's chart (the timeline's memory) reads its window from the panel's store: here nothing is scoped to
-// one session, and a FINISHED sweep opens on all of it rather than on the last few minutes before now.
+// The resource panel's chart (the timeline's memory) reads its window from the panel's store. Here nothing is scoped to
+// one session, and the window is the WHOLE sweep, not the panel's last few minutes: following the clock, that window
+// slid off the runs once they were done and left the lanes and the plot empty. A finished sweep is framed to exactly
+// its span (`fitFinished`), so its end is not stretched on to whenever the page is read.
 laneScoped.value = false;
-if (window.__BENCH_STATE__?.finished) resWindowS.value = 0;
+resWindowS.value = 0;
+markCloud(window.__BENCH_STATE__);
+fitFinished(window.__BENCH_STATE__);
+// The chart's keys (↑/↓ pick a line, ←/→ through a model's parts, Esc unwinds), which the panel installs with its own.
+installChartKeys(document);
 // The panel's tooltip layer, so a `Hash` chip shows the tip it shows in the panel.
 installTooltipLayer(document);
 render(<App />, document.getElementById("app")!);

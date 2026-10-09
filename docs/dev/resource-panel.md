@@ -856,3 +856,9 @@ test would have passed the day the feature broke.
   `optional` field is sent at zero, so absent means not reported; an `unload` says why in `reason`, never assume idle.
 - **Event lane.** Spans run BACKWARDS from a finish stamp; a tool step is ONE event with phases; a load is its own
   event. Phases are drawn only where something TIMED them.
+
+**A cloud model has its own shade.** `colorFor` (palette.ts) mixes a name in `cloudModels` toward `--fg`: the same
+hue, lighter on a dark theme and darker on a light one, so a cloud model is never read as the local model that hashed
+to the same colour. The panel fills `cloudModels` from the server's model list (listed and not among Ollama's, the rule
+of its "cloud" chip); unknown provenance marks none. The bench's pages fill it from the sweep's model list.
+

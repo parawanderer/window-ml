@@ -35,7 +35,7 @@ export function normalizeRepoUrl(raw) {
 }
 
 /** The public HTTPS repo URL from origin. "" if no remote. */
-function repoUrl() {
+export function repoUrl() {
     return normalizeRepoUrl(git("config --get remote.origin.url"));
 }
 

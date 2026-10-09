@@ -36,8 +36,10 @@ export async function readSweeps(sweepDir) {
  *
  * @param {{ specPath: string, source: string, fingerprint: string, dirty: boolean, by: string }} sweep
  */
-export async function recordSweep(sweepDir, { specPath, source, fingerprint, dirty, by }) {
-    const rec = { op: "sweep", at: new Date().toISOString(), by: String(by).slice(0, 200), spec: specPath, specHash: specHash(source), fingerprint, dirty: !!dirty, specSource: source };
+export async function recordSweep(sweepDir, { specPath, onDisk = null, source, fingerprint, dirty, by }) {
+    // `onDisk`: where the file was on the machine that ran the sweep, so a reader can open it; `spec` stays the path in
+    // the repo, which is what means the same thing on another clone.
+    const rec = { op: "sweep", at: new Date().toISOString(), by: String(by).slice(0, 200), spec: specPath, ...(onDisk ? { onDisk } : {}), specHash: specHash(source), fingerprint, dirty: !!dirty, specSource: source };
     await appendFile(path.join(sweepDir, "sweeps.jsonl"), JSON.stringify(rec) + "\n");
     return readSweeps(sweepDir);
 }
@@ -52,7 +54,8 @@ export function specProvenance(sweeps) {
     const prev = sweeps.at(-2) ?? null;
     const changed = prev ? prev.specHash !== cur.specHash : null;
     const rows = changed ? codeDiff(prev.specSource ?? "", cur.specSource ?? "") : null;
-    const brief = (r) => ({ at: r.at, by: r.by, specHash: r.specHash, fingerprint: r.fingerprint, dirty: r.dirty, spec: r.spec });
+    // A record from before `onDisk` was kept has none, and is shown by its repo path.
+    const brief = (r) => ({ at: r.at, by: r.by, specHash: r.specHash, fingerprint: r.fingerprint, dirty: r.dirty, spec: r.spec, onDisk: r.onDisk ?? null });
     return {
         ...brief(cur),
         source: cur.specSource ?? "",
@@ -69,7 +72,7 @@ export function specProvenance(sweeps) {
 /** spec.md: the same as the page's Spec card, as text. */
 export function specText(p) {
     if (!p) return "# Spec\n\nNo sweep has been recorded.\n";
-    const lines = [`# Spec`, "", `This sweep ran \`${p.spec}\` (spec ${p.specHash}), started by ${p.by} at ${p.at}, on build ${p.fingerprint}${p.dirty ? " (uncommitted changes)" : ""}.`, ""];
+    const lines = [`# Spec`, "", `This sweep ran \`${p.onDisk ?? p.spec}\` (spec ${p.specHash}), started by ${p.by} at ${p.at}, on build ${p.fingerprint}${p.dirty ? " (uncommitted changes)" : ""}.`, ""];
     lines.push("## Since the previous sweep", "");
     if (!p.previous) lines.push("This is the first sweep recorded here.");
     else {

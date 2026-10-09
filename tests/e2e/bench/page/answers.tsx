@@ -9,6 +9,7 @@ import { Outcome, runDir } from "./runs";
 import { Hash } from "../../../../src/sidebar/copy-hash";
 import { FromSpec, specSource } from "./from-spec";
 import { markdown } from "../../../../src/sidebar/format";
+import { Card } from "./card";
 
 /** How answers are shown: rendered as the panel renders an answer, or the exact text the model sent. */
 type Mode = "md" | "raw";
@@ -98,7 +99,7 @@ export function Answers({ s, base, live }: { s: BenchState; base: string; live: 
     if (!ids.length) return null;
     const repeats = new Set(s.runs.map((r) => r.repeat)).size > 1;
     return (
-        <section class="card">
+        <Card id="answers" label="the answers">
             <header>
                 <h2><Tip tip="Each interview turn as a row, each run as a column: what every model answered to the same question. Also in summary.md.">Answers</Tip></h2>
                 <span class="sub">{live ? "Select a line in an answer and press mark wrong; every later run of that model is checked for it." : ""}</span>
@@ -124,6 +125,6 @@ export function Answers({ s, base, live }: { s: BenchState; base: string; live: 
                 );
             })}
             {marking ? <MarkDialog target={marking.target} quote={marking.quote} onClose={() => setMarking(null)} /> : null}
-        </section>
+        </Card>
     );
 }
