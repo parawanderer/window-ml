@@ -16,7 +16,7 @@ import { listServerTools } from "./sw-llm";
 import { workerMl } from "./worker-ml";
 import { dropAnswer } from "./worker-answer";
 import { dropVisionMemory } from "./worker-vision";
-import { buildWorkerTools, dropWorkerTools, pageOnlySend, workerSpend, WORKER_TOOL_NAMES } from "./worker-tools";
+import { buildWorkerTools, dropWorkerTools, pageOnlySend, spendDelta, workerSpend, WORKER_TOOL_NAMES } from "./worker-tools";
 
 /** What a run's local tools need to run: the tools by name, and the vision facts their ToolContext carries. */
 interface LocalToolset { byName: Record<string, MlTool>; model: string | null; driverSees: boolean; visionModel: string | null; }
@@ -95,11 +95,7 @@ export async function runLocalTool(send: ToolSend, onStream?: (text: string, ts?
     const before = workerSpend(send.runId);
     const env = envelopeFrom(tool, args, await executeTool(tool, args, ctx, onStream));
     // What its own model calls spent (fetch_url's reader), as the page reports a delegated tool's: the delta.
-    const after = workerSpend(send.runId);
-    if (before && after && after.calls > before.calls) {
-        const prev = new Map((before.byModel ?? []).map((m) => [m.model, m]));
-        const byModel = (after.byModel ?? []).map((m) => ({ model: m.model, prompt: m.prompt - (prev.get(m.model)?.prompt ?? 0), completion: m.completion - (prev.get(m.model)?.completion ?? 0), calls: m.calls - (prev.get(m.model)?.calls ?? 0) })).filter((m) => m.calls > 0);
-        env.subUsage = { prompt: after.prompt - before.prompt, completion: after.completion - before.completion, calls: after.calls - before.calls, ...(byModel.length ? { byModel } : {}) };
-    }
+    const spent = before ? spendDelta(before, workerSpend(send.runId)) : undefined;
+    if (spent) env.subUsage = spent;
     return env;
 }

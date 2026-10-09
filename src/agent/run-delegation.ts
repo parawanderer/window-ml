@@ -20,7 +20,7 @@ import { executeTool, toolContext, answerSetFor, withRunSession, withRunDeref } 
 import { expandPointers } from "../pointers/pointer-macro";
 import { columnsViaBackground } from "../tools/deref-read";
 import { preResolvedDeref, type PreRead } from "../pointers/named-reads";
-import { captureVerify, captureVerifyElement } from "../tools/builtin-tools";
+import { captureVerify, captureVerifyElement, verifyInWorker } from "../tools/builtin-tools";
 import { pageVisionHost, pageGeometry, answerGeometry, type PageGeometry, type GeometryRequest } from "../dom/page-geometry";
 import { htmlToMarkdown } from "../dom/html-to-md";
 import { clipOut, elLine, errText } from "../dom/dom";
@@ -110,11 +110,11 @@ const VERIFY_TEXT_MAX = 8000;   // cap the navigate verify:"text" Markdown so a 
 /** A tool of a BACKGROUND-hosted run, executed in the page. Every model call made on its behalf — the tool's
  *  own, and the verify captures below that call vision directly — is labelled as part of the run that caused it
  *  (RequestHint: `use: "agent"`, the run's session). */
-export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
+export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; verifyInWorker?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
     return withRunSession(hintSession(runId), () => runDelegatedToolIn(runId, name, args, opts));
 }
 
-async function runDelegatedToolIn(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
+async function runDelegatedToolIn(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; verifyInWorker?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
     const run = runs.get(runId);
     if (!run) return { result: `Error: no active agent run "${runId}" on this page (it may have ended).` };
     // A worker-built run's `answer` tool runs in the worker, and asks the page only for a selector's elements: this
@@ -267,6 +267,8 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
         // page-reachable store) keeps the primitive scoped to a tool call of THIS run, exactly as on the page
         // path — a page's own console still has no active run and gets nothing.
         const ctx = toolContext(run.byName, run.model ?? null, null, run.driverSees ?? false, run.visionModel ?? null);
+        // The worker takes this run's verifies (it said so in the call): a verify here is a request, never a picture.
+        if (opts.verifyInWorker) verifyInWorker(ctx);
         // Only the reads the approved script names, which the worker resolved and sent with the call (named-reads.ts):
         // the page shares this world, and could otherwise read anything the run holds while the call is in flight.
         const answer = preResolvedDeref(opts.reads ?? []);
@@ -319,6 +321,8 @@ export function envelopeFrom(tool: MlTool, args: Record<string, unknown>, env: A
         // open) the timeline had only our wall clock: a first python_exec read as a slow script rather
         // than as a runtime being downloaded, and a remote tool's net/queue split never drew at all.
         remoteMs: env.remoteMs,
+        // What a click/type/wait asks the worker to picture, in a run whose verifies the worker takes.
+        ...(env.verifyRequest ? { verifyRequest: env.verifyRequest } : {}),
     };
 }
 
@@ -328,7 +332,7 @@ export function envelopeFrom(tool: MlTool, args: Record<string, unknown>, env: A
 export function installToolDelegation(): void {
     window.addEventListener("message", async (event: MessageEvent) => {
         if (event.source !== window || !event.data || event.data.type !== "PAGE_TOOL_RUN") return;
-        const { callId, runId, name, args, reads, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, stream, finish, summary, answerShape, answerSelect, geometry } = event.data as { answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; callId: string; runId: string; name: string; args: Record<string, unknown>; reads?: PreRead[]; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean; summary?: string };
+        const { callId, runId, name, args, reads, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker: inWorker, stream, finish, summary, answerShape, answerSelect, geometry } = event.data as { verifyInWorker?: boolean; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; callId: string; runId: string; name: string; args: Record<string, unknown>; reads?: PreRead[]; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean; summary?: string };
         // The END of a turn of a run the WORKER built (sw-run-host.ts): no page-side caller exists to assemble its
         // answer, so the worker asks for it. Ends the run's registration here, as the page path's caller does.
         if (finish) {
@@ -345,7 +349,7 @@ export function installToolDelegation(): void {
             try { window.postMessage({ type: "PAGE_TOOL_STREAM", runId, chunk, ts, ...(skipped ? { skipped } : {}) }, "*"); } catch { /* non-cloneable → drop */ }
         }) : null;
         const onStream = sender ? (chunk: string, ts?: number) => sender.push(chunk, ts) : undefined;
-        const envelope = await runDelegatedTool(runId, name, args || {}, { reads: Array.isArray(reads) ? reads : [], renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt, verifyViewport: !!verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, ...(Array.isArray(answerShape) ? { answerShape } : {}), ...(answerSelect && typeof answerSelect === "object" ? { answerSelect } : {}), ...(geometry && typeof geometry === "object" ? { geometry } : {}), onStream });
+        const envelope = await runDelegatedTool(runId, name, args || {}, { reads: Array.isArray(reads) ? reads : [], renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt, verifyViewport: !!verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker: inWorker === true, ...(Array.isArray(answerShape) ? { answerShape } : {}), ...(answerSelect && typeof answerSelect === "object" ? { answerSelect } : {}), ...(geometry && typeof geometry === "object" ? { geometry } : {}), onStream });
         sender?.flush();   // the last lines go out BEFORE the result, which supersedes the live view
         window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope }, "*");
     });

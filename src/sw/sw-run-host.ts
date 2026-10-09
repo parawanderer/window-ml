@@ -11,10 +11,7 @@ import { eventsForRun, type RunLogEvent } from "../log/run-log";
 import { execCodeIn, expandPointers } from "../pointers/pointer-macro";
 import { namedReads, type PreRead } from "../pointers/named-reads";
 import type { CurrentSnapshot } from "../agent/current-context";
-import { watchWhileWaiting, PageUnreachable } from "./page-reachable";
-import type { TabState } from "./page-reachable";
 import type { ToolMeta } from "../agent/agent-loop";
-import type { HousekeepingReport } from "../log/housekeeping";
 import type { NeutralMessage, ToolCall, TokenUsage } from "../contract/contract-chat";
 import { UI_OUT_CAP } from "../contract/contract-chat";
 import { clipHeadTail, panelHead, ceilingNote } from "../agent/output-clip";
@@ -29,7 +26,6 @@ import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from
 import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, consentFetch, persistGrants, fetchConsent } from "./sw-consent";
 import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
-import { noteRunMechanic } from "./sw-runs";
 import { ensureLocalTools, runLocalTool, runsInWorker } from "./sw-local-tools";
 import { withUserWatches } from "./sw-shared-watches";
 import { routeExec, execNames } from "./exec-routing";
@@ -38,39 +34,19 @@ import { finalizeAnswer, type AnswerShapeItem } from "../pointers/answer-set";
 import { withEnv } from "./sw-current-env";
 import { isolationAvailable, pageApproved, runIsolatedExec } from "./sw-isolated-exec";
 import { grantRunFetch, runFetchConsented, grantRunPython, pageOnlyPython } from "./worker-tools";
-import { navBarrier, bgRuns, isWorkerRun, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
+import { isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue } from "./sw-values";
 import { focusLineFor } from "./sw-focus";
+import { delegateSend } from "./delegate-send";
+import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerVerify, VERIFY_REFUSED, VERIFY_WITHHELD, type VerifyOutcome, type WorkerVerify } from "./worker-verify";
+import { topDocument } from "./worker-vision";
 
 // The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
 // `seen` marks where the model's copy stopped, exactly like the main-world exec path.
 const CDP_EXEC_CAP = 500;
 
 const STREAM_EMIT_MS = 90;   // min gap between live `agent-stream` deltas — smooth enough to read, not a flood
-
-// EVERY RUN_TOOL_IN_PAGE send goes through this: it waits out any in-flight navigation on the tab before
-// delegating. On a tab with no navigation pending, whenReady resolves immediately (zero cost) — so a
-// single-page run is unaffected.
-//
-// …and then WATCHES the tab while it waits, because the send has a third outcome besides answering and
-// rejecting: a tab the browser put to sleep in the background still has a registered receiver, so the call
-// simply sits. One measured run spent 13m57s inside a `pageInfo` here and was released by the person opening
-// the tab. `page-reachable.ts` has the reasoning; what it costs a healthy call is one `chrome.tabs.get`.
-const tabState = async (tabId: number): Promise<TabState> => {
-    try { return (await chrome.tabs.get(tabId)).discarded ? "asleep" : "awake"; }
-    catch { return "gone"; }   // the id no longer resolves: closed, or replaced by a discard under a new id
-};
-// A barrier wait shorter than this is the ordinary cost of a page committing a navigation, and saying so every
-// time would bury the waits that mattered.
-const BARRIER_NOTE_MS = 250;
-
-/** What a delegated send is about, for the run's log: the tool's own name, which cannot be a record's `reason`
- *  (those are lowercase slugs and a tool is `pageInfo` or `python_exec`), so it travels in `detail`. */
-const sendDetail = (tabId: number, msg: unknown): Record<string, string | number> => {
-    const name = (msg as { payload?: { name?: unknown } })?.payload?.name;
-    return { tab: tabId, ...(typeof name === "string" && name ? { tool: name } : {}) };
-};
 
 /** The tab's main-frame document: the barrier's record of the last commit, else the browser's answer (a worker that was
  *  evicted has no record). Undefined where neither knows, and then a re-adopt is judged on the navigation alone. */
@@ -93,55 +69,6 @@ function preReadsFor(runId: string, js: string): PreRead[] {
         } catch (e) { return { ref, pipe, error: (e as Error)?.message || String(e) }; }
     });
 }
-
-/** Send a message into a run's tab and wait for the page's answer, the way every delegated tool call is sent: held
- *  while the tab navigates, and watched while it waits, so a discarded tab is rebuilt and a frozen one is bounded
- *  (see above). Also how the worker pushes a run's toolset into a tab (sw-run-start.ts `adoptOnTab`). */
-export const delegateSend = async (tabId: number, msg: unknown, documentId?: string): Promise<any> => {
-    // THE RUN'S LOG, not the transcript: a step already shows how long a tool took. What it cannot show is that
-    // the wait was the browser rather than the tool — a navigation being committed, a discarded tab rebuilt, a
-    // page that stopped answering. Those are the lines someone asking "where did the time go" comes for.
-    const detail = sendDetail(tabId, msg);
-    const note = (kind: string, extra: Partial<HousekeepingReport> = {}): void =>
-        noteRunMechanic(tabId, { ...extra, subsystem: "page", kind, detail: { ...detail, ...extra.detail } });
-    const held = Date.now();
-    await navBarrier.whenReady(tabId);
-    const waited = Date.now() - held;
-    if (waited >= BARRIER_NOTE_MS) note("held", { reason: "navigating", ms: waited });
-    // Pinned to a document, a send the tab can no longer deliver there is refused by the browser rather than delivered
-    // to whatever document the tab holds now (an approved exec routed for one page, sw-isolated-exec.ts).
-    const send = () => (documentId ? chrome.tabs.sendMessage(tabId, msg, { documentId }) : chrome.tabs.sendMessage(tabId, msg));
-    try { return await watchWhileWaiting(send(), () => tabState(tabId)); }
-    catch (e) {
-        if (!(e instanceof PageUnreachable) || e.state !== "asleep") {
-            if (e instanceof PageUnreachable) note("unreachable", { level: "error", reason: e.state, ms: e.waitedMs });
-            throw e;
-        }
-        // A DISCARDED tab has no document, so there is nothing to preserve and a reload costs nothing that is
-        // not already lost — which is the whole reason this is safe to do without asking. Reloading is also the
-        // one way to touch the tab that does not take the person's screen away from them, and the new document
-        // re-adopts the run on CONTENT_READY, which is exactly what the barrier waits for. One retry: if the
-        // page cannot answer after being rebuilt, the tool fails with a sentence instead of looping.
-        note("discarded", { level: "warn", ms: e.waitedMs });
-        navBarrier.noteNavigating(tabId);
-        const ok = await chrome.tabs.reload(tabId).then(() => true, () => false);
-        await navBarrier.whenReady(tabId);
-        // No reason when the reload worked, the browser's own word for it when it did not: an absent reason
-        // reads as "and then it was fine", which is what the next line is about to confirm or deny.
-        note("reloaded", ok ? {} : { level: "error", reason: "gone" });
-        const from = Date.now();
-        try {
-            const answer = await watchWhileWaiting(send(), () => tabState(tabId));
-            // The story needs its ending. Without this the log reads "discarded, reloaded" and then stops, and
-            // whether the run went on is left to be inferred from what did NOT appear underneath it.
-            note("recovered", { ms: Date.now() - from });
-            return answer;
-        } catch (again) {
-            if (again instanceof PageUnreachable) note("unreachable", { level: "error", reason: again.state, ms: again.waitedMs, detail: { retried: true } });
-            throw again;
-        }
-    }
-};
 
 // LIVE tool-output streaming on the BACKGROUND path: the in-flight delegated tool's onStream, keyed by runId.
 // The loop delegates tool calls SEQUENTIALLY (one in flight per run), so runId alone correlates a page-posted
@@ -241,10 +168,27 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
         const refused = await applyAnswerOps(runId, ops);
         if (refused) recordRunLog(runId, { level: "warn", subsystem: "routing", kind: "answer-ops-refused", reason: refused, detail: {} });
     };
+    /** Whether this run's vision is the worker's: it built the run, or was handed it (`makeWorkerRun`), even mid-turn.
+     *  Its verifies are taken here, and a page's envelope cannot carry a picture, a reply or a spend into it. A run handed
+     *  over during its first turn is not in `bgRuns` yet, so `isWorkerRun` misses it; its rebuild record says so. */
+    const workerVision = (): boolean => p.builtBy === "worker" || isWorkerRun(runId) || runRebuilds.get(runId)?.builtBy === "worker";
+    const tabUrlNow = (): string => tabPageUrl.get(tabId) || p.pageUrl || "";
+    /** Take a verify in the worker, pinned to `doc`, with the run's vision facts (carried in its rebuild config). */
+    const verifyHere = (doc: string | null | undefined, req: WorkerVerify, verb: string): Promise<VerifyOutcome> =>
+        workerVerify(runId, tabId, doc, req, verb, { driverSees: !!p.rebuild?.driverSees, visionModel: p.rebuild?.visionModel ?? null }, tabUrlNow);
     const sendTool = async (payload: { runId: string; name: string; args: Record<string, unknown>; stream?: boolean; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[] }, onStream?: (chunk: string, ts?: number) => void, documentId?: string): Promise<unknown> => {
         // A worker-built run's REMOTE tool never goes to the page, which has no such tool. If this worker does not hold
         // it (rehydrated after an eviction, or a resumed session), it is rebuilt first.
-        const tabUrl = (): string => tabPageUrl.get(tabId) || p.pageUrl || "";
+        const tabUrl = tabUrlNow;
+        // To the page. The call itself of a run whose vision is the worker's is told so (its verify comes back as a
+        // request), and what the page answers is held to that (`withoutPageVision`).
+        const toPage = async (pin?: string): Promise<unknown> => {
+            const vis = workerVision();
+            const call = vis && !payload.renderOnly && !payload.precheck && !payload.readonlyTry;
+            const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: call ? { ...payload, verifyInWorker: true } : payload }, pin);
+            // Asked again on the answer: a run the person took over while the call was in flight is the worker's now.
+            return vis || workerVision() ? withoutPageVision(env, payload.name) : env;
+        };
         if (p.builtBy === "worker" && runsInWorker(p, payload.name)) {
             await ensureLocalTools(runId, p, tabId, tabUrl).catch(() => { /* answered below */ });
             const local = await runLocalTool({ ...payload, tabUrl: tabUrl() }, onStream);
@@ -252,9 +196,9 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             // A remote tool has nowhere else to run; a builtin declined here (fetch_url's render of this very page) does.
             if (p.tools.some((t) => t.name === payload.name && t.remote))
                 return { result: `Error: the server tool "${payload.name}" is not available any more (the server no longer lists it).` };
-            return delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload });
+            return toPage();
         }
-        return (await runLocalTool(payload, onStream)) ?? delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload }, documentId);
+        return (await runLocalTool(payload, onStream)) ?? toPage(documentId);
     };
     const abortCtl = new AbortController();   // CANCEL_RUN aborts this → the loop resolves { cancelled }
     // Set once this run's page navigates: the page-side caller that normally emits the lifecycle
@@ -564,6 +508,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     // page's context — actionable, and safe (no blind retry that could double-submit a form).
                     const CHANNEL_GONE = /message channel closed|Receiving end does not exist|No tab with id/i;
                     let env: Partial<import("../contract").PageToolEnvelope>;
+                    let workerMade = false;   // the worker wrote this result itself (the page could not be reached, or navigated)
                     // The document this call goes to: if the call navigates, that document stays alive a moment and
                     // still knows the run id, and its re-adopt must not pass for the destination's. Unknown while a
                     // navigation is in flight (the call then goes to whichever document re-adopts); never a wait of
@@ -583,7 +528,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     } catch (e) {
                         const emsg = (e as Error)?.message || String(e);
                         if (!CHANNEL_GONE.test(emsg)) {
-                            env = { result: `Error: could not reach the page to run "${name}" (${emsg}).` };
+                            env = { result: `Error: could not reach the page to run "${name}" (${emsg}).` }; workerMade = true;
                         } else {
                             // The page navigated out from under the call. Its pageInfo may already be here (a fast
                             // re-adopt beat us); else engage the barrier and wait for it (bounded by the barrier's
@@ -591,10 +536,29 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                             let info = takeInfo();
                             if (!info) { navBarrier.noteNavigating(tabId, sentTo); await navBarrier.whenReady(tabId); info = takeInfo(); }
                             hasNavigated = true;   // the run moved pages → the terminal result must fan to the new page
+                            workerMade = true;
                             env = { result: `The page navigated while running "${name}" — the action triggered a navigation, or the page redirected mid-call.${info ? `\n\nYou are now on the new page:\n${info}` : " The new page is still loading — wait, then look."}\n\nNOTE: "${name}" may NOT have taken effect on the previous page. Verify the CURRENT page (look / findByText) and re-run "${name}" here if the change didn't happen.` };
                         }
                     }
                     addSub(env?.subUsage);   // this tool's own delegated vision sub-call spend (look/locate)
+                    // The document a verify of this call is pinned to: the one the call was sent to, else (a navigation was in
+                    // flight) the tab's top document once the answer is in. A navigation the action itself caused lands the
+                    // verify on a document it does not describe, which the vision host refuses (worker-verify.ts).
+                    const actionDoc = async (): Promise<string | null> => sentTo ?? await topDocument(tabId);
+                    /** A ring-back verify after an action the worker did through the debugger: taken here for a run whose
+                     *  vision is the worker's, else the page takes it (`payload`). */
+                    const ringVerify = async (req: WorkerVerify | null, verb: string, payload: Record<string, unknown>): Promise<{ vres: string; vimg?: string; vimgLabel?: string; vfeedback?: import("../contract").ToolFeedback }> => {
+                        if (workerVision()) {
+                            if (!req) return { vres: VERIFY_REFUSED };
+                            const v = await verifyHere(await actionDoc(), req, verb);
+                            addSub(v.subUsage);
+                            return { vres: v.content, vimg: v.image, vimgLabel: v.imageLabel, vfeedback: v.feedback };
+                        }
+                        const venv = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, ...payload } }).catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
+                        if (!venv) return { vres: "" };
+                        addSub(venv.subUsage);
+                        return { vres: venv.result || "", vimg: venv.image, vimgLabel: venv.imageLabel, vfeedback: venv.feedback };
+                    };
                     if (env?.answerMedia?.length) runAnswerMedia.push(...env.answerMedia);   // answer's element visuals → HUD card
                     // Cross-page: the `navigate` tool DEFERS the real location change a tick, so its result
                     // returns before the document unloads. Engage the barrier NOW — not only via the async
@@ -621,10 +585,16 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                             // `pipe` scans the text-verify Markdown (text/text-all only) — threaded to the page.
                             const navPipe = typeof (args as { pipe?: unknown })?.pipe === "string" ? (args as { pipe: string }).pipe : undefined;
                             if (verify && !navBarrier.isNavigating(tabId)) {
+                                const text = verify === "text" || verify === "text-all";
                                 const payload = verify === "text" ? { runId, verifyText: "strip" as const, verifyPipe: navPipe }
                                     : verify === "text-all" ? { runId, verifyText: "all" as const, verifyPipe: navPipe }
                                     : { runId, verifyViewport: true };
-                                const v = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload }).catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
+                                // A screenshot of the destination for a run whose vision is the worker's is taken here, pinned to
+                                // the document the tab holds now: the one the navigation landed on and that re-adopted the run.
+                                // The Markdown is still the page's, and is all a page answer may carry into this run.
+                                const v = !text && workerVision()
+                                    ? await verifyHere(await topDocument(tabId), { kind: "viewport" }, "navigated").then((o) => ({ result: o.content, image: o.image, imageLabel: o.imageLabel, feedback: o.feedback, subUsage: o.subUsage }), () => null)
+                                    : await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload }).then((e) => (workerVision() ? withoutPageVision(e, name) : e), () => null) as Partial<import("../contract").PageToolEnvelope> | null;
                                 if (v && (v.image || v.feedback || v.result)) {
                                     if (v.result) env.result = `${env.result || ""}\n\n${v.result}`;
                                     env.image = v.image; env.imageLabel = v.imageLabel; env.feedback = v.feedback;
@@ -650,14 +620,14 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                         // The click succeeded. If `verify` was asked, ring the PAGE back to capture the area at
                         // the click point NOW (it couldn't run inline — the click was deferred to us). Merge its
                         // image/description/feedback so the model gets the result in THIS step, not a stray look().
-                        let vres = "", vimg: string | undefined, vimgLabel: string | undefined, vfeedback: import("../contract").ToolFeedback | undefined;
-                        if (env.cdpClick.verify) {
-                            const venv = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, verifyAt: { x: env.cdpClick.x, y: env.cdpClick.y } } })
-                                .catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
-                            if (venv) { vres = venv.result || ""; vimg = venv.image; vimgLabel = venv.imageLabel; vfeedback = venv.feedback; addSub(venv.subUsage); }
-                        }
+                        // Whether to verify is the MODEL's word for a run whose vision is the worker's, never the page's flag.
+                        const wantVerify = workerVision() ? verifyAsked(name, args as Record<string, unknown>) : !!env.cdpClick.verify;
+                        const { vres = "", vimg, vimgLabel, vfeedback } = wantVerify
+                            // The point is the page's word: checked as a request of this call would be.
+                            ? await ringVerify(checkVerifyRequest({ kind: "area", center: { x: env.cdpClick.x, y: env.cdpClick.y } }, { name, args: args as Record<string, unknown> }), "clicked", { verifyAt: { x: env.cdpClick.x, y: env.cdpClick.y } })
+                            : { vres: "" };
                         // Append the page-side stuck-loop re-snap nudge (a repeat @pt click) to the SUCCESS result.
-                        const tail = env.cdpClick.verify ? "" : " Re-run look to see the result.";
+                        const tail = wantVerify ? "" : " Re-run look to see the result.";
                         return { result: `Clicked the reserved target at (${env.cdpClick.x}, ${env.cdpClick.y}) via the debugger.${tail}${env.cdpClick.hint || ""}${vres}`, image: vimg, imageLabel: vimgLabel, feedback: vfeedback, renderIn: env.renderIn, renderOut: env.renderOut };
                     }
                     // SEALED-SHADOW click: a `>>>` selector targeted content inside a closed/declarative shadow
@@ -674,13 +644,11 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                         if (!m) return { result: `${env.result || ""}\n\nThe debugger couldn't reach "${env.cdpShadowClick.selector}" inside the sealed shadow root (no match). Check the selector, or fall back to locate/@pt.`, renderIn: env.renderIn, renderOut: env.renderOut };
                         const r = await cdpClick(tabId, m.cx, m.cy);
                         if (!("ok" in r)) return { result: (r as { error: string }).error, renderIn: env.renderIn, renderOut: env.renderOut };
-                        let vres = "", vimg: string | undefined, vimgLabel: string | undefined, vfeedback: import("../contract").ToolFeedback | undefined;
-                        if (env.cdpShadowClick.verify) {
-                            const venv = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, verifyAt: { x: m.cx, y: m.cy } } })
-                                .catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
-                            if (venv) { vres = venv.result || ""; vimg = venv.image; vimgLabel = venv.imageLabel; vfeedback = venv.feedback; addSub(venv.subUsage); }
-                        }
-                        const tail = env.cdpShadowClick.verify ? "" : " Re-run look to see the result.";
+                        const wantVerify = workerVision() ? verifyAsked(name, args as Record<string, unknown>) : !!env.cdpShadowClick.verify;
+                        const { vres = "", vimg, vimgLabel, vfeedback } = wantVerify
+                            ? await ringVerify({ kind: "area", center: { x: m.cx, y: m.cy } }, "clicked", { verifyAt: { x: m.cx, y: m.cy } })
+                            : { vres: "" };
+                        const tail = wantVerify ? "" : " Re-run look to see the result.";
                         return { result: `Clicked ${m.line} inside a sealed shadow root via the debugger (at ${m.cx}, ${m.cy}).${tail}${vres}`, image: vimg, imageLabel: vimgLabel, feedback: vfeedback, renderIn: env.renderIn, renderOut: env.renderOut };
                     }
                     // TRUSTED KEYBOARD: type into a canvas / WebGL / remote-desktop surface or a sealed field
@@ -713,19 +681,28 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                         }
                         const typed = await cdpKeyType(tabId, text, submit);
                         if (!("ok" in typed)) return { result: (typed as { error: string }).error, renderIn: env.renderIn, renderOut: env.renderOut };
-                        let vres = "", vimg: string | undefined, vimgLabel: string | undefined, vfeedback: import("../contract").ToolFeedback | undefined;
-                        if (t.verify) {
+                        const wantVerify = workerVision() ? verifyAsked(name, args as Record<string, unknown>) : !!t.verify;
+                        let verified: { vres: string; vimg?: string; vimgLabel?: string; vfeedback?: import("../contract").ToolFeedback } = { vres: "" };
+                        if (wantVerify) {
                             // The verify PICTURE: the whole element (selector/canvas → verifyElement), the focused
                             // element (@focus → verifyFocus), else the point crop (an @pt / sealed field, by coords).
-                            const payload = t.verifyElement ? { runId, verifyElement: t.verifyElement }
-                                : t.verifyFocus ? { runId, verifyFocus: true }
-                                : typeof fx === "number" && typeof fy === "number" ? { runId, verifyAt: { x: fx, y: fy } }
-                                : { runId, verifyViewport: true };
-                            const venv = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload }).catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
-                            if (venv) { vres = venv.result || ""; vimg = venv.image; vimgLabel = venv.imageLabel; vfeedback = venv.feedback; addSub(venv.subUsage); }
+                            const payload = t.verifyElement ? { verifyElement: t.verifyElement }
+                                : t.verifyFocus ? { verifyFocus: true }
+                                : typeof fx === "number" && typeof fy === "number" ? { verifyAt: { x: fx, y: fy } }
+                                : { verifyViewport: true };
+                            // In the worker the target is the call's own: `@focus` is the focused element, a page-named element
+                            // must be the call's selector and index (checkVerifyRequest), a point is where the worker typed.
+                            const sel = String((args as { selector?: unknown }).selector ?? "").trim();
+                            const req: WorkerVerify | null = sel === "@focus" || sel === "" ? { kind: "focus" }
+                                : t.verifyElement !== undefined ? checkVerifyRequest({ kind: "element", selector: t.verifyElement, index: (args as { index?: unknown }).index ?? 0 }, { name, args: args as Record<string, unknown> })
+                                : typeof fx === "number" && typeof fy === "number" ? checkVerifyRequest({ kind: "area", center: { x: fx, y: fy } }, { name, args: args as Record<string, unknown> })
+                                : { kind: "viewport" };
+                            // A point keeps the page ring-back's verb ("clicked"): the model is shown what it was shown before.
+                            verified = await ringVerify(req, req?.kind === "area" ? "clicked" : "typed", payload);
                         }
+                        const { vres, vimg, vimgLabel, vfeedback } = verified;
                         const shown = text.length > 60 ? text.slice(0, 60) + "…" : text;
-                        const tail = t.verify ? "" : " Re-run look to see the result.";
+                        const tail = wantVerify ? "" : " Re-run look to see the result.";
                         return { result: `Typed "${shown}" into ${where} via the debugger (trusted keyboard, additive).${submit ? " Submitted (Enter)." : ""}${tail}${vres}`, image: vimg, imageLabel: vimgLabel, feedback: vfeedback, renderIn: env.renderIn, renderOut: env.renderOut };
                     }
                     // STRICT-PAGE exec: main-world eval was CSP/TT-blocked and the page handed back a cdpExec
@@ -751,6 +728,18 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                                 renderOut: { type: "exec-out", stdout: clipHeadTail(stdout, UI_OUT_CAP, panelHead(CDP_EXEC_CAP)), ...(stdout.length > UI_OUT_CAP ? { capture: clipOut(stdout, UI_OUT_CAP) } : {}), seen, value: r.value } };
                         }
                         return { result: `${env.result || ""}\n\n${r.error}`, renderIn: env.renderIn, renderOut: env.renderOut };
+                    }
+                    // The verify of a click/type/wait in a run whose vision is the worker's: the page asked for it as data, and
+                    // the worker takes it, pinned to the document the action ran in. A request the model did not ask for is
+                    // dropped; a malformed one skips the verify with a fixed note.
+                    // A page that sends no request for a verify the model asked for gets the fixed note, never silence.
+                    if (env && !workerMade && workerVision() && verifyAsked(name, args as Record<string, unknown>)) {
+                        if (env.verifyRequest !== undefined) {
+                            const req = checkVerifyRequest(env.verifyRequest, { name, args: args as Record<string, unknown> });
+                            const v = req ? await verifyHere(await actionDoc(), req, verifyVerb(name)) : { content: VERIFY_REFUSED } as VerifyOutcome;
+                            addSub(v.subUsage);
+                            env = { ...env, result: (env.result || "") + v.content, image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };
+                        } else env = { ...env, result: (env.result || "") + VERIFY_WITHHELD };
                     }
                     // The page already computed the rendered In/Out slots (descriptorFor) — forward them so
                     // the sidebar shows the rich view. `image` rides along for INLINE VISION (native look):

@@ -182,7 +182,7 @@ learned by shipping the wrong version first.
 - **Transcript.** A long session is WINDOWED; a jump to a step goes through `reveal`; the window is a plain Map
   bumped through `rev`, NEVER a signal read during render. → sidebar.md
 - **A delegated tool has a THIRD outcome:** a send to a sleeping tab neither answers nor rejects. Every send goes
-  through `delegateSend` (sw-run-host.ts); a tab can come back under a new id (`chrome.tabs.onReplaced`). → agent-tools.md
+  through `delegateSend` (delegate-send.ts); a tab can come back under a new id (`chrome.tabs.onReplaced`). → agent-tools.md
 - **The execution log** (`run-log.ts`) is where the worker writes what it did under a run, since a service-worker
   `console.log` is never seen: `recordRunLog`/`noteRunMechanic`. `subsystem`/`kind` must be lowercase slugs or the
   record is SILENTLY dropped. It is not the housekeeping log. → run-log.md

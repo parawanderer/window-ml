@@ -780,7 +780,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 const withVerify = async (base: string): Promise<string | ToolResult> => {
                     if (!verify || !verifyArea) return base;
                     const v = await verifyArea(ctx, null, "wait");
-                    return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };
+                    return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback, ...(v.verifyRequest ? { verifyRequest: v.verifyRequest } : {}) };
                 };
                 if (selector) {
                     const cap = Math.min(Math.max(timeout | 0, 0) || 5000, 30000);

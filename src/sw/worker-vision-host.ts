@@ -7,14 +7,15 @@
 // reply, no model name. Every answer is rebuilt by `checkGeometry` before a body reads it, bounded by a per-question
 // timeout, and correlated to its question. A malformed or late answer, or a document change, refuses the WHOLE call:
 // the host remembers the first refusal and every later question gets it too (`refusal()`, `onWorkerHost`).
-// Nothing builds one yet: look and locate move onto it in later PRs (docs/spec/SITE_ACCESS.md, slice 2 part 3).
+// The verify after an action runs over it (worker-verify.ts); look and locate move onto it in later PRs (docs/spec/SITE_ACCESS.md,
+// slice 2 part 3).
 
 import type { GeoView, Geometry, Shot, StitchBegin, TargetQuery, VisionHost } from "../tools/vision-host";
 import type { VisionMemory } from "../contract/contract-render";
 import { shootVia } from "../ml/ml-vision";
 import { workerRaster, type Raster } from "../raster";
 import { checkGeometry, DPR_MAX, GEOMETRY_MOVED, GEOMETRY_REFUSED, GEOMETRY_SLOW, GEOMETRY_UNREACHABLE, STITCH_TILES, type GeoAsked, type GeoOp } from "./geometry-check";
-import { delegateSend } from "./sw-run-host";
+import { delegateSend } from "./delegate-send";
 import { recordRunLog } from "./sw-run-log";
 import { topDocument, visionMemoryFor, workerShot, workerVisionChat } from "./worker-vision";
 
@@ -33,6 +34,12 @@ const SCALE_MIN = 0.25;
 /** How far short of the viewport a stitch's height may be: a page no taller than its viewport, less a horizontal
  *  scrollbar (`innerHeight` counts the scrollbar, `scrollHeight` does not). */
 const STITCH_SHORT_PX = 32;
+
+/** The raster a host draws with when its caller names none; a vm test sets one (it has no OffscreenCanvas). */
+let defaultRaster: Raster | null = null;   // state: test — set only by the worker's test hook
+
+/** Draw with `r` in every host whose caller names no raster (the worker's test hook; null restores the real one). */
+export function useRasterForTest(r: Raster | null): void { defaultRaster = r; }
 
 /** Stitch ids for the whole worker, so two vision calls of one run (one page) never share one. */
 let stitchSeq = 0;   // state: plumbing — only unique within the worker's life; the page ends a reused id's old stitch
@@ -224,7 +231,7 @@ export function workerVisionHost(runId: string, tabId: number, documentId: strin
             if (refused) return Promise.reject(new Error(refused));
             return workerVisionChat(runId, prompt, o);
         },
-        raster: opts.raster ?? workerRaster,
+        raster: opts.raster ?? defaultRaster ?? workerRaster,
         memory,
         refusal: () => refused,
         commit: () => {

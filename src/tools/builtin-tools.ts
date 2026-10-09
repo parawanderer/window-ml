@@ -1036,6 +1036,14 @@ const VERIFY_MARGIN = 150;
 // A passed-in verify capability (built with `ml` where it's available) so the PURE domTools (wait, in
 // tools.ts, which have no `ml`) can verify too — without depending on ml directly.
 export type VerifyArea = (ctx: ToolContext | undefined, center: { x: number; y: number } | null, verb: string, mutated?: boolean) => Promise<Partial<ToolResult>>;
+/** The tool calls whose run takes its verifies in the worker: the worker said so in the call's RUN_TOOL_IN_PAGE
+ *  (`verifyInWorker`), and run-delegation.ts marks the call's context. Such a call captures nothing and calls no model
+ *  for its verify: it hands back a `verifyRequest` instead (docs/dev/agent-tools.md, "The worker's vision host"). */
+const WORKER_VERIFIES = Symbol("verifyInWorker");   // a symbol, so the per-call copy `executeTool` makes keeps it
+/** Mark a call's context as one whose verify the worker takes. */
+export function verifyInWorker(ctx: ToolContext): void { (ctx as unknown as Record<symbol, boolean>)[WORKER_VERIFIES] = true; }
+/** Whether a call's verify is the worker's to take (its context was marked by {@link verifyInWorker}). */
+export const verifiesInWorker = (ctx: ToolContext | undefined): boolean => !!ctx && (ctx as unknown as Record<symbol, boolean>)[WORKER_VERIFIES] === true;
 /** The verify after an action: a clean crop of the area around `center` (the viewport when null), inline for a driver
  *  that sees, else the host's reader describes it; with the DOM legend of that area. */
 export async function captureVerify(host: VisionHost, ctx: ToolContext | undefined, center: { x: number; y: number } | null, verb: string, mutated = false): Promise<Partial<ToolResult>> {
@@ -1169,6 +1177,7 @@ export const buildClickTool = (ml: MlApi): MlTool => {
                 const after = (typeof location !== "undefined" && location.href) || "";
                 const nav = after && after !== before ? ` Navigated to ${after}.` : "";
                 const base = `Clicked at (${pt.x}, ${pt.y}) on ${elLine(hit)}.${nav} Page title: ${truncate(document.title || "", 80)}.${repeatPointHint(token)}`;
+                if (verify && verifiesInWorker(ctx)) return { content: base, verifyRequest: { kind: "area", center: { x: pt.x, y: pt.y } } };
                 if (verify) { const v = await captureVerify(pageVisionHost(ml), ctx, { x: pt.x, y: pt.y }, "clicked"); return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback }; }
                 return `${base} Re-run look to see the result.`;
             }
@@ -1203,6 +1212,7 @@ export const buildClickTool = (ml: MlApi): MlTool => {
                 // Re-resolve: center on the element's CURRENT spot if it survived, else its pre-action spot (mutated).
                 let center = preCenter, mutated = false;
                 try { const now = queryAll(selector)[index]; const c = (now && isElement(now)) ? elementCenter(now) : null; if (c) center = c; else mutated = true; } catch { mutated = true; }
+                if (center && verifiesInWorker(ctx)) return { content: base, verifyRequest: { kind: "area", center, ...(mutated ? { mutated } : {}) } };
                 if (center) { const v = await captureVerify(pageVisionHost(ml), ctx, center, "clicked", mutated); return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback }; }
             }
             return `${base} Re-run look/findByText to see the result.`;
@@ -1312,6 +1322,11 @@ export const buildTypeTool = (ml: MlApi): MlTool => {
                 // fixed-radius point crop. If it VANISHED after submit (navigation), fall back to a point crop of
                 // where it was, flagged as mutated.
                 let now: Element | undefined; try { now = queryAll(selector)[index]; } catch { /* gone */ }
+                // The worker takes this run's verifies: the same choice (the whole field, else the area where it was), as data.
+                if (verifiesInWorker(ctx)) {
+                    if (now && isElement(now)) return { content: base, verifyRequest: { kind: "element", selector, ...(index ? { index } : {}), line: elLine(now), ...(preCenter ? { center: preCenter } : {}) } };
+                    if (preCenter) return { content: base, verifyRequest: { kind: "area", center: preCenter, mutated: true } };
+                }
                 if (now && isElement(now)) {
                     const v = await captureVerifyElement(pageVisionHost(ml), ctx, selector, "typed", `the field ${elLine(now)}`, index);
                     if (v.content || v.image || v.feedback) return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };

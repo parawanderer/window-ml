@@ -119,7 +119,7 @@ on `pageVisionHost` (`src/dom/page-geometry.ts`), which answers from the DOM, CA
 before; the seam is what lets a worker host ask the same geometry of the page over a message instead
 (`tests/vision-host.test.mjs` drives the bodies over a fake host with no DOM in the process).
 
-**The worker's vision host** (`workerVisionHost`, `src/sw/worker-vision-host.ts`; built, not yet used by a tool). The
+**The worker's vision host** (`workerVisionHost`, `src/sw/worker-vision-host.ts`; the verify after an action runs on it). The
 same bodies, with the capture (`workerShot`), the drawing (`workerRaster`) and the model call (`workerVisionChat`) in
 the worker, and only GEOMETRY asked of the page: `RUN_TOOL_IN_PAGE { runId, geometry: { seq, op, ...args } }` through
 `delegateSend`, pinned to one documentId for the whole call, answered by `answerGeometry` (page-geometry.ts) in
@@ -138,6 +138,39 @@ refused stitch is still ended while the document is the call's. The pixel ratio 
 what the page reported, the capture's wins and the run log notes `routing`/`dpr-mismatch`. The worker bounds a stitch
 itself (nine tiles, a canvas of at most 65536 device px). Tests: `tests/geometry-check.test.mjs`,
 `tests/worker-vision-host.test.mjs`.
+
+**The verify of a worker-built run is the worker's** (`src/sw/worker-verify.ts`). For a run the worker built or was
+handed, the run host sends the call itself with `verifyInWorker: true`; the page marks the call's context
+(`verifyInWorker`, builtin-tools.ts) and its click, type or wait captures nothing and calls no model: it answers with a
+`verifyRequest`, plain data saying what the page's own verify would have pictured: `{ kind: "area", center, mutated? }`
+(click, and a type whose field vanished), `{ kind: "element", selector, index?, line?, center? }` (type: the field, its
+`elLine`, and the pre-action centre to fall back to) or `{ kind: "viewport" }` (wait). `checkVerifyRequest` rebuilds it
+or refuses it whole: only a click, type or wait the MODEL asked to verify may have one, only of the kinds that tool
+makes; coordinates finite and clamped to ±1e5; an element is the call's own `selector` and `index` (a page cannot point
+the picture at another element), held to geometry-check's selector rules; the line folded and cut to 200. A refused
+request appends a fixed note; one the model did not ask for is dropped silently. The worker then runs the same bodies
+(`captureVerify`, `captureVerifyElement`) on a worker host, so the model gets the text and picture it got before, and
+the reader's call is metered into the run (`ensureRunState`, worker-tools.ts). The CDP ring-backs (a debugger click, a
+sealed-shadow click, a trusted type, a navigate's destination) take the verify in the worker directly, with the target
+chosen from the call's own arguments (`@focus` → the focused element, a canvas → the call's selector), and whether to
+verify is the model's `verify`, never the page's flag. Page-hosted runs keep the page's verify and its ring-backs.
+Pinning: a click/type/wait verify is pinned to the document the call was SENT to (else, when a navigation was in
+flight, the tab's top document once the answer is in), because the request's coordinates and selector describe that
+document. An action that navigated the tab therefore gets the refusal sentence ("the page changed … look again"), never
+a picture of the destination taken with the old page's geometry. A `navigate` verify is the one meant for the
+destination: it is pinned to the tab's top document after the new page re-adopted the run. The verify is unmistakably
+the worker's: before anything is appended, the page's result text has the verify's marks folded (`foldVerifyMarks`):
+every 👁 (the mark a reader's description opens with) becomes "(eye)", and the sentence that presents a reader's
+description ("You can't see images, so this is …'s description:", apostrophes and spacing varied) is quoted as the
+page's own text. The worker's block then needs no separator of its own: its 👁 is the only one in the result, a page
+cannot write that code point, and a driver that sees gets the worker's image, which no page envelope can carry. An
+honest run's text is unchanged. The fold is narrow on purpose (any other text is the page's word, as before), so a
+paraphrase or a homoglyph of the lead sentence is still readable as page text, just never with the worker's mark. A
+verify the model asked for that does not happen says so in a fixed note: the page sent no request (`VERIFY_WITHHELD`),
+a malformed one (`VERIFY_REFUSED`), a refused geometry call, or a capture that failed (the worker's own sentence, such
+as the tab not showing). Who strips is decided on the page's ANSWER, so a call in flight when the person takes a run
+over comes back stripped. Tests: `tests/worker-verify.test.mjs`, `tests/review-verify.test.mjs`, and the verify cases
+of `tests/vision-characterize.test.mjs`.
 
 **Agent self-knowledge (`agent_api_docs`).** The agent had none: asked "how do I call you
 from the console?" it answered from pre-training ("try typing `window`…"), because nothing in
@@ -443,7 +476,7 @@ always coarse; the background-hosted loop calls `focusLineFor` directly. Both re
 - **A delegated tool has a THIRD outcome, and it is the one that hurts.** `chrome.tabs.sendMessage` to a tab the
   browser has put to sleep in the background neither answers nor rejects — the content script is registered, the
   renderer is simply not running it — so the send sits. A measured run spent 13m57s inside one `pageInfo` and was
-  released by the person opening the tab. Every send goes through `delegateSend` (sw-run-host.ts), which watches
+  released by the person opening the tab. Every send goes through `delegateSend` (delegate-send.ts), which watches
   the tab while it waits (`page-reachable.ts`): a `discarded` tab is reloaded in place and retried once (it has no
   document, so a reload costs nothing already lost), and a frozen one, which the browser labels as nothing unusual,
   is bounded by a deliberately generous cap. A tab hosting a run is also pinned (`autoDiscardable: false`) and
