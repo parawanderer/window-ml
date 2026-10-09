@@ -2,6 +2,7 @@
 // wrong line in. A mark is POSTed to the dashboard, appended to the sweep's marks.jsonl, and checked on every later run of
 // that model at that turn (interview.mjs `checkMarks`); the checks come back on the run as `checks`.
 
+import { Tip } from "./tip";
 import { useState, useRef } from "preact/hooks";
 import type { BenchState, RunState } from "./state";
 import { Outcome, runDir } from "./runs";
@@ -35,10 +36,10 @@ function AnswerCell({ r, turn, base, live, mode, onMark }: { r: RunState; turn: 
     return (
         <div class="ans">
             <div class="meta">
-                <span>{t.tools.length} call{t.tools.length === 1 ? "" : "s"}{t.tools.length ? `: ${t.tools.join(", ")}` : ""}</span>
-                {t.capped ? <span class="badge warn">step cap</span> : null}
+                <Tip tip="The tools the model called during this turn, in order.">{t.tools.length} call{t.tools.length === 1 ? "" : "s"}{t.tools.length ? `: ${t.tools.join(", ")}` : ""}</Tip>
+                {t.capped ? <span class="badge warn tt" data-tip="The turn ran out of steps before it answered: what is shown is where it stopped.">step cap</span> : null}
                 <span class="sp" />
-                {dir ? <><a class="view" href={`${dir}/run.md.html`} data-title={who}>run</a><a class="view" href={`${dir}/outbox/turn-${turn}.md`} data-title={who}>turn</a></> : null}
+                {dir ? <><a class="view tt" href={`${dir}/run.md.html`} data-title={who} data-tip="The whole run's transcript, every turn.">run</a><a class="view tt" href={`${dir}/outbox/turn-${turn}.md`} data-title={who} data-tip="This turn's report as the bench saved it (outbox/turn-N.md).">turn</a></> : null}
                 {live && r.state === "done"
                     ? <button class="btn small danger" onMouseDown={() => { picked.current = selectionIn(txt.current); }}
                         onClick={() => onMark({ taskId: r.taskId, who: r.who, turn, hash: r.hash ?? null }, picked.current)}>mark wrong</button>
@@ -53,7 +54,7 @@ function AnswerCell({ r, turn, base, live, mode, onMark }: { r: RunState; turn: 
                     <b>{c.here ? "marked wrong" : c.still ? "still says a line marked wrong" : "no longer says a line marked wrong"}</b>
                     {c.quote ? <q>{c.quote.slice(0, 300)}</q> : null}
                     {c.note ? <span class="dim"> — {c.note}</span> : null}
-                    <span class="by" title={c.at ?? ""}>{c.by}</span>
+                    <span class="by tt" data-tip={`Marked by ${c.by}${c.at ? ` at ${new Date(c.at).toLocaleString()}` : ""}`}>{c.by}</span>
                 </div>
             ))}
         </div>
@@ -99,10 +100,10 @@ export function Answers({ s, base, live }: { s: BenchState; base: string; live: 
     return (
         <section class="card">
             <header>
-                <h2>Answers</h2>
-                <span class="sub">{live ? "Select a line in an answer and press mark wrong; every later run of that model is checked for it." : "Each turn's answers, side by side."}</span>
+                <h2><Tip tip="Each interview turn as a row, each run as a column: what every model answered to the same question. Also in summary.md.">Answers</Tip></h2>
+                <span class="sub">{live ? "Select a line in an answer and press mark wrong; every later run of that model is checked for it." : ""}</span>
                 <span class="seg" role="group" aria-label="how answers are shown">
-                    {(["md", "raw"] as const).map((m) => <button key={m} class={`btn small${mode === m ? " on" : ""}`} aria-pressed={mode === m} onClick={() => setMode(m)}>{m === "md" ? "markdown" : "raw"}</button>)}
+                    {(["md", "raw"] as const).map((m) => <button key={m} class={`btn small tt${mode === m ? " on" : ""}`} data-tip={m === "md" ? "Answers rendered as the panel renders them." : "Answers exactly as the model sent them."} aria-pressed={mode === m} onClick={() => setMode(m)}>{m === "md" ? "markdown" : "raw"}</button>)}
                 </span>
             </header>
             {s.skipped?.length ? <div class="note">Skipped (failed the tool-call probe): {s.skipped.map((k) => <span key={k.model}><code>{k.model}</code> {k.why}; </span>)}</div> : null}

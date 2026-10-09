@@ -181,3 +181,8 @@ h1.from, p.from { width: fit-content; max-width: 100% }
 .seg .btn.on { background: var(--panel); color: var(--fg); font-weight: 600 }
 .ans .txt.md { white-space: normal }
 .ans .txt.md > :last-child { margin-bottom: 0 }
+
+/* A label with an explanation on hover (tip.tsx): a faint dotted underline, nothing more. */
+.help { cursor: help; text-decoration: underline dotted color-mix(in srgb, var(--fg-faint) 70%, transparent); text-underline-offset: 3px }
+th .help { text-decoration-color: color-mix(in srgb, var(--fg-faint) 50%, transparent) }
+.tile .tt { display: inline }

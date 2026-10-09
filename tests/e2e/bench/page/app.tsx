@@ -34,16 +34,23 @@ function ThemeToggle() {
     useEffect(() => { applyTheme(theme); try { localStorage.setItem(THEME_KEY, theme); } catch { /* private mode */ } }, [theme]);
     const next: Record<Theme, Theme> = { auto: "light", light: "dark", dark: "auto" };
     const icon = { auto: "◐", light: "☀", dark: "☾" }[theme];
-    return <button class="btn small" title={`Theme: ${theme} (click for ${next[theme]})`} aria-label={`Theme: ${theme}`} onClick={() => setTheme(next[theme])}>{icon} {theme}</button>;
+    return <button class="btn small tt" data-tip={`Theme: ${theme}${theme === "auto" ? " (follows the system)" : ""}. Click for ${next[theme]}.`} aria-label={`Theme: ${theme}`} onClick={() => setTheme(next[theme])}>{icon} {theme}</button>;
 }
 
 /** The models behind the runs, by role: the driver, the vision reader and the utility model, since a delegated look or
  *  a utility call makes "which model produced this" three questions. */
+/** What each model of a run does, for its pill's tooltips. */
+const ROLE_TIP = {
+    driver: "The model that runs the agent: it reads the page and picks every tool call.",
+    vision: "The model that reads screenshots for look, locate and verify.",
+    utility: "A small, cheap model for side tasks, such as summarising a session into its title.",
+};
+
 function Models({ s }: { s: BenchState }) {
     const seen = new Map<string, NonNullable<BenchState["runs"][number]["models"]>>();
     for (const r of s.runs) if (r.models) seen.set([r.models.driver, r.models.vision, r.models.utility].join(" "), r.models);
     if (!seen.size) return null;
-    const role = (k: string, v?: string | null) => <span class={`role${v ? "" : " none"}`}><span class="rk">{k}</span>{v ? <code>{v}</code> : "none"}</span>;
+    const role = (k: keyof typeof ROLE_TIP, v?: string | null) => <span class={`role tt${v ? "" : " none"}`} data-tip={ROLE_TIP[k]}><span class="rk">{k}</span>{v ? <code>{v}</code> : "none"}</span>;
     return <div class="models">{[...seen.values()].map((m, i) => <span key={i} class="mset">{role("driver", m.driver)}{role("vision", m.vision)}{role("utility", m.utility)}</span>)}</div>;
 }
 
@@ -65,12 +72,12 @@ function Head({ s, disconnected }: { s: BenchState; disconnected: boolean }) {
             </div>
             <div class="bar"><i style={{ width: `${pct}%` }} /></div>
             <div class="counts">
-                <span class="badge">{done} / {s.runs.length} runs · {pct}%</span>
+                <span class="badge tt" data-tip="Runs finished out of the whole matrix.">{done} / {s.runs.length} runs · {pct}%</span>
                 {failed ? <span class="badge bad">{failed} failed</span> : null}
-                {cached ? <span class="badge">{cached} cached</span> : null}
-                {s.finished ? <span class="badge ok">done</span> : <span class="badge">{s.jobs} job{s.jobs > 1 ? "s" : ""}</span>}
-                {s.spec?.changed ? <a class="badge warn" href="#spec" title="the spec differs from the sweep before: see the Spec card">spec changed</a> : null}
-                {s.dirty ? <span class="badge warn" title="uncommitted changes: these numbers are not reproducible from a commit">dirty tree</span> : null}
+                {cached ? <span class="badge tt" data-tip="Runs not re-run: an earlier sweep of the same build measured them. --no-cache runs them again.">{cached} cached</span> : null}
+                {s.finished ? <span class="badge ok">done</span> : <span class="badge tt" data-tip="Runs going at once, each in its own browser (--jobs).">{s.jobs} job{s.jobs > 1 ? "s" : ""}</span>}
+                {s.spec?.changed ? <a class="badge warn tt" href="#spec" data-tip="The spec differs from the sweep before: see the Spec card.">spec changed</a> : null}
+                {s.dirty ? <span class="badge warn tt" data-tip="Built with uncommitted changes: these numbers are not reproducible from a commit.">dirty tree</span> : null}
                 {disconnected ? <span class="badge bad">disconnected</span> : null}
             </div>
         </header>

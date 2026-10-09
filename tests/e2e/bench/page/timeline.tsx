@@ -3,6 +3,7 @@
 // model). The events are the resource panel's derivation (`eventsFrom`), sent by the harness; the layout and the bars
 // are the panel's too (lane-view.tsx).
 
+import { Tip } from "./tip";
 import type { BenchState } from "./state";
 import { LaneRows, LaneAxis, laneWindow } from "./lane-view";
 import { runName } from "./runs";
@@ -16,16 +17,15 @@ export function SweepTimeline({ s }: { s: BenchState }) {
     return (
         <section class="card">
             <header>
-                <h2>Timeline</h2>
-                <span class="sub">Each run's model calls, tool steps and loads on one clock; rows that overlap ran at the same time. Hover a bar for what it was.
-                    {cached ? ` ${cached} cached run(s) are not drawn: they ran in an earlier sweep.` : ""}</span>
+                <h2><Tip tip="Each run's model calls, tool steps and model loads on one clock. Rows that overlap ran at the same time; on one GPU that is contention. Hover a bar for what it was. Also as text in timeline.md.">Timeline</Tip></h2>
+                {cached ? <span class="sub">{cached} cached run(s) are not drawn: they ran in an earlier sweep.</span> : null}
             </header>
             <div class="tl">
                 {t.runs.map(({ index, events }) => {
                     const r = s.runs[index];
                     const name = runName(r, s.dims);
                     return [
-                        <div key={`w${index}`} class="who" title={name}>{name}</div>,
+                        <div key={`w${index}`} class="who"><Tip tip={name}>{name}</Tip></div>,
                         <section key={`l${index}`} class="wml-lane"><LaneRows events={events} axis={axis} now={t.now} maxRows={4} maxTotal={6} /></section>,
                     ];
                 })}

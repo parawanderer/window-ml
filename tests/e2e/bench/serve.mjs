@@ -167,7 +167,7 @@ export async function startDashboard({ port = DEFAULT_PORT, artifactRoot, onMark
          * saying the sweep finished) is never the one dropped.
          */
         update(next) {
-            state = { ...next, columns: COLUMNS.map((c) => ({ key: c.key, label: c.label, digits: c.digits })) };
+            state = { ...next, columns: COLUMNS.map((c) => ({ key: c.key, label: c.label, about: c.about, digits: c.digits })) };
             if (flushTimer) return;
             flush();
             flushTimer = setTimeout(() => { flushTimer = null; flush(); }, 150);
@@ -200,5 +200,5 @@ export async function startDashboard({ port = DEFAULT_PORT, artifactRoot, onMark
  * @returns {Promise<string>} a self-contained HTML document
  */
 export async function staticPage(state) {
-    return pageHtml({ ...state, artifactBase: "", columns: COLUMNS.map((c) => ({ key: c.key, label: c.label, digits: c.digits })) });
+    return pageHtml({ ...state, artifactBase: "", columns: COLUMNS.map((c) => ({ key: c.key, label: c.label, about: c.about, digits: c.digits })) });
 }

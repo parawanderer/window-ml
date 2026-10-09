@@ -109,6 +109,25 @@ test("text the page did not write says where it came from: the sweep's name and 
     assert.match(tip(doc.querySelector(".ans .txt")), /What a answered at turn 1, rendered as markdown/);
 });
 
+test("every column, tile and card heading explains itself on hover, in the panel's tooltip, never the browser's", async () => {
+    const doc = await dashboard({
+        dims: ["model"], interviews: { rev: ["q"] },
+        rows: [{ combo: { model: "a" }, taskId: "rev", agg: { runs: 1, errors: 0, steps: { mean: 2, sd: null, n: 1 } } }],
+        runs: [{ combo: { model: "a" }, who: "a", taskId: "rev", repeat: 0, state: "done", ok: true, path: "p", hash: "h".repeat(32), steps: 2, secs: 1,
+            models: { driver: "a", vision: null, utility: "u" }, turns: [{ answer: "x", tools: ["exec"], capped: true }], checks: [] }],
+    });
+    const tipOf = (el) => el.querySelector("[data-tip]")?.getAttribute("data-tip") || el.closest("[data-tip]")?.getAttribute("data-tip");
+    for (const th of doc.querySelectorAll("th")) assert.ok(tipOf(th), `column "${th.textContent}" has a tip`);
+    for (const t of doc.querySelectorAll(".tile")) assert.ok(tipOf(t), `tile "${t.textContent}" has a tip`);
+    for (const h of doc.querySelectorAll(".card > header h2")) assert.ok(tipOf(h), `card "${h.textContent}" has a tip`);
+    for (const r of doc.querySelectorAll(".mset .role")) assert.ok(tipOf(r), "each model role says what it does");
+    const { COLUMNS } = await import("../tests/e2e/bench/metrics.mjs");
+    for (const c of COLUMNS) assert.ok(c.about, `metrics.mjs column ${c.key} says what it is`);
+    const results = [...doc.querySelectorAll(".card")].find((c) => c.querySelector("h2")?.textContent === "Results");
+    assert.equal(tipOf([...results.querySelectorAll("th")].find((th) => th.textContent === "steps")), COLUMNS.find((c) => c.key === "steps").about, "a result column's tip is metrics.mjs's `about`");
+    assert.equal(doc.querySelectorAll("#app [title]").length, 0, "no browser tooltips");
+});
+
 // --- the dashboard's Timeline card ---
 
 test("the timeline draws each run that has events as its own lane, on one shared axis, and leaves out cached runs", async () => {

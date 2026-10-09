@@ -48,7 +48,7 @@ export interface BenchState {
     name: string;
     description?: string;
     dims: string[];
-    columns: { key: string; label: string; digits: number }[];
+    columns: { key: string; label: string; about?: string; digits: number }[];
     runs: RunState[];
     rows: { combo: Record<string, unknown>; taskId: string; agg: Record<string, Agg> & { runs: number; errors: number } }[];
     started: number;

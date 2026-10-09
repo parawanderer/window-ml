@@ -1,6 +1,11 @@
 // runs.tsx — the sweep's tables and the pieces that describe one run: its outcome badge, its artifacts, what is in
 // flight, and the aggregate results.
 
+import { Tip } from "./tip";
+
+/** A spec dimension's column: what a value in it is. */
+const dimTip = (d: string) => `A dimension of the spec: the value of ${d} this run used.`;
+const TASK_TIP = "The spec's task id: what the run was asked to do.";
 import { Hash } from "../../../../src/sidebar/copy-hash";
 import type { BenchState, RunState, Agg } from "./state";
 import { dur } from "./format";
@@ -38,7 +43,7 @@ function OutcomeLink({ r, dir, dims }: { r: RunState; dir: string; dims: string[
     const f = r.focus;
     // The heading slugs are lower-cased, so the tool is too (sampleText -> sampletext).
     const anchor = f ? `#step-${f.step}${f.tool ? `-${String(f.tool).toLowerCase()}` : ""}` : "";
-    return <a class="view plain" href={`${dir}/run.md.html${anchor}`} title={f ? `step ${f.step} — ${f.why}` : "open the transcript"} data-title={runName(r, dims)}><Outcome r={r} /></a>;
+    return <a href={`${dir}/run.md.html${anchor}`} class="view plain tt" data-tip={f ? `Opens the transcript at step ${f.step}: ${f.why}` : "Opens the transcript"} data-title={runName(r, dims)}><Outcome r={r} /></a>;
 }
 
 /** What is running, lifted out of the table: with `--jobs N` the live rows can be anywhere in a hundred. */
@@ -47,7 +52,7 @@ export function Flight({ s }: { s: BenchState }) {
     if (!live.length) return null;
     return (
         <section class="card">
-            <header><h2>Running now</h2><span class="sub">{live.length} of {s.jobs} job{s.jobs > 1 ? "s" : ""}</span></header>
+            <header><h2><Tip tip="The runs in flight: the step against its budget, the tool it is in, and how long it has been going.">Running now</Tip></h2><span class="sub">{live.length} of {s.jobs} job{s.jobs > 1 ? "s" : ""}</span></header>
             <div class="flight">
                 {live.map((r) => (
                     <div key={r.path || runName(r, s.dims)} class="frow">
@@ -72,14 +77,14 @@ export function Stats({ s }: { s: BenchState }) {
     const steps = timed.reduce((a, r) => a + (r.steps || 0), 0);
     const left = s.runs.length - done.length;
     const eta = !s.finished && meanRun != null && timed.length >= 3 && left > 0 ? new Date(now + (left * meanRun * 1000) / Math.max(1, s.jobs)) : null;
-    const tile = (label: string, value: string, title = "") => <div class="tile" title={title}><b>{value}</b><span>{label}</span></div>;
+    const tile = (label: string, value: string, tip: string) => <div class="tile"><b>{value}</b><span><Tip tip={tip}>{label}</Tip></span></div>;
     return (
         <div class="tiles">
-            {tile("elapsed", dur((s.finished || now) - s.started))}
-            {tile("per run", meanRun == null ? "–" : dur(meanRun * 1000), timed.length ? `mean over ${timed.length} timed runs` : "")}
-            {tile("per step", steps ? `${(total / steps).toFixed(1)}s` : "–", steps ? `${steps} steps across ${timed.length} runs` : "")}
-            {s.finished ? tile("finished", dur(s.finished - s.started))
-                : tile("eta", eta ? eta.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "–", eta ? `about ${dur(eta.getTime() - now)} left, at ${s.jobs} job(s)` : "needs a few runs first")}
+            {tile("elapsed", dur((s.finished || now) - s.started), "Wall-clock time since the sweep started.")}
+            {tile("per run", meanRun == null ? "–" : dur(meanRun * 1000), `Mean wall-clock time of one run${timed.length ? `, over ${timed.length} timed run(s)` : ""}. Cached runs are left out: their time belongs to an earlier sweep.`)}
+            {tile("per step", steps ? `${(total / steps).toFixed(1)}s` : "–", `Mean time of one agent step (a tool call or an answer)${steps ? `: ${steps} steps across ${timed.length} run(s)` : ""}.`)}
+            {s.finished ? tile("finished", dur(s.finished - s.started), "How long the whole sweep took.")
+                : tile("eta", eta ? eta.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "–", eta ? `When the sweep should end: about ${dur(eta.getTime() - now)} left, from the mean run time at ${s.jobs} job(s).` : "When the sweep should end; shown once three runs have been timed, since one sample is a guess.")}
         </div>
     );
 }
@@ -93,10 +98,10 @@ function Fmt({ a, digits }: { a?: Agg; digits: number }) {
 export function Results({ s }: { s: BenchState }) {
     return (
         <section class="card">
-            <header><h2>Results</h2><span class="sub">Mean over each cell's repeats, ± the sample standard deviation; — is not measured.</span></header>
+            <header><h2><Tip tip="One row per combination and task: the mean over its repeats, ± the sample standard deviation. A dash is not measured. Also in report.md and rows.json.">Results</Tip></h2></header>
             {!s.rows?.length ? <div class="empty">Nothing measured yet.</div> : (
                 <div class="tablewrap"><table>
-                    <thead><tr>{s.dims.map((d) => <th key={d} class="l">{d}</th>)}<th class="l">task</th><th>runs</th>{s.columns.map((c) => <th key={c.key}>{c.label}</th>)}</tr></thead>
+                    <thead><tr>{s.dims.map((d) => <th key={d} class="l"><Tip tip={dimTip(d)}>{d}</Tip></th>)}<th class="l"><Tip tip={TASK_TIP}>task</Tip></th><th><Tip tip="Runs that completed out of the runs this row is the mean of (its repeats).">runs</Tip></th>{s.columns.map((c) => <th key={c.key}><Tip tip={c.about}>{c.label}</Tip></th>)}</tr></thead>
                     <tbody>{s.rows.map((r, i) => (
                         <tr key={i}>{s.dims.map((d) => <td key={d} class="l"><code>{String(r.combo[d])}</code></td>)}<td class="l">{r.taskId}</td>
                             <td>{r.agg.runs - r.agg.errors}/{r.agg.runs}</td>
@@ -113,10 +118,16 @@ export function Runs({ s, base }: { s: BenchState; base: string }) {
     const nextUp = s.runs.findIndex((r) => r.state === "pending");
     return (
         <section class="card">
-            <header><h2>Runs</h2><span class="sub">The status opens the transcript at the step that broke, when one did.</span></header>
+            <header><h2><Tip tip="Every run, in the order of the matrix. The status opens the transcript, at the step that broke when one did.">Runs</Tip></h2></header>
             {!s.runs.length ? <div class="empty">Nothing has started.</div> : (
                 <div class="tablewrap"><table>
-                    <thead><tr>{s.dims.map((d) => <th key={d} class="l">{d}</th>)}<th class="l">task</th><th class="l">run</th><th class="l">agent</th><th class="l">status</th><th>steps</th><th>secs</th><th class="l">artifacts</th></tr></thead>
+                    <thead><tr>{s.dims.map((d) => <th key={d} class="l"><Tip tip={dimTip(d)}>{d}</Tip></th>)}<th class="l"><Tip tip={TASK_TIP}>task</Tip></th>
+                        <th class="l"><Tip tip="Which repeat of this combination and task: r0 is the first.">run</Tip></th>
+                        <th class="l"><Tip tip="The run's session hash, the id the panel and run.json use. Click to copy it whole.">agent</Tip></th>
+                        <th class="l"><Tip tip="queued, running (step and tool), failed (the run errored), cached (measured in an earlier sweep of the same build), ok (no predicate to score it), correct or wrong (the task's predicate).">status</Tip></th>
+                        <th><Tip tip="Agent steps the run took: tool calls and answers.">steps</Tip></th>
+                        <th><Tip tip="Wall-clock seconds the run took.">secs</Tip></th>
+                        <th class="l"><Tip tip="read: the transcript, rendered (run.md.html). md: the same as markdown. json: the machine-readable export, for diffing two runs.">artifacts</Tip></th></tr></thead>
                     <tbody>{s.runs.map((r, i) => {
                         const dir = runDir(r, base);
                         const who = [runName(r, s.dims), r.hash].filter(Boolean).join(" · ");
