@@ -120,7 +120,10 @@ export async function startDashboard({ port = DEFAULT_PORT, artifactRoot, onMark
             });
             res.write(`data: ${JSON.stringify(state)}\n\n`);   // the current state, so a late tab is not blank
             clients.add(res);
-            req.on("close", () => clients.delete(res));
+            seen.set(res, version);
+            // Drained: the newest state, unless it already has it (resending the same one refilled the buffer forever).
+            res.on("drain", () => { if (behind.delete(res) && seen.get(res) !== version) sendState(res); });
+            req.on("close", () => { clients.delete(res); behind.delete(res); seen.delete(res); });
             return;
         }
         if (url.pathname === "/mark" && req.method === "POST" && onMark) {
@@ -167,10 +170,28 @@ export async function startDashboard({ port = DEFAULT_PORT, artifactRoot, onMark
     const url = `http://127.0.0.1:${server.address().port}`;
     if (bound !== port) console.log(`  (port ${port} was taken — serving on ${server.address().port} instead)`);
 
+    /**
+     * The clients that could not take the last state frame: its socket's buffer was full (a tab in the background, a
+     * slow link). A state frame REPLACES the one before, so such a client is skipped until it drains and then sent the
+     * newest one. Written to regardless, a reader that stopped reading kept every frame in this process: a 1 to 2 MB state
+     * several times a second filled the heap in minutes (a 330-run sweep died at 4 GB).
+     */
+    const behind = new Set();
+    /** Which state each client was last sent, by `version` (bumped on every update). */
+    const seen = new Map();
+    let version = 0, stateFrame = null;
+    const send = (c, frame) => {
+        try { if (!c.write(frame)) behind.add(c); } catch { clients.delete(c); behind.delete(c); }
+    };
+    const sendState = (c) => {
+        stateFrame ??= `data: ${JSON.stringify(state)}\n\n`;
+        seen.set(c, version);
+        send(c, stateFrame);
+    };
     /** A named event to every open page: `reload` after a rebuild, `build-error` when one failed. */
     const announce = (name, data) => {
         const frame = `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
-        for (const c of clients) { try { c.write(frame); } catch { clients.delete(c); } }
+        for (const c of clients) send(c, frame);   // rare and small: sent even to a client that is behind
     };
     // The live-edit loop. Debounced, since an editor's save is often several writes and a model's edit several files.
     const watchers = [];
@@ -195,8 +216,10 @@ export async function startDashboard({ port = DEFAULT_PORT, artifactRoot, onMark
 
     let flushTimer = null;
     const flush = () => {
-        const frame = `data: ${JSON.stringify(state)}\n\n`;
-        for (const c of clients) { try { c.write(frame); } catch { clients.delete(c); } }
+        for (const c of clients) {
+            if (behind.has(c) || seen.get(c) === version) continue;   // a client that is behind gets the newest when it drains
+            sendState(c);
+        }
     };
 
     return {
@@ -209,6 +232,7 @@ export async function startDashboard({ port = DEFAULT_PORT, artifactRoot, onMark
          */
         update(next) {
             state = { ...next, columns: COLUMNS.map((c) => ({ key: c.key, label: c.label, about: c.about, digits: c.digits })) };
+            version++; stateFrame = null;
             if (flushTimer) return;
             flush();
             flushTimer = setTimeout(() => { flushTimer = null; flush(); }, 150);
