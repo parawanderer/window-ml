@@ -1,0 +1,8 @@
+{
+  "about": "How a model uses agent_api_docs to learn the window.ml API, then a critical review of the tool and of the reference it returns, which is model-facing text end to end.",
+  "task": "Using agent_api_docs (not your memory), work out the exact calls for two things a user asked: (1) fetch a CSV file from a URL and get the sum of one column, and (2) ask a model a question and print its reply token by token as it streams. Give each as a short JavaScript snippet for the devtools console, and say which part of the reference each detail came from.",
+  "asks": [
+    "Now review agent_api_docs itself: its description, its parameters, and every piece of text it returned to you this session. Quote the parts that were unclear, wrong-seeming, contradictory, repeated, or that you had to work around, and say what each cost you (an extra call, a guess). What did you look for and not find?",
+    "Look again at the first, no-arguments view. Which parts did you actually use, and roughly what share of it was noise for this task? If you could change one thing about how the reference is split up or served (members, types, search, the default view), what would it be and why? Be specific and critical; this is for the people building it."
+  ]
+}
