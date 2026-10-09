@@ -2,7 +2,7 @@
 // and how the box's `/api/fits` answer is read. The cells are timers and the box is a function, so every case is exact.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { runLanes, fitsGate } from "../tests/e2e/bench/lanes.mjs";
+import { runLanes, fitsGate, settleUntilResident } from "../tests/e2e/bench/lanes.mjs";
 
 /** Cells as `model` strings; `fn` records what ran at once, each cell taking `ms`. */
 function harness(models, { ms = 20 } = {}) {
@@ -65,12 +65,31 @@ test("--jobs caps how many lanes run at once", async () => {
     assert.equal(h.peak(), 2);
 });
 
-test("a model that was not loaded is settled before the next lane asks, so two lanes are never both told it fits", async () => {
-    const h = harness(["a", "b"]);
-    const loaded = new Set(), asked = [];
-    const gate = async (m) => { asked.push([m, [...loaded].sort().join(",")]); return { go: true, local: true, resident: loaded.has(m), why: "fits" }; };
-    await runLanes(h.cells, opts(h, gate, { settle: async (m) => { loaded.add(m); } }));
-    assert.deepEqual(asked.map(([m, l]) => (m === "b" ? l : null)).filter((x) => x != null), ["a"], "b asked after a was loaded");
+test("a model that was not loaded is settled before the next local lane starts, so two lanes are never both told it fits", async () => {
+    const loaded = new Set(), startedWith = [];
+    const fn = async (m) => { startedWith.push([m, [...loaded].sort().join(",")]); await new Promise((r) => setTimeout(r, 20)); };
+    const gate = async (m) => ({ go: true, local: true, resident: loaded.has(m), why: "fits" });
+    await runLanes(["a", "b"], { modelOf: (m) => m, gate, fn, retryMs: 5, settle: async (m) => { await new Promise((r) => setTimeout(r, 10)); loaded.add(m); } });
+    assert.deepEqual(startedWith.find(([m]) => m === "b"), ["b", "a"], "b started once a had loaded");
+});
+
+test("a model loads when its own cell starts: cloud lanes never wait for it, the next local lane waits only until it has loaded", async () => {
+    // As on the box: a local model is resident only once a cell of it has run for a moment (its first request loads it).
+    const loaded = new Set(), started = [];
+    const t0 = Date.now();
+    const fn = async (m) => {
+        started.push([m, Date.now() - t0]);
+        if (m !== "cloud") setTimeout(() => loaded.add(m), 30);
+        await new Promise((r) => setTimeout(r, 60));
+    };
+    const gate = async (m) => (m === "cloud" ? { go: true, local: false, why: "cloud" } : { go: true, local: true, resident: loaded.has(m), why: "fits" });
+    // Settling gives up after 2 s, as the real one gives up after 3 min: waiting it out is the bug this guards.
+    const settle = settleUntilResident(gate, { timeoutMs: 2000, everyMs: 5 });
+    await runLanes(["a", "b", "cloud", "cloud", "cloud"], { modelOf: (m) => m, gate, fn, settle, retryMs: 2000 });
+    const at = (m, k = 0) => started.filter(([x]) => x === m)[k][1];
+    assert.ok(at("cloud", 2) < 500, `the cloud lane ran all three cells without waiting on a load (third at ${at("cloud", 2)} ms)`);
+    assert.ok(at("b") < 500, `b started once a had loaded, not after settle's timeout (${at("b")} ms)`);
+    assert.ok(at("b") >= at("a") + 25, "and not before a was loaded: a pair never both told it fits");
 });
 
 // --- reading the box's answer ---
