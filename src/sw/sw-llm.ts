@@ -15,7 +15,7 @@ import { generatesText, producesEmbeddings } from "../contract/contract-server";
 import { loadedFrom } from "../resource/resource-events";
 import { createFrameReader } from "../protostream";
 import { Frame } from "../proto/chat.gen";
-import { withCacheBreakpoints } from "./cache-breakpoints";
+import { withPromptCache } from "./cache-breakpoints";
 
 // The wire body we assemble for a chat request (grows per format/options).
 interface ChatBody {
@@ -612,10 +612,10 @@ export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSig
 
     const body: ChatBody = {
         model,
-        // An Anthropic model caches only up to a marked breakpoint (cache-breakpoints.ts); every other model gets the
-        // messages unchanged. The ollama format never reaches Anthropic.
-        messages: config.apiFormat === "ollama" ? messages.map(m => format.buildMessage(m)) : withCacheBreakpoints(messages.map(m => format.buildMessage(m)), model),
+        messages: messages.map(m => format.buildMessage(m)),
     };
+    // An Anthropic model caches its prefix only when asked (cache-breakpoints.ts). The ollama format never reaches one.
+    if (config.apiFormat !== "ollama") Object.assign(body, withPromptCache(body));
     // Ollama's thinking toggle. Only sent when explicitly boolean — models without
     // thinking support reject the param. Placement is per-format (see applyThink):
     // OpenWebUI's OpenAI route needs it in `params`, not top-level.
