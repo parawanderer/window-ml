@@ -10,6 +10,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { timelineText, labelSeed, SEED_LABEL } from "../tests/e2e/bench/timeline-text.mjs";
 import { addMark, readMarks } from "../tests/e2e/bench/mark.mjs";
+import { doneSummary, doneLine } from "../tests/e2e/bench/sinks.mjs";
 import { checkMarks } from "../tests/e2e/interview.mjs";
 
 const ev = (kind, t, until, extra = {}) => ({ kind, t, until, label: kind, model: "m", ...extra });
@@ -97,3 +98,17 @@ test("mark.mjs: with one interview in the sweep, --task is not needed; with seve
     fs.writeFileSync(path.join(dir, "page.json"), JSON.stringify({ interviews: { a: [], b: [] } }));
     assert.throws(() => cli("--model", "a", "--turn", "1", "--quote", "x"), /2 interviews \(a, b\): say which with --task/);
 });
+
+// --- the sweep's end, for a caller waiting on it ---
+
+test("done: counts what ran, what came from the cache, what errored and what a predicate scored; the exit says whether any errored", () => {
+    const run = (over) => ({ state: "done", ok: true, succeeded: null, cached: false, ...over });
+    const runs = [run({ succeeded: true }), run({ succeeded: false }), run({ ok: false }), run({ cached: true, succeeded: true }), { state: "pending", ok: false }];
+    const d = doneSummary("pb", runs, { report: "a/report.md", page: "http://127.0.0.1:7331" });
+    assert.deepEqual({ ...d, at: null }, { name: "pb", runs: 5, ran: 3, cached: 1, ok: 3, errors: 1, correct: 2, wrong: 1, report: "a/report.md", page: "http://127.0.0.1:7331", at: null, exit: 2 });
+    assert.equal(doneLine(d), "BENCH DONE pb runs=5 ran=3 cached=1 ok=3 errors=1 correct=2 wrong=1 report=a/report.md page=http://127.0.0.1:7331");
+    const clean = doneSummary("pb", [run({})], { report: "r.md" });
+    assert.equal(clean.exit, 0);
+    assert.match(doneLine(clean), /^BENCH DONE pb .* page=none$/, "no page without --serve");
+});
+

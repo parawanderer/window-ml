@@ -27,6 +27,13 @@ so START A SWEEP WITH `--serve` AND HAND THE HUMAN THE URL. It prints as a banne
   watch it live ↑  (120 runs)
 ```
 
+**A sweep ends by EXITING, so run it in the background and wait for it.** The last line it prints is
+`BENCH DONE <name> runs=… ok=… errors=… correct=… wrong=… report=… page=…` (and the same in `done.json` in the sweep
+directory); the status is 0 when no run errored, 2 when some did, 1 when the runner failed. With `--serve` the page
+stays up after the exit, served from the sweep's files by a detached `serve.mjs` on the same port, so the URL you
+handed over keeps working. The next sweep takes that port back; `node --import tsx tests/e2e/bench/serve.mjs --stop`
+stops it, and `serve.mjs <sweep dir>` serves any finished sweep again.
+
 **In VS Code, that URL docks as an editor tab.** Cmd-click it in the terminal and VS Code offers a picker
 — choose **Simple Browser** and the page opens beside the code, TensorBoard-style. Simple Browser is
 built in (it registers an external URI opener for http), so nothing needs installing. The port is stable,

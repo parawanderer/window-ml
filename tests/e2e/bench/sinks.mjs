@@ -120,3 +120,22 @@ export function writeReport(sweep, sink) {
     sink.note(`\`report.html\` beside this file is the same index as a page — the live view with the final state baked in, for a human.`);
     return sink.done();
 }
+
+/**
+ * What a finished sweep did, for done.json and the final line: how many runs, how many ran and how many came from the
+ * cache, how many errored (the harness or the backend failed: a timeout, a crash, a model that never answered) and how
+ * many a predicate scored right or wrong. `exit` is the process's status: 0 when no run errored, 2 when some did (1 is
+ * the runner itself crashing).
+ */
+export function doneSummary(name, runs, { report, page = null } = {}) {
+    const done = runs.filter((r) => r.state === "done");
+    const errors = done.filter((r) => !r.ok).length;
+    return {
+        name, runs: runs.length, ran: done.filter((r) => !r.cached).length, cached: done.filter((r) => r.cached).length,
+        ok: done.length - errors, errors, correct: done.filter((r) => r.succeeded === true).length, wrong: done.filter((r) => r.succeeded === false).length,
+        report, page, at: new Date().toISOString(), exit: errors ? 2 : 0,
+    };
+}
+
+/** The final line: `BENCH DONE <name> key=value …`, stable so a poller can grep for `^BENCH DONE`. */
+export const doneLine = (d) => `BENCH DONE ${d.name} runs=${d.runs} ran=${d.ran} cached=${d.cached} ok=${d.ok} errors=${d.errors} correct=${d.correct} wrong=${d.wrong} report=${d.report} page=${d.page ?? "none"}`;

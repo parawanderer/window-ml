@@ -14,14 +14,45 @@
 // reconnect in the browser.
 
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
-import { watch as fsWatch } from "node:fs";
-import { extname, join, normalize, resolve, sep } from "node:path";
+import { readFile, writeFile, rm, mkdir } from "node:fs/promises";
+import { watch as fsWatch, readFileSync } from "node:fs";
+import { extname, join, normalize, resolve, sep, dirname } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { COLUMNS } from "./metrics.mjs";
 import { appScript, scoresScript, appCss, invalidate } from "./page/bundle.mjs";
 
 /** The stable default. Arbitrary, but FIXED: a reused URL is the whole point (see startDashboard). */
 export const DEFAULT_PORT = 7331;
+
+/**
+ * Where a FINISHED sweep's page server says who it is (`{ pid, port, url, dir, at }`): `serveSweep` writes it once
+ * listening and removes it on the way out. The next sweep reads it to take the port back (so the URL a person was given
+ * stays the URL), and `serve.mjs --stop` to stop it. A sweep still RUNNING never writes it, so nothing stops a live one.
+ */
+export const SERVER_FILE = resolve(dirname(fileURLToPath(import.meta.url)), "../artifacts/bench/server.json");
+
+/** The finished sweep's server named in SERVER_FILE, when its process is still alive; else null. */
+export function servedSweep() {
+    let s;
+    try { s = JSON.parse(readFileSync(SERVER_FILE, "utf8")); } catch { return null; }
+    try { process.kill(s.pid, 0); return s; } catch { return null; }
+}
+
+/**
+ * Stop the finished sweep's server (SERVER_FILE), when there is one and, with `port`, when it holds that port: SIGTERM,
+ * then wait up to `waitMs` for it to go. Resolves what it stopped, or null.
+ */
+export async function stopServedSweep({ port = null, waitMs = 5000 } = {}) {
+    const s = servedSweep();
+    if (!s || s.pid === process.pid || (port != null && s.port !== port)) return null;
+    try { process.kill(s.pid, "SIGTERM"); } catch { return null; }
+    for (const until = Date.now() + waitMs; Date.now() < until;) {
+        try { process.kill(s.pid, 0); } catch { break; }
+        await new Promise((r) => setTimeout(r, 100));
+    }
+    await rm(SERVER_FILE, { force: true });
+    return s;
+}
 
 const MIME = {
     ".md": "text/plain; charset=utf-8", ".json": "application/json", ".txt": "text/plain; charset=utf-8",
@@ -123,6 +154,8 @@ export async function startDashboard({ port = DEFAULT_PORT, artifactRoot, onMark
     // That matters most in VS Code, where the page lives in a Simple Browser editor tab you would
     // otherwise have to reopen every run. Falls back to any free port if something already holds it,
     // rather than refusing to start over a convenience.
+    // A finished sweep's server left on the port (serveSweep) gives it back, so this sweep keeps the URL already in use.
+    if (port) await stopServedSweep({ port });
     let bound = port;
     try {
         await new Promise((res, rej) => server.listen(port, "127.0.0.1", res).once("error", rej));
@@ -216,3 +249,74 @@ export async function staticPage(state) {
  * Same stylesheet and tooltip layer as the sweep page.
  */
 export const scoresPage = (board) => pageHtml(board, { script: scoresScript, title: "scoreboard", key: "__BENCH_SCORES__" });
+
+/**
+ * Serve a FINISHED sweep's page from its directory, as the live page showed it at the end: page.json's state, the run
+ * artifacts, /scores read afresh, and marks (POST /mark, and marks.jsonl edits from mark.mjs) checked against the
+ * answers as the live sweep did. run.mjs hands its page to this in a detached process when a `--serve` sweep ends, so
+ * the sweep process can exit (its caller learns it is done) while the open browser tab reconnects to the same URL.
+ * Writes SERVER_FILE once listening; SIGTERM or SIGINT stops it and removes the file.
+ */
+export async function serveSweep(dir, { port = DEFAULT_PORT } = {}) {
+    const { readMarks, addMark } = await import("./mark.mjs");
+    const { checkMarks, validMark } = await import("../interview.mjs");
+    const { pageSources } = await import("./page/bundle.mjs");
+    const { openScores, readRuns, scoreboard } = await import("./scores.mjs");
+    const sweepDir = resolve(dir);
+    const state = JSON.parse(await readFile(join(sweepDir, "page.json"), "utf8"));
+    // page.json links the saved page's scoreboard beside the log; served, the scoreboard is /scores.
+    if (state.scores) state.scores = { ...state.scores, href: "/scores" };
+    const db = await openScores().catch(() => null);
+    let dash = null;
+    const recheck = async () => {
+        const marks = await readMarks(sweepDir);
+        for (const r of state.runs) if (r.turns) r.checks = checkMarks(r, marks);
+        dash?.update(state);
+    };
+    dash = await startDashboard({
+        port, artifactRoot: sweepDir, watch: pageSources(),
+        ...(db ? { scores: async () => scoreboard(readRuns(db)) } : {}),
+        onMark: async (body) => {
+            if (!validMark(body)) return null;
+            const mark = await addMark(sweepDir, body, "person (page)");
+            await recheck();
+            return mark;
+        },
+    });
+    await recheck();
+    let marksTimer = null;
+    const marksWatch = (() => {
+        try { return fsWatch(sweepDir, (_, f) => { if (f === "marks.jsonl") { clearTimeout(marksTimer); marksTimer = setTimeout(recheck, 100); } }); }
+        catch { return null; }
+    })();
+    const url = dash.url;
+    await mkdir(dirname(SERVER_FILE), { recursive: true });
+    await writeFile(SERVER_FILE, JSON.stringify({ pid: process.pid, port: Number(new URL(url).port), url, dir: sweepDir, at: new Date().toISOString() }));
+    const stop = async () => {
+        clearTimeout(marksTimer);
+        marksWatch?.close();
+        await dash.stop();
+        if (servedSweep()?.pid === process.pid) await rm(SERVER_FILE, { force: true });
+        process.exit(0);
+    };
+    process.once("SIGTERM", stop);
+    process.once("SIGINT", stop);
+    return { url, stop };
+}
+
+// node --import tsx tests/e2e/bench/serve.mjs <sweep dir> [--port N]   serve a finished sweep's page (run.mjs does this)
+// node --import tsx tests/e2e/bench/serve.mjs --stop                    stop the one that is serving
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+    const argv = process.argv.slice(2);
+    if (argv[0] === "--stop") {
+        const s = await stopServedSweep();
+        console.log(s ? `stopped the page server for ${s.dir} (${s.url}, pid ${s.pid})` : "no finished sweep is being served");
+    } else if (argv[0]) {
+        const i = argv.indexOf("--port");
+        const { url } = await serveSweep(argv[0], { port: i >= 0 ? Number(argv[i + 1]) : DEFAULT_PORT });
+        console.log(`serving ${argv[0]} at ${url}`);
+    } else {
+        console.log("usage: serve.mjs <sweep dir> [--port N] | --stop");
+        process.exit(2);
+    }
+}
