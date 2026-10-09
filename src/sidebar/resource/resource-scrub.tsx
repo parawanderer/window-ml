@@ -128,8 +128,10 @@ export function ScrubStrip({ samples, window: win, pan, events = [], follows }: 
             // A width dragged while following is a PREFERENCE, like the one in Settings — the same quantity,
             // reached the other way — so it is remembered rather than lost on the next mount.
             resWindowS.value = intent.windowS;
-            chrome.storage.local.set({ [RESWIN_KEY]: intent.windowS });
             zoomRange.value = null;
+            // Guarded, as `settleScrub` is: a page with no extension (the bench's) has no `chrome`, and the throw
+            // came before the zoom was cleared, so a box dragged back to the tail stayed pinned there.
+            try { chrome.storage.local.set({ [RESWIN_KEY]: intent.windowS }); } catch { /* opaque origin */ }
 
         };
         move(e);

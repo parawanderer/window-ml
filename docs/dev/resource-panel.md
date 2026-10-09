@@ -679,6 +679,9 @@ sidebar.css (`laneCss`). A change to how a bar looks is made there, once; `Event
   `WindowChip` (resource-scrub.tsx) is the width readout and its way back to the default, on the panel and the bench.
   **THE READOUT CLOSES OFF THE CHART** (resource-chart.tsx, document listeners): a move off the plots or onto a lane
   closes it unless the arrow keys hold a line; a PRESS off them (`offReadout`: the strip, a lane) closes it even then.
+  **These gestures have a jsdom suite**, `tests/chart-gestures.test.mjs`: the chart as the bench page bundles it (no
+  extension, so no `chrome`), every element given one 800 px box. A change to the window, the strip, the brush or the
+  readout runs it in a second; the e2e specs (`resource-panel`, `resource-stream`, `tooltips`) stay the panel's.
   **THE AXIS HOLDS UNDER THE POINTER** (`chartHeld`). A chart scrolling under a still cursor moves the sample being
   read; so while the pointer is on the plots or the lane, the axis (and the samples) it entered on are held, and it
   catches up when the pointer leaves. Letting go is the hard half: leaving the panel's IFRAME for the page tells the
