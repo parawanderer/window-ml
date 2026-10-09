@@ -473,6 +473,9 @@ test("the navigate verify ring-back (verifyViewport): the page captures the whol
     const w = await startVisionRun({ model: "text-driver", turns: [], reader: () => "The new page.",
         onDriverTurn: async (n, { page, runId }) => { if (n === 0) env = await page.deliver({ type: "RUN_TOOL_IN_PAGE", payload: { runId, verifyViewport: true } }); } });
     try {
+        // The ring-back is delivered from the driver's first turn: under load that comes after the run has started.
+        for (let i = 0; i < 2000 && env === undefined; i++) await new Promise((r) => setTimeout(r, 1));
+        assert.ok(env !== undefined, "the ring-back was delivered and answered");
         assert.deepEqual(pageSent(w.page), ["CAPTURE_TAB", "FETCH_LLM"]);
         const [call] = pageModelCalls(w.page);
         assert.equal(call.messages[0].content, "The image is a screenshot of the page after it settled following a wait. Describe the current state — especially anything that just finished loading or changed.",
