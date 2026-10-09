@@ -8,7 +8,7 @@
 // Nothing here may touch the page. The page context goes into the system prompt AFTER assembly (`withPageContext`),
 // because on the worker path it is the page's answer to a question asked once the toolset exists.
 
-import { CITABLE_TOOLS } from "./agent-loop";
+import { CITABLE_TOOLS, citeParam, withCallTitle } from "../tools/tool-params";
 import { buildServerTools } from "../tools/builtin-tools";
 import { type MlApi, type MlTool, type MlPublicConfig, DEFAULT_GROUNDING_RANGE, type VisionMemory, detectGroundingModel, type LexicalMetric, type ElementContext } from "../contract";
 import type { PromptOrigin } from "../contract/contract-run";
@@ -16,7 +16,6 @@ import type { StartRunPayload, RebuildConfig } from "../contract/contract-messag
 import { promptSurfaceClause, promptSurfaceOf } from "./prompt-surface";
 import { stepBudget } from "./step-budget";
 import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, shadowClause, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_CLOSED_NOTE, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, askAboutTask } from "./prompts";
-import { citeParam, withCallTitle } from "../tools/tool-params";
 import { buildDereferenceTool } from "../tools/tools";
 
 /** The part of `window.ml` assembly reads: config and capability probes, the model and server-tool lists, the tool

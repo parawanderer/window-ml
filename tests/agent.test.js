@@ -240,7 +240,7 @@ test("agent_api_docs: a bad pipe stage is an actionable message, never a lost st
 test("agent_api_docs is CITABLE, so its output can be named by a pointer and read back later", async () => {
     // The other half of the same gap: with a `token` the result mints an @tool:<id>, so `dereference` can pipe
     // it on a LATER step instead of only at the moment of the call.
-    const { CITABLE_TOOLS } = await import("../src/agent/agent-loop.ts");
+    const { CITABLE_TOOLS } = await import("../src/tools/tool-params.ts");
     assert.ok(CITABLE_TOOLS.has("agent_api_docs"),
         "without this, the reference is the one output no pointer can name");
 });
@@ -1591,6 +1591,21 @@ test("a soft schema issue (unknown extra prop) prepends a note but still runs th
     assert.equal(ran, 1, "the tool still ran (a lenient validator must not block a legit call)");
     // Note APPENDS, so a real Error:/Denied prefix would stay at position 0.
     assert.match(res.transcript[0].result, /^ran\n\n⚠ Argument schema issue\(s\): unknown property "extra"$/);
+});
+
+test("the run's own parameters are never 'unknown': `title` on any tool, `token` on a citable one; a real stray still is", async () => {
+    // GPT-6 Luna (2026-10-09) was told "unknown property \"title\"" on page tools, for a parameter every tool is offered.
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([
+        toolCall("t", { x: "a", title: "check x" }, "c1"),
+        toolCall("exec", { js: "1", token: "the one" }, "c2"),
+        toolCall("t", { x: "a", token: "not citable" }, "c3"),
+        reply("ok")]) });
+    const t = world.ml.defineTool({ name: "t", parameters: { type: "object", properties: { x: { type: "string" } }, required: ["x"] }, run: () => "ran" });
+    const exec = world.ml.defineTool({ name: "exec", parameters: { type: "object", properties: { js: { type: "string" } }, required: ["js"] }, run: () => "1" });
+    const res = await world.ml.agent("x", { tools: [t, exec], maxSteps: 5 });
+    assert.doesNotMatch(String(res.transcript[0].result), /schema issue/, "title is offered on every tool");
+    assert.doesNotMatch(String(res.transcript[1].result), /schema issue/, "token is offered on a citable tool");
+    assert.match(String(res.transcript[2].result), /unknown property "token"/, "on a tool that is not citable it is a real mistake");
 });
 
 test("a schema-less tool (no declared properties) is never flagged for its args", async () => {
