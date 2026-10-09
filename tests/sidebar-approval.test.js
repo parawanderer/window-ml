@@ -297,19 +297,41 @@ test("Settings → Site access: 'On all sites' (<all_urls>) shows the note inste
     assert.equal(sect.querySelector(".perm-add"), null, "no add form when everything is already allowed");
 });
 
-test("Settings CDP toggle: enabling just flips the `cdp` flag (no fragile runtime permission request)", async () => {
+test("Settings CDP toggle: on by default; switching it just flips the `cdp` flag (no fragile runtime permission request)", async () => {
     const w = await loadSidebarWorld();
     let requested = false;
     w.window.chrome.permissions = { contains: (_q, cb) => cb(true), request: () => { requested = true; } };   // install-time → granted
     await openSettings(w, "Advanced");
     const cb = cdpToggle(w);
     assert.ok(cb, "the CDP toggle renders under Advanced");
-    assert.equal(cb.checked, false, "off by default");
-    cb.checked = true; cb.dispatchEvent(new w.window.Event("change", { bubbles: true }));
+    assert.equal(cb.checked, true, "on by default since 2026-10-09");
+    cb.checked = false; cb.dispatchEvent(new w.window.Event("change", { bubbles: true }));
+    await w.flush();
+    assert.equal(w.syncStore.cdp, false, "turning it off is stored, so the person's choice survives a later default");
+    cdpToggle(w).checked = true; cdpToggle(w).dispatchEvent(new w.window.Event("change", { bubbles: true }));
     await w.flush();
     assert.equal(w.syncStore.cdp, true, "enabling persists the flag ON");
     assert.equal(requested, false, "it does NOT call the unreliable runtime permission request");
     assert.match([...w.shadow.querySelectorAll(".set-hint")].map(e => e.textContent).join(" "), /Ready/i, "shows the granted/ready note");
+});
+
+test("Settings user scripts: not allowed → says where to turn it on, with a button to the details page; allowed → says so", async () => {
+    const off = await loadSidebarWorld();
+    const opened = [];
+    off.window.chrome.userScripts = { getWorldConfigurations: () => Promise.reject(new Error("not allowed")) };
+    off.window.chrome.tabs = { ...(off.window.chrome.tabs || {}), create: (o) => opened.push(o.url) };
+    await openSettings(off, "Advanced");
+    await off.flush();
+    const hint = [...off.shadow.querySelectorAll(".set-hint")].find(e => /User scripts/.test(e.textContent));
+    assert.ok(hint, "the row renders under Advanced");
+    assert.match(hint.textContent, /not allowed.*Allow User Scripts/s);
+    hint.querySelector("button").click();
+    assert.match(opened[0] || "", /^chrome:\/\/extensions\/\?id=/, "the button opens window.ml's details page");
+    const on = await loadSidebarWorld();
+    on.window.chrome.userScripts = { getWorldConfigurations: () => Promise.resolve([]) };
+    await openSettings(on, "Advanced");
+    await on.flush();
+    assert.ok([...on.shadow.querySelectorAll(".set-hint")].some(e => /User scripts allowed/.test(e.textContent)));
 });
 
 test("Settings CDP toggle: flag ON but the debugger permission is INACTIVE → an actionable reload note", async () => {

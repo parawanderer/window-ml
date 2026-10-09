@@ -66,7 +66,7 @@ identically to the click case:
   only reached AFTER the human approves the code (they see the exact source).
 - **Runtime `debugger` permission** — request `chrome.debugger` at first use
   (`chrome.permissions`), not held ambiently.
-- **A flag** — `cdpExec` config, off by default (like `cdpClick`).
+- **A flag** — `cdpExec` config, off by default (like `cdpClick`). Both became the one `cdp` setting, on by default since 2026-10-09.
 - **The banner** — the unsuppressible "being debugged" bar IS the honest "the browser is
   being driven" signal. Appears only when CDP eval actually fires (a strict page), so it
   correlates with "the agent just ran privileged code on a locked-down page."

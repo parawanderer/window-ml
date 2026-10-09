@@ -276,7 +276,7 @@ const TIP = {
     agentSeesFocus: "Default ON. When you are not on the agent's tab, chat_metadata says where you are: the chat page (reading this run or not), another tab, or away from the browser. A run started from the extension's UI also gets that tab's site and title; a page-started run only \"another tab\". Never a full URL, never a private window. Off: nothing about where you are.",
     selfIntrospection: "Default ON. The agent may read its own run with `ml.current` in a read-only exec the extension hosts (never on the page), and its system prompt tells it so. Off: `ml.current` is absent and the prompt says nothing about it.",
     autoApproveSelfSource: "Default ON. Auto-approve an UNCREDENTIALED fetch_url/ml.fetch of the agent's OWN repo source — committed files (raw.githubusercontent.com) or structural/code API endpoints (api.github.com/repos/<owner>/<repo>/…), locked to this build's repoUrl — so it can read the code it's running to explain/debug itself. NEVER auto-approves user-generated PROSE endpoints (issues/pulls/comments/discussions/reviews/releases — a prompt-injection surface), a credentialed fetch, or a rendered load; those still ask. Public, read-only, uncredentialed → near-zero risk.",
-    cdp: "Experimental. Use chrome.debugger (CDP) for two things a normal page context can't do: (1) CLICK surfaces a synthetic click can't reach — cross-origin iframes and declarative/native closed shadow roots; (2) run imperative `exec` on strict-CSP / Trusted-Types pages (GitHub, Google apps) where main-world eval is blocked. The debugger is exempt from the page's CSP/TT, so it's the only mechanism that works. The `debugger` permission is declared at install; this toggle gates USAGE (the API stays unused until it's on AND the model hits a reserved surface). Still gated by the per-action approval. Attaching flashes Chrome's \"is debugging this browser\" banner — only for these reserved actions, so the flash marks the risk. Off by default; while off, a reserved click / a blocked exec just reports an actionable error and the agent falls back to read-only / ml.fetch.",
+    cdp: "Use chrome.debugger (CDP) for two things a normal page context can't do: (1) CLICK surfaces a synthetic click can't reach — cross-origin iframes and declarative/native closed shadow roots; (2) run imperative `exec` on strict-CSP / Trusted-Types pages (GitHub, Google apps) where main-world eval is blocked. The debugger is exempt from the page's CSP/TT, so it's the only mechanism that works. The `debugger` permission is declared at install; this toggle gates USAGE (the API stays unused until it's on AND the model hits a reserved surface). Still gated by the per-action approval. Attaching flashes Chrome's \"is debugging this browser\" banner — only for these reserved actions, so the flash marks the risk. On by default; while off, a reserved click / a blocked exec just reports an actionable error and the agent falls back to read-only / ml.fetch.",
     pierceClosedShadow: "Let the DOM tools reach inside CLOSED shadow roots too (normally selector-invisible). A tiny script captures each closed root as the page builds it — the tools then treat it like an open root (same `host >>> inner` syntax). Closed shadow DOM is encapsulation, not a security boundary, so this doesn't cross any origin. On by default: the capture script wraps attachShadow on every page regardless of this setting (capture only — page behaviour is unchanged), so this just gates whether the tools use it. Turn it off to keep the tools' selector reach limited to open roots. Declarative/native closed roots still can't be captured; the agent falls back to visual locate/@pt for those.",
     groundingEnabled: "Experimental. When on, ml.agent's `locate` tool asks a grounding VLM for bounding-box coordinates. This loads an extra model into VRAM — leave off if memory is tight. Off = locate still works via the Set-of-Marks screenshot tool, which needs no extra model.",
     groundingModel: "A vision model that outputs coordinates (recommended qwen2.5vl:7b, or :3b for lower latency). Blank auto-detects a qwen2.5vl on your server. Real-world grounding accuracy is unproven.",
@@ -901,6 +901,31 @@ function CdpToggle() {
                 : null}
         </>
     );
+}
+
+/** Whether Chrome lets window.ml run user scripts, and the way to turn it on. An approved `exec` that reads `ml.current`
+ *  or a pointer runs in an isolated world: a user-script world when this is on, else a debugger one. Only the person
+ *  can turn it on (the extension's details page, "Allow User Scripts"), so this row says where, and re-checks when the
+ *  panel regains focus, which is when they come back from that page. */
+function UserScriptsStatus() {
+    const [on, setOn] = useState<boolean | null>(null);
+    useEffect(() => {
+        const check = () => {
+            try {
+                const us = (chrome as unknown as { userScripts?: { getWorldConfigurations?: () => Promise<unknown> } }).userScripts;
+                if (!us?.getWorldConfigurations) { setOn(false); return; }
+                us.getWorldConfigurations().then(() => setOn(true), () => setOn(false));
+            } catch { setOn(false); }
+        };
+        check();
+        window.addEventListener("focus", check);
+        return () => window.removeEventListener("focus", check);
+    }, []);
+    const open = () => { try { chrome.tabs.create({ url: `chrome://extensions/?id=${chrome.runtime.id}` }); } catch { /* no tabs API here */ } };
+    if (on === null) return null;
+    return on
+        ? <div class="set-hint"><span class="perm-ok">User scripts allowed.</span> An approved exec that reads <code>ml.current</code> or a pointer runs in its own user-script world, with no debugger banner.</div>
+        : <div class="set-hint"><span class="perm-warn">User scripts are not allowed.</span> Turn on <b>Allow User Scripts</b> on window.ml's details page so an approved exec that reads <code>ml.current</code> or a pointer runs in its own world without the debugger. <button class="test-btn" onClick={open}>Open details page</button></div>;
 }
 
 function PermissionsView() {
@@ -1552,9 +1577,10 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                 </label>
                 </Section>
 
-                <Section id="cdp" title="Debugger-based actions (experimental)">
+                <Section id="cdp" title="Debugger-based actions and user scripts">
                 <div class="set-note">Use <code>chrome.debugger</code> (CDP) for what a normal page context can't: <b>click</b> cross-origin iframes / declarative-closed shadow roots, and run imperative <code>exec</code> on <b>strict-CSP / Trusted-Types</b> pages (GitHub, Google apps) where main-world eval is blocked. The debugger is exempt from the page's CSP/TT — the only mechanism that works. Still gated by the per-action approval. Attaching flashes Chrome's <b>“is debugging this browser” banner</b> — only for these reserved actions, so the flash marks the risk.</div>
                 <CdpToggle />
+                <UserScriptsStatus />
                 </Section>
 
             </> : null}
