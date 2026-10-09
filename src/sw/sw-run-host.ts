@@ -23,7 +23,7 @@ import { stepBudget } from "../agent/step-budget";
 import type { StartRunPayload, ResumeRunPayload } from "../contract/contract-messages";
 import { type RequestHint, hintSession } from "../contract/contract-run";
 import { externalSheetIds, clipOut, isCurrentPage } from "../dom/dom";
-import { extractGrants, fetchUrlLiterals } from "./grant-extract";
+import { extractGrants, fetchUrlLiterals, tabGrantsForCall } from "./grant-extract";
 import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
 import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, consentFetch, persistGrants, fetchConsent } from "./sw-consent";
@@ -503,7 +503,6 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 // Scoped to this delegation: cleared in `finally`, so a later call needs its own approval.
                 // An APPROVED exec may fetch inline (ml.fetch) the URLs its code spells out: the person saw them. Only
                 // those, parsed here: the page shares the tab, and an open grant lent it every URL while any exec ran.
-                if (name === "exec") grantsFor(tabId, callKey).fetchUrls = new Set(fetchUrlLiterals(String((args as { js?: unknown }).js ?? "")));
                 // The pointer reads an approved script names, resolved here and sent with it: the page answers only
                 // those, so it cannot read the rest of the run's store while the call is in flight (named-reads.ts).
                 const reads = name === "exec" && typeof (args as { js?: unknown }).js === "string" ? preReadsFor(runId, (args as { js: string }).js) : undefined;
@@ -514,7 +513,6 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 // grant reading the same thing: a friendly name cannot make the card say one callable
                 // while the grant authorises another.
                 const remote = p.tools.find(t => t.name === name)?.remote;
-                if (remote) grantsFor(tabId, callKey).serverTools.add(serverToolKey(remote.toolId, remote.fn, args as Record<string, unknown>));
                 // A python_exec the WORKER runs gets its grants as the RUN's call grant (worker-tools.ts): on the tab
                 // they were a sheet read with the person's cookies, and full-mode Python, that any script on the
                 // page could use while the call ran. One that needs the page (an image, a selector) still mints the
@@ -523,16 +521,18 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 if (pyInWorker) {
                     await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "").catch(() => { /* nothing granted: fails closed */ });
                     grantRunPython(runId, { sheets: externalSheetIds(args), code: (args as { mode?: string }).mode === "full" ? String((args as { code?: unknown }).code ?? "") : null });
-                } else if (name === "python_exec") {
+                }
+                // What this call puts on the TAB for its own sub-ops (tabGrantsForCall, grant-extract.ts): an exec's literal
+                // fetch URLs, a server tool's exact call, a page-run python_exec's full-mode code, and its sheets only for a
+                // run the page built. Minted only when there is something to mint, so a call with none holds no entry.
+                const minted = tabGrantsForCall({ name, args: args as Record<string, unknown>, builtByWorker: p.builtBy === "worker", pyInWorker,
+                    ...(remote ? { remoteKey: serverToolKey(remote.toolId, remote.fn, args as Record<string, unknown>) } : {}) });
+                if (minted.fetchUrls) grantsFor(tabId, callKey).fetchUrls = new Set(minted.fetchUrls);
+                if (minted.serverTools.length || minted.sheets.length || minted.pyCode.length) {
                     const g = grantsFor(tabId, callKey);
-                    // A worker-built run's sheet grant NEVER goes on the tab, even when the call fell back to the
-                    // page: the tab is shared with the page, and the minted id is a credentialed read any script on
-                    // it can spend (FETCH_SHEET is a run-tab type) while the call runs. A page-built run's loop is
-                    // the page's own, so its grant has to live where its calls are made. (Red-team T3 on #442; a
-                    // worker-built call that names a sheet AND a page source is now refused before the gate, so
-                    // this leg keeps working only for the page parts — the sheet load fails closed, not silent.)
-                    if (p.builtBy !== "worker") for (const id of externalSheetIds(args)) g.sheets.add(id);
-                    if ((args as { mode?: string }).mode === "full") g.pyCode.add(String((args as { code?: unknown }).code ?? ""));
+                    for (const k of minted.serverTools) g.serverTools.add(k);
+                    for (const id of minted.sheets) g.sheets.add(id);
+                    for (const code of minted.pyCode) g.pyCode.add(code);
                 }
                 try {
                     // A delegated call can race a NAVIGATION — the tool's own action submits a form / follows a
