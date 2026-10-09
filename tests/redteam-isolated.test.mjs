@@ -186,7 +186,7 @@ test("a user-script line is taken only from the run's tab, top frame, under the 
     assert.ok(!r.results[0].includes("FORGED"), r.results[0]);
 });
 
-test("a user-script line with NO frameId is refused (an absent fact never reads as the top frame)", { ...T, todo: "onIsolatedStream (src/sw/sw-isolated-exec.ts:44) reads `sender.frameId ?? 0`: an absent frameId passes as the top frame. Not reachable from a page (onUserScriptMessage only hears this extension's user-script worlds); defence in depth only" }, async () => {
+test("a user-script line with NO frameId is refused (an absent fact never reads as the top frame)", T, async () => {
     const r = await rtRun(["window.b = 1; console.log('real'); return @tool:exec"], {
         us: true, stream: true,
         onExecute: (bg, inj) => {
@@ -239,7 +239,7 @@ test("a CDP binding call is taken only from the isolated world's context on the 
 });
 
 let r_bg;
-test("the page cannot write into a MAIN-world CDP exec's live output through __mlCdpStream (predates the isolated exec)", { ...T, todo: "cdpEval (src/sw/sw-cdp.ts:142) adds __mlCdpStream with no executionContextName and its listener (sw-cdp.ts:133-137) checks neither context nor nonce: the page's own scripts call it while a strict-page exec runs. Inherent while the exec runs in the page's world, which can also patch the console the wrapper reads; predates PR #453" }, async () => {
+test("the page cannot write into a MAIN-world CDP exec's live output through __mlCdpStream (predates the isolated exec)", { ...T, todo: "cdpEval (src/sw/sw-cdp.ts) adds __mlCdpStream with no executionContextName and its listener checks neither context nor nonce: the page's own scripts call it while a strict-page exec runs. Inherent while the exec runs in the page's world, which can also patch the console the wrapper reads; predates PR #453" }, async () => {
     const SCRIPT = "document.title = 'x'; console.log('real'); return 1";
     const r = await rtRun([SCRIPT], {
         cdp: true, stream: true,
@@ -264,7 +264,7 @@ test("the page cannot write into a MAIN-world CDP exec's live output through __m
 
 // --- 3. routing the page can steer ---
 
-test("an exec routed to the page's world on an approved site never runs in the main world of an unapproved page the tab moved to before the send", { ...T, todo: "the route is decided on tabPageUrl at src/sw/sw-run-host.ts:455, and the send (sendTool → delegateSend, sw-run-host.ts:504 and :97-108) waits out the navigation and delivers to whichever document re-adopts, with no check that it is still the approved document. A plain approved script then runs in the main world of the unapproved page" }, async () => {
+test("an exec routed to the page's world on an approved site never runs in the main world of an unapproved page the tab moved to before the send", T, async () => {
     // Positive control: with no navigation the plain script runs in the page's world.
     const calm = await rtRun(["document.title = 'x'; return 1"], { us: "off", onBg: (bg) => bg.commit(7, { documentId: "doc-site", url: SITE_URL }) });
     assert.equal(calm.toPage.length, 1);
@@ -280,7 +280,7 @@ test("an exec routed to the page's world on an approved site never runs in the m
     assert.equal(r.toPage.length, 0, `the approved script was sent into the unapproved page's main world: ${JSON.stringify(r.toPage)}`);
 });
 
-test("a pointer script that falls back to the page's world on an approved site never carries its values to an unapproved page the tab moved to", { ...T, todo: "the approved-page fallback (src/sw/exec-routing.ts:57-58) is chosen on the URL read at src/sw/sw-run-host.ts:455; the reads then ride RUN_TOOL_IN_PAGE (sw-run-host.ts:504) to whichever document re-adopts after the navigation: the pointer values reach the unapproved site's main world" }, async () => {
+test("a pointer script that falls back to the page's world on an approved site never carries its values to an unapproved page the tab moved to", T, async () => {
     const SECRET = "SITE-SECRET-41";
     // Positive control: with no navigation the fallback is what the owner chose (values sent to the approved page).
     const calm = await rtRun([FIRST, "window.b = 1; return @tool:exec.length"], { us: "off", pageValue: SECRET, onBg: (bg) => bg.commit(7, { documentId: "doc-site", url: SITE_URL }) });
@@ -297,7 +297,7 @@ test("a pointer script that falls back to the page's world on an approved site n
     assert.equal(r.log.length, 2);
 });
 
-test("with no navigation record (a worker that restarted), the route reads where the tab IS, not the page the run started on", { ...T, todo: "src/sw/sw-run-host.ts:455 falls back to `p.pageUrl`, the run's START page, when tabPageUrl has no entry (worker memory: lost on eviction). A run that moved to an unapproved site before the worker restarted routes as if still on the approved one. Inferred for the eviction; checked for the fallback" }, async () => {
+test("with no navigation record (a worker that restarted), the route reads where the tab IS, not the page the run started on", T, async () => {
     // Positive control: still on the approved site, the plain script runs in the page's world.
     const calm = await rtRun(["document.title = 'x'; return 1"], { us: "off" });
     assert.equal(calm.toPage.length, 1);
@@ -311,7 +311,7 @@ test("with no navigation record (a worker that restarted), the route reads where
     assert.match(r.results[0], /not approved/);
 });
 
-test("an isolated exec runs only in the document its route was decided for", { ...T, todo: "runInUserScriptWorld (src/sw/sw-isolated-exec.ts:153) targets { tabId, frameIds: [0] } with no documentIds, and runInCdpWorld creates its world on whatever frame the tab holds (sw-isolated-exec.ts:210-213): after a navigation the script and its bound values run against the new document, an unapproved page included" }, async () => {
+test("an isolated exec runs only in the document its route was decided for", T, async () => {
     let raced = false;
     const r = await rtRun(["window.b = 1; return @tool:exec.length"], {
         us: true, onBg: (bg) => bg.commit(7, { documentId: "doc-site", url: SITE_URL }),
@@ -324,7 +324,7 @@ test("an isolated exec runs only in the document its route was decided for", { .
     for (const i of real) assert.deepEqual(i.target.documentIds, ["doc-site"], `injected without the decided document: ${JSON.stringify(i.target)}`);
 });
 
-test("an isolated exec stopped by a navigation is never run a second time on the document that replaced it", { ...T, todo: "runInUserScriptWorld (src/sw/sw-isolated-exec.ts:161-166) probes __mlIsoStarted in the world, which a NEW document's fresh world never has, so a script stopped by a navigation is run again, as its statement form, on the new page with its bound values" }, async () => {
+test("an isolated exec stopped by a navigation is never run a second time on the document that replaced it", T, async () => {
     let stopped = false, ranOn = [];
     const r = await rtRun(["(window.n = 1, @tool:exec.length)"], {
         us: true, onBg: (bg) => bg.commit(7, { documentId: "doc-site", url: SITE_URL }),

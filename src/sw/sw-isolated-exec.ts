@@ -41,7 +41,7 @@ export function onIsolatedStream(msg: unknown, sender: chrome.runtime.MessageSen
     const m = msg as { type?: string; nonce?: string; text?: string; ts?: number } | null;
     if (!m || m.type !== "ISO_EXEC_STREAM" || typeof m.nonce !== "string" || typeof m.text !== "string") return;
     const s = isoStreams.get(m.nonce);
-    if (!s || sender.tab?.id !== s.tabId || (sender.frameId ?? 0) !== 0) return;
+    if (!s || sender.tab?.id !== s.tabId || sender.frameId !== 0) return;
     s.push(m.text, typeof m.ts === "number" ? m.ts : undefined);
 }
 
@@ -136,21 +136,22 @@ export async function userScriptsAvailable(): Promise<boolean> {
 }
 
 /**
- * Run the script in a user-script world of the run's own (`wml-<runId>`), top frame only.
+ * Run the script in a user-script world of the run's own (`wml-<runId>`), in one document only.
  * @param tabId the run's tab
+ * @param documentId the top-frame document its route was decided for
  * @param runId the run, which names the world
  * @param code the approved source, pointer macros expanded
  * @param b what to bind
  * @param onStream the call's live-output sink
  */
-export async function runInUserScriptWorld(tabId: number, runId: string, code: string, b: IsolatedBindings, onStream?: (text: string, ts?: number) => void): Promise<IsolatedResult> {
+export async function runInUserScriptWorld(tabId: number, documentId: string, runId: string, code: string, b: IsolatedBindings, onStream?: (text: string, ts?: number) => void): Promise<IsolatedResult> {
     const us = chrome.userScripts;
     const worldId = `wml-${runId}`;
     const n = nonce();
     if (onStream) isoStreams.set(n, { tabId, push: onStream });
     const stream = onStream ? `chrome.runtime.sendMessage({ type: "ISO_EXEC_STREAM", nonce: ${JSON.stringify(n)}, text: __t, ts: __ts })` : "";
     const run = async (inner: string): Promise<unknown> => {
-        const [res] = await us.execute({ target: { tabId, frameIds: [0] }, worldId, injectImmediately: true, js: [{ code: isolatedWrapper(inner, b, n, stream) }] });
+        const [res] = await us.execute({ target: { tabId, documentIds: [documentId] }, worldId, injectImmediately: true, js: [{ code: isolatedWrapper(inner, b, n, stream) }] });
         return (res as { result?: unknown } | undefined)?.result;
     };
     try {
@@ -159,9 +160,11 @@ export async function runInUserScriptWorld(tabId: number, runId: string, code: s
         let out: unknown;
         try { out = await run(expr); } catch { out = undefined; }
         if (!isWrapped(out)) {
-            // Not run, or stopped. Only a script that never started (the expression form did not parse) is tried again:
-            // a second run of one that started would repeat what it did.
-            const [probe] = await us.execute({ target: { tabId, frameIds: [0] }, worldId, js: [{ code: "globalThis.__mlIsoStarted" }] });
+            // Not run, or stopped. Only a script that never started (the expression form did not parse), in the document
+            // it was routed for, is tried again: a second run of one that started would repeat what it did, and a new
+            // document is not the one the route was decided for.
+            if (!(await stillOn(tabId, documentId))) return { error: "The exec stopped before it finished: the page navigated." };
+            const [probe] = await us.execute({ target: { tabId, documentIds: [documentId] }, worldId, js: [{ code: "globalThis.__mlIsoStarted" }] });
             if ((probe as { result?: unknown } | undefined)?.result === n) return { error: "The exec stopped before it finished (did the page navigate?)." };
             out = await run(body);
         }
@@ -177,14 +180,15 @@ export async function runInUserScriptWorld(tabId: number, runId: string, code: s
 const ISO_BINDING = "__mlIsoStream";
 
 /**
- * Run the script in a CDP isolated world on the tab's top frame, created for this call.
+ * Run the script in a CDP isolated world on the tab's top frame, created for this call, in one document only.
  * @param tabId the run's tab
+ * @param documentId the top-frame document its route was decided for
  * @param runId the run, which names the world
  * @param code the approved source, pointer macros expanded
  * @param b what to bind
  * @param onStream the call's live-output sink
  */
-export async function runInCdpWorld(tabId: number, runId: string, code: string, b: IsolatedBindings, onStream?: (text: string, ts?: number) => void): Promise<IsolatedResult> {
+export async function runInCdpWorld(tabId: number, documentId: string, runId: string, code: string, b: IsolatedBindings, onStream?: (text: string, ts?: number) => void): Promise<IsolatedResult> {
     const at = await ensureDebuggerAttached(tabId);
     if ("error" in at) return { error: `Couldn't attach the debugger to run exec in an isolated world (${at.error}).` };
     const target: chrome.debugger.Debuggee = { tabId };
@@ -213,6 +217,9 @@ export async function runInCdpWorld(tabId: number, runId: string, code: string, 
         const world = await chrome.debugger.sendCommand(target, "Page.createIsolatedWorld", { frameId, worldName, grantUniveralAccess: false }) as { executionContextId?: number };
         contextId = world?.executionContextId;
         if (contextId === undefined) return { error: "The isolated exec could not create its world." };
+        // Created on whatever document the frame held; checked AFTER, so a world on any later document is refused (a
+        // context dies with its document, so one created on the routed document cannot outlive it).
+        if (!(await stillOn(tabId, documentId))) { contextId = undefined; return { error: "The exec did not run: the page navigated before it started." }; }
         const stream = bound ? `${ISO_BINDING}(JSON.stringify({ nonce: ${JSON.stringify(n)}, text: __t, ts: __ts }))` : "";
         type EvalResult = { result?: { value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string } };
         const evaluate = (inner: string) => chrome.debugger.sendCommand(target, "Runtime.evaluate",
@@ -233,6 +240,12 @@ export async function runInCdpWorld(tabId: number, runId: string, code: string, 
         }
         touchDebugger(tabId);
     }
+}
+
+/** Whether the tab's top frame still holds `documentId` (the browser's answer; unknown reads as no). */
+async function stillOn(tabId: number, documentId: string): Promise<boolean> {
+    const f = await Promise.resolve(chrome.webNavigation?.getFrame?.({ tabId, frameId: 0 })).catch(() => null) as { documentId?: string } | null;
+    return f?.documentId === documentId;
 }
 
 /** What this browser offers for isolation now: user scripts if the person allowed them, else CDP if its setting is on
@@ -262,12 +275,12 @@ const ISO_EXEC_CAP = 500;
 
 /**
  * Run an approved exec of a worker-built run in an isolated world, and shape what it returns as the page's exec does.
- * @param o the call: its tab and run, the approved source, the mechanism and why, the pointer reads it names, and
+ * @param o the call: its tab, the document its route was decided for (it runs there or nowhere), its run, the approved source, the mechanism and why, the pointer reads it names, and
  *   `current`, which makes `ml.current` for a script that names it (undefined: the run offers none)
  * @returns the tool result, with its In/Out renders and the one-line note on what differs from the page's world
  */
 export async function runIsolatedExec(o: {
-    tabId: number; runId: string; js: string; how: "userScripts" | "cdp"; reason: ExecReason; reads: readonly PreRead[];
+    tabId: number; documentId: string; runId: string; js: string; how: "userScripts" | "cdp"; reason: ExecReason; reads: readonly PreRead[];
     current?: () => Promise<CurrentSnapshot | undefined>; onStream?: (text: string, ts?: number) => void;
 }): Promise<{ result: string; renderIn: RenderDescriptor; renderOut?: RenderDescriptor }> {
     const renderIn = execCodeIn(o.js);
@@ -279,7 +292,7 @@ export async function runIsolatedExec(o: {
         } catch (e) { b.currentError = `ml.current could not be read (${(e as Error)?.message || e}).`; }
     }
     const code = expandPointers(o.js).code;
-    const r = o.how === "userScripts" ? await runInUserScriptWorld(o.tabId, o.runId, code, b, o.onStream) : await runInCdpWorld(o.tabId, o.runId, code, b, o.onStream);
+    const r = o.how === "userScripts" ? await runInUserScriptWorld(o.tabId, o.documentId, o.runId, code, b, o.onStream) : await runInCdpWorld(o.tabId, o.documentId, o.runId, code, b, o.onStream);
     const note = `(Ran in an isolated world because ${WHY[o.reason]}: the page's own scripts and globals are not visible there, and ml has only ${["current", "dereference"].filter((m) => m !== "current" || b.current || b.currentError).map((m) => `ml.${m}`).join(" and ")}. If the page behaved differently, read what you need in a read-only exec and act in the next.)`;
     if ("error" in r) return { result: `Error: ${r.error}\n\n${note}`, renderIn, renderOut: { type: "exec-out", error: r.error } };
     const kept = r.logs.join("\n");

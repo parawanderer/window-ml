@@ -112,7 +112,8 @@ The isolated script runs inside one wrapper built as source (`isolatedWrapper`):
 `dereference` answering only the reads sent with the call), captures the console, and returns plain data. Live lines
 come back through `chrome.runtime.onUserScriptMessage` (reachable only from a world this extension configured), checked
 against the run's tab, the top frame and the call's nonce, or through a CDP binding added with `executionContextName`,
-so only that world has it, checked against the world's context id. Every decision is in the execution log
+so only that world has it, checked against the world's context id. The route is decided for one document (read
+before its URL, so a navigation in between fails the send rather than redirecting it) and every send is pinned to it. Every decision is in the execution log
 (`subsystem: routing`, `kind: exec-main|exec-isolated|exec-refused`, `detail.how`).
 
 ## What the content script sends outside the gate

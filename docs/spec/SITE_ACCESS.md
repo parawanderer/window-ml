@@ -416,6 +416,14 @@ Recorded as each slice lands, with the reason.
     `return`s, where the main world's `eval` gives the last statement's.
   - `state` persists across calls in the user-script world, not in a CDP world (a new one per call), and is never the
     page's `state`.
+  - Found by the red-team pass on it: the route was decided on one page and the exec delivered to whichever document
+    the tab held at send time, so a navigation in between put an approved script (or a pointer fallback's values) in
+    an unapproved page's main world, and a stopped isolated script was run again on the next page. The route now reads
+    the tab's document first, then the browser's URL for it (not the run's start page, which a restarted worker fell
+    back to), and every send is pinned to that document (`tabs.sendMessage` `documentId`, `userScripts.execute`
+    `documentIds`, a CDP world checked against it after it is made). An isolated exec with no known document does not
+    run. Still open, and older than part 4: a main-world CDP exec's live output can be written by the page
+    (`__mlCdpStream`), which shares that world and its console.
   - Untested against a real browser: how `userScripts.execute` reports a script that does not parse (handled as
     "no result": a probe of a start marker decides whether to try the body form, so a script is never run twice).
     The e2e browser has no "Allow User Scripts" toggle set, so only the vm tests cover that path.
