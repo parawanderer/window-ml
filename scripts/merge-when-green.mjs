@@ -19,7 +19,7 @@
 // committed or stashed by hand; `--discard` merges anyway. The main clone is only reminded: nothing removes it. A
 // checkout on the branch also keeps its LOCAL branch, and only the remote one is deleted.
 
-import { existsSync, readdirSync, renameSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
@@ -111,7 +111,17 @@ export function diskOnly(dir, status = sh("git", ["status", "--porcelain"], dir)
             sweeps.push(name);
     }
     const files = status.split("\n").filter(Boolean);
-    return { sweeps, scoreDbs, files };
+    return { sweeps, scoreDbs, files, server: liveServer(path.join(bench, "server.json")) };
+}
+
+/** The detached bench page server a finished sweep left running from this checkout (`server.json`, written by
+ *  tests/e2e/bench/serve.mjs only while it is alive), or null. A worktree removed under it leaves it serving nothing. */
+function liveServer(file) {
+    try {
+        const s = JSON.parse(readFileSync(file, "utf8"));
+        process.kill(s.pid, 0);   // throws when no such process
+        return s;
+    } catch { return null; }
 }
 
 const BENCH = "tests/e2e/artifacts/bench";
@@ -159,13 +169,14 @@ export async function leftovers(branch, { keep, discard }) {
             found = diskOnly(dir);
         }
         const { sweeps, scoreDbs, files } = found;
-        if (!sweeps.length && !scoreDbs.length && !files.length) continue;
+        if (!sweeps.length && !scoreDbs.length && !files.length && !found.server) continue;
         const stop = linked && !discard;
         blocked ||= stop;
         console.log(`\n${stop ? "✖" : "⚠"} ${dir} (${linked ? "a worktree" : "the main clone"} on ${branch}) holds work that is in no commit:`);
         for (const n of sweeps) console.log(`    bench sweep:  ${BENCH}/${n}/`);
         for (const n of scoreDbs) console.log(`    scoreboard:   ${BENCH}/${n}`);
         for (const c of clashes) console.log(`    not moved:    ${c}`);
+        if (found.server) console.log(`    page server:  pid ${found.server.pid} at ${found.server.url}, serving ${found.server.dir}`);
         for (const f of files.slice(0, 20)) console.log(`    git:          ${f}`);
         if (files.length > 20) console.log(`    git:          …and ${files.length - 20} more`);
         if (!stop) continue;
@@ -174,7 +185,18 @@ export async function leftovers(branch, { keep, discard }) {
         if (files.length) console.log(`    files: commit them (here, or on a new branch from main) or stash them (git -C ${dir} stash -u)`);
         console.log("  To merge without keeping them, run again with --discard.");
     }
-    return { blocked, held: checkouts.length > 0 };
+    return { blocked, held: checkouts.length > 0, servers: checkouts.filter((c) => c.linked).map((c) => diskOnly(c.dir).server).filter(Boolean) };
+}
+
+/** Stop the page servers linked worktrees left running: the PR is merged, and a worktree removed under one leaves it
+ *  serving a directory that is gone. Says how to serve each sweep again from the main clone. */
+function stopServers(servers, main) {
+    for (const s of servers) {
+        try { process.kill(s.pid, "SIGTERM"); } catch { continue; }
+        const moved = path.join(main, BENCH, path.basename(s.dir));
+        const again = existsSync(moved) ? moved : s.dir;
+        console.log(`  stopped the page server (pid ${s.pid}) a worktree left running; to serve that sweep again: node --import tsx tests/e2e/bench/serve.mjs ${again}`);
+    }
 }
 
 async function main() {
@@ -190,7 +212,7 @@ async function main() {
         if (!v.pending || !wait || i >= POLL_LIMIT) break;
         await new Promise((r) => setTimeout(r, POLL_MS));
     }
-    const { blocked, held } = await leftovers(f.head, { keep, discard });
+    const { blocked, held, servers } = await leftovers(f.head, { keep, discard });
     console.log(`${pr}: ${v.reason}`);
     if (!v.ok) process.exit(1);
     if (blocked) { console.log(`${pr}: ${merge ? "NOT MERGED" : "would not merge"}: a worktree holds work that is in no commit (above)`); process.exit(1); }
@@ -199,6 +221,7 @@ async function main() {
     const args = ["pr", "merge", pr, "--squash", ...(held ? [] : ["--delete-branch"])];
     if (spawnSync("gh", args, { cwd: ROOT, stdio: "inherit" }).status !== 0) { console.log(`${pr}: merge FAILED`); process.exit(1); }
     if (held) gh("api", "-X", "DELETE", `repos/${REPO}/git/refs/heads/${f.head}`);
+    stopServers(servers, checkoutsOf(f.head).main);
     console.log(`${pr}: MERGED ${gh("pr", "view", pr, "--json", "mergeCommit", "-q", ".mergeCommit.oid").slice(0, 8)}${held ? ` (local branch ${f.head} kept: a checkout holds it)` : ""}`);
 }
 

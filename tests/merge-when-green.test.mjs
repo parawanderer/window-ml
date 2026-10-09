@@ -53,12 +53,22 @@ test("a checkout's bench sweeps, scoreboard and uncommitted files are named; oth
     mkdirSync(path.join(bench, "not-a-sweep"), { recursive: true });
     writeFileSync(path.join(bench, "scores.sqlite"), "");
     const found = diskOnly(dir, "?? tests/e2e/panel/api-docs.json\n M src/x.ts\n");
-    assert.deepEqual(found, { sweeps: ["my-sweep"], scoreDbs: ["scores.sqlite"], files: ["?? tests/e2e/panel/api-docs.json", " M src/x.ts"] });
+    assert.deepEqual(found, { sweeps: ["my-sweep"], scoreDbs: ["scores.sqlite"], files: ["?? tests/e2e/panel/api-docs.json", " M src/x.ts"], server: null });
 });
 
 test("a clean checkout with no bench directory has nothing to remind about", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "mwg-"));
-    assert.deepEqual(diskOnly(dir, ""), { sweeps: [], scoreDbs: [], files: [] });
+    assert.deepEqual(diskOnly(dir, ""), { sweeps: [], scoreDbs: [], files: [], server: null });
+});
+
+test("a page server a finished sweep left running is found while it lives, and forgotten once its process is gone", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "mwg-"));
+    const bench = path.join(dir, "tests/e2e/artifacts/bench");
+    mkdirSync(bench, { recursive: true });
+    writeFileSync(path.join(bench, "server.json"), JSON.stringify({ pid: process.pid, port: 7331, url: "http://127.0.0.1:7331", dir: "x" }));
+    assert.equal(diskOnly(dir, "").server.pid, process.pid, "this process stands in for a live server");
+    writeFileSync(path.join(bench, "server.json"), JSON.stringify({ pid: 2 ** 22 + 12345, port: 7331, url: "u", dir: "x" }));
+    assert.equal(diskOnly(dir, "").server, null, "a pid with no process is a stale file, not a server");
 });
 
 // --- --keep-bench: a worktree's results move into the main clone, the scoreboard's rows merge ---
