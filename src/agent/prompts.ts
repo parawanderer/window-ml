@@ -118,15 +118,19 @@ import { PIPE_SYNTAX } from "../pointers/text-pipe";
 // loses adds nothing to the product. docs/spec/PROMPT_BUDGET.md, "Measuring step 3".
 declare const __ML_PROMPT_VARIANT__: string | undefined;
 /** This build carries the condensed cluster. Replaced at build time; the current text is what ships. */
-const CONDENSED = typeof __ML_PROMPT_VARIANT__ === "string" && __ML_PROMPT_VARIANT__ === "condensed";
+const CONDENSED = typeof __ML_PROMPT_VARIANT__ === "string" && (__ML_PROMPT_VARIANT__ === "condensed" || __ML_PROMPT_VARIANT__ === "condensed2");
+/** The second condensed arm: the first, plus one sentence naming the failure DeepSeek V4 Pro showed under it (rows a tool
+ *  returned, retyped as a markdown table instead of embedded; re-emission 0.07 → 0.39 over 5 repeats). */
+const CONDENSED2 = typeof __ML_PROMPT_VARIANT__ === "string" && __ML_PROMPT_VARIANT__ === "condensed2";
 /** The condensed tool-output-tokens section: the same behaviours (opt in, embed instead of retyping, cite once, the
  *  render rules) with the explanation of why cut. Exported so a test can hold it to the same rules as the shipped one. */
-export const condensedTooltokens = (answer: boolean): string =>
+export const condensedTooltokens = (answer: boolean, retype = CONDENSED2): string =>
     "\n\nTOOL OUTPUT TOKENS. An `@tool:<id>` is a handle to one tool result, valid for the whole session. Set " +
     "`token: true`, or a short label (`token: \"the pricing table\"`), on exec / python_exec / look / locate / fetch_url " +
     "and the result ends with its `@tool:<id>`; a tool NAME (`@tool:exec`) means that tool's latest call. SHOW an output " +
     "by embedding it like an image: `![caption](@tool:<id>:out)` expands to the real table, image or value in place, " +
-    "and `:in` to the code you ran, so never retype either. Nothing you computed is shown unless you cite it; an embed " +
+    "and `:in` to the code you ran, so never retype either. " + (retype ? "Asked to show rows, a table or a value a tool " +
+    "returned, embed its pointer: never write it out again as a markdown table or a list. " : "") + "Nothing you computed is shown unless you cite it; an embed " +
     "counts as TERSE. " + (answer ? "A big table or image can go in the block under your reply instead: " +
     "`ml.answer.add(\"@tool:<id>:out\")` or the `answer` tool, with a `note`. " : "") + "Cite each output once, only " +
     "a result worth showing. Code you will show with `:in`: clear names, a short comment per step. A sympy result, a " +

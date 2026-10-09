@@ -638,6 +638,9 @@ test("the condensed tool-output-tokens variant (prompt budget step 3) keeps ever
     assert.match(withAnswer, /counts as TERSE/);
     assert.match(withAnswer, /ml\.answer\.add/);
     assert.doesNotMatch(without, /answer/i, "a run without the `answer` tool is never told about it");
+    assert.match(condensedTooltokens(true, true), /never write it out again as a markdown table/, "the condensed2 arm's sentence");
+    assert.doesNotMatch(withAnswer, /markdown table/, "and only that arm's");
+    assert.doesNotMatch(condensedTooltokens(true, true), / {2}/);
     assert.match(CONDENSED_DEREF, /dereference/);
     assert.match(CONDENSED_DEREF, /even without `token`/);
     for (const s of [withAnswer, without, CONDENSED_DEREF]) assert.doesNotMatch(s, / {2}/, "no run of two spaces");

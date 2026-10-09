@@ -28,7 +28,8 @@ export default defineBench({
     approve: "auto",
 
     dimensions: {
-        prompt: ["current", "condensed"],
+        // condensed2 = condensed + one sentence against retyping rows as a markdown table (V4 Pro did, at condensed).
+        prompt: ["current", "condensed", "condensed2"],
         model: MODELS,
     },
 
