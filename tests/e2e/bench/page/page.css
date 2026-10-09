@@ -242,3 +242,5 @@ a.role.score { color: inherit } a.role.score:hover { text-decoration: none; back
 .card.folded > :not(header):not(.foldbtn) { display: none }
 .card.folded > header { margin-bottom: 0 }
 @media (prefers-reduced-motion: reduce) { .foldbtn svg { transition: none } }
+/* A tag beside a run's outcome (StreamTag) keeps its distance from it. */
+td > a.view + .badge, td > .badge + .badge { margin-left: 4px }

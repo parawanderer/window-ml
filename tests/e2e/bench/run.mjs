@@ -38,7 +38,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { runOnce, resolveBackendFromEnv, renderRun } from "../run-once.mjs";
 import { measureRun, aggregate } from "./metrics.mjs";
-import { expandCells, cellKey, cellPath, comboLabel, buildGroups, parseSelector, slug } from "./cells.mjs";
+import { expandCells, cellKey, cellPath, comboLabel, buildGroups, parseSelector, slug, cellSurface, cellStream } from "./cells.mjs";
 import { writeReport, mdSink, terminalSink } from "./sinks.mjs";
 import { startDashboard, staticPage } from "./serve.mjs";
 import { pageSources } from "./page/bundle.mjs";
@@ -175,7 +175,7 @@ async function runCell(cell, ctx, index) {
     const label = `${comboLabel(cell.combo)} · ${t.id} · r${cell.repeat}`;
     ctx.log(`  ▶ ${label}`);
 
-    const surface = e.surface !== undefined ? e.surface : (t.surface ?? null);
+    const surface = cellSurface(cell);
     // An interview: each ask is sent once the turn before it ends, and every turn's answer lands in outbox/, read
     // back as the run goes so the page fills in turn by turn rather than at the end.
     const driver = t.asks?.length ? interviewDriver({ asks: t.asks, dir }) : null;
@@ -194,6 +194,7 @@ async function runCell(cell, ctx, index) {
             python: e.python ?? !!t.python,
             toolTokens: e.toolTokens ?? !!t.toolTokens,
             agentOptions: { ...(t.agentOptions || {}), ...(e.agentOptions || {}) },
+            stream: cellStream(cell),
             seed: t.seed || null,
             ...(t.script ? { script: t.script } : {}),
             surface,
@@ -242,7 +243,7 @@ async function runCell(cell, ctx, index) {
         run = { events: [], result: null, error: String(err), runMs: 0, approvals: [], seedBoundaryStep: -1 };
     }
 
-    const measurement = measureRun(run, t);
+    const measurement = measureRun({ ...run, stream: run.stream ?? cellStream(cell) }, t);
     ctx.finalSession?.(index, run.session ?? null);
     // An interview's answers, turn by turn, kept with the cell so a cached one still sets them side by side.
     const turns = t.asks?.length ? readTurns(dir, t.asks.length + 1) : null;
@@ -267,7 +268,7 @@ async function runCell(cell, ctx, index) {
     if (row) ctx.logged += logRuns(ctx.scores, [row]);
     ctx.ran++;
     ctx.report?.(index, "done", { ...saved, dir, fromCache: false });
-    ctx.log(`  ${measurement.ok ? "✔" : "✖"} ${label} — ${measurement.steps} steps, ${(measurement.runMs / 1000).toFixed(1)}s${measurement.succeeded === null ? "" : measurement.succeeded ? ", correct" : ", WRONG"}${measurement.error ? ` — ${String(measurement.error).slice(0, 80)}` : ""}`);
+    ctx.log(`  ${measurement.ok ? "✔" : "✖"} ${label} — ${measurement.steps} steps, ${(measurement.runMs / 1000).toFixed(1)}s${measurement.succeeded === null ? "" : measurement.succeeded ? ", correct" : ", WRONG"}${measurement.error ? ` — ${String(measurement.error).slice(0, 80)}` : ""}${measurement.stream?.asked && measurement.stream.turns && !measurement.stream.streamed ? " — asked to stream, but nothing streamed" : ""}`);
     return { ...saved, dir, fromCache: false };
 }
 
@@ -482,6 +483,7 @@ const main = async () => {
                 ok: m.ok, succeeded: m.succeeded, steps: m.steps, secs: m.runMs / 1000,
                 cached: info.fromCache, path: path.relative(sweepDir, info.dir), live: undefined,
                 hash: info.hash ?? null, backend: info.backend ?? null, models: info.models ?? null,
+                stream: m.stream ?? null,
                 ...(info.turns ? { turns: info.turns, statuses: info.statuses ?? [] } : {}),
             });
             recheck(r);

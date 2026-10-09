@@ -82,6 +82,13 @@ export interface BenchTask {
     script?: unknown[];
     /** extra ml.agent options for this task */
     agentOptions?: Record<string, unknown>;
+    /**
+     * Stream the model's turns (`stream: true`), as the HUD does: each turn is read from the stream and its tool calls
+     * assembled from chunks, rather than one plain call per turn. Unset: off for a console run, on for a run started
+     * from a UI `surface` (what that surface sends). A cell's `stream` overrides it. The run records which it was and
+     * how many stream deltas it saw (`measurement.stream`).
+     */
+    stream?: boolean;
     /** how long one run of this task may take before it is recorded as a timeout */
     timeoutMs?: number;
     /**
@@ -104,6 +111,8 @@ export interface CellEffects {
     defines?: Record<string, string>;
     /** options merged into the ml.agent call */
     agentOptions?: Record<string, unknown>;
+    /** stream the model's turns, overriding the task's `stream` (a `stream: [false, true]` dimension maps here) */
+    stream?: boolean;
     /** override the backend for this cell (typically just the model) */
     backend?: { model?: string; chatUrl?: string; key?: string };
     /** override the task's tool subset */
@@ -113,7 +122,7 @@ export interface CellEffects {
     /**
      * Start the run from a UI surface ("hud", …) instead of a console `ml.agent`, overriding the task's own `surface`;
      * `null` forces a console run. A UI run gets the kit a person's run gets, so `tools`, `python`, `toolTokens`,
-     * `agentOptions` and a task's `seed` do not apply to it.
+     * `agentOptions` and a task's `seed` do not apply to it; `stream` does.
      */
     surface?: string | null;
 }

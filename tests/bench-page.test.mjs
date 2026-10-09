@@ -212,6 +212,20 @@ test("the header links to the scoreboard beside the theme; a sweep that logged n
     assert.match(off.dataset.tip, /fake model|node:sqlite|before the scoreboard/);
 });
 
+test("a run that asked to stream is tagged streamed, or not streamed when no delta came; a run that did not ask has no tag", async () => {
+    const base = { taskId: "t", repeat: 0, state: "done", ok: true, path: "t/x/r0" };
+    const doc = await dashboard({ dims: ["s"], runs: [
+        { ...base, combo: { s: "on" }, who: "on", stream: { asked: true, deltas: 9, streamed: true, turns: 3, turnsWithUsage: 3 } },
+        { ...base, combo: { s: "short" }, who: "short", stream: { asked: true, deltas: 9, streamed: true, turns: 3, turnsWithUsage: 2 } },
+        { ...base, combo: { s: "never" }, who: "never", stream: { asked: true, deltas: 0, streamed: false, turns: 3, turnsWithUsage: 3 } },
+        { ...base, combo: { s: "off" }, who: "off", stream: { asked: false, deltas: 0, streamed: false, turns: 3, turnsWithUsage: 3 } },
+    ] });
+    const tags = [...doc.querySelectorAll(".badge")].filter((b) => /streamed/.test(b.textContent));
+    assert.deepEqual(tags.map((b) => [b.textContent, b.classList.contains("warn"), b.classList.contains("bad")]),
+        [["streamed", false, false], ["streamed", true, false], ["not streamed", false, true]]);
+    assert.match(tags[1].dataset.tip, /2 of 3 turns reported usage/);
+});
+
 // --- a run's own page ---
 
 test("a run page draws its lane from inert data, with its script admitted by hash and nothing else", () => {

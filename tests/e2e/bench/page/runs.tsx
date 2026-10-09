@@ -35,16 +35,29 @@ export function Outcome({ r }: { r: RunState }) {
 }
 
 /**
+ * Whether a run's model turns were streamed, beside its outcome: shown only for a run that asked to (a console run's
+ * default is not to). Asked and nothing arrived is flagged, since then the option never took effect; so is a turn
+ * without usage, which the token figures then leave out.
+ */
+export function StreamTag({ r }: { r: RunState }) {
+    const st = r.stream;
+    if (!st?.asked || r.state !== "done") return null;
+    if (!st.streamed) return st.turns ? <span class="badge bad tt" data-tip="Asked to stream its model turns, but no live delta arrived: the option did not take effect, so this run was measured unstreamed.">not streamed</span> : null;
+    const short = st.turnsWithUsage < st.turns;
+    return <span class={`badge tt${short ? " warn" : ""}`} data-tip={`Its model turns were streamed, as the HUD streams them: ${st.deltas} live deltas over ${st.turns} turn${st.turns === 1 ? "" : "s"}. ${st.turnsWithUsage} of ${st.turns} turns reported usage${short ? ": the provider left it off a stream, so this run's token figures miss the rest" : ""}.`}>streamed</span>;
+}
+
+/**
  * The outcome, linked into the transcript AT the step that broke where one is identifiable (`focus`, from the run's own
  * event stream), since landing at the top of a fifty-screen run.md is the work the link was supposed to save. A clean
  * wrong run has no failing step, so it links to the top.
  */
 function OutcomeLink({ r, dir, dims }: { r: RunState; dir: string; dims: string[] }) {
-    if (!dir || r.state !== "done") return <Outcome r={r} />;
+    if (!dir || r.state !== "done") return <><Outcome r={r} /><StreamTag r={r} /></>;
     const f = r.focus;
     // The heading slugs are lower-cased, so the tool is too (sampleText -> sampletext).
     const anchor = f ? `#step-${f.step}${f.tool ? `-${String(f.tool).toLowerCase()}` : ""}` : "";
-    return <a href={`${dir}/run.md.html${anchor}`} class="view plain tt" data-tip={f ? `Opens the transcript at step ${f.step}: ${f.why}` : "Opens the transcript"} data-title={runName(r, dims)}><Outcome r={r} /></a>;
+    return <><a href={`${dir}/run.md.html${anchor}`} class="view plain tt" data-tip={f ? `Opens the transcript at step ${f.step}: ${f.why}` : "Opens the transcript"} data-title={runName(r, dims)}><Outcome r={r} /></a><StreamTag r={r} /></>;
 }
 
 /** What is running, lifted out of the table: with `--jobs N` the live rows can be anywhere in a hundred. */

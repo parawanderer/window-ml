@@ -349,6 +349,8 @@ export function decideApproval(policy, gate) {
  * @param {boolean} [cfg.python] wire python_exec as an extraTool
  * @param {boolean} [cfg.toolTokens] enable tool tokens (pointers)
  * @param {object} [cfg.agentOptions] extra ml.agent options, merged last (the bench's dimension knob)
+ * @param {boolean|null} [cfg.stream] stream the model's turns (`stream` on the run), on a console run and a UI run
+ *   alike; null leaves a console run to `agentOptions` and a UI run unstreamed
  * @param {{task: string, script: Array}|null} [cfg.seed] SEED A HISTORY before the measured turn. Turn 1 runs
  *   against the scripted fake-LLM (so it can be made to corrupt a pointer, fail a call, or capture data),
  *   then the backend is swapped to `cfg.backend` and `cfg.task` runs as a FOLLOW-UP in the same session —
@@ -375,12 +377,13 @@ export function decideApproval(policy, gate) {
  *   the worker, with the kit a UI run gets (click, type, python_exec, chat_metadata) and its prompt clauses, and each
  *   later turn sent as that person's message. Null (the default) is a console run, `ml.agent` from the page. `tools`,
  *   `python`, `toolTokens`, `agentOptions` and `seed` are the console run's knobs and do not apply.
- * @returns {Promise<{events, session, runMd, runJson, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, models, seedBoundaryStep, captured}>}
+ * @returns {Promise<{events, session, runMd, runJson, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, models, seedBoundaryStep, captured, stream}>}
+ *   `stream` is whether the run asked to stream; its `agent-stream` events say whether it did.
  */
 export async function runOnce(cfg = {}) {
     const {
         task = DEFAULT_TASK, followup = "", start = "/step3", tools = null,
-        python = false, toolTokens = false, agentOptions = {},
+        python = false, toolTokens = false, agentOptions = {}, stream = null,
         backend = null, script = DEFAULT_SCRIPT, warm = true, warmAll = false,
         dist = null, artDir = null, approve = "auto", capture = "failure",
         focusSidebar = true, hold = false, synthetic = true, sharedWatches = [], watchNotes = {}, nextTurn = null, decide = null, surface = null,
@@ -525,7 +528,7 @@ export async function runOnce(cfg = {}) {
         let uiHash = null;
         /** Start a console run in the page: an `ml.createAgent` handle for a multi-turn run, else one `ml.agent` call.
          *  Self-contained (it runs in the page), so the same function can rebuild the handle in a new document. */
-        const launchInPage = ({ task, needsHandle, toolNames, toolTokens, python, extra, resume }) => {
+        const launchInPage = ({ task, needsHandle, toolNames, toolTokens, python, extra, stream, resume }) => {
             const opts = {
                 toolTokens,
                 approvalRouting: "both",   // gates show in the UI AND are resolvable via the __mlApprovals channel
@@ -545,6 +548,7 @@ export async function runOnce(cfg = {}) {
             // python_exec is an extraTool, so it survives the tools subset filter above.
             if (python) opts.extraTools = [window.ml.pythonTool()];
             Object.assign(opts, extra);   // caller-supplied options win (the bench's dimension knob)
+            if (stream != null) opts.stream = stream;   // already resolved against `extra` by the caller
             // ALWAYS fire a turn NON-blocking — stash the promise, return immediately — so the caller can
             // open the sidebar and click into the live session WHILE it runs. The result is picked up from
             // the event stream, so nothing is lost by not awaiting here.
@@ -559,7 +563,7 @@ export async function runOnce(cfg = {}) {
             }
             return null;
         };
-        const launchArgs = { task, needsHandle, toolNames: tools, toolTokens, python, extra: agentOptions };
+        const launchArgs = { task, needsHandle, toolNames: tools, toolTokens, python, extra: agentOptions, stream };
         if (!surface) try {
             await page.evaluate(launchInPage, launchArgs);
         } catch (e) { error = String(e); }
@@ -575,7 +579,7 @@ export async function runOnce(cfg = {}) {
                     // approvalRouting "both": the gates stay in the UI and are ALSO ruled on through __mlApprovals, as a
                     // console run's are here. Only the SW-realm test hook can ask for it.
                     ({ hash: uiHash } = await ext.sw.evaluate(({ tabId, req }) => globalThis.__mlStartUserRunForTest(tabId, req, { approvalRouting: "both" }),
-                        { tabId, req: { task: t, surface, hud: "quiet" } }));
+                        { tabId, req: { task: t, surface, hud: "quiet", ...(stream ? { stream: true } : {}) } }));
                 } else {
                     const outcome = await ext.sw.evaluate(({ h, t, surface }) => globalThis.__mlUserRunActionForTest(h, "send", { text: t, surface }), { h: uiHash, t, surface });
                     if (outcome !== "turn") log(`  (the message started no new turn: ${outcome})`);
@@ -689,7 +693,8 @@ export async function runOnce(cfg = {}) {
             await new Promise((resolve) => { ext.context.on("close", resolve); process.on("SIGINT", resolve); });
         }
 
-        return { events, session, runMd: md, runJson: json, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, models, seedBoundaryStep, captured };
+        return { events, session, runMd: md, runJson: json, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, models, seedBoundaryStep, captured,
+            stream: stream ?? (surface ? false : agentOptions.stream === true) };
     } catch (thrown) {
         // An UNEXPECTED failure — the interesting one. A capture in `finally` would run after the context
         // is torn down; doing it here, before rethrowing, is the only place the page still exists.
