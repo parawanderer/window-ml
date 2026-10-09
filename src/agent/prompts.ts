@@ -112,9 +112,36 @@ export const CALL_TITLE_CLAUSE =
     "not a sentence, and never an explanation of the tool itself.";
 import { PIPE_SYNTAX } from "../pointers/text-pipe";
 
+// ---- prompt budget step 3: a condensed tool-output-tokens cluster, an experiment ----
+// Whether the shorter text keeps models citing and reading back is behavioural, so it is a build-time variant
+// (`--define __ML_PROMPT_VARIANT__`), measured by tests/e2e/bench/specs/prompt-budget-tooltokens.bench.ts. A cut that
+// loses adds nothing to the product. docs/spec/PROMPT_BUDGET.md, "Measuring step 3".
+declare const __ML_PROMPT_VARIANT__: string | undefined;
+/** This build carries the condensed cluster. Replaced at build time; the current text is what ships. */
+const CONDENSED = typeof __ML_PROMPT_VARIANT__ === "string" && __ML_PROMPT_VARIANT__ === "condensed";
+/** The condensed tool-output-tokens section: the same behaviours (opt in, embed instead of retyping, cite once, the
+ *  render rules) with the explanation of why cut. Exported so a test can hold it to the same rules as the shipped one. */
+export const condensedTooltokens = (answer: boolean): string =>
+    "\n\nTOOL OUTPUT TOKENS. An `@tool:<id>` is a handle to one tool result, valid for the whole session. Set " +
+    "`token: true`, or a short label (`token: \"the pricing table\"`), on exec / python_exec / look / locate / fetch_url " +
+    "and the result ends with its `@tool:<id>`; a tool NAME (`@tool:exec`) means that tool's latest call. SHOW an output " +
+    "by embedding it like an image: `![caption](@tool:<id>:out)` expands to the real table, image or value in place, " +
+    "and `:in` to the code you ran, so never retype either. Nothing you computed is shown unless you cite it; an embed " +
+    "counts as TERSE. " + (answer ? "A big table or image can go in the block under your reply instead: " +
+    "`ml.answer.add(\"@tool:<id>:out\")` or the `answer` tool, with a `note`. " : "") + "Cite each output once, only " +
+    "a result worth showing. Code you will show with `:in`: clear names, a short comment per step. A sympy result, a " +
+    "latex string or an image renders on its own; a pipe only overrides (`| latex`, `| img`, `| raw`).";
+/** The condensed reading-back section, the counterpart of DEREF_CLAUSE. */
+export const CONDENSED_DEREF =
+    "\n\nREADING AN OUTPUT AGAIN. `dereference` reads a pointer: use it instead of re-running a tool or retyping a " +
+    "value. It is free and changes nothing, and its `pipe` inspects something too big for your context: `schema` or " +
+    "`keys` first, then a path like `.rows | head 5`. An output cut to fit gets a pointer even without `token`: the note " +
+    "at the cut names it. A pointer is a snapshot of when its tool ran.";
+
 /** The tool-tokens section. `answer`: the run has the `answer` tool, so an output can also go in the block under the
  *  reply; without it, an output is embedded inline only, and the prompt never names a tool the run lacks. */
-export const tooltokensClause = (answer: boolean): string =>
+export const tooltokensClause = (answer: boolean): string => CONDENSED ? condensedTooltokens(answer) : currentTooltokens(answer);
+const currentTooltokens = (answer: boolean): string =>
     "\n\nTOOL OUTPUT TOKENS. An `@tool:<id>` is a HANDLE to one tool result, and it has TWO uses: showing that " +
     "output to the user in your answer, and READING IT BACK YOURSELF later (with `dereference`). So opt in " +
     "whenever an output is worth keeping — either because you'll show it, OR because you may need it again " +
@@ -144,6 +171,7 @@ export const tooltokensClause = (answer: boolean): string =>
     "forces the literal text. E.g. `![derivative](@tool:<id>:out)` typesets a sympy result on its own.";
 /** The tool-tokens section for a run with the `answer` tool. */
 export const TOOLTOKENS_CLAUSE = tooltokensClause(true);
+
 // The other half of tool tokens: a token is not only a CITATION for the answer, it is a POINTER the model can
 // read back mid-run. Kept in the same clause because it is only true when tool tokens are on.
 /** THE PIPE DIALECT, once. It was spelled out verbatim in four `pipe` PARAMETERS (fetch_url, navigate,
@@ -163,7 +191,7 @@ export const PIPE_CLAUSE =
     "the lines you need instead of the whole document. It is the same dialect everywhere it appears. " +
     PIPE_SYNTAX;
 
-export const DEREF_CLAUSE =
+const CURRENT_DEREF =
     "\n\nNAME WHAT YOU KEEP. `token` can be a SHORT LABEL instead of `true` — `token: \"the pricing table\"` — " +
     "and that label is for YOU, not the user: it is how you'll recognise the handle later, and you can find a " +
     "pointer by its name even if you misremember the id. Label anything you might come back to. " +
@@ -176,6 +204,8 @@ export const DEREF_CLAUSE =
     "like `.rows | head 5`. An output cut to fit your context gets a pointer even without `token`: the note at " +
     "the cut names it. NOTE a pointer is a SNAPSHOT of when that tool ran: the reply says " +
     "when it was captured, so re-read the page instead if it has changed since.";
+/** The reading-back section: how to read a pointer, and what a cut output already has. */
+export const DEREF_CLAUSE = CONDENSED ? CONDENSED_DEREF : CURRENT_DEREF;
 
 /** The DOM tools that pierce shadow roots, in the order the shadow clause names them. */
 export const SHADOW_TOOLS = ["findByText", "interactives", "describeElement", "ancestors", "countMatches", "sampleText", "click", "type", "wait", "answer"] as const;

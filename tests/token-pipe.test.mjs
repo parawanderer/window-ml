@@ -626,3 +626,22 @@ test("the default prompt says page text is data, that an embed is terse, and tha
     // AGENT_SYSTEM's numbered list indents its continuation lines, so only the two clauses are checked whole.
     for (const s of [TOOLTOKENS_CLAUSE, DEREF_CLAUSE]) assert.doesNotMatch(s, / {2}/, "no run of two spaces");
 });
+
+test("the condensed tool-output-tokens variant (prompt budget step 3) keeps every behaviour the shipped one asks for", async () => {
+    const { condensedTooltokens, CONDENSED_DEREF, tooltokensClause, DEREF_CLAUSE } = await import("../src/agent/prompts.ts");
+    const [withAnswer, without] = [condensedTooltokens(true), condensedTooltokens(false)];
+    // citeParam points every `token` parameter at this heading, in either build.
+    assert.match(withAnswer, /TOOL OUTPUT TOKENS\./);
+    assert.match(withAnswer, /!\[caption\]\(@tool:<id>:out\)/, "the embed grammar");
+    assert.match(withAnswer, /`:in`/);
+    assert.match(withAnswer, /@tool:exec/, "a tool name means its latest call");
+    assert.match(withAnswer, /counts as TERSE/);
+    assert.match(withAnswer, /ml\.answer\.add/);
+    assert.doesNotMatch(without, /answer/i, "a run without the `answer` tool is never told about it");
+    assert.match(CONDENSED_DEREF, /dereference/);
+    assert.match(CONDENSED_DEREF, /even without `token`/);
+    for (const s of [withAnswer, without, CONDENSED_DEREF]) assert.doesNotMatch(s, / {2}/, "no run of two spaces");
+    assert.ok(withAnswer.length + CONDENSED_DEREF.length < (tooltokensClause(true).length + DEREF_CLAUSE.length) / 2, "it is a cut worth measuring");
+    // Without the define this build ships the current text.
+    assert.notEqual(tooltokensClause(true), withAnswer);
+});
