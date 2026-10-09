@@ -25,14 +25,14 @@ import { type Axis, segments, chartWindow, axisOf, scrubExtent, scrubPinch, wind
 import { scopeToSpan, filterEvents, sessionWindow } from "../../resource/resource-lane";
 import { deviceBands, hostBands, residualRank } from "../../resource/resource-bands";
 import { editLayout, VRAM_POLL_MS, laneFilter, layout, sampleGapMs } from "./panel-state";
-import { chartHeld, HOLD_LAPSE_MS, holdAxis, holdKey, hoverAt, lastPointerAt, live, readingIsOverlay, releaseAxis, stepPool, tipMuted } from "./chart-interaction";
+import { chartHeld, HOLD_LAPSE_MS, holdAxis, holdKey, hoverAt, lastPointerAt, live, readingIsOverlay, releaseAxis, stepPool, tipMuted, leavePool, poolHover } from "./chart-interaction";
 import { scopedHash, resWindowS, zoomRange, laneScoped, laneEnabled, crosshair } from "../store";
 import { EventLane } from "./resource-lane-ui";
 import { AXIS_TICK_MS } from "./resource-overlays";
 import { settleScrub, ScrubStrip } from "./resource-scrub";
 import { DeviceView } from "./resource-device-view";
 import { UtilView, BoxView, OverlayView } from "./resource-box-views";
-import { kbFocus, hoverModel, stepFocus, stepDepth } from "./vram-focus";
+import { kbFocus, kbPool, hoverModel, stepFocus, stepDepth } from "./vram-focus";
 
 /** Mute the cursor tip if one is showing, and say whether that happened — so the Esc handler can fall through
  *  to leaving the zoom when there was nothing to hide. The decision lives HERE, beside the signals it reads,
@@ -112,7 +112,19 @@ function TrackView({ def, samples, latest, hidden, events = [] }: { def: TrackDe
 // the panel's iframe for the page: moving anywhere in the panel off the chart; the shell saying the pointer is on the
 // page; and the lapse, in the chart's tick.
 if (typeof document !== "undefined") document.addEventListener("pointermove", (e) => {
-    if (chartHeld.value && !(e.target as Element | null)?.closest?.(".rc, .rc-lane")) chartHeld.value = null;
+    const on = e.target as Element | null;
+    if (chartHeld.value && !on?.closest?.(".rc, .rc-lane")) chartHeld.value = null;
+    // THE SAME BACKSTOP FOR THE CHART'S READOUT (its crosshair, where the pointer is reading it, a pool lit). The chart
+    // clears them on its plots' pointerleave, but a chart redrawn under a still pointer (a live page's next state) has
+    // the browser re-enter whatever element is now under it, and that readout outlived the pointer: up wherever it went
+    // next, and over a lane bar on top of the bar's own tip. Only the chart's surfaces set these, so off the chart, or on
+    // a lane (whose bars have tips of their own), the readout is over, unless the keyboard holds a line. A lane's own
+    // reading position (surface "lane") is the lane's to clear, and event tips are untouched (a model card's ribbon
+    // opens one outside the chart).
+    if (kbFocus.value || kbPool.value || (on?.closest?.(".rc") && !on.closest(".rc-lane, .wml-lane"))) return;
+    if (crosshair.value) crosshair.value = null;
+    if (hoverAt.value && hoverAt.value.surface !== "lane") hoverAt.value = null;
+    if (poolHover.value) leavePool();
 }, { passive: true });
 
 /** THE CHART itself: one track per memory pool on a shared segmented axis, the scrub strip above and the
