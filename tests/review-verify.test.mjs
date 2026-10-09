@@ -293,7 +293,7 @@ test("a reply that arrives after a mid-call hand-over cannot carry the page's pi
     assert.equal(w.spend(), 0, "the page's spend was counted after the hand-over");
 });
 
-test("a page's own model call during a handed-over run's first turn cannot be filed under the run", { ...T, todo: "withoutWorkerSession asks isWorkerRun (bgRuns), which misses a run handed over in its first turn; workerVision also reads runRebuilds. The panel files the page's generation under the person's run" }, async () => {
+test("a page's own model call during a handed-over run's first turn cannot be filed under the run", T, async () => {
     let hint;
     const w = await run({ builtBy: "page", builderUrl: "https://builder.example/", calls: [{ name: "scroll", args: {} }, { name: "click", args: { selector: "#save", verify: true } }],
         page: async (p, n, bg) => {
@@ -321,7 +321,7 @@ test("a page's own model call naming a worker-built run is served, not counted i
     assert.equal(w.spend(), 0, "it was counted in the run's tally");
 });
 
-test("the session check survives what wireHint normalises: a padded run session is dropped too", { ...T, todo: "withoutWorkerSession compares the raw string (startsWith(\"wml-\"), slice(4)); wireHint then trims it, so \" wml-<run>\" or \"wml-<run> \" goes out as the run's session and the panel files the page's generation under the person's run" }, async () => {
+test("the session check survives what wireHint normalises: a padded run session is dropped too", T, async () => {
     const w = await run({ model: "text-driver", calls: [{ name: "scroll", args: {} }],
         page: async (p, _n, bg) => { await pageChat(bg, ` wml-${p.runId}`); await pageChat(bg, `wml-${p.runId}\t`); return { result: "Scrolled." }; } });
     const calls = pageCallsIn(w.subs);
