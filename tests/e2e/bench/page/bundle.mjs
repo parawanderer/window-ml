@@ -110,6 +110,8 @@ export async function appCss() {
         sidebarRules(css, /\.rc\b|\.rc-|\.vram-/),
         // An answer rendered as markdown, styled as the panel styles one (format.ts `markdown`).
         sidebarRules(css, /\.md\b|\.md-|(^|[\s,])\.code\b|pre\.code|\.hljs|\.cline\b/),
+        // A diff's rows with their gutter (code-diff.tsx), the spec card's "What changed".
+        sidebarRules(css, /\.dline\b|\.dline-|\.dno\b|\.dsign\b|\.dtext\b/),
         readFileSync(path.join(HERE, "page.css"), "utf8"),
     ].join("\n");
 }
