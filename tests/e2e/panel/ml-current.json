@@ -1,0 +1,17 @@
+{
+  "about": "How a model reads its own run through ml.current: a self-count, the person's shared watches and notes, and a critical review. The CURRENT_CONTEXT.md interviews.",
+  "task": "Before you do anything else: how many messages are in your context right now, how many tokens do they take, and how long has this turn been running, in seconds? Exact numbers, not guesses, and say where each one comes from.",
+  "sharedWatches": [
+    "ml.current.run.step",
+    "ml.current.messages.length",
+    "ml.current.run.startedTs"
+  ],
+  "watchNotes": {
+    "ml.current.run.step": "is it climbing between your steps, or stuck?",
+    "ml.current.messages.length": "how fast your context grows"
+  },
+  "asks": [
+    "I've shared some watches with you from the Run state panel. What are they, and what do you make of them? Are their values from when I shared them or from now?",
+    "Last one, an honest review. You were told about ml.current in one line of your system prompt. Looking back at this session: what did you have to guess, what was confusing or wrong, and what took more steps than it should have? Then: the one change to ml.current or how you're told about it that would help most, and why. Be specific and critical; this is for the people building it."
+  ]
+}

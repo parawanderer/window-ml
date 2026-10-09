@@ -9,6 +9,10 @@ as in AGENTS.md — they are all under `src/`.
   turn as the run goes, and `decide` lets the caller rule on gates. The interface is a directory (`inbox/`, `outbox/`,
   `status`, `gate.json`/`decision`), so an agent session can interview a model about a feature, answer what it asks
   and steer it, one Bash call per message. Built for the `ml.current` usability runs (2026-10-08).
+- **`panel.mjs`** (`panel` skill) — one interview file (`tests/e2e/panel/*.json`) put to several real models at once,
+  each in its own converse session, after a one-tool-call PROBE per model so a broken connection is named rather than
+  read as a model ignoring the task. Writes `summary.md`: calls per turn, how each ended, then the answers side by
+  side. For judging an API, prompt or tool change by how models in general read it; the bench measures, a panel asks.
 - **`observe.mjs`** — a **debug/observation wrapper, not a test** (see the `observe` skill for the
   full playbook): `node --import tsx tests/e2e/observe.mjs` drives ONE agent run in a real Chromium
   and writes ARTIFACTS to `tests/e2e/artifacts/<RUN_LABEL|timestamp>/` (gitignored): **`run.md`** =
