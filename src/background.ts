@@ -14,7 +14,9 @@ import { googleSheetId } from "./dom/dom";
 import { browserInfo, cropDataUrl } from "./util";   // the fork's settings scheme (page-context Browser line); cropDataUrl for the test-only __mlWorkerCropForTest
 import { workerRaster } from "./raster";
 import { ensureDebuggerAttached, releaseDebugger, cdpClick, cdpScreenshot, cdpShadowResolve } from "./sw/sw-cdp";   // CDP/debugger layer (strict-CSP exec, trusted click/type, host-grant-free screenshot)
-import { captureOwnTab, NOT_SHOWING } from "./sw/sw-capture";
+import { CAPTURE_RETRIES, CAPTURE_RETRY_MS, captureOwnTab, NOT_SHOWING } from "./sw/sw-capture";
+import { buildWorkerTools, workerSpend } from "./sw/worker-tools";
+import { captureRunTab, workerShot, workerVisionChat } from "./sw/worker-vision";   // the worker's vision pieces, test-only until a tool uses them
 import { fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw/sw-fetch";   // outbound fetch layer (ml.fetch, rendered fetch, credentialed Google Sheets CSV)
 import { executeServerTool, serverToolResult } from "./sw/sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw/sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
@@ -115,9 +117,13 @@ startValueSweeps();
 // worker's OffscreenCanvas to the page's canvas pixel for pixel. Nothing in the extension crops in the worker yet.
 (globalThis as unknown as { __mlWorkerCropForTest?: unknown }).__mlWorkerCropForTest = (dataUrl: string, rect: { left: number; top: number; width: number; height: number }, dpr: number) => cropDataUrl(dataUrl, rect, dpr, workerRaster);
 
-// captureVisibleTab quota backoff: retry a rate-limited screenshot (~2/sec cap) rather than failing the step.
-const CAPTURE_RETRIES = 5;       // ~5 tries…
-const CAPTURE_RETRY_MS = 550;    // …spaced just over the 1s/2-call window → clears the transient quota
+// TEST-ONLY (SW realm only): the worker's vision pieces (worker-vision.ts), which no tool calls yet, so
+// tests/worker-vision.test.mjs and tests/e2e/worker-shot.spec.mjs can drive them. `seedRun` gives a run the worker-tool
+// state its sub-call spend is counted in; `spend` reads it back.
+(globalThis as unknown as { __mlWorkerVisionForTest?: unknown }).__mlWorkerVisionForTest = {
+    captureRunTab, workerShot, workerVisionChat, spend: workerSpend,
+    seedRun: (runId: string, tabId: number) => { buildWorkerTools(runId, tabId, () => "", ["fetch_url"]); },
+};
 
 if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
     chrome.webNavigation.onCommitted.addListener((d) => {

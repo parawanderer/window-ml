@@ -179,6 +179,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         setTimeout, clearTimeout, DOMException,   // rate-limit backoff (abortableWait) uses timers + abort
         Response,          // some paths construct/inspect Response
         Blob,              // the value store keeps a fetched body as a Blob
+        atob, btoa,        // a worker realm has both (imageSize reads a capture's PNG header through atob)
         // The value store's database. Absent by default, as in any realm with no IndexedDB, which leaves the store off;
         // a test that exercises it passes a `fake-indexeddb` IDBFactory.
         // A key range is how the store deletes a session's events, so a worker given a database needs it too: without

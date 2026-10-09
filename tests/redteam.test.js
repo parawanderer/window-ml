@@ -22,7 +22,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
 const { jsonResponse, streamResponse, loadBackground, loadPageWorld } = require("./helpers");
-const { PAGE_STARTED_TYPES, RUN_CONTROL_TYPES, RUN_TAB_TYPES } = require("../src/page-relay.ts");
+const { HANDLE_MAP, PAGE_STARTED_TYPES, RUN_CONTROL_TYPES, RUN_TAB_TYPES } = require("../src/page-relay.ts");
 
 const baseConfig = (o = {}) => ({ chatUrl: "http://host/api/chat/completions", apiKey: "sk-SECRET-KEY", model: "default-model", apiFormat: "openai", ocrModel: "", ...o });
 const hostilePage = (id = 9, url = "https://evil.example/attack") => ({ tab: { id, url }, url });   // sender.tab set + web origin
@@ -227,6 +227,33 @@ test("GAIN blocked — a page's cancel is its own message type, so the gate can 
     const relayed = await pageRelays({ type: "CANCEL_RUN_REQUEST", payload: { runId: "r" } });
     assert.deepEqual(relayed, ["PAGE_CANCEL_RUN"]);
     assert.ok(RUN_CONTROL_TYPES.has("PAGE_CANCEL_RUN"), "and it is run control: never allowed from an unapproved page");
+});
+
+test("GAIN blocked — the worker's sidebar hide/show for its own screenshot (SHOT_HIDE/SHOT_SHOW) is no page's to send, relay or read", async () => {
+    // worker-vision.ts `workerShot` hides the sidebar through the shell (chrome.tabs.sendMessage → the content script),
+    // and the shell takes it only from the worker (shell-shot.ts). Neither type may be one a page can get relayed, or
+    // a page could hide the sidebar under a run, end the worker's hide early, or learn when the worker shoots.
+    const shotTypes = ["SHOT_HIDE", "SHOT_SHOW"];
+    const mapped = Object.entries(HANDLE_MAP).flatMap(([k, v]) => [k, v.type, v.responseType]);
+    for (const t of shotTypes) {
+        assert.ok(!mapped.some((m) => String(m).startsWith(t)), `${t} is in HANDLE_MAP`);
+        assert.ok(!PAGE_STARTED_TYPES.has(t) && !RUN_TAB_TYPES.has(t), `${t} is page-startable`);
+    }
+    const relayed = await pageRelays(...shotTypes.flatMap((t) => [{ type: t, id: "x" }, { type: `${t}_REQUEST`, payload: { id: "x" } }]));
+    assert.deepEqual(relayed, [], "the content script relays none of them");
+    // Sent straight at the worker as if relayed, it does nothing: no message to any tab's shell.
+    const bg = loadBackground({ config: baseConfig() });
+    // (an unknown type is never answered, as Chrome closes such a channel; the race stands in for that)
+    for (const t of shotTypes) await Promise.race([bg.send({ type: t, id: "x" }, hostilePage()), tick()]);
+    assert.deepEqual(bg.tabMessages.filter((a) => /^SHOT_/.test(a[1]?.type)), [], "the worker forwarded a page's SHOT_* to a shell");
+    // And the worker's own SHOT_* reaching the content script is never re-posted on the page's window.
+    const world = loadPageWorld({ onRuntimeMessage: () => ({ data: null }) });
+    const posted = [];
+    const real = world.context.window.postMessage;
+    world.context.window.postMessage = (m, ...rest) => { posted.push(m); return real.call(world.context.window, m, ...rest); };
+    for (const t of shotTypes) await world.fireRuntimeMessage({ type: t, id: "x" }, { id: "ext" });
+    await tick();
+    assert.deepEqual(posted.filter((m) => JSON.stringify(m).includes("SHOT")), [], "the page saw the worker's shot");
 });
 
 test("the extension's own shell sends nothing the origin gate refuses (it shares the page's sender)", async () => {

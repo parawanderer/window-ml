@@ -20,6 +20,7 @@ import { resolveContextContainer, domToContext } from "../dom/dom";   // right-c
 import type { ElementContext } from "../contract/contract-run";
 import type { DebugMode } from "../contract/contract-config";
 import { eventSession, pageMayWrite, type WorkerClaim } from "../event-admission";
+import { shotGate } from "./shell-shot";
 
 const WIDTH_KEY = "ml_debug_width";
 const CARD_W_KEY = "ml_card_width";   // the corner card's dragged width
@@ -734,18 +735,9 @@ function showHighlight(ref: { selector?: string; index?: number; token?: string;
 // hide→show window: snapshot the position and snap back on any scroll until we restore.
 let scrollPin: { x: number; y: number; onScroll: () => void } | null = null;
 
-function onWindowMessage(e: MessageEvent): void {
-    const d = e.data;
-    if (!d) return;
-    // injected.js just loaded and is listening (a page-load race: it may have missed the
-    // handshake we posted before its <script> ran). Re-send it, if the bus is meant to be live.
-    if (d.__mlSidebar === "hello" && e.source === window) { if (busLive()) handshake(); return; }
-    // The page's answer to a session action the chat page asked for (shell-session-relay.ts).
-    if (d.__mlSessionDone && e.source === window) { onSessionDone(d.__mlSessionDone); return; }
-    // injected.js asks us to hide the overlay for a screenshot (so the sidebar
-    // isn't captured into the agent's `look`). Hide, then ack after two frames so
-    // the hidden state has painted before the capture fires.
-    if (d.__mlSidebarShot === "hide") {
+/** The sidebar's shot handling: the page's handshake and the worker's SHOT_HIDE/SHOT_SHOW, held apart. */
+const shot = shotGate({
+    hide() {
         if (!scrollPin) {
             const x = window.scrollX, y = window.scrollY;
             const onScroll = () => window.scrollTo(x, y);
@@ -756,10 +748,8 @@ function onWindowMessage(e: MessageEvent): void {
         if (cardHost) cardHost.style.visibility = "hidden";   // the off-mode card, if it's showing
         if (lightbox) lightbox.style.visibility = "hidden";   // full-viewport overlay — MUST hide too, else the shot is all backdrop
         hideHighlight();   // a hover box would otherwise land in the capture
-        requestAnimationFrame(() => requestAnimationFrame(() => window.postMessage({ __mlSidebarShot: "hidden" }, "*")));
-        return;
-    }
-    if (d.__mlSidebarShot === "show") {
+    },
+    show() {
         if (shellHost) shellHost.style.visibility = "";
         if (cardHost) cardHost.style.visibility = "";
         if (lightbox) lightbox.style.visibility = "";
@@ -768,8 +758,22 @@ function onWindowMessage(e: MessageEvent): void {
             window.scrollTo(scrollPin.x, scrollPin.y);   // final restore in case one slipped through
             scrollPin = null;
         }
-        return;
-    }
+    },
+});
+
+function onWindowMessage(e: MessageEvent): void {
+    const d = e.data;
+    if (!d) return;
+    // injected.js just loaded and is listening (a page-load race: it may have missed the
+    // handshake we posted before its <script> ran). Re-send it, if the bus is meant to be live.
+    if (d.__mlSidebar === "hello" && e.source === window) { if (busLive()) handshake(); return; }
+    // The page's answer to a session action the chat page asked for (shell-session-relay.ts).
+    if (d.__mlSessionDone && e.source === window) { onSessionDone(d.__mlSessionDone); return; }
+    // injected.js asks us to hide the overlay for a screenshot (so the sidebar isn't captured into the agent's
+    // `look`). Hide, then ack after two frames so the hidden state has painted before the capture fires. Its "show"
+    // lifts its own hide only: a shot the worker is taking stays hidden (shell-shot.ts).
+    if (d.__mlSidebarShot === "hide") { shot.pageHide(() => window.postMessage({ __mlSidebarShot: "hidden" }, "*")); return; }
+    if (d.__mlSidebarShot === "show") { shot.pageShow(); return; }
     // injected resolved an @pt/@box token to viewport coords → draw a point marker / box outline (unless
     // a newer hover superseded it, or the token was stale and didn't resolve).
     if (d.type === "ML_HL_AT" && e.source === window) {
@@ -1460,6 +1464,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // A run's event from the worker, for the card or the overlay. It comes this way, and never over the page's window,
     // so the page neither reads it nor can pass one off as the worker's (docs/spec/SITE_ACCESS.md, attack 15).
     if (msg?.type === "ML_DEBUG_TO_PAGE") { if (startupQueue) workerStartup.push(msg.event); else feedDebug(msg.event, true); return; }
+    // The worker hiding the sidebar for a screenshot it takes itself: answered only for the worker, never the page.
+    if (msg?.type === "SHOT_HIDE" || msg?.type === "SHOT_SHOW") return shot.onRuntime(msg, sender, sendResponse) || undefined;
     // Not ours to answer (content.ts relays them to the page), but they carry a run's id to the page: claim it first.
     if (msg?.type === "ADOPT_RUN_NOW") claimForWorker(msg.payload?.runId, true);
     else if (msg?.type === "RUN_TOOL_IN_PAGE") claimForWorker(msg.payload?.runId, false);

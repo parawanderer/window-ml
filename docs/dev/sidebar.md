@@ -58,6 +58,15 @@ land before injected's async `<script>` was listening, stranding the panel un-li
 until a settings toggle. `bus.ts` replays its ring only ONCE per session so the re-handshake
 can't double-emit.
 
+**Hiding for a shot: two parties, held apart (`shell-shot.ts`).** A page-hosted vision tool hides the sidebar with
+the window handshake (`__mlSidebarShot: hide → hidden → show`), which any page script can post. A shot the WORKER
+takes (`workerShot`, `sw/worker-vision.ts`) hides it with `SHOT_HIDE`/`SHOT_SHOW` over `chrome.tabs.sendMessage` to
+the top frame, accepted only from the worker (this extension's id and no `sender.tab`) and never page-relayable. Each
+party's hide is held separately and the sidebar shows only when neither holds one, so a page's "show" cannot bring
+the sidebar back into the worker's shot. `SHOT_HIDE` is answered after two frames; the worker waits 200 ms for it,
+then captures anyway, and always sends `SHOT_SHOW`. A worker hide with no show (an eviction mid-shot) lifts itself
+after 15 s.
+
 **The services seam (`services.ts`): the session views never call `chrome` or the parent frame themselves.**
 The session views (agent runs, chat turns, output cells, code blocks, approvals, the composer) are shared by the
 overlay, the DevTools panel and the HUD card, and by the chat page and a phone app next (`docs/spec/CHAT_PAGE.md`),

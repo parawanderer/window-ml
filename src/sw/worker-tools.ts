@@ -5,7 +5,7 @@
 // slice 2 part 2). These are the same tools, from the same factories, given an `ml` whose members the worker answers
 // itself: the descriptor the model is shown and the run's approval are unchanged, and only where the body runs moves.
 
-import type { FetchResult, MlApi, MlTool, SubcallUsage } from "../contract";
+import type { FetchLlmPayload, FetchResult, MlApi, MlTool, SubcallUsage } from "../contract";
 import { fetchTool, defineTool, pythonTool } from "../ml/ml-tool-factories";
 import { _loadTable, isTableValue, tableSpecs } from "../ml/ml-python";
 import { googleSheetCsvUrl, googleSheetId } from "../dom/dom";
@@ -106,6 +106,38 @@ export function pageOnlySend(name: string | undefined, args: Record<string, unkn
 }
 
 /**
+ * Send one model request for a run's worker tool and count what it spent into the run's sub-call tally: the one path
+ * every worker-side sub-call takes (fetch_url's reader, the vision calls), so each lands in `subUsage` the same way.
+ * @param ctx the run's worker-tool state
+ * @param payload the request, as a page would send it in FETCH_LLM
+ * @returns the reply's text
+ */
+async function meteredChat(ctx: RunCtx, payload: FetchLlmPayload): Promise<string> {
+    const r = await fetchLLM(payload) as { content?: string | null; model?: string | null; usage?: { promptTokens?: number; completionTokens?: number } | null };
+    const p = r.usage?.promptTokens || 0, c = r.usage?.completionTokens || 0;
+    const s = ctx.spent;
+    s.prompt += p; s.completion += c; s.calls += 1;
+    const model = r.model || payload.model || "unknown";
+    const row = (s.byModel ??= []).find((m) => m.model === model);
+    if (row) { row.prompt += p; row.completion += c; row.calls += 1; } else s.byModel.push({ model, prompt: p, completion: c, calls: 1 });
+    return String(r.content ?? "");
+}
+
+/**
+ * {@link meteredChat} for a run by id: a request built elsewhere (the vision sub-calls' `oneShotRequest`), counted into
+ * that run's sub-call spend.
+ * @param runId the run
+ * @param payload the request
+ * @returns the reply's text
+ * @throws when this worker holds no worker-tool state for the run (never sent unmetered)
+ */
+export function runChat(runId: string, payload: FetchLlmPayload): Promise<string> {
+    const ctx = runs.get(runId);
+    if (!ctx) return Promise.reject(new Error(`no worker state for run ${runId}: its model call was not sent.`));
+    return meteredChat(ctx, payload);
+}
+
+/**
  * The `ml` a worker tool of one run is given: `fetch` through the same consent checks a page's would pass (the run's
  * approval minted them for its tab), its derived fields with Markdown from the offscreen document, and `chat` for
  * `fetch_url`'s reader, metered as the run's sub-call spend.
@@ -135,19 +167,10 @@ function runMl(ctx: RunCtx): MlApi {
         // No page here: python_exec's selector warning finds nothing (a send naming a selector goes to the page).
         _queryAll: () => [],
         pythonExec: (code: string, opts: { mode?: "readonly" | "full"; tableRaw?: boolean; tables?: unknown; onStdout?: (chunk: string, ts?: number) => void } = {}) => workerPython(ctx, code, opts),
-        chat: async (prompt: string, opts: { model?: string | null; extend?: "utility" | null; numCtx?: number | null } = {}): Promise<string> => {
-            const r = await fetchLLM({
-                messages: [{ role: "user", content: prompt }], model: opts.model ?? null, extend: opts.extend ?? null,
-                numCtx: opts.numCtx ?? null, think: false, hint: { use: "agent", session: hintSession(ctx.runId) },
-            }) as { content?: string | null; model?: string | null; usage?: { promptTokens?: number; completionTokens?: number } | null };
-            const p = r.usage?.promptTokens || 0, c = r.usage?.completionTokens || 0;
-            const s = ctx.spent;
-            s.prompt += p; s.completion += c; s.calls += 1;
-            const model = r.model || opts.model || "unknown";
-            const row = (s.byModel ??= []).find((m) => m.model === model);
-            if (row) { row.prompt += p; row.completion += c; row.calls += 1; } else s.byModel.push({ model, prompt: p, completion: c, calls: 1 });
-            return String(r.content ?? "");
-        },
+        chat: (prompt: string, opts: { model?: string | null; extend?: "utility" | null; numCtx?: number | null } = {}): Promise<string> => meteredChat(ctx, {
+            messages: [{ role: "user", content: prompt }], model: opts.model ?? null, extend: opts.extend ?? null,
+            numCtx: opts.numCtx ?? null, think: false, hint: { use: "agent", session: hintSession(ctx.runId) },
+        }),
     } as unknown as MlApi;
 }
 
