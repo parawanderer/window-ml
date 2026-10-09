@@ -8,7 +8,7 @@
 // Only the spec FILE is recorded: a module it imports (a shared predicate) is covered by the build fingerprint, which
 // hashes the whole tree's uncommitted diff, not by this.
 
-import { readFile, appendFile } from "node:fs/promises";
+import { readFile, appendFile, readdir, rename, mkdir, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { codeDiff, diffStat } from "../../../src/diff.ts";
@@ -90,4 +90,48 @@ export function specText(p) {
     const fence = p.source.includes("```") ? "````" : "```";
     lines.push("", "## The spec as it ran", "", `${fence}${path.extname(p.spec).slice(1)}`, p.source.replace(/\n$/, ""), fence, "");
     return lines.join("\n");
+}
+
+/** Where a sweep keeps the runs a later run of the same cell replaced: `history/<cell path>/<when>-<key>/`. */
+export const HISTORY = "history";
+
+/**
+ * Move a cell's earlier run out of the way before the cell runs again in place (a new spec or build changed its key,
+ * `--no-cache`, an errored run retried), instead of deleting it: `history/<cell path>/<when>-<key>/`. A measured run is
+ * often the only copy (a sweep before the store, or with sync off), and a re-run under the same sweep name replaced it
+ * without a word. Resolves the path it moved to, relative to the sweep, or null when there was no run there.
+ */
+export async function keepEarlierRun(sweepDir, cellRel) {
+    const dir = path.join(sweepDir, cellRel);
+    let saved = null, when;
+    try {
+        when = (await stat(path.join(dir, "cell.json"))).mtime;
+        saved = JSON.parse(await readFile(path.join(dir, "cell.json"), "utf8"));
+    } catch {
+        // No cell.json: a run that never finished. Kept too when it left a transcript, which is all there is of it.
+        try { when = (await stat(path.join(dir, "run.md"))).mtime; } catch { return null; }
+    }
+    const stamp = when.toISOString().replace(/[:.]/g, "-");
+    // The key's first characters name which version it was; filesystem-safe, so a key is never a path.
+    const tag = saved?.key ? String(saved.key).replace(/[^\w-]+/g, "").slice(0, 8) || "nokey" : "unfinished";
+    const rel = path.join(HISTORY, cellRel, `${stamp}-${tag}`);
+    await mkdir(path.dirname(path.join(sweepDir, rel)), { recursive: true });
+    await rename(dir, path.join(sweepDir, rel));
+    return rel;
+}
+
+/** Every run kept in a sweep's history: `{ rel, cellPath }`, `rel` its directory relative to the sweep. */
+export async function historyRuns(sweepDir) {
+    const out = [];
+    const walk = async (rel) => {
+        let entries;
+        try { entries = await readdir(path.join(sweepDir, rel), { withFileTypes: true }); } catch { return; }
+        if (entries.some((e) => e.isFile() && (e.name === "cell.json" || e.name === "run.md"))) {
+            out.push({ rel, cellPath: path.dirname(path.relative(HISTORY, rel)) });
+            return;
+        }
+        for (const e of entries) if (e.isDirectory()) await walk(path.join(rel, e.name));
+    };
+    await walk(HISTORY);
+    return out.sort((a, b) => a.rel.localeCompare(b.rel));
 }

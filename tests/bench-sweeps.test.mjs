@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { JSDOM } from "jsdom";
-import { recordSweep, readSweeps, specProvenance, specText, specHash } from "../tests/e2e/bench/sweeps.mjs";
+import { recordSweep, readSweeps, specProvenance, specText, specHash, keepEarlierRun, historyRuns } from "../tests/e2e/bench/sweeps.mjs";
 import { staticPage } from "../tests/e2e/bench/serve.mjs";
 
 const SPEC_A = 'export default {\n  name: "x",\n  tasks: [{ id: "t", task: "count the links" }],\n};\n';
@@ -107,4 +107,22 @@ test("a sweep with no record (a page saved before sweeps were logged) has no Spe
     const doc = new JSDOM(await staticPage({ name: "x", dims: [], runs: [], rows: [], jobs: 1, started: 0, finished: 1 }), { runScripts: "dangerously", pretendToBeVisual: true }).window.document;
     assert.equal(doc.querySelector("#spec"), null);
     assert.equal(doc.querySelector('a[href="#spec"]'), null);
+});
+
+// --- a cell run again keeps the run it replaces ---
+
+test("a cell run again moves its earlier run to history/, finished or not, and an empty cell has nothing to keep", async () => {
+    const sweep = fs.mkdtempSync(path.join(os.tmpdir(), "hist-"));
+    const cell = (rel, files) => { fs.mkdirSync(path.join(sweep, rel), { recursive: true }); for (const [f, v] of Object.entries(files)) fs.writeFileSync(path.join(sweep, rel, f), v); };
+    cell("iv/m-a/r0", { "cell.json": JSON.stringify({ key: "abcdef1234567890" }), "run.md": "# the baseline" });
+    const rel = await keepEarlierRun(sweep, "iv/m-a/r0");
+    assert.match(rel, /^history\/iv\/m-a\/r0\/\d{4}-\d\d-\d\dT[\d-]+Z-abcdef12$/);
+    assert.equal(fs.readFileSync(path.join(sweep, rel, "run.md"), "utf8"), "# the baseline", "moved whole");
+    assert.ok(!fs.existsSync(path.join(sweep, "iv/m-a/r0")), "the cell is free for the new run");
+    cell("iv/m-b/r0", { "run.md": "# it died half way" });
+    assert.match(await keepEarlierRun(sweep, "iv/m-b/r0"), /-unfinished$/, "a run that never finished is kept too: its transcript is all there is");
+    cell("iv/m-c/r0", {});
+    assert.equal(await keepEarlierRun(sweep, "iv/m-c/r0"), null);
+    assert.equal(await keepEarlierRun(sweep, "iv/none/r0"), null);
+    assert.deepEqual((await historyRuns(sweep)).map((h) => h.cellPath), ["iv/m-a/r0", "iv/m-b/r0"]);
 });

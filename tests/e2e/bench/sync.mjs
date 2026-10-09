@@ -31,6 +31,7 @@ import { s3Client } from "./s3.mjs";
 import { readDotenv } from "../../../scripts/dotenv.mjs";
 import { openScores, COLS as SCORE_COLS, logRuns, SCORES_DB } from "./scores.mjs";
 import { openBoxLog, BOX_DB } from "./box-stream.mjs";
+import { historyRuns } from "./sweeps.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../../..");
@@ -165,6 +166,16 @@ export async function syncableRuns(sweepDir) {
         try { cell = JSON.parse(await readFile(path.join(sweepDir, r.path, "cell.json"), "utf8")); } catch { continue; }
         const id = cell.hash ?? `key-${cell.key}`;
         out.push({ dir: path.join(sweepDir, r.path), prefix: `traces/${sweep}/${r.path}/${id}/` });
+    }
+    // Runs a later run of the same cell replaced (history/, sweeps.mjs `keepEarlierRun`): under their cell, beside the
+    // run that replaced them, since the store keys a run by its own id. One that never finished has no cell.json and
+    // is not sent: the store counts a run as there once its cell.json is.
+    for (const h of await historyRuns(sweepDir)) {
+        if (tasksOff.has(h.cellPath.split(path.sep)[0])) continue;
+        let cell;
+        try { cell = JSON.parse(await readFile(path.join(sweepDir, h.rel, "cell.json"), "utf8")); } catch { continue; }
+        if (tasksOff.has(cell.taskId)) continue;
+        out.push({ dir: path.join(sweepDir, h.rel), prefix: `traces/${sweep}/${h.cellPath}/${cell.hash ?? `key-${cell.key}`}/` });
     }
     return out;
 }

@@ -189,6 +189,20 @@ test("a sweep's runs go under traces/<sweep>/<cell>/<run id>/, cell.json last; o
     assert.deepEqual([...readFileSync(path.join(into, "traces/pb/t1/m-a/r0/h1/shots/1.png"))], [1, 2, 3]);
 });
 
+test("a run a later run of its cell replaced (history/) goes to the store too, under its cell, beside the run that replaced it", async () => {
+    objects.clear();
+    const { keepEarlierRun } = await import("../tests/e2e/bench/sweeps.mjs");
+    const { dir } = sweepDir({ runs: [{ path: "t1/m-a/r0", taskId: "t1", hash: "old" }] });
+    const kept = await keepEarlierRun(dir, "t1/m-a/r0");
+    // The cell ran again: a new run in its place.
+    mkdirSync(path.join(dir, "t1/m-a/r0"), { recursive: true });
+    writeFileSync(path.join(dir, "t1/m-a/r0", "cell.json"), JSON.stringify({ key: "k2", hash: "new" }));
+    assert.equal((await push(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", sweeps: [dir] })).runs, 2);
+    assert.ok(objects.has("traces/pb/t1/m-a/r0/new/cell.json"));
+    assert.ok(objects.has("traces/pb/t1/m-a/r0/old/cell.json"), `the replaced run, from ${kept}`);
+    assert.equal((await push(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", sweeps: [dir] })).runs, 0, "and not again");
+});
+
 test("what stays here: a sweep whose spec said sync: false, a task that did, and every run with --only-db", async () => {
     objects.clear();
     const off = sweepDir({ sync: { off: true, tasksOff: [] }, runs: [{ path: "t1/x/r0", taskId: "t1", hash: "h" }] });

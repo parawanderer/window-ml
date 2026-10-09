@@ -58,7 +58,7 @@ import { writeReport, mdSink, terminalSink, doneSummary, doneLine } from "./sink
 import { startDashboard, staticPage, servedSweep } from "./serve.mjs";
 import { pageSources } from "./page/bundle.mjs";
 import { addMark, readMarks, defaultBy } from "./mark.mjs";
-import { recordSweep, specProvenance, specText } from "./sweeps.mjs";
+import { recordSweep, specProvenance, specText, keepEarlierRun } from "./sweeps.mjs";
 import { runLanes, fitsGate, settleUntilResident } from "./lanes.mjs";
 import { storeFromEnv, openStore, push as pushToStore } from "./sync.mjs";
 import { timelineText, labelSeed, seedEndOf, SEED_LABEL } from "./timeline-text.mjs";
@@ -196,6 +196,9 @@ async function runCell(cell, ctx, index) {
     // Where its artifacts land is known now, so the page can open a run WHILE it runs: they are rewritten on every
     // event, and the open viewer reloads as the run moves.
     ctx.report?.(index, "running", { path: path.relative(ctx.sweepDir, dir) });
+    // A run already there is moved to the sweep's history, never deleted: it may be the only copy of it.
+    const kept = await keepEarlierRun(ctx.sweepDir, cellPath(cell)).catch((e) => { ctx.log(`  (could not keep the earlier run of ${cellPath(cell)}: ${e.message}; it is replaced)`); return null; });
+    if (kept) { ctx.kept.push(kept); ctx.log(`  ↪ ${cellPath(cell)}: the run already there is kept in ${kept}/`); }
     await rm(dir, { recursive: true, force: true });   // a re-run must not read a stale run.md as its own
     await mkdir(dir, { recursive: true });
 
@@ -411,7 +414,7 @@ const main = async () => {
         spec, fingerprint, sweepDir, backend, buildDirs, cache: args.cache, scores, scoreSweep, logged: 0,
         // Warming is a VRAM concern for a local model, and pointless against a hosted API or the fake.
         warm: !!backend && process.env.WARM !== "0",
-        cached: 0, ran: 0, retried: 0, pdf: args.pdf,
+        cached: 0, ran: 0, retried: 0, pdf: args.pdf, kept: [],
         // What a held cell's own process needs to find the same cell in the same spec (hold.mjs), and the runs kept open.
         holdCli: args.hold,
         held: { job: { specPath: path.resolve(args.specPath), load: { models: args.models, surface: args.surface, turnMinutes: args.turnMinutes }, select: { only: parseSelector(args.only), skip: parseSelector(args.skip), repeats: args.repeats } },
@@ -667,7 +670,7 @@ const main = async () => {
     }
     // ONE line a poller can look for, last, and the same as done.json in the sweep directory.
     const done = doneSummary(spec.name, runs, { report: path.relative(ROOT, reportPath), page, retried: ctx.retried,
-        held: ctx.held.runs.map(({ pid, cell, dir, attach, expiresAt }) => ({ pid, cell, dir, attach, expiresAt })) });
+        held: ctx.held.runs.map(({ pid, cell, dir, attach, expiresAt }) => ({ pid, cell, dir, attach, expiresAt })), kept: ctx.kept });
     await writeFile(path.join(sweepDir, "done.json"), JSON.stringify(done, null, 2));
     // Into the bench store, when one is configured (sync.mjs; off by default). Never the sweep's failure: what did not
     // go now goes on the next push.
@@ -677,6 +680,7 @@ const main = async () => {
         catch (e) { console.log(`  (store push failed: ${String(e?.message || e).slice(0, 160)}; \`node --import tsx tests/e2e/bench/sync.mjs push\` retries)`); }
     }
     if (page) console.log(`  the page stays up at ${page}; stop it with: node --import tsx tests/e2e/bench/serve.mjs --stop`);
+    if (ctx.kept.length) console.log(`  ${ctx.kept.length} earlier run${ctx.kept.length === 1 ? "" : "s"} of re-run cells kept in ${path.relative(ROOT, path.join(sweepDir, "history"))}/ (the run each replaced, with its cell.json)`);
     if (done.held.length) {
         console.log(`  ${done.held.length} run${done.held.length === 1 ? " is" : "s are"} held open (each until /end, ${ctx.held.idleMin ?? HOLD_IDLE_MIN} idle minutes, or \`node --import tsx tests/e2e/bench/hold.mjs --stop\`):`);
         for (const h of done.held) console.log(`    ${h.cell}: ${h.attach}`);

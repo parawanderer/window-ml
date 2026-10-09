@@ -128,7 +128,7 @@ export function writeReport(sweep, sink) {
  * `isRateLimit`), whose fix is fewer at once. `exit` is the process's status: 0 when no run errored, 2 when some did (1 is
  * the runner itself crashing).
  */
-export function doneSummary(name, runs, { report, page = null, retried = 0, held = [] } = {}) {
+export function doneSummary(name, runs, { report, page = null, retried = 0, held = [], kept = [] } = {}) {
     const done = runs.filter((r) => r.state === "done");
     const errors = done.filter((r) => !r.ok).length;
     return {
@@ -137,7 +137,9 @@ export function doneSummary(name, runs, { report, page = null, retried = 0, held
         // Cells that errored last time and ran again instead of coming from the cache.
         retried, report, page,
         // Runs kept open after the sweep (bench/hold.mjs): `{ pid, cell, dir, attach, expiresAt }` each.
-        held, at: new Date().toISOString(), exit: errors ? 2 : 0,
+        held,
+        // Earlier runs of cells this sweep ran again, moved to the sweep's history/ rather than deleted (sweeps.mjs).
+        ...(kept.length ? { kept } : {}), at: new Date().toISOString(), exit: errors ? 2 : 0,
     };
 }
 

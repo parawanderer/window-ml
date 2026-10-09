@@ -34,6 +34,12 @@ stays up after the exit, served from the sweep's files by a detached `serve.mjs`
 handed over keeps working. The next sweep takes that port back; `node --import tsx tests/e2e/bench/serve.mjs --stop`
 stops it, and `serve.mjs <sweep dir>` serves any finished sweep again.
 
+**A run is never deleted by a later one.** When a cell runs again in place (the spec or the build changed its key,
+`--no-cache`, an errored run retried), the run already there moves to `history/<cell path>/<when>-<key>/` in the sweep
+directory (`↪ … kept in` in the log, `kept` in `done.json`), and `sync.mjs push` sends it too, beside the run that
+replaced it. Reusing a sweep's name for a changed spec therefore no longer loses its baseline; `report.md` and
+`summary.md` still describe only the cells this sweep ran.
+
 **A run that ERRORED is not cached as done.** The next sweep runs it again (`↻ … running it again`, `retried` in
 `done.json`); a finished run, right or wrong, stays cached. A backend's rate limit is named as one (`rate-limited` on
 the page, `rate_limited=` in the final line), however it arrives: Open WebUI passes OpenRouter's as a 400. Its fix is
