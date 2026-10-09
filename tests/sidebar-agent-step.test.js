@@ -261,7 +261,7 @@ test("fetch_url `ask` step: the In shows the FULL question on its own line + who
     const w = await loadSidebarWorld();
     const url = "https://api.github.com/repos/o/r/git/trees/abc?recursive=1";
     const ask = "List only the file paths (type: blob) that plausibly hold a system prompt";
-    await w.dispatch(agentStart("ask1", "find the prompt file"));
+    await w.dispatch(agentStart("ask1", "find the prompt file", "big-model:70b"));
     await w.dispatch(agentStep("ask1", 1, {
         seq: 1, tool: "fetch_url", arguments: { url, ask }, result: "Fetched …\n\nAnswer:\nREADME.md",
         renderIn: { type: "action", verb: "fetch", target: url, ask, answeredBy: "qwen3:4b", tokens: 5231 },
@@ -274,7 +274,12 @@ test("fetch_url `ask` step: the In shows the FULL question on its own line + who
 
     const askLine = w.shadow.querySelector(".r-action-ask");
     assert.ok(askLine, "the question renders on its own line");
-    assert.match(askLine.textContent, /Asked:/, "with a bold Asked: label");
+    assert.match(askLine.textContent, /Model asked:/, "labelled as the MODEL's question, not the user's");
+    assert.ok(askLine.querySelector("q.r-action-ask-q"), "the question itself is marked as quoted model text");
+    // The tip names who asked whom, and that the asking model never saw the page.
+    const tip = await hoverTip(w, askLine.querySelector(".r-action-ask-lbl"));
+    assert.match(tip, /big-model:70b wrote this question and sent the fetched page to qwen3:4b/);
+    assert.match(tip, /never read the page itself/);
     assert.ok(askLine.textContent.includes(ask), "the FULL question is shown (not truncated)");
     const meta = w.shadow.querySelector(".r-action-meta");
     assert.ok(meta, "the answered-by/tokens meta line renders");

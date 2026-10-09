@@ -96,6 +96,19 @@ function LocateSubstepView({ s, n }: { s: LocateSubstep; n: number }) {
     );
 }
 
+/** fetch_url's `ask`: the question the RUNNING model wrote, which another model answered over the fetched page. Marked
+ *  as model-written (Shane, 2026-10-09: "Asked:" read like the user's question), with a tip naming both models, since
+ *  the running one never saw the page, only the answer. */
+function FetchAsk({ ask, answeredBy }: { ask: string; answeredBy?: string }) {
+    rev.value;   // reactive: re-read when sessions change
+    const driver = view.value.name === "detail" ? sessionMap.get(view.value.hash)?.model : undefined;
+    const reader = answeredBy || "a reader model";
+    const tip = driver && driver === answeredBy
+        ? `${driver} wrote this question and sent the fetched page to a SEPARATE call of itself with it. That call read the page; this conversation got back only its answer.`
+        : `${driver || "The model running this session"} wrote this question and sent the fetched page to ${reader} with it. It never read the page itself, only the answer below.`;
+    return <div class="r-action-ask"><span class="r-action-ask-lbl" {...cursorTipOn(tip)}>Model asked:</span>{" "}<q class="r-action-ask-q">{ask}</q></div>;
+}
+
 function LocateRender({ d }: { d: Extract<RenderDescriptor, { type: "locate" }> }) {
     // Is this vision sub-call's model the SAME as the agent driver's? If so, flag that
     // it still ran standalone (its image + reply never entered the driver's context) —
@@ -1788,7 +1801,7 @@ export function RenderPanel({ d, marks, live, failLine, ranMs, ranSince, ctx, li
                         {d.attempts?.length ? <FetchLadder attempts={d.attempts} resolvedBy={d.resolvedBy} /> : null}
                         {/* fetch `ask` mode: the question gets its own line (FULL, never truncated), then who answered
                             it + the tokens that reader sub-call spent — so the distill is legible, not a squeezed note. */}
-                        {d.ask ? <div class="r-action-ask"><b>Asked:</b> {d.ask}</div> : null}
+                        {d.ask ? <FetchAsk ask={d.ask} answeredBy={d.answeredBy} /> : null}
                         {d.answeredBy ? <div class="r-action-meta">Answered by: <span class="r-action-model">{d.answeredBy}</span>{d.tokens ? <> · {d.tokens.toLocaleString()} tokens</> : null}</div> : null}
                         {/* The in-the-middle step: the RAW content the reader model actually saw before answering.
                             Collapsed (it can be large), like locate's per-substep prompt — open it to audit the distill. */}

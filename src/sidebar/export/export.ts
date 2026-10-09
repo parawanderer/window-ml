@@ -391,7 +391,7 @@ function writeAgent(s: Session, d: Sink): void {
             // fetch `ask` mode: a clean In — the URL, the FULL question, and who answered it + the tokens spent
             // (a static export can't hover the raw toggle, so it shows the distilled meta inline; render-in-both).
             const ri = st.renderIn;
-            const lines = [`${ri.verb}${ri.target ? " " + ri.target : ""}${ri.note ? " · " + ri.note : ""}`, `Asked: ${ri.ask}`];
+            const lines = [`${ri.verb}${ri.target ? " " + ri.target : ""}${ri.note ? " · " + ri.note : ""}`, `Model asked: “${ri.ask}”`];
             if (ri.answeredBy) lines.push(`Answered by ${ri.answeredBy}${ri.tokens ? ` · ${ri.tokens.toLocaleString()} tokens` : ""}`);
             d.block("In", lines.join("\n"));
             // The in-the-middle step: the RAW content the reader saw. Collapsed (it can be large) — a disclosure,
