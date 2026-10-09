@@ -1,6 +1,7 @@
 # Prompt budget: trimming the system prompt and tool schemas, and measuring it
 
-Status: **step 1 done (#448), step 2 next, step 3 needs the bench picked up again.** Started 2026-10-08.
+Status: **steps 1 and 2 done (#448, #451); of step 3, the `ml.current` cut shipped unmeasured (#450) and `answer` left
+the default kit (#464); the rest of step 3 needs the bench.** Started 2026-10-08, updated 2026-10-09.
 
 Every model call carries the system prompt and every tool's schema. This is the plan for making that smaller
 without making runs worse, and the record of what has been measured so far. It is here, not in `tmp/`, so whoever
@@ -11,10 +12,11 @@ picks the bench up next finds it.
 | Run | System prompt | Tools | Measured on |
 | --- | --- | --- | --- |
 | Console run (`ml.agent` from a page) | 10,545 chars before #448, **8,548 after** | 16 | panel runs, `run.md` "System prompt (N chars)" |
-| UI run (HUD, sidebar, chat page) | **13,518 chars** | 21 (adds `click`, `type`, `python_exec`, `chat_metadata`, `dereference`) | panel runs with `SURFACE=hud` |
+| UI run (HUD, sidebar, chat page) | 13,518 chars before #448, **12,453 after** | 21 (adds `click`, `type`, `python_exec`, `chat_metadata`, `dereference`) | panel runs with `SURFACE=hud` |
 
-Tool schemas are not in that count, and in a UI run they are now the larger half: the panel measured the `token`
-parameter's paragraph repeated on about ten tools (~5k chars) and `verify` repeated on five.
+Tool schemas are not in that count, and in a UI run they are the larger half. Step 2 took about 1.9k characters a
+call out of them, and leaving `answer` out of the default kit (#464) about 2.3k more. Since #456 a console run has
+`click` and `type` too, and `agent_api_docs` whenever it has `exec`.
 
 ## How the problems were found: the model panel
 
@@ -30,6 +32,8 @@ which half you would keep. What several models agree on is a candidate; every fa
 - `SURFACE=hud` (#447) reviews the run a person starts; without it the panel reviews a console run, which has no
   `click`/`type`/`python_exec` and so finds "missing tools" that a UI run has.
 - The transcripts are under `tests/e2e/artifacts/bloat*/` (gitignored, so they are not kept).
+- Since #461/#462 the panel is a tool: `tests/e2e/panel.mjs` with an interview file (`tests/e2e/panel/*.json`), or
+  the same file as a bench sweep (`.claude/skills/panel/SKILL.md`). OpenRouter models joined on 2026-10-09.
 
 ## The plan
 
@@ -40,7 +44,7 @@ paragraphs that repeated their tools' descriptions (their unique lines moved int
 the outcome" into method step 6, fixed four contradictions, and stopped naming tools a console run does not have.
 No rule was dropped, so this needed the panel rerun and the unit tests, not a benchmark.
 
-### Step 2: repeated schema text (next, same kind as step 1)
+### Step 2: repeated schema text (done, #451)
 
 The pipe dialect already went this way: it was spelled out in four `pipe` parameters (~800 tokens a run) and is now
 said once in the prompt (`PIPE_CLAUSE`), each parameter pointing at it. Do the same for:
@@ -51,6 +55,9 @@ said once in the prompt (`PIPE_CLAUSE`), each parameter pointing at it. Do the s
 
 The clause and the tool must arrive together (detect from the schema, as `PIPE_CLAUSE` does), or a tool read cold
 loses its meaning. Check with the panel and the unit tests, as step 1.
+
+Done in #451: `token` and `verify` are one line on each parameter, pointing at the prompt; `dereference` points at
+the pipe syntax (`PIPE_REF`) instead of repeating it.
 
 ### Step 3: moving reference text out of every call (needs measurement)
 
@@ -65,9 +72,11 @@ These change what the model knows without asking, so each is a bet that it looks
 | `exec`'s description repeating `ml.fetch`, `ml.a11y`, `ml.state` | `agent_api_docs` |
 | Tool-output-tokens clause (2,669 chars in a UI run) | shorter clause; the citation grammar to `dereference` |
 
-**The `ml.current` one is the one to watch.** Every panel reviewer wanted it out, but the earlier interviews showed
-the prompt line is what took Gemini Flash from 6 calls to 1 on a self-count question. Test a one-sentence pointer
-against the full signature before deciding.
+**The `ml.current` one shipped without the bench (#450)**, on the owner's call: when `agent_api_docs` is in the
+toolset, which it is whenever `exec` is (#456), the clause is one sentence and the signature is in the docs; the long
+form stays only for a run without them. The panel's cost: the shared-watch question is still answered in one call, the
+self-count question now takes 6 to 9 calls instead of 1 (the model looks the shape up first). Its bench task below
+still decides whether a middle form is worth it.
 
 ## Measuring step 3
 
@@ -111,7 +120,5 @@ From the memories and git, as of 2026-10-08:
 
 ## Open
 
-- Whether a console run should get `click`/`type` at all, or keep its smaller toolset. Today it has neither and its
-  tool descriptions still mention them (`interactives`: "pass N as click's index").
 - Whether the `title` instruction stays in the prompt. Two reviewers called it duplicated; its comment in
   `prompts.ts` says it is said once there so each schema can carry one line, which is the step 2 pattern already.
