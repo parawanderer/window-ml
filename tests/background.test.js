@@ -91,6 +91,8 @@ test("FETCH_LLM: a response with NO choices container IS a clear format-mismatch
     assert.match(res.error, /did not match the "openai" format/);
 });
 
+// --- rate limits: a 429, or a 400 that says it is one, is backed off and retried ---
+
 test("FETCH_LLM: a 429 (rate limit) is backed off and retried, then succeeds", async () => {
     let calls = 0;
     const bg = loadBackground({
@@ -116,6 +118,36 @@ test("FETCH_LLM: repeated 429s give up after the retry cap with a clear error (n
     const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] } });
     assert.ok(calls >= 5, `bounded retries then surfaces the error (was ${calls} attempts)`);
     assert.match(res.error, /HTTP 429/, "the persistent rate limit is surfaced, not swallowed");
+});
+
+test("FETCH_LLM: a rate limit relayed as a 400 (OpenWebUI passing OpenRouter's limit through) is backed off like a 429", async () => {
+    let calls = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => {
+            calls++;
+            // The body OpenWebUI sent for OpenRouter's limit, verbatim (2026-10-09). Retry-After 0 keeps the test fast.
+            if (calls <= 2) return { ...jsonResponse({ detail: "Rate limit exceeded: new-account-rpm/anthropic/claude-sonnet-5.5-20260928. Rate limit reached: new accounts are limited to 20 requests per minute for this model. Please retry shortly." }, 400), headers: { get: (k) => k === "retry-after" ? "0" : null } };
+            return jsonResponse({ choices: [{ message: { content: "recovered" } }] });
+        },
+    });
+    const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] } });
+    // Two limits in a row: only backoff survives that. The hint-free resend is one retry, so without the fix the
+    // second 400 would fail the run at 2 calls.
+    assert.equal(calls, 3, "both rate-limited 400s were backed off and retried");
+    assert.equal(res.data, "recovered");
+});
+
+test("FETCH_LLM: any other 400 is not backed off: it fails after at most the one hint-free retry, with its body in the error", async () => {
+    let calls = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => { calls++; return jsonResponse({ detail: "Model not found" }, 400); },
+    });
+    const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] } });
+    // The one retry is the existing hint-free resend for a strict server; a rate limit would make five calls.
+    assert.ok(calls <= 2, `not backed off (was ${calls} calls)`);
+    assert.match(res.error, /HTTP 400 .*Model not found/);
 });
 
 test("FETCH_LLM: a transient NETWORK failure is retried, so an ongoing run RECOVERS when the box returns", async () => {
