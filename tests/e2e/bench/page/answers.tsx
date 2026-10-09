@@ -5,7 +5,7 @@
 import { Tip } from "../../../../src/sidebar/help-tip";
 import { useState, useRef } from "preact/hooks";
 import type { BenchState, RunState } from "./state";
-import { Outcome, runDir } from "./runs";
+import { Outcome, HeldTag, runDir, runName } from "./runs";
 import { Hash } from "../../../../src/sidebar/copy-hash";
 import { FromSpec, specSource } from "./from-spec";
 import { markdown } from "../../../../src/sidebar/format";
@@ -125,6 +125,41 @@ export function Answers({ s, base, live }: { s: BenchState; base: string; live: 
                 );
             })}
             {marking ? <MarkDialog target={marking.target} quote={marking.quote} onClose={() => setMarking(null)} /> : null}
+        </Card>
+    );
+}
+
+/**
+ * Turns someone added to a run while it was held open after the sweep (bench/hold.mjs), per run: what was asked and what
+ * came back. Its own card, apart from the interview's grid: not asked of every model, so never set side by side, and
+ * never scored or checked for marks.
+ */
+export function Continued({ s, base }: { s: BenchState; base: string }) {
+    const [mode] = useState<Mode>(readMode);
+    const runs = s.runs.filter((r) => r.continued?.length);
+    if (!runs.length) return null;
+    const dims = s.dims || [];
+    return (
+        <Card id="continued" label="the continued conversations">
+            <header>
+                <h2><Tip tip="Turns sent to a run kept open after the sweep (`--hold`, `converse.mjs --attach`): not part of the scripted interview, so not compared across models and not scored. Each is also outbox/turn-N.md in the run's directory, listed in continued.jsonl.">Continued</Tip></h2>
+                <span class="sub">after the scripted turns, on runs held open</span>
+            </header>
+            {runs.map((r) => {
+                // AnswerCell reads a turn by its number, so the added turns sit at theirs (after the run's own).
+                const at: RunState = { ...r, turns: [], checks: [] };
+                for (const c of r.continued!) at.turns![c.turn - 1] = c;
+                return (
+                    <div key={`${r.taskId}${r.who}${r.repeat}`} class="answers continued">
+                        <div class="ah"><code>{runName(r, dims)}</code>{r.hash ? <Hash hash={r.hash} /> : null}<HeldTag r={r} /></div>
+                        {r.continued!.map((c) => [
+                            <div key={`q${c.turn}`} class="q"><span class="turn">Turn {c.turn}</span>
+                                <span class="asked tt" data-tip={`Sent to this run after the sweep${c.at ? `, ${new Date(c.at).toLocaleString()}` : ""}.`}>{c.ask.length > 600 ? `${c.ask.slice(0, 600)} …` : c.ask}</span></div>,
+                            <AnswerCell key={`a${c.turn}`} r={at} turn={c.turn} base={base} live={false} mode={mode} onMark={() => {}} />,
+                        ])}
+                    </div>
+                );
+            })}
         </Card>
     );
 }

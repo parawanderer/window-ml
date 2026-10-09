@@ -11,11 +11,11 @@ import { execFileSync } from "node:child_process";
 import { timelineText, labelSeed, seedEndOf, SEED_LABEL } from "../tests/e2e/bench/timeline-text.mjs";
 import { addMark, readMarks } from "../tests/e2e/bench/mark.mjs";
 import { doneSummary, doneLine } from "../tests/e2e/bench/sinks.mjs";
-import { checkMarks } from "../tests/e2e/interview.mjs";
+import { checkMarks, readContinued, followContinued } from "../tests/e2e/interview.mjs";
 
 // hold.mjs reads its list's path once, on import: a test's own, never the real one.
 process.env.BENCH_HELD_FILE = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "held-")), "held.json");
-const { holdMode, heldRuns, HELD_FILE } = await import("../tests/e2e/bench/hold.mjs");
+const { holdMode, heldRuns, canShow, HELD_FILE } = await import("../tests/e2e/bench/hold.mjs");
 
 const ev = (kind, t, until, extra = {}) => ({ kind, t, until, label: kind, model: "m", ...extra });
 
@@ -167,4 +167,41 @@ test("hold: held.json lists only runs whose process is alive, and BENCH DONE cou
     const d = doneSummary("pb", [{ state: "done", ok: true }], { report: "r.md", held: [{ pid: 1, cell: "a", attach: "…" }] });
     assert.match(doneLine(d), / held=1 report=/);
     assert.match(doneLine(doneSummary("pb", [], { report: "r.md" })), / held=0 /);
+});
+
+test("hold: a held run's browser is a window to show later wherever there is a screen; a Linux box without one runs headless", () => {
+    assert.equal(canShow({}, "darwin"), true);
+    assert.equal(canShow({}, "win32"), true);
+    assert.equal(canShow({}, "linux"), false);
+    assert.equal(canShow({ DISPLAY: ":0" }, "linux"), true);
+    assert.equal(canShow({ WAYLAND_DISPLAY: "wayland-0" }, "linux"), true);
+});
+
+test("continued: the turns added to a held run, each with its answer from the outbox, and the page follows them as they come", async () => {
+    const sweep = fs.mkdtempSync(path.join(os.tmpdir(), "cont-"));
+    const dir = path.join(sweep, "t/m/r0");
+    fs.mkdirSync(path.join(dir, "outbox"), { recursive: true });
+    assert.deepEqual(readContinued(dir), [], "none yet");
+    fs.writeFileSync(path.join(dir, "outbox", "turn-3.md"), "# Turn 3\n\n## Answer\n\nIt used exec.\n\n## Steps\n\n- **exec** {}\n  → 2\n");
+    fs.writeFileSync(path.join(dir, "continued.jsonl"), JSON.stringify({ turn: 3, ask: "which tools?", at: "2026-10-09T12:00:00.000Z", answered: true }) + "\nnot json\n" + JSON.stringify({ turn: 4, ask: "and then?", at: null, answered: false }) + "\n");
+    assert.deepEqual(readContinued(dir), [
+        { turn: 3, ask: "which tools?", at: "2026-10-09T12:00:00.000Z", answer: "It used exec.", tools: ["exec"], capped: false },
+        { turn: 4, ask: "and then?", at: null, answer: "", tools: [], capped: false },
+    ], "a torn line is skipped, a turn without its report has no answer yet");
+
+    const runs = [{ path: "t/m/r0", held: "…" }, { path: "t/n/r0" }, { path: "" }];
+    let calls = 0;
+    const stop = followContinued(sweep, () => runs, () => { calls++; }, 20);
+    assert.equal(calls, 1, "read once at the start");
+    assert.equal(runs[0].continued.length, 2);
+    assert.equal(runs[1].continued, undefined, "a run with nothing added is left alone");
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(calls, 1, "nothing new, no change");
+    fs.appendFileSync(path.join(dir, "continued.jsonl"), JSON.stringify({ turn: 5, ask: "last", at: null, answered: true }) + "\n");
+    const t = Date.now() + 8;
+    fs.utimesSync(path.join(dir, "continued.jsonl"), t / 1000, t / 1000);
+    for (const until = Date.now() + 2000; calls < 2 && Date.now() < until;) await new Promise((r) => setTimeout(r, 20));
+    stop();
+    assert.equal(calls, 2);
+    assert.deepEqual(runs[0].continued.map((c) => c.turn), [3, 4, 5]);
 });

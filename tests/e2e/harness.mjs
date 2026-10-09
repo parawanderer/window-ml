@@ -55,6 +55,21 @@ export async function launchExtension(/** @type {{ headful?: boolean, dist?: str
     return { context, sw, extensionId, close: () => context.close() };
 }
 
+/**
+ * Minimise or restore the window `page` is in (CDP `Browser.setWindowBounds`), for a headful browser that should stay out
+ * of the way until someone asks to see it (a held bench run, bench/hold.mjs). macOS keeps part of an off-screen window
+ * on screen, so out of the way means minimised. A minimised page still reports itself visible: the run is unchanged.
+ * @param {"minimized" | "normal"} state
+ */
+export async function setWindow(/** @type {any} */ context, /** @type {any} */ page, state) {
+    const cdp = await context.newCDPSession(page);
+    try {
+        const { windowId } = await cdp.send("Browser.getWindowForTarget");
+        await cdp.send("Browser.setWindowBounds", { windowId, bounds: { windowState: state } });
+        if (state === "normal") await page.bringToFront();
+    } finally { await cdp.detach().catch(() => {}); }
+}
+
 /** Write the extension's non-secret config (chatUrl / apiFormat / model / debugMode …) via the SW. */
 export async function configureExtension(/** @type {any} */ sw, /** @type {Record<string, unknown>} */ config) {
     await sw.evaluate((/** @type {any} */ cfg) => new Promise((r) => chrome.storage.sync.set(cfg, () => r(undefined))), config);

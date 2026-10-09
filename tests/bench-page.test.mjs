@@ -254,6 +254,21 @@ test("a run held open after the sweep is badged, and its tip is the command that
     assert.ok(held.dataset.tip.includes(attach), held.dataset.tip);
 });
 
+test("turns added to a held run are their own card, apart from the interview's grid, with each question and answer", async () => {
+    const r = { combo: { model: "a" }, who: "a", taskId: "iv", repeat: 0, state: "done", ok: true, path: "iv/a/r0", held: "node tests/e2e/converse.mjs --attach x", turns: [{ answer: "one", tools: [], capped: false }],
+        continued: [{ turn: 2, ask: "which tools did you use?", at: null, answer: "It used exec.", tools: ["exec"], capped: false }] };
+    const doc = await dashboard({ dims: ["model"], runs: [r, { ...r, combo: { model: "b" }, who: "b", continued: undefined, held: undefined }], interviews: { iv: ["q1"] } });
+    const cont = card(doc, "Continued");
+    assert.ok(cont, "no Continued card");
+    assert.match(cont.textContent, /which tools did you use\?/);
+    assert.match(cont.textContent, /It used exec\./);
+    assert.equal(cont.querySelectorAll(".ans").length, 1, "only the run that was continued");
+    assert.ok(cont.querySelector('a[href$="outbox/turn-2.md"]'), "links the turn's own report");
+    assert.ok(!card(doc, "Answers").textContent.includes("which tools did you use"), "never in the interview's grid");
+    const none = await dashboard({ dims: ["model"], runs: [{ ...r, continued: undefined }], interviews: { iv: ["q1"] } });
+    assert.equal(card(none, "Continued"), null);
+});
+
 test("one running run's badges count together: the Running card, the Answers header and the Runs table", async (t) => {
     const runs = [{ combo: { model: "m" }, who: "m", taskId: "iv", repeat: 0, state: "running", startedAt: Date.now() - 130_000, path: "iv/m/r0", live: { step: 8, maxSteps: 10, tool: "exec" } }];
     const doc = await dashboard({ dims: ["model"], runs, finished: null, interviews: { iv: ["q1"] } });

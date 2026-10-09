@@ -9,7 +9,7 @@
 import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import type { BenchState } from "./state";
-import { Answers } from "./answers";
+import { Answers, Continued } from "./answers";
 import { SweepTimeline } from "./timeline";
 import { Flight, Stats, Results, Runs } from "./runs";
 import { Viewer } from "./viewer";
@@ -142,6 +142,7 @@ function App() {
                 <section class="card"><Stats s={s} /><Models s={s} /></section>
                 <Flight s={s} />
                 <Answers s={s} base={base} live={!baked} />
+                <Continued s={s} base={base} />
                 <SweepTimeline s={s} />
                 <Results s={s} />
                 <Runs s={s} base={base} />

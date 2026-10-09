@@ -90,7 +90,9 @@ as in AGENTS.md — they are all under `src/`.
   `--hold all | failures | k=v` (or `hold` on a task) runs those cells in a detached `bench/hold.mjs` process each, which
   hands the run back to be measured and stays up after the sweep with the session live: `converse.mjs --attach <cell dir>
   "<message>"` talks to it, `/end`, 30 idle minutes (`--hold-idle`) or SIGTERM releases it, and `artifacts/bench/held.json`
-  lists the live ones (`hold.mjs`, `hold.mjs --stop`). runOnce's `keep` hook is what keeps a finished run open.
+  lists the live ones (`hold.mjs`, `hold.mjs --stop`). runOnce's `keep` hook is what keeps a finished run open. A held
+  browser is a minimised real window (`window: "minimized"`; `hold.mjs --show`/`--hide`, `setWindow` in harness.mjs),
+  since a headless one cannot become visible later; added turns go to `continued.jsonl` and the page's Continued card.
   **`--serve`** prints a banner URL for a live page a human watches — every run's state and what is
   queued, the in-flight run's step against its budget and the tool it is in, elapsed / mean-per-run /
   mean-per-step / ETA, and links to each `run.md`. Served by node:http + SSE; the page is Preact

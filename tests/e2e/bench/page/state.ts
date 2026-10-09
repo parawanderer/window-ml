@@ -33,6 +33,8 @@ export interface RunState {
     /** whether its model turns were to be streamed, and whether they were (metrics.mjs `streamUse`) */
     stream?: { asked: boolean | null; deltas: number; streamed: boolean; turns: number; turnsWithUsage: number } | null;
     turns?: { answer: string; tools: string[]; capped: boolean }[];
+    /** turns someone added after the run's own, while it was held open (bench/hold.mjs): never part of the interview */
+    continued?: { turn: number; ask: string; at: string | null; answer: string; tools: string[]; capped: boolean }[];
     checks?: { id: string; turn: number; quote: string; note: string; by: string; at: string | null; here: boolean; still: boolean | null }[];
 }
 

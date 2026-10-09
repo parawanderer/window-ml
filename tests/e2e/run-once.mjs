@@ -34,7 +34,7 @@ const MANIFEST_VERSION = await import("node:fs/promises")
     .then((fs) => fs.readFile(new URL("../../manifest.json", import.meta.url), "utf8"))
     .then((t) => JSON.parse(t).version).catch(() => undefined);
 
-import { launchExtension, configureExtension, waitForMl, watchRunEvents } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, watchRunEvents, setWindow } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 import { renderMarkdownPage, lanePrelude } from "./viewer.mjs";
@@ -347,9 +347,11 @@ export const FAKE_MODEL = "fake-model";
  *   ANY NUMBER of further turns, decided as the run goes (converse.mjs): asked after each turn, with that turn's
  *   result; a string is the next message, null ends the session. Each turn gets `timeoutMs`.
  * @param {(gate: object) => Promise<boolean>} [cfg.decide] decides each approval gate itself, instead of `approve`
- * @param {(run: object, talk: (text: string) => Promise<{ turn: number, answered: boolean, result: object | null, events: object[] }>) => Promise<void>} [cfg.keep]
+ * @param {(run: object, talk: (text: string) => Promise<{ turn: number, answered: boolean, result: object | null, events: object[] }>, ctl: { window: (state: "minimized" | "normal") => Promise<void> }) => Promise<void>} [cfg.keep]
  *   called once the run is over, with what runOnce will return, before the browser closes: the run stays live (its
- *   session, page and gates) until `keep` resolves, and each `talk` sends one more turn into it (bench/hold.mjs)
+ *   session, page and gates) until `keep` resolves, and each `talk` sends one more turn into it (bench/hold.mjs);
+ *   `ctl.window` minimises or shows the run's window (headful only: see `window`)
+ * @param {"minimized"} [cfg.window] run headful with every window minimised, so it can be shown on demand (`ctl.window`)
  * @param {string} [cfg.start] start route on the test site (e.g. "/spreadsheet")
  * @param {string[]|null} [cfg.tools] limit to this subset of domTools (smaller prompt), or null for the full kit
  * @param {boolean} [cfg.python] wire python_exec as an extraTool
@@ -393,7 +395,7 @@ export async function runOnce(cfg = {}) {
         python = false, toolTokens = false, agentOptions = {}, stream = null,
         backend = null, script = DEFAULT_SCRIPT, warm = true, warmAll = false,
         dist = null, artDir = null, approve = "auto", capture = "failure",
-        focusSidebar = true, hold = false, synthetic = true, sharedWatches = [], watchNotes = {}, nextTurn = null, decide = null, surface = null, keep = null,
+        focusSidebar = true, hold = false, synthetic = true, sharedWatches = [], watchNotes = {}, nextTurn = null, decide = null, surface = null, keep = null, window: windowMode = null,
         timeoutMs = followup ? 240000 : 120000,
         log = () => {}, onEvent = null,
     } = cfg;
@@ -406,7 +408,7 @@ export async function runOnce(cfg = {}) {
     const site = await startPageServer({});
     // A window only when someone is watching: `hold` (observe's WATCH) or an explicit focusSidebar
     // request means a human is looking at it. A bench cell is neither.
-    const ext = await launchExtension({ dist, headful: !!(hold || cfg.headful) });
+    const ext = await launchExtension({ dist, headful: !!(hold || cfg.headful || windowMode) });
     let approvalLoopOn = true;
     let captured = [];
     const approvals = [];
@@ -459,6 +461,8 @@ export async function runOnce(cfg = {}) {
         }
 
         const page = await ext.context.newPage();
+        // A window kept out of the way until someone asks for it: every window the launch opened, the run's included.
+        if (windowMode === "minimized") for (const p of ext.context.pages()) await setWindow(ext.context, p, "minimized").catch(() => {});
         page.on("console", (m) => { transcript.push({ kind: "console", type: m.type(), text: m.text() }); if (m.type() === "error") log(`  [page console.error] ${m.text().slice(0, 300)}`); });
         page.on("pageerror", (e) => { transcript.push({ kind: "pageerror", text: String(e) }); log(`  [pageerror] ${String(e).slice(0, 300)}`); });
 
@@ -708,7 +712,7 @@ export async function runOnce(cfg = {}) {
                 await startTurn(text);
                 const answered = await awaitResults(++turnsDone, Date.now() + timeoutMs);
                 return { turn: turnsDone, answered, result: [...events].reverse().find((e) => e.kind === "agent-result") ?? null, events };
-            });
+            }, { window: (state) => setWindow(ext.context, page, state) });
             approvalLoopOn = false; await gates.catch(() => {});
         }
 

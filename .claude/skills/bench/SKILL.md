@@ -48,7 +48,10 @@ in `done.json` (`held`), a `held` badge on the page. Talk to one with `node test
 "<message>"` (prints the turn it starts; without a message, where the session is), and end it with the message `/end`.
 It also lets go after 30 idle minutes (`--hold-idle N`, `holdIdleMinutes` on a task), since a local model's run keeps
 its memory on the box, and on SIGTERM. `hold.mjs` lists the held runs (`artifacts/bench/held.json`), `hold.mjs --stop
-[pid|cell|dir]` releases them, and merge-when-green releases those a merged worktree left. A held cell is never served
+[pid|cell|dir]` releases them, `hold.mjs --show [x]` brings a held run's browser window up to look at (it starts as a
+real window, minimised; `--hide` minimises it again; `--hold-headless`, or a Linux box with no display, keeps it
+headless, with no window to show), and each turn sent to it after its own goes in `continued.jsonl` and on the page's
+Continued card, apart from the interview and never scored, and merge-when-green releases those a merged worktree left. A held cell is never served
 from the cache under `all` or a selector (a cached result has no browser to keep); under `failures` it is.
 
 **Local models in parallel: `--lanes`.** One lane per model: each model's runs in turn, different models at once when
