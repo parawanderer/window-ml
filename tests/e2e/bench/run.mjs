@@ -60,6 +60,7 @@ import { pageSources } from "./page/bundle.mjs";
 import { addMark, readMarks, defaultBy } from "./mark.mjs";
 import { recordSweep, specProvenance, specText, keepEarlierRun } from "./sweeps.mjs";
 import { runLanes, fitsGate, settleUntilResident } from "./lanes.mjs";
+import { shownFingerprint } from "./shown.mjs";
 import { storeFromEnv, openStore, push as pushToStore } from "./sync.mjs";
 import { timelineText, labelSeed, seedEndOf, SEED_LABEL } from "./timeline-text.mjs";
 import { memoryText } from "./resource-poll.mjs";
@@ -273,6 +274,9 @@ async function runCell(cell, ctx, index) {
     // time, because a cached cell has no session to ask.
     const saved = { key, combo: cell.combo, taskId: t.id, repeat: cell.repeat, measurement,
         hash: run.session?.hash ?? null,
+        // What the model was SHOWN (system prompt and tool schemas): part of the task's item on the scoreboard, saved
+        // with the cell so a cached one keeps it.
+        shown: shownFingerprint(run.session),
         // WHICH MODEL produced this. A sweep can vary the model as a dimension, and even when it does
         // not, "which model was this run against" is the first question asked of any result and was
         // previously answerable only by reading a run.md. Saved with the cell so a cached one keeps it.

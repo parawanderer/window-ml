@@ -11,6 +11,7 @@ import { JSDOM } from "jsdom";
 import { fitRasch, sigmoid } from "../tests/e2e/bench/rasch.mjs";
 import { openScores, logRuns, readRuns, runRow, scoreboard, scoresText, sweepScores, taskHash, variantOf, modelInfo, unscoredTasks, MIN_SCORED } from "../tests/e2e/bench/scores.mjs";
 import { scoresPage, staticPage } from "../tests/e2e/bench/serve.mjs";
+const { shownFingerprint } = await import("../tests/e2e/bench/shown.mjs");
 
 let sqlite = true;
 try { await import("node:sqlite"); } catch { sqlite = false; }
@@ -125,6 +126,57 @@ test("the server's list says which model is local and its digest; a cloud model 
     assert.equal((await modelInfo({ chatUrl: "http://box:11434/api/chat" }, fetchOllama)).get("qwen3.5:9b").digest, "d9");
     assert.equal((await modelInfo({ chatUrl: "http://box/x" }, async () => { throw new Error("down"); })).size, 0);
     assert.equal((await modelInfo(null)).size, 0);
+});
+
+// --- what the model was shown: part of the item ---
+
+/** A session as run.json carries it: the system prompt, with the parts that move between runs, and the tool schemas. */
+const session = ({ port = 61037, now = "09/10/2026, 18:44:09", hash = "abcdef12", prompt = "You drive a browser.", desc = "Read text.", look = "See the page." } = {}) => ({
+    hash,
+    config: {
+        system: `${prompt}\nSession ${hash}; earlier output @tool:a39f599.\nURL: http://127.0.0.1:${port}/step3\nNow: ${now} (Europe/Amsterdam)`,
+        tools: [{ name: "read", description: desc, parameters: { type: "object" } }, { name: "look", vision: true, description: look, parameters: { type: "object" } }],
+    },
+});
+
+test("shown: what moves between runs of one build is not a change; a reworded prompt or tool is; a sight-dependent tool counts by name", () => {
+    const base = shownFingerprint(session());
+    assert.match(base, /^[0-9a-f]{12}$/);
+    assert.equal(shownFingerprint(session({ port: 61511, now: "09/10/2026, 17:20:46", hash: "99887766" })), base, "the port, the clock and the session's hash");
+    assert.notEqual(shownFingerprint(session({ prompt: "You drive a browser carefully." })), base, "a reworded system prompt");
+    assert.notEqual(shownFingerprint(session({ desc: "Read the text of an element." })), base, "a reworded tool description");
+    assert.equal(shownFingerprint(session({ look: "See the page with your OWN eyes." })), base, "look reads differently to a model that sees images itself: never split by model");
+    assert.equal(shownFingerprint(null), null);
+    assert.equal(shownFingerprint({ config: {} }), null);
+});
+
+test("shown: a changed prompt is a new item with its own difficulty; runs logged before it was recorded are their own item", () => {
+    const rows = [
+        ...rowsOf("a", "t", 6, 5, { shown: "v1" }), ...rowsOf("b", "t", 6, 2, { shown: "v1" }),
+        ...rowsOf("a", "t", 6, 1, { shown: "v2" }), ...rowsOf("b", "t", 6, 0, { shown: "v2" }),
+        ...rowsOf("a", "t", 4, 4), ...rowsOf("a", "u", 6, 3, { shown: "v1" }),
+    ];
+    const items = scoreboard(rows, { db: "/x" }).tasks.filter((t) => t.task === "t");
+    assert.deepEqual(items.map((t) => t.shown).sort((x, y) => String(x).localeCompare(String(y))), [null, "v1", "v2"].sort((x, y) => String(x).localeCompare(String(y))));
+    const b = Object.fromEntries(items.map((t) => [t.shown ?? "legacy", t.difficulty?.b]));
+    assert.ok(b.v2 > b.v1, `the reworded version is its own item, harder here (${b.v1} → ${b.v2})`);
+    assert.match(scoresText(scoreboard(rows, { db: "/x" })), /\| t \| th \| legacy \|/);
+});
+
+test("shown: a log written before the column existed gains it on open, its rows read as legacy, and new rows carry it", needsSqlite, async () => {
+    const file = path.join(tmp(), "scores.sqlite");
+    const { DatabaseSync } = await import("node:sqlite");
+    const old = new DatabaseSync(file);
+    // The table as the first version wrote it: every column but `shown`.
+    old.exec(`CREATE TABLE runs (id INTEGER PRIMARY KEY, run TEXT NOT NULL UNIQUE, at TEXT NOT NULL, by TEXT NOT NULL, sweep TEXT NOT NULL, spec TEXT, spec_hash TEXT, task TEXT NOT NULL, task_hash TEXT NOT NULL, task_text TEXT, variant TEXT NOT NULL, scored INTEGER NOT NULL, model TEXT NOT NULL, digest TEXT, quant TEXT, params TEXT, local INTEGER, vision TEXT, utility TEXT, backend TEXT, build TEXT NOT NULL, dirty INTEGER NOT NULL, passed INTEGER, error TEXT, hit_cap INTEGER NOT NULL, prompt_tokens INTEGER, completion_tokens INTEGER, sub_tokens INTEGER, tokens INTEGER, steps INTEGER NOT NULL, secs REAL NOT NULL);
+        INSERT INTO runs (run, at, by, sweep, task, task_hash, variant, scored, model, build, dirty, passed, hit_cap, steps, secs) VALUES ('old1', '2026-10-01T00:00:00Z', 't', 's', 'count', 'x', '{}', 1, 'gemma4:31b', 'b', 0, 1, 0, 3, 1.5);`);
+    old.close();
+    const db = await openScores(file);
+    assert.equal(logRuns(db, [runRow(saved({ hash: "n".repeat(32), shown: "5e64db65aa11" }), TASK, SWEEP)]), 1);
+    const rows = readRuns(db);
+    assert.deepEqual(rows.map((r) => [r.run, r.shown]), [["old1", null], ["n".repeat(32), "5e64db65aa11"]]);
+    db.close();
+    assert.equal((await openScores(file)).prepare("PRAGMA table_info(runs)").all().filter((c) => c.name === "shown").length, 1, "and opening it again adds nothing twice");
 });
 
 // --- the scoreboard ---

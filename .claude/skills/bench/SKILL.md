@@ -256,7 +256,11 @@ Every run a sweep makes against a REAL model (never the fake one, never a cached
 `tests/e2e/artifacts/bench/scores.sqlite`, table `runs`, as it finishes: the model's tag plus the digest and
 quantisation the server reports, the task's id plus a hash of its text and predicate, pass/fail, tokens, steps, the
 build, who started the sweep and when. A row is never updated. `scores.mjs` fits a Rasch model over the predicate-scored
-runs (`rasch.mjs`): a score θ per model and a difficulty per task, so models that ran different tasks compare. Token
+runs (`rasch.mjs`): a score θ per model and a difficulty per task, so models that ran different tasks compare. An ITEM
+is a task's id, its wording and predicate, and what the model was SHOWN with it (`shown`, shown.mjs: the system prompt
+and tool schemas from run.json, minus what moves between runs, a sight-dependent tool like `look` by name only): a branch
+that rewords the prompt or a tool is a new item with its own difficulty, never pooled with main's; runs logged before
+`shown` existed are one `legacy` item. Token
 bloat is each run's tokens over the median run of the same task, averaged per model. Every number's meaning is in
 `scores.md` under "How these numbers are computed", and in the page's tooltips. Ask the log anything else directly:
 `sqlite3 tests/e2e/artifacts/bench/scores.sqlite "SELECT model, task, passed, tokens FROM runs ORDER BY at DESC LIMIT 20"`.

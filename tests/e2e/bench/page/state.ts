@@ -115,7 +115,7 @@ export interface ScoreBoard {
     /** what each number is, by column: the tooltips, and scores.md's notes */
     about: Record<string, string>;
     models: ScoreModel[];
-    tasks: { key: string; task: string; taskHash: string; text: string; variant: string; scored: boolean; runs: number; models: number; passed: number; scoredRuns: number;
+    tasks: { key: string; task: string; taskHash: string; shown: string | null; text: string; variant: string; scored: boolean; runs: number; models: number; passed: number; scoredRuns: number;
         difficulty: { b: number; se: number; lo: number; hi: number } | null; medianTokens: number | null }[];
 }
 
