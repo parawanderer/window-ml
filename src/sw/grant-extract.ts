@@ -16,6 +16,7 @@
 
 import { parse } from "acorn";
 import type { PersistGrant } from "../contract/contract-agent";
+import { externalSheetIds } from "../dom/dom";
 
 /** Minimal acorn-node shape — we only read `type`, member/call fields, and literal values. */
 type Node = { type: string; [k: string]: unknown };
@@ -93,4 +94,31 @@ function staticString(node: Node | undefined): string | null {
         }
     }
     return null;
+}
+
+/** What one approved call puts on its TAB for its own sub-operations (`grantsFor`, sw-consent.ts): what any script on
+ *  that page could also spend while the call runs, so only what the call cannot do without. */
+export interface TabCallGrants { fetchUrls?: string[]; serverTools: string[]; sheets: string[]; pyCode: string[] }
+
+/**
+ * Decide the grants an approved call mints on its tab. Pure, so each rule is tested on its own.
+ *
+ * - An `exec`: the URLs its code spells out (its inline `ml.fetch`), and no others.
+ * - A server tool: the exact call the person saw (`remoteKey`, `serverToolKey`).
+ * - A `python_exec` the worker runs (`pyInWorker`): nothing on the tab; its grants are the run's (worker-tools.ts).
+ * - A `python_exec` that falls to the page: its full-mode code. Its external sheets only for a run the PAGE built,
+ *   whose loop is the page's own. A worker-built run's sheet never goes on the tab, whatever the call's shape: the
+ *   minted id is a credentialed read any script on the page could spend while the call runs (clause B, #442).
+ * @param c the call: its tool, its args, whether the worker built the run, whether its python_exec runs in the worker,
+ *   and a server tool's call key
+ */
+export function tabGrantsForCall(c: { name: string; args: Record<string, unknown>; builtByWorker: boolean; pyInWorker: boolean; remoteKey?: string }): TabCallGrants {
+    const out: TabCallGrants = { serverTools: [], sheets: [], pyCode: [] };
+    if (c.name === "exec") out.fetchUrls = fetchUrlLiterals(String(c.args.js ?? ""));
+    if (c.remoteKey) out.serverTools.push(c.remoteKey);
+    if (c.name === "python_exec" && !c.pyInWorker) {
+        if (!c.builtByWorker) out.sheets.push(...externalSheetIds(c.args));
+        if (c.args.mode === "full") out.pyCode.push(String(c.args.code ?? ""));
+    }
+    return out;
 }
