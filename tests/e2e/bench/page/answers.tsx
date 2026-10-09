@@ -41,6 +41,7 @@ function AnswerCell({ r, turn, base, live, onMark }: { r: RunState; turn: number
                     <b>{c.here ? "marked wrong" : c.still ? "still says a line marked wrong" : "no longer says a line marked wrong"}</b>
                     {c.quote ? <q>{c.quote.slice(0, 300)}</q> : null}
                     {c.note ? <span class="dim"> — {c.note}</span> : null}
+                    <span class="by" title={c.at ?? ""}>{c.by}</span>
                 </div>
             ))}
         </div>

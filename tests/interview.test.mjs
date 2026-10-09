@@ -107,7 +107,7 @@ test("a mark is checked against the same model's later answer at the same turn, 
     const mark = { id: "m1", taskId: "t", who: "a", turn: 2, quote: "The snapshot  EXCLUDES the current call", note: "it does not", hash: "h1" };
     const run = (hash, ans) => ({ taskId: "t", who: "a", hash, turns: [{ answer: "x" }, { answer: ans }] });
     assert.deepEqual(checkMarks(run("h1", "… the snapshot excludes the current call …"), [mark])[0],
-        { id: "m1", turn: 2, quote: mark.quote, note: "it does not", here: true, still: true });
+        { id: "m1", turn: 2, quote: mark.quote, note: "it does not", by: "unknown", at: null, here: true, still: true });
     const later = checkMarks(run("h2", "the snapshot\nexcludes the current call"), [mark])[0];
     assert.equal(later.here, false);
     assert.equal(later.still, true, "a line rewrapped is still the same line");

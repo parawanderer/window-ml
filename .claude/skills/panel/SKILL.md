@@ -17,7 +17,9 @@ USE_ENV=1 node --import tsx tests/e2e/panel.mjs tests/e2e/panel/bloat.json \
 Each model's directory holds `run.md`, `run.json`, `outbox/turn-<n>.md` (one per turn, the answer then each step) and
 `run.log`. A PERSON reading a panel wants the bench's page instead: the same file through `bench/run.mjs` with
 `--models … --serve` sets the answers side by side in a browser and lets them mark a wrong line, which every later run
-of that model is checked against (`bench` skill, "Interviews").
+of that model is checked against (`bench` skill, "Interviews"). A MODEL gets the same from the bench without the page:
+`summary.md`, `timeline.md` and `page.json` in the sweep directory, and `node tests/e2e/bench/mark.mjs <sweep dir>
+--model <who> --turn <n> --quote "<line>"` to mark an answer wrong (the bench skill's "What it writes" table).
 
 Run it in the BACKGROUND (a few minutes; the models run in parallel). Options: `--out <dir>`, `--surface hud|console`,
 `--turn-minutes N`, or `PANEL_MODELS=a,b,c` instead of `--models`.

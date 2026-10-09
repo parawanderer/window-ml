@@ -129,7 +129,7 @@ export function panelSummary(name, iv, results, skipped, surface) {
             // A person's marks from an earlier read (the bench's page): whether this answer still says the marked line.
             for (const c of (r.checks ?? []).filter((c) => c.turn === i + 1 && c.still != null)) {
                 const what = c.here ? "marked wrong" : c.still ? "still says a line marked wrong" : "no longer says a line marked wrong";
-                L.push(`- ${what}${c.quote ? `: "${c.quote.replace(/\s+/g, " ").slice(0, 200)}"` : ""}${c.note ? ` (${c.note.replace(/\s+/g, " ").slice(0, 200)})` : ""}`);
+                L.push(`- ${what}${c.quote ? `: "${c.quote.replace(/\s+/g, " ").slice(0, 200)}"` : ""}${c.note ? ` (${c.note.replace(/\s+/g, " ").slice(0, 200)})` : ""}${c.by ? `, marked by ${c.by}` : ""}`);
             }
             if ((r.checks ?? []).some((c) => c.turn === i + 1 && c.still != null)) L.push("");
         }
@@ -174,7 +174,7 @@ const fold = (s) => String(s ?? "").replace(/\s+/g, " ").trim().toLowerCase();
  * @param {{ taskId: string, who: string, hash?: string|null, turns: { answer: string }[] }} run `who` is what a mark
  *   names the run by (the `model` value when the sweep has one, else its whole combination)
  * @param {Array<{ id: string, taskId: string, who: string, turn: number, quote: string, note?: string, hash?: string|null }>} marks
- * @returns {Array<{ id: string, turn: number, quote: string, note: string, here: boolean, still: boolean | null }>}
+ * @returns {Array<{ id: string, turn: number, quote: string, note: string, by: string, at: string | null, here: boolean, still: boolean | null }>}
  *   `here`: the mark was made on THIS run; `still`: the answer still contains the quote (null: that turn has no answer)
  */
 export function checkMarks(run, marks) {
@@ -183,7 +183,7 @@ export function checkMarks(run, marks) {
         if (m.taskId !== run.taskId || m.who !== run.who) continue;
         const t = run.turns?.[m.turn - 1];
         const here = !!m.hash && m.hash === run.hash;
-        out.push({ id: m.id, turn: m.turn, quote: m.quote, note: m.note ?? "", here,
+        out.push({ id: m.id, turn: m.turn, quote: m.quote, note: m.note ?? "", by: m.by ?? "unknown", at: m.at ?? null, here,
             still: t ? (m.quote ? fold(t.answer).includes(fold(m.quote)) : true) : null });
     }
     return out;

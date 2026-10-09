@@ -137,3 +137,5 @@ a.plain:hover { text-decoration: none } a.plain:hover .badge { border-color: var
 .builderr h2 { color: var(--err) }
 .builderr pre { margin: 0; padding: 8px 10px; border-radius: 6px; background: var(--panel); overflow-x: auto;
                 font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap }
+/* Whose mark it is: a person at the page, or which agent. */
+.flag .by { float: right; margin-left: 10px; color: var(--fg-faint); font-size: 11px }

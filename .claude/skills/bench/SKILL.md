@@ -128,7 +128,7 @@ A task (or a cell, through `apply`) can set `surface: "hud"` to start the run th
 kit and prompt a UI run gets) instead of a console `ml.agent`; `tools`, `python`, `toolTokens`, `agentOptions` and
 `seed` are console knobs and do not apply to it. `sharedWatches`/`watchNotes` go to `ml.current` as in observe.
 
-## Interviews (a panel, read by a person)
+## Interviews (a panel, read by a person or a model)
 
 A task with `asks: [...]` is an INTERVIEW: each ask is sent once the turn before it ends, every turn's answer lands
 in `outbox/turn-<n>.md` and in the cell's `turns`, and the page gets an **Answers** view (turns as rows, runs as
@@ -141,7 +141,7 @@ USE_ENV=1 node --import tsx tests/e2e/bench/run.mjs tests/e2e/panel/bloat.json \
 
 One run per model, all at once (`--jobs` overrides), each model PROBED first exactly as `panel.mjs` does, and
 `summary.md` in the sweep directory is the file `panel.mjs` writes. On the live page a person selects a wrong line in
-an answer and presses **mark wrong**; marks are kept in the sweep's `marks.json`, and every later run of that model
+an answer and presses **mark wrong**; marks are kept in the sweep's `marks.jsonl` (an append-only log, each record saying who made it), and every later run of that model
 and turn is CHECKED: does its answer still contain the marked line (case and spacing folded)? The page and
 `summary.md` say "still says" or "no longer says". A verbatim match is crude, but it turns a person's reading into
 something the next run is held to. For a model reading results, `panel.mjs` is the same thing without a page.
@@ -167,6 +167,17 @@ set one explicitly, and with neither it runs the scripted fake-LLM (which is wha
 deterministic). `apply()`'s `backend.model` overrides the model per cell.
 
 ## What it writes
+
+**Everything the page shows is also a file**, rendered from the same data, and the sweep's last lines in the terminal
+list them. A model driving the bench reads these; it never needs the page.
+
+| On the page | In the sweep directory | From a terminal |
+| --- | --- | --- |
+| Results table | `report.md` (and `rows.json`) | read it |
+| Answers, side by side | `summary.md` (`summary-<task>.md` with several interviews) | read it |
+| "mark wrong" and its checks | `marks.jsonl` (append-only; who and when on each); each answer's checks in `summary.md` | add a mark: `node tests/e2e/bench/mark.mjs <sweep dir> --model <who> --turn <n> --quote "<line>" [--note "<why>"] --by "<who you are>"`; `--list` shows them. The next run of that model is checked for it. |
+| Timeline | `timeline.md`: each run's start, end and busy time on one clock, which runs overlapped and for how long, then every span (model calls with their phases, tool steps, model loads, sub-calls) | read it |
+| all of it | `page.json`: the exact state `report.html` renders | `jq` it |
 
 `tests/e2e/artifacts/bench/<spec>/` (gitignored) holds `report.md`, `rows.json` (the aggregate AND every
 individual run, for further analysis), and one directory per RUN at

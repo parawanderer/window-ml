@@ -25,7 +25,7 @@ export interface RunState {
     live?: { step?: number; maxSteps?: number; tool?: string; last?: string; pending?: boolean };
     focus?: { step: number; tool?: string; why: string } | null;
     turns?: { answer: string; tools: string[]; capped: boolean }[];
-    checks?: { id: string; turn: number; quote: string; note: string; here: boolean; still: boolean | null }[];
+    checks?: { id: string; turn: number; quote: string; note: string; by: string; at: string | null; here: boolean; still: boolean | null }[];
 }
 
 export interface BenchState {
