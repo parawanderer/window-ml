@@ -15,7 +15,7 @@ import { openBoxLog, logFrames } from "../tests/e2e/bench/box-stream.mjs";
 /** An S3 stand-in: PUT, GET, ListObjectsV2 with a page of 3 so a listing pages. Every request must be signed. */
 let server, url;
 const objects = new Map();
-const unsigned = [];
+const unsigned = [], listQueries = [];
 before(async () => {
     server = createServer(async (req, res) => {
         if (!/^AWS4-HMAC-SHA256 Credential=k\//.test(req.headers.authorization || "")) unsigned.push(req.url);
@@ -30,6 +30,7 @@ before(async () => {
             res.writeHead(200); return res.end();
         }
         if (req.method === "GET" && u.searchParams.get("list-type") === "2") {
+            listQueries.push(u.search);
             const prefix = u.searchParams.get("prefix") || "";
             const all = [...objects.keys()].filter((k) => k.startsWith(prefix)).sort();
             const start = Number(u.searchParams.get("continuation-token") || 0);
@@ -186,6 +187,14 @@ test("what stays here: a sweep whose spec said sync: false, a task that did, and
     const plain = sweepDir({ runs: [{ path: "t1/x/r0", taskId: "t1", hash: "h" }] });
     assert.equal((await push(store(), { clone: "a", scoresDb: "/x", boxDb: "/x", sweeps: [plain.dir], onlyDb: true })).runs, 0);
     assert.ok(![...objects.keys()].some((k) => k.startsWith("traces/")));
+});
+
+test("a listing of the whole bucket sends no empty prefix: Garage refuses `prefix=` as an invalid signature", async () => {
+    listQueries.length = 0;
+    await store().list("");
+    await store().list("scores/");
+    assert.doesNotMatch(listQueries[0], /prefix=/);
+    assert.match(listQueries[1], /prefix=scores%2F/);
 });
 
 test("not configured: status says so and nothing else", async () => {
