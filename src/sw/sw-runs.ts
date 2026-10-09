@@ -88,6 +88,20 @@ export function isWorkerRun(runId: unknown): boolean {
     return typeof runId === "string" && (workerRunsStarting.has(runId) || bgRuns.get(runId)?.p.builtBy === "worker");
 }
 
+/**
+ * A page's model-call payload without a `hint.session` naming a run the worker built: the resource panel files a
+ * generation under the session its hint names, and a page's own call is not that run's. Any other session (the page's
+ * own run, a chat) passes as it came.
+ * @param payload what the page sent
+ * @returns the payload, its hint's session dropped when it names a worker-built run
+ */
+export function withoutWorkerSession<T extends { hint?: { session?: unknown } | null }>(payload: T): T {
+    const s = payload?.hint?.session;
+    if (typeof s !== "string" || !s.startsWith("wml-") || !isWorkerRun(s.slice(4))) return payload;
+    const { session: _dropped, ...hint } = payload.hint!;
+    return { ...payload, hint };
+}
+
 // ---- Durable resume ----
 // A LIVE run's resumable snapshot is also mirrored to chrome.storage.local, so a re-spawned SW (MV3 evicts
 // ~30s idle) can rehydrate an in-flight run instead of losing it. Storage holds ONLY running runs — deleted

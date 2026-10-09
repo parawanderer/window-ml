@@ -321,6 +321,24 @@ function indexRows(bg) {
     };
 }
 
+test("a page's model call cannot file its generation under a run the worker built; its own session's hint passes", T, async () => {
+    // The resource panel attributes a generation to the session its wire hint names. A page knows the run's hash (the
+    // toolset push carries it), so without this its own calls would be counted as the person's run.
+    const { bg, chats } = world();
+    const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "what does it cost?", surface: "hud" });
+    await flush(20);
+    const sender = { tab: { id: 7, windowId: 1, url: SITE.url }, url: SITE.url, origin: "https://site.example", frameId: 0 };
+    const ask = (session) => bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], hint: { use: "agent", session } } }, sender);
+    await ask(`wml-${hash}`);
+    await ask("wml-pagerun1");
+    const hints = chats().slice(-2).map((c) => c.body.hint);
+    assert.equal(hints[0]?.session, undefined, `the worker-built run's session was dropped; got ${JSON.stringify(hints[0])}`);
+    assert.equal(hints[0]?.use, "agent", "the rest of the hint passes");
+    assert.equal(hints[1]?.session, "wml-pagerun1", "a session that is not a worker-built run's passes as it came");
+    const own = chats().find((c) => c.body.hint?.session === `wml-${hash}`);
+    assert.ok(own, "positive control: the run's own call carries its session");
+});
+
 test("a page's events for a run the worker built reach neither the index nor a DevTools panel; its own still do", T, async () => {
     // The run's owner in the index is the tab it runs on, so the index's own tab check let that tab's page in. The page
     // knows the run's hash: the worker hands it over with the toolset push.
