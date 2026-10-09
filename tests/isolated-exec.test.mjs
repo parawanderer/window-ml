@@ -62,9 +62,9 @@ test("the route for every page, script and mechanism", () => {
 
 test("a refusal and the fallback each say what to turn on; the refusal for ml.current says how to read it instead", () => {
     const none = { userScripts: false, cdp: false };
-    assert.match(routeExec(SCRIPTS.current, true, none).result, /Read ml\.current in a read-only exec and act on the page in the next\..*Allow User Scripts/);
-    assert.match(routeExec(SCRIPTS.plain, false, none).result, /not approved.*Allow User Scripts/);
-    assert.match(routeExec(SCRIPTS.pointer, true, none).note, /page's own world.*Allow User Scripts/);
+    assert.match(routeExec(SCRIPTS.current, true, none).result, /Read ml\.current in a read-only exec and act on the page in the next\..*Settings → Advanced → "Debugger-based actions and user scripts"/);
+    assert.match(routeExec(SCRIPTS.plain, false, none).result, /not approved.*Settings → Advanced → "Debugger-based actions and user scripts"/);
+    assert.match(routeExec(SCRIPTS.pointer, true, none).note, /page.s own world.*Settings → Advanced → "Debugger-based actions and user scripts"/);
     for (const s of [routeExec(SCRIPTS.current, true, none).result, routeExec(SCRIPTS.plain, false, none).result, routeExec(SCRIPTS.pointer, true, none).note])
         assert.doesNotMatch(s, / {2}/, "model-facing text is never padded");
 });

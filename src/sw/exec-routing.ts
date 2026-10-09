@@ -34,7 +34,7 @@ export type ExecRoute =
     | { where: "refused"; reason: ExecReason; result: string };
 
 /** The sentence a refused or fallen-back exec names as the remedy. */
-const ENABLE = "Turn on \"Allow User Scripts\" for window.ml on the browser's extension details page, or Debugger-based actions in window.ml Settings → Advanced";
+const ENABLE = "Turn on Debugger-based actions, or allow user scripts, in window.ml Settings → Advanced → \"Debugger-based actions and user scripts\"";
 
 /**
  * Decide where an approved exec of a worker-built run runs.

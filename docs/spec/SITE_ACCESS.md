@@ -418,7 +418,8 @@ Recorded as each slice lands, with the reason.
   `sw-isolated-exec.ts`). Isolated when the page is not approved, or when the script names `ml.current` or a pointer;
   otherwise the page's main world, as before. The mechanism is a user-script world of the run's own
   (`wml-<runId>`), else a CDP isolated world created per call. Owner's decision (2026-10-08) for when neither is
-  available, which is a default install (the "Allow User Scripts" toggle and the CDP setting are both off): refuse on
+  available (the CDP setting turned off and user scripts not allowed; since #467 CDP is on by default, so a default
+  install runs these isolated through CDP): refuse on
   an unapproved page and for `ml.current` (which the main world never had), but run a pointer-naming script on an
   approved page in the main world as before, with a note in the result and the routing in the execution log, so
   nothing that works today breaks. Differences from the spec and the page's world, each told to the model in one line:
