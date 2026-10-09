@@ -25,7 +25,10 @@ import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const REPO = "parawanderer/window-ml";
-const POLL_MS = 30_000, POLL_LIMIT = 120;
+const POLL_MS = 60_000, POLL_LIMIT = 90;
+/** Below this many GitHub API calls left in the hour, a waiter sleeps until the budget resets: every session on the
+ *  account shares the 5,000 an hour, and a few waiters polling at once once ran it out (2026-10-09). */
+const API_RESERVE = 300;
 
 /** Run a command in the repo, returning trimmed stdout ("" on failure). */
 function sh(cmd, args, cwd = ROOT) {
@@ -62,6 +65,29 @@ export function judge(f) {
 }
 
 /** Everything the rule needs about PR `pr`, from GitHub and the fetched remote. */
+/**
+ * The ONE call a waiter makes while CI runs: the tests run for the branch's head, as `{ sha, runId, status }`. The full
+ * {@link facts} (about five calls) are read once, when this says the run completed, instead of on every poll.
+ * @param {string} head the PR's branch
+ * @returns {{ sha: string, runId: string | null, status: string | null }}
+ */
+export function runState(head) {
+    git("fetch", "-q", "origin");
+    const sha = git("rev-parse", `origin/${head}`);
+    const [runId = null, status = null] = (gh("api", `repos/${REPO}/actions/runs?head_sha=${sha}`, "-q",
+        '.workflow_runs[] | select(.name=="tests" and .event=="pull_request") | "\\(.id) \\(.status)"').split("\n")[0] || "").split(" ").filter(Boolean);
+    return { sha, runId, status };
+}
+
+/** Sleep until the hour's API budget resets when fewer than {@link API_RESERVE} calls are left. Reading the budget is free. */
+async function spareTheBudget() {
+    const [left, reset] = gh("api", "rate_limit", "-q", '.resources.core | "\\(.remaining) \\(.reset)"').split(" ").map(Number);
+    if (!(left < API_RESERVE)) return;
+    const ms = Math.max(0, reset * 1000 - Date.now()) + 5_000;
+    console.log(`  GitHub API budget low (${left} left): waiting ${Math.round(ms / 60_000)} min for it to reset`);
+    await new Promise((r) => setTimeout(r, ms));
+}
+
 function facts(pr) {
     git("fetch", "-q", "origin");
     const view = JSON.parse(gh("pr", "view", String(pr), "--json", "headRefName,mergeable,reviews,comments") || "{}");
@@ -231,7 +257,13 @@ async function main() {
         f = facts(pr);
         v = judge(f);
         if (!v.pending || !wait || i >= POLL_LIMIT) break;
-        await new Promise((r) => setTimeout(r, POLL_MS));
+        // While the run is still going, one call a minute says so; the full facts wait until it is done.
+        for (; i < POLL_LIMIT; i++) {
+            await spareTheBudget();
+            await new Promise((r) => setTimeout(r, POLL_MS));
+            const r = runState(f.head);
+            if (r.sha !== f.sha || r.runId !== f.runId || r.status === "completed") break;
+        }
     }
     const { blocked, held, servers, heldRuns } = await leftovers(f.head, { keep, discard });
     console.log(`${pr}: ${v.reason}`);
