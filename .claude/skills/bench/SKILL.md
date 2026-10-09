@@ -51,6 +51,13 @@ left out, they ran in an earlier sweep), Results and Runs. A run opened from it 
 place. Each `run.md.html` has the same lane as its own Timeline section. The page follows the system theme; its
 button switches light/dark. It is Preact under `tests/e2e/bench/page/`, bundled in memory each time the bench starts.
 
+**The page is editable while someone looks at it.** With `--serve`, the server watches the page's sources
+(`tests/e2e/bench/page/`, the lane modules it shares with the panel, `sidebar.css`, `palette.ts`): an edit rebuilds it and
+every open browser reloads onto the new build, keeping its scroll and getting its state straight back, while the sweep
+runs on. So a person, this session or any other agent can work on the page with a human watching it change. A build that
+fails shows the compiler's message on the page and the previous build stays up. Edits to `lane-static.ts` or
+`bundle.mjs` themselves are node modules of the server, so they need a restart.
+
 ```
 npm run build
 node --import tsx tests/e2e/bench/run.mjs tests/e2e/bench/specs/smoke.bench.ts --repeats 1

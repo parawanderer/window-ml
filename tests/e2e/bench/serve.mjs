@@ -15,9 +15,10 @@
 
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
+import { watch as fsWatch } from "node:fs";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { COLUMNS } from "./metrics.mjs";
-import { appScript, appCss } from "./page/bundle.mjs";
+import { appScript, appCss, invalidate } from "./page/bundle.mjs";
 
 /** The stable default. Arbitrary, but FIXED: a reused URL is the whole point (see startDashboard). */
 export const DEFAULT_PORT = 7331;
@@ -56,9 +57,14 @@ ${baked}<script>${appScript()}</script>
  * @param {string} opts.artifactRoot directory that `run.path` values are relative to, served read-only
  * @param {(body: object) => Promise<object | null>} [opts.onMark] stores a person's mark on an answer (POST /mark);
  *   null means it was not a valid one
+ * @param {string[]} [opts.watch] files and directories the page is built from (`pageSources()`). When given, the page is
+ *   EDITABLE WHILE SOMEONE LOOKS AT IT: a change rebuilds it and every open browser reloads (its state comes back on the
+ *   stream, its scroll position with it), so a person, Claude Code or any other agent can work on the page live. A
+ *   build that fails is shown on the page and the last good build keeps being served.
+ * @param {() => Promise<string>} [opts.rebuild] how to build the page again after a change (a test's seam)
  */
-export async function startDashboard({ port = DEFAULT_PORT, artifactRoot, onMark = null }) {
-    const page = await pageHtml();
+export async function startDashboard({ port = DEFAULT_PORT, artifactRoot, onMark = null, watch = null, rebuild = null }) {
+    let page = await pageHtml();
     const clients = new Set();
     let state = { name: "bench", runs: [], rows: [], jobs: 1, started: Date.now() };
     const root = resolve(artifactRoot);
@@ -120,6 +126,32 @@ export async function startDashboard({ port = DEFAULT_PORT, artifactRoot, onMark
     const url = `http://127.0.0.1:${server.address().port}`;
     if (bound !== port) console.log(`  (port ${port} was taken — serving on ${server.address().port} instead)`);
 
+    /** A named event to every open page: `reload` after a rebuild, `build-error` when one failed. */
+    const announce = (name, data) => {
+        const frame = `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
+        for (const c of clients) { try { c.write(frame); } catch { clients.delete(c); } }
+    };
+    // The live-edit loop. Debounced, since an editor's save is often several writes and a model's edit several files.
+    const watchers = [];
+    let rebuildTimer = null;
+    const onSourceChange = () => {
+        clearTimeout(rebuildTimer);
+        rebuildTimer = setTimeout(async () => {
+            rebuildTimer = null;
+            invalidate();
+            try {
+                page = await (rebuild ? rebuild() : pageHtml());
+                announce("reload", { at: Date.now() });
+            } catch (e) {
+                announce("build-error", { message: String(e?.message || e).slice(0, 4000) });
+            }
+        }, 150);
+    };
+    for (const p of watch || []) {
+        try { watchers.push(fsWatch(p, { recursive: true }, onSourceChange)); }
+        catch { /* a path that is not there is not watched */ }
+    }
+
     let flushTimer = null;
     const flush = () => {
         const frame = `data: ${JSON.stringify(state)}\n\n`;
@@ -142,6 +174,8 @@ export async function startDashboard({ port = DEFAULT_PORT, artifactRoot, onMark
         },
         async stop() {
             if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+            clearTimeout(rebuildTimer);
+            for (const w of watchers) w.close();
             flush();   // never end on a coalesced-away final state
             for (const c of clients) { try { c.end(); } catch { /* already gone */ } }
             clients.clear();

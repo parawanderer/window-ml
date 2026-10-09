@@ -84,7 +84,10 @@ as in AGENTS.md — they are all under `src/`.
   panel's derivation (`eventsFrom`) and the bars its own `LaneBars`, so a run in the bench and in the panel
   look the same. Each run's `run.md.html` carries the same lane (`page/run-lane.tsx`, its data inert JSON and
   its script admitted by CSP hash), and the page's run viewer reloads an open run as it moves: **live is
-  transport, not rendering** (the files are rewritten on every event; nothing renders them twice). Worked example specs live in `tests/e2e/bench/specs/` with a `README.md` for humans.
+  transport, not rendering** (the files are rewritten on every event; nothing renders them twice). With `--serve` the
+  page is also **editable live**: the server watches its sources (`pageSources()`), rebuilds on a change and sends
+  `reload` over the stream (or `build-error`, keeping the last good build), so a person or an agent can change the page
+  while someone watches it. Worked example specs live in `tests/e2e/bench/specs/` with a `README.md` for humans.
   **CI runs it as its own `bench` job**
   (`npm run bench:calibrate` → build, smoke sweep, `check-calibration.mjs`), deliberately separate from
   `test`/`e2e` so a broken INSTRUMENT names itself instead of reading as a broken extension. Artifacts land per RUN under

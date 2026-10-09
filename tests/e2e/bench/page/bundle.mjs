@@ -20,10 +20,26 @@ function bundle(entry) {
             // `<` inside a string literal would let a `</script>` close the inline tag the bundle is shipped in.
             charset: "utf8",
         });
+        if (out.errors.length) throw new Error(out.errors.map((e) => `${e.location?.file ?? entry}:${e.location?.line ?? "?"}: ${e.text}`).join("\n"));
         cache.set(entry, out.outputFiles[0].text.replace(/<\/script/gi, "<\\/script"));
     }
     return cache.get(entry);
 }
+
+/** Forget every built bundle, so the next ask builds from the source as it is now (the page's live-edit loop). */
+export const invalidate = () => cache.clear();
+
+/**
+ * What the pages are built from, for a server that watches them: this directory, the lane modules the bundle shares
+ * with the panel, and the stylesheet and palette whose rules and colours it lifts.
+ */
+export const pageSources = () => [
+    HERE,
+    path.join(ROOT, "src/resource"),
+    path.join(ROOT, "src/sidebar/resource"),
+    path.join(ROOT, "src/sidebar/sidebar.css"),
+    path.join(ROOT, "src/sidebar/palette.ts"),
+];
 
 /** The dashboard's script. */
 export const appScript = () => bundle("app.tsx");

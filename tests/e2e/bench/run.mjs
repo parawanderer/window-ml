@@ -41,6 +41,7 @@ import { measureRun, aggregate } from "./metrics.mjs";
 import { expandCells, cellKey, cellPath, comboLabel, buildGroups, parseSelector, slug } from "./cells.mjs";
 import { writeReport, mdSink, terminalSink } from "./sinks.mjs";
 import { startDashboard, staticPage } from "./serve.mjs";
+import { pageSources } from "./page/bundle.mjs";
 // The sweep's timeline: each run's events as the resource panel derives them; the page draws them with its lane.
 const { eventsFrom } = await import("../../../src/sidebar/resource/model-stats.ts");
 import { loadInterview, interviewBench, interviewDriver, readTurns, probe, panelSummary, promptChars, checkMarks, validMark } from "../interview.mjs";
@@ -385,7 +386,9 @@ const main = async () => {
         push();
         return mark;
     };
-    const dash = args.serve ? await startDashboard({ artifactRoot: sweepDir, onMark, ...(args.port != null ? { port: args.port } : {}) }) : null;
+    // Watching the page's own sources makes the page editable while it is open: a person or an agent changes a file
+    // under bench/page/ (or the lane's shared modules) and every open browser reloads onto the new build.
+    const dash = args.serve ? await startDashboard({ artifactRoot: sweepDir, onMark, watch: pageSources(), ...(args.port != null ? { port: args.port } : {}) }) : null;
     const started = Date.now();
     // The question each turn of each interview asked, for the answers view's row headings.
     const interviews = Object.fromEntries(spec.tasks.filter((t) => t.asks?.length).map((t) => [t.id, [t.task, ...t.asks]]));

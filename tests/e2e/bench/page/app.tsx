@@ -16,6 +16,9 @@ import { Viewer } from "./viewer";
 
 declare global { interface Window { __BENCH_STATE__?: BenchState } }
 
+/** Where the reader was when a rebuild reloaded the page; restored once, then forgotten. */
+const SCROLL_KEY = "benchScrollY";
+
 type Theme = "auto" | "light" | "dark";
 const THEME_KEY = "benchTheme";
 /** Remembered per browser; guarded, since a saved report opened from file:// can throw on localStorage. */
@@ -72,14 +75,30 @@ function App() {
     const [s, setS] = useState<BenchState | null>(baked);
     const [, tick] = useState(0);
     const [disconnected, setDisconnected] = useState(false);
+    const [buildError, setBuildError] = useState<string | null>(null);
     useEffect(() => {
         // A SAVED page has its state already; subscribing would sit on a dead port and report a complete sweep as lost.
         if (baked) return;
         const src = new EventSource("/events");
         src.onmessage = (e) => { setS(JSON.parse(e.data)); setDisconnected(false); };
         src.onerror = () => setDisconnected(true);
+        // The page's own source changed and the server rebuilt it (serve.mjs `watch`): reload onto the new build, keeping
+        // the place. The state comes straight back on the stream.
+        src.addEventListener("reload", () => {
+            try { sessionStorage.setItem(SCROLL_KEY, String(window.scrollY)); } catch { /* storage off */ }
+            location.reload();
+        });
+        src.addEventListener("build-error", (e) => setBuildError(JSON.parse((e as MessageEvent).data).message));
         return () => src.close();
     }, []);
+    // Back where the reader was before a rebuild reloaded the page, once there is something to scroll.
+    useEffect(() => {
+        if (!s) return;
+        try {
+            const y = sessionStorage.getItem(SCROLL_KEY);
+            if (y != null) { sessionStorage.removeItem(SCROLL_KEY); requestAnimationFrame(() => window.scrollTo(0, Number(y))); }
+        } catch { /* storage off */ }
+    }, [!!s]);
     // The clocks (elapsed, a running step's time, the ETA) move with the wall, not with events.
     useEffect(() => {
         if (s?.finished) return;
@@ -92,6 +111,13 @@ function App() {
         <>
             <Head s={s} disconnected={disconnected} />
             <main>
+                {buildError ? (
+                    <section class="card builderr">
+                        <header><h2>The page's last edit did not build</h2><span class="sub">Still showing the previous build; it reloads once the source builds again.</span>
+                            <span class="sp" /><button class="btn small" onClick={() => setBuildError(null)}>dismiss</button></header>
+                        <pre>{buildError}</pre>
+                    </section>
+                ) : null}
                 <section class="card"><Stats s={s} /><Models s={s} /></section>
                 <Flight s={s} />
                 <Answers s={s} base={base} live={!baked} />

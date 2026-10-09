@@ -131,3 +131,9 @@ a.plain:hover { text-decoration: none } a.plain:hover .badge { border-color: var
   header.top, main { padding-left: 16px; padding-right: 16px }
   .frow { grid-template-columns: 1fr }
 }
+
+/* A failed rebuild (the page is being edited live): the compiler's own words, over the last build that worked. */
+.builderr { border-color: var(--err) }
+.builderr h2 { color: var(--err) }
+.builderr pre { margin: 0; padding: 8px 10px; border-radius: 6px; background: var(--panel); overflow-x: auto;
+                font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap }
