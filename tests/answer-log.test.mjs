@@ -17,29 +17,38 @@ function workerSet() {
 
 // --- what the page is given ---
 
-test("the shape carries no text content, only that a text item is there; pointers and elements keep their previews", () => {
+test("the shape carries only that a text or an output is there, never its content or caption; an element keeps its preview", () => {
     const shape = answerShape(workerSet());
-    assert.deepEqual(shape, [{ kind: "text" }, { kind: "token", ref: "@tool:abc1234", preview: "the table" }, { kind: "element", preview: "h1 \"Title\"" }]);
+    assert.deepEqual(shape, [{ kind: "text" }, { kind: "token" }, { kind: "element", preview: "h1 \"Title\"" }]);
     assert.ok(!JSON.stringify(shape).includes("PRIVATE"));
+    assert.ok(!JSON.stringify(shape).includes("the table"), "the model's caption stays in the worker");
 });
 
 test("a page-side script reads the length and indices at once, and a text it was not shown reads as kept by the worker", () => {
     const log = new AnswerLog(answerShape(workerSet()));
     const f = makeAnswerFacade(log);
     assert.equal(f.length, 3);
-    assert.deepEqual(f.dump().map((d) => [d.i, d.kind, d.preview]), [[0, "text", "(text, kept by the worker)"], [1, "token", "@tool:abc1234 — the table"], [2, "element", "h1 \"Title\""]]);
+    assert.deepEqual(f.dump().map((d) => [d.i, d.kind, d.preview]), [[0, "text", "(text, kept by the worker)"], [1, "token", "(output, kept by the worker)"], [2, "element", "h1 \"Title\""]]);
     assert.ok(!JSON.stringify(f).includes("PRIVATE"));
 });
 
-test("remove by text matches only what the script can see; a hidden text is never matched, not even by its placeholder", () => {
+test("remove by text or ref matches only what the script added; a hidden item is never matched, not even by its placeholder", () => {
     const log = new AnswerLog(answerShape(workerSet()));
     const f = makeAnswerFacade(log);
     assert.equal(f.remove("PRIVATE TEXT FROM ANOTHER SITE"), 0, "the page cannot test a guess against the hidden text");
     assert.equal(f.remove("\u0000"), 0);
-    assert.equal(f.remove("@tool:abc1234"), 1);
+    assert.equal(f.remove("@tool:abc1234"), 0, "nor against a hidden output's ref");
     f.add("mine");
     assert.equal(f.remove("mine"), 1);
-    assert.equal(f.length, 2);
+    assert.equal(f.length, 3);
+});
+
+test("the worker's replay of a removal by text matches exactly what the script could: a guess at a hidden item removes nothing", () => {
+    const real = workerSet();
+    assert.deepEqual(replayAnswerOps(real, [{ op: "remove", which: "PRIVATE TEXT FROM ANOTHER SITE" }, { op: "remove", which: "@tool:abc1234" }]), { applied: 2 });
+    assert.equal(real.length, 3, "the shape the page sees next tells it nothing");
+    replayAnswerOps(real, [{ op: "add", item: { kind: "text", text: "t" } }, { op: "remove", which: "t" }]);
+    assert.equal(real.length, 3, "what the same report added is matched, as on the page");
 });
 
 test("every change is recorded in order, an element by its preview only; a checkpoint restore drops what came after it", () => {

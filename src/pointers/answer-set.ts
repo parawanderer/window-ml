@@ -306,8 +306,10 @@ export async function answerCall(set: AnswerSet, args: AnswerArgs, select: (sele
 /* ------------------------- the worker's set, as a page-side script sees it ------------------------- */
 
 /** One item of a worker-held set as it is sent to the page with an approved exec: its kind, and what the page may
- *  see of it. A text item's content is the run's (the model may have written it from another site), so it is not sent. */
-export type AnswerShapeItem = { kind: "text" } | { kind: "token"; ref: string; preview?: string } | { kind: "element"; preview: string };
+ *  see of it. A text item's content is the run's (the model may have written it from another site), and so is an
+ *  output pointer's: its caption is the model's note, and a `@tool:` string may carry the model's own words. Neither is
+ *  sent. An element's preview is the page's own DOM. */
+export type AnswerShapeItem = { kind: "text" } | { kind: "token" } | { kind: "element"; preview: string };
 
 /** An item as an operation carries it back: an element by its preview, never its nodes, which stay on the page. */
 export type AnswerOpItem = { kind: "text"; text: string } | { kind: "token"; ref: string; preview?: string } | { kind: "element"; preview: string; note?: string };
@@ -317,12 +319,15 @@ export type AnswerOp = { op: "add"; item: AnswerOpItem } | { op: "remove"; which
 
 /** What a page-side script reads for a text item it cannot see. */
 const HIDDEN_PREVIEW = "(text, kept by the worker)";
+/** …and for an output pointer it cannot see. */
+const HIDDEN_OUTPUT = "(output, kept by the worker)";
 
 /**
  * The set an approved exec of a worker-built run is given on the page: the worker's set as far as the page may see it,
  * recording every change in order for the worker to replay (worker-answer.ts). `.length` and indices are answered here,
- * synchronously, as before. A text item the page was not shown has no content here: a `remove("…")` by text matches
- * only the items this script can see, and the worker's replay matches all of them.
+ * synchronously, as before. A text or output item the page was not shown has no content here, so a `remove("…")` by
+ * text or ref matches only what this script added; the worker's replay matches exactly the same, so a forged removal
+ * cannot test a guess against a hidden item.
  */
 export class AnswerLog extends AnswerSet {
     readonly ops: AnswerOp[] = [];
@@ -331,9 +336,10 @@ export class AnswerLog extends AnswerSet {
     constructor(shape: readonly AnswerShapeItem[]) {
         super();
         for (const s of shape) {
-            if (s.kind === "text") { const it: AnswerItem = { kind: "text", text: "\u0000" }; this.#hidden.add(it); this.items.push(it); }
-            else if (s.kind === "token") this.items.push({ kind: "token", ref: s.ref, ...(s.preview ? { preview: s.preview } : {}) });
-            else this.items.push({ kind: "element", nodes: [], preview: s.preview });
+            if (s.kind === "element") { this.items.push({ kind: "element", nodes: [], preview: s.preview }); continue; }
+            const it: AnswerItem = s.kind === "text" ? { kind: "text", text: "\u0000" } : { kind: "token", ref: "\u0000" };
+            this.#hidden.add(it);
+            this.items.push(it);
         }
     }
 
@@ -355,19 +361,18 @@ export class AnswerLog extends AnswerSet {
     }
 
     override dump(): AnswerItemView[] {
-        return super.dump().map((v) => (this.#hidden.has(this.items[v.i]) ? { ...v, preview: HIDDEN_PREVIEW } : v));
+        return super.dump().map((v) => (this.#hidden.has(this.items[v.i]) ? { ...v, preview: v.kind === "token" ? HIDDEN_OUTPUT : HIDDEN_PREVIEW } : v));
     }
 }
 
 /** The shape of a set, as {@link AnswerLog} is built from it. */
 export function answerShape(set: AnswerSet): AnswerShapeItem[] {
-    return set.items.map((it) => it.kind === "text" ? { kind: "text" as const }
-        : it.kind === "token" ? { kind: "token" as const, ref: it.ref, ...(it.preview ? { preview: it.preview } : {}) }
-            : { kind: "element" as const, preview: it.preview });
+    return set.items.map((it) => (it.kind === "element" ? { kind: "element" as const, preview: it.preview } : { kind: it.kind }));
 }
 
-/** The most operations one call may report, and the longest string an operation may carry. */
-const MAX_OPS = 200, MAX_TEXT = 20_000, MAX_SHORT = 1_000;
+/** The most operations one call may report, the longest string an operation may carry, and how large the set may grow
+ *  through replays (well inside `chrome.storage.session`'s quota, where the worker keeps it). */
+const MAX_OPS = 200, MAX_TEXT = 20_000, MAX_SHORT = 1_000, MAX_ITEMS = 500, MAX_SET_CHARS = 2_000_000;
 
 /**
  * Replay what a page-side script did to the set on the real one. The operations are the PAGE's report: it can forge or
@@ -398,15 +403,28 @@ export function replayAnswerOps(set: AnswerSet, ops: unknown): { applied: number
         return false;
     };
     if (!ops.every(ok)) return { refused: "a malformed operation" };
+    // Replayed on a copy, committed only if the result is within bounds. A removal by text or ref matches only what
+    // this report added, as the script's own view (AnswerLog) did: matching hidden items would let a forged removal
+    // test a guess against them, read back through the next shape's length.
+    const next = new AnswerSet();
+    next.items.push(...set.items);
+    const added = new Set<AnswerItem>();
     for (const o of ops as AnswerOp[]) {
-        if (o.op === "clear") set.clear();
-        else if (o.op === "remove") set.remove(o.which);
+        if (o.op === "clear") next.clear();
+        else if (o.op === "remove") next.remove(typeof o.which === "number" ? o.which : (it: AnswerItem) => added.has(it) && ((it.kind === "token" && it.ref === o.which) || (it.kind === "text" && it.text === o.which)));
         else {
             const it = o.item;
-            set.add(it.kind === "element" ? { kind: "element", nodes: [], preview: it.preview, ...(it.note ? { note: it.note } : {}) }
+            const item: AnswerItem = it.kind === "element" ? { kind: "element", nodes: [], preview: it.preview, ...(it.note ? { note: it.note } : {}) }
                 : it.kind === "token" ? { kind: "token", ref: it.ref, ...(it.preview ? { preview: it.preview } : {}) }
-                    : { kind: "text", text: it.text });
+                    : { kind: "text", text: it.text };
+            added.add(item);
+            next.add(item);
         }
     }
+    if (next.length > MAX_ITEMS) return { refused: `the set would hold ${next.length} items, over ${MAX_ITEMS}` };
+    const chars = JSON.stringify(next.items.map((it) => (it.kind === "element" ? { ...it, nodes: [] } : it))).length;
+    if (chars > MAX_SET_CHARS) return { refused: `the set would be ${chars} characters, over ${MAX_SET_CHARS}` };
+    set.items.length = 0;
+    set.items.push(...next.items);
     return { applied: ops.length };
 }

@@ -7,7 +7,7 @@
 // the set's SHAPE (`AnswerLog`, answer-set.ts) and reports what it changed, which is replayed here; the turn's answer is
 // assembled here. Kept in session storage beside the worker's memory, so an eviction mid-turn does not lose it.
 
-import type { MlTool } from "../contract";
+import type { AnswerMedia, MlTool } from "../contract";
 import { AnswerSet, answerCall, answerShape, replayAnswerOps, type AnswerArgs, type AnswerItem, type AnswerSelection, type AnswerShapeItem } from "../pointers/answer-set";
 import { defineState } from "../state-registry";
 
@@ -54,6 +54,36 @@ export function resetAnswer(runId: string): void {
     void save(runId, set);
 }
 
+/** The most crops the page's own resolution makes (injected.ts `captureAnswer`), and the longest one we keep. */
+const MAX_MEDIA = 6, MAX_IMAGE = 4_000_000;
+
+/**
+ * What the page answered for a selector, as its own resolution could have made it: a whole count, a preview of the
+ * size it builds, and at most six crops, each an image data URL (or none, when its capture failed), rebuilt field by
+ * field. The page may still lie about its DOM, as it can by changing the DOM; it cannot make the answer larger or
+ * point the HUD card at a remote image.
+ * @returns the selection, or null when any part is malformed
+ */
+export function checkSelection(got: unknown): AnswerSelection | null {
+    const g = got as { count?: unknown; preview?: unknown; media?: unknown } | null;
+    if (!g || typeof g !== "object" || !Number.isSafeInteger(g.count) || (g.count as number) < 0) return null;
+    if (g.preview !== undefined && typeof g.preview !== "string") return null;
+    if (g.media !== undefined && (!Array.isArray(g.media) || g.media.length > MAX_MEDIA)) return null;
+    const media: AnswerMedia[] = [];
+    for (const m of (g.media as unknown[] | undefined) ?? []) {
+        const x = m as Record<string, unknown> | null;
+        if (!x || typeof x.image !== "string" || x.image.length > MAX_IMAGE || (x.image && !/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(x.image))) return null;
+        if (x.selector !== undefined && (typeof x.selector !== "string" || x.selector.length > 1_000)) return null;
+        if (x.kind !== undefined && x.kind !== "image" && x.kind !== "element") return null;
+        if (x.mode !== undefined && x.mode !== "inline" && x.mode !== "highlight") return null;
+        media.push({ image: x.image, ...(x.selector ? { selector: x.selector as string } : {}), ...(x.kind ? { kind: x.kind as AnswerMedia["kind"] } : {}), ...(x.mode ? { mode: x.mode as AnswerMedia["mode"] } : {}) });
+    }
+    return { count: g.count as number, ...(typeof g.preview === "string" ? { preview: g.preview.slice(0, 1_000) } : {}), ...(media.length ? { media } : {}) };
+}
+
+/** Forget every run's set and selector in memory: what an eviction does (the eviction test hook). */
+export function dropAllAnswerMemory(): void { sets.clear(); selectors.clear(); }
+
 /** Forget a run's set, when the run is deleted. */
 export function dropAnswer(runId: string): void {
     sets.delete(runId);
@@ -88,9 +118,13 @@ export function workerAnswerTool(runId: string, page: MlTool): MlTool {
             const r = await answerCall(set, args, async (selector, index, note, show) => {
                 const ask = selectors.get(runId);
                 if (!ask) throw new Error("the page cannot be asked for elements right now");
-                const got = await ask({ selector, index, note, show });
-                if (got.error) throw new Error(got.error);
-                return got;
+                // The note is the model's, so it stays here: the page resolves the selector without it, and the crops are
+                // labelled with it after (the page's own resolution used it only as that label).
+                const got = await ask({ selector, index, show });
+                if (got.error) throw new Error(String(got.error).slice(0, 500));
+                const clean = checkSelection(got);
+                if (!clean) throw new Error("the page returned a malformed selection");
+                return { ...clean, ...(clean.media ? { media: clean.media.map((m) => ({ ...m, ...(note ? { label: note } : {}) })) } : {}) };
             });
             await save(runId, set);
             return r.media ? { content: r.content, answerMedia: r.media, answerManaged: true } : r.content;

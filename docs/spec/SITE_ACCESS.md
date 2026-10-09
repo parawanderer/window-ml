@@ -418,9 +418,16 @@ Recorded as each slice lands, with the reason.
   choice of design A, 2026-10-09). The text the model curates never enters the page. A page-world script's
   `ml.answer` keeps a synchronous `.length` by working on the set's shape and reporting its changes (`AnswerLog`),
   which the worker replays after checking them. Differences, all in a page-world script only: `ml.answer.dump()` shows
-  a text it was not shown as "(text, kept by the worker)", and `remove("…")` by text matches only items the script can
-  see, while the replay matches them all. Found while building it: a navigation mid-turn emptied the answer (the
-  page's set died with the document); the worker's set survives it, and an eviction.
+  a text or an output it was not shown as "(… kept by the worker)", and `remove("…")` by text or ref matches only what
+  the script itself added, in the replay too. Found while building it: a navigation mid-turn emptied the answer (the
+  page's set died with the document); the worker's set survives it, and an eviction. Found by the red-team pass on it:
+  a forged removal by text, replayed against the hidden items, let a page test a guess against them through the next
+  shape's length; an output's caption and an element's note (the model's words) reached the page; the page's answer to
+  a selector was taken unchecked (a string count, an unbounded preview, remote image URLs for the HUD card); and the
+  replayed set had no bound short of the storage quota. Each is closed: the replay matches what the script could, the
+  shape carries no caption, the note stays in the worker, the selection is rebuilt field by field, and the set is
+  bounded by item count and size (either bound alone keeps it under the quota). By design and accepted: a page can
+  rewrite the person-facing answer through any survey that reaches it, as it can rewrite that survey's result.
 - **Part 4 (first part): an approved exec of a worker-built run runs isolated where it must** (`exec-routing.ts`,
   `sw-isolated-exec.ts`). Isolated when the page is not approved, or when the script names `ml.current` or a pointer;
   otherwise the page's main world, as before. The mechanism is a user-script world of the run's own
