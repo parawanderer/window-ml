@@ -7,14 +7,14 @@
 // reply, no model name. Every answer is rebuilt by `checkGeometry` before a body reads it, bounded by a per-question
 // timeout, and correlated to its question. A malformed or late answer, or a document change, refuses the WHOLE call:
 // the host remembers the first refusal and every later question gets it too (`refusal()`, `onWorkerHost`).
-// The verify after an action runs over it (worker-verify.ts); look and locate move onto it in later PRs (docs/spec/SITE_ACCESS.md,
-// slice 2 part 3).
+// The verify after an action (worker-verify.ts) and `look` (worker-look.ts) run over it; locate moves onto it in a later
+// PR (docs/spec/SITE_ACCESS.md, slice 2 part 3).
 
 import type { GeoView, Geometry, Shot, StitchBegin, TargetQuery, VisionHost } from "../tools/vision-host";
 import type { VisionMemory } from "../contract/contract-render";
 import { shootVia } from "../ml/ml-vision";
 import { workerRaster, type Raster } from "../raster";
-import { checkGeometry, DPR_MAX, GEOMETRY_MOVED, GEOMETRY_REFUSED, GEOMETRY_SLOW, GEOMETRY_UNREACHABLE, STITCH_TILES, type GeoAsked, type GeoOp } from "./geometry-check";
+import { checkGeometry, DPR_MAX, GEOMETRY_MOVED, GEOMETRY_REFUSED, GEOMETRY_SLOW, GEOMETRY_UNREACHABLE, STITCH_TILES, STITCH_TILES_SHORT, type GeoAsked, type GeoOp } from "./geometry-check";
 import { delegateSend } from "./delegate-send";
 import { recordRunLog } from "./sw-run-log";
 import { topDocument, visionMemoryFor, workerShot, workerVisionChat } from "./worker-vision";
@@ -71,7 +71,7 @@ export function workerVisionHost(runId: string, tabId: number, documentId: strin
     const opMs = opts.opMs ?? GEOMETRY_OP_MS;
     let refused: string | null = null;
     let seq = 0;
-    let stitch: { id: number; total: number; tiles: number } | null = null;
+    let stitch: { id: number; total: number; tiles: number; limit: number } | null = null;
     let dims: { w: number; h: number } | null = null;                 // the last capture's pixel size
     let pending: { shot: Required<Shot>; at: number } | null = null;  // a capture taken to measure, not yet handed out
     let noted = false;
@@ -183,18 +183,30 @@ export function workerVisionHost(runId: string, tabId: number, documentId: strin
             const dpr = v.dpr;
             const id = ++stitchSeq;
             scrolled();
-            const b = await ask("stitchBegin", {}, {}, id) as StitchBegin;
-            // The stitch steps by the viewport the worker just measured, and covers at least about one of it.
-            if (Math.abs(b.vh - v.h) > 1 || b.total < b.vh - STITCH_SHORT_PX) return fail(GEOMETRY_REFUSED);
-            if (b.total * dpr > STITCH_MAX_PX) return fail(GEOMETRY_REFUSED);
-            stitch = { id, total: b.total, tiles: 0 };
+            // The page scrolls as soon as it is asked (to find its pinned overlays), before it answers: from here every
+            // way out of the begin, a refused answer or one past the bound included, ends the stitch so the page is put back.
+            stitch = { id, total: 0, tiles: 0, limit: STITCH_TILES };
+            let b: StitchBegin;
+            try {
+                b = await ask("stitchBegin", {}, {}, id) as StitchBegin;
+                // The stitch steps by the viewport the worker just measured, and covers at least about one of it.
+                if (Math.abs(b.vh - v.h) > 1 || b.total < b.vh - STITCH_SHORT_PX) fail(GEOMETRY_REFUSED);
+                if (b.total * dpr > STITCH_MAX_PX) fail(GEOMETRY_REFUSED);
+            } catch (e) {
+                await geo.stitchEnd();
+                throw e;
+            }
+            // A capture shorter than the viewport steps the stitch by what it shows (ml-vision.ts `stitchVia`), so it
+            // takes more tiles.
+            const short = !!dims && dims.h / dpr < v.h - 1;
+            stitch = { id, total: b.total, tiles: 0, limit: short ? STITCH_TILES_SHORT : STITCH_TILES };
             return { ...b, dpr };
         },
         stitchTile: async ({ y }) => {
             const s = stitch;
             if (!s) throw new Error("stitchTile before stitchBegin");
             // The worker's loop, not the page's isLast, ends a stitch: a page that never reaches its bottom gets nine tiles.
-            if (++s.tiles > STITCH_TILES) return fail(GEOMETRY_REFUSED);
+            if (++s.tiles > s.limit) return fail(GEOMETRY_REFUSED);
             scrolled();
             return ask("stitchTile", { y }, { total: s.total }, s.id) as ReturnType<Geometry["stitchTile"]>;
         },

@@ -1,7 +1,8 @@
 // worker-vision-host.test.mjs — the worker's VisionHost (src/sw/worker-vision-host.ts), end to end in node:vm: the built
 // worker asks a page for GEOMETRY only, checks every answer (geometry-check.ts), and does the capture, the drawing and
-// the model call itself. Nothing builds one in the extension yet; it is driven through the worker's test hook
-// `__mlWorkerVisionForTest` (background.ts).
+// the model call itself. The verify after an action runs over it, and so does `look` (worker-look.ts `workerLook`, the
+// tool a run whose vision is the worker's runs in place of the page's); both are driven here through the worker's test
+// hook `__mlWorkerVisionForTest` (background.ts).
 //
 // The page is the real page geometry (page-geometry.ts `answerGeometry`) over a jsdom document, answering the worker's
 // RUN_TOOL_IN_PAGE as a message (JSON-cloned on the way). The tool bodies are the real look and locate, run once over
@@ -13,7 +14,8 @@ import { JSDOM } from "jsdom";
 import { buildLookTool, buildLocateTool } from "../src/tools/builtin-tools.ts";
 import { pageVisionHost, pageGeometry, answerGeometry } from "../src/dom/page-geometry.ts";
 import { defineTool } from "../src/ml/ml-tool-factories.ts";
-import { GEOMETRY_OPS, GEOMETRY_REFUSED, GEOMETRY_MOVED, GEOMETRY_SLOW, STITCH_TILES } from "../src/sw/geometry-check.ts";
+import { buildNativeLookTool } from "../src/ml/ml-vision.ts";
+import { GEOMETRY_OPS, GEOMETRY_REFUSED, GEOMETRY_MOVED, GEOMETRY_SLOW, STITCH_TILES, STITCH_SCREENS } from "../src/sw/geometry-check.ts";
 
 const require = createRequire(import.meta.url);
 const { jsonResponse, loadBackground } = require("./helpers");
@@ -48,9 +50,11 @@ function blankRaster() {
         },
         set(t, p, v) { t[p] = v; return true; },
     });
+    const sizes = [];   // every canvas drawn on, [w, h]: a stitch's compose is the tall one
     return {
+        sizes,
         decode: async () => ({ source: {}, width: 1024, height: 768, close() {} }),
-        canvas: (w, h) => ({ width: w, height: h, getContext: () => ctx }),
+        canvas: (w, h) => { sizes.push([w, h]); return { width: w, height: h, getContext: () => ctx }; },
         encode: async () => `data:image/png;base64,RASTER${++n}`,
     };
 }
@@ -352,5 +356,213 @@ test("the run's vision memory is the worker's: what a completed call marks seen,
         assert.deepEqual([...w.host().memory.seen].map((p) => [p.x, p.y]), [[1, 2]]);
         w.wv.seedRun("run-2", 3);
         assert.equal(w.wv.workerVisionHost("run-2", 3, "doc-3").memory.seen.length, 0);
+    });
+});
+
+// --- look in the worker (worker-look.ts): the run host's look for a run whose vision is the worker's ---
+
+const READER = { driverSees: false, visionModel: "reader-vl" };
+const NATIVE = { driverSees: true, visionModel: "vlm-driver" };
+/** `workerLook` of run-1 on tab 3, document doc-3, drawn with `raster`. */
+const lookIn = (w, args, vision, { raster = blankRaster(), doc = "doc-3", ...opts } = {}) =>
+    w.wv.workerLook("run-1", 3, doc, args, vision, () => "https://site.example/", { raster, ...opts });
+/** The same look's text over the page's own host on the same page. */
+const pageLook = async (args, vision, reply) => {
+    const host = pageHost(reply);
+    const tool = vision.driverSees ? buildNativeLookTool({ defineTool }, { host }) : buildLookTool({ defineTool }, { model: vision.visionModel, host });
+    const r = await tool.run(args);
+    return typeof r === "string" ? { content: r } : r;
+};
+
+test("native look of the viewport in the worker: the page host's text, the worker's capture inline, and the page asked geometry only", T, async () => {
+    await onPage(async () => {
+        const w = world({ reply: "unused" });
+        const env = await lookIn(w, {}, NATIVE);
+        assert.equal(env.result, (await pageLook({}, NATIVE)).content);
+        assert.equal(env.result, "Screenshot of the viewport captured — shown to you in the next message.\n\nDOM in view (use these selectors with click/type/findByText):\n• controls: «Save» `#save` · «Delete» `#del`");
+        assert.equal(env.image, png(1024, 768), "the worker's own capture, uncropped");
+        assert.equal(env.imageLabel, "viewport");
+        assert.equal(w.chats.length, 0, "a driver that sees is shown the pixels: no reader call");
+        assert.equal(env.subUsage, undefined);
+        assert.deepEqual(w.geoMsgs().map((g) => g.op), ["view", "legend"]);
+        assertOnlyGeometry(w.bg, ["vlm-driver"]);
+    });
+});
+
+test("delegated look of an element in the worker: the reader's words and the legend as the page host gives them, its spend the call's, the page asked geometry only", T, async () => {
+    await onPage(async () => {
+        const w = world({ reply: "A blue Save button." });
+        const env = await lookIn(w, { selector: "#save", question: "is it blue?" }, READER);
+        const page = await pageLook({ selector: "#save", question: "is it blue?" }, READER, "A blue Save button.");
+        assert.equal(env.result, page.content);
+        assert.equal(env.renderOut?.prompt ?? env.renderOut?.type, page.render.prompt ?? "look");
+        assert.equal(env.image, undefined, "no image for a driver that cannot see");
+        assert.equal(w.chats.length, 1);
+        assert.equal(w.chats[0].model, "reader-vl");
+        assert.equal(w.chats[0].max_tokens, 512);
+        assert.equal(env.subUsage?.calls, 1, "the reader's call is the call's spend");
+        assertOnlyGeometry(w.bg, ["reader-vl", "is it blue", "Describe", "A blue Save button."]);
+    });
+});
+
+test("look at an @tool image pointer asks the page nothing: the reader reads the run's own capture in the worker", T, async () => {
+    await onPage(async () => {
+        const w = world({ reply: "The earlier page." });
+        const env = await lookIn(w, { question: "what was there?", _image: png(10, 10), _imageLabel: "@tool:abc1234 (captured at step 2)" }, READER);
+        assert.match(env.result, /^The earlier page\./);
+        assert.equal(w.bg.tabMessages.length, 0, "no message reached the tab");
+        assert.equal(w.chats.length, 1);
+        assert.ok(JSON.stringify(w.chats[0]).includes(png(10, 10).split(",")[1]), "the reader got the pointer's image");
+    });
+});
+
+test("views on a marked point: both crops from one capture, labelled as the page host labels them, and whether the mark crosses text asked of the page", T, async () => {
+    await onPage(async () => {
+        const { token } = await pageGeometry().mint({ pt: { x: 360, y: 220 } });
+        const args = { selector: token, views: ["overlay", "no-overlay"] };
+        const w = world({ reply: "A Save button under the mark." });
+        const env = await lookIn(w, args, NATIVE);
+        const page = await pageLook(args, NATIVE);
+        assert.equal(env.result, page.content);
+        assert.deepEqual(JSON.parse(JSON.stringify(env.images.map((i) => i.label))), ["with click-point box", "clean — no box (read text here)"]);
+        assert.equal(w.bg.captures.length + w.bg.debuggerCalls.filter((c) => c[2] === "Page.captureScreenshot").length, 1, "one capture for both views");
+        assert.ok(w.geoMsgs().some((g) => g.op === "crossesText"));
+        const d = world({ reply: "A Save button under the mark." });
+        const denv = await lookIn(d, args, READER);
+        assert.equal(denv.result, (await pageLook(args, READER, "A Save button under the mark.")).content);
+        assert.equal((JSON.stringify(d.chats[0]).match(/data:image/g) || []).length, 2, "the reader sees both crops");
+        assertOnlyGeometry(d.bg, ["reader-vl", "Two crops", "A Save button under the mark."]);
+    });
+});
+
+test("the legend is formatted in the worker from structured data: a boundary note is the worker's sentence, shown once per document", T, async () => {
+    await onPage(async () => {
+        const frames = { kind: "cross-frames", count: 1, selectors: ["iframe#pay"] };
+        const w = world({ reply: "A form.", page: (q) => (q.op === "legend" ? { result: "", geometry: { seq: q.seq, reply: { controls: [], media: [], text: [], boundaries: [frames], moreControls: 0, moreMedia: 0 } } } : undefined) });
+        const first = await lookIn(w, {}, READER);
+        assert.match(first.result, /iframe#pay/, "the boundary is named");
+        assert.doesNotMatch(first.result, /cross-frames/, "in the worker's words, not the page's field names");
+        const second = await lookIn(w, {}, READER);
+        assert.doesNotMatch(second.result, /iframe#pay/, "the run's vision memory keeps it from being repeated");
+    });
+});
+
+test("a refused look is the host's fixed sentence, never half a result: a malformed legend drops the whole call, image included", T, async () => {
+    await onPage(async () => {
+        const bad = (q) => (q.op === "legend" ? { result: "", geometry: { seq: q.seq, reply: { controls: [{ name: "x", role: "button", selector: "a`b" }], media: [], text: [], boundaries: [], moreControls: 0, moreMedia: 0 } } } : undefined);
+        for (const vision of [NATIVE, READER]) {
+            const w = world({ reply: "A page.", page: bad });
+            const env = await lookIn(w, {}, vision);
+            assert.equal(env.result, `Error: ${GEOMETRY_REFUSED}`);
+            assert.equal(env.image, undefined);
+            assert.equal(env.images, undefined);
+        }
+        const w = world();
+        const none = await lookIn(w, {}, NATIVE, { doc: null });
+        assert.match(none.result, /^Error: the browser does not say which page the tab holds now/);
+        assert.equal(w.bg.tabMessages.length, 0);
+    });
+});
+
+// --- look's full-page stitch in the worker: bounded by the worker, whatever the page says ---
+
+const STITCH_T = { timeout: 30000 };
+/** A page geometry answer for `q` (the stitch's id echoed), from `reply`. */
+const answer = (q, reply) => ({ result: "", geometry: { seq: q.seq, ...(q.stitch !== undefined ? { stitch: q.stitch } : {}), reply } });
+/** The tiles the page was asked to scroll to. */
+const tiles = (w) => w.geoMsgs().filter((g) => g.op === "stitchTile");
+
+test("a full-page look in the worker: the page scrolls, the worker captures each tile and composes them, and the page is restored", STITCH_T, async () => {
+    await onPage(async () => {
+        let y = 0;
+        Object.defineProperty(window, "scrollY", { get: () => y, configurable: true });
+        window.scrollTo = (_x, to) => { y = Math.max(0, Math.min(to, 2000 - 768)); };
+        const w = world({ reply: "A long page." });
+        const raster = blankRaster();
+        const env = await lookIn(w, { scope: "page" }, READER, { raster });
+        assert.match(env.result, /^A long page\./);
+        assert.doesNotMatch(env.result, /DOM in view/, "no legend for the downscaled overview");
+        assert.deepEqual(tiles(w).map((g) => g.y), [0, 768, 1536]);
+        assert.deepEqual(raster.sizes.at(-1), [1024, 2000], "one canvas, the page's height");
+        assert.equal(w.geoMsgs().at(-1).op, "stitchEnd");
+        assert.match(promptOf(w.chats[0]), /DOWNSCALED full-page overview/);
+    });
+});
+
+/** The text of the reader's prompt in a chat body. */
+const promptOf = (body) => { const m = body.messages.at(-1); return typeof m.content === "string" ? m.content : m.content.filter((p) => p.type === "text").map((p) => p.text).join("\n"); };
+
+test("a stitch the page sizes past eight screens, with no viewport height, or with one the worker did not measure, is refused before a tile is taken", STITCH_T, async () => {
+    await onPage(async () => {
+        const cases = [
+            ["a huge total", { total: 1e5, vh: 768, startY: 0, dpr: 1 }],
+            ["a total past eight screens", { total: STITCH_SCREENS * 768 + 1, vh: 768, startY: 0, dpr: 1 }],
+            ["vh 0", { total: 2000, vh: 0, startY: 0, dpr: 1 }],
+            ["a tiny vh the viewport does not have", { total: 8, vh: 1, startY: 0, dpr: 1 }],
+            ["a NaN total", { total: null, vh: 768, startY: 0, dpr: 1 }],
+        ];
+        for (const [what, reply] of cases) {
+            const raster = blankRaster();
+            const w = world({ reply: "A page.", page: (q) => (q.op === "stitchBegin" ? answer(q, reply) : undefined) });
+            const env = await lookIn(w, { scope: "page" }, NATIVE, { raster });
+            assert.equal(env.result, `Error: ${GEOMETRY_REFUSED}`, what);
+            assert.equal(tiles(w).length, 0, what);
+            assert.ok(raster.sizes.every(([, h]) => h <= 768), `${what}: no tall canvas`);
+            assert.equal(env.image, undefined, what);
+        }
+    });
+});
+
+test("a stitch whose canvas would pass 65536 device pixels is refused, however the page splits it into screens", STITCH_T, async () => {
+    await onPage(async () => {
+        const w = world({ shot: png(2048, 1536), page: (q) => (q.op === "view" ? answer(q, { w: 1024, h: 8192, dpr: 2, sx: 0, sy: 0 }) : q.op === "stitchBegin" ? answer(q, { total: 8 * 8192, vh: 8192, startY: 0, dpr: 2 }) : undefined) });
+        const raster = blankRaster();
+        const env = await lookIn(w, { scope: "page" }, NATIVE, { raster });
+        assert.equal(env.result, `Error: ${GEOMETRY_REFUSED}`);
+        assert.equal(tiles(w).length, 0);
+        assert.ok(raster.sizes.every(([, h]) => h <= 65536));
+    });
+});
+
+test("a page whose tiles never report the last one gets eight screens at most, composed into a canvas no taller than eight screens", STITCH_T, async () => {
+    await onPage(async () => {
+        const w = world({ page: (q) => (q.op === "stitchBegin" ? answer(q, { total: 8 * 768, vh: 768, startY: 0, dpr: 1 }) : q.op === "stitchTile" ? answer(q, { actualY: 0, isLast: false }) : undefined) });
+        const raster = blankRaster();
+        const t0 = Date.now();
+        const env = await lookIn(w, { scope: "page" }, NATIVE, { raster });
+        assert.ok(tiles(w).length <= STITCH_SCREENS && tiles(w).length <= STITCH_TILES, `${tiles(w).length} tiles`);
+        assert.ok(raster.sizes.every(([, h]) => h <= 8 * 768), JSON.stringify(raster.sizes));
+        assert.match(env.result, /^Screenshot of the full page captured/);
+        assert.ok(Date.now() - t0 < 20000);
+    });
+});
+
+test("a tile reply for another stitch or another question, or landing past the page's end, ends the look with the fixed sentence and restores the page", STITCH_T, async () => {
+    await onPage(async () => {
+        const cases = [
+            ["another stitch's id", (q) => ({ result: "", geometry: { seq: q.seq, stitch: q.stitch + 1, reply: { actualY: 0, isLast: false } } })],
+            ["no stitch id", (q) => ({ result: "", geometry: { seq: q.seq, reply: { actualY: 0, isLast: false } } })],
+            ["another question's seq", (q) => ({ result: "", geometry: { seq: q.seq + 7, stitch: q.stitch, reply: { actualY: 0, isLast: false } } })],
+            ["a scroll past the page's end", (q) => answer(q, { actualY: 2001, isLast: false })],
+            ["a non-boolean isLast", (q) => answer(q, { actualY: 0, isLast: "yes" })],
+        ];
+        for (const [what, tile] of cases) {
+            const w = world({ reply: "A page.", page: (q) => (q.op === "stitchTile" ? tile(q) : undefined) });
+            const env = await lookIn(w, { scope: "page" }, READER);
+            assert.equal(env.result, `Error: ${GEOMETRY_REFUSED}`, what);
+            assert.equal(tiles(w).length, 1, `${what}: no tile after the bad one`);
+            assert.equal(w.chats.length, 0, `${what}: the reader was never asked`);
+            assert.equal(w.geoMsgs().at(-1).op, "stitchEnd", `${what}: the page is still restored`);
+        }
+    });
+});
+
+test("a tile the page never answers ends the look after the per-question bound, with the fixed sentence", STITCH_T, async () => {
+    await onPage(async () => {
+        const w = world({ page: (q) => (q.op === "stitchTile" ? new Promise((r) => setTimeout(() => r(answer(q, { actualY: 0, isLast: true })), 3000)) : undefined) });
+        const t0 = Date.now();
+        const env = await lookIn(w, { scope: "page" }, NATIVE, { opMs: 100 });
+        assert.equal(env.result, `Error: ${GEOMETRY_SLOW}`);
+        assert.ok(Date.now() - t0 < 2500, `bounded: ${Date.now() - t0} ms`);
     });
 });

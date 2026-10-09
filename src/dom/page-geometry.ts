@@ -234,18 +234,24 @@ export function pageGeometry(): PageGeometry {
             const total = Math.min(document.documentElement.scrollHeight, vh * 8);
             const startY = window.scrollY;
             const overlays: { el: HTMLElement; anchor: "top" | "bottom"; vis: string }[] = [];
+            // Open before the probe scrolls, so a stitchEnd that arrives while it runs (the worker gave up waiting for
+            // this answer) finds the scroll to put back; the probe then stops where it is and leaves the page as it was.
+            const s: Stitch = { total, vh, startY, overlays };
+            stitches.set(id, s);
+            const ended = (): boolean => { if (stitches.get(id) === s) return false; window.scrollTo(0, startY); return true; };
             if (total > vh) {
                 const cands = ([...document.querySelectorAll("*")] as HTMLElement[])
                     .filter(el => { const p = getComputedStyle(el).position; return p === "fixed" || p === "sticky"; });
                 window.scrollTo(0, 0); await paint();
+                if (ended()) return { total, vh, startY, dpr };
                 const r0 = cands.map(el => el.getBoundingClientRect());
                 window.scrollTo(0, Math.min(vh, Math.max(1, total - vh))); await paint();
+                if (ended()) return { total, vh, startY, dpr };
                 cands.forEach((el, i) => {
                     const c = classifyOverlay(r0[i], el.getBoundingClientRect(), vh);
                     if (c.pinned) overlays.push({ el, anchor: c.anchor, vis: ownVisibility(el) });
                 });
             }
-            stitches.set(id, { total, vh, startY, overlays });
             return { total, vh, startY, dpr };
         },
         stitchTile: async ({ y }, id = 0) => {

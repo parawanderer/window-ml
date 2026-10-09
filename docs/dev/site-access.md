@@ -30,7 +30,7 @@ on; otherwise `captureOwnTab` (`sw-capture.ts`) takes `captureVisibleTab` only w
 window shows, and throws the shot away if the window showed another tab while it was taken. `captureVisibleTab` takes a
 window, not a tab, so before this a page in a background tab was handed the pixels of the tab in front of it.
 
-**A run's own screenshot, taken by the worker** (`captureRunTab`, `sw/worker-vision.ts`; the verify after an action uses it): the
+**A run's own screenshot, taken by the worker** (`captureRunTab`, `sw/worker-vision.ts`; `look` and the verify after an action use it): the
 debugger by tab id when CDP is on, bounded at 5 s since a tab in the background may never paint, then `captureOwnTab`,
 which refuses a tab that is not showing. The worker never switches tabs to take one. `workerShot` pins it to the top
 frame's document (`webNavigation.getFrame` before and after, and any commit on the tab during it, refuse it) and masks
@@ -41,9 +41,9 @@ out of a shot"). The worker's vision host asks the page for layout only, through
 **A page's answer cannot carry a picture, a reply or a spend into a worker-built run.** For a run the worker built or
 was handed (`makeWorkerRun`, mid-turn included), the run host drops `image`, `imageLabel`, `images`, `feedback` and
 `subUsage` from every page envelope (`withoutPageVision`, `sw/worker-verify.ts`), so a page can neither show the model
-a picture as the page's screenshot nor inflate the run's spend. `look` and `locate` are exempt until they move to the
-worker (part 3, PRs 6 and 7). The verify after a click, type, wait or navigate is the worker's
-(`docs/dev/agent-tools.md`, "The worker's vision host").
+a picture as the page's screenshot nor inflate the run's spend. `locate` is exempt until it moves to the worker (part 3,
+PR 7). The verify after a click, type, wait or navigate is the worker's, and so is `look`: the page is never sent the
+call, only the target for a preview (`docs/dev/agent-tools.md`, "The worker's vision host").
 
 **The shell is not the page, but the browser cannot tell them apart.** The content-script shell's messages arrive with
 the page's tab and origin, so anything it sends under a page-startable type is refused on an unapproved site. It sends

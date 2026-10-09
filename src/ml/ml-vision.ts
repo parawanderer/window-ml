@@ -21,7 +21,7 @@ import type { ShotBox, VisionMemory } from "../contract/contract-render";
 import { queryAll, isElement, viewportRect, errText } from "../dom/dom";
 import { pickAccentColorForTarget, annotate } from "../dom/locate";
 import { POINT_RE, resolvePoint, PT_LOOK_RADIUS, cropDataUrl, BOX_RE, resolveBox, MIN_SHOT_PX, markSeen } from "../util";
-import { pageRaster, type Raster } from "../raster";
+import { pageRaster, type Raster, type RasterImage } from "../raster";
 import { pageCapture, pageGeometry, pageVisionHost, measureElement } from "../dom/page-geometry";
 import type { ShotHost, ShotTarget, ShotOpts, VisionHost } from "../tools/vision-host";
 
@@ -243,57 +243,103 @@ export const _stitchFullPage = async function(capture: () => Promise<string>): P
     return stitchVia({ geo: pageGeometry(), raster: pageRaster }, capture);
 };
 
+/** A full-page stitch refused because each capture shows under half of the viewport: the tiles would be too many. */
+export const STITCH_SHORT_CAPTURE = "the screenshots show less than half of the page's viewport each, so the full page cannot be stitched. Look at the viewport or an element instead.";
+/** A full-page stitch refused because its tiles leave rows of the page between them that no capture drew. */
+export const STITCH_GAP = "the page's scroll left rows between the screenshots that none of them shows, so the full page cannot be stitched. Look at the viewport or an element instead.";
+
 /**
- * The full-page stitch over any host: the host scrolls the page a viewport at a time and reports where it landed
+ * The full-page stitch over any host: the host scrolls the page and reports where it landed
  * (`geo.stitchBegin`/`stitchTile`/`stitchEnd`), `capture` shoots each tile, paced under captureVisibleTab's two calls a
- * second with backoff retries, and the tiles are composed with the host's raster.
+ * second with backoff retries, and the tiles are composed with the host's raster. Each tile steps the page by what its
+ * capture shows: a viewport, or less when the capture is shorter (the top of the viewport, as under the debugger's
+ * infobar), so no rows are left between tiles.
  * @param host the geometry that scrolls and the raster that composes
  * @param capture the viewport capture for each tile
  * @returns the stitched image as a PNG data URL
  */
 export async function stitchVia(host: Pick<ShotHost, "geo" | "raster">, capture: () => Promise<string>): Promise<string> {
     const { total, vh, dpr } = await host.geo.stitchBegin();
-    const shots: { y: number; url: string }[] = [];
+    const tiles: StitchTileImage[] = [];
     try {
-        for (let y = 0; y < total; y += vh) {
-            const { actualY, isLast } = await host.geo.stitchTile({ y });
+        try {
+            for (let y = 0; y < total;) {
+                const { actualY, isLast } = await host.geo.stitchTile({ y });
 
-            let url: string | null = null;
-            let retries = 3;
+                let url: string | null = null;
+                let retries = 3;
 
-            while (retries > 0 && !url) {
-                try {
-                    // 600ms ensures we strictly stay under the 2 calls/sec limit
-                    await new Promise(r => setTimeout(r, 600));
-                    url = await capture();
-                } catch (e) {
-                    // If we still hit the quota, back off for a full second and retry
-                    if ((e as Error).message && (e as Error).message.includes("MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND")) {
-                        console.warn(`Hit Chrome capture limit at scroll ${y}, backing off...`);
-                        await new Promise(r => setTimeout(r, 1000));
-                        retries--;
-                    } else {
-                        throw e; // Unrelated error, fail fast
+                while (retries > 0 && !url) {
+                    try {
+                        // 600ms ensures we strictly stay under the 2 calls/sec limit
+                        await new Promise(r => setTimeout(r, 600));
+                        url = await capture();
+                    } catch (e) {
+                        // If we still hit the quota, back off for a full second and retry
+                        if ((e as Error).message && (e as Error).message.includes("MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND")) {
+                            console.warn(`Hit Chrome capture limit at scroll ${y}, backing off...`);
+                            await new Promise(r => setTimeout(r, 1000));
+                            retries--;
+                        } else {
+                            throw e; // Unrelated error, fail fast
+                        }
                     }
                 }
+
+                if (!url) throw new Error("Failed to capture after retries due to quota limits.");
+                let img: RasterImage;
+                try { img = await host.raster.decode(url); } catch { throw new Error("failed to load a capture"); }
+                tiles.push({ y: actualY, img });
+                // What this capture shows of the page, in CSS px: a viewport, or its top when the capture is shorter.
+                const shown = img.height / dpr;
+                const short = shown < vh - 1;
+                // A clamped step reached the bottom: further steps would re-capture the same tile. A short capture that
+                // was not clamped goes on, since the rows under it are still to be shown.
+                if (isLast && (!short || actualY < y || actualY + shown >= total)) break;
+                const step = short ? Math.floor(shown) : vh;
+                if (step < vh / 2) throw new Error(STITCH_SHORT_CAPTURE);
+                y += step;
             }
-
-            if (!url) throw new Error("Failed to capture after retries due to quota limits.");
-            shots.push({ y: actualY, url });
-            // A clamped step reached the bottom — further steps would re-capture the same tile.
-            if (isLast) break;
+        } finally {
+            await host.geo.stitchEnd();
         }
+        return await composeTiles(tiles, total, dpr, host.raster);
     } finally {
-        await host.geo.stitchEnd();
+        for (const t of tiles) t.img.close();
     }
+}
 
-    return composeStitch(shots, total, dpr, host.raster);
+/** One decoded tile of a stitch: the scroll offset it was captured at (CSS px), and the capture. */
+type StitchTileImage = { y: number; img: RasterImage };
+
+/**
+ * Compose a stitch's decoded tiles into one tall PNG data URL: each tile drawn at its scroll offset (`y`, CSS px,
+ * × `dpr`) at its own height, on a canvas as wide as the first tile. The canvas is `total` CSS px tall, or only as tall
+ * as the tiles reach when the last of them stops short of it (a capture shorter than the viewport cannot show the
+ * page's bottom rows), so no row of it is left undrawn.
+ * @throws {Error} {@link STITCH_GAP} when a tile starts below the rows the tiles before it drew
+ */
+async function composeTiles(tiles: StitchTileImage[], total: number, dpr: number, raster: Raster): Promise<string> {
+    if (!tiles.length) throw new Error("nothing captured");
+    const full = Math.round(total * dpr);
+    let reach = 0;
+    for (const t of [...tiles].sort((a, b) => a.y - b.y)) {
+        const top = Math.round(t.y * dpr);
+        // One device row is the rounding of a fractional ratio, as it always was.
+        if (top > reach + 1) throw new Error(STITCH_GAP);
+        reach = Math.max(reach, top + t.img.height);
+    }
+    const canvas = raster.canvas(tiles[0].img.width, reach >= full - 1 ? full : reach);
+    const ctx = canvas.getContext("2d")!;
+    tiles.forEach((t) => ctx.drawImage(t.img.source, 0, Math.round(t.y * dpr)));
+    return await raster.encode(canvas);
 }
 
 /**
  * Compose a full-page stitch's viewport captures into one tall PNG data URL: each tile drawn at its scroll offset
- * (`y`, CSS px, × `dpr`) on a canvas as wide as the first tile and `total` CSS px tall. `raster` is where the images
- * and canvas come from (the page's by default).
+ * (`y`, CSS px, × `dpr`) at its own height, on a canvas as wide as the first tile and `total` CSS px tall (or as tall
+ * as the tiles reach, when they stop short of it). `raster` is where the images and canvas come from (the page's by
+ * default).
  *
  * @param {{ y: number, url: string }[]} shots The captures, each with the scroll offset it was taken at.
  * @param {number} total The page height covered, in CSS px.
@@ -307,10 +353,7 @@ export async function composeStitch(shots: { y: number; url: string }[], total: 
     const imgs = decoded.flatMap((d) => (d.status === "fulfilled" ? [d.value] : []));
     try {
         if (imgs.length < shots.length) throw new Error("failed to load a capture");
-        const canvas = raster.canvas(imgs[0].width, Math.round(total * dpr));
-        const ctx = canvas.getContext("2d")!;
-        shots.forEach((s, i) => ctx.drawImage(imgs[i].source, 0, Math.round(s.y * dpr)));
-        return await raster.encode(canvas);
+        return await composeTiles(shots.map((s, i) => ({ y: s.y, img: imgs[i] })), total, dpr, raster);
     } finally {
         for (const img of imgs) img.close();
     }

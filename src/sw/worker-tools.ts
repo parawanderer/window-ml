@@ -25,8 +25,10 @@ import { senderTrust } from "./sw-consent";
 import { htmlToMarkdownOffscreen } from "./sw-offscreen";
 import { fetchLLM, getConfig } from "./sw-llm";
 
-/** The builtin tools a worker-built run executes in the worker rather than the page. */
-export const WORKER_TOOL_NAMES: ReadonlySet<string> = new Set(["fetch_url", "python_exec", "agent_api_docs", "answer"]);
+/** The builtin tools a worker-built run executes in the worker rather than the page. `look` is built per call, over a
+ *  vision host pinned to the call's document (worker-look.ts); naming it here gives a run whose only worker tool it is
+ *  the state its reader's calls are metered into from the start. */
+export const WORKER_TOOL_NAMES: ReadonlySet<string> = new Set(["fetch_url", "python_exec", "agent_api_docs", "answer", "look"]);
 
 /** What one run's worker tools share: the tab they act for, its fetch cache, and the spend of their model calls. */
 interface RunCtx {
@@ -280,5 +282,6 @@ export function buildWorkerTools(runId: string, tabId: number, tabUrl: () => str
     const docs = { invocation: invocationInfo, config: async () => publicConfig(await getConfig(), ctx.tabUrl()) };
     // answer keeps the run's set here, with the page's descriptor (what the model is shown); worker-answer.ts.
     const pageAnswer = () => makeDomTools(defineTool).find((t) => t.name === "answer")!;
+    // `look` is none of these: the run host builds it for each call (worker-look.ts).
     return wanted.map((n) => (n === "fetch_url" ? fetchTool.call(ml) : n === "python_exec" ? pythonTool.call(ml) : n === "agent_api_docs" ? apiDocsTool(defineTool, docs) : n === "answer" ? workerAnswerTool(runId, pageAnswer()) : null)).filter((t): t is MlTool => !!t);
 }

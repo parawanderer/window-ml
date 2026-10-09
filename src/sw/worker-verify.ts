@@ -135,8 +135,9 @@ export async function workerVerify(runId: string, tabId: number, documentId: str
 }
 
 /** The tools whose vision still runs in the page in a run whose vision is the worker's: their picture, their reader's
- *  description and its spend are still the page's to report, until look and locate move (slice 2 part 3, PRs 6 and 7). */
-export const PAGE_VISION_TOOLS: ReadonlySet<string> = new Set(["look", "locate"]);
+ *  description and its spend are still the page's to report, until locate moves (slice 2 part 3, PR 7). `look` runs in
+ *  the worker (worker-look.ts), so a page's envelope for it is held to the rule like any other tool's. */
+export const PAGE_VISION_TOOLS: ReadonlySet<string> = new Set(["locate"]);
 
 /**
  * A page's envelope for a run whose vision is the worker's, without the fields through which a capture, a reader's

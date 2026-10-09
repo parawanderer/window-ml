@@ -19,6 +19,7 @@ import { buildWorkerTools, workerSpend } from "./sw/worker-tools";
 import { captureRunTab, workerShot, workerVisionChat, dropAllVisionMemory } from "./sw/worker-vision";   // the worker's vision pieces, test-only until a tool uses them
 import { workerVisionHost, onWorkerHost, useRasterForTest } from "./sw/worker-vision-host";   // the worker's vision host: the verify uses it; the hook below drives it directly
 import { checkVerifyRequest } from "./sw/worker-verify";
+import { workerLook } from "./sw/worker-look";
 import { fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw/sw-fetch";   // outbound fetch layer (ml.fetch, rendered fetch, credentialed Google Sheets CSV)
 import { executeServerTool, serverToolResult } from "./sw/sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw/sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
@@ -36,6 +37,7 @@ import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
 import { startBackgroundRun, delegateStreams, hostRun } from "./sw/sw-run-host";
 import { adoptOnTab, startUserRun, userRunAction, steerRun } from "./sw/sw-run-start";
+import { pageRebuild } from "./agent/run-assembly";
 import { PAGE_STARTED_TYPES } from "./page-relay";
 import { originOf, type SiteEdit } from "./site-access";
 import { editSiteAccess, pageRefusal, readSiteLists, siteDecision } from "./sw/sw-site-access";
@@ -120,10 +122,10 @@ startValueSweeps();
 // worker's OffscreenCanvas to the page's canvas pixel for pixel.
 (globalThis as unknown as { __mlWorkerCropForTest?: unknown }).__mlWorkerCropForTest = (dataUrl: string, rect: { left: number; top: number; width: number; height: number }, dpr: number) => cropDataUrl(dataUrl, rect, dpr, workerRaster);
 
-// TEST-ONLY (SW realm only): the worker's vision pieces (worker-vision.ts, worker-vision-host.ts, worker-verify.ts), so tests/worker-vision.test.mjs, tests/worker-vision-host.test.mjs and tests/e2e/worker-shot.spec.mjs can drive them. `seedRun` gives a run the worker-tool
+// TEST-ONLY (SW realm only): the worker's vision pieces (worker-vision.ts, worker-vision-host.ts, worker-verify.ts, worker-look.ts), so tests/worker-vision.test.mjs, tests/worker-vision-host.test.mjs, tests/worker-look.test.mjs and tests/e2e/worker-shot.spec.mjs can drive them. `seedRun` gives a run the worker-tool
 // state its sub-call spend is counted in; `spend` reads it back.
 (globalThis as unknown as { __mlWorkerVisionForTest?: unknown }).__mlWorkerVisionForTest = {
-    captureRunTab, workerShot, workerVisionChat, workerVisionHost, onWorkerHost, spend: workerSpend, checkVerifyRequest,
+    captureRunTab, workerShot, workerVisionChat, workerVisionHost, onWorkerHost, spend: workerSpend, checkVerifyRequest, workerLook,
     // A vm has no OffscreenCanvas: a test draws the worker's crops with a recorder of its own.
     useRaster: useRasterForTest,
     seedRun: (runId: string, tabId: number) => { buildWorkerTools(runId, tabId, () => "", ["fetch_url"]); },
@@ -346,7 +348,8 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
                     makeWorkerRun(runId);
                     resumeIds.push(runId);
                 }
-                adopt.push({ runId, rebuild: resume ? { ...rebuild, builtBy: "worker" } : rebuild });
+                // content.ts posts this to the page's window: a worker's run sends only what the page still needs.
+                adopt.push({ runId, rebuild: pageRebuild(resume ? { ...rebuild, builtBy: "worker" } : rebuild) });
             };
             if (ids) for (const runId of ids) { const rebuild = runRebuilds.get(runId); if (rebuild) addAdopt(runId, rebuild); }
             // ALSO re-adopt recently-COMPLETED-but-resumable runs on this tab (bgRuns): a HUD run that navigated

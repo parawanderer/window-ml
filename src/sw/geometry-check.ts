@@ -34,6 +34,10 @@ export const STITCH_SCREENS = 8;
 /** The most tiles a full-page stitch takes: eight screens, and one more for a scroll that lands short. */
 export const STITCH_TILES = 9;
 
+/** The most tiles a full-page stitch takes when the capture is shorter than the viewport: it steps by what a capture
+ *  shows, never less than half a screen (ml-vision.ts `stitchVia`), so twice the screens, and one more. */
+export const STITCH_TILES_SHORT = 2 * STITCH_SCREENS + 1;
+
 /** The fixed sentence for a reply the worker would not read. Never says what was wrong: that is the page's to learn. */
 export const GEOMETRY_REFUSED = "The page's answer about its layout was malformed, so it was not used.";
 /** The sentence for a page that did not answer a layout question in time. */
