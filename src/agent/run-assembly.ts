@@ -22,7 +22,7 @@ import { buildDereferenceTool } from "../tools/tools";
 /** The part of `window.ml` assembly reads: config and capability probes, the model and server-tool lists, the tool
  *  factories, and the OCR reader for a pasted image. The worker's adapter implements exactly this. */
 export type AssemblyMl = Pick<MlApi, "domTools" | "defineTool" | "config" | "models" | "serverTools" | "read" | "_imageToDataUrl"
-    | "_resolveVisionModel" | "_nativeLookTool" | "lookTool" | "locateTool" | "navigateTool" | "fetchTool">;
+    | "_resolveVisionModel" | "_nativeLookTool" | "lookTool" | "locateTool" | "navigateTool" | "fetchTool" | "clickTool" | "typeTool">;
 
 /** The options of `ml.agent` that decide what a run CONTAINS, as opposed to how it is driven or observed. */
 export interface AssemblyOptions {
@@ -202,6 +202,22 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
     // what they list (add `ml.fetchTool()` to include it) — unlike the vision tools, which augment any
     // driver because they're capability-probed. requiresApproval, so default-on is safe.
     if (!tools && !toolset.some(t => t.name === "fetch_url")) toolset.push(ml.fetchTool());
+    // click and type: in the DEFAULT kit too, as a run the user starts from a surface already has them
+    // (userRunOptions' extraTools, so they are not added twice). A console run without them was told about them
+    // anyway, by every tool that hands back a selector "to pass to click/type" (a model-panel review, 2026-10-08).
+    // Both ask before they act. A caller who hand-picks `tools` gets exactly what they list, as with fetch_url.
+    if (!tools) for (const make of [ml.clickTool, ml.typeTool]) {
+        if (typeof make !== "function") continue;
+        const t = make.call(ml);
+        if (!toolset.some(x => x.name === t.name)) toolset.push(t);
+    }
+    // agent_api_docs whenever exec is wired, even into a hand-picked list (like the vision tools): exec reaches
+    // `ml`, and the reference is how a model learns what `ml` (and `ml.current`) holds. It reads a static
+    // document in capped pieces, so it can neither act nor flood the context.
+    if (toolset.some(t => t.name === "exec") && !toolset.some(t => t.name === "agent_api_docs")) {
+        const docs = (ml.domTools || []).find(t => t.name === "agent_api_docs");
+        if (docs) toolset.push(docs);
+    }
     // Composer attachments for THIS turn's first user message (a screenshot pasted/uploaded into the
     // HUD/sidebar). A vision-capable driver sees them natively; otherwise transcribe via the reader
     // (ml.read → the OCR model) and fold the text into the task, so a text-only agent still gets the
