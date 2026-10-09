@@ -28,6 +28,8 @@ type Ev<T = unknown> = Generator<unknown, T, unknown>;
 /** The mediated evaluator: walks the parsed AST as a generator, gating every read, call, write and allocation. */
 /** The `ml.current` fields `adoptCurrent` treats specially; every other field is copied whole. */
 const SPECIAL_CURRENT_FIELDS = new Set(["run", "messages", "meta", "log", "debug"]);
+/** How many objects one non-special `ml.current` field may copy into a survey before the rest is cut. */
+const OWNED_COPY_NODES = 10_000;
 
 export class Evaluator {
     // Arrows we created — the only functions we'll invoke directly. Keyed to their node+scope so a
@@ -185,20 +187,31 @@ export class Evaluator {
             ...(debug ? { debug } : {}),
             // Every other field (`env`, and whatever is added next) is plain data: a deep copy the script owns, walked
             // whole, so a new field reaches a survey without a line here.
-            ...Object.fromEntries(Object.entries(snap).filter(([k, v]) => !SPECIAL_CURRENT_FIELDS.has(k) && v !== undefined).map(([k, v]) => [k, this.ownDeep(structuredClone(v))])),
+            ...Object.fromEntries(Object.entries(snap).filter(([k, v]) => !SPECIAL_CURRENT_FIELDS.has(k) && v !== undefined).map(([k, v]) => [k, this.ownedCopy(v)])),
         });
     }
 
-    /** Own every plain object and array in `v`, breadth first, so a script may write anywhere in its copy. */
-    private ownDeep<T>(v: T): T {
-        const queue: unknown[] = [v];
-        for (let n = 0; n < queue.length && n < 10_000; n++) {
-            const x = queue[n];
-            if (x === null || typeof x !== "object") continue;
-            this.own(x);
-            for (const y of Object.values(x)) if (y !== null && typeof y === "object") queue.push(y);
+    /** A copy of `v` the script owns, made breadth first so a deep field cannot overflow the stack (`structuredClone`
+     *  recurses). Plain objects and arrays are copied and owned; anything else is cloned whole as a leaf. Past
+     *  {@link OWNED_COPY_NODES} objects the rest is cut to a note rather than handed over by reference. */
+    private ownedCopy(v: unknown): unknown {
+        const fresh = (x: object): object => Array.isArray(x) ? new Array(x.length) : {};
+        const plain = (x: object): boolean => Array.isArray(x) || [Object.prototype, null].includes(Object.getPrototypeOf(x));
+        if (v === null || typeof v !== "object") return v;
+        if (!plain(v)) return structuredClone(v);
+        const seen = new Map<object, object>([[v, this.own(fresh(v))]]);
+        const queue: object[] = [v];
+        for (let n = 0; n < queue.length; n++) {
+            const from = queue[n], to = seen.get(from) as Record<string, unknown>;
+            for (const [k, x] of Object.entries(from)) {
+                if (x === null || typeof x !== "object") to[k] = x;
+                else if (seen.has(x)) to[k] = seen.get(x);
+                else if (!plain(x)) to[k] = structuredClone(x);
+                else if (seen.size >= OWNED_COPY_NODES) to[k] = `[cut: over ${OWNED_COPY_NODES} objects]`;
+                else { seen.set(x, this.own(fresh(x))); to[k] = seen.get(x); queue.push(x); }
+            }
         }
-        return v;
+        return seen.get(v);
     }
 
     /** The PRINT boundary for `ml.current.messages`. Holding the context costs nothing; printing it is what spends

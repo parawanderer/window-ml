@@ -521,14 +521,17 @@ test("ADVERSARIAL: a field copied whole gives no way to its realm, and a deep on
     const snap = fullSnapshot();
     for (const js of ["return ml.current.env.constructor", "return ml.current.env.__proto__", "return ml.current.env.page.constructor.constructor('return 1')()", "return Object.getPrototypeOf(ml.current.env.exec)"])
         await assert.rejects(inWorkerRealm(js, snap), (e) => e instanceof Denied || e instanceof NotInDialect, js);
-    // A future field that is deep: copied and owned to the bottom, without hanging on it.
+    // A future field that is deep: copied and owned, without hanging on it or overflowing the stack (a recursive clone
+    // of this chain did, on CI's smaller stack at 2,000 and everywhere at 50,000).
     let deep = {}; const top = deep;
-    for (let i = 0; i < 2000; i++) { deep.next = { i }; deep = deep.next; }
+    for (let i = 0; i < 50_000; i++) { deep.next = { i }; deep = deep.next; }
     const t0 = Date.now();
     const r = await inWorkerRealm("let n = ml.current.later; let d = 0; for (const _ of ml.range(50)) { n = n.next; d += 1 } n.i = -1; return d", { ...snap, later: top });
     assert.equal(r.value, 50);
     assert.equal(top.next.next.i, 1, "the host's object was not written through the script's copy");
     assert.ok(Date.now() - t0 < 2000, "walking a deep field is bounded");
+    const cut = await inWorkerRealm("let n = ml.current.later; let d = 0; for (const _ of ml.range(20000)) { if (typeof n.next !== 'object') return [d, n.next]; n = n.next; d += 1 } return d", { ...snap, later: top });
+    assert.deepEqual(cut.value, [9999, "[cut: over 10000 objects]"], "past the cap the rest is cut to a note, never handed over by reference");
 });
 
 // --- the worker's fetch cache: re-reads of what the run's fetch_url read in the worker (slice 2 part 2) ---
