@@ -21,7 +21,9 @@ import pointerIds from "./pointer-ids.bench";
 const MODELS = (process.env.PROMPT_MODELS || "gemma4:31b,gemma4:26b,qwen3.5:9b").split(",").map(s => s.trim()).filter(Boolean);
 
 export default defineBench({
-    name: "prompt-budget-tooltokens",
+    // PROMPT_SWEEP names a second sweep of this spec, so cloud models can run beside a local sweep without sharing its
+    // artifact directory.
+    name: process.env.PROMPT_SWEEP || "prompt-budget-tooltokens",
     description: "Current vs condensed tool-output-tokens clause: do models still cite instead of retyping, and read back?",
     repeats: 3,
     timeoutMs: 300000,
