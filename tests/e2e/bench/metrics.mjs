@@ -331,6 +331,23 @@ export function tokenCost(events, before = []) {
 }
 
 /**
+ * Whether the run's model turns were streamed, from its events: what it asked for, how many live deltas
+ * (`agent-stream`) it emitted, and how many of its turns reported usage. A streamed turn always ends with a delta (the
+ * run host's final flush), so `asked` with no deltas means the option never took effect. Usage is counted because the
+ * token metrics read it, and a provider may leave it off a stream: a streamed arm short of usage is not comparable.
+ */
+export function streamUse(events, asked = null) {
+    const turns = new Set(), withUsage = new Set();
+    for (const s of stepsOf(events)) {
+        if (s.step == null) continue;
+        turns.add(s.step);
+        if (s.usage) withUsage.add(s.step);
+    }
+    const deltas = events.filter((e) => e.kind === "agent-stream").length;
+    return { asked, deltas, streamed: deltas > 0, turns: turns.size, turnsWithUsage: withUsage.size };
+}
+
+/**
  * Everything measurable about one run, from its artifacts alone.
  *
  * `succeeded` comes from the spec's per-task predicate — the bench cannot know what a right answer
@@ -417,6 +434,7 @@ export function measureRun(run, task = {}, opts = {}) {
         pointers: pointerUse(events),
         recovery: recovery(events),
         focus: focusStep(run),
+        stream: streamUse(events, run.stream ?? null),
     };
 }
 

@@ -7,11 +7,12 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
     stepsOf, authoredTexts, capturedOutputs, sharesRun, reEmission, pointerRefs, pointerUse,
-    recovery, tokenCost, measureRun, afterSeed, spread, rate, aggregate, COLUMNS, focusStep,
+    recovery, tokenCost, measureRun, afterSeed, spread, rate, aggregate, COLUMNS, focusStep, streamUse,
 } from "../tests/e2e/bench/metrics.mjs";
-import { combos, expandCells, cellKey, selected, parseSelector, buildGroups, cellPath } from "../tests/e2e/bench/cells.mjs";
+import { combos, expandCells, cellKey, selected, parseSelector, buildGroups, cellPath, cellStream } from "../tests/e2e/bench/cells.mjs";
 
 /** A tool step as the sidebar receives it: a pending START, then the DONE carrying the result. */
 const step = (seq, tool, args, result, extra = {}) => ([
@@ -397,4 +398,42 @@ test("focusStep: a SEEDED step is not blamed — the script wrote it, not the mo
 test("focusStep rides on the measurement, so the index needs no second pass over the stream", () => {
     const ev = [start(), ...step(1, "exec", { js: "x" }, "Error: boom"), end("nope")];
     assert.deepEqual(measureRun({ events: ev, runMs: 10 }, {}).focus, { step: 1, tool: "exec", why: "tool error" });
+});
+
+// --- streaming as a knob: which runs stream, and whether they did ---
+
+test("cellStream: the cell's stream, then its agentOptions, then the task's; unset, a UI surface streams and a console run does not", () => {
+    const cell = (task = {}, effects = {}) => ({ task: { id: "t", task: "x", ...task }, effects, combo: {}, repeat: 0 });
+    assert.equal(cellStream(cell()), false, "console default: off");
+    assert.equal(cellStream(cell({ surface: "hud" })), true, "a UI run sends what the HUD sends");
+    assert.equal(cellStream(cell({ surface: "hud" }, { surface: null })), false, "forced to the console");
+    assert.equal(cellStream(cell({ stream: true })), true);
+    assert.equal(cellStream(cell({ agentOptions: { stream: true } })), true);
+    assert.equal(cellStream(cell({ stream: true }, { stream: false })), false, "the cell wins over the task");
+    assert.equal(cellStream(cell({ surface: "hud" }, { stream: false })), false, "and over the surface's default");
+    assert.equal(cellStream(cell({ stream: false }, { agentOptions: { stream: true } })), true, "the cell's agentOptions too");
+    assert.equal(cellStream(cell({ agentOptions: { stream: true }, stream: false })), false, "the task's stream over its agentOptions");
+});
+
+test("cellKey: a streamed run is its own cache entry, and a non-streamed one keeps the key it had before stream was a knob", () => {
+    const base = { task: { id: "t", task: "x" }, effects: {}, combo: { m: "a" }, repeat: 0 };
+    const before = createHash("sha256").update(JSON.stringify({ fingerprint: "f", combo: base.combo, repeat: 0, effects: {},
+        task: { id: "t", task: "x", start: null, tools: null, python: false, toolTokens: false, followup: "", seed: null, script: null, agentOptions: null } })).digest("hex").slice(0, 16);
+    assert.equal(cellKey(base, "f"), before);
+    assert.notEqual(cellKey({ ...base, effects: { stream: true } }, "f"), cellKey({ ...base, effects: { stream: false } }, "f"));
+    assert.notEqual(cellKey({ ...base, task: { ...base.task, surface: "hud" } }, "f"), cellKey({ ...base, task: { ...base.task, surface: "hud" }, effects: { stream: false } }, "f"),
+        "a UI run cached before it streamed is run again");
+});
+
+test("streamUse: asked, how many live deltas, and how many turns reported usage", () => {
+    const evs = [
+        { kind: "agent-step", step: 0, thought: "a", usage: { promptTokens: 10, completionTokens: 2 } },
+        { kind: "agent-stream", step: 0, content: "a" },
+        { kind: "agent-step", step: 0, seq: 1, tool: "exec", arguments: {}, result: "r" },
+        { kind: "agent-step", step: 1, thought: "done" },
+        { kind: "agent-stream", step: 1, content: "done" },
+    ];
+    assert.deepEqual(streamUse(evs, true), { asked: true, deltas: 2, streamed: true, turns: 2, turnsWithUsage: 1 });
+    assert.deepEqual(streamUse(evs.filter((e) => e.kind !== "agent-stream"), true).streamed, false, "asked but never streamed is visible");
+    assert.deepEqual(measureRun({ events: evs, stream: false }).stream.asked, false);
 });

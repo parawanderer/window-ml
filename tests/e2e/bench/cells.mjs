@@ -72,6 +72,20 @@ export function cellPath(cell) {
     return `${slug(cell.task.id)}/${c}/r${cell.repeat}`;
 }
 
+/** Where a cell's run starts: the cell's `surface` (null forces the console), else the task's, else the console. */
+export const cellSurface = (cell) => (cell.effects.surface !== undefined ? cell.effects.surface : (cell.task.surface ?? null));
+
+/**
+ * Whether a cell's run streams its model turns: the cell's `stream`, then its `agentOptions.stream`, then the task's
+ * the same two ways; unset, what the run's starting point sends (a UI surface streams, as the HUD does; a console
+ * `ml.agent` does not, its default).
+ */
+export function cellStream(cell) {
+    const e = cell.effects, t = cell.task;
+    const v = [e.stream, e.agentOptions?.stream, t.stream, t.agentOptions?.stream].find((x) => typeof x === "boolean");
+    return v ?? !!cellSurface(cell);
+}
+
 /**
  * The cache key: everything that could change the result.
  *
@@ -85,6 +99,8 @@ export function cellKey(cell, fingerprint) {
         combo: cell.combo,
         repeat: cell.repeat,
         effects: cell.effects,
+        // Only when on, so a cache written before streaming was a knob (every run non-streamed) stays valid.
+        ...(cellStream(cell) ? { stream: true } : {}),
         task: {
             id: cell.task.id, task: cell.task.task, start: cell.task.start ?? null,
             tools: cell.task.tools ?? null, python: !!cell.task.python, toolTokens: !!cell.task.toolTokens,

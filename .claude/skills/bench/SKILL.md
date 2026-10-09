@@ -136,6 +136,14 @@ A task (or a cell, through `apply`) can set `surface: "hud"` to start the run th
 kit and prompt a UI run gets) instead of a console `ml.agent`; `tools`, `python`, `toolTokens`, `agentOptions` and
 `seed` are console knobs and do not apply to it. `sharedWatches`/`watchNotes` go to `ml.current` as in observe.
 
+`stream: true` on a task or a cell streams each model turn, as the HUD does (tool calls assembled from chunks, usage
+from the stream's last chunk); `dimensions: { stream: [false, true] }` with `apply: (c) => ({ stream: c.stream })`
+makes it an arm. Unset, a console run is NOT streamed (`ml.agent`'s default, and every sweep before this knob) and a
+`surface` run IS (what the HUD sends). Each run records `measurement.stream` (`asked`, live `deltas`, `turns`,
+`turnsWithUsage`) in `cell.json` and `page.json`, and the page tags it `streamed`, or `not streamed` when it asked
+and no delta came. Compare the arms' token figures only where `turnsWithUsage` equals `turns`: a provider can leave
+usage off a stream.
+
 ## Interviews (a panel, read by a person or a model)
 
 A task with `asks: [...]` is an INTERVIEW: each ask is sent once the turn before it ends, every turn's answer lands

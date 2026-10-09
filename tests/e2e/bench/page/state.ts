@@ -26,6 +26,8 @@ export interface RunState {
     models?: { driver?: string | null; vision?: string | null; utility?: string | null } | null;
     live?: { step?: number; maxSteps?: number; tool?: string; last?: string; pending?: boolean };
     focus?: { step: number; tool?: string; why: string } | null;
+    /** whether its model turns were to be streamed, and whether they were (metrics.mjs `streamUse`) */
+    stream?: { asked: boolean | null; deltas: number; streamed: boolean; turns: number; turnsWithUsage: number } | null;
     turns?: { answer: string; tools: string[]; capped: boolean }[];
     checks?: { id: string; turn: number; quote: string; note: string; by: string; at: string | null; here: boolean; still: boolean | null }[];
 }
