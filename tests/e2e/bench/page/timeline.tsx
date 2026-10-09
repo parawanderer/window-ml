@@ -10,6 +10,7 @@ import { colorFor } from "../../../../src/sidebar/palette";
 import { FilterChips } from "../../../../src/sidebar/filter-chips";
 import type { BenchState, PackedSamples } from "./state";
 import { ResourceTracks } from "../../../../src/sidebar/resource/resource-chart";
+import { WindowChip } from "../../../../src/sidebar/resource/resource-scrub";
 import { startBrush, BrushOverlay, LANE_KINDS } from "../../../../src/sidebar/resource/resource-lane-ui";
 import type { ResourceSample } from "../../../../src/resource/resource-model";
 import type { ResourceEvent } from "../../../../src/resource/resource-timeline";
@@ -118,11 +119,13 @@ export function SweepTimeline({ s }: { s: BenchState }) {
             <header>
                 <h2><Tip tip="Each run's model calls, tool steps and model loads on one clock, under the box's memory when the harness could read it (the resource panel's chart: drag on it or on a lane to select a stretch, scroll or drag the strip to move along). Rows that overlap ran at the same time; on one GPU that is contention. Hover a bar for what it was. Also as text in timeline.md and memory.md.">Timeline</Tip></h2>
                 {cached ? <span class="sub">{cached} cached run(s) are not drawn: they ran in an earlier sweep.</span> : null}
+                {mem && axis ? <><span class="sp" /><WindowChip always allMs={(s.finished ? Math.max(s.finished, mem.samples.at(-1)!.t) : Date.now()) - mem.samples[0].t} /></> : null}
             </header>
             {values.size || kinds.size > 1 ? <TimelineFilter values={values} kinds={kinds.size > 1 ? kinds : new Map()} hidden={hidden} toggle={toggle} /> : null}
             {!axis ? <div class="empty">Every run is hidden: click a struck-out value to show it again.</div>
                 : mem ? <div class="tlchart">
                     <ResourceTracks samples={mem.samples} capacity={mem.samples.at(-1)!.capacity} hidden={hiddenModels} events={shownEvents}
+                        endAt={s.finished ? Math.max(s.finished, mem.samples.at(-1)!.t) : undefined}
                         lane={({ axis: chartAxis, runs }) => lanes({ axis: chartAxis, rowAttrs: { onPointerDown: startBrush(runs) }, rowPrefix: () => <BrushOverlay runs={runs} /> })} />
                 </div>
                 : lanes({ axis, withAxis: true })}
