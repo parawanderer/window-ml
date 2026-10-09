@@ -25,6 +25,11 @@ script's promise settles. The streaming port (`LLM_STREAM`) checks the same gate
 2. Otherwise the sender must be grantable (`grantableOrigin`: top frame, http(s), not opaque) and its origin approved
    (`decide`), or, over https only, its host on `pageApprovalDomains`.
 
+**A page's screenshot is of its own tab, or nothing.** `CAPTURE_TAB` goes through the debugger by tab id when CDP is
+on; otherwise `captureOwnTab` (`sw-capture.ts`) takes `captureVisibleTab` only while the sender's tab is the one its
+window shows, and throws the shot away if the window showed another tab while it was taken. `captureVisibleTab` takes a
+window, not a tab, so before this a page in a background tab was handed the pixels of the tab in front of it.
+
 **The shell is not the page, but the browser cannot tell them apart.** The content-script shell's messages arrive with
 the page's tab and origin, so anything it sends under a page-startable type is refused on an unapproved site. It sends
 its own types instead (`USER_START_RUN`, `USER_RUN_ACTION`, `USER_PYTHON_PREWARM`, `CANCEL_RUN`), and

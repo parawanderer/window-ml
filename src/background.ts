@@ -14,6 +14,7 @@ import { googleSheetId } from "./dom/dom";
 import { browserInfo, cropDataUrl } from "./util";   // the fork's settings scheme (page-context Browser line); cropDataUrl for the test-only __mlWorkerCropForTest
 import { workerRaster } from "./raster";
 import { ensureDebuggerAttached, releaseDebugger, cdpClick, cdpScreenshot, cdpShadowResolve } from "./sw/sw-cdp";   // CDP/debugger layer (strict-CSP exec, trusted click/type, host-grant-free screenshot)
+import { captureOwnTab, NOT_SHOWING } from "./sw/sw-capture";
 import { fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw/sw-fetch";   // outbound fetch layer (ml.fetch, rendered fetch, credentialed Google Sheets CSV)
 import { executeServerTool, serverToolResult } from "./sw/sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw/sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
@@ -929,10 +930,11 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     } else if (message.type === "CAPTURE_TAB") {
         // Screenshot the visible viewport so the page can crop it to an element.
         // Privileged: pages can't capture pixels, and a cross-origin canvas would
-        // taint — same escalation the FETCH_IMAGE_B64 fetch already grants. For a
-        // page-relayed message sender.tab is set; its windowId targets the tab.
+        // taint — same escalation the FETCH_IMAGE_B64 fetch already grants. A page's
+        // capture is of its OWN tab only (sw-capture.ts): captureVisibleTab shoots
+        // whatever its window shows, which for a tab in the background is another site.
         const doCapture = () => sender.tab
-            ? chrome.tabs.captureVisibleTab(sender.tab.windowId, { format: "png" })
+            ? (sender.tab.id != null ? captureOwnTab(sender.tab.id) : Promise.reject(new Error(NOT_SHOWING)))
             : chrome.tabs.captureVisibleTab({ format: "png" });
         (async () => {
             const cfg = await getConfig();

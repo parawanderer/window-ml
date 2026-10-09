@@ -139,6 +139,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const listeners = [];
     const connectListeners = [];
     const tabRemovedListeners = [];   // chrome.tabs.onRemoved listeners; fired by bg.closeTab(id)
+    const tabActivatedListeners = new Set();   // chrome.tabs.onActivated listeners; fired by bg.activateTab(id)
     const stored = { ...config };
     const syncListeners = [];
     const localStore = { ...local };   // seed chrome.storage.local (e.g. ml_bgrun_* snapshots for durable-resume tests)
@@ -325,6 +326,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 create: async (props) => { tabsCreated.push(props); return { id: 4242 + tabsCreated.length }; },
                 remove: async (id) => { tabsRemoved.push(id); },
                 onRemoved: { addListener: (fn) => tabRemovedListeners.push(fn) },
+                onActivated: { addListener: (fn) => tabActivatedListeners.add(fn), removeListener: (fn) => tabActivatedListeners.delete(fn) },
                 // What `tabs.query({})` answers: `openTabs`, as the browser reports them (a tab on a site the
                 // extension may not read has no `url` and no `title`).
                 query: async () => openTabs.map((t) => ({ ...t })),
@@ -384,6 +386,13 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         },
         /** Simulates the user closing a tab (chrome.tabs.onRemoved). */
         closeTab: (tabId) => { for (const fn of tabRemovedListeners) fn(tabId, {}); },
+        /** Simulates the user switching to a tab: it becomes its window's `active` one in `openTabs`, and
+         *  chrome.tabs.onActivated fires. */
+        activateTab: (tabId) => {
+            const t = openTabs.find((x) => x.id === tabId);
+            for (const o of openTabs) if (o.windowId === t.windowId) o.active = o.id === tabId;
+            for (const fn of [...tabActivatedListeners]) fn({ tabId, windowId: t.windowId });
+        },
         // Simulates the content script opening a streaming Port. Returns a client
         // handle: send(msg) posts to the background port; onMessage(fn) receives
         // background pushes; messages[] collects them.
