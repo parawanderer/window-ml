@@ -414,6 +414,13 @@ Recorded as each slice lands, with the reason.
   isolated run is known not to behave as the page's world would, the tool result carries one terse note naming the
   method, the reason and the difference, and nothing when parity is full. The routing decision and its reason go to
   the execution log.
+- **Slice 2 part 2: `answer` of a worker-built run runs in the worker, and the answer set lives there** (owner's
+  choice of design A, 2026-10-09). The text the model curates never enters the page. A page-world script's
+  `ml.answer` keeps a synchronous `.length` by working on the set's shape and reporting its changes (`AnswerLog`),
+  which the worker replays after checking them. Differences, all in a page-world script only: `ml.answer.dump()` shows
+  a text it was not shown as "(text, kept by the worker)", and `remove("…")` by text matches only items the script can
+  see, while the replay matches them all. Found while building it: a navigation mid-turn emptied the answer (the
+  page's set died with the document); the worker's set survives it, and an eviction.
 - **Part 4 (first part): an approved exec of a worker-built run runs isolated where it must** (`exec-routing.ts`,
   `sw-isolated-exec.ts`). Isolated when the page is not approved, or when the script names `ml.current` or a pointer;
   otherwise the page's main world, as before. The mechanism is a user-script world of the run's own
