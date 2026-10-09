@@ -304,12 +304,11 @@ const selectorWithin = (target: Element, scope: Document | ShadowRoot): string =
     return parts.join(" > ") || target.tagName.toLowerCase();
 };
 
-// --- Closed-shadow-root piercing (opt-in `pierceClosedShadow`) ---------------------------------------
+// --- Closed-shadow-root piercing (`pierceClosedShadow`, on by default) ------------------------------
 // The document_start patch (shadow-patch.ts, main world) stashes every CLOSED shadow root in
 // window.__mlClosedRoots as it's created. We CONSULT that map only when the user turned the flag on —
-// injected.ts calls setPierceClosedShadow() with the run's config before the DOM tools execute. Off (the
-// default) → capturedClosedRoot always returns null and every closed root stays unreachable, exactly as
-// before. This is the single seam; all traversal (deepQueryAll, `>>>` resolution, describeSkeleton, the
+// injected.ts calls setPierceClosedShadow() with the run's config before the DOM tools execute. Off →
+// capturedClosedRoot always returns null and every closed root stays unreachable. This is the single seam; all traversal (deepQueryAll, `>>>` resolution, describeSkeleton, the
 // stats/host scans) reads closed roots through traversableRoot/capturedClosedRoot so the feature is on or
 // off uniformly.
 // The flag and the captured-roots map both live on `window` (the main world, where `window === globalThis`)
@@ -512,10 +511,10 @@ export const describeSkeleton = (el: Element, depth: number, indent = "", canLoc
 // trailing nth as the 1-based nth match of the base set. Correct native uses (non-empty) are never touched.
 const TRAILING_NTH_NATIVE = /^([\s\S]*):nth-(?:of-type|child)\(\s*(\d+)\s*\)\s*$/i;
 
-/** querySelectorAll that PIERCES open shadow roots. Chrome's native querySelectorAll stops at shadow
+/** querySelectorAll that PIERCES shadow roots. Chrome's native querySelectorAll stops at shadow
  *  boundaries, so web-component content (Gemini's editor, many design systems) is invisible to a selector.
- *  Collects matches at `root` + recursively inside every OPEN shadowRoot (closed roots are unreachable by
- *  design), deduped. Reads the live DOM. */
+ *  Collects matches at `root` + recursively inside every shadow root `traversableRoot` gives (open ones, and
+ *  closed ones captured while piercing is on), deduped. Reads the live DOM. */
 // The extension's OWN injected UI — the overlay shell, corner card, hover-highlight, lightbox (ids.ts) — all
 // use an `ml-sb-*` / `ml-lightbox*` / `ml-highlight*` id. A page query / composition shouldn't pick it up (it's
 // not page content): `ml.queryAll("button")` was finding the HUD's own controls (in the overlay shadow root,

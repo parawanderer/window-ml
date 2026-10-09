@@ -408,7 +408,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 "Cheaper to write (and to get right) than the equivalent `.split`/`.filter`/`.slice` chain. " +
                 "SHADOW DOM / IFRAMES: use `ml.queryAll('host >>> inner')` — a shadow/iframe-piercing " +
                 "querySelectorAll that returns an Array and understands the same selector dialect the DOM " +
-                "tools use (`>>>` crosses each OPEN shadow root / same-origin iframe; a trailing " +
+                "tools use (`>>>` crosses each shadow root, open or captured closed, and each same-origin iframe; a trailing " +
                 "`:contains(\"text\")` filters by visible text) — instead of hand-chaining `.shadowRoot` / " +
                 "`.contentDocument`. " +
                 // Advertise the a11y primitive HERE (not only on interactives' output) so a straight-to-exec
@@ -753,9 +753,10 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
             name: "wait",
             summary: "Waits for an element to appear on the page.",
             description: "Wait for the page to settle after an async update (a click/type/navigation " +
-                "takes effect after a delay, not instantly). Pass `selector` to wait until an element " +
-                "APPEARS (best — waits exactly as long as needed), or `ms` for a fixed pause. Use it " +
-                "generously before you look/read again; reading a mid-update page gives stale results.",
+                "takes effect after a delay, not instantly). Use it when the page is still updating: after an " +
+                "action that loads something, or while a loading indicator is showing (look for one first). Pass " +
+                "`selector` to wait until an element APPEARS (best — waits exactly as long as needed), or `ms` for " +
+                "a fixed pause. Reading a mid-update page gives stale results.",
             parameters: {
                 type: "object",
                 properties: {
