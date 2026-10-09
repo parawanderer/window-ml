@@ -11,7 +11,7 @@ import type { JsonSchema } from "../contract";
 import type { PromptOrigin, RequestHint } from "./contract-run";
 import type { LexicalMetric } from "./contract-config";
 import type { NeutralMessage, ExtendProfile } from "./contract-chat";
-import type { RemoteToolTarget, RemoteTiming, ReusedGrant } from "./contract-agent";
+import type { RemoteToolTarget, RemoteTiming, ReusedGrant, VerifyRequest } from "./contract-agent";
 import type { AnswerMedia, RenderDescriptor, ToolFeedback } from "./contract-render";
 import type { FetchFormat } from "./contract-fetch";
 import type { SubcallUsage } from "./contract-debug";
@@ -328,6 +328,9 @@ export interface PageToolEnvelope {
      *  measured around the page-side run, so the background loop can accumulate the per-turn tally its meta
      *  tool + UI report (the page meter, bus.ts, lives page-side and the SW loop can't read it directly). */
     subUsage?: SubcallUsage;
+    /** The verify the worker is to take after this click/type/wait (a run whose vision is the worker's, asked with
+     *  `verifyInWorker`): the page's word, checked field by field (worker-verify.ts `checkVerifyRequest`). */
+    verifyRequest?: VerifyRequest;
 }
 
 /** A resumable chat session persisted to chrome.storage.local for { save: true }

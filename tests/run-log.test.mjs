@@ -136,7 +136,7 @@ test("the export is a document, not a bare array: it says which run, when, and b
 async function emittedNames() {
     const { readFile } = await import("node:fs/promises");
     const out = { subsystem: new Set(), kind: new Set(), reason: new Set() };
-    for (const f of ["sw-run-host.ts", "sw-cdp.ts", "sw-runs.ts"]) {
+    for (const f of ["sw-run-host.ts", "delegate-send.ts", "sw-cdp.ts", "sw-runs.ts"]) {
         const src = await readFile(new URL(`../src/sw/${f}`, import.meta.url), "utf8");
         for (const key of ["subsystem", "kind", "reason"])
             for (const m of src.matchAll(new RegExp(`\\b${key}:\\s*([^,}\\n]+)`, "g")))
@@ -202,7 +202,7 @@ test("a record keeps a warn or error level; info is the default and is not store
 test("every level an emitter passes is one the sanitizer keeps", async () => {
     const { readFile } = await import("node:fs/promises");
     const levels = new Set();
-    for (const f of ["sw-run-host.ts", "sw-cdp.ts", "sw-runs.ts"]) {
+    for (const f of ["sw-run-host.ts", "delegate-send.ts", "sw-cdp.ts", "sw-runs.ts"]) {
         const src = await readFile(new URL(`../src/sw/${f}`, import.meta.url), "utf8");
         for (const m of src.matchAll(/\blevel:\s*"([^"]*)"/g)) levels.add(m[1]);
     }

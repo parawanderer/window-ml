@@ -30,12 +30,19 @@ on; otherwise `captureOwnTab` (`sw-capture.ts`) takes `captureVisibleTab` only w
 window shows, and throws the shot away if the window showed another tab while it was taken. `captureVisibleTab` takes a
 window, not a tab, so before this a page in a background tab was handed the pixels of the tab in front of it.
 
-**A run's own screenshot, taken by the worker** (`captureRunTab`, `sw/worker-vision.ts`; not yet used by a tool): the
+**A run's own screenshot, taken by the worker** (`captureRunTab`, `sw/worker-vision.ts`; the verify after an action uses it): the
 debugger by tab id when CDP is on, bounded at 5 s since a tab in the background may never paint, then `captureOwnTab`,
 which refuses a tab that is not showing. The worker never switches tabs to take one. `workerShot` pins it to the top
 frame's document (`webNavigation.getFrame` before and after, and any commit on the tab during it, refuse it) and masks
 the extension's own UI out in the worker, changing nothing on the page (`docs/dev/sidebar.md`, "Keeping the extension
 out of a shot"). The worker's vision host asks the page for layout only, through one checked protocol
+(`docs/dev/agent-tools.md`, "The worker's vision host").
+
+**A page's answer cannot carry a picture, a reply or a spend into a worker-built run.** For a run the worker built or
+was handed (`makeWorkerRun`, mid-turn included), the run host drops `image`, `imageLabel`, `images`, `feedback` and
+`subUsage` from every page envelope (`withoutPageVision`, `sw/worker-verify.ts`), so a page can neither show the model
+a picture as the page's screenshot nor inflate the run's spend. `look` and `locate` are exempt until they move to the
+worker (part 3, PRs 6 and 7). The verify after a click, type, wait or navigate is the worker's
 (`docs/dev/agent-tools.md`, "The worker's vision host").
 
 **The shell is not the page, but the browser cannot tell them apart.** The content-script shell's messages arrive with

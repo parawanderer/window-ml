@@ -24,7 +24,7 @@ import { makeBackgroundTaskPromise } from "./bridge";
 import { makeDynamicTools } from "./ml/dynamic-tools";
 import type { DynamicToolNamespace } from "./ml/dynamic-tools";
 import { renderArgs, logStep } from "./agent/approval";
-import { captureVerify } from "./tools/builtin-tools";
+import { captureVerify, verifiesInWorker } from "./tools/builtin-tools";
 import { pageVisionHost } from "./dom/page-geometry";
 import { currentAnswer, currentDeref, currentServerAllow, currentHasTool, currentHiddenMember } from "./tools/tool-exec";
 import { installToolDelegation, registerRun, endRun } from "./agent/run-delegation";
@@ -475,7 +475,10 @@ import { derivedFetchFields, cacheCopy } from "./ml/fetch-result";
     // Pass a `verifyArea` capability (closes over ml) so the pure `wait` domTool can `verify` too — the
     // domTools stay ml-free; they just receive this function. center=null → a viewport shot (wait is area-first).
     window.ml.domTools = makeDomTools(window.ml.defineTool,
-        (ctx, center, verb, mutated) => captureVerify(pageVisionHost(window.ml as unknown as MlApi), ctx, center, verb, mutated),
+        // A run whose verifies the worker takes gets the request instead of a picture taken here.
+        async (ctx, center, verb, mutated) => verifiesInWorker(ctx)
+            ? { verifyRequest: center ? { kind: "area" as const, center, ...(mutated ? { mutated } : {}) } : { kind: "viewport" as const } }
+            : captureVerify(pageVisionHost(window.ml as unknown as MlApi), ctx, center, verb, mutated),
         // captureAnswer: serialize each element an `answer` designates, for the HUD completion card (user-facing
         // output — NOT the debug sidebar). ml-backed, so the domTools stay ml-free. Capped + per-element failures
         // swallowed; the answer still stands without the media. An <img> → its FULL-RES src (crop fallback); any

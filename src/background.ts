@@ -17,7 +17,8 @@ import { ensureDebuggerAttached, releaseDebugger, cdpClick, cdpScreenshot, cdpSh
 import { CAPTURE_RETRIES, CAPTURE_RETRY_MS, captureOwnTab, NOT_SHOWING } from "./sw/sw-capture";
 import { buildWorkerTools, workerSpend } from "./sw/worker-tools";
 import { captureRunTab, workerShot, workerVisionChat, dropAllVisionMemory } from "./sw/worker-vision";   // the worker's vision pieces, test-only until a tool uses them
-import { workerVisionHost, onWorkerHost } from "./sw/worker-vision-host";   // the worker's vision host, test-only until a tool uses it
+import { workerVisionHost, onWorkerHost, useRasterForTest } from "./sw/worker-vision-host";   // the worker's vision host: the verify uses it; the hook below drives it directly
+import { checkVerifyRequest } from "./sw/worker-verify";
 import { fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw/sw-fetch";   // outbound fetch layer (ml.fetch, rendered fetch, credentialed Google Sheets CSV)
 import { executeServerTool, serverToolResult } from "./sw/sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw/sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
@@ -116,14 +117,15 @@ startValueSweeps();
 (globalThis as unknown as { __mlUserRunActionForTest?: unknown }).__mlUserRunActionForTest = (hash: string, action: "send" | "continue", body: { text?: string; surface?: string }) => userRunAction(hash, action, body);
 
 // TEST-ONLY (SW realm only): crop a data URL with the worker's raster, so tests/e2e/raster.spec.mjs can hold the real
-// worker's OffscreenCanvas to the page's canvas pixel for pixel. Nothing in the extension crops in the worker yet.
+// worker's OffscreenCanvas to the page's canvas pixel for pixel.
 (globalThis as unknown as { __mlWorkerCropForTest?: unknown }).__mlWorkerCropForTest = (dataUrl: string, rect: { left: number; top: number; width: number; height: number }, dpr: number) => cropDataUrl(dataUrl, rect, dpr, workerRaster);
 
-// TEST-ONLY (SW realm only): the worker's vision pieces (worker-vision.ts, worker-vision-host.ts), which no tool calls
-// yet, so tests/worker-vision.test.mjs, tests/worker-vision-host.test.mjs and tests/e2e/worker-shot.spec.mjs can drive them. `seedRun` gives a run the worker-tool
+// TEST-ONLY (SW realm only): the worker's vision pieces (worker-vision.ts, worker-vision-host.ts, worker-verify.ts), so tests/worker-vision.test.mjs, tests/worker-vision-host.test.mjs and tests/e2e/worker-shot.spec.mjs can drive them. `seedRun` gives a run the worker-tool
 // state its sub-call spend is counted in; `spend` reads it back.
 (globalThis as unknown as { __mlWorkerVisionForTest?: unknown }).__mlWorkerVisionForTest = {
-    captureRunTab, workerShot, workerVisionChat, workerVisionHost, onWorkerHost, spend: workerSpend,
+    captureRunTab, workerShot, workerVisionChat, workerVisionHost, onWorkerHost, spend: workerSpend, checkVerifyRequest,
+    // A vm has no OffscreenCanvas: a test draws the worker's crops with a recorder of its own.
+    useRaster: useRasterForTest,
     seedRun: (runId: string, tabId: number) => { buildWorkerTools(runId, tabId, () => "", ["fetch_url"]); },
 };
 

@@ -146,6 +146,8 @@ export interface ToolEnvelope {
     remoteMs?: import("../contract").RemoteTiming;
     /** the built-in `answer` tool already added these to the run's answer set — the loop must not re-add them */
     answerManaged?: boolean;
+    /** what to picture for a verify the worker takes (see ToolResult.verifyRequest) */
+    verifyRequest?: import("../contract").VerifyRequest;
 }
 
 export async function executeTool(tool: MlTool, args: Record<string, unknown>, ctx?: ToolContext, onStream?: (text: string, ts?: number) => void): Promise<ToolEnvelope> {
@@ -193,7 +195,7 @@ export async function executeTool(tool: MlTool, args: Record<string, unknown>, c
         // also hand back real DOM nodes / a screenshot (routed to onStep/the transcript, never the model).
         if (raw && typeof raw === "object" && typeof (raw as ToolResult).content === "string") {
             const r = raw as ToolResult;
-            return { result: r.content + note, elements: r.elements, answerMedia: r.answerMedia, answerManaged: r.answerManaged, image: r.image, imageLabel: r.imageLabel, images: r.images, render: r.render, renderIn: r.renderIn, cdpClick: r.cdpClick, cdpExec: r.cdpExec, cdpShadowClick: r.cdpShadowClick, cdpType: r.cdpType, feedback: r.feedback, remoteMs: r.remoteMs };
+            return { result: r.content + note, elements: r.elements, answerMedia: r.answerMedia, answerManaged: r.answerManaged, image: r.image, imageLabel: r.imageLabel, images: r.images, render: r.render, renderIn: r.renderIn, cdpClick: r.cdpClick, cdpExec: r.cdpExec, cdpShadowClick: r.cdpShadowClick, cdpType: r.cdpType, feedback: r.feedback, remoteMs: r.remoteMs, ...(r.verifyRequest ? { verifyRequest: r.verifyRequest } : {}) };
         }
         return { result: String(raw) + note };
     } catch (e) { return { result: `Error: ${errText(e)}` + note }; }

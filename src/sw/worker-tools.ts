@@ -48,6 +48,34 @@ export function workerSpend(runId: string): SubcallUsage | undefined {
     return s && { ...s, byModel: s.byModel?.map((m) => ({ ...m })) };
 }
 
+/**
+ * What a run's worker tools spent between two reads of {@link workerSpend}, per model too: the `subUsage` a call reports.
+ * @param before the spend before the call
+ * @param after the spend after it
+ * @returns the delta, or undefined when no model call was made
+ */
+export function spendDelta(before: SubcallUsage | undefined, after: SubcallUsage | undefined): SubcallUsage | undefined {
+    if (!after || after.calls <= (before?.calls ?? 0)) return undefined;
+    const prev = new Map((before?.byModel ?? []).map((m) => [m.model, m]));
+    const byModel = (after.byModel ?? []).map((m) => ({ model: m.model, prompt: m.prompt - (prev.get(m.model)?.prompt ?? 0), completion: m.completion - (prev.get(m.model)?.completion ?? 0), calls: m.calls - (prev.get(m.model)?.calls ?? 0) })).filter((m) => m.calls > 0);
+    return { prompt: after.prompt - (before?.prompt ?? 0), completion: after.completion - (before?.completion ?? 0), calls: after.calls - (before?.calls ?? 0), ...(byModel.length ? { byModel } : {}) };
+}
+
+/**
+ * Give a run the worker-tool state its worker-side model calls are counted in, when it has none: a run with none of the
+ * worker tools still makes vision sub-calls here (the verify after an action).
+ * @param runId the run
+ * @param tabId its tab
+ * @param tabUrl its tab's URL
+ */
+export function ensureRunState(runId: string, tabId: number, tabUrl: () => string): void {
+    if (!runs.has(runId)) runs.set(runId, newRunCtx(runId, tabId, tabUrl, false));
+}
+
+/** Fresh worker-tool state for a run. */
+const newRunCtx = (runId: string, tabId: number, tabUrl: () => string, python: boolean): RunCtx =>
+    ({ runId, tabId, tabUrl, python, cache: new Map(), spent: { prompt: 0, completion: 0, calls: 0 }, consented: new Set(), credOnce: new Set() });
+
 /** A successful default-mode fetch this run already made, for a read-only survey's `ml.fetch` (never egresses). */
 export function workerFetchCached(runId: string, url: string): FetchResult | undefined {
     return runs.get(runId)?.cache.get(url);
@@ -243,8 +271,9 @@ async function workerPython(ctx: RunCtx, code: string, opts: { mode?: "readonly"
 export function buildWorkerTools(runId: string, tabId: number, tabUrl: () => string, names: readonly string[]): MlTool[] {
     const wanted = names.filter((n) => WORKER_TOOL_NAMES.has(n));
     if (!wanted.length) return [];
-    const ctx: RunCtx = runs.get(runId) ?? { runId, tabId, tabUrl, python: names.includes("python_exec"), cache: new Map(), spent: { prompt: 0, completion: 0, calls: 0 }, consented: new Set(), credOnce: new Set() };
-    ctx.tabId = tabId; ctx.tabUrl = tabUrl;
+    const ctx: RunCtx = runs.get(runId) ?? newRunCtx(runId, tabId, tabUrl, false);
+    // State made earlier (by ensureRunState, for a verify) learns the run's tools here.
+    ctx.tabId = tabId; ctx.tabUrl = tabUrl; ctx.python = names.includes("python_exec");
     runs.set(runId, ctx);
     const ml = runMl(ctx);
     // agent_api_docs reads the shortcut and the config here, where the page would have asked for them by message.

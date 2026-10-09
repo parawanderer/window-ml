@@ -65,7 +65,19 @@ export interface ToolResult {
     cdpType?: { text: string; submit?: boolean; append?: boolean; x?: number; y?: number; selector?: string; index?: number; verify?: boolean; verifyElement?: string; verifyFocus?: boolean };
     /** what this tool fed into the model's context (locate's snap-inject); surfaced in the debug render + export */
     feedback?: ToolFeedback;
+    /** The verify after a `verify: true` click/type/wait of a run whose vision is the worker's: what to picture, for the
+     *  worker to capture and describe, in place of a picture the page took. Set only when the run's call asked the page
+     *  for it; the worker checks it field by field and uses nothing else of a page's result for the verify. */
+    verifyRequest?: VerifyRequest;
 }
+
+/** What a page asks the worker to picture after an action, as plain data: the area around a point (the element's
+ *  centre, or where it was if the action removed it), the whole element (`line` is the page's description of it, and
+ *  `center` the pre-action spot to fall back to when it can't be shot), or the viewport. */
+export type VerifyRequest =
+    | { kind: "area"; center: { x: number; y: number }; mutated?: boolean }
+    | { kind: "element"; selector: string; index?: number; line?: string; center?: { x: number; y: number } }
+    | { kind: "viewport" };
 
 /** The RUNTIME execution context handed to a tool's `run(args, ctx)` — things a tool can only learn at run
  *  time, not when it was defined: which OTHER tools are wired this run (so a tool can adapt when a companion
