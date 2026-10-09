@@ -37,6 +37,7 @@ import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
 import { startBackgroundRun, delegateStreams, hostRun } from "./sw/sw-run-host";
 import { adoptOnTab, startUserRun, userRunAction, steerRun } from "./sw/sw-run-start";
+import { pageRebuild } from "./agent/run-assembly";
 import { PAGE_STARTED_TYPES } from "./page-relay";
 import { originOf, type SiteEdit } from "./site-access";
 import { editSiteAccess, pageRefusal, readSiteLists, siteDecision } from "./sw/sw-site-access";
@@ -347,7 +348,8 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
                     makeWorkerRun(runId);
                     resumeIds.push(runId);
                 }
-                adopt.push({ runId, rebuild: resume ? { ...rebuild, builtBy: "worker" } : rebuild });
+                // content.ts posts this to the page's window: a worker's run sends only what the page still needs.
+                adopt.push({ runId, rebuild: pageRebuild(resume ? { ...rebuild, builtBy: "worker" } : rebuild) });
             };
             if (ids) for (const runId of ids) { const rebuild = runRebuilds.get(runId); if (rebuild) addAdopt(runId, rebuild); }
             // ALSO re-adopt recently-COMPLETED-but-resumable runs on this tab (bgRuns): a HUD run that navigated

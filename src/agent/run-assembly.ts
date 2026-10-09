@@ -452,6 +452,21 @@ export function rebuildFor(asm: AssembledRun, crossOrigin: boolean, builtBy?: "w
     };
 }
 
+/**
+ * What of a run's rebuild-config may be posted to the page's window (content.ts relays an adopt as `ADOPT_RUN`, which
+ * any script on the page reads). A page-built run's comes back as it is: the page made it. A worker's run (built by the
+ * worker, or handed to it) names no driver model, and its vision facts go to the page only while the page still runs a
+ * tool that reads them: `locate`, until it moves to the worker (site-access part 3, PR 7). Its `look` is the worker's
+ * (worker-look.ts), which reads the facts from the worker's own copy.
+ * @param rebuild the run's full rebuild-config, as the worker keeps it
+ * @returns what the page is sent
+ */
+export function pageRebuild(rebuild: RebuildConfig): RebuildConfig {
+    if (rebuild.builtBy !== "worker") return rebuild;
+    const pageLocates = (rebuild.toolNames || []).includes("locate");
+    return { ...rebuild, model: null, ...(pageLocates ? {} : { driverSees: false, visionModel: null, groundingModel: null }) };
+}
+
 /** How an assembled run is to be hosted: what the host decides rather than what assembly produced. */
 export interface RunHosting {
     runId: string;

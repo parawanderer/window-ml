@@ -183,9 +183,9 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
         const tabUrl = tabUrlNow;
         // `look` of a run whose vision is the worker's runs here (worker-look.ts), pinned to the document the tab holds
         // once any navigation settles; the page is asked geometry only. A preview it still draws (the target's label) is
-        // sent the target alone, never the question. Only for a run that offers `look`: a model naming it in a run without
-        // vision gets the page's unknown-tool answer, never a capture.
-        if (payload.name === "look" && workerVision() && p.tools.some((t) => t.name === "look")) {
+        // sent the target alone, never the question. A run that does not offer `look` never gets here with a call (the
+        // loop answers a name outside its toolset itself); with no vision facts, workerLook captures nothing.
+        if (payload.name === "look" && workerVision()) {
             if (payload.renderOnly || payload.precheck || payload.readonlyTry) payload = { ...payload, args: lookPreviewArgs(payload.args) };
             else {
                 noteLocalStep(runId, payload.name);

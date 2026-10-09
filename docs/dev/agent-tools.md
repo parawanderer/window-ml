@@ -134,9 +134,13 @@ commit, a back-forward restore, pushState, a fragment) is the WHOLE call's (`ref
 instead of a half result a body made of it). The run's vision memory is per document, and a call's marks reach it
 only when the call completes. A crop that misses the capture (`cropDataUrl`, `OFF_CAPTURE`) or an element with a
 sliver in view is refused on every host. Stitch ids are the worker's, the page keeps each open stitch by id, and a
-refused stitch is still ended while the document is the call's. The pixel ratio is the capture's width over the page's viewport width; more than 2% from
+refused stitch is still ended while the document is the call's, a begin refused or answered too late included (the page
+opens a stitch before its probe scrolls, so an end that overtakes the begin still puts the scroll back). Each tile steps
+the page by what its capture shows (`stitchVia`): a capture shorter than the viewport (its top, as under the debugger's
+infobar) steps by its own height, the canvas ends where the last capture's pixels do, and a tile that leaves rows
+undrawn (`STITCH_GAP`) or a capture under half a viewport (`STITCH_SHORT_CAPTURE`) refuses the stitch. The pixel ratio is the capture's width over the page's viewport width; more than 2% from
 what the page reported, the capture's wins and the run log notes `routing`/`dpr-mismatch`. The worker bounds a stitch
-itself (nine tiles, a canvas of at most 65536 device px). Tests: `tests/geometry-check.test.mjs`,
+itself (nine tiles, seventeen when the capture is short, a canvas of at most 65536 device px). Tests: `tests/geometry-check.test.mjs`,
 `tests/worker-vision-host.test.mjs`.
 
 **The `look` of a worker-built run is the worker's** (`src/sw/worker-look.ts`). For a run the worker built or was
@@ -146,7 +150,8 @@ pinned to the tab's top document once any navigation settles, and runs it throug
 page would. So the model gets the same text, image(s) or reader's words; the capture, the crops, the `views`, the stitch's
 compose, the reader's prompt and reply, and the legend's wording (from structured `legend` geometry, with the run's
 per-document `boundariesSeen`) stay in the worker, and the reader's call is the call's `subUsage`. An `@tool:` image
-pointer (`_image`) asks the page nothing at all. A preview (an approval card, a pending step) still asks the page to draw
+pointer (`_image`) asks the page nothing at all. The run's adopt posted to the page's window names no driver model
+(`pageRebuild`, run-assembly.ts); the reader and grounding model go only while the page's `locate` still reads them (PR 7). A preview (an approval card, a pending step) still asks the page to draw
 the In label, sent the target only (`lookPreviewArgs`: `selector`, `index`), never the question. A refused call is
 `Error: ` and the host's fixed sentence, never half a result. A full-page look is bounded by the host (eight screens,
 nine tiles, a 65536 px canvas, each tile correlated to its stitch and question). Tests: `tests/worker-vision-host.test.mjs`

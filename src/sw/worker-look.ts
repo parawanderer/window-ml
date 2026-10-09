@@ -19,6 +19,9 @@ import { ensureRunState, spendDelta, workerSpend } from "./worker-tools";
 /** The result for a look with no document to pin it to: the browser does not say which page the tab holds. */
 export const LOOK_NO_DOCUMENT = "Error: the browser does not say which page the tab holds now, so nothing was looked at. Look again.";
 
+/** The result for a look in a run with no vision: its driver does not see and it has no reader. */
+export const LOOK_NO_VISION = "Error: this run has no vision model, so nothing was looked at.";
+
 /** The arguments of a `look` an approval card or a pending step's preview may show the page: the target only, which the
  *  page resolves to a label (`targetRender`) and learns anyway from the geometry it is asked. Never the question. */
 export function lookPreviewArgs(args: Record<string, unknown> | undefined): Record<string, unknown> {
@@ -42,6 +45,8 @@ export function lookPreviewArgs(args: Record<string, unknown> | undefined): Reco
 export async function workerLook(runId: string, tabId: number, documentId: string | null | undefined, args: Record<string, unknown>,
     vision: { driverSees: boolean; visionModel: string | null }, tabUrl: () => string, opts: WorkerVisionHostOpts = {}): Promise<PageToolEnvelope> {
     if (!documentId) return { result: LOOK_NO_DOCUMENT };
+    // A run with neither a driver that sees nor a reader has no `look`: nothing is captured for it.
+    if (!vision.driverSees && !vision.visionModel) return { result: LOOK_NO_VISION };
     // The reader's call is metered into the run's worker state, which a run with no other worker tool has none of yet.
     ensureRunState(runId, tabId, tabUrl);
     const before = workerSpend(runId);

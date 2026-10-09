@@ -14,10 +14,11 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { JSDOM } from "jsdom";
 import { pageGeometry, answerGeometry } from "../src/dom/page-geometry.ts";
-import { stitchVia } from "../src/ml/ml-vision.ts";
+import { stitchVia, STITCH_SHORT_CAPTURE, STITCH_GAP } from "../src/ml/ml-vision.ts";
 import { extensionRects } from "../src/sidebar/shell-shot.ts";
 import { GEOMETRY_REFUSED, GEOMETRY_MOVED, GEOMETRY_SLOW } from "../src/sw/geometry-check.ts";
 import { OFF_CAPTURE } from "../src/util.ts";
+import { LOOK_NO_VISION } from "../src/sw/worker-look.ts";
 
 const require = createRequire(import.meta.url);
 const { jsonResponse, loadBackground } = require("./helpers");
@@ -252,15 +253,40 @@ test("a worker-built run with no vision (a text driver, no reader) offers no loo
     assert.equal(w.subs.length, 0, "no reader call");
 });
 
-test("a worker-built run's adopt names no model to the page: the driver, the reader and the grounding model stay in the worker", { ...T, todo: "the ADOPT_RUN_NOW rebuild (content.ts posts it to the page's window as ADOPT_RUN) carries `model`, `visionModel` and `groundingModel`; the page still needs the reader for locate until PR 7" }, async () => {
+test("a worker-built run's adopt names no driver model to the page, on the start's adopt and on a fresh document's re-adopt", T, async () => {
     const w = await run({ model: "text-driver", calls: [{ name: "look", args: {} }] });
     const adopt = w.bg.tabMessages.map(([, m]) => m).find((m) => m.type === "ADOPT_RUN_NOW");
     assert.ok(adopt, "the run was adopted");
     const rb = plain(adopt.payload.rebuild);
-    assert.equal(rb.model ?? null, null, `driver model reached the page: ${rb.model}`);
+    assert.equal(rb.model, null, `driver model reached the page: ${rb.model}`);
+    assert.ok(!JSON.stringify(adopt).includes("text-driver"), JSON.stringify(adopt));
+    assert.equal(rb.builtBy, "worker");
+    assert.ok(rb.toolNames.includes("look") && rb.toolNames.includes("locate"), "the page still registers the run's tools");
+    // A fresh document on the tab (a navigation) asks for the run's rebuild again (content.ts posts it as ADOPT_RUN).
+    const ready = plain(await w.bg.send({ type: "CONTENT_READY", payload: {} }, { tab: { id: SITE.id, url: SITE.url }, url: SITE.url, frameId: 0 }));
+    const again = (ready?.adopt || []).find((a) => a.runId === w.hash);
+    assert.ok(again, `the run is re-adopted: ${JSON.stringify(ready)}`);
+    assert.equal(again.rebuild.model, null);
+    assert.ok(!JSON.stringify(again).includes("text-driver"));
+    // The worker's own copy keeps every fact: its look reads the reader from it.
+    assert.equal(w.subs[0]?.model, "reader-vl");
+});
+
+test("a worker-built run's adopt names no reader or grounding model to the page once locate runs in the worker (PR 7)", { ...T, todo: "PR 7: the page's `locate` still reads the reader, the grounding model and whether the driver sees from the rebuild, so `pageRebuild` keeps them for a run that offers locate" }, async () => {
+    const w = await run({ model: "text-driver", calls: [{ name: "look", args: {} }] });
+    const rb = plain(w.bg.tabMessages.map(([, m]) => m).find((m) => m.type === "ADOPT_RUN_NOW").payload.rebuild);
     assert.equal(rb.visionModel ?? null, null, `reader model reached the page: ${rb.visionModel}`);
     assert.equal(rb.groundingModel ?? null, null, `grounding model reached the page: ${rb.groundingModel}`);
-    assert.ok(!JSON.stringify(adopt).includes("reader-vl") && !JSON.stringify(adopt).includes("text-driver"));
+});
+
+test("what of a rebuild the page is sent: a worker's run without locate names no model at all; a page-built run's comes back as it was", T, async () => {
+    const { pageRebuild } = await import("../src/agent/run-assembly.ts");
+    const full = { toolNames: ["click", "look"], model: "text-driver", driverSees: true, visionModel: "reader-vl", groundingModel: "ground-vl", groundingRange: 1000, pierceClosed: true, cdp: true, crossOrigin: false };
+    const worker = pageRebuild({ ...full, builtBy: "worker" });
+    assert.deepEqual(worker, { ...full, builtBy: "worker", model: null, driverSees: false, visionModel: null, groundingModel: null });
+    const withLocate = pageRebuild({ ...full, toolNames: ["look", "locate"], builtBy: "worker" });
+    assert.deepEqual(withLocate, { ...full, toolNames: ["look", "locate"], builtBy: "worker", model: null }, "locate (the page's until PR 7) keeps the vision facts");
+    assert.equal(pageRebuild(full), full, "a page-built run's rebuild is the page's own");
 });
 
 // --- harness 2: workerLook over the real page geometry on a jsdom page (as tests/worker-vision-host.test.mjs) ---
@@ -378,6 +404,17 @@ test("a tab replaced under its id mid-look (a prerender or a restored discard) r
     });
 });
 
+test("a look in the worker for a run with no vision facts (no driver that sees, no reader) captures nothing and asks the page nothing", T, async () => {
+    await onPage(async () => {
+        const w = world();
+        const env = await w.look({ selector: "#save", question: "?" }, { driverSees: false, visionModel: null });
+        assert.equal(env.result, LOOK_NO_VISION);
+        assert.equal(w.bg.captures.length, 0);
+        assert.equal(w.geoMsgs().length, 0);
+        assert.equal(w.chats.length, 0);
+    });
+});
+
 // --- the stitch: what the page says about it is validated, and the page is put back on every exit ---
 
 test("a stitch begin whose numbers are not numbers (strings, booleans, negatives, Infinity as null, a fraction of a viewport) is refused before any tile", T, async () => {
@@ -412,7 +449,7 @@ test("a tile whose actualY is negative, a string, null (NaN or Infinity on the w
     });
 });
 
-test("a stitch the worker refuses after the page began it (a viewport that disagrees, a begin answered too late) still ends it, so the page's scroll comes back", { ...T, todo: "stitchEnd is sent only once the worker accepted the begin (worker-vision-host.ts `stitch` is set after the checks), but the page's stitchBegin has already scrolled to probe its pinned overlays; a refused or late begin leaves the page scrolled" }, async () => {
+test("a stitch the worker refuses after the page began it (a viewport that disagrees, a begin answered too late) still ends it, so the page's scroll comes back", T, async () => {
     // The page starts at 300; its own stitchBegin scrolls to 0 and to one viewport down to probe its overlays.
     for (const [what, opts] of [
         ["the viewport the worker measured disagrees with the begin's", { page: (q) => (q.op === "view" ? answer(q, { w: 1024, h: 700, dpr: 1, sx: 0, sy: 300 }) : undefined), shot: png(1024, 700) }],
@@ -435,32 +472,92 @@ test("a stitch the worker refuses after the page began it (a viewport that disag
     }
 });
 
+test("a stitchEnd that reaches the page while its stitchBegin is still probing (the worker stopped waiting) puts the scroll back", T, async () => {
+    await onPage(async ({ scrollY }) => {
+        const geo = pageGeometry();
+        const begun = geo.stitchBegin(5);
+        await geo.stitchEnd(5);
+        await begun;
+        await new Promise((r) => setTimeout(r, 50));
+        assert.equal(scrollY(), 300, `the page was left scrolled to ${scrollY()}`);
+    }, { scrollY: 300 });
+});
+
 // --- the stitch's tiles are composed at their real height ---
 
-test("a full-page look in the worker composes each tile at its capture's real height: a capture shorter than the viewport leaves no undrawn band", { ...T, todo: "composeStitch draws each tile at y*dpr and steps the page by the reported viewport height; a debugger capture shorter than the viewport (457 of 600 px in the e2e harness) leaves the bottom of every tile undrawn in the stitch (tests/e2e/vision-capture.spec.mjs reads the bands near each tile's top to step round it)" }, async () => {
+test("a full-page look in the worker composes each tile at its capture's real height: a capture shorter than the viewport leaves no undrawn band", T, async () => {
     await onPage(async () => {
         const raster = recordingRaster();
         const w = world({ shot: png(1024, 600) });   // the viewport is 768 tall; the capture only its top 600
         const env = await w.look({ scope: "page" }, NATIVE, { raster });
-        if (/^Error: /.test(env.result)) return;   // refusing a stitch it cannot cover is also correct
+        assert.match(env.result, /^Screenshot of the full page captured/, env.result);
         const compose = raster.canvases.at(-1);
-        assert.equal(compose.height, 2000);
+        // The page scrolls at most to 2000 - 768 = 1232, whose capture shows down to 1832: the stitch ends there.
+        assert.equal(compose.height, 1832);
         assert.equal(uncoveredRows(compose), 0, `rows no capture drew: ${uncoveredRows(compose)} of ${compose.height}; tiles ${JSON.stringify(compose.draws.map((d) => [d.a[1], d.src.h]))}`);
+        assert.deepEqual(w.geoMsgs().filter((g) => g.op === "stitchTile").map((g) => g.y), [0, 600, 1200, 1800], "each tile steps by what the one before showed");
+        assert.equal(w.geoMsgs().at(-1).op, "stitchEnd");
     });
 });
 
-test("the page host's stitch has the same short-capture gap: stitchVia composes tiles at the viewport step whatever each capture's height", { ...T, todo: "shared with the worker: ml-vision.ts `stitchVia`/`composeStitch` never read a tile's own height, so a page-hosted full-page look under the debugger has the same undrawn bands" }, async () => {
+test("a full-page look whose capture is the whole viewport stitches as before: viewport steps, the page's full height", T, async () => {
+    await onPage(async () => {
+        const raster = recordingRaster();
+        const w = world({ shot: png(1024, 768) });
+        const env = await w.look({ scope: "page" }, NATIVE, { raster });
+        assert.match(env.result, /^Screenshot of the full page captured/, env.result);
+        const compose = raster.canvases.at(-1);
+        assert.equal(compose.height, 2000);
+        assert.equal(uncoveredRows(compose), 0);
+        assert.deepEqual(w.geoMsgs().filter((g) => g.op === "stitchTile").map((g) => g.y), [0, 768, 1536]);
+    });
+});
+
+test("a short capture on an eight-screen page takes the tiles it needs: the worker's tile bound grows with the step, the page is covered as far as a capture shows", { timeout: 60000 }, async () => {
+    await onPage(async () => {
+        const raster = recordingRaster();
+        const w = world({ shot: png(1024, 600) });
+        const env = await w.look({ scope: "page" }, NATIVE, { raster });
+        assert.match(env.result, /^Screenshot of the full page captured/, env.result);
+        const tiles = w.geoMsgs().filter((g) => g.op === "stitchTile").length;
+        assert.ok(tiles > 9, `${tiles} tiles: more than a viewport-step stitch's nine`);
+        const compose = raster.canvases.at(-1);
+        assert.equal(compose.height, 8 * 768 - 768 + 600);
+        assert.equal(uncoveredRows(compose), 0);
+    }, { height: 8 * 768 });
+});
+
+test("the page host's stitch steps by each capture's real height too (stitchVia and composeStitch are shared)", T, async () => {
     const raster = recordingRaster();
     let y = 0;
+    const asked = [];
     const geo = {
         stitchBegin: async () => ({ total: 1800, vh: 600, startY: 0, dpr: 1 }),
-        stitchTile: async ({ y: to }) => { y = Math.min(to, 1200); return { actualY: y, isLast: y + 600 >= 1800 }; },
+        stitchTile: async ({ y: to }) => { asked.push(to); y = Math.min(to, 1200); return { actualY: y, isLast: y + 600 >= 1800 }; },
         stitchEnd: async () => {},
     };
     await stitchVia({ geo, raster }, async () => png(800, 457));
     const compose = raster.canvases.at(-1);
-    assert.equal(compose.height, 1800);
+    assert.deepEqual(asked, [0, 457, 914, 1371]);
+    assert.equal(compose.height, 1657, "as far down as a capture shows: the last scroll (1200) plus 457");
     assert.equal(uncoveredRows(compose), 0, `rows no capture drew: ${uncoveredRows(compose)}`);
+});
+
+test("a stitch whose captures show under half the viewport, or whose page scrolls past the rows a tile showed, is refused with a fixed sentence and still ended", T, async () => {
+    for (const [what, shot, land, sentence] of [
+        ["a capture of under half the viewport", png(800, 250), (to) => to, STITCH_SHORT_CAPTURE],
+        ["a page that scrolls further than it was asked", png(800, 600), (to) => (to ? to + 100 : 0), STITCH_GAP],
+    ]) {
+        const raster = recordingRaster();
+        let ended = 0;
+        const geo = {
+            stitchBegin: async () => ({ total: 1800, vh: 600, startY: 0, dpr: 1 }),
+            stitchTile: async ({ y: to }) => { const at = Math.min(land(to), 1200); return { actualY: at, isLast: at + 600 >= 1800 }; },
+            stitchEnd: async () => { ended++; },
+        };
+        await assert.rejects(stitchVia({ geo, raster }, async () => shot), (e) => e.message === sentence, what);
+        assert.equal(ended, 1, `${what}: the stitch was ended`);
+    }
 });
 
 test("an element below a short capture's bottom edge is refused as off the capture, not cropped to a blank the reader is asked about", T, async () => {

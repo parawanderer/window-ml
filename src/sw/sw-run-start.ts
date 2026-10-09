@@ -13,7 +13,7 @@ import { shortHash, type PromptOrigin } from "../contract/contract-run";
 import { askAboutTask } from "../agent/prompts";
 import { promptSurfaceOf } from "../agent/prompt-surface";
 import { stepBudget } from "../agent/step-budget";
-import { assembleRun, rebuildFor, startPayload, userRunOptions, withPageContext, type UserRunRequest } from "../agent/run-assembly";
+import { assembleRun, pageRebuild, rebuildFor, startPayload, userRunOptions, withPageContext, type UserRunRequest } from "../agent/run-assembly";
 import { relayDebugEvent } from "./sw-debug";
 import { getConfig } from "./sw-llm";
 import { dropLocalTools, registerLocalTools } from "./sw-local-tools";
@@ -38,7 +38,8 @@ import { workerMl } from "./worker-ml";
  *   answered at all (as opposed to a page that answered that it cannot)
  */
 export async function adoptOnTab(tabId: number, runId: string, rebuild: RebuildConfig): Promise<{ pageInfo?: string; error?: string; unanswered?: true }> {
-    const msg = { type: "ADOPT_RUN_NOW", payload: { runId, rebuild } };
+    // The content script posts this to the page's window: only what the page still needs of it (`pageRebuild`).
+    const msg = { type: "ADOPT_RUN_NOW", payload: { runId, rebuild: pageRebuild(rebuild) } };
     const why = (e: unknown): string => String((e as Error)?.message || e);
     const silent = { error: "the page did not answer; it may still be loading, or the extension cannot run there", unanswered: true as const };
     try {

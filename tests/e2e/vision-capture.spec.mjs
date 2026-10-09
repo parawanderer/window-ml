@@ -129,11 +129,29 @@ test("a full-page look stitches real captures in the worker: each band where the
         expect(turn2).toContain("Screenshot of the full page captured");
         const shots = turn2.match(/data:image\/png;base64,[A-Za-z0-9+/=]+/g) || [];
         expect(shots.length).toBe(1);
-        // Near the top of each tile: a debugger capture in this harness is shorter than the viewport (457 of 600 px), which
-        // leaves the bottom of each tile out of the stitch, so the bands are read where every tile has pixels.
-        const px = await colours(page, shots[0], [[400, 10], [400, 300], [400, 610], [400, 900], [400, 1210], [400, 1500]]);
-        expect([px.w, px.h], "the page's 800×1800, at scale 1").toEqual([800, 1800]);
+        // A debugger capture in this harness can be shorter than the viewport (457 of 600 px): the stitch then steps by what
+        // each capture shows, and ends where the last one's pixels do (the page's bottom rows are in no capture). Every
+        // band is read on both sides of each edge, and at the stitch's last row.
+        const size = await colours(page, shots[0], []);
+        expect(size.w, "the page's 800 px width, at scale 1").toBe(800);
+        expect(size.h, `the stitch reaches as far down as a capture shows: ${size.h}`).toBeGreaterThanOrEqual(1600);
+        expect(size.h).toBeLessThanOrEqual(1800);
+        const px = await colours(page, shots[0], [[400, 10], [400, 590], [400, 610], [400, 1190], [400, 1210], [400, size.h - 1]]);
         expect(px.at, JSON.stringify(px)).toEqual([[255, 0, 0], [255, 0, 0], [0, 255, 0], [0, 255, 0], [0, 0, 255], [0, 0, 255]]);
+        // No row of the stitch is left undrawn (transparent): a short capture used to leave a band under each tile.
+        const blank = await page.evaluate(async (src) => {
+            const img = new Image();
+            await new Promise((ok, bad) => { img.onload = ok; img.onerror = bad; img.src = src; });
+            const c = document.createElement("canvas");
+            c.width = img.naturalWidth; c.height = img.naturalHeight;
+            const g = c.getContext("2d");
+            g.drawImage(img, 0, 0);
+            const d = g.getImageData(400, 0, 1, c.height).data;
+            const rows = [];
+            for (let y = 0; y < c.height; y++) if (d[y * 4 + 3] === 0) rows.push(y);
+            return rows.length;
+        }, shots[0]);
+        expect(blank, "rows no capture drew").toBe(0);
         expect(await page.evaluate(() => window.scrollY), "the page's scroll is restored").toBe(0);
         await expectNoVisionOnPage(page);
     } finally {
