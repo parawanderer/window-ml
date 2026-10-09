@@ -3,22 +3,12 @@
 // question changed, not only the answers. The data is sweeps.mjs `specProvenance`, the same as spec.md.
 
 import { CodeBlock } from "../../../../src/sidebar/code-block";
+import { DiffLines } from "../../../../src/sidebar/code-diff";
 import { Tip } from "../../../../src/sidebar/help-tip";
 import type { BenchState, SpecState } from "./state";
 import { Card } from "./card";
 
 const when = (iso: string) => { const d = new Date(iso); return isNaN(+d) ? iso : d.toLocaleString(); };
-
-/** A diff's rows: +/- lines, and a gap for a run of unchanged ones. */
-function DiffRows({ rows }: { rows: NonNullable<SpecState["diff"]> }) {
-    return (
-        <pre class="sdiff">
-            {rows.map((r, i) => r.kind === "gap"
-                ? <span key={i} class="gap">{`⋯ ${r.skipped} unchanged line${r.skipped === 1 ? "" : "s"}`}</span>
-                : <span key={i} class={r.kind}>{r.kind === "add" ? "+ " : r.kind === "del" ? "- " : "  "}{r.text}</span>)}
-        </pre>
-    );
-}
 
 export function SpecCard({ s }: { s: BenchState }) {
     const p = s.spec;
@@ -47,7 +37,7 @@ export function SpecCard({ s }: { s: BenchState }) {
                     : <><span class="badge warn">changed</span> <span class="dim">since {prev.by}'s sweep, {when(prev.at)} (spec {prev.specHash})
                         {p.stat ? `: ${p.stat.added} line${p.stat.added === 1 ? "" : "s"} added, ${p.stat.removed} removed` : ": too long to diff"}</span></>}</dd>
             </dl>
-            {p.diff ? <details open><summary>What changed</summary><DiffRows rows={p.diff} /></details> : null}
+            {p.diff ? <details open><summary>What changed</summary><DiffLines rows={p.diff} lang={/\.json$/i.test(p.spec) ? "json" : "typescript"} class="sdiff" /></details> : null}
             {p.history.length > 1 ? (
                 <details><summary>Every sweep ({p.history.length})</summary>
                     <div class="hscroll"><table class="hist"><thead><tr><th>started</th><th>by</th><th>spec</th><th>build</th></tr></thead>

@@ -89,7 +89,11 @@ test("the Spec card shows who started the sweep, that the spec changed, and the 
     assert.match(card.textContent, /started by<b>agent<\/b>/);
     assert.match(card.textContent, /changed.*since person's sweep/);
     assert.match(card.textContent, /uncommitted changes/);
-    assert.deepEqual([...card.querySelectorAll(".sdiff .add")].map((e) => e.textContent), [`+ ${hostile.split("\n")[2]}`]);
+    // The changed line as the panel draws a diff (code-diff.tsx): highlighted, under a gutter of its old and new line numbers.
+    const added = [...card.querySelectorAll(".sdiff .dline-add")];
+    assert.deepEqual(added.map((e) => e.querySelector(".dtext").textContent), [hostile.split("\n")[2]]);
+    assert.deepEqual([...added[0].querySelectorAll(".dno")].map((n) => n.textContent), ["", "3"], "new on line 3, no old line");
+    assert.equal(added[0].querySelector(".dsign").textContent, "+");
     assert.equal(card.querySelectorAll("img, b").length, 0, card.innerHTML);
     // The spec's text as the panel shows code: highlighted (its keywords coloured), one numbered row per line.
     assert.equal(card.querySelectorAll(".ssrc .cline").length, hostile.split("\n").length);

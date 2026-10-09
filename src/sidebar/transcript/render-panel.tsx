@@ -32,6 +32,7 @@ import {
     highlightToken, highlightEl, clearHighlight, tokenHover, pickedHover,
 } from "../ui-kit";
 import { displaySource } from "../code-block";
+import { DiffLines } from "../code-diff";
 import { copyText } from "../copy-hash";
 
 /** A tool's returned DOM ELEMENTS, as a hoverable list. Each row carries the same stateless
@@ -672,18 +673,7 @@ function CodeDiff({ revision, after, lang, hash, failed }: { revision: CodeRevis
                    draws. So a diff row, a margin note and a failure mark all name the same line, and you can
                    read straight down between them instead of counting. A row that exists on only one side
                    leaves the other column blank, which is exactly the claim being made. */
-                ? <pre class={`code r-diff-body${nums ? " numbered" : ""}`}><code class="hljs">{rows.map((r, i) => r.kind === "gap"
-                    ? <span class="dline dline-gap" key={i}>{nums ? <><span class="dno" /><span class="dno" /></> : null}<span class="dsign" />
-                        <span class="dtext">{`⋮ ${r.skipped} unchanged line${r.skipped === 1 ? "" : "s"}`}</span>{"\n"}</span>
-                    : <span class={`dline dline-${r.kind}`} key={i}>
-                        {nums ? <>
-                            <span class="dno">{r.kind === "add" ? "" : r.a}</span>
-                            <span class="dno">{r.kind === "del" ? "" : r.b}</span>
-                        </> : null}
-                        <span class="dsign">{r.kind === "add" ? "+" : r.kind === "del" ? "−" : " "}</span>
-                        <span class="dtext" dangerouslySetInnerHTML={{ __html: highlight(r.text, lang) || "&nbsp;" }} />
-                        {"\n"}
-                    </span>)}</code></pre>
+                ? <DiffLines rows={rows} lang={lang} numbers={nums} class="r-diff-body" />
                 : null}
         </div>
     );

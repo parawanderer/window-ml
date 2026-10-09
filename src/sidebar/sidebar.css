@@ -2388,9 +2388,12 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 :root[data-codewrap="off"] .code, :root[data-codewrap="off"] .md pre.code { white-space: pre; word-break: normal; }
 
 /* Line-number gutter. Each source line is its own flex row so the number stays
-   aligned even when a long line wraps (align to the first visual row). */
+   aligned even when a long line wraps. STRETCHED, not flex-start: the gutter's rule is the number's own
+   border, so a number box one visual row tall left a gap in the rule beside every wrapped line. The number
+   itself still sits on the first row (block content starts at the top). */
 pre.code.numbered code.hljs { display: block; padding-left: 0; }
-.cline { display: flex; align-items: flex-start; }
+/* ONE LINE OF A NUMBERED CODE BLOCK — its line-number gutter cell, then the code. */
+.cline { display: flex; align-items: stretch; }
 :root[data-codewrap="off"] .cline { width: max-content; min-width: 100%; }
 .cline .lno {
     flex: 0 0 auto; width: 2.2em; padding-right: 8px; margin-right: 8px;
@@ -3559,7 +3562,12 @@ button.ui-step-now:hover { background: var(--panel-2); color: var(--fg); }
 /* ONE ROW OF A DIFF — the gutter's two line numbers, the +/- sign, then the text. A flex row so the
    numbers stay put when the text wraps, which is what lets a diff row, a margin note and a failure mark
    all name the same line and be read straight down. */
-.dline { display: flex; align-items: flex-start; }
+/* Stretched for the same reason as `.cline`: the gutter's rule is a border on `.dno`, and it must run the whole
+   height of a wrapped row. */
+.dline { display: flex; align-items: stretch; }
+/* A diff (code-diff.tsx `DiffLines`) fills its box with the code block's surface, numbered or not: inline, the inner
+   `code.hljs` painted a theme's background only behind the text. */
+pre.code.dlines > code.hljs { display: block; }
 /* An added line: the new side only, so the colour says which side you are reading. */
 .dline-add { background: color-mix(in srgb, var(--ok) 13%, transparent); }
 /* A removed line. */
