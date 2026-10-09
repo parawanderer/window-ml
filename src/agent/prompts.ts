@@ -93,7 +93,8 @@ export const currentClause = (docs: boolean): string => docs
 // silent between steps and put everything in the final answer.
 export const HUD_PROSE_PROGRESS =
     " Your between-step prose (not your hidden thinking) shows live in a small corner card, so keep it to ONE " +
-    "SHORT line — a terse status like \"Scanning the table…\", never a paragraph. Put all detail in your final answer.";
+    "SHORT line — a terse status like \"Scanning the table…\", never a paragraph. That limit is only for text " +
+    "between tool calls: your final answer can be as long as it needs to be.";
 export const HUD_PROSE_QUIET =
     " The user has the HUD in QUIET mode and will NOT see anything you say between steps — so don't narrate " +
     "your progress at all. Work silently, thinking as needed, and put your entire response in the FINAL answer.";
@@ -174,23 +175,23 @@ export const SHADOW_TOOLS = ["findByText", "interactives", "describeElement", "a
  * model told they pierce went looking for them (a DeepSeek review, 2026-10-08).
  * @param names the run's tool names
  */
-export const shadowClause = (names: readonly string[]): string =>
-    `\n\nShadow DOM: the DOM tools (${SHADOW_TOOLS.filter((n) => names.includes(n)).join(" / ")}) pierce OPEN shadow roots automatically. A control inside one ` +
-    "is referenced as `host >>> inner` — one `>>>` per shadow boundary, and it nests: `a >>> b >>> c`. Pass " +
-    "that selector to any DOM tool and it re-resolves it; describeElement flags a `#shadow-root (OPEN)` and " +
-    "shows its contents.";
-// The closed-root sentence, appended after SHADOW_CLAUSE. Which one depends on whether the user enabled
-// closed-root piercing (pierceClosedShadow) — see injected.ts. Default: closed roots are visual-only.
-export const SHADOW_CLOSED_NOTE =
+export const shadowClause = (names: readonly string[], pierceClosed = true): string =>
+    `\n\nShadow DOM: the DOM tools (${SHADOW_TOOLS.filter((n) => names.includes(n)).join(" / ")}) pierce ` +
+    (pierceClosed ? "shadow roots automatically, open and closed (a closed one is captured when the page creates it). " : "OPEN shadow roots automatically. ") +
+    "A control inside one is referenced as `host >>> inner` — one `>>>` per shadow boundary, and it nests: " +
+    "`a >>> b >>> c`. Pass that selector to any DOM tool and it re-resolves it; describeElement flags " +
+    (pierceClosed ? "`#shadow-root (OPEN)` or `(CLOSED, pierced)`" : "a `#shadow-root (OPEN)`") + " and shows its contents." +
+    (pierceClosed ? SHADOW_CLOSED_PIERCE_NOTE : SHADOW_CLOSED_NOTE);
+// The closed-root sentence, part of the clause. Which one depends on the user's closed-root piercing setting
+// (pierceClosedShadow, on by default; see injected.ts): with it off, a closed root is visual-only.
+const SHADOW_CLOSED_NOTE =
     " A CLOSED shadow root is unreachable by ANY selector — click it visually with `locate`/`@pt` if you " +
     "have that tool, else say you can't.";
-// Piercing on: most closed roots are ALSO reachable via `>>>`; only the few the extension can't capture
-// (declarative / native) stay visual-only, and the scanning tools flag exactly those.
-export const SHADOW_CLOSED_PIERCE_NOTE =
-    " CLOSED shadow roots are ALSO pierced (captured at page load) — the same `host >>> inner` syntax reaches " +
-    "inside and describeElement flags `#shadow-root (CLOSED, pierced)`. A few can't be captured (declarative " +
-    "`shadowrootmode=\"closed\"` or native browser roots); the scanning tools flag those specifically — reach " +
-    "them visually with `locate`/`@pt`.";
+// Piercing on: only the few closed roots the extension can't capture (declarative / native) stay visual-only, and
+// the scanning tools flag exactly those.
+const SHADOW_CLOSED_PIERCE_NOTE =
+    " A few closed roots can't be captured (declarative `shadowrootmode=\"closed\"` or native browser roots); the " +
+    "scanning tools flag those — reach them visually with `locate`/`@pt`.";
 // Same-origin iframes ALSO use `>>>`. Appended after the shadow clause whenever the DOM tools are present.
 export const IFRAME_CLAUSE =
     " Iframes use the SAME `>>>` notation: a SAME-ORIGIN `<iframe>` is crossed like a shadow boundary — " +

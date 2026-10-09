@@ -15,7 +15,7 @@ import type { PromptOrigin } from "../contract/contract-run";
 import type { StartRunPayload, RebuildConfig } from "../contract/contract-messages";
 import { promptSurfaceClause, promptSurfaceOf } from "./prompt-surface";
 import { stepBudget } from "./step-budget";
-import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, shadowClause, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_CLOSED_NOTE, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, askAboutTask } from "./prompts";
+import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, shadowClause, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, askAboutTask } from "./prompts";
 import { buildDereferenceTool } from "../tools/tools";
 
 /** The part of `window.ml` assembly reads: config and capability probes, the model and server-tool lists, the tool
@@ -292,7 +292,7 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
         if (toolset.some(t => ["findByText", "describeElement", "interactives", "click", "type"].includes(t.name))) {
             // The closed-root sentence differs by whether piercing is enabled (reachable via `>>>` vs
             // visual-only). SHADOW_EXEC_NOTE (`>>>` → JS) is still accurate either way.
-            systemPrompt += shadowClause(toolset.map(t => t.name)) + (pierceClosed ? SHADOW_CLOSED_PIERCE_NOTE : SHADOW_CLOSED_NOTE) + IFRAME_CLAUSE;
+            systemPrompt += shadowClause(toolset.map(t => t.name), pierceClosed) + IFRAME_CLAUSE;
             if (toolset.some(t => t.name === "exec")) systemPrompt += SHADOW_EXEC_NOTE;
         }
         if (toolset.some(t => t.name === "agent_api_docs")) systemPrompt += SELF_CLAUSE;

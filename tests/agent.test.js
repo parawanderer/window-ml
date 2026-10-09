@@ -321,6 +321,22 @@ test("interactives lists controls by role + accessible name with a clickable sel
     assert.match(run(ml, "interactives", { includeNav: true }).content, /\[link\] "Home"/);
 });
 
+test("the shadow-DOM paragraph says once what the run pierces: open and closed by default, open only when closed piercing is off", async () => {
+    const { shadowClause } = await import("../src/agent/prompts.ts");
+    const on = shadowClause(["findByText"]), off = shadowClause(["findByText"], false);
+    assert.match(on, /pierce shadow roots automatically, open and closed/);
+    assert.doesNotMatch(on, /pierce OPEN|ALSO pierced/, "no sentence that reads as a limit, then one that lifts it");
+    assert.match(on, /A few closed roots can't be captured/);
+    assert.match(off, /pierce OPEN shadow roots/);
+    assert.match(off, /A CLOSED shadow root is unreachable by ANY selector/);
+});
+
+test("the corner card's one-line rule says it is for text between tool calls, not the final answer", async () => {
+    const { HUD_PROSE_PROGRESS } = await import("../src/agent/prompts.ts");
+    assert.match(HUD_PROSE_PROGRESS, /ONE SHORT line/);
+    assert.match(HUD_PROSE_PROGRESS, /only for text between tool calls: your final answer can be as long as it needs/);
+});
+
 test("shadow DOM: the DOM tools pierce OPEN shadow roots, and a shadow reference re-resolves via `>>>`", () => {
     const { ml, document } = loadDomWorld('<div id="host"></div><button>light-only</button>');
     const root = document.getElementById("host").attachShadow({ mode: "open" });
@@ -2811,7 +2827,8 @@ test("the async/wait advice is the wait tool's own, not repeated in the prompt",
     await world.ml.agent("t", { tools: [wait], vision: false });
     assert.doesNotMatch(seen[0], /updates ASYNCHRONOUSLY/);
     assert.match(wait.description, /async update/);
-    assert.match(wait.description, /Use it generously before you look\/read again/);
+    assert.match(wait.description, /when the page is still updating/);
+    assert.doesNotMatch(wait.description, /generously/, "no blanket advice to wait, which contradicted the method's 'be decisive'");
 });
 
 test("the shadow-DOM sentence names only the piercing tools the run has: a hand-picked toolset without click or type", async () => {
