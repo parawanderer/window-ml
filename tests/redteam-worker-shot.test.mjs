@@ -223,13 +223,15 @@ test("no message a page can send, naming the run, sends a model call through the
     assert.equal(spendOf(wv, "run-1").calls, before.calls + 1);
 });
 
-test("a page's FETCH_LLM cannot file its generation under a worker-built run's session on the wire", {
-    todo: "pre-existing, not this PR: FETCH_LLM passes the page's `hint.session` through wireHint unchanged, so an approved page that knows a worker run's hash files its own model calls under `wml-<hash>`, and the resource panel (model-stats.ts groups server gens by hint.session) shows them as that run's. The run's own subUsage is untouched (previous test). Fix in the FETCH_LLM handler: drop a page's hint.session that names a worker-built run (workerRunsStarting / the run registry), or any session not of a run the page hosts.",
-}, async () => {
+test("a page's FETCH_LLM cannot file its generation under a worker-built run's session on the wire", async () => {
     const bodies = [];
-    const { bg, wv } = world({ siteGate: true, local: { ml_site_always: ["https://run.example"] }, onFetch: (c) => { if (c.body?.messages) bodies.push(c.body); return jsonResponse({ choices: [{ message: { content: "ok" } }] }); } });
-    wv.seedRun("run-1", 3);
-    await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "x" }], hint: { use: "agent", session: hintSession("run-1") } } }, fromRunTab());
-    assert.equal(bodies.length, 1, "control: the call went");
-    assert.notEqual(bodies[0].hint?.session, hintSession("run-1"), "the page's call is filed under the worker run's session");
+    // A real worker-built run (the worker-tool state `seedRun` makes is not one): its hash is what the page knows.
+    const { bg } = world({ siteGate: true, local: { ml_site_always: ["https://run.example"] },
+        onTabMessage: (_t, m) => (m?.type === "ADOPT_RUN_NOW" ? { pageInfo: "" } : m?.type === "SHOT_RECTS" ? NO_UI : m?.type === "RUN_TOOL_IN_PAGE" ? { result: "" } : undefined),
+        onFetch: (c) => { if (c.body?.messages) bodies.push(c.body); return jsonResponse({ choices: [{ message: { content: "ok" } }] }); } });
+    const { hash } = await bg.context.__mlStartUserRunForTest(3, { task: "a task", surface: "hud" });
+    await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "PAGE CALL" }], hint: { use: "agent", session: hintSession(hash) } } }, fromRunTab());
+    const page = bodies.filter((b) => b.messages.some((m) => m.content === "PAGE CALL"));
+    assert.equal(page.length, 1, "control: the call went");
+    assert.notEqual(page[0].hint?.session, hintSession(hash), "the page's call is filed under the worker run's session");
 });
