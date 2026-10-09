@@ -2,6 +2,7 @@
 //
 //   node --import tsx tests/e2e/bench/run.mjs tests/e2e/bench/specs/pointer-ids.bench.ts
 //   … --jobs 4            run 4 browsers at once (a hosted API; NOT a local GPU — see below)
+//   … --no-sync / --only-db   when a bench store is configured (sync.mjs), do not push this sweep / push only the rows
 //   … --lanes             one lane per model: each model's runs in turn, different models at once when the box says
 //                         the next fits beside what is loaded (/api/fits); a cloud model always goes. `--jobs N` caps
 //                         the lanes running at once. An interview runs this way unless --jobs is given
@@ -53,6 +54,7 @@ import { pageSources } from "./page/bundle.mjs";
 import { addMark, readMarks, defaultBy } from "./mark.mjs";
 import { recordSweep, specProvenance, specText } from "./sweeps.mjs";
 import { runLanes, fitsGate, settleUntilResident } from "./lanes.mjs";
+import { storeFromEnv, openStore, push as pushToStore } from "./sync.mjs";
 import { timelineText, labelSeed, seedEndOf, SEED_LABEL } from "./timeline-text.mjs";
 import { memoryText } from "./resource-poll.mjs";
 import { startBox, openBoxLog, BOX_DB } from "./box-stream.mjs";
@@ -74,6 +76,8 @@ function parseArgv(argv) {
         const a = argv[i];
         if (a === "--jobs") { args.jobs = Math.max(1, Number(argv[++i]) || 1); args.jobsSet = true; }
         else if (a === "--lanes") args.lanes = true;
+        else if (a === "--no-sync") args.sync = false;
+        else if (a === "--only-db") args.onlyDb = true;
         else if (a === "--only") args.only.push(argv[++i]);
         else if (a === "--skip") args.skip.push(argv[++i]);
         else if (a === "--repeats") args.repeats = Math.max(1, Number(argv[++i]) || 1);
@@ -599,6 +603,10 @@ const main = async () => {
         runs, rows, started, finished, jobs: args.jobs, dirty, fingerprint, pdf: args.pdf, interviews, skipped, spec: provenance,
         scores: scoreLines("../scores.html"), cloud, scripted, repo,
         resources: resPoll?.resources() ?? null,
+        // What may leave this machine for the bench store (sync.mjs): nothing when the spec says `sync: false`, and no
+        // run of a task that says so.
+        ...(spec.sync === false || spec.tasks.some((t) => t.sync === false)
+            ? { sync: { off: spec.sync === false, tasksOff: spec.tasks.filter((t) => t.sync === false).map((t) => t.id) } } : {}),
         timeline: (ganttAt = 0, sweepTimeline()),
     };
     // report.html — the live page with the final state baked in. Written ALWAYS, not only with --serve:
@@ -652,6 +660,13 @@ const main = async () => {
     // ONE line a poller can look for, last, and the same as done.json in the sweep directory.
     const done = doneSummary(spec.name, runs, { report: path.relative(ROOT, reportPath), page, retried: ctx.retried });
     await writeFile(path.join(sweepDir, "done.json"), JSON.stringify(done, null, 2));
+    // Into the bench store, when one is configured (sync.mjs; off by default). Never the sweep's failure: what did not
+    // go now goes on the next push.
+    const storeCfg = args.sync === false ? null : storeFromEnv();
+    if (storeCfg) {
+        try { await pushToStore(openStore(storeCfg), { sweeps: [sweepDir], onlyDb: !!args.onlyDb, log: console.log }); }
+        catch (e) { console.log(`  (store push failed: ${String(e?.message || e).slice(0, 160)}; \`node --import tsx tests/e2e/bench/sync.mjs push\` retries)`); }
+    }
     if (page) console.log(`  the page stays up at ${page}; stop it with: node --import tsx tests/e2e/bench/serve.mjs --stop`);
     console.log(doneLine(done));
     // Exit, rather than wait for every handle to close: everything is written, and the exit IS the signal.
