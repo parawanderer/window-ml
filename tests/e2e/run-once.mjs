@@ -499,7 +499,16 @@ export async function runOnce(cfg = {}) {
             utility: backend?.utilityModel || null,
         };
         await page.goto(startUrl);
-        await waitForMl(page);
+        // Once more after a reload before giving up: with a dozen browsers starting at once (a sweep's lanes), `window.ml`
+        // has missed waitForMl's 15 s about once in two hundred runs, a run that then measured nothing. A test calls
+        // waitForMl directly and still fails at once.
+        try { await waitForMl(page); }
+        catch (e) {
+            if (!/Timeout/i.test(String(e))) throw e;
+            log("  (window.ml did not appear in 15 s; reloading the page and waiting once more)");
+            await page.reload();
+            await waitForMl(page);
+        }
         // The worker's events (a background-hosted run's steps) never reach the page's window, so they come from the
         // DevTools port; the page's own still arrive through the bridge above. Overlay mode sends neither twice.
         await watchRunEvents(ext, page, (ev) => { events.push(ev); onEvent?.(ev); dump(events); });
