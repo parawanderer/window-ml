@@ -8,7 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { timelineText, labelSeed, SEED_LABEL } from "../tests/e2e/bench/timeline-text.mjs";
+import { timelineText, labelSeed, seedEndOf, SEED_LABEL } from "../tests/e2e/bench/timeline-text.mjs";
 import { addMark, readMarks } from "../tests/e2e/bench/mark.mjs";
 import { doneSummary, doneLine } from "../tests/e2e/bench/sinks.mjs";
 import { checkMarks } from "../tests/e2e/interview.mjs";
@@ -40,15 +40,29 @@ test("timeline.md: a run still going is drawn to `now`; runs that never met have
     assert.match(timelineText(null, () => ""), /No run has events/);
 });
 
-test("timeline.md: a seeded run's scripted first turn is named as the spec's script, not as the fake model", () => {
+test("timeline.md: a seeded run's scripted first turn is named as the spec's script, and its measured turns as the measured model", () => {
+    // As eventsFrom draws one: every event carries the model the run STARTED on, the fake's, the measured turn's too.
     const events = labelSeed([
         ev("run", 0, 1000, { model: "fake-model", label: "run 1/2 · fake-model" }),
-        ev("run", 1000, 4000, { model: "qwen3:8b", label: "run 2/2 · qwen3:8b" }),
-    ], "fake-model");
-    assert.deepEqual(events.map((e) => [e.model, e.label]), [[SEED_LABEL, `run 1/2 · ${SEED_LABEL}`], ["qwen3:8b", "run 2/2 · qwen3:8b"]]);
+        ev("gen", 100, 900, { model: "fake-model", label: "fake-model" }),
+        ev("run", 1000, 4000, { model: "fake-model", label: "run 2/2 · fake-model" }),
+        ev("tool", 1500, 2500, { model: "fake-model", label: "answer" }),
+        ev("load", 1100, 1400, { model: "qwen3:8b", label: "loading qwen3:8b" }),
+    ], "fake-model", { seedEnd: 950, measured: "qwen3:8b" });
+    assert.deepEqual(events.map((e) => [e.model, e.label]), [
+        [SEED_LABEL, `run 1/2 · ${SEED_LABEL}`], [SEED_LABEL, SEED_LABEL],
+        ["qwen3:8b", "run 2/2 · qwen3:8b"], ["qwen3:8b", "answer"], ["qwen3:8b", "loading qwen3:8b"],
+    ]);
     const md = timelineText({ now: 4000, runs: [{ index: 0, events }] }, () => "a");
     assert.match(md, /seed \(scripted, from the spec\)/);
     assert.doesNotMatch(md, /fake-model/);
+});
+
+test("the seed's end is its first answer; before the seed has answered, everything so far is the seed", () => {
+    assert.equal(seedEndOf([{ kind: "agent-step", ts: 5 }, { kind: "agent-result", ts: 950 }, { kind: "agent-result", ts: 4000 }]), 950);
+    assert.equal(seedEndOf([{ kind: "agent-step", ts: 5 }]), Infinity);
+    const live = labelSeed([ev("gen", 100, 900, { model: "fake-model", label: "fake-model" })], "fake-model", { seedEnd: Infinity, measured: "qwen3:8b" });
+    assert.equal(live[0].model, SEED_LABEL);
 });
 
 // --- marks from the command line ---

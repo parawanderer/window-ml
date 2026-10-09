@@ -49,7 +49,7 @@ import { startDashboard, staticPage, servedSweep } from "./serve.mjs";
 import { pageSources } from "./page/bundle.mjs";
 import { addMark, readMarks, defaultBy } from "./mark.mjs";
 import { recordSweep, specProvenance, specText } from "./sweeps.mjs";
-import { timelineText, labelSeed, SEED_LABEL } from "./timeline-text.mjs";
+import { timelineText, labelSeed, seedEndOf, SEED_LABEL } from "./timeline-text.mjs";
 import { memoryText } from "./resource-poll.mjs";
 import { startBox, openBoxLog, BOX_DB } from "./box-stream.mjs";
 import { repoUrl } from "../../../scripts/gen-build-info.mjs";
@@ -249,7 +249,7 @@ async function runCell(cell, ctx, index) {
     }
 
     const measurement = measureRun({ ...run, stream: run.stream ?? cellStream(cell) }, t);
-    ctx.finalSession?.(index, run.session ?? null);
+    ctx.finalSession?.(index, run.session ?? null, run.events ?? []);
     // An interview's answers, turn by turn, kept with the cell so a cached one still sets them side by side.
     const turns = t.asks?.length ? readTurns(dir, t.asks.length + 1) : null;
     // Best-effort: a failed render must not lose the cell's measurement, which is the expensive part.
@@ -455,9 +455,11 @@ const main = async () => {
     ctx.rawOf = (i) => raw[i];
     // A seeded cell against a real model runs its first turn on the fake LLM: named as the spec's script, not as a model.
     const seededOf = (c) => !!c.task.seed && !!(c.effects.backend || backend);
-    const lane = (i, events) => (seededOf(cells[i]) ? labelSeed(events, FAKE_MODEL) : events);
+    const lane = (i, events, rawEvents) => (seededOf(cells[i])
+        ? labelSeed(events, FAKE_MODEL, { seedEnd: seedEndOf(rawEvents), measured: cells[i].effects.backend?.model ?? backend?.model ?? null })
+        : events);
     const scripted = cells.some(seededOf) ? [SEED_LABEL] : [];
-    ctx.finalSession = (i, session) => { laneEvents[i] = session ? lane(i, eventsFrom([session])) : []; raw[i] = []; ganttAt = 0; };
+    ctx.finalSession = (i, session, rawEvents) => { laneEvents[i] = session ? lane(i, eventsFrom([session]), rawEvents) : []; raw[i] = []; ganttAt = 0; };
     const sweepTimeline = () => {
         if (Date.now() - ganttAt < 2000 && gantt) return gantt;
         ganttAt = Date.now();
@@ -466,7 +468,7 @@ const main = async () => {
             if (runsState[i].cached) return null;
             if (laneEvents[i]) return laneEvents[i];
             if (runsState[i].state !== "running" || !raw[i].length) return null;
-            try { const { session } = renderRun(raw[i]); return session ? lane(i, eventsFrom([session], now)) : null; } catch { return null; }
+            try { const { session } = renderRun(raw[i]); return session ? lane(i, eventsFrom([session], now), raw[i]) : null; } catch { return null; }
         });
         const runs = evs.flatMap((events, index) => (events?.length ? [{ index, events }] : []));
         gantt = runs.length ? { runs, now } : null;

@@ -5,10 +5,22 @@
  *  page.json. Not a model: the history the spec replays through the fake LLM before the measured model takes over. */
 export const SEED_LABEL = "seed (scripted, from the spec)";
 
-/** A seeded run's events with the fake LLM's name (`fakeModel`) replaced by `SEED_LABEL`, in the model and the label. */
-export function labelSeed(events, fakeModel) {
-    return events.map((e) => (e.model === fakeModel ? { ...e, model: SEED_LABEL, label: String(e.label).split(fakeModel).join(SEED_LABEL) } : e));
+/**
+ * A seeded run's events, each named for what really served it. The run's steps carry no model of their own, so the lane
+ * gives every one the model the run STARTED on, the fake's: by that, the measured model's steps read as the fake's too.
+ * The seed is the first turn, so an event that began before the seed's answer (`seedEnd`) is the seed (`SEED_LABEL`),
+ * and one after it is the measured model's (`measured`), in the model and the label alike.
+ */
+export function labelSeed(events, fakeModel, { seedEnd = Infinity, measured = null } = {}) {
+    return events.map((e) => {
+        if (e.model !== fakeModel) return e;
+        const name = e.t < seedEnd ? SEED_LABEL : measured;
+        return name ? { ...e, model: name, label: String(e.label).split(fakeModel).join(name) } : e;
+    });
 }
+
+/** When a seeded run's seed turn answered: its first `agent-result`, from the run's raw events; Infinity before it has. */
+export const seedEndOf = (rawEvents) => rawEvents.find((e) => e.kind === "agent-result")?.ts ?? Infinity;
 
 /** A duration: milliseconds under a second (a fake-model run takes a few), else seconds. */
 const span = (ms) => (ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`);
