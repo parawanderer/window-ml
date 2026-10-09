@@ -19,7 +19,7 @@ script's promise settles. The streaming port (`LLM_STREAM`) checks the same gate
 1. A tab hosting a live background run (`activeRuns`) may send `RUN_TAB_TYPES` (page-relay.ts) from its top frame,
    whatever its origin: what that run's delegated tools send while they still run in the page (a vision tool's model
    call and screenshot, `fetch_url`, `python_exec`, a sheet, a server tool, a shadow resolve, the config a vision tool
-   or an exec reads). Never run control, a model change, an unload, a session, an embedding or a dump. The list
+   or an exec reads). An isolated exec sends none of them: its `ml` has nothing that sends. Never run control, a model change, an unload, a session, an embedding or a dump. The list
    shrinks as slice 2 moves tools to the worker, and goes with the last one. It is also why a run on a local `file:`
    page keeps working.
 2. Otherwise the sender must be grantable (`grantableOrigin`: top frame, http(s), not opaque) and its origin approved
@@ -94,6 +94,26 @@ the live shortcut (`invocationInfo`, `sw-invocation.ts`) and the config itself, 
 `RUN_TAB_TYPES`. `GET_CONFIG` stays until the vision tools move (part 3). Its within-dig dedup memory is the worker's,
 keyed by the run's local tools, so `runLocalTool` counts each call the page runs towards its streak (`countDocsStreak`),
 which the page's `executeTool` used to do; a read-only try counts on neither side.
+
+## Where an approved exec of a worker-built run runs
+
+`delegateTool` (`sw-run-host.ts`) asks `routeExec` (`src/sw/exec-routing.ts`) before it mints any grant on the tab. The
+rule is pure, and its tests enumerate every input (`tests/isolated-exec.test.mjs`):
+
+- A plain script on an approved page: the page's main world, full parity.
+- A script naming `ml.current` or a pointer (read lexically by `execNames`; a miss fails closed, since an unnamed
+  read is not sent and the main world has no `ml.current`), or any script on a page that is not approved: an
+  isolated world (`runIsolatedExec`, `src/sw/sw-isolated-exec.ts`). That is `chrome.userScripts.execute` in the run's
+  world `wml-<runId>` when the person has allowed user scripts, else a CDP isolated world when the CDP setting is on.
+- Neither available: refused on an unapproved page and for `ml.current`; a pointer script on an approved page runs in
+  the main world with a note (owner's decision).
+
+The isolated script runs inside one wrapper built as source (`isolatedWrapper`): it binds `ml` (`current` deep-frozen,
+`dereference` answering only the reads sent with the call), captures the console, and returns plain data. Live lines
+come back through `chrome.runtime.onUserScriptMessage` (reachable only from a world this extension configured), checked
+against the run's tab, the top frame and the call's nonce, or through a CDP binding added with `executionContextName`,
+so only that world has it, checked against the world's context id. Every decision is in the execution log
+(`subsystem: routing`, `kind: exec-main|exec-isolated|exec-refused`, `detail.how`).
 
 ## What the content script sends outside the gate
 
