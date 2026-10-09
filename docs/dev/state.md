@@ -9,7 +9,10 @@ so names are the reference. UI state (what is open, hovered, scrolled: about 150
 (about 55) are counted, not listed: they are not a run's state.
 
 **Adding state?** Declare it where it lives with `defineState` (`src/state-registry.ts`): its scope, realm, audience,
-what loses it, and a `read` that returns plain data for one run. The inspector lists what is declared. State that is not
+what loses it, and a `read` that returns plain data for one run. The inspector lists what is declared. A member two
+realms can hold for the same run (`run.answer`: the page's set for a page-built run, the worker's for one it built)
+is declared `heldOnly` in the realm that holds it only sometimes: that realm lists it only for a run whose read holds
+something (`membersFor`), so the other realm's row shows instead of an empty one. State that is not
 a run's (a cache, UI, in-flight plumbing, a lookup table) gets a `// state: cache|ui|plumbing|fixed|test` marker instead.
 `node scripts/check-state.mjs` asks about every store a change adds (`working-in-the-repo.md`). A store with no
 declaration yet still gets a row here.
