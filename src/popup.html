@@ -46,6 +46,11 @@
         background: transparent; border: none; color: var(--fg-faint); padding: 6px; border-radius: 50%; }
     button.icon-btn:hover { background: var(--panel-2); color: var(--fg); }
     button.icon-btn svg { width: 16px; height: 16px; }
+    /* Something in the settings still needs doing (no connection yet): a dot on the gear, in the accent colour. */
+    button.icon-btn { position: relative; }
+    .pending-dot { position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%;
+        background: var(--accent); box-shadow: 0 0 0 2px var(--bg); }
+    .pending-dot[hidden] { display: none; }
     label { display: block; margin: 10px 0 3px; color: var(--fg-dim); }
     input, select {
         width: 100%; box-sizing: border-box; padding: 6px 8px;
@@ -125,18 +130,19 @@
     <div class="pop-head">
         <h1>window.ml</h1>
         <span class="pop-actions">
+        <button id="openChat" class="icon-btn" title="All sessions and chats: read them, answer them, start new ones" aria-label="Open all sessions and chats">
+            <!-- The panel's IconChat (src/sidebar/icons.tsx), so the popup and the panel draw "chats" the same way. -->
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" />
+            </svg>
+        </button>
         <button id="openConfig" class="icon-btn" title="Settings: connection, permissions, appearance" aria-label="Settings" aria-expanded="false" aria-controls="config">
             <!-- The panel's IconGear (src/sidebar/icons.tsx). -->
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
                 <path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
             </svg>
-        </button>
-        <button id="openChat" class="icon-btn" title="All sessions and chats: read them, answer them, start new ones" aria-label="Open all sessions and chats">
-            <!-- The panel's IconChat (src/sidebar/icons.tsx), so the popup and the panel draw "chats" the same way. -->
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" />
-            </svg>
+            <span class="pending-dot" id="configPending" hidden></span>
         </button>
         </span>
     </div>
@@ -284,12 +290,12 @@
         </div>
     </div>
 
-    <hr class="site-rule">
     <!-- THIS SITE, last and under a rule: it is about the tab you are on, not about window.ml as a whole. May the page in
          the current tab use window.ml (docs/spec/SITE_ACCESS.md)? The current tab's
          origin only; DevTools Settings holds the full list. Hidden on a page that can never be granted (a browser page,
          a local file). -->
     <div id="siteAccess" hidden>
+        <hr class="site-rule">
         <label>This site</label>
         <div class="hint"><code id="siteOrigin"></code> <span id="siteState"></span></div>
         <div class="row" id="siteButtons">

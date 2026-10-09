@@ -68,6 +68,8 @@ function showConfig(on: boolean) {
 function updateConnSummary() {
     const url = $("chatUrl").value.trim();
     const el = document.getElementById("connStatus")!;
+    // The gear says so too while the settings are hidden: there is something there still to do.
+    document.getElementById("configPending")!.hidden = !!url;
     if (!url) { el.innerHTML = `<span class="todo">① Set up your connection</span>`; return; }
     let host = url;
     try { host = new URL(url).host || url; } catch { /* keep the raw string */ }
