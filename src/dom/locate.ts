@@ -10,6 +10,7 @@
 import { clickSelector } from "./dom";
 import { styleHidden, roleOf, accessibleName } from "./a11y";
 import { SB_ROOT, SB_CARD } from "../ids";
+import { pageRaster, withDecoded, type Raster, type Raster2D } from "../raster";
 
 export type MarkFilter = "clickables" | "inputs" | "images" | "all";
 
@@ -199,7 +200,7 @@ export function pickOverlayHex(weights: number[], avoidHues: number[] = [], pale
  *  near-white pixels excluded — they don't claim a hue). Pass `region` (image px) to
  *  restrict sampling to a sub-rect, e.g. the target box, so its own colour is measured
  *  even when it's a tiny fraction of the full image. */
-function sampleHues(ctx: CanvasRenderingContext2D, w: number, h: number, region?: Rect): number[] {
+function sampleHues(ctx: Raster2D, w: number, h: number, region?: Rect): number[] {
     const weights = new Array(12).fill(0);
     const x0 = region ? Math.max(0, Math.floor(region.left)) : 0;
     const y0 = region ? Math.max(0, Math.floor(region.top)) : 0;
@@ -241,26 +242,21 @@ export function dominantHues(weights: number[], frac = 0.5): number[] {
 }
 
 /** Pick a contrasting colour for a data-URL image (loads it, samples, scores) from
- *  `palette` — the overlay palette by default, or the accent palette for a highlight. */
-export function pickOverlayColor(dataUrl: string, avoidHues: number[] = [], palette = OVERLAY_PALETTE): Promise<string> {
-    return new Promise((resolve) => {
-        const img = new Image();
-        img.onload = () => {
-            const cv = document.createElement("canvas");
-            cv.width = img.naturalWidth; cv.height = img.naturalHeight;
-            const ctx = cv.getContext("2d", { willReadFrequently: true });   // we sample pixels back (sampleHues)
-            if (!ctx) return resolve(palette[0].hex);
-            ctx.drawImage(img, 0, 0);
-            resolve(pickOverlayHex(sampleHues(ctx, cv.width, cv.height), avoidHues, palette));
-        };
-        img.onerror = () => resolve(palette[0].hex);
-        img.src = dataUrl;
-    });
+ *  `palette` — the overlay palette by default, or the accent palette for a highlight.
+ *  `raster` is where the image and canvas come from (the page's by default). */
+export function pickOverlayColor(dataUrl: string, avoidHues: number[] = [], palette = OVERLAY_PALETTE, raster: Raster = pageRaster): Promise<string> {
+    return withDecoded(raster, dataUrl, "failed to load the image to pick a colour", (img) => {
+        const cv = raster.canvas(img.width, img.height);
+        const ctx = cv.getContext("2d", { willReadFrequently: true });   // we sample pixels back (sampleHues)
+        if (!ctx) return palette[0].hex;
+        ctx.drawImage(img.source, 0, 0);
+        return pickOverlayHex(sampleHues(ctx, cv.width, cv.height), avoidHues, palette);
+    }).catch(() => palette[0].hex);
 }
 
 /** The page-aware "selected" highlight colour (green unless the page is green-heavy). */
-export const pickAccentColor = (dataUrl: string, avoidHues: number[] = []): Promise<string> =>
-    pickOverlayColor(dataUrl, avoidHues, ACCENT_PALETTE);
+export const pickAccentColor = (dataUrl: string, avoidHues: number[] = [], raster: Raster = pageRaster): Promise<string> =>
+    pickOverlayColor(dataUrl, avoidHues, ACCENT_PALETTE, raster);
 
 /**
  * Page-aware accent that also dodges the TARGET's own colour: picks against the whole
@@ -268,22 +264,16 @@ export const pickAccentColor = (dataUrl: string, avoidHues: number[] = []): Prom
  * `box` (image px) — so the marker outline clashes with neither the background nor the
  * element it rings. `box` is the marker rect in the image's own pixels (source × scale).
  */
-export function pickAccentColorForTarget(dataUrl: string, box: Rect, avoidHues: number[] = []): Promise<string> {
-    return new Promise((resolve) => {
-        const img = new Image();
-        img.onload = () => {
-            const cv = document.createElement("canvas");
-            cv.width = img.naturalWidth; cv.height = img.naturalHeight;
-            const ctx = cv.getContext("2d", { willReadFrequently: true });   // samples background + target hues
-            if (!ctx) return resolve(ACCENT_PALETTE[0].hex);
-            ctx.drawImage(img, 0, 0);
-            const background = sampleHues(ctx, cv.width, cv.height);
-            const target = dominantHues(sampleHues(ctx, cv.width, cv.height, box));
-            resolve(pickOverlayHex(background, [...avoidHues, ...target], ACCENT_PALETTE));
-        };
-        img.onerror = () => resolve(ACCENT_PALETTE[0].hex);
-        img.src = dataUrl;
-    });
+export function pickAccentColorForTarget(dataUrl: string, box: Rect, avoidHues: number[] = [], raster: Raster = pageRaster): Promise<string> {
+    return withDecoded(raster, dataUrl, "failed to load the image to pick a colour", (img) => {
+        const cv = raster.canvas(img.width, img.height);
+        const ctx = cv.getContext("2d", { willReadFrequently: true });   // samples background + target hues
+        if (!ctx) return ACCENT_PALETTE[0].hex;
+        ctx.drawImage(img.source, 0, 0);
+        const background = sampleHues(ctx, cv.width, cv.height);
+        const target = dominantHues(sampleHues(ctx, cv.width, cv.height, box));
+        return pickOverlayHex(background, [...avoidHues, ...target], ACCENT_PALETTE);
+    }).catch(() => ACCENT_PALETTE[0].hex);
 }
 
 /** One box drawn onto a screenshot: a colored outline + an optional tab holding a
@@ -386,7 +376,7 @@ export function pickLabelSpot(box: Rect, label: Rect, img: Rect, score: (r: Rect
  * every 4th pixel for speed. Returns 0 on a tainted canvas or where getImageData is a
  * jsdom no-op, so placement then just falls back to the first candidate.
  */
-function regionBusyness(ctx: CanvasRenderingContext2D, r: Rect): number {
+function regionBusyness(ctx: Raster2D, r: Rect): number {
     try {
         const w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
         const data = ctx.getImageData(Math.max(0, Math.round(r.left)), Math.max(0, Math.round(r.top)), w, h).data;
@@ -407,7 +397,7 @@ function regionBusyness(ctx: CanvasRenderingContext2D, r: Rect): number {
  *  so a thin line/outline survives even a busy multi-colour background. One legibility
  *  trick shared by the grid lines and the box outlines — `path` strokes the shape (it may
  *  itself call ctx.stroke()/strokeRect, run twice with the two styles). */
-function strokeCased(ctx: CanvasRenderingContext2D, path: () => void, coreWidth: number, color: string, scale: number) {
+function strokeCased(ctx: Raster2D, path: () => void, coreWidth: number, color: string, scale: number) {
     ctx.strokeStyle = "rgba(0,0,0,0.55)"; ctx.lineWidth = coreWidth + Math.max(2, Math.round(2 * scale)); path();
     ctx.strokeStyle = color; ctx.lineWidth = coreWidth; path();
 }
@@ -422,71 +412,65 @@ function strokeCased(ctx: CanvasRenderingContext2D, path: () => void, coreWidth:
  * marks (acute on a zoomed-in @pt verify shot) — hug-only, never a corner/leader. Badges
  * stay pinned — the number↔box correspondence is Set-of-Marks' whole point.
  */
-export function annotate(dataUrl: string, boxes: Annot[], scale: number): Promise<string> {
-    return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-            const cv = document.createElement("canvas");
-            cv.width = img.naturalWidth; cv.height = img.naturalHeight;
-            const ctx = cv.getContext("2d", { willReadFrequently: true });   // regionBusyness reads back for float labels
-            if (!ctx) return reject(new Error("no 2d canvas context for annotate"));
-            ctx.drawImage(img, 0, 0);
-            const fs = Math.round(13 * scale);
-            const pad = Math.round(3 * scale);
-            const bh = fs + pad * 2;
-            ctx.font = `bold ${fs}px sans-serif`;
-            ctx.textBaseline = "top";
-            const tab = (text: string, color: string, cornerX: number, cornerY: number, place: "above" | "belowRight") => {
-                const bw = Math.ceil(ctx.measureText(text).width) + pad * 2;
-                let bx = place === "belowRight" ? cornerX - bw : cornerX;   // right-aligned to end at the corner
-                let by = place === "belowRight" ? cornerY : cornerY - bh;   // above the top edge / below the bottom
-                bx = Math.max(0, Math.min(bx, cv.width - bw));
-                by = Math.max(0, Math.min(by, cv.height - bh));
-                ctx.fillStyle = color; ctx.fillRect(bx, by, bw, bh);
-                ctx.fillStyle = "#fff"; ctx.fillText(text, bx + pad, by + pad);
-            };
-            for (const b of boxes) {
-                const x = b.rect.left * scale, y = b.rect.top * scale;
-                const w = b.rect.width * scale, h = b.rect.height * scale;
-                const boxRect: Rect = { left: x, top: y, width: w, height: h };
-
-                // A `float` label picks its spot from the pixels BEFORE this box's stroke
-                // lands, so the stroke doesn't bias the variance around the box edge. Only
-                // when opted in (small crops) — a big render keeps the simple fixed tab so
-                // an escape-leader can't span the whole image.
-                let placed: { spot: LabelSpot; bw: number; text: string } | null = null;
-                if (b.float && !b.corners && b.badge == null && b.label) {
-                    const bw = Math.ceil(ctx.measureText(b.label).width) + pad * 2;
-                    const spot = pickLabelSpot(
-                        boxRect,
-                        { left: 0, top: 0, width: bw, height: bh },
-                        { left: 0, top: 0, width: cv.width, height: cv.height },
-                        r => regionBusyness(ctx, r),
-                        Math.max(3, Math.round(4 * scale)),
-                        true,   // hug-only: never a corner + leader (misleads the VLM verify)
-                    );
-                    placed = { spot, bw, text: b.label };
-                }
-
-                strokeCased(ctx, () => ctx.strokeRect(x, y, w, h), Math.max(1, Math.round(2 * scale)), b.color, scale);
-
-                if (b.corners) {
-                    tab(b.corners[0], b.color, x, y, "above");            // top-left
-                    tab(b.corners[1], b.color, x + w, y + h, "belowRight"); // bottom-right
-                } else if (b.badge != null) {
-                    tab(String(b.badge), b.color, x, y, "above");         // pinned to its box
-                } else if (placed) {
-                    // hug-only: the label sits beside the box, never a corner + leader.
-                    ctx.fillStyle = b.color; ctx.fillRect(placed.spot.left, placed.spot.top, placed.bw, bh);
-                    ctx.fillStyle = "#fff"; ctx.fillText(placed.text, placed.spot.left + pad, placed.spot.top + pad);
-                } else if (b.label) {
-                    tab(b.label, b.color, x, y, "above");                 // fixed tab (default)
-                }
-            }
-            resolve(cv.toDataURL("image/png"));
+export function annotate(dataUrl: string, boxes: Annot[], scale: number, raster: Raster = pageRaster): Promise<string> {
+    return withDecoded(raster, dataUrl, "failed to load the screenshot for annotation", (img) => {
+        const cv = raster.canvas(img.width, img.height);
+        const ctx = cv.getContext("2d", { willReadFrequently: true });   // regionBusyness reads back for float labels
+        if (!ctx) throw new Error("no 2d canvas context for annotate");
+        ctx.drawImage(img.source, 0, 0);
+        const fs = Math.round(13 * scale);
+        const pad = Math.round(3 * scale);
+        const bh = fs + pad * 2;
+        ctx.font = `bold ${fs}px sans-serif`;
+        ctx.textBaseline = "top";
+        const tab = (text: string, color: string, cornerX: number, cornerY: number, place: "above" | "belowRight") => {
+            const bw = Math.ceil(ctx.measureText(text).width) + pad * 2;
+            let bx = place === "belowRight" ? cornerX - bw : cornerX;   // right-aligned to end at the corner
+            let by = place === "belowRight" ? cornerY : cornerY - bh;   // above the top edge / below the bottom
+            bx = Math.max(0, Math.min(bx, cv.width - bw));
+            by = Math.max(0, Math.min(by, cv.height - bh));
+            ctx.fillStyle = color; ctx.fillRect(bx, by, bw, bh);
+            ctx.fillStyle = "#fff"; ctx.fillText(text, bx + pad, by + pad);
         };
-        img.onerror = () => reject(new Error("failed to load the screenshot for annotation"));
-        img.src = dataUrl;
+        for (const b of boxes) {
+            const x = b.rect.left * scale, y = b.rect.top * scale;
+            const w = b.rect.width * scale, h = b.rect.height * scale;
+            const boxRect: Rect = { left: x, top: y, width: w, height: h };
+
+            // A `float` label picks its spot from the pixels BEFORE this box's stroke
+            // lands, so the stroke doesn't bias the variance around the box edge. Only
+            // when opted in (small crops) — a big render keeps the simple fixed tab so
+            // an escape-leader can't span the whole image.
+            let placed: { spot: LabelSpot; bw: number; text: string } | null = null;
+            if (b.float && !b.corners && b.badge == null && b.label) {
+                const bw = Math.ceil(ctx.measureText(b.label).width) + pad * 2;
+                const spot = pickLabelSpot(
+                    boxRect,
+                    { left: 0, top: 0, width: bw, height: bh },
+                    { left: 0, top: 0, width: cv.width, height: cv.height },
+                    r => regionBusyness(ctx, r),
+                    Math.max(3, Math.round(4 * scale)),
+                    true,   // hug-only: never a corner + leader (misleads the VLM verify)
+                );
+                placed = { spot, bw, text: b.label };
+            }
+
+            strokeCased(ctx, () => ctx.strokeRect(x, y, w, h), Math.max(1, Math.round(2 * scale)), b.color, scale);
+
+            if (b.corners) {
+                tab(b.corners[0], b.color, x, y, "above");            // top-left
+                tab(b.corners[1], b.color, x + w, y + h, "belowRight"); // bottom-right
+            } else if (b.badge != null) {
+                tab(String(b.badge), b.color, x, y, "above");         // pinned to its box
+            } else if (placed) {
+                // hug-only: the label sits beside the box, never a corner + leader.
+                ctx.fillStyle = b.color; ctx.fillRect(placed.spot.left, placed.spot.top, placed.bw, bh);
+                ctx.fillStyle = "#fff"; ctx.fillText(placed.text, placed.spot.left + pad, placed.spot.top + pad);
+            } else if (b.label) {
+                tab(b.label, b.color, x, y, "above");                 // fixed tab (default)
+            }
+        }
+        return raster.encode(cv);
     });
 }
 
@@ -501,19 +485,13 @@ export type Box = { left: number; top: number; right: number; bottom: number };
  * image (which now == 0–size), 0–100 percent, 0–1024 tokens. Map per-axis by
  * `coord/range`, independent of the viewport's aspect ratio.
  */
-export function resizeToSquare(dataUrl: string, size = 1000): Promise<string> {
-    return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-            const cv = document.createElement("canvas");
-            cv.width = size; cv.height = size;
-            const ctx = cv.getContext("2d");
-            if (!ctx) return reject(new Error("no 2d canvas context for grounding resize"));
-            ctx.drawImage(img, 0, 0, size, size);
-            resolve(cv.toDataURL("image/png"));
-        };
-        img.onerror = () => reject(new Error("failed to load screenshot for grounding"));
-        img.src = dataUrl;
+export function resizeToSquare(dataUrl: string, size = 1000, raster: Raster = pageRaster): Promise<string> {
+    return withDecoded(raster, dataUrl, "failed to load screenshot for grounding", (img) => {
+        const cv = raster.canvas(size, size);
+        const ctx = cv.getContext("2d");
+        if (!ctx) throw new Error("no 2d canvas context for grounding resize");
+        ctx.drawImage(img.source, 0, 0, size, size);
+        return raster.encode(cv);
     });
 }
 
@@ -526,21 +504,15 @@ export function resizeToSquare(dataUrl: string, size = 1000): Promise<string> {
  * convention (the model sees size×size); projectFromSquare inverts the uniform scale
  * and the padding. The pad colour is a neutral dark so it reads as "no content".
  */
-export function letterboxToSquare(dataUrl: string, size = 1000, pad = "#141414"): Promise<string> {
-    return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-            const cv = document.createElement("canvas");
-            cv.width = size; cv.height = size;
-            const ctx = cv.getContext("2d");
-            if (!ctx) return reject(new Error("no 2d canvas context for grounding letterbox"));
-            ctx.fillStyle = pad; ctx.fillRect(0, 0, size, size);
-            const s = size / Math.max(img.naturalWidth, img.naturalHeight);
-            ctx.drawImage(img, 0, 0, img.naturalWidth * s, img.naturalHeight * s);
-            resolve(cv.toDataURL("image/png"));
-        };
-        img.onerror = () => reject(new Error("failed to load screenshot for grounding"));
-        img.src = dataUrl;
+export function letterboxToSquare(dataUrl: string, size = 1000, pad = "#141414", raster: Raster = pageRaster): Promise<string> {
+    return withDecoded(raster, dataUrl, "failed to load screenshot for grounding", (img) => {
+        const cv = raster.canvas(size, size);
+        const ctx = cv.getContext("2d");
+        if (!ctx) throw new Error("no 2d canvas context for grounding letterbox");
+        ctx.fillStyle = pad; ctx.fillRect(0, 0, size, size);
+        const s = size / Math.max(img.width, img.height);
+        ctx.drawImage(img.source, 0, 0, img.width * s, img.height * s);
+        return raster.encode(cv);
     });
 }
 
@@ -586,36 +558,30 @@ export function viewportBox(coords: number[], range: number, w: number, h: numbe
  * line gets a dark casing so it survives even a busy multi-colour page. Never touches
  * the live page.
  */
-export function drawGrid(dataUrl: string, cols: number, rows: number, scale: number, avoidHues: number[] = []): Promise<string> {
-    return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-            const cv = document.createElement("canvas");
-            cv.width = img.naturalWidth; cv.height = img.naturalHeight;
-            const ctx = cv.getContext("2d", { willReadFrequently: true });   // sampleHues reads back to pick the line colour
-            if (!ctx) return reject(new Error("no 2d canvas context for grid"));
-            ctx.drawImage(img, 0, 0);
-            const color = pickOverlayHex(sampleHues(ctx, cv.width, cv.height), avoidHues);
-            const cw = cv.width / cols, ch = cv.height / rows;
-            const fs = Math.round(13 * scale), pad = Math.round(3 * scale);
-            const lw = Math.max(1, Math.round(1.5 * scale));
-            const lines = () => {
-                for (let c = 1; c < cols; c++) { ctx.beginPath(); ctx.moveTo(c * cw, 0); ctx.lineTo(c * cw, cv.height); ctx.stroke(); }
-                for (let r = 1; r < rows; r++) { ctx.beginPath(); ctx.moveTo(0, r * ch); ctx.lineTo(cv.width, r * ch); ctx.stroke(); }
-            };
-            strokeCased(ctx, lines, lw, color, scale);
-            ctx.font = `bold ${fs}px sans-serif`; ctx.textBaseline = "top";
-            for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-                const n = String(r * cols + c + 1);
-                const bw = Math.ceil(ctx.measureText(n).width) + pad * 2, bh = fs + pad * 2;
-                const x = c * cw + Math.round(2 * scale), y = r * ch + Math.round(2 * scale);
-                ctx.fillStyle = color; ctx.fillRect(x, y, bw, bh);
-                ctx.fillStyle = "#fff"; ctx.fillText(n, x + pad, y + pad);
-            }
-            resolve(cv.toDataURL("image/png"));
+export function drawGrid(dataUrl: string, cols: number, rows: number, scale: number, avoidHues: number[] = [], raster: Raster = pageRaster): Promise<string> {
+    return withDecoded(raster, dataUrl, "failed to load screenshot for grid", (img) => {
+        const cv = raster.canvas(img.width, img.height);
+        const ctx = cv.getContext("2d", { willReadFrequently: true });   // sampleHues reads back to pick the line colour
+        if (!ctx) throw new Error("no 2d canvas context for grid");
+        ctx.drawImage(img.source, 0, 0);
+        const color = pickOverlayHex(sampleHues(ctx, cv.width, cv.height), avoidHues);
+        const cw = cv.width / cols, ch = cv.height / rows;
+        const fs = Math.round(13 * scale), pad = Math.round(3 * scale);
+        const lw = Math.max(1, Math.round(1.5 * scale));
+        const lines = () => {
+            for (let c = 1; c < cols; c++) { ctx.beginPath(); ctx.moveTo(c * cw, 0); ctx.lineTo(c * cw, cv.height); ctx.stroke(); }
+            for (let r = 1; r < rows; r++) { ctx.beginPath(); ctx.moveTo(0, r * ch); ctx.lineTo(cv.width, r * ch); ctx.stroke(); }
         };
-        img.onerror = () => reject(new Error("failed to load screenshot for grid"));
-        img.src = dataUrl;
+        strokeCased(ctx, lines, lw, color, scale);
+        ctx.font = `bold ${fs}px sans-serif`; ctx.textBaseline = "top";
+        for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+            const n = String(r * cols + c + 1);
+            const bw = Math.ceil(ctx.measureText(n).width) + pad * 2, bh = fs + pad * 2;
+            const x = c * cw + Math.round(2 * scale), y = r * ch + Math.round(2 * scale);
+            ctx.fillStyle = color; ctx.fillRect(x, y, bw, bh);
+            ctx.fillStyle = "#fff"; ctx.fillText(n, x + pad, y + pad);
+        }
+        return raster.encode(cv);
     });
 }
 
