@@ -152,11 +152,12 @@ export interface MlConfig {
      *  Declarative (`shadowrootmode=closed`) / native roots still can't be captured, so the tools keep
      *  steering those to visual `locate`/@pt. */
     pierceClosedShadow: boolean;
-    /** experimental: let the agent CLICK "reserved" surfaces — cross-origin iframes and declarative/native
+    /** Let the agent CLICK "reserved" surfaces — cross-origin iframes and declarative/native
      *  closed shadow roots — that no selector or synthetic click can reach, AND run imperative `exec` on
      *  strict-CSP / Trusted-Types pages where main-world eval is blocked — via chrome.debugger (CDP)
-     *  Input.dispatchMouseEvent / Runtime.evaluate (real, trusted, CSP-exempt). Off by default; also needs
-     *  the runtime `debugger` permission (requested when you enable this) and the per-action approval.
+     *  Input.dispatchMouseEvent / Runtime.evaluate (real, trusted, CSP-exempt). On by default since 2026-10-09 (a
+     *  core component: it is also one of the two isolated worlds an approved `exec` reading `ml.current` or a pointer
+     *  can run in); the `debugger` permission is declared at install, and each action still needs its approval.
      *  Attaching flashes Chrome's "is debugging" banner — only for these reserved actions, so the flash marks
      *  the risk. Specs: docs/spec/CDP_CLICK.md, docs/spec/EXEC_STRICT_CSP.md. */
     cdp: boolean;
@@ -289,7 +290,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     valueStoreBudgetMB: 1024,           // capped at half the browser's quota for the extension
     protoStream: "auto",                // ask every time: one header, and a backend that won't serve it answers as it always did
     pierceClosedShadow: true,
-    cdp: false,
+    cdp: true,
     pageApprovalDomains: [],
     groundingEnabled: false,
     groundingModel: "",

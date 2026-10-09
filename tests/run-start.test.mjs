@@ -437,7 +437,9 @@ test("an approved exec is sent the values of the pointers its script names, and 
     const scripts = ["window.a = 1; return 'FIRST OUTPUT'", "window.b = 1; return @tool:exec.length + ml.dereference(String.fromCharCode(64) + 'tool:exec').length"];
     let n = 0, bg;
     bg = loadBackground({
-        config: { ...config, autoApproveReadonly: false }, openTabs: [SITE], local: SITE_APPROVED,
+        // No isolated world (CDP off, no user scripts): the row where a pointer-naming exec on an approved page runs in
+        // the main world, sent its values. With CDP on, the default since 2026-10-09, it would run isolated instead.
+        config: { ...config, autoApproveReadonly: false, cdp: false }, openTabs: [SITE], local: SITE_APPROVED,
         onFetch: (call) => {
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
             const js = scripts[n++];

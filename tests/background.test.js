@@ -670,7 +670,8 @@ test("GET_CONFIG returns the model/ocrModel/apiFormat and withholds the URL and 
         autoApproveSameOriginAuth: false, autoApproveSelfSource: true,
         // A run the page assembles decides from it whether its prompt offers `ml.current`. On when never stored.
         selfIntrospection: true,
-        pierceClosedShadow: true, cdp: false,
+        // On since 2026-10-09: a core component. Never stored here, so this is the default.
+        pierceClosedShadow: true, cdp: true,
         groundingEnabled: false, groundingModel: "", groundingRange: 1000, debugMode: "off",
         // Computed per-origin: no sender.tab in this harness call → not on the whitelist → false. The raw
         // pageApprovalDomains list is deliberately NOT exposed (only this boolean for the caller's origin).
@@ -678,6 +679,16 @@ test("GET_CONFIG returns the model/ocrModel/apiFormat and withholds the URL and 
     });
     // The page must never see the server URL, API key, or the raw approval-domain list (security invariants).
     assert.ok(!("chatUrl" in res.data) && !("apiKey" in res.data) && !("pageApprovalDomains" in res.data), Object.keys(res.data).join());
+});
+
+test("UPGRADE: an install that never touched the debugger setting gets it on; one that turned it off keeps it off", async () => {
+    // Settings stores a key only when the person changes it (setField), so an install from before the default changed
+    // has no `cdp` at all, and one that switched it off has `cdp: false`. The first reads the new default; the second
+    // was a choice and stays.
+    const untouched = loadBackground({ config: baseConfig() });
+    assert.equal((await untouched.send({ type: "GET_CONFIG", payload: {} })).data.cdp, true);
+    const turnedOff = loadBackground({ config: baseConfig({ cdp: false }) });
+    assert.equal((await turnedOff.send({ type: "GET_CONFIG", payload: {} })).data.cdp, false);
 });
 
 test("CDP_CLICK dispatches a trusted press+release via the debugger; the attachment is REUSED across clicks", async () => {

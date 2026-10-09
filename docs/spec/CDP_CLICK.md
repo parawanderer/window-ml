@@ -59,7 +59,7 @@ synthetic; **reserved → CDP** (attach → dispatch → detach around that one 
 (to avoid the scary always-on perm), but **Chrome forbids `debugger` as an optional permission** —
 `chrome.permissions.request(['debugger'])` rejects it: *"Only permissions specified in the manifest may be
 requested."* So there's no per-use grant; the extension declares `debugger` at install (Chrome re-prompts on
-update). The off-by-default **`cdpClick` flag** is the real on/off — the API stays unused until it's on AND
+update). The **`cdpClick` flag** (now the single `cdp` setting, on by default since 2026-10-09) is the real on/off — the API stays unused until it's on AND
 the model hits a reserved surface.
 
 ## Integration
