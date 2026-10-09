@@ -12,7 +12,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { jsonResponse, streamResponse, loadBackground } = require("./helpers");
 const { routeExec, execNames } = await import("../src/sw/exec-routing.ts");
-const { isolatedWrapper } = await import("../src/sw/sw-isolated-exec.ts");
+const { isolatedWrapper, returnLastExpression } = await import("../src/sw/sw-isolated-exec.ts");
 
 const T = { timeout: 10000 };
 const config = { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "default-model", apiFormat: "openai", ocrModel: "", debugMode: "off" };
@@ -332,3 +332,29 @@ test("a CDP world created after the tab moved on is never evaluated in: the exec
     assert.equal(toPage.length, 1, "only the first, plain script reached the page");
     assert.match(results[1], /navigated before it started/);
 });
+
+// --- a script ending on an expression returns its value, as in the page's world ---
+
+// The script a real model ran (qwen3.8:27b, a HUD bench run): statements, a comment, and a last line that is the value.
+const ENDS_ON_EXPRESSION = "const sys = ml.current.messages[0].content;\n// a comment line\nconst lines = sys.split('\\n');\nlines.map((l, i) => i + ': ' + l.slice(0, 60)).join('\\n').slice(0, 3000);";
+
+test("the statement form returns the last top-level expression, and leaves every other script as it came", () => {
+    assert.equal(returnLastExpression("const a = 1;\n// c\na + 1;"), "const a = 1;\n// c\nreturn (a + 1);");
+    assert.equal(returnLastExpression("const a = 1\na, a + 1 // trailing"), "const a = 1\nreturn (a, a + 1); // trailing");
+    assert.equal(returnLastExpression("let x = await f(); x;;"), "let x = await f(); return (x);;", "an empty statement after it is skipped");
+    for (const same of ["const a = 1; return a;", "if (x) { y; }", "for (const a of b) a;", "function f() {}", "", "const a = (", "'use strict'"])
+        assert.equal(returnLastExpression(same), same, JSON.stringify(same));
+});
+
+test("a script ending on an expression returns that value in the user-script world", T, async () => {
+    const { results } = await isoRun([ENDS_ON_EXPRESSION], { us: true });
+    assert.match(results[0], /^0: /, `the joined lines, not (undefined); got ${results[0]}`);
+});
+
+test("a script ending on an expression returns that value in the CDP world", T, async () => {
+    const w = cdpWorld();
+    const { results } = await isoRun([ENDS_ON_EXPRESSION, "const v = @tool:exec;\nconst n = v.length;\n'len=' + n"], { cdp: true, onDebuggerCommand: w.onDebuggerCommand, onBg: (bg) => { w.bg = bg; } });
+    assert.match(results[0], /^0: /, `got ${results[0]}`);
+    assert.match(results[1], /len=\d+/, `got ${results[1]}`);
+});
+
