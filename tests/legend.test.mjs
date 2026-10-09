@@ -5,7 +5,7 @@
 //    match), short + mostly-visible only; boundaries name the actual iframe selector. jsdom, guarded globals.
 import { test, before, after } from "node:test";
 import assert from "node:assert";
-import { formatLegend, regionLegend, clipVisibleText } from "../src/dom/legend.ts";
+import { formatLegend, regionLegend, clipVisibleText, boundaryLine } from "../src/dom/legend.ts";
 import { CLIP_CASES, toWords } from "../tools/legend-cases.mjs";
 const collapseWs = (s) => s.replace(/\s+/g, " ").trim();   // case-preserved, mirrors legend.ts
 
@@ -73,10 +73,10 @@ test("clipVisibleText: a line the crop clips >50% VERTICALLY is dropped (unreada
 // --- formatLegend (pure): grouped lines + suppress-empty --------------------------------------------
 test("formatLegend: grouped lines for each non-empty category", () => {
     const s = formatLegend({
-        controls: [{ name: "«Reveal secret»", selector: "#b" }],
-        media: [{ name: "img «logo»", selector: ".logo" }],
+        controls: [{ name: "Reveal secret", role: "button", selector: "#b" }],
+        media: [{ kind: "img", name: "logo", selector: ".logo" }],
         text: [{ text: "XORG-4242", selector: ".secret" }],
-        boundaries: ["⚠ 1 cross-origin iframe (`#f2`) — no selector reaches inside; locate that selector → click the @pt"],
+        boundaries: [{ kind: "cross-frames", count: 1, selectors: ["#f2"] }],
         moreControls: 0, moreMedia: 0,
     });
     assert.match(s, /DOM in view/);
@@ -93,10 +93,10 @@ test("formatLegend: nothing notable → empty string (suppress-empty)", () => {
 test("formatLegend: a `seen` set dedups the BOUNDARIES line across calls (not controls/text)", () => {
     const seen = new Set();
     const lg = () => ({
-        controls: [{ name: "«Go»", selector: "#g" }],
+        controls: [{ name: "Go", role: "button", selector: "#g" }],
         text: [{ text: "VAL", selector: ".v" }],
         media: [],
-        boundaries: ["1 same-origin iframe (`#f`) — reach inside with `<selector> >>> …`"],
+        boundaries: [{ kind: "same-frames", count: 1, selectors: ["#f"] }],
         moreControls: 0, moreMedia: 0,
     });
     const first = formatLegend(lg(), seen);
@@ -106,12 +106,20 @@ test("formatLegend: a `seen` set dedups the BOUNDARIES line across calls (not co
     assert.match(second, /• controls: «Go» `#g`/, "crop-specific controls/text are NOT deduped");
     assert.match(second, /• text: «VAL» `\.v`/);
     // A genuinely NEW boundary still appears.
-    const third = formatLegend({ ...lg(), boundaries: ["⚠ 1 cross-origin iframe (`#x`) — no selector reaches inside"] }, seen);
+    const third = formatLegend({ ...lg(), boundaries: [{ kind: "cross-frames", count: 1, selectors: ["#x"] }] }, seen);
     assert.match(third, /• boundaries: ⚠ 1 cross-origin iframe \(`#x`\)/);
 });
 
+test("boundaryLine: each kind of boundary reads as the sentence the page used to build, and names at most three frames", () => {
+    assert.equal(boundaryLine({ kind: "cross-frames", count: 1, selectors: ["#f2"] }), "⚠ 1 cross-origin iframe (`#f2`) — no selector reaches inside; locate that selector → click the @pt");
+    assert.equal(boundaryLine({ kind: "cross-frames", count: 5, selectors: ["#a", "#b", "#c"] }), "⚠ 5 cross-origin iframes (`#a`, `#b`, `#c`, …) — no selector reaches inside; locate that selector → click the @pt");
+    assert.equal(boundaryLine({ kind: "same-frames", count: 2, selectors: ["#a", "#b"] }), "2 same-origin iframes (`#a`, `#b`) — reach inside with `<selector> >>> …`");
+    assert.equal(boundaryLine({ kind: "shadow", count: 1, closed: false }), "1 open shadow root — refs use `host >>> …`");
+    assert.equal(boundaryLine({ kind: "shadow", count: 3, closed: true }), "3 shadow roots — refs use `host >>> …`");
+});
+
 test("formatLegend: truncation counts show as …+N", () => {
-    const s = formatLegend({ controls: [{ name: '"a"', selector: "#a" }], media: [], text: [], boundaries: [], moreControls: 3, moreMedia: 0 });
+    const s = formatLegend({ controls: [{ name: "a", role: "button", selector: "#a" }], media: [], text: [], boundaries: [], moreControls: 3, moreMedia: 0 });
     assert.match(s, /…\+3/);
 });
 
@@ -162,7 +170,8 @@ test("regionLegend: a cross-origin iframe boundary names its SELECTOR + @pt", ()
     const win = mountDom(`<iframe id="f" src="about:blank"></iframe>`);
     Object.defineProperty(win.document.getElementById("f"), "contentDocument", { get: () => null });   // simulate cross-origin
     const lg = regionLegend(SMALL);
-    const b = lg.boundaries.find(x => /cross-origin iframe/.test(x));
+    assert.deepEqual(lg.boundaries, [{ kind: "cross-frames", count: 1, selectors: ["#f"] }], "the page sends the boundary as data, not a sentence");
+    const b = lg.boundaries.map(boundaryLine).find(x => /cross-origin iframe/.test(x));
     assert.ok(b, "cross-origin boundary present");
     assert.match(b, /#f/, "names the iframe selector (its only appearance)");
     assert.match(b, /@pt/, "tells the model to locate → @pt");

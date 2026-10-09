@@ -35,7 +35,8 @@ debugger by tab id when CDP is on, bounded at 5 s since a tab in the background 
 which refuses a tab that is not showing. The worker never switches tabs to take one. `workerShot` pins it to the top
 frame's document (`webNavigation.getFrame` before and after, and any commit on the tab during it, refuse it) and masks
 the extension's own UI out in the worker, changing nothing on the page (`docs/dev/sidebar.md`, "Keeping the extension
-out of a shot").
+out of a shot"). The worker's vision host asks the page for layout only, through one checked protocol
+(`docs/dev/agent-tools.md`, "The worker's vision host").
 
 **The shell is not the page, but the browser cannot tell them apart.** The content-script shell's messages arrive with
 the page's tab and origin, so anything it sends under a page-startable type is refused on an unapproved site. It sends

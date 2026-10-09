@@ -133,6 +133,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     let permsHeld = new Set(debuggerPermission ? ["debugger"] : []);
     const permAddedListeners = [];
     const committedListeners = [];   // chrome.webNavigation.onCommitted listeners; fired by bg.commit(tabId, …)
+    const sameDocListeners = { history: [], fragment: [] };   // onHistoryStateUpdated / onReferenceFragmentUpdated; fired by bg.sameDocumentNav
     const committedDocs = new Map();   // tabId → the main-frame documentId last committed, for webNavigation.getFrame
     /** The tab's top-frame document now: the last committed, else an open tab's first (`doc-<tabId>`). */
     const docOf = (tabId) => committedDocs.get(tabId) ?? (openTabs.some((t) => t.id === tabId) ? `doc-${tabId}` : undefined);
@@ -206,6 +207,9 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 onCommitted: { addListener: (fn) => committedListeners.push(fn), removeListener: (fn) => { const i = committedListeners.indexOf(fn); if (i >= 0) committedListeners.splice(i, 1); } },
                 // Like the browser, a live tab always has a top-frame document: the last one committed, else its first.
                 getFrame: async ({ tabId, frameId }) => (frameId === 0 && docOf(tabId) ? { documentId: docOf(tabId), frameId: 0 } : null),
+                // A same-document navigation (pushState, a fragment) keeps the document: fired by bg.sameDocumentNav only.
+                onHistoryStateUpdated: { addListener: (fn) => sameDocListeners.history.push(fn), removeListener: (fn) => { const i = sameDocListeners.history.indexOf(fn); if (i >= 0) sameDocListeners.history.splice(i, 1); } },
+                onReferenceFragmentUpdated: { addListener: (fn) => sameDocListeners.fragment.push(fn), removeListener: (fn) => { const i = sameDocListeners.fragment.indexOf(fn); if (i >= 0) sameDocListeners.fragment.splice(i, 1); } },
             },
             storage: {
                 sync: {
@@ -373,6 +377,11 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         commit: (tabId, { documentId, url = "https://page.test/" }) => {
             committedDocs.set(tabId, documentId);
             for (const fn of [...committedListeners]) fn({ tabId, frameId: 0, documentId, url });
+        },
+        /** A same-document navigation of the tab's top frame, as the browser reports one: `kind` "history" (pushState) or
+         *  "fragment" (a hash change). The document, and its id, stay. */
+        sameDocumentNav: (tabId, { kind = "history", url = "https://page.test/" } = {}) => {
+            for (const fn of [...sameDocListeners[kind]]) fn({ tabId, frameId: 0, documentId: docOf(tabId), url });
         },
         /** Grant a permission the way the browser's prompt does: held, then permissions.onAdded. */
         grantPermission: (name) => { permsHeld.add(name); for (const fn of permAddedListeners) fn({ permissions: [name] }); },

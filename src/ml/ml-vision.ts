@@ -124,6 +124,18 @@ function tooSmall(rect: { width: number; height: number }): void {
 }
 
 /**
+ * Refuse an element whose part inside the viewport is a sliver (or nothing): its CSS size can be fine while the crop of
+ * the capture, which holds only the viewport, would be a few pixels or none.
+ */
+function offScreen(rect: { left: number; top: number; width: number; height: number }, view: { w: number; h: number }): void {
+    const w = Math.min(rect.left + rect.width, view.w) - Math.max(rect.left, 0);
+    const h = Math.min(rect.top + rect.height, view.h) - Math.max(rect.top, 0);
+    if (!(w >= MIN_SHOT_PX && h >= MIN_SHOT_PX)) {
+        throw new Error(`element is off-screen (${w > 0 && h > 0 ? `only ${Math.round(w)}×${Math.round(h)}px of it is in view` : "none of it is in view"}) — scroll it into view first, or target what is on screen.`);
+    }
+}
+
+/**
  * `ml.screenshot` over any host: the viewport, a full-page stitch, an `@pt`/`@box` token's marked crop, or an
  * element's crop (a selector, or the focused element). The host answers where the target is (`geo`), captures, and
  * draws (`raster`); the cropping and marking here are the same whichever host it is.
@@ -187,8 +199,9 @@ export async function shootVia(host: ShotHost, target: ShotTarget, { scroll = tr
     }
     if (!("rect" in t)) throw new Error("ml.screenshot needs a CSS selector, an Element, or nothing.");
     tooSmall(t.rect);
-    const { dpr } = await host.geo.view();
-    return cropDataUrl(await viewport(), t.rect, dpr, host.raster);
+    const view = await host.geo.view();
+    offScreen(t.rect, view);
+    return cropDataUrl(await viewport(), t.rect, view.dpr, host.raster);
 }
 
 /**

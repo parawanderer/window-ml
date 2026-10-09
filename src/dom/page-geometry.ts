@@ -116,7 +116,16 @@ export async function measureElement(el: Element, scroll: boolean, measure: "vie
 }
 
 /** The page's Geometry, plus `nodes`: the live elements behind the marks it handed out (the page's debug side channel). */
-export type PageGeometry = Geometry & { nodes(refs: ElementRef[]): Element[] };
+export type PageGeometry = Omit<Geometry, "stitchBegin" | "stitchTile" | "stitchEnd"> & {
+    nodes(refs: ElementRef[]): Element[];
+    /** Geometry's stitch ops, each for the stitch `id` (the worker's; 0 for the page's own), several open at once. */
+    stitchBegin(id?: number): ReturnType<Geometry["stitchBegin"]>;
+    stitchTile(q: { y: number }, id?: number): ReturnType<Geometry["stitchTile"]>;
+    stitchEnd(id?: number): ReturnType<Geometry["stitchEnd"]>;
+};
+
+/** The most stitches one page geometry keeps open; a new one past it ends the oldest first. */
+const MAX_STITCHES = 4;
 
 /** How many live elements a page geometry remembers for `nodes`; older refs resolve to nothing. */
 const MAX_REFS = 500;
@@ -134,8 +143,26 @@ export function pageGeometry(): PageGeometry {
         if (refs.size > MAX_REFS) { const k = refs.keys().next().value; if (k !== undefined) refs.delete(k); }
         return { ref, id: m.id, role: m.role, name: m.name, selector: m.selector, rect: plainRect(m.rect) };
     });
-    let stitch: { total: number; vh: number; startY: number; overlays: { el: HTMLElement; anchor: "top" | "bottom"; vis: string }[] } | null = null;
-    return {
+    type Stitch = { total: number; vh: number; startY: number; overlays: { el: HTMLElement; anchor: "top" | "bottom"; vis: string }[] };
+    // Open stitches by id. Two vision calls may stitch at once (each its own id); one that was never ended (its call was
+    // refused, its worker evicted) stays here, so a later stitch reads an overlay's OWN visibility from it rather than
+    // the "hidden" that stitch left behind.
+    const stitches = new Map<number, Stitch>();
+    /** Restore a stitch's overlays and the scroll it started from, and forget it. */
+    const endStitch = (id: number): void => {
+        const s = stitches.get(id);
+        stitches.delete(id);
+        if (!s) return;
+        // Restore every overlay's visibility (even on a capture throw) and the scroll position.
+        for (const o of s.overlays) o.el.style.visibility = o.vis;
+        window.scrollTo(0, s.startY);
+    };
+    /** An overlay's own visibility: what an open stitch recorded for it, else what it has now. */
+    const ownVisibility = (el: HTMLElement): string => {
+        for (const s of stitches.values()) { const o = s.overlays.find((x) => x.el === el); if (o) return o.vis; }
+        return el.style.visibility;
+    };
+    const geo: PageGeometry = {
         view: async () => ({ w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio || 1, sx: window.scrollX, sy: window.scrollY }),
         target: async (q: TargetQuery): Promise<TargetReply> => {
             if ("token" in q) {
@@ -197,7 +224,10 @@ export function pageGeometry(): PageGeometry {
         // a bottom footer on the last), hiding it on the rest so the content behind shows
         // through. Skipped for a single-viewport page (nothing can repeat). getComputedStyle
         // over the DOM is a one-time cost, negligible beside the paced 600ms/tile captures.
-        stitchBegin: async () => {
+        stitchBegin: async (id = 0) => {
+            // A reused id is a stitch that never ended: end it first. Past the cap, the oldest goes the same way.
+            endStitch(id);
+            while (stitches.size >= MAX_STITCHES) endStitch(stitches.keys().next().value as number);
             const dpr = window.devicePixelRatio || 1;
             const vh = window.innerHeight;
             // Cap at ~8 screens so the image stays sane
@@ -212,14 +242,14 @@ export function pageGeometry(): PageGeometry {
                 window.scrollTo(0, Math.min(vh, Math.max(1, total - vh))); await paint();
                 cands.forEach((el, i) => {
                     const c = classifyOverlay(r0[i], el.getBoundingClientRect(), vh);
-                    if (c.pinned) overlays.push({ el, anchor: c.anchor, vis: el.style.visibility });
+                    if (c.pinned) overlays.push({ el, anchor: c.anchor, vis: ownVisibility(el) });
                 });
             }
-            stitch = { total, vh, startY, overlays };
+            stitches.set(id, { total, vh, startY, overlays });
             return { total, vh, startY, dpr };
         },
-        stitchTile: async ({ y }) => {
-            const s = stitch;
+        stitchTile: async ({ y }, id = 0) => {
+            const s = stitches.get(id);
             if (!s) throw new Error("stitchTile before stitchBegin");
             window.scrollTo(0, y);
             // Wait for the browser to actually paint the new scroll position
@@ -237,19 +267,13 @@ export function pageGeometry(): PageGeometry {
             for (const o of s.overlays) o.el.style.visibility = (o.anchor === "top" ? y === 0 : isLast) ? o.vis : "hidden";
             return { actualY, isLast };
         },
-        stitchEnd: async () => {
-            const s = stitch;
-            stitch = null;
-            if (!s) return;
-            // Restore every overlay's visibility (even on a capture throw) and the scroll position.
-            for (const o of s.overlays) o.el.style.visibility = o.vis;
-            window.scrollTo(0, s.startY);
-        },
+        stitchEnd: async (id = 0) => endStitch(id),
         nodes: (list) => list.flatMap((r) => {
             if (typeof r === "number") { const el = refs.get(r); return el ? [el] : []; }
             try { const el = queryAll(r.selector)[r.index]; return el ? [el] : []; } catch { return []; }
         }),
     };
+    return geo;
 }
 
 /**
@@ -286,4 +310,43 @@ export function pageVisionHost(ml: MlApi, memory: VisionMemory | null = null): V
         memory,
         elements: (list) => geo.nodes(list),
     };
+}
+
+/** A geometry question as it crosses from the worker (worker-vision-host.ts): the op, its arguments, the worker's
+ *  sequence number for the call, and for a stitch op the stitch it belongs to. */
+export type GeometryRequest = { seq: number; op: string; stitch?: number } & Record<string, unknown>;
+
+/** The page's answer to one geometry question: the op's reply with the request's `seq` (and `stitch`) echoed, or
+ *  `error` when the op threw (its message stays here: the worker refuses it with its own sentence). */
+export type GeometryAnswer = { seq: number; stitch?: number; reply?: unknown; error?: true };
+
+/**
+ * Answer one geometry question from the worker with this page's `Geometry`. Each op is called with the arguments that
+ * op takes, read from the request by name, so nothing else in the request reaches it. An op the interface does not have
+ * (`nodes`, the page-only debug channel, included) is not answered.
+ * @param geo the run's page geometry (one per run, so a stitch's state and the marks' refs carry between questions)
+ * @param req the question
+ * @returns the answer, or null for an unknown op
+ */
+export async function answerGeometry(geo: PageGeometry, req: GeometryRequest): Promise<GeometryAnswer | null> {
+    const q = req as Record<string, any>;
+    const stitchId = Number.isSafeInteger(q.stitch) ? q.stitch as number : 0;
+    const ops: Record<string, () => Promise<unknown>> = {
+        view: () => geo.view(),
+        target: () => geo.target("token" in q ? { token: String(q.token) } : "focus" in q ? { focus: true, scroll: q.scroll } : { selector: String(q.selector), index: q.index, scroll: q.scroll, measure: q.measure }),
+        marks: () => geo.marks({ filter: q.filter, box: q.box, scoped: !!q.scoped, max: q.max, badge: q.badge }),
+        snap: () => geo.snap({ box: q.box, cx: q.cx, cy: q.cy, filter: q.filter }),
+        cell: () => geo.cell({ box: q.box, filter: q.filter }),
+        mint: () => geo.mint("box" in q ? { box: q.box } : { pt: q.pt }),
+        legend: () => geo.legend({ box: q.box }),
+        crossesText: () => geo.crossesText({ box: q.box }),
+        focus: () => geo.focus(),
+        stitchBegin: () => geo.stitchBegin(stitchId),
+        stitchTile: () => geo.stitchTile({ y: q.y }, stitchId),
+        stitchEnd: () => geo.stitchEnd(stitchId),
+    };
+    if (typeof req.op !== "string" || !Object.prototype.hasOwnProperty.call(ops, req.op)) return null;
+    const echo = { seq: req.seq, ...(typeof req.stitch === "number" ? { stitch: req.stitch } : {}) };
+    try { return { ...echo, reply: await ops[req.op]() }; }
+    catch { return { ...echo, error: true }; }
 }

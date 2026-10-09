@@ -217,6 +217,9 @@ export const MIN_SHOT_PX = 4;
 // page-world consumers (builtin-tools) keep importing it from util.
 export { VISION_NUM_CTX } from "./contract/contract-render";
 
+/** The sentence for a crop that misses the screenshot: its target is off the screen. */
+export const OFF_CAPTURE = "the target is outside the screenshot (off-screen), so there is nothing to crop. Scroll it into view, or locate it again.";
+
 /**
  * Crop a full-viewport PNG data URL down to an element's rect. Runs page-side
  * because a data: image doesn't taint the canvas (the cross-origin-taint gotcha
@@ -234,8 +237,11 @@ export const cropDataUrl = (dataUrl: string, rect: { left: number; top: number; 
     withDecoded(raster, dataUrl, "failed to load the captured screenshot", (img) => {
         const sx = Math.max(0, Math.round(rect.left * dpr));
         const sy = Math.max(0, Math.round(rect.top * dpr));
-        const sw = Math.max(1, Math.min(Math.round(rect.width * dpr), img.width - sx));
-        const sh = Math.max(1, Math.min(Math.round(rect.height * dpr), img.height - sy));
+        const w = Math.min(Math.round(rect.width * dpr), img.width - sx), h = Math.min(Math.round(rect.height * dpr), img.height - sy);
+        // A rect that misses the capture altogether (past an edge, or of no size) has nothing to crop: refused, rather
+        // than floored to a 1x1 image a reader is then asked about.
+        if (!(w >= 1 && h >= 1 && (rect.left + rect.width) * dpr > 0 && (rect.top + rect.height) * dpr > 0)) throw new Error(OFF_CAPTURE);
+        const sw = w, sh = h;
         const canvas = raster.canvas(sw, sh);
         canvas.getContext("2d")!.drawImage(img.source, sx, sy, sw, sh, 0, 0, sw, sh);
         return raster.encode(canvas);

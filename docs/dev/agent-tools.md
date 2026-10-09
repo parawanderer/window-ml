@@ -119,6 +119,26 @@ on `pageVisionHost` (`src/dom/page-geometry.ts`), which answers from the DOM, CA
 before; the seam is what lets a worker host ask the same geometry of the page over a message instead
 (`tests/vision-host.test.mjs` drives the bodies over a fake host with no DOM in the process).
 
+**The worker's vision host** (`workerVisionHost`, `src/sw/worker-vision-host.ts`; built, not yet used by a tool). The
+same bodies, with the capture (`workerShot`), the drawing (`workerRaster`) and the model call (`workerVisionChat`) in
+the worker, and only GEOMETRY asked of the page: `RUN_TOOL_IN_PAGE { runId, geometry: { seq, op, ...args } }` through
+`delegateSend`, pinned to one documentId for the whole call, answered by `answerGeometry` (page-geometry.ts) in
+`envelope.geometry` with `seq` (and a stitch's id) echoed. `checkGeometry` (`src/sw/geometry-check.ts`) rebuilds every
+reply field by field (finite numbers clamped to ±1e5, enums, text cut and control characters folded, selectors and
+`@pt`/`@box` tokens refused rather than cut, list caps, mark ids renumbered by the worker) and refuses the whole reply on
+any malformed part. Page text is held to its field: control and format characters (C0, C1, bidi, zero-width) fold to a
+space in names and refuse a selector, as does a backtick; a role is a role token or `generic`; a legend crosses as data
+(bare names the legend quotes itself, folding « » and ` inside; `LegendBoundary`, phrased by `boundaryLine`) at the
+page host's own caps. A refusal, a 10 s stall, or ANY navigation of the tab's top frame while the call is open (a
+commit, a back-forward restore, pushState, a fragment) is the WHOLE call's (`refusal()`, `onWorkerHost` hands it back
+instead of a half result a body made of it). The run's vision memory is per document, and a call's marks reach it
+only when the call completes. A crop that misses the capture (`cropDataUrl`, `OFF_CAPTURE`) or an element with a
+sliver in view is refused on every host. Stitch ids are the worker's, the page keeps each open stitch by id, and a
+refused stitch is still ended while the document is the call's. The pixel ratio is the capture's width over the page's viewport width; more than 2% from
+what the page reported, the capture's wins and the run log notes `routing`/`dpr-mismatch`. The worker bounds a stitch
+itself (nine tiles, a canvas of at most 65536 device px). Tests: `tests/geometry-check.test.mjs`,
+`tests/worker-vision-host.test.mjs`.
+
 **Agent self-knowledge (`agent_api_docs`).** The agent had none: asked "how do I call you
 from the console?" it answered from pre-training ("try typing `window`…"), because nothing in
 its context named `window.ml` or the extension. Two pieces fix it. `SELF_CLAUSE` (prompts.ts,

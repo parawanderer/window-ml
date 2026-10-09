@@ -15,6 +15,8 @@ import { runChat } from "./worker-tools";
 import { maskShot } from "./shot-mask";
 import { workerRaster } from "../raster";
 import type { ShotRects } from "../sidebar/shell-shot";
+import type { VisionMemory } from "../contract/contract-render";
+import { defineState } from "../state-registry";
 
 /**
  * How long a debugger screenshot may take before the own-tab capture is tried instead. A shot of a showing tab, attach
@@ -76,7 +78,7 @@ function sized(dataUrl: string): Required<Shot> {
 }
 
 /** The tab's top-frame document now, by the browser's answer (null when it gives none). */
-async function topDocument(tabId: number): Promise<string | null> {
+export async function topDocument(tabId: number): Promise<string | null> {
     const f = await Promise.resolve(chrome.webNavigation?.getFrame?.({ tabId, frameId: 0 })).catch(() => null) as { documentId?: string } | null;
     return typeof f?.documentId === "string" ? f.documentId : null;
 }
@@ -110,13 +112,16 @@ async function askRects(tabId: number, documentId: string, ms: number): Promise<
  * any extension frame sit, before and after the capture, and the union of both is painted opaque in the worker. Pinned
  * to the top frame's document: a commit during the shot, or a different document after it, refuses the shot.
  * @param tabId the run's tab
- * @param opts `rectsMs`: the bound on each of the shell's answers ({@link SHOT_RECTS_MS}); `cdpTimeoutMs` as {@link captureRunTab}
+ * @param opts `rectsMs`: the bound on each of the shell's answers ({@link SHOT_RECTS_MS}); `cdpTimeoutMs` as
+ *   {@link captureRunTab}; `documentId`: the document the shot must be of (refused when the tab holds another)
  * @returns the masked capture
  * @throws when the document changed, the shell did not answer in time or unreadably, or the mask covers most of the shot
  */
-export async function workerShot(tabId: number, opts: { rectsMs?: number; cdpTimeoutMs?: number } = {}): Promise<Required<Shot>> {
+export async function workerShot(tabId: number, opts: { rectsMs?: number; cdpTimeoutMs?: number; documentId?: string } = {}): Promise<Required<Shot>> {
     const doc = await topDocument(tabId);
     if (!doc) throw new Error("Can't screenshot this tab: the browser does not say which page it holds.");
+    // A shot asked for one document (a vision call whose geometry came from it) is of that document or of nothing.
+    if (opts.documentId !== undefined && doc !== opts.documentId) throw new Error(NAVIGATED);
     let moved = false;
     const onCommitted = (d: { tabId: number; frameId: number }): void => { if (d.tabId === tabId && d.frameId === 0) moved = true; };
     chrome.webNavigation.onCommitted.addListener(onCommitted);
@@ -146,3 +151,31 @@ export async function workerShot(tabId: number, opts: { rectsMs?: number; cdpTim
 export function workerVisionChat(runId: string, prompt: string, o: { images: string[]; model: string | null; maxTokens: number | null; numCtx: number | null }): Promise<string> {
     return runChat(runId, oneShotRequest(prompt, { images: o.images, model: o.model, maxTokens: o.maxTokens, numCtx: o.numCtx, session: hintSession(runId) }));
 }
+
+/** Each run's vision memory in the worker, for the one document it is about: the spots look and locate already showed
+ *  its driver there, and the boundary notes already appended. A new document starts it empty (what page A showed must
+ *  not suppress page B's feedback). Worker memory only, so an eviction forgets it and a repeated crop or note is shown
+ *  again. */
+const memories = new Map<string, { documentId: string; memory: VisionMemory }>();   // see the defineState below
+
+defineState({
+    id: "run.vision", scope: "run", realm: "worker", audience: "human", lostOn: ["worker-eviction", "navigation"], heldOnly: true,
+    describe: "The spots look and locate already showed the model on the run's current page, and the iframe and shadow-root notes already given there, so neither is repeated.",
+    read: ({ runId }) => {
+        const m = runId ? memories.get(runId)?.memory : undefined;
+        return m ? { seen: m.seen.map((p) => ({ x: p.x, y: p.y })), boundariesSeen: [...(m.boundariesSeen ?? [])] } : undefined;
+    },
+});
+
+/** A run's vision memory in the worker for `documentId`, made empty on first use and whenever the document changes. */
+export function visionMemoryFor(runId: string, documentId: string): VisionMemory {
+    let m = memories.get(runId);
+    if (!m || m.documentId !== documentId) { m = { documentId, memory: { seen: [], boundariesSeen: new Set() } }; memories.set(runId, m); }
+    return m.memory;
+}
+
+/** Forget a run's vision memory, when its worker tools are dropped. */
+export function dropVisionMemory(runId: string): void { memories.delete(runId); }
+
+/** Forget every run's vision memory: what an eviction does (the eviction test hook). */
+export function dropAllVisionMemory(): void { memories.clear(); }

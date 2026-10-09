@@ -16,7 +16,8 @@ import { workerRaster } from "./raster";
 import { ensureDebuggerAttached, releaseDebugger, cdpClick, cdpScreenshot, cdpShadowResolve } from "./sw/sw-cdp";   // CDP/debugger layer (strict-CSP exec, trusted click/type, host-grant-free screenshot)
 import { CAPTURE_RETRIES, CAPTURE_RETRY_MS, captureOwnTab, NOT_SHOWING } from "./sw/sw-capture";
 import { buildWorkerTools, workerSpend } from "./sw/worker-tools";
-import { captureRunTab, workerShot, workerVisionChat } from "./sw/worker-vision";   // the worker's vision pieces, test-only until a tool uses them
+import { captureRunTab, workerShot, workerVisionChat, dropAllVisionMemory } from "./sw/worker-vision";   // the worker's vision pieces, test-only until a tool uses them
+import { workerVisionHost, onWorkerHost } from "./sw/worker-vision-host";   // the worker's vision host, test-only until a tool uses it
 import { fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw/sw-fetch";   // outbound fetch layer (ml.fetch, rendered fetch, credentialed Google Sheets CSV)
 import { executeServerTool, serverToolResult } from "./sw/sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw/sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
@@ -88,6 +89,7 @@ startValueSweeps();
     runRebuilds.clear(); runReplayBuffer.clear(); pendingApprovals.clear(); hydratedRuns.clear(); resurrectedRuns.clear(); readoptPageInfo.clear();
     dropAllLocalTools();
     dropAllAnswerMemory();
+    dropAllVisionMemory();
     await hydratePersistedRuns();
 };
 // TEST-ONLY: seed a minimal resumable bgRun for a tab, so a unit test can exercise the "don't wipe a tab that
@@ -117,11 +119,11 @@ startValueSweeps();
 // worker's OffscreenCanvas to the page's canvas pixel for pixel. Nothing in the extension crops in the worker yet.
 (globalThis as unknown as { __mlWorkerCropForTest?: unknown }).__mlWorkerCropForTest = (dataUrl: string, rect: { left: number; top: number; width: number; height: number }, dpr: number) => cropDataUrl(dataUrl, rect, dpr, workerRaster);
 
-// TEST-ONLY (SW realm only): the worker's vision pieces (worker-vision.ts), which no tool calls yet, so
-// tests/worker-vision.test.mjs and tests/e2e/worker-shot.spec.mjs can drive them. `seedRun` gives a run the worker-tool
+// TEST-ONLY (SW realm only): the worker's vision pieces (worker-vision.ts, worker-vision-host.ts), which no tool calls
+// yet, so tests/worker-vision.test.mjs, tests/worker-vision-host.test.mjs and tests/e2e/worker-shot.spec.mjs can drive them. `seedRun` gives a run the worker-tool
 // state its sub-call spend is counted in; `spend` reads it back.
 (globalThis as unknown as { __mlWorkerVisionForTest?: unknown }).__mlWorkerVisionForTest = {
-    captureRunTab, workerShot, workerVisionChat, spend: workerSpend,
+    captureRunTab, workerShot, workerVisionChat, workerVisionHost, onWorkerHost, spend: workerSpend,
     seedRun: (runId: string, tabId: number) => { buildWorkerTools(runId, tabId, () => "", ["fetch_url"]); },
 };
 

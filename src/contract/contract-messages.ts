@@ -278,6 +278,9 @@ export interface PageToolEnvelope {
     answerMedia?: AnswerMedia[];
     /** what an exec of a worker-built run changed in its answer set, for the worker to replay (worker-answer.ts) */
     answerOps?: import("../pointers/answer-set").AnswerOp[];
+    /** the page's answer to a worker vision host's layout question (`geometry`): the op's reply with the request's
+     *  `seq` (and `stitch`) echoed, or `error`. The page's word, which the worker rebuilds (geometry-check.ts). */
+    geometry?: import("../dom/page-geometry").GeometryAnswer;
     /** a selector the worker's `answer` tool asked the page to resolve (`answerSelect`), without its nodes */
     answerSelection?: { count: number; preview?: string; media?: AnswerMedia[] };
     /** screenshot data-URL (inline vision — reserved for the parity work) */
