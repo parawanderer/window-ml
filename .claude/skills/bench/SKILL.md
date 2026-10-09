@@ -169,13 +169,15 @@ deterministic). `apply()`'s `backend.model` overrides the model per cell.
 ## What it writes
 
 **Everything the page shows is also a file**, rendered from the same data, and the sweep's last lines in the terminal
-list them. A model driving the bench reads these; it never needs the page.
+list them. A model driving the bench reads these; it never needs the page. Why, and the rules a new card or file follows (append-only
+logs, who and when on every edit): [docs/dev/bench-design.md](../../../docs/dev/bench-design.md).
 
 | On the page | In the sweep directory | From a terminal |
 | --- | --- | --- |
 | Results table | `report.md` (and `rows.json`) | read it |
 | Answers, side by side | `summary.md` (`summary-<task>.md` with several interviews) | read it |
 | "mark wrong" and its checks | `marks.jsonl` (append-only; who and when on each); each answer's checks in `summary.md` | add a mark: `node tests/e2e/bench/mark.mjs <sweep dir> --model <who> --turn <n> --quote "<line>" [--note "<why>"] --by "<who you are>"`; `--list` shows them. The next run of that model is checked for it. |
+| Spec: which spec version ran, who started the sweep, the diff against the sweep before | `spec.md`; the log of every sweep, `sweeps.jsonl` (append-only) | read it. Set `BENCH_BY="<who you are>"` when you start a sweep, so it says who did. |
 | Timeline | `timeline.md`: each run's start, end and busy time on one clock, which runs overlapped and for how long, then every span (model calls with their phases, tool steps, model loads, sub-calls) | read it |
 | all of it | `page.json`: the exact state `report.html` renders | `jq` it |
 

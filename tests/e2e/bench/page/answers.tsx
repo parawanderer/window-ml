@@ -1,5 +1,5 @@
 // answers.tsx — an interview's answers side by side (turns as rows, runs as columns), and the dialog a person marks a
-// wrong line in. A mark is POSTed to the dashboard, stored in the sweep's marks.json, and checked on every later run of
+// wrong line in. A mark is POSTed to the dashboard, appended to the sweep's marks.jsonl, and checked on every later run of
 // that model at that turn (interview.mjs `checkMarks`); the checks come back on the run as `checks`.
 
 import { useState, useRef } from "preact/hooks";

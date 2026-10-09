@@ -87,7 +87,9 @@ as in AGENTS.md — they are all under `src/`.
   transport, not rendering** (the files are rewritten on every event; nothing renders them twice). With `--serve` the
   page is also **editable live**: the server watches its sources (`pageSources()`), rebuilds on a change and sends
   `reload` over the stream (or `build-error`, keeping the last good build), so a person or an agent can change the page
-  while someone watches it. Worked example specs live in `tests/e2e/bench/specs/` with a `README.md` for humans.
+  while someone watches it. The rules the page and its files follow (the files are the truth and the page one view,
+  append-only logs, who and when on every edit, the spec each sweep ran): [bench-design.md](bench-design.md).
+  Worked example specs live in `tests/e2e/bench/specs/` with a `README.md` for humans.
   **CI runs it as its own `bench` job**
   (`npm run bench:calibrate` → build, smoke sweep, `check-calibration.mjs`), deliberately separate from
   `test`/`e2e` so a broken INSTRUMENT names itself instead of reading as a broken extension. Artifacts land per RUN under

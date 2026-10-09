@@ -28,6 +28,22 @@ export interface RunState {
     checks?: { id: string; turn: number; quote: string; note: string; by: string; at: string | null; here: boolean; still: boolean | null }[];
 }
 
+/** One sweep's record, as sweeps.mjs keeps it (without the spec's text). */
+export interface SweepRecord { at: string; by: string; specHash: string; fingerprint: string; dirty: boolean; spec: string }
+
+/** Which spec this sweep ran and what changed since the sweep before (sweeps.mjs `specProvenance`). */
+export interface SpecState extends SweepRecord {
+    source: string;
+    sweeps: number;
+    previous: SweepRecord | null;
+    /** null on the first sweep */
+    changed: boolean | null;
+    diff: ({ kind: "same"; text: string; a: number; b: number } | { kind: "del"; text: string; a: number } | { kind: "add"; text: string; b: number } | { kind: "gap"; skipped: number })[] | null;
+    tooBig: boolean;
+    stat: { added: number; removed: number } | null;
+    history: SweepRecord[];
+}
+
 export interface BenchState {
     name: string;
     description?: string;
@@ -43,6 +59,7 @@ export interface BenchState {
     /** the question each turn of each interview asked, by task id */
     interviews?: Record<string, string[]>;
     skipped?: { model: string; why: string }[];
+    spec?: SpecState | null;
     /** each run's events (the resource panel's derivation), by its place in `runs`; cached runs have none */
     timeline?: { runs: { index: number; events: ResourceEvent[] }[]; now: number } | null;
     /** where run paths are served from: "/artifacts/" live, "" in a saved report */

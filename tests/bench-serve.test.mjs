@@ -24,6 +24,8 @@ async function fixture() {
     return { base, sweep };
 }
 
+// --- serving files from the sweep, and nothing outside it ---
+
 test("serves an artifact inside the sweep, and 404s one that is not written yet", async () => {
     const { sweep } = await fixture();
     const d = await startDashboard({ artifactRoot: sweep });
@@ -57,6 +59,8 @@ test("refuses to escape the sweep directory, including through encoded dots", as
         }
     } finally { await d.stop(); }
 });
+
+// --- the page itself ---
 
 test("the page is self-contained — no CDN and no external file; its script is bundled from source in memory", async () => {
     const { sweep } = await fixture();

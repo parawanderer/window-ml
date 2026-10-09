@@ -13,6 +13,7 @@ import { Answers } from "./answers";
 import { SweepTimeline } from "./timeline";
 import { Flight, Stats, Results, Runs } from "./runs";
 import { Viewer } from "./viewer";
+import { SpecCard } from "./spec";
 
 declare global { interface Window { __BENCH_STATE__?: BenchState } }
 
@@ -63,6 +64,7 @@ function Head({ s, disconnected }: { s: BenchState; disconnected: boolean }) {
                 {failed ? <span class="badge bad">{failed} failed</span> : null}
                 {cached ? <span class="badge">{cached} cached</span> : null}
                 {s.finished ? <span class="badge ok">done</span> : <span class="badge">{s.jobs} job{s.jobs > 1 ? "s" : ""}</span>}
+                {s.spec?.changed ? <a class="badge warn" href="#spec" title="the spec differs from the sweep before: see the Spec card">spec changed</a> : null}
                 {s.dirty ? <span class="badge warn" title="uncommitted changes: these numbers are not reproducible from a commit">dirty tree</span> : null}
                 {disconnected ? <span class="badge bad">disconnected</span> : null}
             </div>
@@ -124,6 +126,7 @@ function App() {
                 <SweepTimeline s={s} />
                 <Results s={s} />
                 <Runs s={s} base={base} />
+                <SpecCard s={s} />
             </main>
             <Viewer s={s} base={base} live={!baked} />
         </>

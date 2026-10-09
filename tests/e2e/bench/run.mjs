@@ -42,7 +42,8 @@ import { expandCells, cellKey, cellPath, comboLabel, buildGroups, parseSelector,
 import { writeReport, mdSink, terminalSink } from "./sinks.mjs";
 import { startDashboard, staticPage } from "./serve.mjs";
 import { pageSources } from "./page/bundle.mjs";
-import { addMark, readMarks } from "./mark.mjs";
+import { addMark, readMarks, defaultBy } from "./mark.mjs";
+import { recordSweep, specProvenance, specText } from "./sweeps.mjs";
 import { timelineText } from "./timeline-text.mjs";
 import { watch as watchFs } from "node:fs";
 // The sweep's timeline: each run's events as the resource panel derives them; the page draws them with its lane.
@@ -360,6 +361,10 @@ const main = async () => {
     const backend = await resolveBackendFromEnv();
     const sweepDir = path.join(ARTROOT, slug(spec.name));
     await mkdir(sweepDir, { recursive: true });
+    // Which spec this sweep ran and who started it, appended to the sweep's log; the page's Spec card, spec.md and
+    // page.json show it beside the diff against the sweep before (sweeps.mjs).
+    const specRel = path.relative(ROOT, path.resolve(args.specPath));
+    const provenance = specProvenance(await recordSweep(sweepDir, { specPath: specRel, source: await readFile(args.specPath, "utf8"), fingerprint, dirty, by: defaultBy() }));
 
     const ctx = {
         spec, fingerprint, sweepDir, backend, buildDirs, cache: args.cache,
@@ -435,7 +440,7 @@ const main = async () => {
     const push = () => dash?.update({
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
         runs: runsState, rows: aggregateRows(cells, results),
-        started, finished: null, jobs: args.jobs, dirty, interviews, skipped, timeline: sweepTimeline(),
+        started, finished: null, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(),
     });
     ctx.liveOf = (i) => runsState[i].live;
     ctx.report = (i, state, info) => {
@@ -521,7 +526,7 @@ const main = async () => {
     // reading the page see the same thing and cannot drift apart.
     const pageState = {
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
-        runs, rows, started, finished, jobs: args.jobs, dirty, fingerprint, pdf: args.pdf, interviews, skipped,
+        runs, rows, started, finished, jobs: args.jobs, dirty, fingerprint, pdf: args.pdf, interviews, skipped, spec: provenance,
         timeline: (ganttAt = 0, sweepTimeline()),
     };
     // report.html — the live page with the final state baked in. Written ALWAYS, not only with --serve:
@@ -531,9 +536,11 @@ const main = async () => {
     await writeFile(path.join(sweepDir, "page.json"), JSON.stringify(pageState, null, 2));
     const nameOf = (i) => [runs[i].taskId, ...Object.keys(spec.dimensions || {}).map((d) => runs[i].combo[d]), `r${runs[i].repeat}`].join(" · ");
     await writeFile(path.join(sweepDir, "timeline.md"), timelineText(pageState.timeline, nameOf, { cached: runs.filter((r) => r.cached).length }));
+    await writeFile(path.join(sweepDir, "spec.md"), specText(provenance));
     await writeFile(path.join(sweepDir, "rows.json"), JSON.stringify({ fingerprint, dirty, started, finished, rows, runs }, null, 2));
     files.push(
         ["timeline", "timeline.md", "every run on one clock: spans, overlaps, model loads"],
+        ["spec", "spec.md", "which spec version ran, who started the sweep, the diff against the sweep before (log: sweeps.jsonl)"],
         ["page data", "page.json", "everything the page shows, as JSON"],
         ["page", "report.html", "the same, for a person (opens from disk)"],
     );
@@ -541,14 +548,14 @@ const main = async () => {
     console.log(`\n  ${path.relative(ROOT, sweepDir)}/`);
     for (const [what, f, why] of files) console.log(`    ${f.padEnd(22)} ${what}: ${why}`);
     console.log("");
-    // A live watcher holds the process open: without a page to keep current, stop watching marks.json now.
+    // A live watcher holds the process open: without a page to keep current, stop watching marks.jsonl now.
     const unwatchMarks = () => { clearTimeout(marksTimer); marksWatch?.close(); };
     if (!dash) unwatchMarks();
 
     if (dash) {
         dash.update({
             name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
-            runs: runsState, rows, started, finished, jobs: args.jobs, dirty, interviews, skipped, timeline: sweepTimeline(),
+            runs: runsState, rows, started, finished, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(),
         });
         // Held open on purpose: the page IS the result when you ran with --serve, and tearing the server
         // down the instant the last cell lands would blank it exactly when you look.
