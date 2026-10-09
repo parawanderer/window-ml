@@ -207,7 +207,7 @@ test("a script naming a pointer runs in the run's own user-script world: its val
     assert.ok(toPage.every((p) => !p.reads?.length), "the page was sent no pointer value");
     const isoRuns = injected.filter((i) => !/^globalThis\.__mlIsoStarted$/.test(i.js[0].code));
     assert.ok(isoRuns.length >= 1);
-    assert.ok(isoRuns.every((i) => i.worldId === `wml-${hash}` && JSON.stringify(i.target) === JSON.stringify({ tabId: 7, frameIds: [0] })), "the run's world, top frame only");
+    assert.ok(isoRuns.every((i) => i.worldId === `wml-${hash}` && JSON.stringify(i.target) === JSON.stringify({ tabId: 7, documentIds: ["doc-7"] })), "the run's world, in the document it was routed for");
     assert.match(results[1], /FROM THE PAGE/i, "the value the page returned for the first script is what the pointer holds");
     assert.match(results[1], /Ran in an isolated world because it reads pointer values/);
     assert.deepEqual(log.map((r) => [r.kind, r.reason, r.detail?.how]), [["exec-main", "plain", undefined], ["exec-isolated", "pointer", "userScripts"]]);
@@ -314,4 +314,21 @@ test("the CDP world's live-output binding is installed in that world only, and a
     assert.match(results[1], /real/);
     assert.ok(live.some((o) => o.includes("real")), `the line streamed live: ${JSON.stringify(live)}`);
     assert.ok(live.every((o) => !/FORGED/.test(o)), JSON.stringify(live));
+});
+
+test("a CDP world created after the tab moved on is never evaluated in: the exec runs in the routed document or nowhere", T, async () => {
+    const w = cdpWorld();
+    const inner = w.onDebuggerCommand;
+    const { toPage, results } = await isoRun([FIRST, "window.b = 1; return @tool:exec.length"], {
+        cdp: true, onBg: (bg) => { w.bg = bg; },
+        onDebuggerCommand: async (method, params) => {
+            // The tab commits another document while the world is being created, so the world belongs to that one.
+            if (method === "Page.createIsolatedWorld") w.bg.commit(7, { documentId: "doc-next", url: "https://evil.example/" });
+            return inner(method, params);
+        },
+    });
+    assert.ok(w.calls.some(([m]) => m === "Page.createIsolatedWorld"), "positive control: a world was asked for");
+    assert.equal(w.calls.filter(([m, p]) => m === "Runtime.evaluate" && p.contextId === 11).length, 0, "nothing was evaluated in it");
+    assert.equal(toPage.length, 1, "only the first, plain script reached the page");
+    assert.match(results[1], /navigated before it started/);
 });

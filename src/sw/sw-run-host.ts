@@ -94,7 +94,7 @@ function preReadsFor(runId: string, js: string): PreRead[] {
 /** Send a message into a run's tab and wait for the page's answer, the way every delegated tool call is sent: held
  *  while the tab navigates, and watched while it waits, so a discarded tab is rebuilt and a frozen one is bounded
  *  (see above). Also how the worker pushes a run's toolset into a tab (sw-run-start.ts `adoptOnTab`). */
-export const delegateSend = async (tabId: number, msg: unknown): Promise<any> => {
+export const delegateSend = async (tabId: number, msg: unknown, documentId?: string): Promise<any> => {
     // THE RUN'S LOG, not the transcript: a step already shows how long a tool took. What it cannot show is that
     // the wait was the browser rather than the tool — a navigation being committed, a discarded tab rebuilt, a
     // page that stopped answering. Those are the lines someone asking "where did the time go" comes for.
@@ -105,7 +105,10 @@ export const delegateSend = async (tabId: number, msg: unknown): Promise<any> =>
     await navBarrier.whenReady(tabId);
     const waited = Date.now() - held;
     if (waited >= BARRIER_NOTE_MS) note("held", { reason: "navigating", ms: waited });
-    try { return await watchWhileWaiting(chrome.tabs.sendMessage(tabId, msg), () => tabState(tabId)); }
+    // Pinned to a document, a send the tab can no longer deliver there is refused by the browser rather than delivered
+    // to whatever document the tab holds now (an approved exec routed for one page, sw-isolated-exec.ts).
+    const send = () => (documentId ? chrome.tabs.sendMessage(tabId, msg, { documentId }) : chrome.tabs.sendMessage(tabId, msg));
+    try { return await watchWhileWaiting(send(), () => tabState(tabId)); }
     catch (e) {
         if (!(e instanceof PageUnreachable) || e.state !== "asleep") {
             if (e instanceof PageUnreachable) note("unreachable", { level: "error", reason: e.state, ms: e.waitedMs });
@@ -125,7 +128,7 @@ export const delegateSend = async (tabId: number, msg: unknown): Promise<any> =>
         note("reloaded", ok ? {} : { level: "error", reason: "gone" });
         const from = Date.now();
         try {
-            const answer = await watchWhileWaiting(chrome.tabs.sendMessage(tabId, msg), () => tabState(tabId));
+            const answer = await watchWhileWaiting(send(), () => tabState(tabId));
             // The story needs its ending. Without this the log reads "discarded, reloaded" and then stops, and
             // whether the run went on is left to be inferred from what did NOT appear underneath it.
             note("recovered", { ms: Date.now() - from });
@@ -230,7 +233,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     // Every tool send that names a tool goes through here. A run the worker built (sw-run-start.ts) runs its REMOTE tools
     // and the builtins that never read the page itself (sw-local-tools.ts, worker-tools.ts); everything else, and every
     // run a page built, goes to the page as before.
-    const sendTool = async (payload: { runId: string; name: string; args: Record<string, unknown>; stream?: boolean; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; reads?: PreRead[] }, onStream?: (chunk: string, ts?: number) => void): Promise<unknown> => {
+    const sendTool = async (payload: { runId: string; name: string; args: Record<string, unknown>; stream?: boolean; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; reads?: PreRead[] }, onStream?: (chunk: string, ts?: number) => void, documentId?: string): Promise<unknown> => {
         // A worker-built run's REMOTE tool never goes to the page, which has no such tool. If this worker does not hold
         // it (rehydrated after an eviction, or a resumed session), it is rebuilt first.
         const tabUrl = (): string => tabPageUrl.get(tabId) || p.pageUrl || "";
@@ -243,7 +246,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 return { result: `Error: the server tool "${payload.name}" is not available any more (the server no longer lists it).` };
             return delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload });
         }
-        return (await runLocalTool(payload, onStream)) ?? delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload });
+        return (await runLocalTool(payload, onStream)) ?? delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload }, documentId);
     };
     const abortCtl = new AbortController();   // CANCEL_RUN aborts this → the loop resolves { cancelled }
     // Set once this run's page navigates: the page-side caller that normally emits the lifecycle
@@ -450,15 +453,22 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 // Where an approved exec of a run the worker built runs (exec-routing.ts): the page's world, an isolated
                 // world on the same tab (sw-isolated-exec.ts), or nowhere. Decided before any grant is minted on the tab.
                 const js = name === "exec" && p.builtBy === "worker" && typeof (args as { js?: unknown }).js === "string" ? (args as { js: string }).js : undefined;
-                let execNote: string | undefined;
+                let execNote: string | undefined, execDoc: string | undefined;
                 if (js !== undefined) {
-                    const route = routeExec(js, await pageApproved(tabPageUrl.get(tabId) || p.pageUrl || ""), await isolationAvailable(!!(await getConfig()).cdp));
+                    // The document FIRST, then its URL: the call is pinned to that document, so a navigation after this
+                    // read makes the send fail instead of landing on the next page, whatever the URL then says. The URL
+                    // is the browser's, not the run's start page (a worker that restarted has no navigation record).
+                    execDoc = await documentOn(tabId);
+                    const url = (await chrome.tabs.get(tabId).catch(() => null))?.url || tabPageUrl.get(tabId) || "";
+                    const route = routeExec(js, await pageApproved(url), await isolationAvailable(!!(await getConfig()).cdp));
                     recordRunLog(runId, { subsystem: "routing", kind: `exec-${route.where}`, reason: route.reason, detail: { tool: name, ...(route.where === "isolated" ? { how: route.how } : {}) } });
                     if (route.where === "refused") return { result: route.result, renderIn: execCodeIn(js) };
                     if (route.where === "isolated") {
                         const snap = p.selfIntrospection === false ? undefined : contextByRun.get(runId);
+                        // Never unpinned: what it is given is the run's, so with no document to hold it to, it does not run.
+                        if (!execDoc) return { result: "Error: could not tell which page the tab holds now, so this exec was not run. Run it again.", renderIn: execCodeIn(js) };
                         return runIsolatedExec({
-                            tabId, runId, js, how: route.how, reason: route.reason, reads: preReadsFor(runId, js), onStream,
+                            tabId, runId, js, how: route.how, reason: route.reason, reads: preReadsFor(runId, js), onStream, documentId: execDoc,
                             // Made only for a script that names it, as a survey's is (tryReadonly below).
                             ...(snap && execNames(js).current ? { current: async () => withUserWatches(snap({ model: modelNow(), log: eventsForRun(await runLog.all(), runId) })) } : {}),
                         });
@@ -511,7 +521,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                         return r && (sentTo === undefined || r.doc !== sentTo) ? r.info : undefined;
                     };
                     try {
-                        env = await sendTool({ runId, name, args, stream: !!onStream, ...(reads ? { reads } : {}) }, onStream) as Partial<import("../contract").PageToolEnvelope>;
+                        env = await sendTool({ runId, name, args, stream: !!onStream, ...(reads ? { reads } : {}) }, onStream, execDoc) as Partial<import("../contract").PageToolEnvelope>;
                     } catch (e) {
                         const emsg = (e as Error)?.message || String(e);
                         if (!CHANNEL_GONE.test(emsg)) {
