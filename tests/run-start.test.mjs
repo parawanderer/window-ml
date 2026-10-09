@@ -580,11 +580,12 @@ async function toolsRun(calls, { shortcut = "Ctrl+Shift+K" } = {}) {
 }
 
 test("agent_api_docs of a worker-built run runs in the worker, with the live shortcut and config read there", T, async () => {
-    const { toPage, toolResults } = await toolsRun([{ name: "agent_api_docs" }]);
+    const { toPage, toolResults } = await toolsRun([{ name: "agent_api_docs", args: { search: "HUD setup" } }, { name: "agent_api_docs", args: { search: "setup" } }]);
     assert.equal(toPage.filter((p) => p.name === "agent_api_docs").length, 0, "not even a preview of it went to the page");
     const out = toolResults[0] ?? "";
-    assert.match(out, /Keyboard: `Ctrl\+Shift\+K`/, `the shortcut bound now, read from chrome.commands; got ${out.slice(-600)}`);
-    assert.match(out, /Reading your own setup \(no approval needed\)/, "autoApproveReadonly read from the worker's config");
+    const hud = (await toolsRun([{ name: "agent_api_docs", args: { search: "HUD" } }])).toolResults[0] ?? "";
+    assert.match(hud, /Keyboard: `Ctrl\+Shift\+K`/, `the shortcut bound now, read from chrome.commands; got ${hud.slice(-600)}`);
+    assert.match(toolResults[1] ?? out, /Reading your own setup \(no approval needed\)/, "autoApproveReadonly read from the worker's config");
 });
 
 test("agent_api_docs in the worker leaves out ml.answer for a UI-started run, which has no answer tool", T, async () => {

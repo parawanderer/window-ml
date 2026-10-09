@@ -209,8 +209,11 @@ test("agent_api_docs ships the generated window.ml reference in the default regi
     // still return the reference (a docs call must never hang a step).
     const { ml } = loadDomWorld("<p>hi</p>");
     const docs = await run(ml, "agent_api_docs", {});
-    assert.match(docs, /Opening the HUD/, "the runtime invocation section is appended");
-    assert.match(docs, /shortcuts/, "the user is pointed at the rebinding page even without the relay");
+    // The default view NAMES the runtime sections; a search serves them (model panel, 2026-10-09).
+    assert.match(docs, /"Opening the HUD"/, "the default view says the invocation section can be searched");
+    const hud = await run(ml, "agent_api_docs", { search: "HUD" });
+    assert.match(hud, /## Opening the HUD/, "a search serves the runtime invocation section");
+    assert.match(hud, /shortcuts/, "the user is pointed at the rebinding page even without the relay");
     assert.ok(docs.length > 2000, `expected the full reference, got ${docs.length} chars`);
     assert.ok(docs.includes("devtools console"), "missing the console framing the tool exists for");
     assert.ok(docs.includes("agent(task"), "missing ml.agent's signature");
@@ -253,7 +256,7 @@ test("agent_api_docs reports the free read-only ml calls ONLY when autoApproveRe
         // Answer only the shortcut lookup (so it doesn't wait out its timeout); GET_CONFIG must fall
         // through to the harness's own probe reply, which is what carries `config`.
         const world = loadPageWorld({ config, onRuntimeMessage: (m) => m.type === "GET_INVOCATION" ? { data: null } : undefined });
-        return world.ml.domTools.find(t => t.name === "agent_api_docs").run({});
+        return world.ml.domTools.find(t => t.name === "agent_api_docs").run({ search: "setup" });
     };
     const on = await docsWith({ model: "m", ocrModel: "", autoApproveReadonly: true });
     assert.match(on, /no approval needed/i);

@@ -10,10 +10,10 @@
 // The load-bearing query is BY MEMBER, because that's how an agent actually reaches for this:
 // it doesn't start from a type name, it starts from an intent ("I want to call ml.fetch"). So:
 //
-//   • default (no args)   → the preamble + MlApi + an INDEX of the referenced type names.
+//   • default (no args)   → the core preamble + ONE LINE per member + the type names.
 //   • { members: [...] }   → each method's own signature+JSDoc PLUS the type sections its
-//                            signature directly references (one hop down the graph — the
-//                            "everything I need to call this" view). Drill again for more.
+//                            signature reaches, followed to the leaves within GRAPH_BUDGET (the
+//                            "everything I need to call this" view).
 //   • { types: [...] }     → a specific type section by name (the precise second step).
 //   • { search: "term" }   → scan every member and type section for the term and return the hits.
 //
@@ -24,8 +24,11 @@
 
 /** The generated reference, split so it can be served piecewise. Emitted by gen-api-docs.mjs. */
 export interface ApiDocsParts {
-    /** The framing prose: what window.ml is, agent-vs-chat, where the HUD section lives. */
+    /** The framing prose: what window.ml is, agent-vs-chat, reaching `ml` from your own `exec`. */
     preamble: string;
+    /** "Where a run starts": the UIs, what `chat_metadata` reports, session hashes. Served by a search, not by the
+     *  default view, which is for finding a method. Optional so a fixture can leave it out. */
+    surfaces?: string;
     /** The `## \`ml\` — the object on \`window\`` section: MlApi's public members as one ```ts block. */
     mlApi: string;
     /** `typeName → its \`### typeName\` markdown section`, in alphabetical order. */
@@ -35,8 +38,8 @@ export interface ApiDocsParts {
 /**
  * A runtime-resolved section the tool supplies (the live HUD shortcut, the source commit, the
  * read-only-exec note). It can't be baked into the generated reference — it's true only right now
- * — so it's passed in per call. Included in the default view AND made searchable, because "how do
- * I open the HUD?" is a thing the model reaches for via `search`, not by re-reading the no-args view.
+ * — so it's passed in per call. Named in the default view and served by a search, because "how do I
+ * open the HUD?" is a thing the model reaches for via `search`, not by re-reading the no-args view.
  */
 export interface EnvSection {
     /** A short label for name-matching a search (e.g. "Opening the HUD"). */
@@ -63,12 +66,13 @@ export interface ApiDocsQuery {
 // we list names instead of expanding.
 const MAX_SECTIONS = 8;
 
-// When expanding a member/type, we follow its type graph to the leaves and include the WHOLE
-// closure if it fits this many characters — because a second `agent_api_docs` round-trip costs a
-// full turn (the system prompt re-sends), so a few KB of maybe-unused type defs is the cheaper
-// trade. Past it, the one-hop (direct) types are still guaranteed and the deeper tail is named,
-// not expanded. ~6 KB ≈ 1.5 K tokens.
-export const GRAPH_BUDGET = 6000;
+// When expanding a member/type, we follow its type graph to the leaves and include the WHOLE closure if its DEEPER
+// part fits this many characters, because a second `agent_api_docs` round-trip costs a full turn (the system prompt
+// re-sends), so a few KB of maybe-unused type defs is the cheaper trade. The types asked for, and a member's one-hop
+// types, are always shown and never counted: when they were, `members: ["fetch"]` spent the budget on FetchResult
+// and left out Table and TableCell, the types a CSV caller needed next (six of seven panel models paid a call for
+// it, 2026-10-09). Past the budget the deeper tail is named, not expanded. ~12 KB ≈ 3 K tokens.
+export const GRAPH_BUDGET = 12000;
 
 /* --------------------- reading the member graph out of MlApi --------------------- */
 
@@ -205,37 +209,64 @@ const piece = (seen: Set<string> | undefined, key: string, stub: string, full: s
 
 /* ------------------------------- the views ------------------------------- */
 
-/** The default view: preamble + MlApi + a compact type index + the runtime/environment sections. */
+/** The sections a search reaches beyond members and types: the run's live environment and where a run starts. */
+const searchable = (parts: ApiDocsParts, env: EnvSection[]): EnvSection[] =>
+    parts.surfaces ? [...env, { name: "Where a run starts", body: parts.surfaces }] : env;
+
+/** A member's JSDoc reduced to its first sentence, and its declaration on one line. */
+const gist = (m: Member): { signature: string; summary: string } => {
+    const lines = m.block.split("\n");
+    const declAt = lines.findIndex(l => /^(?:\t| {4})(?:readonly\s+)?[A-Za-z_$]/.test(l) && !/^\s*(\/\*|\*)/.test(l));
+    const doc = lines.slice(0, declAt < 0 ? 0 : declAt).filter(l => !/^\s*\/\*\s*-{2,}/.test(l))
+        .map(l => l.replace(/^\s*(\/\*\*|\*\/|\*)\s?/, "").replace(/\*\/\s*$/, "")).join(" ").replace(/\s+/g, " ").trim();
+    const first = doc.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? doc;
+    const signature = lines.slice(declAt < 0 ? 0 : declAt).join(" ").replace(/\s+/g, " ").trim().replace(/;$/, "");
+    return { signature, summary: first };
+};
+
+/** The section a member sits under in MlApi (`/* ---- chat ---- *\/`), when it has one. */
+const sectionOf = (m: Member): string | null => m.block.match(/\/\*\s*-{2,}\s*(.*?)\s*-{2,}\s*\*\//)?.[1] ?? null;
+
+/**
+ * The default view: what exists, compactly. The core preamble, then ONE LINE per `ml` member (its declaration and the
+ * first sentence of its doc) under MlApi's own section markers, the type names, and how to drill in. Full JSDoc is
+ * served only by `members`, so nothing the default printed comes back again on the drill-in. The panel (2026-10-09)
+ * measured the old default, which printed every member's full doc plus the environment sections, as 60-95% noise
+ * for a task and the largest reply of a session.
+ */
 const defaultView = (parts: ApiDocsParts, env: EnvSection[], seen?: Set<string>): string => {
-    const names = Object.keys(parts.types);
+    const members = splitMembers(parts.mlApi);
+    const lines: string[] = ["## `ml`: every member, one line each", ""];
+    for (const m of members) {
+        const section = sectionOf(m);
+        if (section) lines.push("", `### ${section}`, "");
+        const { signature, summary } = gist(m);
+        lines.push(`- \`${signature}\`${summary ? `: ${summary}` : ""}`);
+    }
+    const more = searchable(parts, env).map(e => `"${e.name}"`);
     const index = [
-        "## Referenced types (names only — this reference is large)",
+        "## Going deeper",
         "",
-        "The signatures above mention these types. To keep this call small, only **MlApi** is",
-        "expanded by default. Pull in what you need instead of loading the whole reference —",
-        "usually by METHOD, which also brings in the types that method's signature uses:",
+        "Full docs come by name; a member brings the types its signature uses, followed to their leaves:",
         "",
-        '    agent_api_docs({ members: ["fetch", "agent"] })   // a method + the types it hands you',
-        '    agent_api_docs({ types: ["FetchResult"] })         // a specific type by name',
-        '    agent_api_docs({ search: "screenshot" })           // scan every section for a term',
+        '    agent_api_docs({ members: ["fetch", "agent"] })   // methods, full doc, with their types',
+        '    agent_api_docs({ types: ["FetchResult"] })         // a type by name',
+        '    agent_api_docs({ search: "screenshot" })           // every section mentioning a term',
         "",
-        `Available types: ${names.join(", ")}.`,
-        "",
-        "Environment facts about THIS run (how you're invoked, the live HUD shortcut, your source",
-        'commit) are the sections below — and are searchable, e.g. `agent_api_docs({ search: "HUD" })`.',
+        `Types: ${Object.keys(parts.types).join(", ")}.`,
+        ...(more.length ? ["", `Also searchable by name: ${more.join(", ")} (how you are opened, your source commit, what you can read about your own setup, where runs start).`] : []),
     ].join("\n");
     return [
         piece(seen, "preamble", "[intro already seen]", parts.preamble),
-        piece(seen, "ml", "[the ml object (methods) already seen]", parts.mlApi),
+        piece(seen, "index", "[the member index already seen]", lines.join("\n").replace(/\n{3,}/g, "\n\n")),
         index,
-        ...env.map(e => piece(seen, `env:${e.name}`, `[${e.name} already seen]`, e.body)),
     ].join("\n");
 };
 
 /**
  * Expand `ml` methods and/or named types, following each one's type graph. The types a member's
  * signature references directly (one hop) and any explicit `types` are GUARANTEED; then the deeper
- * transitive tail is included too, all the way to the leaves, as long as the whole closure fits
+ * transitive tail is included too, all the way to the leaves, as long as that tail fits
  * GRAPH_BUDGET — so a small graph comes back complete in one call and the model needn't drill again.
  * Over budget, the tail is named (with `types:[...]`) rather than expanded. Everything de-dupes.
  */
@@ -280,8 +311,7 @@ const expand = (parts: ApiDocsParts, wantMembers: string[], wantTypes: string[],
         if (guaranteed.has(t) || section.length <= budget) {
             out.push(section);
             seen?.add(key);
-            budget -= section.length;
-            if (!guaranteed.has(t)) bonus.push(t);
+            if (!guaranteed.has(t)) { budget -= section.length; bonus.push(t); }
         }
     }
     const deferred = reachable.filter(t => !guaranteed.has(t) && !bonus.includes(t) && !seen?.has(`type:${t}`));
@@ -345,14 +375,14 @@ const searchDocs = (parts: ApiDocsParts, term: string, env: EnvSection[], seen?:
 };
 
 /**
- * Slice the API reference per the query. Pure: the tool appends its runtime-only sections
- * (HUD shortcut, source commit, read-only note) to the DEFAULT view separately.
+ * Slice the API reference per the query. Pure: the tool resolves its runtime-only sections
+ * (HUD shortcut, source commit, read-only note) and passes them in as `env`.
  *
  * @param parts The generated reference parts (ML_API_PARTS).
  * @param q     `{ members }`/`{ types }` to expand, `{ search }` to scan (with either, both are returned), none for the
  *              default view.
- * @param env   Runtime/environment sections (HUD shortcut, source, …): shown in the default view and
- *              searchable. The tool resolves these live and passes them only when the view can use them.
+ * @param env   Runtime/environment sections (HUD shortcut, source, …): named in the default view, served
+ *              by a search. The tool resolves these live and passes them only when the view can use them.
  * @param seen  The run's within-burst dedup set (DocsMemory.shown): a chunk whose key is already in it is
  *              printed as a one-line stub instead of in full, and a full emit adds its key. Omit to disable.
  */
@@ -365,9 +395,9 @@ export function queryApiDocs(parts: ApiDocsParts, q: ApiDocsQuery = {}, env: Env
     // and marks what it printed, so the search then stubs those instead of printing them twice.
     if (members.length || types.length) {
         const view = expand(parts, members, types, seen);
-        return search ? `${view}\n\n${searchDocs(parts, search, env, seen)}` : view;
+        return search ? `${view}\n\n${searchDocs(parts, search, searchable(parts, env), seen)}` : view;
     }
-    if (search) return searchDocs(parts, search, env, seen);
+    if (search) return searchDocs(parts, search, searchable(parts, env), seen);
     return defaultView(parts, env, seen);
 }
 
