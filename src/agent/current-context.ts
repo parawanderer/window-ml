@@ -35,11 +35,6 @@ export function recordAppended(recorded: (RecordedMeta | undefined)[], from: num
     for (let i = from; i < to; i++) recorded[i] = { ...UNRECORDED, ...fact };
 }
 
-/** How a message's size was arrived at. `counted`: the engine reported it. `estimated`: characters over
- *  {@link CHARS_PER_TOKEN}, which is all there is for every user, system and tool message. A bare number would be
- *  read as counted, and usually is not (the same reason `RunStats.genBasis` exists). */
-export type TokensBasis = "counted" | "estimated";
-
 /** Characters per token for an estimate. No tokenizer is involved: good for comparing messages, rough for budgets. */
 export const CHARS_PER_TOKEN = 4;
 
@@ -57,11 +52,15 @@ export interface MessageMeta {
     gapMs: number | null;
     /** Where a user message was typed. Null for every other role, and for history. */
     surface: PromptSurface | null;
-    /** The size of this message: what compacting it would reclaim. Text only; see `images`. An ESTIMATE unless
-     *  `tokensBasis` is `"counted"`: a real model summed these and called the total exact. */
-    tokens: number;
-    tokensBasis: TokensBasis;
-    /** Images the message carries, which `tokens` does NOT include: an image's cost depends on the model, and
+    /** The size of this message as the ENGINE counted it: what compacting it would reclaim. Text only; see `images`.
+     *  Present only when there is a count (a reply the model produced); otherwise `estimatedTokens` is, never both,
+     *  so a message's size is `m.tokens ?? m.estimatedTokens`. Two names because a bare `tokens` was read as exact
+     *  when it was an estimate (a real model summed them and called the total exact, 2026-10-08). */
+    tokens?: number;
+    /** The size of this message ESTIMATED from its characters ({@link CHARS_PER_TOKEN}), when the engine gave no count:
+     *  every system, user and tool message. A total that includes one is an estimate. */
+    estimatedTokens?: number;
+    /** Images the message carries, which neither size includes: an image's cost depends on the model, and
      *  estimating its data URL by characters would be wrong by orders of magnitude. */
     images: number;
     /** The step that produced it, and the call within the run, so it joins up with the transcript and `@tool:` ids. */
@@ -180,8 +179,7 @@ export function snapshotCurrent(src: {
             ageMs: r.ts == null ? null : Math.max(0, src.now - r.ts),
             gapMs: r.ts == null || prev == null ? null : Math.max(0, r.ts - prev),
             surface: m.role === "user" ? r.surface : null,
-            tokens: counted ?? Math.ceil(textChars(m) / CHARS_PER_TOKEN),
-            tokensBasis: counted != null ? "counted" : "estimated",
+            ...(counted != null ? { tokens: counted } : { estimatedTokens: Math.ceil(textChars(m) / CHARS_PER_TOKEN) }),
             images: m.images?.length ?? 0,
             step: r.step,
             seq: r.seq,

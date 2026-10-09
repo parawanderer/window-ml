@@ -78,11 +78,11 @@ export const SELF_CLAUSE =
  *  self-count question takes a few more calls (the model looks it up), the shared-watch question one. Without the docs
  *  there is nowhere to learn it, so the GENERATED shape and those facts stay in the prompt. */
 export const currentClause = (docs: boolean): string => docs
-    ? "\n\n`ml.current`, read in a read-only `exec`, is your own run as data: your messages and what each costs, this " +
+    ? "\n\n`ml.current`, read in a read-only `exec`, is your own run as data: your messages and what each costs (`meta[i].tokens ?? meta[i].estimatedTokens`), this " +
       "turn's step, the execution log, and what the user shared with you (`ml.current.debug.userWatches`). Most tasks " +
       "never need it; `agent_api_docs` documents it. A shared watch is re-evaluated on every read, so its value is " +
       "now, and its `note` is the user's question to answer."
-    : `\n\nYou can read YOUR OWN RUN as data: \`ml.current\` in a read-only \`exec\` is \`${CURRENT_SIGNATURE}\`, with \`meta[i]\` describing \`messages[i]\` (system prompt first; \`tokens\` is an estimate unless \`tokensBasis\` is "counted"); ` +
+    : `\n\nYou can read YOUR OWN RUN as data: \`ml.current\` in a read-only \`exec\` is \`${CURRENT_SIGNATURE}\`, with \`meta[i]\` describing \`messages[i]\` (system prompt first; a message's size is \`tokens\` when the engine counted it, else \`estimatedTokens\`); ` +
       "`run.step` (1 on this turn's first call), `maxSteps` and `startedTs` are THIS turn's; a read holds the call making it, not its result, and a shared watch is re-evaluated on every read, so its value is now; its `note` is the user's question about it, so answer that. Use it to " +
       "check what is in your context, what a tool really returned, or what the user shared with you in " +
       "`ml.current.debug.userWatches`. It is read-only and never " +

@@ -657,6 +657,8 @@ test("UPGRADE: a stored config from before the flag reads as ON: the prompt name
     const { system, toPage, results, log } = await surveyRun(["ml.current.run.step"]);
     // With agent_api_docs, ONE sentence (Shane, 2026-10-08: most runs never need it): what it is, and where to learn it.
     assert.match(system, /`ml\.current`, read in a read-only `exec`, is your own run as data/);
+    // DeepSeek V4 Pro and Kimi K3 summed only `estimatedTokens` until the sentence named both (2026-10-09).
+    assert.match(system, /what each costs \(`meta\[i\]\.tokens \?\? meta\[i\]\.estimatedTokens`\)/);
     assert.match(system, /`ml\.current\.debug\.userWatches`\)\. Most tasks never need it; `agent_api_docs` documents it\./);
     // The one fact a real model got wrong with the sentence alone, without looking it up (DeepSeek V4 Pro, 2026-10-08).
     assert.match(system, /A shared watch is re-evaluated on every read, so its value is now, and its `note` is the user's question to answer\./);
@@ -670,12 +672,12 @@ test("what real models got wrong about ml.current is said where agent_api_docs s
     const { currentClause } = await import("../src/agent/prompts.ts");
     // From converse sessions, 2026-10-08: a per-turn step read as session-wide, a shared watch read as a snapshot from
     // when it was shared, an estimated token total called exact, a note's question answered with the number.
-    for (const fact of ["1 on a turn's first call", "re-evaluated for every read", "An ESTIMATE unless", "often their question", "the system prompt first"])
+    for (const fact of ["1 on a turn's first call", "re-evaluated for every read", "m.tokens ?? m.estimatedTokens", "often their question", "the system prompt first"])
         assert.ok(ML_API_DOCS.includes(fact), `agent_api_docs says: ${fact}`);
     const bare = currentClause(false);
     assert.ok(bare.includes(`\`ml.current\` in a read-only \`exec\` is \`${CURRENT_SIGNATURE}\``), "no docs: the generated signature, verbatim");
     assert.match(bare, /`run\.step` \(1 on this turn's first call\), `maxSteps` and `startedTs` are THIS turn's/);
-    assert.match(bare, /system prompt first; `tokens` is an estimate unless `tokensBasis` is "counted"/);
+    assert.match(bare, /system prompt first; a message's size is `tokens` when the engine counted it, else `estimatedTokens`/);
     assert.match(bare, /its `note` is the user's question about it, so answer that/);
 });
 
