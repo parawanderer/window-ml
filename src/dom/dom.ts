@@ -1142,18 +1142,25 @@ export const googleSheetId = (url: string): string | null => {
     return m ? m[1] : null;
 };
 
-/** Every EXTERNAL Google Sheet (a Sheets URL that isn't 'current') a python_exec call touches —
- *  whether its `tables` arg is a single source string OR a map of them — as spreadsheet ids. Reading
- *  arbitrary Google data the user didn't navigate to is privileged, so these drive the approval
- *  escalation + the auto-approve decision. Pure; shared by the page loop and the (design-A) background
- *  auto-approve so both agree on "which sheets need consent". */
+/** Every EXTERNAL Google Sheet (a Sheets URL that isn't 'current') a python_exec call touches, ANYWHERE
+ *  in its `tables` arg — a source string, a map of them, or either nested in a list — as spreadsheet ids.
+ *  Reading arbitrary Google data the user didn't navigate to is privileged, so these drive the approval
+ *  escalation + the auto-approve decision, and a shape the loaders happen to accept must never hide a
+ *  sheet from them (red-team T2: an array-wrapped URL auto-approved as "sandbox" and was read anyway).
+ *  A table BY VALUE stops the walk: its cells may hold sheet URLs and are DATA the scan must not escalate.
+ *  Pure; shared by the page loop and the (design-A) background auto-approve so both agree on "which
+ *  sheets need consent". */
 export const externalSheetIds = (args: unknown): string[] => {
-    const t = (args as { tables?: unknown } | null)?.tables;
-    const vals: unknown[] = typeof t === "string" ? [t] : (t && typeof t === "object") ? Object.values(t as Record<string, unknown>) : [];
-    return vals
-        .filter((v): v is string => typeof v === "string" && v !== "current")
-        .map(v => googleSheetId(v))
-        .filter((id): id is string => !!id);
+    const out: string[] = [];
+    const walk = (v: unknown, depth: number): void => {
+        if (typeof v === "string") { if (v !== "current") { const id = googleSheetId(v); if (id) out.push(id); } return; }
+        if (!v || typeof v !== "object" || depth > 8) return;   // depth: a model-written arg tree, not a data structure to explore
+        const o = v as { columns?: unknown; rows?: unknown };
+        if (Array.isArray(o.columns) && Array.isArray(o.rows)) return;
+        for (const x of Object.values(v as Record<string, unknown>)) walk(x, depth + 1);
+    };
+    walk((args as { tables?: unknown } | null)?.tables, 0);
+    return out;
 };
 
 /** A Google Sheets URL → its CSV export URL (fetched credentialed → the user's own data),

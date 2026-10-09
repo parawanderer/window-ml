@@ -34,7 +34,7 @@ import { ensureLocalTools, runLocalTool, runsInWorker } from "./sw-local-tools";
 import { withUserWatches } from "./sw-shared-watches";
 import { routeExec, execNames } from "./exec-routing";
 import { isolationAvailable, pageApproved, runIsolatedExec } from "./sw-isolated-exec";
-import { grantRunFetch, runFetchConsented } from "./worker-tools";
+import { grantRunFetch, runFetchConsented, grantRunPython, pageOnlyPython } from "./worker-tools";
 import { navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue } from "./sw-values";
@@ -269,6 +269,15 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     // only reading the pointer back faulted with "nothing has been captured in this run".
     const toolMetas: ToolMeta[] = p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, capabilities: t.capabilities, ...(t.remote ? { remote: t.remote } : {}) }));
     const toolDefs = p.tools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
+    /** The refusal for a worker-built run's python_exec that names BOTH an external sheet and something only the page can
+     *  supply (an image, a selector, `current`), or null. Such a call runs nowhere safely: the worker cannot read the page
+     *  part, and sending it to the page would put the sheet grant on the TAB, where any script on it could spend it while
+     *  the call ran (red-team T3 on #442). Checked in the precheck (before the gate) and where the call is delegated
+     *  (the auto-approved path skips the precheck). */
+    const mixedPythonRefusal = (name: string, args: Record<string, unknown>): string | null =>
+        name === "python_exec" && p.builtBy === "worker" && pageOnlyPython(args) && externalSheetIds(args).length
+            ? "Refused: a python_exec for this run cannot mix an external Google Sheet with a page source (an image, a CSS selector, or \"current\"). Load the sheet in its own call — the worker runs that, and the sheet's rows come back to you — then do the page part in the next call."
+            : null;
     const approvedSheets = new Set<string>();   // external sheets approved this run (isSheetApproved)
     // Cross-origin navigation consent: origins this run may navigate to WITHOUT re-prompting — seeded
     // with the start origin, and each cross-origin nav the user approves is added (so repeat navs to it
@@ -451,6 +460,12 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 return { content: r.content, tool_calls: r.tool_calls, reasoning: r.reasoning, usage: r.usage };
             },
             delegateTool: async (name, args, onStream) => {
+                // The mixed-call refusal again, for the call the precheck never saw: one AUTO-approved because an
+                // earlier call got its sheet approved skips the gate and the precheck with it. Refused before any
+                // grant is minted or anything is sent, with the same two-call steer (the tab grant staying unminted,
+                // below, is the second layer).
+                const mixed = mixedPythonRefusal(name, args);
+                if (mixed) return { result: mixed };
                 // Where an approved exec of a run the worker built runs (exec-routing.ts): the page's world, an isolated
                 // world on the same tab (sw-isolated-exec.ts), or nowhere. Decided before any grant is minted on the tab.
                 const js = name === "exec" && p.builtBy === "worker" && typeof (args as { js?: unknown }).js === "string" ? (args as { js: string }).js : undefined;
@@ -497,9 +512,23 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 // while the grant authorises another.
                 const remote = p.tools.find(t => t.name === name)?.remote;
                 if (remote) grantsFor(tabId).serverTools.add(serverToolKey(remote.toolId, remote.fn, args as Record<string, unknown>));
-                if (name === "python_exec") {
+                // A python_exec the WORKER runs gets its grants as the RUN's call grant (worker-tools.ts): on the tab
+                // they were a sheet read with the person's cookies, and full-mode Python, that any script on the
+                // page could use while the call ran. One that needs the page (an image, a selector) still mints the
+                // tab's, which that page call sends.
+                const pyInWorker = name === "python_exec" && p.builtBy === "worker" && runsInWorker(p, name) && !pageOnlyPython(args as Record<string, unknown>);
+                if (pyInWorker) {
+                    await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "").catch(() => { /* nothing granted: fails closed */ });
+                    grantRunPython(runId, { sheets: externalSheetIds(args), code: (args as { mode?: string }).mode === "full" ? String((args as { code?: unknown }).code ?? "") : null });
+                } else if (name === "python_exec") {
                     const g = grantsFor(tabId);
-                    for (const id of externalSheetIds(args)) g.sheets.add(id);
+                    // A worker-built run's sheet grant NEVER goes on the tab, even when the call fell back to the
+                    // page: the tab is shared with the page, and the minted id is a credentialed read any script on
+                    // it can spend (FETCH_SHEET is a run-tab type) while the call runs. A page-built run's loop is
+                    // the page's own, so its grant has to live where its calls are made. (Red-team T3 on #442; a
+                    // worker-built call that names a sheet AND a page source is now refused before the gate, so
+                    // this leg keeps working only for the page parts — the sheet load fails closed, not silent.)
+                    if (p.builtBy !== "worker") for (const id of externalSheetIds(args)) g.sheets.add(id);
                     if ((args as { mode?: string }).mode === "full") g.pyCode.add(String((args as { code?: unknown }).code ?? ""));
                 }
                 try {
@@ -694,6 +723,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     return { result: (env?.result || `Error: the page returned nothing for tool "${name}".`) + (execNote ? `\n\n${execNote}` : ""), renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel, images: env?.images, remoteMs: env?.remoteMs };
                 } finally {
                     pendingGrants.delete(tabId);   // grants were for THIS approved call's sub-ops only
+                    if (pyInWorker) grantRunPython(runId, null);
                     if (reads) execReads.delete(runId);
                     if (onStream) delegateStreams.delete(runId);   // the call is done — stop routing live chunks to it
                 }
@@ -764,6 +794,13 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             // A non-null error → the gate is SKIPPED and the error returned. Only delegated for tools
             // that HAVE a precheck (avoids a useless round-trip on every gated call).
             precheck: async (name, args) => {
+                // A worker-built run's python_exec that names BOTH an external sheet and something only the page can
+                // supply (an image, a selector, `current`) cannot run anywhere safely: the worker cannot read the page
+                // part, and sending it to the page would put the sheet grant on the TAB, where any script on it could
+                // spend it while the call ran. So it runs nowhere — refused here, BEFORE the gate, rather than putting
+                // the person through approving a call that must then fail (red-team T3 on #442).
+                const mixed = mixedPythonRefusal(name, args);
+                if (mixed) return mixed;
                 if (!p.tools.some((t) => t.name === name && t.precheck)) return null;
                 const env = await sendTool({ runId, name, args, precheck: true })
                     .catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;

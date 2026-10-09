@@ -6,7 +6,12 @@
 // itself: the descriptor the model is shown and the run's approval are unchanged, and only where the body runs moves.
 
 import type { FetchResult, MlApi, MlTool, SubcallUsage } from "../contract";
-import { fetchTool, defineTool } from "../ml/ml-tool-factories";
+import { fetchTool, defineTool, pythonTool } from "../ml/ml-tool-factories";
+import { _loadTable, isTableValue, tableSpecs } from "../ml/ml-python";
+import { googleSheetCsvUrl, googleSheetId } from "../dom/dom";
+import { runPython } from "./sw-python";
+import { fetchSheetCsv } from "./sw-fetch";
+import { tableFromDelimited } from "../table/table-data";
 import { derivedFetchFields, cacheCopy } from "../ml/fetch-result";
 import { hintSession } from "../contract/contract-run";
 import { isCurrentPage } from "../dom/dom";
@@ -19,7 +24,7 @@ import { htmlToMarkdownOffscreen } from "./sw-offscreen";
 import { fetchLLM, getConfig } from "./sw-llm";
 
 /** The builtin tools a worker-built run executes in the worker rather than the page. */
-export const WORKER_TOOL_NAMES: ReadonlySet<string> = new Set(["fetch_url", "agent_api_docs"]);
+export const WORKER_TOOL_NAMES: ReadonlySet<string> = new Set(["fetch_url", "python_exec", "agent_api_docs"]);
 
 /** What one run's worker tools share: the tab they act for, its fetch cache, and the spend of their model calls. */
 interface RunCtx {
@@ -28,6 +33,9 @@ interface RunCtx {
     consented: Set<string>;
     /** As-you (credentialed) fetches the person approved, each spent by the one call it was approved for. */
     credOnce: Set<string>;
+    /** What the python_exec call now running was approved for: external sheet ids, and full-mode code. Set around the
+     *  one call (`grantRunPython`), never on the tab. */
+    pyCall?: { sheets: Set<string>; code: string | null };
 }
 
 const runs = new Map<string, RunCtx>();   // state: plumbing — per run, dropped with its local tools
@@ -59,6 +67,12 @@ export function grantRunFetch(runId: string, url: string, credentials: boolean):
     return true;
 }
 
+/** Grant the python_exec call about to run in the worker what its approval covers; `null` ends the call's grant. */
+export function grantRunPython(runId: string, grant: { sheets: string[]; code: string | null } | null): void {
+    const ctx = runs.get(runId);
+    if (ctx) ctx.pyCall = grant ? { sheets: new Set(grant.sheets), code: grant.code } : undefined;
+}
+
 /** Whether this run's worker-side fetch_url was already approved for `url` (a new one goes to the gate). */
 export function runFetchConsented(runId: string, url: string): boolean | undefined {
     return runs.get(runId)?.consented.has(url);
@@ -71,6 +85,22 @@ export function dropWorkerTools(runId: string): void { runs.delete(runId); }
  *  which is that page's own content and only exists there. */
 export function pageOnlyFetch(args: Record<string, unknown> | undefined, tabUrl: string): boolean {
     return !!args?.credentials && !!args?.rendered && typeof args?.url === "string" && !!tabUrl && isCurrentPage(args.url, tabUrl);
+}
+
+/** Whether a python_exec send needs the page: a screenshot (`image`), a page table by CSS selector, or `current` (the
+ *  page's own sheet or table). A table by value, a URL the run fetched and an external sheet do not, and neither does a
+ *  `@tool:` table pointer: the loop resolves it to a table by value before the call is sent, but the precheck reads the
+ *  args before that, so the raw pointer string must not count as a selector (agent-loop.ts `resolveTablePointers`). */
+export function pageOnlyPython(args: Record<string, unknown> | undefined): boolean {
+    if (args?.image) return true;
+    const t = args?.tables;
+    const sources = typeof t === "string" ? [t] : Array.isArray(t) ? t : t && typeof t === "object" ? Object.values(t) : [];
+    return sources.some((src) => typeof src === "string" && (src === "current" || (!/^https?:\/\//i.test(src) && !/^\s*@tool:/.test(src))));
+}
+
+/** Whether a worker tool's send of `name` with `args` must go to the page instead. */
+export function pageOnlySend(name: string | undefined, args: Record<string, unknown> | undefined, tabUrl: string): boolean {
+    return name === "fetch_url" ? pageOnlyFetch(args, tabUrl) : name === "python_exec" ? pageOnlyPython(args) : false;
 }
 
 /**
@@ -100,6 +130,9 @@ function runMl(ctx: RunCtx): MlApi {
             if (data.ok && !credentials && !rendered && format === "markdown") ctx.cache.set(String(url), cacheCopy(data));
             return data;
         },
+        // No page here: python_exec's selector warning finds nothing (a send naming a selector goes to the page).
+        _queryAll: () => [],
+        pythonExec: (code: string, opts: { mode?: "readonly" | "full"; tableRaw?: boolean; tables?: unknown; onStdout?: (chunk: string, ts?: number) => void } = {}) => workerPython(ctx, code, opts),
         chat: async (prompt: string, opts: { model?: string | null; extend?: "utility" | null; numCtx?: number | null } = {}): Promise<string> => {
             const r = await fetchLLM({
                 messages: [{ role: "user", content: prompt }], model: opts.model ?? null, extend: opts.extend ?? null,
@@ -114,6 +147,64 @@ function runMl(ctx: RunCtx): MlApi {
             return String(r.content ?? "");
         },
     } as unknown as MlApi;
+}
+
+/** One `tables` source, loaded in the worker: a table by value (the page's own loader, which needs no DOM), a URL this
+ *  run's fetch_url read (its cache), or an external Google Sheet, read with the person's cookies only when this call was
+ *  approved for it. */
+async function workerTable(ctx: RunCtx, name: string, src: unknown, raw: boolean): Promise<Awaited<ReturnType<typeof _loadTable>>> {
+    if (isTableValue(src)) return _loadTable.call({} as MlApi, name, src, raw);   // the by-value branch reads no DOM
+    // A source is a URL string or nothing: a wrapped one (`[url]`, `{s:[url]}`) is NOT coerced back with
+    // String(src). The gate's scan finds a sheet at any depth now (externalSheetIds), so the person sees it
+    // before this runs; this refusal is the second line — a shape no loader was written for must not become a
+    // credentialed read through a coercion nobody approved (red-team T2 on #442).
+    if (typeof src !== "string") throw new Error(`pythonExec tables — "${name}" is not a loadable source: pass a URL string or a table value, not a ${Array.isArray(src) ? "list" : typeof src}.`);
+    const url = src;
+    const csvUrl = googleSheetCsvUrl(url);
+    if (csvUrl) {
+        const id = googleSheetId(url);
+        const tabUrl = ctx.tabUrl();
+        const trusted = (await senderTrust({ tab: { id: ctx.tabId, url: tabUrl } as chrome.tabs.Tab, url: tabUrl })) !== "untrusted";
+        if (!trusted && !(id && ctx.pyCall?.sheets.has(id))) throw new Error("Refused: this sheet hasn't been approved for this run's python_exec.");
+        const { csv, name: sheetName } = await fetchSheetCsv(csvUrl);
+        const sheet = tableFromDelimited(csv, { delimiter: ",", raw });
+        return { name, source: { kind: "sheet-external", label: id || url, name: sheetName }, data: { kind: "rows", columns: sheet.columns, rows: sheet.rows } };
+    }
+    const cached = ctx.cache.get(url);
+    if (cached?.table) return { name, source: { kind: "fetch", label: cached.url }, data: { kind: "rows", columns: cached.table.columns, rows: cached.table.rows } };
+    throw new Error(cached
+        ? `pythonExec tables — "${url}" was fetched but isn't a table (type: ${cached.type}). Only a CSV/TSV parses into a DataFrame this way.`
+        : `pythonExec tables — "${url}" is not among this run's fetches. Call fetch_url on it, then pass the URL here.`);
+}
+
+/** `ml.pythonExec` for a run's python_exec in the worker: its tables loaded here, then `runPython` with the run as the
+ *  caller (full mode only for the code this call was approved for), live stdout straight to the call's output. */
+async function workerPython(ctx: RunCtx, code: string, opts: { mode?: "readonly" | "full"; tableRaw?: boolean; tables?: unknown; onStdout?: (chunk: string, ts?: number) => void }) {
+    // The page's shape rule, so `[[url]]` (a list once unwrapped, its key "0" no variable name) is refused as it is there.
+    const specs: [string, unknown][] = tableSpecs(opts.tables ?? null).map(({ name, src }) => [name, src]);
+    const loaded = [];
+    for (const [name, src] of specs) loaded.push(await workerTable(ctx, name, src, !!opts.tableRaw));
+    // Not derived from anything the page knows (the run id reaches it): a stream id it cannot name.
+    const requestId = `wpy-${crypto.randomUUID()}`;
+    const r = await runPython({
+        code, image: null, hardened: opts.mode !== "full", stream: !!opts.onStdout,
+        tables: loaded.map((l, i) => ({ name: l.name, data: l.data, alias: typeof specs[i][1] === "string" ? specs[i][1] : null })),
+    }, requestId, {
+        ownSurface: false, tabId: ctx.tabId, disclose: false,
+        untrusted: async () => (await senderTrust({ tab: { id: ctx.tabId, url: ctx.tabUrl() } as chrome.tabs.Tab, url: ctx.tabUrl() })) === "untrusted",
+        pyCodeOk: (c) => ctx.pyCall?.code === c,
+        valueOk: (holders) => holders.includes(ctx.runId),
+        ...(opts.onStdout ? { stream: opts.onStdout } : {}),
+    });
+    if (r.error !== undefined) throw new Error(r.error);
+    const res = r.data as { table?: { columns: string[]; rows: unknown[][] }; valueKey?: string } & Record<string, unknown>;
+    const extra: Record<string, unknown> = {};
+    if (res?.table) extra.resultTable = { ...res.table, ...(res.valueKey ? { value: res.valueKey } : {}) };
+    if (loaded.length) extra.inputTables = loaded.map((l) => ({
+        name: l.name, source: l.source,
+        ...(l.data.kind === "rows" ? { columns: l.data.columns, rows: l.data.rows } : l.data.kind === "value" ? { columns: l.data.columns, rows: l.preview ?? [], ...(l.rowCount != null ? { rowCount: l.rowCount } : {}) } : { html: true }),
+    }));
+    return { ...res, ...extra };
 }
 
 /**
@@ -133,5 +224,5 @@ export function buildWorkerTools(runId: string, tabId: number, tabUrl: () => str
     const ml = runMl(ctx);
     // agent_api_docs reads the shortcut and the config here, where the page would have asked for them by message.
     const docs = { invocation: invocationInfo, config: async () => publicConfig(await getConfig(), ctx.tabUrl()) };
-    return wanted.map((n) => (n === "fetch_url" ? fetchTool.call(ml) : n === "agent_api_docs" ? apiDocsTool(defineTool, docs) : null)).filter((t): t is MlTool => !!t);
+    return wanted.map((n) => (n === "fetch_url" ? fetchTool.call(ml) : n === "python_exec" ? pythonTool.call(ml) : n === "agent_api_docs" ? apiDocsTool(defineTool, docs) : null)).filter((t): t is MlTool => !!t);
 }

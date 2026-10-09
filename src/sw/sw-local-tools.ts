@@ -14,7 +14,7 @@ import { envelopeFrom } from "../agent/run-delegation";
 import { countDocsStreak, executeTool, toolContext } from "../tools/tool-exec";
 import { listServerTools } from "./sw-llm";
 import { workerMl } from "./worker-ml";
-import { buildWorkerTools, dropWorkerTools, pageOnlyFetch, workerSpend, WORKER_TOOL_NAMES } from "./worker-tools";
+import { buildWorkerTools, dropWorkerTools, pageOnlySend, workerSpend, WORKER_TOOL_NAMES } from "./worker-tools";
 
 /** What a run's local tools need to run: the tools by name, and the vision facts their ToolContext carries. */
 interface LocalToolset { byName: Record<string, MlTool>; model: string | null; driverSees: boolean; visionModel: string | null; }
@@ -78,8 +78,9 @@ export async function runLocalTool(send: ToolSend, onStream?: (text: string, ts?
     const set = localToolsets.get(send.runId);
     const tool = send.name ? set?.byName[send.name] : undefined;
     const args = send.args || {};
-    // The one fetch the page answers itself: a session render of the page the run is on, from its live DOM.
-    const toPage = !tool || (send.name === "fetch_url" && !send.renderOnly && send.tabUrl !== undefined && pageOnlyFetch(args, send.tabUrl));
+    // What the page answers itself: a session render of the page the run is on (its live DOM), and a python_exec that
+    // needs a screenshot or a page table. The approval preview is drawn here either way.
+    const toPage = !tool || (!send.renderOnly && send.tabUrl !== undefined && pageOnlySend(send.name, args, send.tabUrl));
     if (!set || toPage) {
         // A call the page runs is still a step of this run: agent_api_docs, run here, counts it towards its dedup.
         if (set && send.name && !send.renderOnly && !send.precheck && !send.readonlyTry) countDocsStreak(toolContext(set.byName).docsMemory!, send.name);
