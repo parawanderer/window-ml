@@ -5,6 +5,7 @@
 import { eventsIn, type ResourceEvent } from "../../../../src/resource/resource-timeline";
 import { placeEvents, laneRows, MIN_EV_SPAN } from "../../../../src/resource/resource-lane";
 import { useState } from "preact/hooks";
+import type { ComponentChildren } from "preact";
 import { LaneBars } from "../../../../src/sidebar/resource/lane-bars";
 import { EventTipBody } from "../../../../src/sidebar/resource/event-tip";
 import { useTipPlacement } from "../../../../src/sidebar/use-tip";
@@ -34,7 +35,9 @@ export function barTitle(e: ResourceEvent): string {
  * The lane's rows for `events` on `axis`. Instants (no end) are not bars, as in the panel; work still in flight runs to
  * `now`. A page has more height to spend than the panel, so the row caps are the caller's.
  */
-export function LaneRows({ events, axis, now, maxRows = 8, maxTotal = 24 }: { events: readonly ResourceEvent[]; axis: Axis; now?: number; maxRows?: number; maxTotal?: number }) {
+export function LaneRows({ events, axis, now, maxRows = 8, maxTotal = 24, rowAttrs, rowPrefix }: { events: readonly ResourceEvent[]; axis: Axis; now?: number; maxRows?: number; maxTotal?: number;
+    /** on each row: the memory chart's drag to select, when the lane is drawn under it */
+    rowAttrs?: Parameters<typeof LaneBars>[0]["rowAttrs"]; rowPrefix?: () => ComponentChildren }) {
     const spans = events.filter((e) => e.until != null || e.open)
         .map((e) => (e.until == null && e.open && now != null ? { ...e, until: now } : e));
     const rows = laneRows(placeEvents(axis, eventsIn(spans, axis.from, axis.to)), maxRows, MIN_EV_SPAN, maxTotal);
@@ -42,7 +45,7 @@ export function LaneRows({ events, axis, now, maxRows = 8, maxTotal = 24 }: { ev
     const at = (p: EventPlacement) => (ev: PointerEvent) => setHover({ p, x: ev.clientX, y: ev.clientY });
     return (
         <div class="rc-lane-rows">
-            <LaneBars rows={rows} minSpan={MIN_EV_SPAN} barAttrs={(p) => ({
+            <LaneBars rows={rows} minSpan={MIN_EV_SPAN} rowAttrs={rowAttrs} rowPrefix={rowPrefix} barAttrs={(p) => ({
                 "aria-label": barTitle(p.event),
                 onPointerEnter: at(p), onPointerMove: at(p),
                 onPointerLeave: () => setHover(null),

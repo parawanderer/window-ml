@@ -18,6 +18,7 @@ import { FromSpec, specSource } from "./from-spec";
 import { installTooltipLayer } from "../../../../src/sidebar/tooltip-layer";
 import { ThemeToggle, applyTheme, readTheme } from "./theme";
 import { signed } from "../../../../src/sidebar/interval-bar";
+import { laneScoped, resWindowS } from "../../../../src/sidebar/store";
 
 declare global { interface Window { __BENCH_STATE__?: BenchState } }
 
@@ -146,6 +147,10 @@ function App() {
 }
 
 applyTheme(readTheme());
+// The resource panel's chart (the timeline's memory) reads its window from the panel's store: here nothing is scoped to
+// one session, and a FINISHED sweep opens on all of it rather than on the last few minutes before now.
+laneScoped.value = false;
+if (window.__BENCH_STATE__?.finished) resWindowS.value = 0;
 // The panel's tooltip layer, so a `Hash` chip shows the tip it shows in the panel.
 installTooltipLayer(document);
 render(<App />, document.getElementById("app")!);

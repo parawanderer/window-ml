@@ -2,6 +2,8 @@
 // the page only reads it.
 
 import type { ResourceEvent } from "../../../../src/resource/resource-timeline";
+import type { Capacity } from "../../../../src/resource/resource-capacity";
+import type { ResourceSample } from "../../../../src/resource/resource-model";
 
 export interface Agg { mean: number | null; sd: number | null; n: number }
 
@@ -66,6 +68,8 @@ export interface BenchState {
     artifactBase?: string;
     /** the scoreboard's line for each driver model of the sweep, when the runs are logged */
     scores?: SweepScores | null;
+    /** the box's memory over the sweep (resource-poll.mjs), each distinct capacity once; null without readings */
+    resources?: PackedSamples | null;
 }
 
 /** A model's score on the scoreboard (scores.mjs `scoreboard`): θ relative to the average task, and its chance there. */
@@ -97,3 +101,6 @@ export interface ScoreBoard {
 
 /** The sweep page's view of the scoreboard: each driver model's line, and where the scoreboard is. */
 export interface SweepScores { href: string; about: Record<string, string>; minScored: number; models: Record<string, ScoreModel> }
+
+/** Resource samples as the harness sends them: each sample names its capacity by index (`c`). */
+export interface PackedSamples { capacities: Capacity[]; samples: (Omit<ResourceSample, "capacity"> & { c: number })[] }

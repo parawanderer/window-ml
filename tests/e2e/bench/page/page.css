@@ -108,7 +108,13 @@ a.plain:hover { text-decoration: none } a.plain:hover .badge { border-color: var
 .flag q { font-style: italic }
 
 /* The sweep timeline: a label column, then each run's lane, all on one axis. */
-.tl { display: grid; grid-template-columns: minmax(120px, max-content) 1fr; gap: 4px 14px; align-items: center }
+.tl { display: grid; grid-template-columns: var(--tl-label) 1fr; gap: 4px 14px; align-items: center }
+/* The label column is a fixed width so the memory chart above the lanes (timeline.tsx) can start where the lanes do:
+   the chart is inset by the column and its gap, and the lanes under it reach back out into it. */
+.card { --tl-label: 200px }
+.tlchart { padding-left: calc(var(--tl-label) + 14px) }
+.tlchart .tl { margin-left: calc(-1 * (var(--tl-label) + 14px)); margin-top: 6px }
+@media (max-width: 600px) { .card { --tl-label: 110px } }
 .tl .who { font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg-dim); white-space: nowrap;
            overflow: hidden; text-overflow: ellipsis; max-width: 34ch }
 .tl .wml-lane .rc-lane-rows { padding: 3px 0; border-bottom: 1px dashed var(--border) }
