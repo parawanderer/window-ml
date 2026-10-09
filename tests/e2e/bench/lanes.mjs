@@ -45,8 +45,10 @@ export function fitsGate(backend, info = new Map(), fetchImpl = fetch) {
  * no, only once nothing else runs (as one job would). Otherwise it waits for a running cell to end, or `retryMs`, and
  * asks again, since another client can change the answer.
  *
- * Admission is one lane at a time, and a lane admitted for a model that was not yet loaded holds it until the model is
- * (`settle`): two lanes asking at once would both be told "fits" for a pair that does not.
+ * Admission is one lane at a time, and while a model a lane was admitted for is still LOADING (`settle`, which waits for
+ * the box to say it is resident), no other LOCAL lane is admitted: two lanes asking at once would both be told "fits"
+ * for a pair that does not. The load is waited for OUTSIDE the admission: the model loads only once its lane's cell
+ * starts, so waiting for it before that cell could start held every lane, cloud ones too, for `settle`'s whole timeout.
  * @returns {Promise<unknown[]>} `fn`'s results, by cell index
  */
 export async function runLanes(cells, { modelOf, gate, fn, maxLanes = Infinity, retryMs = 15_000, settle = async () => {}, log = () => {} }) {
@@ -58,6 +60,8 @@ export async function runLanes(cells, { modelOf, gate, fn, maxLanes = Infinity, 
     });
     const out = new Array(cells.length);
     let running = 0, localRunning = 0;
+    /** The local model admitted and not yet resident, or null: the next local lane asks once it has loaded. */
+    let loading = null;
     let wake = () => {};
     const changed = () => { const w = wake; wake = () => {}; w(); };
     const waitForChange = () => new Promise((r) => { const t = setTimeout(r, retryMs); const prev = wake; wake = () => { clearTimeout(t); prev(); r(); }; });
@@ -68,17 +72,24 @@ export async function runLanes(cells, { modelOf, gate, fn, maxLanes = Infinity, 
 
     /** Wait for this lane's turn to start `model`; resolves whether it runs as a local model. */
     const admit = async (model) => {
+        // Logged when the reason to wait CHANGES, not each retry: "a is still loading", then "would displace a".
+        let said = null;
+        const waits = (why) => { if (why !== said) log(`  ⏸ lane ${model || "(default model)"}: waits (${why})`); said = why; };
         for (let waited = false; ; waited = true) {
             const local = running < maxLanes ? await exclusive(async () => {
                 if (running >= maxLanes) return undefined;   // filled while this lane waited for the lock
                 const r = await gate(model);
+                if (r.local && loading && loading !== model) { waits(`${loading} is still loading`); return undefined; }
                 const go = r.go === true || (r.go === null && localRunning === 0) || (r.go === false && running === 0);
-                if (!go) { if (!waited) log(`  ⏸ lane ${model || "(default model)"}: waits (${r.why})`); return undefined; }
+                if (!go) { waits(r.why); return undefined; }
                 if (waited || r.go !== true) log(`  ▸ lane ${model || "(default model)"}: starts (${r.why})`);
                 running++;
                 if (r.local) localRunning++;
-                // A model that was not loaded is about to be: the next lane asks once it is.
-                if (r.local && !r.resident) await settle(model);
+                // A model that was not loaded is about to be, by this lane's cell: the next local lane asks once it is.
+                if (r.local && !r.resident) {
+                    loading = model;
+                    Promise.resolve().then(() => settle(model)).catch(() => {}).finally(() => { if (loading === model) loading = null; changed(); });
+                }
                 return !!r.local;
             }) : undefined;
             if (local !== undefined) return local;
