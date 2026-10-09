@@ -10,7 +10,7 @@ import { useState, useEffect, useRef } from "preact/hooks";
 import { signal, effect } from "@preact/signals";
 import {
     loadedModels, psError, rev, sessionMap,
-    crosshair, VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, zoomRange, laneScoped, LANE_HIDDEN_KEY, showModels, lsGet, asides,
+    crosshair, VRAMH_KEY, vramH, resWindowS, zoomRange, laneScoped, LANE_HIDDEN_KEY, showModels, lsGet, asides,
     scopedHash,
 } from "../store";
 import { truncate } from "../format";
@@ -43,6 +43,7 @@ import { layoutKey, dragging, dragStale, measureFloor, easeVramH, cancelEase, no
 import { TrackEditor } from "./track-editor";
 import { RowTip, sparkAt, SparkTip, ModelRow, GhostRow } from "./model-rows";
 import { toHost } from "../parent-channel";
+import { WindowChip } from "./resource-scrub";
 
 /** A machine-level banner for GPUs the server can see and cannot use.
  *
@@ -105,12 +106,6 @@ function GpuFaults() {
 /** Whether the model list is showing the models this session did NOT use. Off by default and NOT persisted:
  *  it answers a question you had once ("what else is on the box?"), not a preference. */
 export const othersOpen = signal(false);
-
-/** How long a selected range is, for the chip that offers to leave it. */
-export const zoomSpan = (z: { from: number; to: number }): string => {
-    const s = Math.max(0, Math.round((z.to - z.from) / 1000));
-    return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
-};
 
 /** Everything that happened this browsing session, on the machine's timeline: generations, tool steps, model
  *  loads (from the sessions), and evictions (from the samples themselves, since nothing else reports them).
@@ -553,19 +548,7 @@ export function VramPanel() {
                     and the difference between them is what the ✕ restores: a pin drops back to the rolling
                     window, a resize goes back to the width the picker names. The label is formatted by the
                     same `zoomSpan` either way, so the two cannot read as different kinds of thing. */}
-                {zoomRange.value || resWindowS.value !== resWindowPref.value ? (
-                    <button class={`tt vram-zoom ${zoomRange.value ? "pinned" : "resized"}`} onClick={() => {
-                        if (zoomRange.value) { zoomRange.value = null; return; }
-                        resWindowS.value = resWindowPref.value;
-                        try { chrome.storage.local.set({ [RESWIN_KEY]: resWindowPref.value }); } catch { /* opaque origin */ }
-                    }}>
-                        {zoomRange.value ? zoomSpan(zoomRange.value)
-                            : resWindowS.value === 0 ? "all" : zoomSpan({ from: 0, to: resWindowS.value * 1000 })} ✕
-                        <span class="tt-pop wrap" role="tooltip">{zoomRange.value
-                            ? <>Showing the range you selected instead of the rolling window. Click, or press Esc, to go back to live.</>
-                            : <>The window has been resized away from the default. Click to go back to it — the default is the one the chart's own settings name, behind the gear.</>}</span>
-                    </button>
-                ) : null}
+                <WindowChip />
                 {/* BEFORE the view picker: what the panel is ABOUT comes before how it is drawn. Not gated on
                     capacity like the picker is — scoping still governs the lane and the model list on a box
                     that answers no /api/info, and hiding the switch there would leave a scoped panel with no

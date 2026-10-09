@@ -248,10 +248,13 @@ export function clampWindow(win: { from: number; to: number }, minMs = MIN_SCOPE
  * waiting to come back.
  */
 export function chartWindow(zoom: { from: number; to: number } | null, scoped: { from: number; to: number; live?: true } | null,
-    secs: number, now: number, firstT?: number): { from: number; to: number; live?: true } | null {
+    secs: number, now: number, firstT?: number): { from: number; to: number; live?: true; grows?: true } | null {
     if (zoom) return zoom;
     if (scoped) return scoped;
-    if (!secs) return null;                        // "everything" — no window to draw
+    // "Everything": still a WINDOW, from the first reading to now, growing rather than scrolling (`grows`). With none,
+    // the strip drew no box, and a wheel, a pinch or a drag on the strip had no window to move, so nothing at all
+    // could be done from the whole view but pick a stretch on the plot. Null only before there is a first reading.
+    if (!secs) return firstT != null ? { from: firstT, to: Math.max(now, firstT + 1), live: true, grows: true } : null;
     const width = secs * 1000;
     // FILL, THEN SCROLL, the same rule a live session follows (`sessionWindow`). With less history than the window
     // holds, the window starts at the first reading and the data grows rightward into it; once the history is longer,

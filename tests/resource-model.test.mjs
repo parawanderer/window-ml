@@ -1130,6 +1130,15 @@ test("chartWindow: the rolling window fills from the first reading, then scrolls
     assert.deepEqual(X.chartWindow({ from: 1, to: 2 }, null, W, 1_500_000, 1_000_000), { from: 1, to: 2 });
 });
 
+// --- the chart's window: what the plot, the strip and the lanes show ---
+
+test("chartWindow: the whole history is a window too, from the first reading to now, that grows instead of scrolling", () => {
+    // With no window, the strip drew no box and a wheel or pinch on it had nothing to move (the bench's "live").
+    assert.deepEqual(X.chartWindow(null, null, 0, 1_500_000, 1_000_000), { from: 1_000_000, to: 1_500_000, live: true, grows: true });
+    assert.equal(X.chartWindow(null, null, 0, 1_500_000, undefined), null, "nothing read yet: no window");
+    assert.deepEqual(X.chartWindow({ from: 1, to: 2 }, null, 0, 1_500_000, 1_000_000), { from: 1, to: 2 }, "a zoom still wins");
+});
+
 test("sessionWindow: a live session FILLS its window and then SCROLLS, and never rescales", () => {
     const T = 1_700_000_000_000;
     const run = (until) => [{ t: T, until, kind: "run", label: "r", ref: { hash: "a" } }];

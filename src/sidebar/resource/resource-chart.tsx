@@ -108,6 +108,20 @@ function TrackView({ def, samples, latest, hidden, events = [] }: { def: TrackDe
     return <OverlayView def={def} onHide={onHide} samples={samples} latest={latest} hidden={hidden} events={events} />;
 }
 
+/** Whether `el` is off the chart's readout surfaces: anywhere but the chart, or on a lane (its bars have tips of
+ *  their own). The scrub strip sits outside `.rc`, so it is off. */
+export const offReadout = (el: Element | null): boolean => !el?.closest?.(".rc") || !!el.closest(".rc-lane, .wml-lane");
+
+/** Close the chart's readout: its crosshair, where the pointer was reading it, a lit pool, and with `keys` a line or a
+ *  model the arrow keys were holding. A lane's own reading position (surface "lane") is the lane's to clear. */
+function closeReadout(keys: boolean): void {
+    if (keys && kbFocus.value) { kbFocus.value = null; hoverModel.value = null; }
+    if (keys && kbPool.value) kbPool.value = null;
+    if (crosshair.value) crosshair.value = null;
+    if (hoverAt.value && hoverAt.value.surface !== "lane") hoverAt.value = null;
+    if (poolHover.value) leavePool();
+}
+
 // THREE WAYS A HOLD ENDS, because the one that should suffice (`pointerleave`) is not delivered when the pointer leaves
 // the panel's iframe for the page: moving anywhere in the panel off the chart; the shell saying the pointer is on the
 // page; and the lapse, in the chart's tick.
@@ -121,11 +135,15 @@ if (typeof document !== "undefined") document.addEventListener("pointermove", (e
     // a lane (whose bars have tips of their own), the readout is over, unless the keyboard holds a line. A lane's own
     // reading position (surface "lane") is the lane's to clear, and event tips are untouched (a model card's ribbon
     // opens one outside the chart).
-    if (kbFocus.value || kbPool.value || (on?.closest?.(".rc") && !on.closest(".rc-lane, .wml-lane"))) return;
-    if (crosshair.value) crosshair.value = null;
-    if (hoverAt.value && hoverAt.value.surface !== "lane") hoverAt.value = null;
-    if (poolHover.value) leavePool();
+    if (kbFocus.value || kbPool.value || !offReadout(on)) return;
+    closeReadout(false);
 }, { passive: true });
+// A PRESS off the chart ends the readout even when the arrow keys hold a line: moving away keeps a held line on
+// purpose (a reading you are taking), but pressing on the strip or a lane is starting something else, and the readout
+// stayed up over it. Captured, since the strip's own handlers take the event.
+if (typeof document !== "undefined") document.addEventListener("pointerdown", (e) => {
+    if (offReadout(e.target as Element | null)) closeReadout(true);
+}, { passive: true, capture: true });
 
 /** THE CHART itself: one track per memory pool on a shared segmented axis, the scrub strip above and the
  *  event lane below. Drawing only — placement, packing, bands and windows are the pure functions in
@@ -138,8 +156,11 @@ export interface LaneContext { axis: Axis; samples: ResourceSample[]; runs: Reso
 /**
  * @param lane draws the lane in place of the panel's `EventLane`, on the chart's axis: a page with no panel (the bench's
  *   sweep, one lane per run) keeps its own rows and still moves with every zoom, scrub and selection made on the chart
+ * @param endAt where a RECORDING that no longer grows ends (a finished bench sweep): the clock the live view follows
+ *   stops there. Following the wall clock, "live" on a recording read later slid past its end and drew nothing.
  */
-export function ResourceTracks({ samples, capacity, hidden, layout, events = [], lane }: { samples: ResourceSample[]; capacity: Capacity | null; hidden: Set<string>; layout?: TrackDef[] | null; events?: ResourceEvent[]; lane?: (ctx: LaneContext) => ComponentChildren }) {
+export function ResourceTracks({ samples, capacity, hidden, layout, events = [], lane, endAt }: { samples: ResourceSample[]; capacity: Capacity | null; hidden: Set<string>; layout?: TrackDef[] | null; events?: ResourceEvent[]; lane?: (ctx: LaneContext) => ComponentChildren; endAt?: number }) {
+    const clock = () => endAt ?? Date.now();
     // Capacity is fetched once per open and arrives AFTER the first ps poll, so the earliest samples carry
     // none — see the note on `filled` below.
     //
@@ -161,16 +182,16 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [],
     // A live session FILLS its window and then scrolls at the width on screen, rather than growing to fit (which is a
     // continuous zoom, and snapped to a new window when the run ended): see `sessionWindow`.
     const scopedWindow = useMemo(
-        () => (laneScoped.value ? sessionWindow(events, scopedHash(), Date.now(), { followMs: resWindowS.value * 1000 }) : null),
-        [laneScoped.value, scopedHash(), events.length, samples.at(-1)?.t, resWindowS.value]);
+        () => (laneScoped.value ? sessionWindow(events, scopedHash(), clock(), { followMs: resWindowS.value * 1000 }) : null),
+        [laneScoped.value, scopedHash(), events.length, samples.at(-1)?.t, resWindowS.value, endAt]);
     // KEYED ON THE NEWEST SAMPLE'S TIME, never on how many there are. The history is capped (RESOURCE_HISTORY), and a
     // streamed box reaches the cap in about twenty minutes; from then on every reading drops one and adds one, the
     // length never changes, and this memo never ran again. The window's right edge froze at the moment of the last
     // recompute, the scrub strip read the view as scrolled back ("⏸ live"), and the live button did nothing, because
     // it clears a zoom that was already clear.
     const window_ = useMemo(
-        () => chartWindow(zoomRange.value, scopedWindow, resWindowS.value, Date.now(), samples[0]?.t),
-        [resWindowS.value, zoomRange.value, samples.at(-1)?.t, samples[0]?.t, scopedWindow]);
+        () => chartWindow(zoomRange.value, scopedWindow, resWindowS.value, clock(), samples[0]?.t),
+        [resWindowS.value, zoomRange.value, samples.at(-1)?.t, samples[0]?.t, scopedWindow, endAt]);
     // The samples in the window, plus the nearest either side when the window is too narrow to draw itself —
     // see `windowSamples`. Zooming inside one long event used to leave fewer than two samples and an empty
     // chart, which reads as the panel having broken rather than as a window between two polls.
@@ -189,8 +210,9 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [],
     // what is sampled, what the scrub strip reasons about — keeps its sample cadence (see the note on its memo: a
     // right edge moving at another cadence breaks the scrub gestures). Only a window that follows the clock slides:
     // a zoom stays where you put it, and so does a finished session.
-    const following = window_ ? !!window_.live : true;
-    const [tickNow, setTickNow] = useState(() => Date.now());
+    const following = endAt == null && (window_ ? !!window_.live : true);
+    const [tickState, setTickNow] = useState(() => Date.now());
+    const tickNow = endAt ?? tickState;
     useEffect(() => {
         if (!following) return;
         const id = setInterval(() => {
@@ -201,7 +223,7 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [],
         return () => clearInterval(id);
     }, [following]);
     live.axis = held ?? (!window_ ? axisOf(null, [windowed], tickNow)
-        : window_.live && tickNow > window_.to ? { from: window_.from + (tickNow - window_.to), to: tickNow }
+        : window_.live && tickNow > window_.to ? { from: window_.grows ? window_.from : window_.from + (tickNow - window_.to), to: tickNow }
         : window_);
     // KNOWN BUG, diagnosed and deliberately still here: this backfills the CURRENT capacity into a sample
     // that has none, and a capacity carries FREE BYTES — which is what usage is computed from. So a sample

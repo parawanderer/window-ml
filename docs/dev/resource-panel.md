@@ -672,6 +672,13 @@ sidebar.css (`laneCss`). A change to how a bar looks is made there, once; `Event
   than stepping; the window itself (what is sampled, what the scrub strip reasons about) keeps its sample cadence,
   because a right edge moving at another cadence breaks the scrub gestures. While the window is still filling, the
   scrub strip is given it clipped to the last reading, so a left-edge drag means "fewer seconds than the history".
+  **"EVERYTHING" IS A WINDOW TOO** (`resWindowS` 0): from the first reading to now, `grows` rather than scrolls (the
+  tick moves its right edge only). With none, the strip drew no box and a wheel, pinch or strip drag had nothing to
+  move. A page showing a RECORDING that no longer grows (a finished bench sweep) passes `endAt` to `ResourceTracks`,
+  and the clock stops there: following the wall clock, live slid past the last reading and drew an empty chart.
+  `WindowChip` (resource-scrub.tsx) is the width readout and its way back to the default, on the panel and the bench.
+  **THE READOUT CLOSES OFF THE CHART** (resource-chart.tsx, document listeners): a move off the plots or onto a lane
+  closes it unless the arrow keys hold a line; a PRESS off them (`offReadout`: the strip, a lane) closes it even then.
   **THE AXIS HOLDS UNDER THE POINTER** (`chartHeld`). A chart scrolling under a still cursor moves the sample being
   read; so while the pointer is on the plots or the lane, the axis (and the samples) it entered on are held, and it
   catches up when the pointer leaves. Letting go is the hard half: leaving the panel's IFRAME for the page tells the

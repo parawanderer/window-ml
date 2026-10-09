@@ -11,7 +11,7 @@ import type { ResourceSample } from "../../resource/resource-model";
 import type { ResourceEvent } from "../../resource/resource-timeline";
 import { sampleGapMs } from "./panel-state";
 import { colorFor } from "../palette";
-import { zoomRange, resWindowS, RESWIN_KEY, laneEnabled, showLane } from "../store";
+import { zoomRange, resWindowS, resWindowPref, RESWIN_KEY, laneEnabled, showLane } from "../store";
 
 /** Which part of the scrub window the pointer is over, so the cursor can say a handle is there before you
  *  try to use it. A resize affordance you can only discover by failing to pan is not an affordance. */
@@ -255,5 +255,40 @@ export function ScrubStrip({ samples, window: win, pan, events = [], follows }: 
                 </svg>
             ) : null}
         </div>
+    );
+}
+
+/** How long a selected range is, for the chip that offers to leave it. */
+export const zoomSpan = (z: { from: number; to: number }): string => {
+    const s = Math.max(0, Math.round((z.to - z.from) / 1000));
+    return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+};
+
+/**
+ * The chart window's width, and the way back to the default: a pinned range (a selection, a scroll back) returns to
+ * the rolling window, a rolling window resized away from the default returns to the width the default names. Shown
+ * only off the default, unless `always` (a page with room to say how wide the default view is: `allMs`, the whole
+ * history's span, for the "everything" window).
+ */
+export function WindowChip({ always = false, allMs }: { always?: boolean; allMs?: number }) {
+    const pinned = zoomRange.value;
+    const resized = !pinned && resWindowS.value !== resWindowPref.value;
+    const width = (secs: number) => (secs === 0 ? `all${allMs ? ` · ${zoomSpan({ from: 0, to: allMs })}` : ""}` : zoomSpan({ from: 0, to: secs * 1000 }));
+    if (!pinned && !resized) {
+        if (!always) return null;
+        return <span class="tt vram-zoom at-default" aria-label={`window: ${width(resWindowS.value)}`}>{width(resWindowS.value)}
+            <span class="tt-pop wrap" role="tooltip">How wide the chart's window is: its default. Drag on the chart or a lane to select a stretch, scroll or pinch on the chart or the strip to move or resize it.</span></span>;
+    }
+    return (
+        <button class={`tt vram-zoom ${pinned ? "pinned" : "resized"}`} onClick={() => {
+            if (zoomRange.value) { zoomRange.value = null; return; }
+            resWindowS.value = resWindowPref.value;
+            try { chrome.storage.local.set({ [RESWIN_KEY]: resWindowPref.value }); } catch { /* opaque origin */ }
+        }}>
+            {pinned ? zoomSpan(pinned) : width(resWindowS.value)} ✕
+            <span class="tt-pop wrap" role="tooltip">{pinned
+                ? <>Showing the range you selected instead of the rolling window. Click, or press Esc, to go back to live.</>
+                : <>The window has been resized away from the default. Click to go back to it — the default is the one the chart's own settings name, behind the gear.</>}</span>
+        </button>
     );
 }

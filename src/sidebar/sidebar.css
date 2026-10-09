@@ -421,6 +421,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .vram-zoom.resized { border-style: dashed; border-color: color-mix(in srgb, var(--accent) 60%, transparent);
     color: var(--fg-dim); }
 .vram-zoom:hover { background: var(--panel-2-hover); }
+/* At the default, on a page that always says how wide its window is (WindowChip `always`): a reading, not a control. */
+.vram-zoom.at-default { cursor: default; border-color: var(--border); color: var(--fg-dim); }
+.vram-zoom.at-default:hover { background: var(--panel-2); }
 /* ABOVE a gap mark (z-index 3): a moment that happened inside a break is the more specific thing under the pointer,
    and at equal z the later-rendered gap took the hover, so pointing at the rule said "not measured". */
 .rc-rule { position: absolute; top: 0; bottom: 0; width: 9px; margin-left: -4px; cursor: inherit; z-index: 4; }

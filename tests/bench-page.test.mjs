@@ -374,7 +374,9 @@ test("a cloud model is drawn in its own shade of its hue: a local model keeps th
     assert.match(swatch("local:7b"), /^(#[0-9a-f]{6}|rgb\()/i);
 });
 
-test("a finished sweep's chart is framed to the sweep, and Esc on the page reaches the chart's keys", async (t) => {
+/** A finished sweep with the box's memory read every 2 s from 1 s to 39 s, one run from 6 s to 20 s; laid out by a stubbed
+ *  rect (jsdom lays nothing out), so the chart's pointer readings land somewhere. */
+async function sweepWithMemory(t) {
     const { readSample, packSamples } = await import("../tests/e2e/bench/resource-poll.mjs");
     const GiB = 1024 ** 3;
     const info = { compute: { system_compute: { cpu_cores: 8, total_memory: 64 * GiB, free_memory: 32 * GiB, free_swap: 0 }, supported_gpus: [{ gpu_id: "0", name: "CUDA0", runner: "CUDA", total_memory: 24 * GiB, free_memory: 20 * GiB, compute: "8.6", driver: "13" }] } };
@@ -384,11 +386,54 @@ test("a finished sweep's chart is framed to the sweep, and Esc on the page reach
     const html = await staticPage({ name: "x", dims: [], runs: [{ combo: {}, taskId: "t", repeat: 0, state: "done", who: "x", ok: true }], rows: [], jobs: 1,
         started: 5000, finished: 30_000, resources: packSamples(reads), timeline: { now: 30_000, runs: [{ index: 0, events: [ev("run", 6000, 20_000)] }] } });
     const w = new JSDOM(html, { runScripts: "dangerously", pretendToBeVisual: true }).window;
-    t.after(() => w.close());   // the chart ticks on an interval
-    const tick = () => new Promise((r) => w.setTimeout(r, 30));
+    t.after(() => w.close());   // the chart may tick on an interval
+    w.Element.prototype.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 100, right: 800, bottom: 100, x: 0, y: 0 });
+    const tick = () => new Promise((r) => w.setTimeout(r, 40));
     await tick();
-    assert.ok(w.document.querySelector(".tlchart .rc-scrub"), "framed to 5 s to 30 s, inside the readings' 1 s to 39 s: the strip shows where");
-    w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    return { w, d: w.document, tick };
+}
+
+test("a finished sweep's live view is the whole sweep up to its end, never the wall clock it is read at", async (t) => {
+    const { d } = await sweepWithMemory(t);
+    // Following the wall clock, live slid past the sweep's last reading: an empty chart, empty lanes, and no box on the strip.
+    assert.equal(d.querySelector(".tlchart .rc-scrub-win")?.getAttribute("style"), "left: 0%; width: 100%;", "the strip boxes the whole sweep");
+    assert.match(d.querySelector(".tlchart .rc-scrub-live").className, /\bon\b/, "and that is live");
+    // The run (6 s to 20 s) on an axis from the first reading (1 s) to the last (39 s): it starts about 13% in.
+    const left = parseFloat(d.querySelector(".tlchart .wml-lane .rc-ev-run").style.left);
+    assert.ok(left > 10 && left < 16, `run bar at ${left}%`);
+    // And the window says how wide it is: the default, all 38 s of readings, as a reading rather than a control.
+    const chip = d.querySelector("#timeline .vram-zoom, .card .vram-zoom");
+    assert.equal(chip.tagName, "SPAN");
+    assert.match(chip.firstChild.textContent, /^all · 38s$/);
+});
+
+test("the chart's readout closes on a press off the chart, even while the arrow keys hold a line", async (t) => {
+    const { w, d, tick } = await sweepWithMemory(t);
+    const tip = () => d.querySelectorAll(".tlchart .rc-tip-keys").length;
+    const hover = async () => {
+        const hit = d.querySelector(".tlchart .rc .rc-hit");
+        hit.dispatchEvent(new w.PointerEvent("pointerenter", { bubbles: false, clientX: 400, clientY: 50 }));
+        hit.dispatchEvent(new w.PointerEvent("pointermove", { bubbles: true, clientX: 400, clientY: 50 }));
+        await tick();
+    };
+    await hover();
+    assert.equal(tip(), 1, "the readout is up over the plot");
+    d.dispatchEvent(new w.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
     await tick();
-    assert.equal(w.document.querySelector(".tlchart .rc-scrub"), null, "Esc let go of the frame: the whole of the readings, no strip");
+    const strip = d.querySelector(".tlchart .rc-scrub");
+    strip.dispatchEvent(new w.PointerEvent("pointermove", { bubbles: true, clientX: 400, clientY: 120 }));
+    await tick();
+    assert.equal(tip(), 1, "moving off keeps a line the keys hold: a reading being taken");
+    strip.dispatchEvent(new w.PointerEvent("pointerdown", { bubbles: true, clientX: 400, clientY: 120 }));
+    await tick();
+    assert.equal(tip(), 0, "a press on the strip ends it");
+    await hover();
+    assert.equal(tip(), 1);
+    d.querySelector(".tlchart .wml-lane .rc-ev-run").dispatchEvent(new w.PointerEvent("pointerdown", { bubbles: true, clientX: 100, clientY: 150 }));
+    await tick();
+    assert.equal(tip(), 0, "and so does a press on a lane");
+    await hover();
+    d.querySelector(".tlchart .rc .rc-hit").dispatchEvent(new w.PointerEvent("pointerdown", { bubbles: true, clientX: 400, clientY: 50 }));
+    await tick();
+    assert.equal(tip(), 1, "a press on the plot is the plot's own");
 });
