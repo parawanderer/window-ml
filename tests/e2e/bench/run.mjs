@@ -58,7 +58,7 @@ import { writeReport, mdSink, terminalSink, doneSummary, doneLine } from "./sink
 import { startDashboard, staticPage, servedSweep } from "./serve.mjs";
 import { pageSources } from "./page/bundle.mjs";
 import { addMark, readMarks, defaultBy } from "./mark.mjs";
-import { recordSweep, specProvenance, specText, keepEarlierRun } from "./sweeps.mjs";
+import { recordSweep, specProvenance, specText, keepEarlierRun, cellsOnDisk, sortOnDisk } from "./sweeps.mjs";
 import { runLanes, fitsGate, settleUntilResident } from "./lanes.mjs";
 import { shownFingerprint } from "./shown.mjs";
 import { storeFromEnv, openStore, push as pushToStore } from "./sync.mjs";
@@ -370,6 +370,17 @@ const main = async () => {
     const { fingerprint, dirty } = buildFingerprint();
     const cells = expandCells(spec, { only: parseSelector(args.only), skip: parseSelector(args.skip), repeats: args.repeats });
     if (!cells.length) throw new Error("no cells selected — check --only/--skip");
+    const sweepDir = path.join(ARTROOT, slug(spec.name));
+    // The rest of the sweep already on disk: what an earlier `--only`/`--models` ran of the same spec and build goes into
+    // this report as if read from the cache, so the report is the whole sweep; what an earlier version ran is only listed.
+    // An interview's other models are cells of the same spec over a longer model list.
+    const disk = await cellsOnDisk(sweepDir);
+    let whole = spec;
+    if (isInterviewFile(args.specPath)) {
+        const more = [...new Set(disk.map((d) => d.saved.combo?.model).filter((m) => typeof m === "string" && !args.models.includes(m)))];
+        if (more.length) whole = await loadSpec(args.specPath, { models: [...args.models, ...more], surface: args.surface, turnMinutes: args.turnMinutes });
+    }
+    const { same: alsoSame, older } = sortOnDisk(disk, { base: expandCells(whole, { repeats: 1 }), selected: new Set(cells.map(cellPath)), fingerprint });
 
     const groups = buildGroups(cells);
     // With lanes, the most that can run at once: one per model, under --jobs when given (the page's "N jobs").
@@ -377,9 +388,10 @@ const main = async () => {
         const models = new Set(cells.map((c) => c.effects.backend?.model ?? "")).size;
         args.jobs = args.jobsSet ? Math.min(args.jobs, models) : models;
     }
-    console.log(`\n  ${spec.name}\n  ${cells.length} runs · ${groups.length} build${groups.length > 1 ? "s" : ""} · ${args.lanes ? `lanes ${args.jobs} (one per model, as the box has room)` : `jobs ${args.jobs}`}${dirty ? " · DIRTY TREE" : ""}\n`);
+    console.log(`\n  ${spec.name}\n  ${cells.length} runs · ${groups.length} build${groups.length > 1 ? "s" : ""} · ${args.lanes ? `lanes ${args.jobs} (one per model, as the box has room)` : `jobs ${args.jobs}`}${dirty ? " · DIRTY TREE" : ""}${alsoSame.length ? ` · ${alsoSame.length} more already on disk` : ""}${older.length ? ` · ${older.length} on disk from an earlier version` : ""}\n`);
     if (args.dry) {
         for (const c of cells) console.log(`  ${comboLabel(c.combo)} · ${c.task.id} · r${c.repeat}  [${cellKey(c, fingerprint)}]`);
+        if (alsoSame.length) console.log(`\n  and in the report, already on disk: ${alsoSame.map((s) => s.rel).join(", ")}`);
         console.log(`\n  (dry run — nothing executed)\n`);
         return;
     }
@@ -393,7 +405,6 @@ const main = async () => {
     }
 
     const backend = await resolveBackendFromEnv();
-    const sweepDir = path.join(ARTROOT, slug(spec.name));
     // What the box did over the sweep, read as the resource panel reads it: its event stream when the server has one
     // (memory readings and its own loads, evictions and serving spans, every frame also kept in box.sqlite), else polled
     // memory. For the page's memory chart and memory.md; only against a real backend.
@@ -431,6 +442,9 @@ const main = async () => {
     };
     // The live page, when asked for. Every cell is seeded as QUEUED so the whole matrix is visible from the
     // start — what is running, what is next, and what is left is the question a long sweep actually raises.
+    // The cells this invocation runs come first; the rest of the sweep already on disk (above) after them, never run.
+    const nRun = cells.length;
+    for (const { cell } of alsoSame) cells.push(cell);
     const runsState = cells.map((c) => ({ combo: c.combo, taskId: c.task.id, repeat: c.repeat, state: "pending", who: whoOf(c.combo) }));
     const results = new Array(cells.length);
     // A person's marks on interview answers, kept beside the sweep so the next run of it checks them.
@@ -503,7 +517,7 @@ const main = async () => {
     };
     const push = () => dash?.update({
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
-        runs: runsState, rows: aggregateRows(cells, results),
+        runs: runsState, rows: aggregateRows(cells, results), older,
         started, finished: null, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: liveScores, cloud, scripted, repo,
         resources: resPoll?.resources() ?? null,
     });
@@ -543,6 +557,10 @@ const main = async () => {
             catch { /* no opener here — the URL is printed above */ }
         }
     }
+    alsoSame.forEach(({ rel, saved }, k) => {
+        runsState[nRun + k].onDisk = true;
+        ctx.report(nRun + k, "done", { ...saved, dir: path.join(sweepDir, rel), fromCache: true });
+    });
     push();
     // A run held open mid-sweep can be talked to before the sweep ends: its added turns go on the page as they come.
     const unfollow = dash ? followContinued(sweepDir, () => runsState, push) : () => {};
@@ -551,13 +569,13 @@ const main = async () => {
     // fits beside what is loaded. Without a real backend every cell is the fake's, so it is one lane.
     if (args.lanes) {
         const gate = backend ? fitsGate(backend, info) : async () => ({ go: true, local: false, why: "the fake model" });
-        await runLanes(cells, {
+        await runLanes(cells.slice(0, nRun), {
             modelOf: (c) => c.effects.backend?.model ?? backend?.model ?? "",
             gate, settle: backend ? settleUntilResident(gate) : async () => {},
             fn: (cell, i) => runCell(cell, ctx, i),
             maxLanes: args.jobsSet ? args.jobs : Infinity, log: (s) => console.log(s),
         });
-    } else await pool(cells, args.jobs, (cell, i) => runCell(cell, ctx, i));
+    } else await pool(cells.slice(0, nRun), args.jobs, (cell, i) => runCell(cell, ctx, i));
     const finished = Date.now();
     unfollow();
     resPoll?.stop();
@@ -583,12 +601,14 @@ const main = async () => {
         path: results[i] ? path.relative(sweepDir, results[i].dir) : "",
         repoPath: results[i] ? path.relative(ROOT, results[i].dir) : "",
         who: runsState[i].who,
+        // Not selected this time: an earlier invocation of the same spec and build ran it.
+        ...(runsState[i].onDisk ? { onDisk: true } : {}),
         ...(runsState[i].held ? { held: runsState[i].held } : {}),
         ...(runsState[i].continued?.length ? { continued: runsState[i].continued } : {}),
         ...(runsState[i].turns ? { turns: runsState[i].turns, checks: runsState[i].checks ?? [], ...(runsState[i].followUps ? { followUps: runsState[i].followUps } : {}), ...(runsState[i].expects ? { expects: runsState[i].expects } : {}) } : {}),
     }));
 
-    const sweep = { spec, rows, runs, fingerprint, dirty, started, finished, sweepDir: path.relative(ROOT, sweepDir), cached: ctx.cached, ran: ctx.ran, jobs: args.jobs, pdf: args.pdf };
+    const sweep = { spec, rows, runs, older, onDisk: alsoSame.length, fingerprint, dirty, started, finished, sweepDir: path.relative(ROOT, sweepDir), cached: ctx.cached, ran: ctx.ran, jobs: args.jobs, pdf: args.pdf };
     writeReport(sweep, terminalSink());
     const md = writeReport(sweep, mdSink());
     const reportPath = path.join(sweepDir, "report.md");
@@ -615,7 +635,7 @@ const main = async () => {
     if (scores) await writeScoreFiles(scores);
     const pageState = {
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
-        runs, rows, started, finished, jobs: args.jobs, dirty, fingerprint, pdf: args.pdf, interviews, skipped, spec: provenance,
+        runs, rows, older, started, finished, jobs: args.jobs, dirty, fingerprint, pdf: args.pdf, interviews, skipped, spec: provenance,
         scores: scoreLines("../scores.html"), cloud, scripted, repo,
         resources: resPoll?.resources() ?? null,
         // What may leave this machine for the bench store (sync.mjs): nothing when the spec says `sync: false`, and no
@@ -633,7 +653,7 @@ const main = async () => {
     await writeFile(path.join(sweepDir, "timeline.md"), timelineText(pageState.timeline, nameOf, { cached: runs.filter((r) => r.cached).length }));
     await writeFile(path.join(sweepDir, "spec.md"), specText(provenance));
     await writeFile(path.join(sweepDir, "memory.md"), memoryText(pageState.resources));
-    await writeFile(path.join(sweepDir, "rows.json"), JSON.stringify({ fingerprint, dirty, started, finished, rows, runs }, null, 2));
+    await writeFile(path.join(sweepDir, "rows.json"), JSON.stringify({ fingerprint, dirty, started, finished, rows, runs, older }, null, 2));
     files.push(
         ["timeline", "timeline.md", "every run on one clock: spans, overlaps, model loads"],
         ["memory", "memory.md", "the box's memory during the sweep: each pool's peak and mean, each model's stretch in memory"],
@@ -660,7 +680,7 @@ const main = async () => {
     if (dash) {
         dash.update({
             name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
-            runs: runsState, rows, started, finished, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: scoreLines("/scores"), cloud, scripted, repo,
+            runs: runsState, rows, older, started, finished, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: scoreLines("/scores"), cloud, scripted, repo,
             resources: pageState.resources,
         });
         // The page outlives the sweep, the sweep's PROCESS does not: a caller that started it in the background (an
@@ -673,7 +693,8 @@ const main = async () => {
         page = await handOffPage(sweepDir, port);
     }
     // ONE line a poller can look for, last, and the same as done.json in the sweep directory.
-    const done = doneSummary(spec.name, runs, { report: path.relative(ROOT, reportPath), page, retried: ctx.retried,
+    // About what THIS invocation did: a run already on disk is in the report, not in the exit status.
+    const done = doneSummary(spec.name, runs.filter((r) => !r.onDisk), { report: path.relative(ROOT, reportPath), page, retried: ctx.retried,
         held: ctx.held.runs.map(({ pid, cell, dir, attach, expiresAt }) => ({ pid, cell, dir, attach, expiresAt })), kept: ctx.kept });
     await writeFile(path.join(sweepDir, "done.json"), JSON.stringify(done, null, 2));
     // Into the bench store, when one is configured (sync.mjs; off by default). Never the sweep's failure: what did not

@@ -69,7 +69,8 @@ function Head({ s, disconnected }: { s: BenchState; disconnected: boolean }) {
     const done = s.runs.filter((r) => r.state === "done").length;
     const pct = s.runs.length ? Math.round((done / s.runs.length) * 100) : 0;
     const failed = s.runs.filter((r) => r.state === "done" && !r.ok).length;
-    const cached = s.runs.filter((r) => r.cached).length;
+    const cached = s.runs.filter((r) => r.cached && !r.onDisk).length;
+    const onDisk = s.runs.filter((r) => r.onDisk).length;
     useEffect(() => { document.title = s.finished ? `✓ ${s.name}` : `${pct}% ${s.name}`; }, [s.finished, pct, s.name]);
     return (
         <header class="top">
@@ -86,12 +87,26 @@ function Head({ s, disconnected }: { s: BenchState; disconnected: boolean }) {
                 <span class="badge tt" data-tip="Runs finished out of the whole matrix.">{done} / {s.runs.length} runs · {pct}%</span>
                 {failed ? <span class="badge bad">{failed} failed</span> : null}
                 {cached ? <span class="badge tt" data-tip="Runs not re-run: an earlier sweep of the same build measured them. --no-cache runs them again.">{cached} cached</span> : null}
+                {onDisk ? <span class="badge tt" data-tip="Runs this invocation did not select (--only, --models) that an earlier one of the same spec and build ran: in every figure, as if read from the cache.">{onDisk} already on disk</span> : null}
                 {s.finished ? <span class="badge ok">done</span> : <span class="badge tt" data-tip="Runs going at once, each in its own browser (--jobs).">{s.jobs} job{s.jobs > 1 ? "s" : ""}</span>}
                 {s.spec?.changed ? <a class="badge warn tt" href="#spec" data-tip="The spec differs from the sweep before: see the Spec card.">spec changed</a> : null}
                 {s.dirty ? <span class="badge warn tt" data-tip="Built with uncommitted changes: these numbers are not reproducible from a commit.">dirty tree</span> : null}
                 {disconnected ? <span class="badge bad">disconnected</span> : null}
             </div>
         </header>
+    );
+}
+
+/** Runs in the sweep's directory from an earlier spec or build: named so they are not taken for lost, never counted. */
+function Older({ s, base }: { s: BenchState; base: string }) {
+    if (!s.older?.length) return null;
+    return (
+        <section class="card">
+            <header><h2>Also on disk, from an earlier version</h2><span class="sub">not in any figure here; run their cells again to measure them on this version</span></header>
+            <ul>{s.older.map((o) => (
+                <li key={o.path}>{o.combo ? Object.entries(o.combo).map(([k, v]) => `${k}=${v}`).join(" ") + " · " : ""}{o.taskId ?? "?"} · r{o.repeat ?? "?"}: <a href={`${base}${o.path}/run.md.html`}><code>{o.path}</code></a></li>
+            ))}</ul>
+        </section>
     );
 }
 
@@ -146,6 +161,7 @@ function App() {
                 <SweepTimeline s={s} />
                 <Results s={s} />
                 <Runs s={s} base={base} />
+                <Older s={s} base={base} />
                 <SpecCard s={s} />
             </main>
             <Viewer s={s} base={base} live={!baked} />

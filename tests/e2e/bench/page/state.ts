@@ -23,6 +23,8 @@ export interface RunState {
     steps?: number;
     secs?: number | null;
     cached?: boolean;
+    /** not selected by this invocation (`--only`, `--models`): an earlier one of the same spec and build ran it */
+    onDisk?: boolean;
     /** the run's directory, relative to the sweep; set as soon as the run starts */
     path?: string;
     hash?: string | null;
@@ -75,6 +77,8 @@ export interface BenchState {
     /** the question each turn of each interview asked, by task id */
     interviews?: Record<string, string[]>;
     skipped?: { model: string; why: string }[];
+    /** runs in the sweep's directory from an earlier spec or build: listed, never counted (sweeps.mjs `sortOnDisk`) */
+    older?: { path: string; taskId: string | null; combo: Record<string, unknown> | null; repeat: number | null }[];
     spec?: SpecState | null;
     /** each run's events (the resource panel's derivation), by its place in `runs`; cached runs have none */
     timeline?: { runs: { index: number; events: ResourceEvent[] }[]; now: number } | null;

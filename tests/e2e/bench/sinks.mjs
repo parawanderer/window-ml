@@ -69,12 +69,12 @@ export function terminalSink(write = (s) => console.log(s)) {
  * @param {object} sink   one of the sinks above
  */
 export function writeReport(sweep, sink) {
-    const { spec, rows, fingerprint, started, finished, cached = 0, ran = 0 } = sweep;
+    const { spec, rows, fingerprint, started, finished, cached = 0, ran = 0, onDisk = 0, older = [] } = sweep;
     sink.heading(spec.name, 1);
     if (spec.description) sink.note(spec.description);
 
     const mins = ((finished - started) / 60000).toFixed(1);
-    sink.note(`${ran + cached} runs (${ran} run, ${cached} cached) · ${mins} min · build ${fingerprint.slice(0, 12)}${sweep.dirty ? " (DIRTY TREE)" : ""}`);
+    sink.note(`${ran + cached + onDisk} runs (${ran} run, ${cached} cached${onDisk ? `, ${onDisk} not selected this time but already on disk from the same spec and build` : ""}) · ${mins} min · build ${fingerprint.slice(0, 12)}${sweep.dirty ? " (DIRTY TREE)" : ""}`);
     if (sweep.dirty) sink.note("The working tree had uncommitted changes: these numbers are not reproducible from a commit.");
     if (sweep.jobs > 1) sink.note(`Ran ${sweep.jobs} browsers in parallel — the wall-time columns (secs) are NOT comparable across a parallel sweep.`);
 
@@ -104,7 +104,7 @@ export function writeReport(sweep, sink) {
         (sweep.runs || []).map((r) => [
             ...dimCols.map((d) => String(r.combo[d])),
             r.taskId,
-            `r${r.repeat}`,
+            `r${r.repeat}${r.onDisk ? " (on disk)" : ""}`,
             !r.ok ? "FAILED" : r.succeeded === null ? "ok" : r.succeeded ? "ok · correct" : "ok · WRONG",
             String(r.steps),
             r.secs != null ? r.secs.toFixed(1) : "—",
@@ -117,6 +117,13 @@ export function writeReport(sweep, sink) {
             r.path ? sink.link("run.md", `${r.path}/run.md`) : "—",
         ]));
     sink.note(`Paths are relative to \`${sweep.sweepDir || "this directory"}\`. Each run's directory holds \`run.md\` (the transcript to read), \`run.json\` (the machine-readable export — diff two runs with this, not the markdown), \`events.json\`, \`transcript.txt\` and a screenshot per step.${sweep.pdf ? " `--pdf` also wrote `run.html` + `run.pdf`." : " Add `--pdf` for `run.html` + `run.pdf` as well."}`);
+    // Results of an earlier version of the spec or build, still on disk: named so nobody thinks them lost, never counted
+    // above, since they answered a different question.
+    if (older.length) {
+        sink.heading("Also on disk, from an earlier version");
+        sink.note("Runs in this directory from an earlier spec or build. They are not in any figure above; run their cells again (`--only`) to measure them on this version.");
+        sink.list(older.map((o) => `${o.combo ? `${comboLabel(o.combo)} · ` : ""}${o.taskId ?? "?"} · r${o.repeat ?? "?"}: ${sink.link(o.path, `${o.path}/run.md`)}`));
+    }
     sink.note(`\`report.html\` beside this file is the same index as a page — the live view with the final state baked in, for a human.`);
     return sink.done();
 }
