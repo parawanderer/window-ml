@@ -312,7 +312,7 @@ export async function runIsolatedExec(o: {
     }
     const code = expandPointers(o.js).code;
     const r = o.how === "userScripts" ? await runInUserScriptWorld(o.tabId, o.documentId, o.runId, code, b, o.onStream) : await runInCdpWorld(o.tabId, o.documentId, o.runId, code, b, o.onStream);
-    const note = `(Ran in an isolated world because ${WHY[o.reason]}: the page's own scripts and globals are not visible there, and ml has only ${["current", "dereference"].filter((m) => m !== "current" || b.current || b.currentError).map((m) => `ml.${m}`).join(" and ")}. If the page behaved differently, read what you need in a read-only exec and act in the next.)`;
+    const note = `(Ran in an isolated world because ${WHY[o.reason]}: it shares the page's DOM (clicks and reads work), but the page's own scripts and globals are not visible there, and ml has only ${["current", "dereference"].filter((m) => m !== "current" || b.current || b.currentError).map((m) => `ml.${m}`).join(" and ")}. If the page behaved differently, read what you need in a read-only exec and act in the next.)`;
     if ("error" in r) return { result: `Error: ${r.error}\n\n${note}`, renderIn, renderOut: { type: "exec-out", error: r.error } };
     const kept = r.logs.join("\n");
     const stdout = r.dropped ? `${kept}\n${ceilingNote(r.dropped)}` : kept;

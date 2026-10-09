@@ -26,6 +26,11 @@ const METHOD_REF = function (): never { throw new NotInDialect("a method referen
 type Ev<T = unknown> = Generator<unknown, T, unknown>;
 
 /** The mediated evaluator: walks the parsed AST as a generator, gating every read, call, write and allocation. */
+/** The `ml.current` fields `adoptCurrent` treats specially; every other field is copied whole. */
+const SPECIAL_CURRENT_FIELDS = new Set(["run", "messages", "meta", "log", "debug"]);
+/** How many objects one non-special `ml.current` field may copy into a survey before the rest is cut. */
+const OWNED_COPY_NODES = 10_000;
+
 export class Evaluator {
     // Arrows we created — the only functions we'll invoke directly. Keyed to their node+scope so a
     // DIRECT call (an IIFE) can be driven by the CALLER's driver (an await inside it still works),
@@ -158,7 +163,8 @@ export class Evaluator {
     /** Build what `ml.current` reads from a snapshot. `messages` is the snapshot's own copy, protected; `run`, `meta`
      *  and `log` are copies the script OWNS, since they will never be writable and annotating a working copy of the
      *  metadata is how a compaction is planned. Flat records, so one level of ownership covers all of them. `debug`,
-     *  where the host adds it, is a read-only copy. */
+     *  where the host adds it, is a read-only copy. Any OTHER field (`env`, and whatever comes next) is copied whole
+     *  for the script to own, so nothing new is silently absent from a survey (`env` was, while this listed fields). */
     adoptCurrent(snap: CurrentSnapshot): Record<string, unknown> {
         const protect = (v: unknown, depth: number, shared = false): void => {
             if (v === null || typeof v !== "object" || depth > 8 || this.readOnly.has(v)) return;
@@ -179,7 +185,33 @@ export class Evaluator {
             meta: this.own(snap.meta.map((r) => this.own({ ...r }))),
             log: Object.assign(log, { text: snap.log.text }),
             ...(debug ? { debug } : {}),
+            // Every other field (`env`, and whatever is added next) is plain data: a deep copy the script owns, walked
+            // whole, so a new field reaches a survey without a line here.
+            ...Object.fromEntries(Object.entries(snap).filter(([k, v]) => !SPECIAL_CURRENT_FIELDS.has(k) && v !== undefined).map(([k, v]) => [k, this.ownedCopy(v)])),
         });
+    }
+
+    /** A copy of `v` the script owns, made breadth first so a deep field cannot overflow the stack (`structuredClone`
+     *  recurses). Plain objects and arrays are copied and owned; anything else is cloned whole as a leaf. Past
+     *  {@link OWNED_COPY_NODES} objects the rest is cut to a note rather than handed over by reference. */
+    private ownedCopy(v: unknown): unknown {
+        const fresh = (x: object): object => Array.isArray(x) ? new Array(x.length) : {};
+        const plain = (x: object): boolean => Array.isArray(x) || [Object.prototype, null].includes(Object.getPrototypeOf(x));
+        if (v === null || typeof v !== "object") return v;
+        if (!plain(v)) return structuredClone(v);
+        const seen = new Map<object, object>([[v, this.own(fresh(v))]]);
+        const queue: object[] = [v];
+        for (let n = 0; n < queue.length; n++) {
+            const from = queue[n], to = seen.get(from) as Record<string, unknown>;
+            for (const [k, x] of Object.entries(from)) {
+                if (x === null || typeof x !== "object") to[k] = x;
+                else if (seen.has(x)) to[k] = seen.get(x);
+                else if (!plain(x)) to[k] = structuredClone(x);
+                else if (seen.size >= OWNED_COPY_NODES) to[k] = `[cut: over ${OWNED_COPY_NODES} objects]`;
+                else { seen.set(x, this.own(fresh(x))); to[k] = seen.get(x); queue.push(x); }
+            }
+        }
+        return seen.get(v);
     }
 
     /** The PRINT boundary for `ml.current.messages`. Holding the context costs nothing; printing it is what spends

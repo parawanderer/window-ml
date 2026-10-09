@@ -122,6 +122,32 @@ export interface CurrentSnapshot {
     log: CurrentLog;
     /** What the PERSON pointed the model at. Present only where the host adds it (a worker-hosted run). */
     debug?: { userWatches: UserWatch[] };
+    /** The environment the run acts in, read now: what you would otherwise learn by trying and reading the refusal.
+     *  Present only where the host adds it (a worker-hosted run). */
+    env?: CurrentEnv;
+}
+
+/** Where an approved `exec` runs: in the page's own world (its scripts share your globals), in an isolated world of its
+ *  own (the page's DOM, not its globals; of `ml` only `current` and `dereference`), or not at all. */
+export type ExecWhere = "page" | "isolated" | "refused";
+
+/** The environment a run acts in, computed by the same rules the extension applies, at the moment it is read. */
+export interface CurrentEnv {
+    /** The page the run's tab holds now. `approved`: whether the person allowed this site to use window.ml (site
+     *  access, in Settings). Not `ml.config().pageApprovalAllowed`, which is whether the page may answer approval
+     *  prompts itself. */
+    page: { url: string; approved: boolean };
+    /** What the browser offers for running a script in a world of its own: user scripts (the person allowed them for the
+     *  extension) and Debugger-based actions (on in Settings, with the debugger permission). Neither means an exec that
+     *  needs isolation is refused. */
+    isolation: { userScripts: boolean; cdp: boolean };
+    /** Where an approved `exec` (one that is not read-only, e.g. it clicks) would run now. It goes by what the script
+     *  READS, not by whether it changes the page: one that clicks AND reads `ml.current` is `readsCurrent`.
+     *  `readsNeither` reads neither `ml.current` nor a pointer. A read-only survey is none of these: it is read in
+     *  place, without the page's world. */
+    exec: { readsNeither: ExecWhere; readsCurrent: ExecWhere; readsPointer: ExecWhere };
+    /** Whether a read-only `exec` (a survey that changes nothing) runs without asking the person. */
+    readonlyAutoApprove: boolean;
 }
 
 /** One watch the person shared with the model from the Run state panel ("look at this"): the expression they wrote, and

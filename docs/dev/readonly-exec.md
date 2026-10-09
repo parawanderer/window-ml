@@ -483,6 +483,10 @@ promise.
   the host adds it, which a worker-hosted run's does (`sw-shared-watches.ts`). It is protected the same way, with its
   own `TypeError` ("ml.current.debug is read-only"), since it is the person's words. Its values are computed before the
   survey, each over `{ ml: { current } }` alone, so nothing the model may not read gets into it.
+- **Every other field is copied whole** for the script to own (`adoptCurrent`, `SPECIAL_CURRENT_FIELDS`): `env` (the
+  run's environment, `sw-current-env.ts`) today, and whatever is added next. While the facade LISTED its fields, `env`
+  was silently absent from every survey and five panel models read it as undefined; a test now compares a survey's
+  `Object.keys(ml.current)` with the snapshot's.
 - **The print boundary** abridges a large message row (over `ABRIDGE_OVER` characters) into its role, size, a preview
   and the expression that prints it whole, in `console.log` and in a returned value. The VALUE is untouched.
 - **Every substitution says so, and the sentence is generated.** `printable` is the one place a print may differ from

@@ -13,6 +13,7 @@ const require = createRequire(import.meta.url);
 const { jsonResponse, streamResponse, loadBackground } = require("./helpers");
 const { routeExec, execNames } = await import("../src/sw/exec-routing.ts");
 const { isolatedWrapper, returnLastExpression } = await import("../src/sw/sw-isolated-exec.ts");
+const { envOf } = await import("../src/sw/sw-current-env.ts");
 
 const T = { timeout: 10000 };
 const config = { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "default-model", apiFormat: "openai", ocrModel: "", debugMode: "off" };
@@ -67,6 +68,34 @@ test("a refusal and the fallback each say what to turn on; the refusal for ml.cu
     assert.match(routeExec(SCRIPTS.pointer, true, none).note, /page.s own world.*Settings → Advanced → "Debugger-based actions and user scripts"/);
     for (const s of [routeExec(SCRIPTS.current, true, none).result, routeExec(SCRIPTS.plain, false, none).result, routeExec(SCRIPTS.pointer, true, none).note])
         assert.doesNotMatch(s, / {2}/, "model-facing text is never padded");
+});
+
+// --- ml.current.env: what the model reads about where an exec would go, for every input ---
+
+test("ml.current.env's exec column is routeExec's own answer, for every page, mechanism and kind of script", () => {
+    const where = (r) => (r.where === "main" ? "page" : r.where);
+    let n = 0;
+    for (const approved of [true, false]) for (const us of [true, false]) for (const cdp of [true, false]) for (const auto of [true, false]) {
+        const iso = { userScripts: us, cdp };
+        const env = envOf("https://site.example/page", approved, iso, auto);
+        const label = `approved=${approved} userScripts=${us} cdp=${cdp}`;
+        // Checked against real scripts of each kind, not the probes the module uses, so a probe that stops reading as its
+        // kind (execNames changes) fails here.
+        assert.equal(env.exec.readsNeither, where(routeExec(SCRIPTS.plain, approved, iso)), `plain, ${label}`);
+        assert.equal(env.exec.readsCurrent, where(routeExec(SCRIPTS.current, approved, iso)), `current, ${label}`);
+        assert.equal(env.exec.readsPointer, where(routeExec(SCRIPTS.pointer, approved, iso)), `pointer, ${label}`);
+        assert.equal(env.exec.readsPointer, where(routeExec(SCRIPTS.deref, approved, iso)), `deref, ${label}`);
+        assert.deepEqual(env.page, { url: "https://site.example/page", approved });
+        assert.deepEqual(env.isolation, iso);
+        assert.equal(env.readonlyAutoApprove, auto);
+        n++;
+    }
+    assert.equal(n, 16);
+    // The default an install has today (#467: Debugger-based actions on, user scripts not allowed), on an approved site.
+    assert.deepEqual(envOf("u", true, { userScripts: false, cdp: true }, true).exec, { readsNeither: "page", readsCurrent: "isolated", readsPointer: "isolated" });
+    // Nothing available: what the model would otherwise learn from a refusal.
+    assert.deepEqual(envOf("u", true, { userScripts: false, cdp: false }, true).exec, { readsNeither: "page", readsCurrent: "refused", readsPointer: "page" });
+    assert.deepEqual(envOf("u", false, { userScripts: false, cdp: false }, true).exec, { readsNeither: "refused", readsCurrent: "refused", readsPointer: "refused" });
 });
 
 // --- the wrapper, run as an isolated world runs it ---
@@ -200,6 +229,16 @@ async function isoRun(scripts, { approved = true, us, cdp = false, onDebuggerCom
 }
 
 const FIRST = "window.a = 1; return 1";
+
+test("an exec reading ml.current.env gets the run's environment, matching where it was itself routed", T, async () => {
+    const { results, log } = await isoRun(["return JSON.stringify(ml.current.env)"], { us: true });
+    assert.deepEqual(log.map((r) => [r.kind, r.reason, r.detail?.how]), [["exec-isolated", "current", "userScripts"]]);
+    const env = JSON.parse(results[0].match(/\{.*\}/s)[0].replace(/\\"/g, '"'));
+    assert.deepEqual(env.page, { url: SITE.url, approved: true });
+    assert.equal(env.isolation.userScripts, true);
+    assert.equal(env.exec.readsCurrent, "isolated", "it says where the exec reading it ran");
+    assert.equal(env.readonlyAutoApprove, false, "isoRun turns the read-only auto-approve off");
+});
 
 test("a script naming a pointer runs in the run's own user-script world: its value never reaches the page", T, async () => {
     const { toPage, results, log, injected, hash } = await isoRun([FIRST, "window.b = 1; return @tool:exec.toUpperCase()"], { us: true });
