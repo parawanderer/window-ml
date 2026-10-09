@@ -6,6 +6,7 @@ import { useState, useRef } from "preact/hooks";
 import type { BenchState, RunState } from "./state";
 import { Outcome, runDir } from "./runs";
 import { Hash } from "../../../../src/sidebar/copy-hash";
+import { FromSpec, specSource } from "./from-spec";
 
 type Target = { taskId: string; who: string; turn: number; hash: string | null };
 
@@ -36,7 +37,7 @@ function AnswerCell({ r, turn, base, live, onMark }: { r: RunState; turn: number
                         onClick={() => onMark({ taskId: r.taskId, who: r.who, turn, hash: r.hash ?? null }, picked.current)}>mark wrong</button>
                     : null}
             </div>
-            <div class="txt" ref={txt}>{t.answer || "(no answer)"}</div>
+            <div class="txt tt from" data-tip={`What ${r.who} answered at turn ${turn}, verbatim.`} ref={txt}>{t.answer || "(no answer)"}</div>
             {(r.checks || []).filter((c) => c.turn === turn && c.still != null).map((c) => (
                 <div key={c.id} class={`flag ${c.here ? "here" : c.still ? "still" : "gone"}`}>
                     <b>{c.here ? "marked wrong" : c.still ? "still says a line marked wrong" : "no longer says a line marked wrong"}</b>
@@ -98,7 +99,8 @@ export function Answers({ s, base, live }: { s: BenchState; base: string; live: 
                         <div class="agrid" style={{ gridTemplateColumns: `repeat(${runs.length}, minmax(320px, 1fr))` }}>
                             {runs.map((r) => <div key={`h${r.who}${r.repeat}`} class="ah"><code>{r.who}{repeats ? ` r${r.repeat}` : ""}</code>{r.hash ? <Hash hash={r.hash} /> : null}<Outcome r={r} /></div>)}
                             {ivs[id].map((q, n) => [
-                                <div key={`q${n}`} class="q"><span class="turn">Turn {n + 1}</span>{q.length > 600 ? `${q.slice(0, 600)} …` : q}</div>,
+                                <div key={`q${n}`} class="q"><span class="turn">Turn {n + 1}</span>
+                                    <FromSpec class="asked" tip={`What the bench sent each model as turn ${n + 1}, verbatim, from ${specSource(s)}.${q.length > 600 ? " Cut at 600 characters here; the whole of it is in the spec." : ""}`}>{q.length > 600 ? `${q.slice(0, 600)} …` : q}</FromSpec></div>,
                                 ...runs.map((r) => <AnswerCell key={`a${n}${r.who}${r.repeat}`} r={r} turn={n + 1} base={base} live={live} onMark={(target, quote) => setMarking({ target, quote })} />),
                             ])}
                         </div>

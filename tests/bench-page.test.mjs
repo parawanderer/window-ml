@@ -73,6 +73,22 @@ test("each run's models are one group (driver, vision, utility), and its hash is
     assert.ok(card(doc, "Runs").querySelector("td .hash.copyable"));
 });
 
+test("text the page did not write says where it came from: the sweep's name and description, each question, each answer", async () => {
+    const doc = await dashboard({
+        name: "panel-bloat", description: "Review your own prompt.", dims: ["model"], interviews: { rev: ["What code is shown?", "x".repeat(700)] },
+        spec: { spec: "tests/e2e/panel/bloat.json", history: [], source: "" },
+        runs: [{ combo: { model: "a" }, who: "a", taskId: "rev", repeat: 0, state: "done", ok: true, path: "p", turns: [{ answer: "CROSSPAGE-9471", tools: [], capped: false }], checks: [] }],
+    });
+    const tip = (el) => el.closest(".tt").getAttribute("data-tip");
+    assert.match(tip(doc.querySelector("h1")), /sweep's name, from tests\/e2e\/panel\/bloat\.json/);
+    assert.match(tip(doc.querySelector(".desc")), /description, from tests\/e2e\/panel\/bloat\.json: written by whoever wrote the spec, not by this page/);
+    const asked = [...doc.querySelectorAll(".q .asked")];
+    assert.equal(asked[0].textContent, "What code is shown?");
+    assert.match(tip(asked[0]), /sent each model as turn 1, verbatim/);
+    assert.match(tip(asked[1]), /Cut at 600 characters here/);
+    assert.match(tip(doc.querySelector(".ans .txt")), /What a answered at turn 1, verbatim/);
+});
+
 // --- the dashboard's Timeline card ---
 
 test("the timeline draws each run that has events as its own lane, on one shared axis, and leaves out cached runs", async () => {

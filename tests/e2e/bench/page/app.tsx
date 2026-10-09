@@ -14,6 +14,7 @@ import { SweepTimeline } from "./timeline";
 import { Flight, Stats, Results, Runs } from "./runs";
 import { Viewer } from "./viewer";
 import { SpecCard } from "./spec";
+import { FromSpec, specSource } from "./from-spec";
 import { installTooltipLayer } from "../../../../src/sidebar/tooltip-layer";
 
 declare global { interface Window { __BENCH_STATE__?: BenchState } }
@@ -56,7 +57,10 @@ function Head({ s, disconnected }: { s: BenchState; disconnected: boolean }) {
     return (
         <header class="top">
             <div class="titlebar">
-                <div class="names"><h1>{s.name}</h1>{s.description ? <p class="desc">{s.description}</p> : null}</div>
+                <div class="names">
+                    <FromSpec as="h1" tip={`The sweep's name, from ${specSource(s)}.`}>{s.name}</FromSpec>
+                    {s.description ? <FromSpec as="p" class="desc" tip={`The sweep's description, from ${specSource(s)}: written by whoever wrote the spec, not by this page.`}>{s.description}</FromSpec> : null}
+                </div>
                 <ThemeToggle />
             </div>
             <div class="bar"><i style={{ width: `${pct}%` }} /></div>

@@ -162,3 +162,15 @@ a.plain:hover { text-decoration: none } a.plain:hover .badge { border-color: var
 .hist { border-collapse: collapse; font-size: 12px; margin: 6px 0 0 }
 .hist th, .hist td { text-align: left; padding: 3px 10px 3px 0; border-bottom: 1px solid var(--border) }
 .hist th { color: var(--fg-dim); font-weight: 500 }
+
+/* Text the page did not write (from-spec.tsx): the panel's tooltip says whose, a faint tint on hover marks how far it
+   runs. `.tt` is inline-flex for the panel's chips; here the element keeps its own display. */
+.from.tt { display: revert }
+.from { cursor: help; border-radius: 4px; transition: background-color .15s }
+.from:hover { background: color-mix(in srgb, var(--accent) 7%, transparent) }
+.ans .txt.from { cursor: text }
+h1.from, p.from { width: fit-content; max-width: 100% }
+/* A question is quoted: what the bench sent, not a label of the page's. */
+.q .asked { color: var(--fg) }
+.q .asked::before { content: "“"; color: var(--fg-faint) }
+.q .asked::after { content: "”"; color: var(--fg-faint) }
