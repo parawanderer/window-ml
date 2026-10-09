@@ -2,7 +2,7 @@
 //  - boxIntersectsText (dom.ts): does the click-point overlay box sit ON page text? Powers a TARGETED
 //    no-overlay nudge instead of an always-on note. Same-origin DOM only (a cross-origin iframe / canvas
 //    @pt has no reachable text → no false positive, falls back to the manual views option).
-//  - lookViews (builtin-tools.ts): produce overlay / no-overlay / both crops from ONE viewport capture.
+//  - lookViews (builtin-tools.ts): produce overlay / no-overlay / both crops from ONE viewport capture, through a VisionHost.
 import { test } from "node:test";
 import assert from "node:assert";
 import { boxIntersectsText } from "../src/dom/dom.ts";
@@ -50,16 +50,17 @@ test("boxIntersectsText: DESCENDS into a same-origin iframe (coords translated)"
 });
 
 // --- lookViews: one capture, the requested crops. A @box token skips the @pt text-detect (no document). ---
-function fakeMl() {
+// A VisionHost reduced to `shoot`, the one member lookViews uses for a @box token (it is `ml.screenshot` on the page).
+function fakeHost() {
     const calls = [];
     return {
         _calls: calls,
-        screenshot: async (target, opts = {}) => { calls.push({ target, opts }); return `shot:${target ?? "vp"}${opts.noOverlay ? ":clean" : ""}${opts.capture ? ":cap" : ""}`; },
+        shoot: async (target, opts = {}) => { calls.push({ target, opts }); return `shot:${target ?? "vp"}${opts.noOverlay ? ":clean" : ""}${opts.capture ? ":cap" : ""}`; },
     };
 }
 
 test("lookViews default → ONE marked crop, captured internally (no separate viewport shot)", async () => {
-    const ml = fakeMl();
+    const ml = fakeHost();
     const { images } = await lookViews(ml, "@box:abc", 0);
     assert.equal(images.length, 1);
     assert.equal(ml._calls.filter(c => c.target == null).length, 0, "no separate viewport capture");
@@ -67,14 +68,14 @@ test("lookViews default → ONE marked crop, captured internally (no separate vi
 });
 
 test("lookViews ['no-overlay'] → ONE clean crop", async () => {
-    const ml = fakeMl();
+    const ml = fakeHost();
     const { images } = await lookViews(ml, "@box:abc", 0, ["no-overlay"]);
     assert.equal(images.length, 1);
     assert.equal(ml._calls[0].opts.noOverlay, true);
 });
 
 test("lookViews ['overlay','no-overlay'] → TWO crops from ONE reused capture", async () => {
-    const ml = fakeMl();
+    const ml = fakeHost();
     const { images } = await lookViews(ml, "@box:abc", 0, ["overlay", "no-overlay"]);
     assert.equal(images.length, 2, "both crops returned");
     assert.equal(ml._calls.filter(c => c.target == null).length, 1, "exactly ONE tab capture (viewport)");

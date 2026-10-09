@@ -9,15 +9,17 @@ import type { MlTool, ToolResult, ToolContext } from "../contract/contract-agent
 import type { LocateSubstep, RenderDescriptor, VisionMemory } from "../contract/contract-render";
 import type { ServerTool } from "../contract/contract-server";
 import { DEFAULT_GROUNDING_RANGE } from "../contract/contract-render";
-import { truncate, errText, elLine, queryAll, selectorError, capturedClosedRoot, isElement, viewportRect, boxIntersectsText, firstHopSealed, clickSelector } from "../dom/dom";
+import { truncate, errText, elLine, queryAll, selectorError, isElement, viewportRect, firstHopSealed, clickSelector } from "../dom/dom";
 import { accessibleName } from "../dom/a11y";
-import { regionLegend, formatLegend, type Box as LegendBox } from "../dom/legend";
+import { formatLegend, type Box as LegendBox } from "../dom/legend";
 import { citeParam } from "./tool-params";
 
 // python_exec output (stdout / value / error) fed to the model is capped per slot — default bigger than
 // exec's 500 (data output legitimately runs longer), the model can raise it per-call (gated). See run().
-import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, PT_LOOK_RADIUS, mintPoint, resolvePoint, nearbyPoint, markSeen, seenNearby, BOX_RE, mintBox, resolveBox } from "../util";
-import { collectCandidates, buildMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, collectInBox, elementAtPoint, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, withHiddenSidebar, regionBox, REGION_NAMES, adjacentCells, type RegionName, type MarkFilter, type Box, type Mark } from "../dom/locate";
+import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, PT_LOOK_RADIUS, resolvePoint, markSeen, seenNearby, BOX_RE } from "../util";
+import { annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, withHiddenSidebar, regionBox, REGION_NAMES, adjacentCells, type RegionName, type MarkFilter, type Box } from "../dom/locate";
+import { OpaqueKind, canvasAt, reservedSurfaceAt, pageVisionHost } from "../dom/page-geometry";
+import type { VisionHost, Geometry, GeoMark } from "./vision-host";
 
 // CDP-trusted-input flag, set per run from config (like setPierceClosedShadow, threaded in injected.ts). When
 // ON, click/type route canvas / @pt / @focus / sealed targets through the debugger for REAL (isTrusted) events
@@ -39,77 +41,6 @@ export const isTypeableEl = (el: Element | null): boolean => {
     return el.hasAttribute("tabindex");   // a focusable custom widget / game surface
 };
 
-// --- Coordinate targets (canvas / WebGL) -----------------------------------
-// A <canvas> has NO sub-node to snap to, so `locate` mints an OPAQUE `@pt:` token (see
-// util.ts) that `click` resolves and `look`/`screenshot` can crop+mark. These helpers add
-// the DOM-side detection + the synthetic click.
-/** The <canvas> at a viewport point, if the topmost element there is one (or inside one). */
-const canvasAt = (x: number, y: number): Element | null => {
-    let el: Element | null = null;
-    try { el = document.elementFromPoint(x, y); } catch { return null; }
-    return el ? el.closest("canvas") : null;
-};
-/** A "RESERVED" surface at a viewport point: one a SYNTHETIC click can't activate, so it needs a real,
- *  hit-tested CDP click (docs/spec/CDP_CLICK.md). Two cases: (1) an `<iframe>` — its content is a separate
- *  document, and dispatching on the `<iframe>` element never reaches inside (cross-origin especially, but a
- *  synthetic click can't reach a same-origin frame's inner control either, since we don't cross frames); and
- *  (2) an un-pierceable CLOSED shadow host — `elementFromPoint` retargets to the host, and a dispatch on the
- *  host can't reach the sealed inner control. NOT reserved: a `<canvas>` (its listener is ON the canvas
- *  element → synthetic works) or an OPEN / pierce-CAPTURED shadow root (selector-reachable). Returns the kind
- *  (+ the iframe's origin, for the approval label), or null for a normally-clickable target. */
-const reservedSurfaceAt = (x: number, y: number): { kind: "iframe" | "shadow"; origin?: string; crossOrigin?: boolean } | null => {
-    let el: Element | null = null;
-    try { el = document.elementFromPoint(x, y); } catch { return null; }
-    if (!el) return null;
-    const iframe = el.closest("iframe") as HTMLIFrameElement | null;
-    if (iframe) {
-        let origin: string | undefined;
-        try { origin = new URL(iframe.getAttribute("src") || "", location.href).origin; } catch { /* opaque/srcdoc → no origin label */ }
-        // CROSS-ORIGIN is the only real security boundary (SOP + the user's ambient session with that third
-        // party). A cross-origin frame's contentDocument is null; same-origin / srcdoc / blank is accessible.
-        // Only this warrants a privileged-click warning in the approval — same-origin iframes and shadow roots
-        // don't (a shadow root isn't even a security feature). Err toward "cross" if we can't tell.
-        let crossOrigin = false;
-        try { crossOrigin = iframe.contentDocument === null; } catch { crossOrigin = true; }
-        return { kind: "iframe", origin, crossOrigin };
-    }
-    // Un-pierceable closed-shadow host (same heuristic as dom.ts closedShadowHosts): a hyphenated custom
-    // element with no light children, no OPEN root, and not captured by the pierce patch.
-    if (!el.shadowRoot && !capturedClosedRoot(el) && el.tagName.includes("-") && !el.children.length) return { kind: "shadow" };
-    return null;
-};
-type OpaqueKind = "canvas" | "iframe" | "shadow";
-/** Any OPAQUE surface at a point: a `<canvas>` (synthetic-clickable — its listener is on the canvas element)
- *  or a "reserved" surface (cross-origin iframe / sealed closed shadow — CDP-clickable). NONE has an inner
- *  DOM node to snap a selector onto, so `locate` mints an `@pt` and the `click` tool routes it by kind
- *  (canvas → synthetic dispatch; reserved → CDP). This is why a GROUNDING box over a sealed shadow / iframe
- *  must NOT fall through to Set-of-Marks (which can't badge inside it) — it should mint the coordinate. */
-const opaqueSurfaceAt = (x: number, y: number): OpaqueKind | null => {
-    if (canvasAt(x, y)) return "canvas";
-    const r = reservedSurfaceAt(x, y);
-    return r ? r.kind : null;
-};
-/** Is this ELEMENT an opaque surface (no inner DOM node to snap to)? A `<canvas>`, an `<iframe>`, or an
- *  un-pierceable closed-shadow host. Used to DROP such elements from SoM candidate sets so a cell/box over
- *  one falls to a coordinate `@pt` rather than a useless SoM pick of the container itself. */
-const isOpaqueEl = (el: Element): boolean =>
-    el.tagName === "CANVAS" || el.tagName === "IFRAME" ||
-    (!el.shadowRoot && !capturedClosedRoot(el) && el.tagName.includes("-") && !el.children.length);
-/** The opaque-surface point nearest the box centre (samples a grid like canvasPointIn), + which KIND.
- *  Generalises canvasPointIn from `<canvas>` to any opaque surface, so grounding/grid can mint an `@pt`
- *  for an iframe / sealed shadow target the DOM can't snap to. */
-const opaquePointIn = (box: Box): { x: number; y: number; kind: OpaqueKind } | null => withHiddenSidebar(() => {
-    const cx = (box.left + box.right) / 2, cy = (box.top + box.bottom) / 2;
-    const w = box.right - box.left, h = box.bottom - box.top;
-    const F = [0.15, 0.35, 0.5, 0.65, 0.85];
-    let best: { x: number; y: number; d: number; kind: OpaqueKind } | null = null;
-    for (const gy of F) for (const gx of F) {
-        const x = box.left + gx * w, y = box.top + gy * h;
-        const k = opaqueSurfaceAt(x, y);
-        if (k) { const d = Math.hypot(x - cx, y - cy); if (!best || d < best.d) best = { x, y, d, kind: k }; }
-    }
-    return best ? { x: best.x, y: best.y, kind: best.kind } : null;
-});
 /** Human noun for an opaque-surface kind (messaging). */
 const surfaceNoun = (kind: OpaqueKind): string =>
     kind === "iframe" ? "a cross-origin <iframe>" : kind === "shadow" ? "a sealed (declarative/native) closed shadow root" : "a <canvas>";
@@ -219,43 +150,48 @@ export const VIEWS_PARAM = { type: "array", items: { type: "string", enum: ["ove
 /** Produce the requested crop VIEWS of a MARKED @pt/@box token from ONE viewport capture (no re-screenshot):
  *  `views` ⊆ ["overlay","no-overlay"], default ["overlay"]. Returns each as a labelled image (the caller
  *  injects them natively or hands them to a reader) plus whether the click-point box crosses page text. */
-export async function lookViews(ml: MlApi, token: string, margin: number, views?: string[]): Promise<{ images: { image: string; label: string }[]; crossesText: boolean }> {
+export async function lookViews(host: Pick<VisionHost, "shoot" | "geo">, token: string, margin: number, views?: string[]): Promise<{ images: { image: string; label: string }[]; crossesText: boolean }> {
     const m = typeof margin === "number" ? margin : 0;
     const isPt = POINT_RE.test(token.trim());
     const wantClean = Array.isArray(views) && views.includes("no-overlay");
     const wantMarked = !Array.isArray(views) || views.length === 0 || views.includes("overlay");
     // ONE capture when BOTH views are wanted (each crop reuses it); a single view captures once internally.
-    const cap = (wantClean && wantMarked) ? await ml.screenshot(null, {}) : null;
+    const cap = (wantClean && wantMarked) ? await host.shoot(null, {}) : null;
     const images: { image: string; label: string }[] = [];
-    if (wantMarked) images.push({ image: await ml.screenshot(token, { margin: m, capture: cap }), label: isPt ? "with click-point box" : "with region outline" });
-    if (wantClean) images.push({ image: await ml.screenshot(token, { margin: m, noOverlay: true, capture: cap }), label: "clean — no box (read text here)" });
+    if (wantMarked) images.push({ image: await host.shoot(token, { margin: m, capture: cap }), label: isPt ? "with click-point box" : "with region outline" });
+    if (wantClean) images.push({ image: await host.shoot(token, { margin: m, noOverlay: true, capture: cap }), label: "clean — no box (read text here)" });
     // Targeted warning: does the 24px marker box (an @pt only) cross page text? Same-origin DOM only.
     let crossesText = false;
-    if (isPt) { const p = resolvePoint(token); if (p) crossesText = boxIntersectsText({ left: p.x - 12, top: p.y - 12, width: 24, height: 24 }); }
+    if (isPt) { const t = await host.geo.target({ token }); if ("point" in t) { const p = t.point; crossesText = await host.geo.crossesText({ box: { left: p.x - 12, top: p.y - 12, width: 24, height: 24 } }); } }
     return { images, crossesText };
 }
 
 /** The viewport box a screenshot of `target` cropped — viewport (null), an @pt neighbourhood, an @box
  *  region, or an element's rect — so the DOM legend enumerates the SAME area the image shows. */
-function boxForTarget(target: string | null, margin: number): LegendBox | null {
-    if (!target) return typeof window !== "undefined" ? { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight } : null;
+async function boxForTarget(geo: Geometry, target: string | null, margin: number): Promise<LegendBox | null> {
+    if (!target) { const v = await geo.view(); return { left: 0, top: 0, right: v.w, bottom: v.h }; }
     const t = target.trim();
-    if (POINT_RE.test(t)) { const p = resolvePoint(t); if (!p) return null; const R = margin > 0 ? margin : PT_LOOK_RADIUS; return { left: p.x - R, top: p.y - R, right: p.x + R, bottom: p.y + R }; }
-    if (BOX_RE.test(t)) { const b = resolveBox(t); if (!b) return null; return { left: b.left - 16, top: b.top - 16, right: b.right + 16, bottom: b.bottom + 16 }; }
-    const el = queryAll(target)[0]; if (!isElement(el)) return null; const r = viewportRect(el); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    if (POINT_RE.test(t)) { const r = await geo.target({ token: t }); if (!("point" in r)) return null; const p = r.point; const R = margin > 0 ? margin : PT_LOOK_RADIUS; return { left: p.x - R, top: p.y - R, right: p.x + R, bottom: p.y + R }; }
+    if (BOX_RE.test(t)) { const r = await geo.target({ token: t }); if (!("box" in r)) return null; const b = r.box; return { left: b.left - 16, top: b.top - 16, right: b.right + 16, bottom: b.bottom + 16 }; }
+    const r = await geo.target({ selector: target, index: 0, scroll: false }); if (!("rect" in r)) return null; return { left: r.rect.left, top: r.rect.top, right: r.rect.right, bottom: r.rect.bottom };
 }
 
 /** The formatted DOM legend for a screenshot target ("" when nothing notable / on any failure). Defensive:
  *  a legend is a NICE-TO-HAVE annotation — it must never break a look/verify. */
-export function legendFor(target: string | null, margin = 0, seen?: Set<string>): string {
-    try { const box = boxForTarget(target, margin); return box ? formatLegend(regionLegend(box), seen) : ""; } catch { return ""; }
+export async function legendFor(host: Pick<VisionHost, "geo">, target: string | null, margin = 0, seen?: Set<string>): Promise<string> {
+    try { const box = await boxForTarget(host.geo, target, margin); return box ? formatLegend(await host.geo.legend({ box }), seen) : ""; } catch { return ""; }
 }
 /** Same, for a caller that already has the viewport box (verify crops). */
-export function legendForBox(box: LegendBox | null, seen?: Set<string>): string {
-    try { return box ? formatLegend(regionLegend(box), seen) : ""; } catch { return ""; }
+export async function legendForBox(host: Pick<VisionHost, "geo">, box: LegendBox | null, seen?: Set<string>): Promise<string> {
+    try { return box ? formatLegend(await host.geo.legend({ box }), seen) : ""; } catch { return ""; }
 }
 
-export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512, memory = null }: { model?: string | null; maxTokens?: number; memory?: VisionMemory | null } = {}): MlTool => {
+/** The delegated `look` tool: a reader model describes a screenshot (of the viewport, an element, an `@pt`/`@box`
+ *  token or the stitched page) to a driver that cannot see images; it runs on the page's VisionHost unless given one. */
+export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512, memory = null, host = null }: { model?: string | null; maxTokens?: number; memory?: VisionMemory | null; host?: VisionHost | null } = {}): MlTool => {
+    // The page's host unless one is given, made when the tool RUNS: a run the worker assembles builds this tool there,
+    // where there is no page, and runs it in the page that hosts the run.
+    const hostOf = (): VisionHost => host || pageVisionHost(ml, memory);
     return ml.defineTool({
         name: "look",
         summary: "Screenshots the page so the agent can see it.",
@@ -282,11 +218,12 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512, memory
             // An `@tool:<id>` image pointer: the LOOP resolved it and handed the captured screenshot down (it
             // owns the pointer store). Re-examining an image the run already has is not a page operation, so
             // there is nothing to screenshot — skip straight to asking the reader about those pixels.
+            const host = hostOf();
             if (_image) {
                 const q = question || "Describe this image concisely — what is shown and what stands out.";
                 const note = `\n\nThis is a screenshot captured EARLIER in this run (${_imageLabel || "an earlier step"}), not the page as it is now.`;
                 try {
-                    const desc = await ml.chat(q + note, { images: [_image], model, maxTokens, numCtx: VISION_NUM_CTX }) as string;
+                    const desc = await host.chat(q + note, { images: [_image], model, maxTokens, numCtx: VISION_NUM_CTX }) as string;
                     return { content: desc, image: _image, imageLabel: _imageLabel || "captured earlier" };
                 } catch (e) { return `Error: ${errText(e)}`; }
             }
@@ -297,13 +234,13 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512, memory
             const isMarked = !!selector && (isPoint || BOX_RE.test(selector.trim()));
             // Looking at an @pt marks that spot SEEN, so locate's snap-feedback won't later re-inject a
             // near-identical crop of it (the shared near-area dedup).
-            if (isPoint) { const p = resolvePoint(selector!); if (p) markSeen(memory, p.x, p.y); }
+            if (isPoint) { const t = await host.geo.target({ token: selector! }); if ("point" in t) markSeen(host.memory, t.point.x, t.point.y); }
             // A marked target honours `views` (overlay / no-overlay / both, one capture); everything else is
             // the usual single shot. `shots` carries what the reader sees; `shot` is the primary (for render).
             let shots: { image: string; label: string }[], shot: string, crossesText = false;
             try {
-                if (isMarked) { const v = await lookViews(ml, selector!, margin as number, views); shots = v.images; crossesText = v.crossesText; shot = shots[0].image; }
-                else { shot = await ml.screenshot(selector || null, { fullPage, index: index || 0, margin: typeof margin === "number" ? margin : 0 }); shots = [{ image: shot, label: "screenshot" }]; }
+                if (isMarked) { const v = await lookViews(host, selector!, margin as number, views); shots = v.images; crossesText = v.crossesText; shot = shots[0].image; }
+                else { shot = await host.shoot(selector || null, { fullPage, index: index || 0, margin: typeof margin === "number" ? margin : 0 }); shots = [{ image: shot, label: "screenshot" }]; }
             }
             catch (e) { return `Error: ${errText(e)}`; }
             const subject = isPoint ? `the point marked on the canvas (${selector})`
@@ -329,7 +266,7 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512, memory
             // Multi-view (overlay + no-overlay): the reader sees BOTH crops — mention which is which so it
             // can read the clean copy and still reason about where the box lands.
             const viewNote = shots.length > 1 ? `\n\nTwo crops of the SAME spot follow: (1) ${shots[0].label}, (2) ${shots[1].label}. Read the clean one for text; use the marked one only to judge WHERE the click lands.` : "";
-            const description = await ml.chat(base + guidance + viewNote, { images: shots.map(s => s.image), model, maxTokens, numCtx: VISION_NUM_CTX }) as string;
+            const description = await host.chat(base + guidance + viewNote, { images: shots.map(s => s.image), model, maxTokens, numCtx: VISION_NUM_CTX }) as string;
             // Progressive-disclosure tip, @pt targets ONLY (irrelevant for a DOM look):
             // the verify step is exactly where the model can see the point grazing the
             // target — steer it to snap with grid-grounding rather than click a near-miss.
@@ -341,14 +278,14 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512, memory
             // Attach the inspected element on the side-channel (debug-only,
             // never to the model). Guarded so a stub-DOM/bad selector no-ops.
             let elements;
-            if (selector) { try { const el = queryAll(selector)[index || 0]; if (el) elements = [el]; } catch {} }
+            if (selector && host.elements) { const els = host.elements([{ selector, index: index || 0 }]); if (els.length) elements = els; }
             // A `look` Out render: the EXACT image the reader saw, WHICH model read it, and its output —
             // so a delegated look reads like a locate substep, not the weird auto-derived element text.
             // (`model` is the resolved reader passed at wiring; `output` is the raw model reply, no tip.)
             const render: RenderDescriptor = { type: "look", image: shot, model, output: description, label: subject, prompt: base + guidance };
             // DOM legend of what's IN this crop (controls/media/boundaries/text with selectors) — bridges the
             // vision reply back to actionable selectors. Skipped for a downscaled full-page overview.
-            const legend = fullPage ? "" : legendFor(selector || null, margin as number, memory?.boundariesSeen);
+            const legend = fullPage ? "" : await legendFor(host, selector || null, margin as number, host.memory?.boundariesSeen);
             return { content: description + pointTip + overTextTip + legend, render, ...(elements ? { elements } : {}) };
         }
     });
@@ -369,7 +306,9 @@ const COORD_IN_DESC = /\(\s*-?\d{1,4}\s*,\s*-?\d{1,4}\s*\)|\b[xy]\s*[=:]\s*-?\d{
 // by this sub-call + shown in the sidebar (via the `render` envelope) — it never
 // enters the driver's history, so a text-only driver can still use it. Returns the
 // chosen element's selector (stateless currency) for click/type/answer.
-export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null, groundingRange = DEFAULT_GROUNDING_RANGE, maxTokens = 64, memory = null }: { model?: string | null; groundingModel?: string | null; groundingRange?: number; maxTokens?: number; memory?: VisionMemory | null } = {}): MlTool => {
+export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null, groundingRange = DEFAULT_GROUNDING_RANGE, maxTokens = 64, memory = null, host = null }: { model?: string | null; groundingModel?: string | null; groundingRange?: number; maxTokens?: number; memory?: VisionMemory | null; host?: VisionHost | null } = {}): MlTool => {
+    // The page's host unless one is given, made when the tool RUNS (see buildLookTool).
+    const hostOf = (): VisionHost => host || pageVisionHost(ml, memory);
     const listOf = (marks: { id: number; role: string; name: string; selector: string }[]) =>
         marks.map(m => `#${m.id} [${m.role}] ${m.name ? `"${truncate(m.name, 50)}"` : "(no accessible name)"}  →  ${m.selector}`).join("\n");
     // Per-run cache of the grounding call (undefined = not asked; null = it errored).
@@ -463,13 +402,17 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                     `• If those coordinates came from an \`@pt:…\` token you located earlier, RE-SEARCH the box around it: locate({ description: "<appearance only, drop the coordinates>", selector: "@pt:…", strategy: "grounding", margin: 100 }) — the point IS the scope; \`margin\` (40–120) grows the box if the target sits near its edge. This reuses the verified point instead of guessing a fresh coordinate.\n` +
                     `• If you have NO such token, narrow by rough area: locate({ description: "<appearance only>", region: "center", strategy: "grid" }) — pick the \`region\` (left/right/top-left/center/…) nearest that spot. Then remove the coordinates from the description.`;
             }
-            const dpr = window.devicePixelRatio || 1;
+            const host = hostOf(), geo = host.geo, raster = host.raster;
+            const view = await geo.view();
+            const dpr = view.dpr;
             const RED = "#ff2d55", YELLOW = "#eab308";
+            // The live elements behind marks, for the debug side channel (a host without a DOM has none).
+            const elementsOf = (ms: GeoMark[]): { elements?: Element[] } => host.elements ? { elements: host.elements(ms.map(m => m.ref)) } : {};
             const rectOf = (b: Box) => ({ left: b.left, top: b.top, width: b.right - b.left, height: b.bottom - b.top });
             const pickedStr = (m: { role: string; name: string; selector: string }) => `[${m.role}]${m.name ? ` "${m.name}"` : ""} → ${m.selector}`;
             // One phrasing for the Set-of-Marks substep, whether it's the primary mechanism
             // or the grid hand-off's second stage.
-            const somLabel = (n: number, chosen?: Mark) => `Set-of-Marks · ${n} candidate${n === 1 ? "" : "s"}${chosen ? ` · model chose #${chosen.id}` : ""}`;
+            const somLabel = (n: number, chosen?: GeoMark) => `Set-of-Marks · ${n} candidate${n === 1 ? "" : "s"}${chosen ? ` · model chose #${chosen.id}` : ""}`;
             let shot: string | undefined;   // captured once, shared between mechanisms
             const avoidHues = colorWordHues(description);   // don't overlay the target's own colour
 
@@ -477,30 +420,30 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             // `crop` (a scoped/grid-cell view, for a tighter, more legible image). The badge
             // colour contrasts with the page (and avoids the target's colour). Shared by
             // strategy 'marks' and grid's in-cell disambiguation.
-            const badgeMarks = async (marks: Mark[], crop?: { left: number; top: number; width: number; height: number }): Promise<string> => {
-                if (!shot) shot = await ml.screenshot(null, {});
-                const src = crop ? await cropDataUrl(shot, crop, dpr) : shot;
-                const color = await pickOverlayColor(src, avoidHues);
-                const box = (m: Mark) => crop ? { left: m.rect.left - crop.left, top: m.rect.top - crop.top, width: m.rect.width, height: m.rect.height } : m.rect;
-                return annotate(src, marks.map(m => ({ rect: box(m), color, badge: m.id })), dpr);
+            const badgeMarks = async (marks: GeoMark[], crop?: { left: number; top: number; width: number; height: number }): Promise<string> => {
+                if (!shot) shot = await host.shoot(null, {});
+                const src = crop ? await cropDataUrl(shot, crop, dpr, raster) : shot;
+                const color = await pickOverlayColor(src, avoidHues, undefined, raster);
+                const box = (m: GeoMark) => crop ? { left: m.rect.left - crop.left, top: m.rect.top - crop.top, width: m.rect.width, height: m.rect.height } : m.rect;
+                return annotate(src, marks.map(m => ({ rect: box(m), color, badge: m.id })), dpr, raster);
             };
             // Ask the vision reader which badge matches; returns the chosen mark (or none),
             // the raw answer, and the prompt sent (for the substep's In/Out debug view).
-            const askMarks = async (marks: Mark[], badged: string, reader: string | null, note = ""): Promise<{ chosen?: Mark; answer: string; prompt: string }> => {
+            const askMarks = async (marks: GeoMark[], badged: string, reader: string | null, note = ""): Promise<{ chosen?: GeoMark; answer: string; prompt: string }> => {
                 const prompt = `The screenshot has numbered badges (#1–#${marks.length}) drawn over candidate ` +
                     `elements. Which single badge number best matches this element: "${description}"${note}? ` +
                     `Reply with ONLY the number, or "NONE" if none match.`;
-                const answer = String(await ml.chat(prompt, { images: [badged], model: reader, numCtx: VISION_NUM_CTX, maxTokens })).trim();
+                const answer = String(await host.chat(prompt, { images: [badged], model: reader, numCtx: VISION_NUM_CTX, maxTokens })).trim();
                 const pick = (answer.match(/\d+/) || [])[0];
                 return { chosen: pick ? marks.find(m => m.id === Number(pick)) : undefined, answer, prompt };
             };
             // Draw a green ring on the chosen badge — the human "visualise" view of a
             // Set-of-Marks pick (the model saw the plain badged `raw` image).
-            const highlightPick = async (badged: string, mark: Mark, crop?: { left: number; top: number; width: number; height: number }): Promise<string> => {
+            const highlightPick = async (badged: string, mark: GeoMark, crop?: { left: number; top: number; width: number; height: number }): Promise<string> => {
                 const rect = crop ? { left: mark.rect.left - crop.left, top: mark.rect.top - crop.top, width: mark.rect.width, height: mark.rect.height } : mark.rect;
                 // Sample the BADGED image (not the shot) so the highlight avoids the badge
                 // colour too — otherwise both can land in the page's emptiest hue and clash.
-                return annotate(badged, [{ rect, color: await pickAccentColor(badged, avoidHues), label: `#${mark.id}` }], dpr);
+                return annotate(badged, [{ rect, color: await pickAccentColor(badged, avoidHues, raster), label: `#${mark.id}` }], dpr, raster);
             };
             // Substeps accumulated by an EARLIER mechanism (an 'auto' grounding attempt that
             // missed) so the Set-of-Marks fallback still shows what grounding saw.
@@ -521,7 +464,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             // Optional `selector` scoping: crop and search a container's region on its own.
             // Scrolls it into view first (like look/click), then clips to the viewport so the
             // cropped pixels and the coordinate projection stay in lockstep.
-            let region = { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+            let region = { left: 0, top: 0, width: view.w, height: view.h };
             let scopeSel = "";
             // True once the search region is narrowed (a `selector` container, or a
             // grid-grounding cell) — so the marks fallback scans that region, not the viewport.
@@ -529,11 +472,12 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             if (selector && BOX_RE.test(selector.trim())) {
                 // `@box:` scope — search INSIDE a previously-outlined canvas container
                 // (from locate({ container: true })). Just a coordinate crop; no DOM node.
-                const bx = resolveBox(selector);
-                if (!bx) return `Unknown container token "${selector}" — re-run locate({ container: true }) for a fresh one.`;
+                const t = await geo.target({ token: selector });
+                if (!("box" in t)) return `Unknown container token "${selector}" — re-run locate({ container: true }) for a fresh one.`;
+                const bx = t.box;
                 const m = margin > 0 ? margin : 0;   // grow the box on a margin retry (cut-off target)
                 const left = Math.max(0, bx.left - m), top = Math.max(0, bx.top - m);
-                region = { left, top, width: Math.min(window.innerWidth, bx.right + m) - left, height: Math.min(window.innerHeight, bx.bottom + m) - top };
+                region = { left, top, width: Math.min(view.w, bx.right + m) - left, height: Math.min(view.h, bx.bottom + m) - top };
                 if (region.width < MIN_SHOT_PX || region.height < MIN_SHOT_PX) return `The container ${selector} is too small or off-screen to search within. Re-locate it, or drop the scope.`;
                 scopeSel = selector;
                 scoped = true;
@@ -543,31 +487,30 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 // just VISUALLY CONFIRMED holds the target, so grounding inside that ~200px
                 // box snaps precisely — the finest zoom tier, seeded by a verified view. No
                 // DOM node / scroll; just crop around the coordinate (clipped to viewport).
-                const pt = resolvePoint(selector);
-                if (!pt) return `Unknown point token "${selector}" — re-run locate for a fresh one.`;
+                const t = await geo.target({ token: selector });
+                if (!("point" in t)) return `Unknown point token "${selector}" — re-run locate for a fresh one.`;
+                const pt = t.point;
                 // `margin` grows the crop so a target cut off at the box edge comes into frame.
                 const R = PT_LOOK_RADIUS + (margin > 0 ? margin : 0);
                 const left = Math.max(0, pt.x - R), top = Math.max(0, pt.y - R);
-                region = { left, top, width: Math.min(window.innerWidth, pt.x + R) - left, height: Math.min(window.innerHeight, pt.y + R) - top };
+                region = { left, top, width: Math.min(view.w, pt.x + R) - left, height: Math.min(view.h, pt.y + R) - top };
                 if (region.width < MIN_SHOT_PX || region.height < MIN_SHOT_PX) return `The area around ${selector} is too small to search (the point is at the viewport edge). Scroll it toward centre, or locate on the canvas selector instead.`;
                 scopeSel = selector;
                 scoped = true;
             } else if (selector) {
-                let matches: Element[];
-                try { matches = queryAll(selector); } catch (e) { return selectorError(selector, e as Error); }
-                const el = matches[index];
-                if (!isElement(el)) return `No element matches "${selector}"${index ? ` at index ${index}` : ""}${matches.length ? ` (only ${matches.length} match${matches.length === 1 ? "" : "es"})` : ""}. Scroll it into view or refine the selector, then call locate again.`;
-                try { el.scrollIntoView({ block: "center", inline: "center" }); } catch { /* detached/older engine */ }
-                // Let the scroll paint before we measure/capture (guarded for non-visual envs).
-                await new Promise<void>(res => typeof requestAnimationFrame === "function"
-                    ? requestAnimationFrame(() => requestAnimationFrame(() => res()))
-                    : res());
-                const r = el.getBoundingClientRect();
+                // Scrolled into view (letting the scroll paint) and measured by its own client box.
+                const t = await geo.target({ selector, index, scroll: true, measure: "client" });
+                if ("err" in t && t.err === "selector") return selectorError(selector, new Error(t.msg));
+                if (!("rect" in t)) {
+                    const count = "err" in t && t.err === "nomatch" ? t.count : 0;
+                    return `No element matches "${selector}"${index ? ` at index ${index}` : ""}${count ? ` (only ${count} match${count === 1 ? "" : "es"})` : ""}. Scroll it into view or refine the selector, then call locate again.`;
+                }
+                const r = t.rect;
                 if (r.width < MIN_SHOT_PX || r.height < MIN_SHOT_PX) {
                     return `The container "${selector}"${index ? ` (match #${index})` : ""} is ${Math.round(r.width)}×${Math.round(r.height)}px — too small to search within (hidden, collapsed, or a sliver?). Target a larger container, or drop \`selector\` to search the whole viewport.`;
                 }
                 const left = Math.max(0, r.left), top = Math.max(0, r.top);
-                region = { left, top, width: Math.min(window.innerWidth, r.right) - left, height: Math.min(window.innerHeight, r.bottom) - top };
+                region = { left, top, width: Math.min(view.w, r.right) - left, height: Math.min(view.h, r.bottom) - top };
                 scopeSel = selector;
                 scoped = true;
             }
@@ -604,9 +547,8 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             // located this run, warn (each mint is a fresh token, so the model otherwise
             // can't tell it keeps landing on the same wrong coordinate — a real failure
             // mode on a hard canvas). Check before minting so it can't match itself.
-            const mintPointWarned = (x: number, y: number): { token: string; dupWarn: string } => {
-                const dup = nearbyPoint(x, y);
-                const token = mintPoint(x, y);
+            const mintPointWarned = async (x: number, y: number): Promise<{ token: string; dupWarn: string }> => {
+                const { token, dup } = await geo.mint({ pt: { x, y } });
                 const dupWarn = dup ? ` ⚠ This is essentially the SAME spot as ${dup.token} (${dup.x}, ${dup.y}) you already located and it didn't work — do NOT re-verify it. Change approach: a different \`region\`, a re-worded description, or another strategy.` : "";
                 return { token, dupWarn };
             };
@@ -631,19 +573,19 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                     // in which case the explicit request wins (it clearly wants a fresh look here). The dedup
                     // path carries a `feedback` too, so "Sent to the model" says plainly that NO image went in
                     // (otherwise the only visible image is the grounding debug viz, which reads as "it saw this").
-                    if (seenNearby(memory, o.x, o.y) && !verify) {
-                        markSeen(memory, o.x, o.y);
+                    if (seenNearby(host.memory, o.x, o.y) && !verify) {
+                        markSeen(host.memory, o.x, o.y);
                         return { ...base, content: base.content + "\n\n(You've already been shown this spot — not re-injecting the crop; act on what you saw, or change approach.)",
                             feedback: { reason: "near a spot you were already shown — crop NOT re-injected (dedup)", via: "text", text: "No new image was sent — you'd already been shown this spot. Act on the earlier crop, or change approach." } };
                     }
-                    markSeen(memory, o.x, o.y);
+                    markSeen(host.memory, o.x, o.y);
                 }
                 // The image the model RECEIVES is the SAME tight crop look({@pt}/selector) gives by default —
                 // a ~200px marked crop of the point (or the element/region), NOT the full annotated viewport
                 // (that stays in the debug Out render): too much screen to send. Regenerate via screenshot;
                 // if it fails, skip the inject rather than dump the whole page on the model.
                 let sent: string;
-                try { sent = await ml.screenshot(o.target, {}); } catch { return base; }
+                try { sent = await host.shoot(o.target, {}); } catch { return base; }
                 // For an @pt the crop carries a box labelled "click point" at the EXACT landing spot (its colour is
                 // contrast-picked, so name it by LABEL not colour). Steer the model to confirm the target sits under
                 // its MIDDLE and, if not, re-snap this SAME point (grounding around it) instead of clicking a
@@ -653,12 +595,12 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                     : "";
                 // DOM legend of the located area — for a canvas/cross-origin @pt this flags "no DOM here /
                 // cross-origin iframe, use @pt"; for a DOM target it names the controls/text around it.
-                const legend = legendFor(o.target, 0, memory?.boundariesSeen);
+                const legend = await legendFor(host, o.target, 0, host.memory?.boundariesSeen);
                 if (driverSees) return { ...base, content: base.content + `\n\n Marked crop shown in the next prompt.${o.kind === "pt" ? ` Confirm "${truncate(description, 50)}" sits under the MIDDLE of the box labelled "click point".` : ""} If it's on target, act now (no need to look() first).${reSnap}${legend}`, image: sent, imageLabel: o.label, feedback: { reason, via: "image", image: sent, label: o.label } };
                 // Text-only driver: the reader describes the crop; the driver gets words, not the image.
                 const describePrompt = `Describe concisely what is at the marked spot on this crop — its colour, shape, and any text — so I can tell whether it's the "${truncate(description, 60)}" I asked for.${CLICK_MARK_NOTE}`;
                 let desc: string;
-                try { desc = String(await ml.chat(describePrompt, { images: [sent], model, maxTokens: 256, numCtx: VISION_NUM_CTX })).trim(); }
+                try { desc = String(await host.chat(describePrompt, { images: [sent], model, maxTokens: 256, numCtx: VISION_NUM_CTX })).trim(); }
                 catch { return base; }   // describe failed → leave the manual look() nudge intact
                 return { ...base, content: base.content + `\n\n👁 Target preview — you can't see images, so this is ${model || "the reader"}'s description of what's under the "click point" mark (NOT the image itself). Judge whether that's "${truncate(description, 50)}", then act or re-locate:\n${desc}${reSnap}${legend}`, feedback: { reason, via: "text", text: desc, prompt: describePrompt, image: sent, label: o.label } };
             };
@@ -721,14 +663,14 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                     return `That region is too small to subdivide further. Use the returned selectors, or switch strategy.`;
                 }
                 const { cols, rows } = gridDims(gRegion, base);   // aspect-matched — no wasted rows
-                if (!shot) shot = await ml.screenshot(null, {});
+                if (!shot) shot = await host.shoot(null, {});
                 let gridded: string;
-                try { gridded = await drawGrid(await cropDataUrl(shot, gRegion, dpr), cols, rows, dpr, avoidHues); }
+                try { gridded = await drawGrid(await cropDataUrl(shot, gRegion, dpr, raster), cols, rows, dpr, avoidHues, raster); }
                 catch (e) { return `Error drawing the grid: ${errText(e)}`; }
                 const gprompt = `This image is divided into a ${cols}×${rows} numbered grid (cells 1–${cols * rows}, numbered left-to-right, top-to-bottom). ` +
                     `Which cell contains ${description}${scopeNote}? If the target sits ON a grid line or spans more than one cell, reply with the 2 adjacent cells (or a 2×2 block of 4) that cover it; otherwise the single cell. ` +
                     `Reply with ONLY the cell number(s), comma-separated, or "NONE".`;
-                const ans = String(await ml.chat(gprompt, { images: [gridded], model: reader, numCtx: VISION_NUM_CTX, maxTokens })).trim();
+                const ans = String(await host.chat(gprompt, { images: [gridded], model: reader, numCtx: VISION_NUM_CTX, maxTokens })).trim();
                 const sel = [...new Set((ans.match(/\d+/g) || []).map(Number).filter(n => n >= 1 && n <= cols * rows))].slice(0, 4);
                 const gmodel = String(reader);
                 const cellLabel = (chose: string) => `Cell pick · grid ${cols}×${rows} · ${chose}`;
@@ -768,7 +710,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 // Highlight the selection on the grid the model saw (crop-local coords) — the
                 // human "visualise" view; the model saw the plain `gridded` (rawImage).
                 const localBox = cellsBox(sel, cols, rows, { left: 0, top: 0, width: gRegion.width, height: gRegion.height });
-                const griddedImage = await annotate(gridded, [{ rect: rectOf(localBox), color: await pickAccentColor(gridded, avoidHues), label: cellNote }], dpr);
+                const griddedImage = await annotate(gridded, [{ rect: rectOf(localBox), color: await pickAccentColor(gridded, avoidHues, raster), label: cellNote }], dpr, raster);
                 const cellStep: LocateSubstep = { label: cellLabel(`model chose ${cellNote}`), prompt: gprompt, output: ans, rawImage: gridded, image: griddedImage };
                 // Snap the unioned selection to the DOM. A <canvas> is NOT a real target (no
                 // sub-node) — drop it (esp. under filter:"all", which returns the canvas itself)
@@ -776,8 +718,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 const cellBox = cellsBox(sel, cols, rows, gRegion);
                 // Snap the unioned selection to the DOM. A <canvas> is NOT a real target (no
                 // sub-node) — drop it so a canvas cell falls to a coordinate, never a SoM pick.
-                const found = collectInBox(cellBox, filter, { max: 20 }).filter(el => !isOpaqueEl(el));
-                const cpt = found.length ? null : opaquePointIn(cellBox);
+                const { marks: found, opaque: cpt } = await geo.cell({ box: cellBox, filter });
                 // AUTO-UPGRADE: a plain-grid canvas cell with a grounder available → treat it
                 // like grid-grounding (grounding pinpoints inside the cell) rather than returning
                 // the imprecise cell centre. On a canvas the snap can't hurt (no element to
@@ -802,24 +743,24 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                     // here, else we'd have auto-upgraded above), else empty. The centre can graze
                     // an off-centre target, so steer off-target to zoom + the real neighbour cells.
                     if (cpt) {
-                        const { token, dupWarn } = mintPointWarned(cpt.x, cpt.y);
-                        const ptImg = await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }, { rect: { left: cpt.x - 11, top: cpt.y - 11, width: 22, height: 22 }, color: RED, label: "point" }], dpr);
+                        const { token, dupWarn } = await mintPointWarned(cpt.x, cpt.y);
+                        const ptImg = await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }, { rect: { left: cpt.x - 11, top: cpt.y - 11, width: 22, height: 22 }, color: RED, label: "point" }], dpr, raster);
                         return {
                             content: `Grid ${cellNote}${scopeNote} is on ${surfaceNoun(cpt.kind)} — no DOM element, so this is a COORDINATE: ${token} at (${Math.round(cpt.x)}, ${Math.round(cpt.y)}). First verify, then click: look({ selector: "${token}" }) → click({ selector: "${token}" }).${reservedClickNote(cpt.kind)}${dupWarn} If it lands OFF the target, ${refineHint}${canvasScopeTip}`,
                             render: gridResult([cellStep, { label: `${cpt.kind === "canvas" ? "Canvas" : cpt.kind === "iframe" ? "Iframe" : "Sealed-shadow"} point · in the cell`, image: ptImg }], { picked: `${token} @ (${Math.round(cpt.x)}, ${Math.round(cpt.y)})`, pickedBy: "snap" }),
                         };
                     }
-                    const snapImg = await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }], dpr);
+                    const snapImg = await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }], dpr, raster);
                     return { content: `Grid ${cellNote} for "${description}"${scopeNote} has no ${filter} element under it. Re-pick, raise gridSize, or switch strategy.`, render: gridResult([cellStep, { label: "DOM snap · no element under the cell", image: snapImg }]) };
                 }
-                const marks = buildMarks(found);
+                const marks = found;
                 if (found.length === 1) {
                     // Exactly one element under the cell → snap to it directly (no 2nd call).
                     const picked = marks[0], pk = pickedStr(picked);
-                    const snapImg = await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }, { rect: picked.rect, color: RED, badge: 1 }], dpr);
+                    const snapImg = await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }, { rect: picked.rect, color: RED, badge: 1 }], dpr, raster);
                     return {
                         content: `Grid ${cellNote}${scopeNote} → ${pk}\n${actHint}\n\n${refineHint}\n\nCandidates in that region:\n${listOf(marks)}`,
-                        elements: [picked.el, ...found.filter(e => e !== picked.el)].slice(0, 50),
+                        ...elementsOf([picked, ...found.filter(e => e !== picked)].slice(0, 50)),
                         render: gridResult([cellStep, { label: "DOM snap · single element in the cell", image: snapImg }], { picked: pk, pickedBy: "snap" }),
                     };
                 }
@@ -831,13 +772,13 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 if (!chosen) {
                     // NONE from the hand-off means the target isn't among this cell's elements
                     // → the CELL was likely wrong. Do NOT zoom into it (futile); re-pick or switch.
-                    return { content: `None of ${cellNote}'s ${found.length} candidates matched "${description}" (model replied "${truncate(answer, 40)}") — the target is probably NOT in that cell, so do NOT zoom into it. Re-run grid for a fresh cell pick (optionally a larger gridSize), or switch to strategy 'marks'. You can also look() at these to double-check:\n${listOf(marks)}`, elements: found.slice(0, 50), render: gridResult([cellStep, { label: somLabel(found.length), note: handoffNote, prompt: somPrompt, output: answer, rawImage: raw, image: raw }]) };
+                    return { content: `None of ${cellNote}'s ${found.length} candidates matched "${description}" (model replied "${truncate(answer, 40)}") — the target is probably NOT in that cell, so do NOT zoom into it. Re-run grid for a fresh cell pick (optionally a larger gridSize), or switch to strategy 'marks'. You can also look() at these to double-check:\n${listOf(marks)}`, ...elementsOf(found.slice(0, 50)), render: gridResult([cellStep, { label: somLabel(found.length), note: handoffNote, prompt: somPrompt, output: answer, rawImage: raw, image: raw }]) };
                 }
                 const pk = `#${chosen.id} ${pickedStr(chosen)}`;   // the badge the model chose
                 const viz = await highlightPick(raw, chosen, rectOf(cellBox));
                 return {
                     content: `Grid ${cellNote}${scopeNote} → badged ${found.length} candidates → model picked ${pk}\n${actHint}\n\n${refineHint}\n\nCandidates in that region:\n${listOf(marks)}`,
-                    elements: [chosen.el, ...found.filter(e => e !== chosen.el)].slice(0, 50),
+                    ...elementsOf([chosen, ...found.filter(e => e !== chosen)].slice(0, 50)),
                     render: gridResult([cellStep, { label: somLabel(found.length, chosen), note: handoffNote, prompt: somPrompt, output: answer, rawImage: raw, image: viz }], { picked: pk, pickedBy: "model" }),
                 };
                 }
@@ -859,16 +800,16 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 let cached = groundCache.get(key);   // reuse this run's prediction (for a margin retry)
                 if (cached === undefined) {
                     try {
-                        shot = await ml.screenshot(null, {});
+                        shot = await host.shoot(null, {});
                         // Crop to the scoped region (the whole viewport when unscoped), then
                         // LETTERBOX to a square — aspect-preserving, so an arbitrary-shaped crop
                         // isn't distorted the way a stretch mangles it.
-                        const cropped = await cropDataUrl(shot, region, dpr);
-                        const square = await letterboxToSquare(cropped, DEFAULT_GROUNDING_RANGE);
+                        const cropped = await cropDataUrl(shot, region, dpr, raster);
+                        const square = await letterboxToSquare(cropped, DEFAULT_GROUNDING_RANGE, undefined, raster);
                         const gp = `Locate "${description}"${scopeNote} in this image. Reply with ONLY its bounding box as four numbers ` +
                             `x1,y1,x2,y2 — top-left then bottom-right corner, each from 0 to ${groundingRange} ` +
                             `(x: 0=left→${groundingRange}=right; y: 0=top→${groundingRange}=bottom). If it isn't visible, reply "NONE".`;
-                        const ans = String(await ml.chat(gp, { images: [square], model: groundingModel, numCtx: VISION_NUM_CTX, maxTokens })).trim();
+                        const ans = String(await host.chat(gp, { images: [square], model: groundingModel, numCtx: VISION_NUM_CTX, maxTokens })).trim();
                         const parsed = (ans.match(/\d+(?:\.\d+)?/g) || []).map(Number);
                         cached = { nums: parsed.length >= 4 ? parsed.slice(0, 4) : null, square, prompt: gp, answer: ans };
                         groundCache.set(key, cached);
@@ -891,9 +832,9 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 // return the plain-grid cell CENTRE we stashed (the upgrade must never regress).
                 const returnAutoUpFallback = async (extra: LocateSubstep[] = []) => {
                     const f = autoUpFallback!;
-                    if (!shot) shot = await ml.screenshot(null, {});
-                    const { token, dupWarn } = mintPointWarned(f.x, f.y);
-                    const ptImg = await annotate(shot, [{ rect: rectOf(f.cellBox), color: YELLOW, label: f.cellNote }, { rect: { left: f.x - 11, top: f.y - 11, width: 22, height: 22 }, color: RED, label: "point" }], dpr);
+                    if (!shot) shot = await host.shoot(null, {});
+                    const { token, dupWarn } = await mintPointWarned(f.x, f.y);
+                    const ptImg = await annotate(shot, [{ rect: rectOf(f.cellBox), color: YELLOW, label: f.cellNote }, { rect: { left: f.x - 11, top: f.y - 11, width: 22, height: 22 }, color: RED, label: "point" }], dpr, raster);
                     return {
                         content: `Grid ${f.cellNote}${scopeNote}: grounding couldn't refine inside the cell, so this is the cell-CENTRE COORDINATE (may graze an off-centre target): ${token} at (${Math.round(f.x)}, ${Math.round(f.y)}). First verify, then click: look({ selector: "${token}" }) → click({ selector: "${token}" }).${dupWarn}${f.offAdvice}${canvasScopeTip}`,
                         render: groundResult([...extra, { label: "Canvas point · cell centre (grounding fallback)", image: ptImg }], { picked: `${token} @ (${Math.round(f.x)}, ${Math.round(f.y)})`, pickedBy: "snap" }),
@@ -907,7 +848,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                     // The square the model saw, annotated with ITS box (visualise view; the
                     // model saw the plain `square` = rawImage).
                     const groundingImage = nums && fb
-                        ? await annotate(square, [{ rect: rectOf(viewportBox(nums, R, DEFAULT_GROUNDING_RANGE, DEFAULT_GROUNDING_RANGE)), color: RED, corners: fb.corners }], 1)
+                        ? await annotate(square, [{ rect: rectOf(viewportBox(nums, R, DEFAULT_GROUNDING_RANGE, DEFAULT_GROUNDING_RANGE)), color: RED, corners: fb.corners }], 1, raster)
                         : square;
                     const boxStep: LocateSubstep = { label: `Grounding${nums && fb ? ` · box ${fb.text}` : " · no box returned"}`, prompt, output: answer, rawImage: nums ? square : undefined, image: groundingImage };
                     // Invert the letterbox back to the scoped region (uniform scale + offset).
@@ -918,9 +859,9 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                         // (a coordinate CONTAINER to operate within), not a click point. The
                         // driver copies the token and recurses INTO it — box → sub-box → @pt.
                         if (container) {
-                            if (!shot) shot = await ml.screenshot(null, {});
-                            const token = mintBox(b);
-                            const boxImg = await annotate(shot, [{ rect: rectOf(b), color: YELLOW, label: "container" }], dpr);
+                            if (!shot) shot = await host.shoot(null, {});
+                            const { token } = await geo.mint({ box: b });
+                            const boxImg = await annotate(shot, [{ rect: rectOf(b), color: YELLOW, label: "container" }], dpr, raster);
                             return feedBack({
                                 content: `Outlined a container for "${description}"${scopeNote}: ${token} — a ${Math.round(b.right - b.left)}×${Math.round(b.bottom - b.top)}px region. Operate WITHIN it: verify with look({ selector: "${token}" }), then locate({ selector: "${token}", description: "…" }) to find a control inside (or container:true again to narrow further), then click the final @pt. Copy the token verbatim — it's a coordinate region, not a selector.`,
                                 render: groundResult([boxStep, { label: "Container region (@box)", image: boxImg }], { picked: token, pickedBy: "snap" }),
@@ -931,12 +872,13 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                         // snap to, so return a point token at the surface-hit nearest the box centre (robust to a
                         // box straddling page chrome above it). Grounding gives a PRECISE box — its strength — so
                         // a sealed-shadow / iframe target still yields a clickable @pt instead of failing to SoM.
-                        const cpt = opaquePointIn(b);
+                        const snapped = await geo.snap({ box: b, cx, cy, filter });
+                        const cpt = snapped.opaque;
                         if (cpt) {
-                            if (!shot) shot = await ml.screenshot(null, {});
-                            const { token, dupWarn } = mintPointWarned(cpt.x, cpt.y);
+                            if (!shot) shot = await host.shoot(null, {});
+                            const { token, dupWarn } = await mintPointWarned(cpt.x, cpt.y);
                             const dot = { left: cpt.x - 11, top: cpt.y - 11, width: 22, height: 22 };
-                            const ptImg = await annotate(shot, [{ rect: rectOf(b), color: YELLOW, label: "grounded region" }, { rect: dot, color: RED, label: "click point" }], dpr);
+                            const ptImg = await annotate(shot, [{ rect: rectOf(b), color: YELLOW, label: "grounded region" }, { rect: dot, color: RED, label: "click point" }], dpr, raster);
                             const upNote = autoUpgraded ? ` ('grid' was auto-upgraded to 'grid-grounding' in this call — grounding pinpointed inside the cell)` : "";
                             const noun = surfaceNoun(cpt.kind);
                             // Off-target: snap around THIS point (re-ground its neighborhood); a
@@ -947,20 +889,18 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                                 render: groundResult([boxStep, { label: `${cpt.kind === "canvas" ? "Canvas" : cpt.kind === "iframe" ? "Iframe" : "Sealed-shadow"} point (no DOM element)`, image: ptImg }], { picked: `${token} @ (${Math.round(cpt.x)}, ${Math.round(cpt.y)})`, pickedBy: "snap" }),
                             }, { kind: "pt", target: token, label: `located point on ${noun}`, x: cpt.x, y: cpt.y });
                         }
-                        const primary = elementAtPoint(cx, cy, filter);
-                        const nearby = collectInBox(b, filter);
-                        const chosen = primary || nearby[0];
-                        const ordered = chosen ? [chosen, ...nearby.filter(e => e !== chosen)].slice(0, 12) : nearby.slice(0, 12);
-                        const marks = buildMarks(ordered);
-                        if (!shot) shot = await ml.screenshot(null, {});   // a cache-hit skipped the capture
+                        // The element at the box's centre first, then the others in it (at most 12); none → nothing there.
+                        const marks = snapped.marks;
+                        const chosen = marks.length > 0;
+                        if (!shot) shot = await host.shoot(null, {});   // a cache-hit skipped the capture
                         // Element-location pass: the search area in YELLOW, candidates in RED.
-                        const snapImg = await annotate(shot, [{ rect: rectOf(b), color: YELLOW, label: margin ? `search +${margin}px` : "search area" }, ...marks.map(m => ({ rect: m.rect, color: RED, badge: m.id }))], dpr);
+                        const snapImg = await annotate(shot, [{ rect: rectOf(b), color: YELLOW, label: margin ? `search +${margin}px` : "search area" }, ...marks.map(m => ({ rect: m.rect, color: RED, badge: m.id }))], dpr, raster);
                         const snapStep: LocateSubstep = { label: `DOM snap${margin ? ` · +${margin}px search margin` : " · nearest element in the box"}`, image: snapImg };
                         if (chosen) {
                             const picked = pickedStr(marks[0]);
                             return feedBack({
                                 content: `Grounded "${description}"${scopeNote}${margin ? ` (margin ${margin}px)` : ""} → ${picked}\n${actHint}\n\nOther elements in that region:\n${listOf(marks)}`,
-                                elements: ordered.slice(0, 50),
+                                ...elementsOf(marks.slice(0, 50)),
                                 render: groundResult([boxStep, snapStep], { picked, pickedBy: "snap" }),
                             }, { kind: "selector", target: marks[0].selector, label: "grounded element" });
                         }
@@ -1007,8 +947,8 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             // Scan wider than we'll badge, so we can report the TRUE candidate count and cap
             // the badges at a legible number (badging 100 elements overlaps into mush).
             const SOM_BADGE_CAP = 40, SOM_DENSE = 30;
-            const allCands = scoped ? collectInBox(regionAsBox, filter, { max: 150 }) : collectCandidates(filter, { max: 150 });
-            const cands = allCands.slice(0, SOM_BADGE_CAP);
+            const sweep = await geo.marks({ filter, box: regionAsBox, scoped, max: 150, badge: SOM_BADGE_CAP });
+            const cands = sweep.marks;
             const prefix = fallbackNote ? "(Grounding missed — used Set-of-Marks.) " : "";
             // A <canvas>/WebGL surface (WebGL is just a <canvas> to the DOM) has no
             // sub-elements to badge — Set-of-Marks can't pick inside it. Steer to the
@@ -1022,21 +962,21 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             const canvasAlts = groundingModel
                 ? "Use strategy 'grid-grounding' (grid narrows the region, then a grounding model pinpoints an exact spot inside it — best for a small target), or 'grounding', or 'grid' and zoom in"
                 : "Use strategy 'grid' and zoom in";
-            const onOpaque = opaquePointIn(regionAsBox);   // is the search area itself an opaque surface?
+            const onOpaque = sweep.opaque;   // is the search area itself an opaque surface?
             if (!cands.length) {
                 if (onOpaque) return { content: `${canvasLead}${scopeSel ? `"${scopeSel}"` : "that area"} is ${surfaceNoun(onOpaque.kind)} — nothing to badge (no sub-elements). ${canvasAlts} — each returns an @pt coordinate token to click.${reservedClickNote(onOpaque.kind)}`, render: missRender(`Set-of-Marks · ${onOpaque.kind} region, nothing to badge`) };
                 return { content: `${prefix}No ${filter} candidates visible${scopeNote || " in the viewport"}. Scroll the target into view, widen the filter (try 'all'), then call again.`, render: missRender(`Set-of-Marks · no ${filter} candidates to badge`) };
             }
-            if (cands.every(c => opaqueSurfaceAt((c.getBoundingClientRect().left + c.getBoundingClientRect().right) / 2, (c.getBoundingClientRect().top + c.getBoundingClientRect().bottom) / 2))) {
-                const k = opaquePointIn(regionAsBox)?.kind ?? "canvas";
+            if (sweep.allOpaque) {
+                const k = sweep.opaque?.kind ?? "canvas";
                 return { content: `${canvasLead}"${description}" is on ${surfaceNoun(k)} — nothing to badge (it has no sub-elements). ${canvasAlts} — it returns an @pt coordinate token to click.${reservedClickNote(k)}`, render: missRender(`Set-of-Marks · target is ${k}, nothing to badge`) };
             }
             // Dense pages break Set-of-Marks (badges overlap, the model misreads) AND we
             // only badge the first SOM_BADGE_CAP — say both, and steer to a better tool.
-            const densityWarn = allCands.length > SOM_DENSE
-                ? `\n\n⚠ ${allCands.length}${allCands.length >= 150 ? "+" : ""} ${filter} candidates${allCands.length > SOM_BADGE_CAP ? ` (only the first ${SOM_BADGE_CAP} are badged/pickable here)` : ""} — Set-of-Marks is unreliable at this density: badges overlap and the wrong one is easily picked. Prefer strategy 'grid' (it narrows the region first), or scope with a \`selector\`. Before acting on any pick from here, verify it with look({ selector: "…" }).`
+            const densityWarn = sweep.total > SOM_DENSE
+                ? `\n\n⚠ ${sweep.total}${sweep.total >= 150 ? "+" : ""} ${filter} candidates${sweep.total > SOM_BADGE_CAP ? ` (only the first ${SOM_BADGE_CAP} are badged/pickable here)` : ""} — Set-of-Marks is unreliable at this density: badges overlap and the wrong one is easily picked. Prefer strategy 'grid' (it narrows the region first), or scope with a \`selector\`. Before acting on any pick from here, verify it with look({ selector: "…" }).`
                 : "";
-            const marks = buildMarks(cands);
+            const marks = cands;
             let badged: string;
             try {
                 // Badge full-frame, or on a crop of the scoped region (badgeMarks picks a
@@ -1052,11 +992,11 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             const marksResult = (extra: { picked?: string; pickedBy?: "model" | "snap" } = {}) =>
                 ({ type: "locate" as const, mode: "marks" as const, model: String(somReader || "default"), substeps: [...priorSubsteps, marksStep], ...extra });
             if (!chosen) {
-                return { content: `${prefix}No badge matched "${description}" (model replied "${truncate(answer, 40)}"). Candidates:\n${listOf(marks)}${densityWarn}`, elements: cands.slice(0, 50), render: marksResult() };
+                return { content: `${prefix}No badge matched "${description}" (model replied "${truncate(answer, 40)}"). Candidates:\n${listOf(marks)}${densityWarn}`, ...elementsOf(cands.slice(0, 50)), render: marksResult() };
             }
             return {
                 content: `${prefix}Matched "${description}" → #${chosen.id} ${pickedStr(chosen)}\n${actHint}\n\nAll candidates:\n${listOf(marks)}${densityWarn}`,
-                elements: [chosen.el],
+                ...elementsOf([chosen]),
                 render: marksResult({ picked: `#${chosen.id} ${pickedStr(chosen)}`, pickedBy: "model" }),
             };
         },
@@ -1092,7 +1032,9 @@ const VERIFY_MARGIN = 150;
 // A passed-in verify capability (built with `ml` where it's available) so the PURE domTools (wait, in
 // tools.ts, which have no `ml`) can verify too — without depending on ml directly.
 export type VerifyArea = (ctx: ToolContext | undefined, center: { x: number; y: number } | null, verb: string, mutated?: boolean) => Promise<Partial<ToolResult>>;
-export async function captureVerify(ml: MlApi, ctx: ToolContext | undefined, center: { x: number; y: number } | null, verb: string, mutated = false): Promise<Partial<ToolResult>> {
+/** The verify after an action: a clean crop of the area around `center` (the viewport when null), inline for a driver
+ *  that sees, else the host's reader describes it; with the DOM legend of that area. */
+export async function captureVerify(host: VisionHost, ctx: ToolContext | undefined, center: { x: number; y: number } | null, verb: string, mutated = false): Promise<Partial<ToolResult>> {
     const driverSees = !!ctx?.driverSees;
     const reader = ctx?.visionModel || null;
     if (!driverSees && !reader) return { content: "\n\n(verify was requested, but no vision model is available to capture the result — read it with look/findByText next.)" };
@@ -1101,9 +1043,9 @@ export async function captureVerify(ml: MlApi, ctx: ToolContext | undefined, cen
     // doesn't need re-marking — and a marker box can occlude the very result it's meant to confirm, which
     // makes the VLM confabulate the hidden characters). A `wait` (center null) → the whole viewport. The
     // point token is still minted so the model can look() it to see EXACTLY where the click landed if needed.
-    const tok = center ? mintPoint(center.x, center.y) : null;
+    const tok = center ? (await host.geo.mint({ pt: { x: center.x, y: center.y } })).token : null;
     let crop: string;
-    try { crop = tok ? await ml.screenshot(tok, { margin: VERIFY_MARGIN, noOverlay: true }) : await ml.screenshot(null, {}); }
+    try { crop = tok ? await host.shoot(tok, { margin: VERIFY_MARGIN, noOverlay: true }) : await host.shoot(null, {}); }
     catch { return {}; }   // capture failed → no verify, base result stands
     // The target is at the crop's centre — say so instead of drawing a box on it. Need the precise landing
     // spot (the click box)? a follow-up look() on the token draws it, without occluding this verify crop.
@@ -1115,34 +1057,35 @@ export async function captureVerify(ml: MlApi, ctx: ToolContext | undefined, cen
     const reason = mutated ? "after the action — target changed" : center ? "after the action" : "after wait";
     // DOM legend of the verify area — names what just APPEARED (a menu that opened, a filled value) with
     // selectors, so the model acts on the DOM instead of re-reading the pixels. Same box the crop shows.
-    const legend = legendForBox(center ? { left: center.x - VERIFY_MARGIN, top: center.y - VERIFY_MARGIN, right: center.x + VERIFY_MARGIN, bottom: center.y + VERIFY_MARGIN } : boxForTarget(null, 0));
+    const legend = await legendForBox(host, center ? { left: center.x - VERIFY_MARGIN, top: center.y - VERIFY_MARGIN, right: center.x + VERIFY_MARGIN, bottom: center.y + VERIFY_MARGIN } : await boxForTarget(host.geo, null, 0));
     if (driverSees) return { content: `\n\n ${areaNote}${clickPoint} Read the result and continue — no need to look() first.${legend}`, image: crop, imageLabel: reason, feedback: { reason, via: "image", image: crop } };
     // Text-only driver: the reader describes the crop (no marker to explain — it's a plain crop).
     const question = center
         ? `The image is a crop of the page just AFTER a "${verb}" action; the target is at the exact CENTRE. Describe what is now shown there and around it — especially anything that CHANGED (a menu/panel/result that appeared, a new field value, a navigation).`
         : `The image is a screenshot of the page after it settled following a wait. Describe the current state — especially anything that just finished loading or changed.`;
     let desc: string;
-    try { desc = String(await ml.chat(question, { images: [crop], model: reader, maxTokens: 256, numCtx: VISION_NUM_CTX })).trim(); }
+    try { desc = String(await host.chat(question, { images: [crop], model: reader, maxTokens: 256, numCtx: VISION_NUM_CTX })).trim(); }
     catch { return {}; }
     return { content: `\n\n👁 ${areaNote} You can't see images, so this is ${reader || "the reader"}'s description:\n${desc}${clickPoint}${legend}`, feedback: { reason, via: "text", text: desc, prompt: question, image: crop } };
 }
 /** Verify by cropping the WHOLE target element (not a fixed-radius point crop) — what `type` wants: a picture
- *  of the field/canvas it typed into. `target` is a selector or an Element; `ml.screenshot` crops it to its
- *  bounding box. Same native (inline image) / delegated (reader describes) split + feedback shape as
- *  captureVerify. Only `type` into an `@pt` keeps the point crop (captureVerify) — there's no element there. */
-export async function captureVerifyElement(ml: MlApi, ctx: ToolContext | undefined, target: string | Element, verb: string, label?: string): Promise<Partial<ToolResult>> {
+ *  of the field/canvas it typed into. `target` is a selector (its `index`th match) or the focused element; the
+ *  host's `shoot` crops it to its bounding box. Same native (inline image) / delegated (reader describes) split +
+ *  feedback shape as captureVerify. Only `type` into an `@pt` keeps the point crop (captureVerify) — there's no
+ *  element there. */
+export async function captureVerifyElement(host: VisionHost, ctx: ToolContext | undefined, target: string | { focus: true }, verb: string, label?: string, index = 0): Promise<Partial<ToolResult>> {
     const driverSees = !!ctx?.driverSees;
     const reader = ctx?.visionModel || null;
     if (!driverSees && !reader) return { content: "\n\n(verify was requested, but no vision model is available to capture the result — read it with look/findByText next.)" };
     let crop: string;
-    try { crop = await ml.screenshot(target as string, { noOverlay: true }); }
+    try { crop = await host.shoot(target, index ? { noOverlay: true, index } : { noOverlay: true }); }
     catch { return {}; }   // the element vanished / can't be shot → no verify, base result stands
     const what = label || (typeof target === "string" ? `"${target}"` : "the element");
     const reason = "after the action";
     if (driverSees) return { content: `\n\n Here's ${what} after you ${verb} it. Read the result and continue — no need to look() first.`, image: crop, imageLabel: reason, feedback: { reason, via: "image", image: crop } };
     const question = `The image is a screenshot of ${what} just AFTER a "${verb}" action. Describe what it now shows — especially anything that CHANGED (a new value, text that appeared on it).`;
     let desc: string;
-    try { desc = String(await ml.chat(question, { images: [crop], model: reader, maxTokens: 256, numCtx: VISION_NUM_CTX })).trim(); }
+    try { desc = String(await host.chat(question, { images: [crop], model: reader, maxTokens: 256, numCtx: VISION_NUM_CTX })).trim(); }
     catch { return {}; }
     return { content: `\n\n👁 Here's ${what} after you ${verb} it. You can't see images, so this is ${reader || "the reader"}'s description:\n${desc}`, feedback: { reason, via: "text", text: desc, prompt: question, image: crop } };
 }
@@ -1222,7 +1165,7 @@ export const buildClickTool = (ml: MlApi): MlTool => {
                 const after = (typeof location !== "undefined" && location.href) || "";
                 const nav = after && after !== before ? ` Navigated to ${after}.` : "";
                 const base = `Clicked at (${pt.x}, ${pt.y}) on ${elLine(hit)}.${nav} Page title: ${truncate(document.title || "", 80)}.${repeatPointHint(token)}`;
-                if (verify) { const v = await captureVerify(ml, ctx, { x: pt.x, y: pt.y }, "clicked"); return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback }; }
+                if (verify) { const v = await captureVerify(pageVisionHost(ml), ctx, { x: pt.x, y: pt.y }, "clicked"); return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback }; }
                 return `${base} Re-run look to see the result.`;
             }
             const el0 = queryAll(selector)[index];
@@ -1256,7 +1199,7 @@ export const buildClickTool = (ml: MlApi): MlTool => {
                 // Re-resolve: center on the element's CURRENT spot if it survived, else its pre-action spot (mutated).
                 let center = preCenter, mutated = false;
                 try { const now = queryAll(selector)[index]; const c = (now && isElement(now)) ? elementCenter(now) : null; if (c) center = c; else mutated = true; } catch { mutated = true; }
-                if (center) { const v = await captureVerify(ml, ctx, center, "clicked", mutated); return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback }; }
+                if (center) { const v = await captureVerify(pageVisionHost(ml), ctx, center, "clicked", mutated); return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback }; }
             }
             return `${base} Re-run look/findByText to see the result.`;
         }
@@ -1366,10 +1309,10 @@ export const buildTypeTool = (ml: MlApi): MlTool => {
                 // where it was, flagged as mutated.
                 let now: Element | undefined; try { now = queryAll(selector)[index]; } catch { /* gone */ }
                 if (now && isElement(now)) {
-                    const v = await captureVerifyElement(ml, ctx, now, "typed", `the field ${elLine(now)}`);
+                    const v = await captureVerifyElement(pageVisionHost(ml), ctx, selector, "typed", `the field ${elLine(now)}`, index);
                     if (v.content || v.image || v.feedback) return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };
                 }
-                if (preCenter) { const v = await captureVerify(ml, ctx, preCenter, "typed", true); return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback }; }
+                if (preCenter) { const v = await captureVerify(pageVisionHost(ml), ctx, preCenter, "typed", true); return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback }; }
             }
             return `${base} Re-run look/findByText to see the result.`;
         }
