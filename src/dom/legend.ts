@@ -89,9 +89,25 @@ const boundaryEl = (el: Element): boolean => el.tagName === "IFRAME" || el.tagNa
 export const LEGEND_NAME_MAX = 41;
 /** The longest a text anchor is: {@link PROSE_LEN} and an ellipsis at each end. */
 export const LEGEND_TEXT_MAX = PROSE_LEN + 2;
-/** A page string as it sits between the legend's own delimiters: « » and ` are the format's, so a label cannot close
- *  its quote and write an entry of its own (‹ › and ' stand in for them). */
-const inQuotes = (s: string): string => s.replace(/«/g, "‹").replace(/»/g, "›").replace(/`/g, "'");
+/** What stands in for each delimiter a tool's result quotes page text with. */
+const STAND_IN: Record<string, string> = { "«": "‹", "»": "›", "`": "'", "\"": "'" };
+
+/**
+ * A page string made safe to put between a tool result's own delimiters: each character of `delims` that appears in it
+ * is replaced by a look-alike (« » by ‹ ›, ` and " by '), so the string cannot close its quote and write an entry, a
+ * selector or a pick of its own. The one folding every result that quotes page text uses.
+ * @param s the page's string
+ * @param delims the delimiters the result quotes with (the legend's « » and `, by default)
+ * @returns the string with those characters replaced
+ */
+export function foldDelimiters(s: string, delims = "«»`"): string {
+    let out = "";
+    for (const ch of s) out += delims.includes(ch) ? STAND_IN[ch] ?? " " : ch;
+    return out;
+}
+
+/** A page string as it sits between the legend's own delimiters (« » and `). */
+const inQuotes = (s: string): string => foldDelimiters(s);
 const quote = (s: string): string => (s ? `«${inQuotes(s)}»` : "");
 const imgName = (el: Element): string => { const src = el.getAttribute("src") || ""; const m = src.split("?")[0].split("/").pop() || ""; return m && !m.startsWith("data:") ? m : ""; };
 /** A control as data: its accessible name cut to forty characters ("" for none), and the role (or tag) shown instead

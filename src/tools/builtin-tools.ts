@@ -11,7 +11,8 @@ import type { ServerTool } from "../contract/contract-server";
 import { DEFAULT_GROUNDING_RANGE } from "../contract/contract-render";
 import { truncate, errText, elLine, queryAll, selectorError, isElement, viewportRect, firstHopSealed, clickSelector } from "../dom/dom";
 import { accessibleName } from "../dom/a11y";
-import { formatLegend, type Box as LegendBox } from "../dom/legend";
+import { formatLegend, foldDelimiters, type Box as LegendBox } from "../dom/legend";
+
 import { citeParam } from "./tool-params";
 
 // python_exec output (stdout / value / error) fed to the model is capped per slot — default bigger than
@@ -20,6 +21,9 @@ import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, PT_LOOK_RAD
 import { annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, withHiddenSidebar, regionBox, REGION_NAMES, adjacentCells, type RegionName, type MarkFilter, type Box } from "../dom/locate";
 import { OpaqueKind, canvasAt, reservedSurfaceAt, pageVisionHost } from "../dom/page-geometry";
 import type { VisionHost, Geometry, GeoMark } from "./vision-host";
+
+/** The delimiters locate quotes a mark's name with ("…"), and the legend's « » and `, folded inside a page's name. */
+const MARK_DELIMS = "\"«»`";
 
 // CDP-trusted-input flag, set per run from config (like setPierceClosedShadow, threaded in injected.ts). When
 // ON, click/type route canvas / @pt / @focus / sealed targets through the debugger for REAL (isTrusted) events
@@ -310,7 +314,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
     // The page's host unless one is given, made when the tool RUNS (see buildLookTool).
     const hostOf = (): VisionHost => host || pageVisionHost(ml, memory);
     const listOf = (marks: { id: number; role: string; name: string; selector: string }[]) =>
-        marks.map(m => `#${m.id} [${m.role}] ${m.name ? `"${truncate(m.name, 50)}"` : "(no accessible name)"} → ${m.selector}`).join("\n");
+        marks.map(m => `#${m.id} [${m.role}] ${m.name ? `"${foldDelimiters(truncate(m.name, 50), MARK_DELIMS)}"` : "(no accessible name)"} → ${m.selector}`).join("\n");
     // Per-run cache of the grounding call (undefined = not asked; null = it errored).
     // The tool lives for one ml.agent run, so a `margin` retry reuses the cached
     // coords + prompt/image and re-runs only the cheap DOM sweep — no 2nd VLM call.
@@ -409,7 +413,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             // The live elements behind marks, for the debug side channel (a host without a DOM has none).
             const elementsOf = (ms: GeoMark[]): { elements?: Element[] } => host.elements ? { elements: host.elements(ms.map(m => m.ref)) } : {};
             const rectOf = (b: Box) => ({ left: b.left, top: b.top, width: b.right - b.left, height: b.bottom - b.top });
-            const pickedStr = (m: { role: string; name: string; selector: string }) => `[${m.role}]${m.name ? ` "${m.name}"` : ""} → ${m.selector}`;
+            const pickedStr = (m: { role: string; name: string; selector: string }) => `[${m.role}]${m.name ? ` "${foldDelimiters(m.name, MARK_DELIMS)}"` : ""} → ${m.selector}`;
             // One phrasing for the Set-of-Marks substep, whether it's the primary mechanism
             // or the grid hand-off's second stage.
             const somLabel = (n: number, chosen?: GeoMark) => `Set-of-Marks · ${n} candidate${n === 1 ? "" : "s"}${chosen ? ` · model chose #${chosen.id}` : ""}`;
