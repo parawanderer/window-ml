@@ -8,7 +8,9 @@
 //   … --pdf               also render each run to run.html + run.pdf (slower, and much larger)
 //   … --capture always    snapshot the browser (screenshot + DOM, every open page) on EVERY run, not
 //                         just the failures — the default is `failure`, and `never` turns it off
-//   … --serve             serve a live page: every run's state, what is queued, the table filling in
+//   … --serve             serve a live page: every run's state, what is queued, the table filling in. When the
+//                         sweep ends the page stays up (a detached server; `serve.mjs --stop` stops it) and the
+//                         process EXITS, so whoever started it in the background learns it is done
 //   … --serve --open      …and open it in a browser
 //   … tests/e2e/panel/bloat.json --models a,b,c    an INTERVIEW file instead of a spec: one run per model, each
 //                         follow-up sent as the turn before it ends, the answers side by side on the page (where a
@@ -20,6 +22,9 @@
 // The division of labour this is built for: an agent defines the benchmark in code, runs it, and reads the
 // terminal; a human watching over its shoulder opens the page. Same data, two audiences — which is why
 // `--serve` prints the URL as a banner rather than a log line, so the assistant can hand it over.
+//
+// The last line a sweep prints is `BENCH DONE <name> runs=… ok=… errors=… report=… page=…` (also done.json in the sweep
+// directory), and it exits 0 when no run errored, 2 when some did, 1 when the runner itself failed.
 //
 // The sweep is RESUMABLE: each cell's measurement is written under a content-addressed key covering the
 // cell's configuration AND the build it ran against, so a six-hour sweep that dies at hour five resumes
@@ -39,8 +44,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { runOnce, resolveBackendFromEnv, renderRun, FAKE_MODEL } from "../run-once.mjs";
 import { measureRun, aggregate } from "./metrics.mjs";
 import { expandCells, cellKey, cellPath, comboLabel, buildGroups, parseSelector, slug, cellSurface, cellStream } from "./cells.mjs";
-import { writeReport, mdSink, terminalSink } from "./sinks.mjs";
-import { startDashboard, staticPage } from "./serve.mjs";
+import { writeReport, mdSink, terminalSink, doneSummary, doneLine } from "./sinks.mjs";
+import { startDashboard, staticPage, servedSweep } from "./serve.mjs";
 import { pageSources } from "./page/bundle.mjs";
 import { addMark, readMarks, defaultBy } from "./mark.mjs";
 import { recordSweep, specProvenance, specText } from "./sweeps.mjs";
@@ -599,19 +604,46 @@ const main = async () => {
     const unwatchMarks = () => { clearTimeout(marksTimer); marksWatch?.close(); };
     if (!dash) unwatchMarks();
 
+    let page = null;
     if (dash) {
         dash.update({
             name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
             runs: runsState, rows, started, finished, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: scoreLines("/scores"), cloud, scripted, repo,
             resources: pageState.resources,
         });
-        // Held open on purpose: the page IS the result when you ran with --serve, and tearing the server
-        // down the instant the last cell lands would blank it exactly when you look.
-        console.log(`  live: ${dash.url} — still serving; Ctrl+C to stop.\n`);
-        await new Promise((r) => process.on("SIGINT", r));
+        // The page outlives the sweep, the sweep's PROCESS does not: a caller that started it in the background (an
+        // agent's background task, a `&` and a wait) learns it finished by its exit, which a held-open server never gave.
+        // The page goes to a detached server on the same port (serve.mjs `serveSweep`), which serves the final state from
+        // page.json; the open tab's event stream reconnects to it, so the person watching sees no change.
+        const port = Number(new URL(dash.url).port);
         await dash.stop();
         unwatchMarks();
+        page = await handOffPage(sweepDir, port);
     }
+    // ONE line a poller can look for, last, and the same as done.json in the sweep directory.
+    const done = doneSummary(spec.name, runs, { report: path.relative(ROOT, reportPath), page });
+    await writeFile(path.join(sweepDir, "done.json"), JSON.stringify(done, null, 2));
+    if (page) console.log(`  the page stays up at ${page}; stop it with: node --import tsx tests/e2e/bench/serve.mjs --stop`);
+    console.log(doneLine(done));
+    // Exit, rather than wait for every handle to close: everything is written, and the exit IS the signal.
+    process.exit(done.exit);
 };
+
+/**
+ * Start the detached server for a finished sweep's page (serve.mjs, as its own process, so this one can exit) and wait
+ * until it says it is listening (SERVER_FILE). Resolves its URL, or null when it did not come up.
+ */
+async function handOffPage(sweepDir, port) {
+    const child = spawn(process.execPath, [...process.execArgv, fileURLToPath(new URL("./serve.mjs", import.meta.url)), sweepDir, "--port", String(port)],
+        { cwd: ROOT, detached: true, stdio: "ignore" });
+    child.unref();
+    for (const until = Date.now() + 20_000; Date.now() < until;) {
+        const s = servedSweep();
+        if (s?.pid === child.pid) return s.url;
+        await new Promise((r) => setTimeout(r, 200));
+    }
+    console.log("  (the page server did not come up; report.html in the sweep directory is the same page, from disk)");
+    return null;
+}
 
 main().catch((e) => { console.error(e); process.exit(1); });

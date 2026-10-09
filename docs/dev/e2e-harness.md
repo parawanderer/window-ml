@@ -81,6 +81,10 @@ as in AGENTS.md — they are all under `src/`.
   `residencyOf` and `machineEventFrom`; every frame kept once in `box.sqlite`), else polled `/api/ps` + `/api/info`
   (`resource-poll.mjs`). The timeline draws the memory with the panel's `ResourceTracks`, the lanes (the box's row,
   then each run's) passed in as its `lane` so they share its axis. One walk, N sinks: terminal + markdown today. **Two audiences, one run:** the terminal is for the agent, and
+  A sweep ends by EXITING (status 0, or 2 when a run errored; last line `BENCH DONE …`, also `done.json`), so a
+  caller that ran it in the background learns it finished; with `--serve` it first hands the page to a detached
+  `serve.mjs <sweep dir>` on the same port, which serves the final state from `page.json` and gives the port back to
+  the next sweep (`artifacts/bench/server.json` names it; `serve.mjs --stop` stops it).
   **`--serve`** prints a banner URL for a live page a human watches — every run's state and what is
   queued, the in-flight run's step against its budget and the tool it is in, elapsed / mean-per-run /
   mean-per-step / ETA, and links to each `run.md`. Served by node:http + SSE; the page is Preact
