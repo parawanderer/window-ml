@@ -116,7 +116,7 @@ function streamResponse(lines, { status = 200 } = {}) {
 // `commandShortcut` is what chrome.commands reports as CURRENTLY bound for the HUD
 // (null = the API is unavailable, "" = the user cleared the binding); `manifestPermissions`
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
-function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, userScripts }) {
+function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, userScripts, onTabsGet }) {
     const calls = [];
     const captures = [];        // captureVisibleTab arg lists, for screenshot tests
     const tabMessages = [];     // chrome.tabs.sendMessage arg lists, for reverse-channel tests
@@ -139,6 +139,8 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const listeners = [];
     const connectListeners = [];
     const tabRemovedListeners = [];   // chrome.tabs.onRemoved listeners; fired by bg.closeTab(id)
+    const tabActivatedListeners = new Set();   // chrome.tabs.onActivated listeners; fired by bg.activateTab(id)
+    const tabReplacedListeners = new Set();   // chrome.tabs.onReplaced listeners; fired by bg.replaceTab(oldId, newId)
     const stored = { ...config };
     const syncListeners = [];
     const localStore = { ...local };   // seed chrome.storage.local (e.g. ml_bgrun_* snapshots for durable-resume tests)
@@ -325,14 +327,20 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 create: async (props) => { tabsCreated.push(props); return { id: 4242 + tabsCreated.length }; },
                 remove: async (id) => { tabsRemoved.push(id); },
                 onRemoved: { addListener: (fn) => tabRemovedListeners.push(fn) },
+                onActivated: { addListener: (fn) => tabActivatedListeners.add(fn), removeListener: (fn) => tabActivatedListeners.delete(fn) },
+                onReplaced: { addListener: (fn) => tabReplacedListeners.add(fn), removeListener: (fn) => tabReplacedListeners.delete(fn) },
                 // What `tabs.query({})` answers: `openTabs`, as the browser reports them (a tab on a site the
                 // extension may not read has no `url` and no `title`).
                 query: async () => openTabs.map((t) => ({ ...t })),
                 // One of `openTabs` by id, rejecting like the real API for a tab that is not there.
+                // `onTabsGet(id, answer)` (if given) runs after the browser has answered and before the caller sees it: the
+                // moment a tab can change under an answer that is already on its way.
                 get: async (id) => {
                     const t = openTabs.find((x) => x.id === id);
                     if (!t) throw new Error(`No tab with id: ${id}.`);
-                    return { ...t };
+                    const answer = { ...t };
+                    if (onTabsGet) await onTabsGet(id, answer);
+                    return answer;
                 },
             }
         }
@@ -384,6 +392,21 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         },
         /** Simulates the user closing a tab (chrome.tabs.onRemoved). */
         closeTab: (tabId) => { for (const fn of tabRemovedListeners) fn(tabId, {}); },
+        /** Simulates the user switching to a tab: it becomes its window's `active` one in `openTabs`, and
+         *  chrome.tabs.onActivated fires. */
+        activateTab: (tabId) => {
+            const t = openTabs.find((x) => x.id === tabId);
+            for (const o of openTabs) if (o.windowId === t.windowId) o.active = o.id === tabId;
+            for (const fn of [...tabActivatedListeners]) fn({ tabId, windowId: t.windowId });
+        },
+        /** Simulates Chrome swapping a tab's contents under a new id (a prerender or a discard restored): the tab is
+         *  `newId` in `openTabs` from now on, and chrome.tabs.onReplaced fires. onActivated does not: the window still
+         *  shows the same strip slot. */
+        replaceTab: (oldId, newId) => {
+            const t = openTabs.find((x) => x.id === oldId);
+            t.id = newId;
+            for (const fn of [...tabReplacedListeners]) fn(newId, oldId);
+        },
         // Simulates the content script opening a streaming Port. Returns a client
         // handle: send(msg) posts to the background port; onMessage(fn) receives
         // background pushes; messages[] collects them.

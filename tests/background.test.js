@@ -1663,8 +1663,8 @@ test("streaming delivers sources (their own SSE line) on the done message", asyn
 });
 
 test("CAPTURE_TAB screenshots the sender's window and returns the data URL", async () => {
-    const bg = loadBackground({ config: baseConfig(), onFetch: () => htmlResponse() });
-    const res = await bg.send({ type: "CAPTURE_TAB", payload: {} }, { tab: { windowId: 7 } });
+    const bg = loadBackground({ config: baseConfig(), onFetch: () => htmlResponse(), openTabs: [{ id: 3, windowId: 7, active: true }] });
+    const res = await bg.send({ type: "CAPTURE_TAB", payload: {} }, { tab: { id: 3, windowId: 7 } });
 
     assert.deepEqual(bg.captures[0], [7, { format: "png" }]); // targeted the sender's window
     assert.equal(res.data, "data:image/png;base64,SHOT");
@@ -1674,9 +1674,10 @@ test("CAPTURE_TAB surfaces a capture failure as an error", async () => {
     const bg = loadBackground({
         config: baseConfig(),
         onFetch: () => htmlResponse(),
-        onCaptureTab: () => { throw new Error("cannot capture chrome:// page"); }
+        onCaptureTab: () => { throw new Error("cannot capture chrome:// page"); },
+        openTabs: [{ id: 3, windowId: 1, active: true }],
     });
-    const res = await bg.send({ type: "CAPTURE_TAB", payload: {} }, { tab: { windowId: 1 } });
+    const res = await bg.send({ type: "CAPTURE_TAB", payload: {} }, { tab: { id: 3, windowId: 1 } });
     assert.match(res.error, /cannot capture/);
 });
 
@@ -1705,6 +1706,7 @@ test("CAPTURE_TAB: CDP on but the debugger capture fails → falls back to captu
         onFetch: () => htmlResponse(),
         onCaptureTab: () => "data:image/png;base64,FALLBACK",
         onDebuggerCommand: () => undefined,   // Page.captureScreenshot returns no data → cdpScreenshot errors → fallback
+        openTabs: [{ id: 7, windowId: 1, active: true, url: "https://x.test/" }],
     });
     const res = await bg.send({ type: "CAPTURE_TAB", payload: {} }, { tab: { id: 7, windowId: 1, url: "https://x.test/" } });
     assert.equal(res.error, undefined);
@@ -1716,12 +1718,64 @@ test("CAPTURE_TAB (CDP off): the site-access error explains the REAL fix (On all
         config: baseConfig({ cdp: false }),
         onFetch: () => htmlResponse(),
         onCaptureTab: () => { throw new Error("Either the '<all_urls>' or 'activeTab' permission is required."); },
+        openTabs: [{ id: 7, windowId: 1, active: true, url: "https://github.com/foo/bar" }],
     });
     const res = await bg.send({ type: "CAPTURE_TAB", payload: {} }, { tab: { id: 7, windowId: 1, url: "https://github.com/foo/bar" } });
     assert.doesNotMatch(res.error, /activeTab permission is required/, "the raw Chrome error is not leaked verbatim");
     assert.match(res.error, /On all sites/, "points at the grant that actually enables captureVisibleTab");
     assert.match(res.error, /Debugger|CDP/, "offers the debugger route (the easy fix)");
     assert.doesNotMatch(res.error, /add (\"?github\.com|this host)/i, "does NOT tell them to add a per-host grant — which does NOT work for captureVisibleTab");
+});
+
+// --- CAPTURE_TAB without the debugger shoots the window's showing tab: a page gets its own tab or nothing ---
+
+test("CAPTURE_TAB (CDP off) from a tab in the background is refused: the page is not handed the tab in front of it", async () => {
+    const bg = loadBackground({
+        config: baseConfig({ cdp: false }), onFetch: () => htmlResponse(),
+        onCaptureTab: () => "data:image/png;base64,OTHER-SITE-PIXELS",
+        openTabs: [{ id: 3, windowId: 1, active: false, url: "https://hostile.example/" }, { id: 4, windowId: 1, active: true, url: "https://bank.example/" }],
+    });
+    const res = await bg.send({ type: "CAPTURE_TAB", payload: {} }, { tab: { id: 3, windowId: 1, url: "https://hostile.example/" } });
+    assert.equal(res.data, undefined, "no pixels");
+    assert.match(res.error, /isn't the one showing in its window/);
+    assert.match(res.error, /Debugger-based actions and user scripts/, "names the Settings row that captures any tab");
+    assert.equal(bg.captures.length, 0, "nothing was captured at all");
+});
+
+test("CAPTURE_TAB (CDP off): a shot during which the window showed another tab is thrown away, even if it switched back", async () => {
+    let bg;
+    bg = loadBackground({
+        config: baseConfig({ cdp: false }), onFetch: () => htmlResponse(),
+        onCaptureTab: () => { bg.activateTab(4); bg.activateTab(3); return "data:image/png;base64,MAYBE-OTHER-SITE"; },
+        openTabs: [{ id: 3, windowId: 1, active: true, url: "https://hostile.example/" }, { id: 4, windowId: 1, active: false, url: "https://bank.example/" }],
+    });
+    const res = await bg.send({ type: "CAPTURE_TAB", payload: {} }, { tab: { id: 3, windowId: 1 } });
+    assert.equal(res.data, undefined);
+    assert.match(res.error, /isn't the one showing/);
+});
+
+test("CAPTURE_TAB (CDP off): a switch in ANOTHER window during the shot does not spoil it; a tab moved to another window does", async () => {
+    let bg, move = false;
+    const tabs = [{ id: 3, windowId: 1, active: true }, { id: 8, windowId: 2, active: true }, { id: 9, windowId: 2, active: false }];
+    bg = loadBackground({
+        config: baseConfig({ cdp: false }), onFetch: () => htmlResponse(), openTabs: tabs,
+        onCaptureTab: () => { bg.activateTab(9); if (move) tabs[0].windowId = 2; return "data:image/png;base64,MINE"; },
+    });
+    assert.equal((await bg.send({ type: "CAPTURE_TAB", payload: {} }, { tab: { id: 3, windowId: 1 } })).data, "data:image/png;base64,MINE");
+    move = true;
+    assert.match((await bg.send({ type: "CAPTURE_TAB", payload: {} }, { tab: { id: 3, windowId: 1 } })).error, /isn't the one showing/);
+});
+
+test("CAPTURE_TAB with CDP on shoots the sender's own tab by id, showing or not", async () => {
+    const bg = loadBackground({
+        config: baseConfig({ cdp: true }), onFetch: () => htmlResponse(),
+        onCaptureTab: () => { throw new Error("captureVisibleTab must not be called"); },
+        onDebuggerCommand: (method) => (method === "Page.captureScreenshot" ? { data: "OWNTAB" } : undefined),
+        openTabs: [{ id: 3, windowId: 1, active: false }, { id: 4, windowId: 1, active: true }],
+    });
+    const res = await bg.send({ type: "CAPTURE_TAB", payload: {} }, { tab: { id: 3, windowId: 1 } });
+    assert.equal(res.data, "data:image/png;base64,OWNTAB");
+    assert.ok(bg.debuggerCalls.some((c) => c[0] === "attach" && c[1]?.tabId === 3), "the debugger was attached to the sender's tab");
 });
 
 test("SAVE_SESSION persists a session that GET_SESSION reads back", async () => {
@@ -2155,6 +2209,7 @@ test("CAPTURE_TAB waits out a transient rate-limit quota and retries (a screensh
             if (n < 3) throw new Error("Failed to execute 'captureVisibleTab': MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND quota exceeded.");
             return "data:image/png;base64,SHOT";
         },
+        openTabs: [{ id: 4, windowId: 1, active: true }],
     });
     const res = await bg.send({ type: "CAPTURE_TAB", payload: {} }, { tab: { id: 4, windowId: 1 } });
     assert.equal(n, 3, "retried past the transient quota (2 blocked, then success)");
