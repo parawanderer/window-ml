@@ -37,6 +37,10 @@
     }
     h1 { font-size: 14px; margin: 0 0 12px; display: flex; align-items: center; gap: 7px; }
     h1::before { content: "🤖"; font-size: 16px; }
+    /* The header row: the name on the left, the sessions link at the top-right. */
+    .pop-head { display: flex; align-items: center; justify-content: space-between; margin: 0 0 12px; }
+    .pop-head h1 { margin: 0; }
+    button.icon-btn { display: inline-flex; align-items: center; justify-content: center; padding: 5px 7px; }
     label { display: block; margin: 10px 0 3px; color: var(--fg-dim); }
     input, select {
         width: 100%; box-sizing: border-box; padding: 6px 8px;
@@ -96,6 +100,12 @@
     .free-row .hint { margin: 0; flex: 1; min-width: 0; overflow-wrap: anywhere; }
     /* Self-approval domain whitelist (mirrors Settings → Permissions). */
     .perm-sep { border-top: 1px solid var(--border); margin: 12px 0 2px; }
+    /* A row's name inside the Manage panel, in the body colour so each row reads as its own item. */
+    .manage-k { color: var(--fg); font-weight: 600; }
+    /* The rule above the per-site controls: they are about the tab you are on, below what is about window.ml. */
+    hr.site-rule { border: 0; border-top: 1px solid var(--border); margin: 14px 0 4px; }
+    /* Up to four buttons in a 340px popup: wrap rather than run past the edge. */
+    #siteButtons { flex-wrap: wrap; }
     .perm-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
     .perm-chip { display: inline-flex; align-items: center; gap: 4px; background: var(--panel-2);
         border: 1px solid var(--border); border-radius: 14px; padding: 3px 4px 3px 10px; }
@@ -106,7 +116,16 @@
 </style>
 </head>
 <body>
-    <h1>window.ml</h1>
+    <!-- The header carries the way to every session: one icon rather than a panel, since it is a link, not a setting. -->
+    <div class="pop-head">
+        <h1>window.ml</h1>
+        <button id="openChat" class="icon-btn" title="All sessions and chats: read them, answer them, start new ones" aria-label="Open all sessions and chats">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 5h11a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9l-4 3v-3H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/>
+                <path d="M17 9h3a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-1v3l-4-3h-4a2 2 0 0 1-1.6-.8"/>
+            </svg>
+        </button>
+    </div>
 
     <!-- Connection: the bare minimum to make the extension work. Collapsed once a URL is
          set; everything else (OCR/utility/grounding/filters) lives in the workbench Settings. -->
@@ -148,21 +167,6 @@
         <!-- Save / test result — right under its buttons, not stranded at the bottom of the popup. -->
         <div id="status"></div>
     </details>
-
-    <!-- THIS SITE: may the page in the current tab use window.ml (docs/spec/SITE_ACCESS.md)? The current tab's
-         origin only; DevTools Settings holds the full list. Hidden on a page that can never be granted (a browser page,
-         a local file). -->
-    <div id="siteAccess" hidden>
-        <label>This site</label>
-        <div class="hint"><code id="siteOrigin"></code> <span id="siteState"></span></div>
-        <div class="row" id="siteButtons">
-            <button id="siteAllowSession" title="Allowed until the browser restarts">Allow this session</button>
-            <button id="siteAllowAlways">Always allow</button>
-            <button id="siteDeny" title="Refuse it, and stop it asking">Deny</button>
-            <button id="siteRevoke">Revoke</button>
-        </div>
-        <div class="perm-sep"></div>
-    </div>
 
     <!-- Optional host-permission grants, right under Connection. One-click for python_exec's Google
          Sheets (`sheet`) loader: the background fetch needs docs.google.com host access, which "On
@@ -243,28 +247,37 @@
         <label class="check" for="agentHudInDevtools"><input type="checkbox" id="agentHudInDevtools"> Also show the HUD alongside DevTools</label>
     </details>
 
+    <!-- MANAGE: what is running across the whole browser and on the server, and the buttons that stop or free it. -->
     <div class="panel">
-        <label class="panel-h">Sessions</label>
+        <label class="panel-h">Manage</label>
         <div class="free-row">
-            <div class="hint">Every chat and agent run in this browser, in one page: read them, answer them, start new ones.</div>
-            <button id="openChat" title="Open the chat page in a tab">Open</button>
-        </div>
-    </div>
-
-    <div class="panel">
-        <label class="panel-h">Agent runs</label>
-        <div class="free-row">
-            <div class="hint">Stops every background agent run and clears any that would auto-resume — the panic button for a run you can't reach.</div>
+            <div class="hint"><b class="manage-k">Agent runs.</b> Stop every background run and clear any that would auto-resume: the panic button for a run you can't reach.</div>
             <button id="stopAllRuns" title="Abort all in-flight agent runs and clear their saved state">Stop all</button>
         </div>
+        <!-- Shown by popup.ts once the server reports what is loaded (display block / none). -->
+        <div id="vramSection" style="display:none">
+            <div class="perm-sep"></div>
+            <div class="free-row">
+                <div class="hint"><b class="manage-k">VRAM.</b> <span id="vram">—</span></div>
+                <button id="unload" title="Evict all loaded models from VRAM">Free VRAM</button>
+                <button id="refreshVram" title="Refresh VRAM usage">↻</button>
+            </div>
+        </div>
     </div>
 
-    <div id="vramSection" class="panel" style="display:none">
-        <label class="panel-h">VRAM</label>
-        <div class="free-row">
-            <div id="vram" class="hint">—</div>
-            <button id="unload" title="Evict all loaded models from VRAM">Free VRAM</button>
-            <button id="refreshVram" title="Refresh VRAM usage">↻</button>
+    <hr class="site-rule">
+    <!-- THIS SITE, last and under a rule: it is about the tab you are on, not about window.ml as a whole. May the page in
+         the current tab use window.ml (docs/spec/SITE_ACCESS.md)? The current tab's
+         origin only; DevTools Settings holds the full list. Hidden on a page that can never be granted (a browser page,
+         a local file). -->
+    <div id="siteAccess" hidden>
+        <label>This site</label>
+        <div class="hint"><code id="siteOrigin"></code> <span id="siteState"></span></div>
+        <div class="row" id="siteButtons">
+            <button id="siteAllowSession" title="Allowed until the browser restarts">Allow this session</button>
+            <button id="siteAllowAlways">Always allow</button>
+            <button id="siteDeny" title="Refuse it, and stop it asking">Deny</button>
+            <button id="siteRevoke">Revoke</button>
         </div>
     </div>
 
