@@ -53,12 +53,12 @@ test("a checkout's bench sweeps, scoreboard and uncommitted files are named; oth
     mkdirSync(path.join(bench, "not-a-sweep"), { recursive: true });
     writeFileSync(path.join(bench, "scores.sqlite"), "");
     const found = diskOnly(dir, "?? tests/e2e/panel/api-docs.json\n M src/x.ts\n");
-    assert.deepEqual(found, { sweeps: ["my-sweep"], scoreDbs: ["scores.sqlite"], files: ["?? tests/e2e/panel/api-docs.json", " M src/x.ts"], server: null });
+    assert.deepEqual(found, { sweeps: ["my-sweep"], scoreDbs: ["scores.sqlite"], files: ["?? tests/e2e/panel/api-docs.json", " M src/x.ts"], server: null, held: [] });
 });
 
 test("a clean checkout with no bench directory has nothing to remind about", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "mwg-"));
-    assert.deepEqual(diskOnly(dir, ""), { sweeps: [], scoreDbs: [], files: [], server: null });
+    assert.deepEqual(diskOnly(dir, ""), { sweeps: [], scoreDbs: [], files: [], server: null, held: [] });
 });
 
 test("a page server a finished sweep left running is found while it lives, and forgotten once its process is gone", () => {
@@ -69,6 +69,17 @@ test("a page server a finished sweep left running is found while it lives, and f
     assert.equal(diskOnly(dir, "").server.pid, process.pid, "this process stands in for a live server");
     writeFileSync(path.join(bench, "server.json"), JSON.stringify({ pid: 2 ** 22 + 12345, port: 7331, url: "u", dir: "x" }));
     assert.equal(diskOnly(dir, "").server, null, "a pid with no process is a stale file, not a server");
+});
+
+test("a run the bench left held open is listed while it lives, and a dead or unreadable entry is not", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "mwg-"));
+    const bench = path.join(dir, "tests/e2e/artifacts/bench");
+    mkdirSync(bench, { recursive: true });
+    const live = { pid: process.pid, cell: "model=a · env · r0", sweep: "panel-env", attach: "node tests/e2e/converse.mjs …", expiresAt: 1 };
+    writeFileSync(path.join(bench, "held.json"), JSON.stringify([live, { ...live, pid: 2 ** 22 + 12345 }]));
+    assert.deepEqual(diskOnly(dir, "").held, [live], "this process stands in for a live hold; the dead pid is a stale entry");
+    writeFileSync(path.join(bench, "held.json"), "{not json");
+    assert.deepEqual(diskOnly(dir, "").held, [], "an unreadable file holds nothing");
 });
 
 // --- --keep-bench: a worktree's results move into the main clone, the scoreboard's rows merge ---
@@ -97,4 +108,5 @@ test("keepBench moves sweeps, merges scoreboard rows without doubling one, and l
     assert.ok(existsSync(path.join(wt, B, "clash", "done.json")), "a clash is left where it was");
     const rows = new DatabaseSync(path.join(main, B, "scores.sqlite")).prepare("SELECT run FROM runs ORDER BY run").all().map((r) => r.run);
     assert.deepEqual(rows, ["a", "b", "c"]);
+    assert.ok(!existsSync(path.join(wt, B, "scores.sqlite")), "a merged scoreboard leaves the worktree, so it no longer blocks the merge");
 });
