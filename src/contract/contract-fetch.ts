@@ -50,9 +50,6 @@ export interface FetchNegotiation {
     resolvedBy: FetchAttempt["strategy"];
 }
 
-/** The result of `ml.fetch(url)`. Content type is resolved BOTH ways so a mislabel is visible: `type` is the
- *  final pick (header when specific, else the content sniff), `typeByHeader`/`typeByContent` are the raw
- *  signals. `json` is pre-parsed when `type === "json"`. `text` is the raw body (size-capped → `truncated`). */
 /** A cell after casting: a number for a numeric column, null for a blank (pandas NaN), a real boolean where
  *  the SOURCE declared one (Parquet does; CSV has no types to declare), else the raw string. */
 export type TableCell = string | number | boolean | null;
@@ -107,7 +104,9 @@ export interface TableLike {
      *  Worth surfacing: it is the discovered value, and a wrong guess is the failure a reader should be able
      *  to see rather than infer from mangled columns. */
     delimiter?: string;
-    /** `rows` was capped at {@link MAX_TABLE_ROWS} — the table is a prefix of the source, not the whole of it. */
+    /** `rows` was capped at 200,000 rows (`MAX_TABLE_ROWS`): the table is a prefix of the source, not the whole of it,
+     *  so a sum or count over `rows` or `col()` covers only that prefix. `shape[0]` is still the source's row count;
+     *  for the whole file, hand the URL to `python_exec`'s `tables`. */
     truncated?: boolean;
     /** The source had NO header row, so `columns` are positional (`0`, `1`, `2`) — `read_csv(header=None)`.
      *  Recorded rather than left implicit: a reader who sees numeric column names should be able to tell that
@@ -128,11 +127,14 @@ export interface TableLike {
  *  `python_exec`'s `tables`. Read-only: writing to it throws; copy what you need first. Available in the
  *  read-only `exec` dialect, where a call that would build more than a million cells at once asks first.
  *
- *  A STORED table (a pointer's preview whose whole table is kept: `rows.length < shape[0]`) reads every row, so
- *  `col`, `select`, `records` and a `head` longer than `rows` return promises: `await t.col("revenue")`. `rows` is
- *  still the preview. The read-only dialect awaits them for you. */
+ *  From `ml.fetch`, every method is synchronous and reads `rows`. One case returns promises: a STORED table, which
+ *  is a pointer's table inside `exec` (`@tool:<id>.table`) where only a preview is in `rows` (`rows.length <
+ *  shape[0]`) and the whole table sits in the run's value store. There, `col`, `select`, `records` and a `head`
+ *  longer than `rows` read every row and return promises: `await t.col("revenue")`. The read-only dialect awaits
+ *  them for you. */
 export interface Table extends TableLike {
-    /** One column's values, by name. `t.col("revenue")` → `[9.99, 13.49, …]`. Throws on an unknown name. */
+    /** One column's values, by name. `t.col("revenue")` → `[9.99, 13.49, …]`. Throws on an unknown name. A promise
+     *  only for a stored table inside `exec` (see above); from `ml.fetch` it is the array. */
     col(name: string): TableCell[];
     /** A column SUBSET as a new table — `df[["a", "b"]]`. Keeps the source's row count and dtypes. */
     select(names: string[]): Table;
@@ -149,7 +151,10 @@ export type ContentKind = "json" | "csv" | "parquet" | "arrow" | "html" | "xml" 
 
 /** The ONE answer shape for every fetch mode: plain, rendered, credentialed, self-source. A caller reads the
  *  same fields whichever path served it, and the fields that are mode-specific are absent rather than faked,
- *  so "this fetch could not tell you" is distinguishable from "the answer was empty". */
+ *  so "this fetch could not tell you" is distinguishable from "the answer was empty". Content type is resolved
+ *  BOTH ways so a mislabel is visible: `type` is the final pick (header when specific, else the content sniff),
+ *  `typeByHeader`/`typeByContent` are the raw signals. `json` is pre-parsed when `type === "json"`, `table` when
+ *  it is a CSV/TSV. `text` is the raw body (size-capped → `truncated`). */
 export interface FetchResult {
     url: string;              // the response URL (after any redirects)
     status: number;           // HTTP status code
@@ -171,7 +176,9 @@ export interface FetchResult {
      *  counterpart of `json`/`schema`, and for the same reason: a caller that has to re-split the text is one
      *  that will get the separator wrong. Attached page-side by `ml.fetch` (like `markdown`), so the rows
      *  never cross the message channel — `.text` still holds the raw body. Handed to the caller as a
-     *  {@link Table}: the data plus `col` / `select` / `records` / `head`. */
+     *  {@link Table}: the data plus `col` / `select` / `records` / `head`, all synchronous. Past 200,000 rows it is a
+     *  prefix: check `truncated` (or `rows.length < shape[0]`) before summing a column. `ml.fetch` always hands back a
+     *  `Table`; the `TableLike` in the type is the same data before the methods are attached. */
     table?: Table | TableLike;
     truncated?: boolean;      // the body was clipped to the size cap
     valueKey?: string;        // value-store key of the WHOLE body when `table` is a preview (past the parse cap). Disclosing it

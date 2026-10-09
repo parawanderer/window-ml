@@ -203,6 +203,9 @@ export interface ChatOptions {
     toolIds?: string[] | null;
     maxTokens?: number | null;
     save?: boolean;
+    /** STREAM the reply: passing this is what turns streaming on (there is no separate flag). Called as each piece
+     *  arrives with `delta`, the new text (a chunk, not necessarily one token), and `full`, the reply so far. The
+     *  call still resolves to the whole reply. Ignored with `schema`, which waits for the complete object. */
     onToken?: (delta: string, full: string) => void;
     /** abort the request (streaming disconnects the Port; both kill the fetch) */
     signal?: AbortSignal | null;
