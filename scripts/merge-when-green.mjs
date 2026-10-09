@@ -111,7 +111,16 @@ export function diskOnly(dir, status = sh("git", ["status", "--porcelain"], dir)
             sweeps.push(name);
     }
     const files = status.split("\n").filter(Boolean);
-    return { sweeps, scoreDbs, files, server: liveServer(path.join(bench, "server.json")) };
+    return { sweeps, scoreDbs, files, server: liveServer(path.join(bench, "server.json")), held: liveHeld(path.join(bench, "held.json")) };
+}
+
+/** The bench runs a sweep left HELD open for someone to keep talking to (`held.json`, a list written by the bench
+ *  while each lives), keeping only entries whose process is still alive. A worktree removed under one leaves a
+ *  browser and a model slot held for nothing. */
+function liveHeld(file) {
+    try {
+        return JSON.parse(readFileSync(file, "utf8")).filter((h) => { try { process.kill(h.pid, 0); return true; } catch { return false; } });
+    } catch { return []; }
 }
 
 /** The detached bench page server a finished sweep left running from this checkout (`server.json`, written by
@@ -169,7 +178,7 @@ export async function leftovers(branch, { keep, discard }) {
             found = diskOnly(dir);
         }
         const { sweeps, scoreDbs, files } = found;
-        if (!sweeps.length && !scoreDbs.length && !files.length && !found.server) continue;
+        if (!sweeps.length && !scoreDbs.length && !files.length && !found.server && !found.held.length) continue;
         const stop = linked && !discard;
         blocked ||= stop;
         console.log(`\n${stop ? "✖" : "⚠"} ${dir} (${linked ? "a worktree" : "the main clone"} on ${branch}) holds work that is in no commit:`);
@@ -177,6 +186,7 @@ export async function leftovers(branch, { keep, discard }) {
         for (const n of scoreDbs) console.log(`    scoreboard:   ${BENCH}/${n}`);
         for (const c of clashes) console.log(`    not moved:    ${c}`);
         if (found.server) console.log(`    page server:  pid ${found.server.pid} at ${found.server.url}, serving ${found.server.dir}`);
+        for (const h of found.held) console.log(`    held run:     pid ${h.pid}, ${h.cell} of ${h.sweep}, attach: ${h.attach}`);
         for (const f of files.slice(0, 20)) console.log(`    git:          ${f}`);
         if (files.length > 20) console.log(`    git:          …and ${files.length - 20} more`);
         if (!stop) continue;
@@ -185,7 +195,8 @@ export async function leftovers(branch, { keep, discard }) {
         if (files.length) console.log(`    files: commit them (here, or on a new branch from main) or stash them (git -C ${dir} stash -u)`);
         console.log("  To merge without keeping them, run again with --discard.");
     }
-    return { blocked, held: checkouts.length > 0, servers: checkouts.filter((c) => c.linked).map((c) => diskOnly(c.dir).server).filter(Boolean) };
+    const linked = checkouts.filter((c) => c.linked).map((c) => diskOnly(c.dir));
+    return { blocked, held: checkouts.length > 0, servers: linked.map((d) => d.server).filter(Boolean), heldRuns: linked.flatMap((d) => d.held) };
 }
 
 /** Stop the page servers linked worktrees left running: the PR is merged, and a worktree removed under one leaves it
@@ -196,6 +207,14 @@ function stopServers(servers, main) {
         const moved = path.join(main, BENCH, path.basename(s.dir));
         const again = existsSync(moved) ? moved : s.dir;
         console.log(`  stopped the page server (pid ${s.pid}) a worktree left running; to serve that sweep again: node --import tsx tests/e2e/bench/serve.mjs ${again}`);
+    }
+}
+
+/** Release the runs linked worktrees left held open: the PR is merged, and the worktree they ran from is about to go. */
+function releaseHeld(runs) {
+    for (const h of runs) {
+        try { process.kill(h.pid, "SIGTERM"); } catch { continue; }
+        console.log(`  released the held run ${h.cell} of ${h.sweep} (pid ${h.pid}) a worktree left open`);
     }
 }
 
@@ -212,7 +231,7 @@ async function main() {
         if (!v.pending || !wait || i >= POLL_LIMIT) break;
         await new Promise((r) => setTimeout(r, POLL_MS));
     }
-    const { blocked, held, servers } = await leftovers(f.head, { keep, discard });
+    const { blocked, held, servers, heldRuns } = await leftovers(f.head, { keep, discard });
     console.log(`${pr}: ${v.reason}`);
     if (!v.ok) process.exit(1);
     if (blocked) { console.log(`${pr}: ${merge ? "NOT MERGED" : "would not merge"}: a worktree holds work that is in no commit (above)`); process.exit(1); }
@@ -223,6 +242,7 @@ async function main() {
     if (spawnSync("gh", args, { cwd: ROOT, stdio: "inherit" }).status !== 0) { console.log(`${pr}: merge FAILED`); process.exit(1); }
     if (held) gh("api", "-X", "DELETE", `repos/${REPO}/git/refs/heads/${f.head}`);
     stopServers(servers, checkoutsOf(f.head).main);
+    releaseHeld(heldRuns);
     console.log(`${pr}: MERGED ${gh("pr", "view", pr, "--json", "mergeCommit", "-q", ".mergeCommit.oid").slice(0, 8)}${held ? ` (local branch ${f.head} kept: a checkout holds it)` : ""}`);
 }
 
