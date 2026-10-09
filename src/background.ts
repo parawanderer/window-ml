@@ -23,7 +23,7 @@ import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, senderO
 import { handleRunLogDump } from "./sw/sw-run-log";
 import { handleRunStateDump } from "./sw/sw-run-state";
 import { releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw/sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
-import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, pendingGrants, isExtensionSender } from "./sw/sw-consent";
+import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants, isExtensionSender } from "./sw/sw-consent";
 import { isWorkerRun, makeWorkerRun, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
@@ -567,7 +567,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             const args = (message.payload?.args ?? {}) as Record<string, unknown>;
             if (await senderTrust(sender) === "untrusted") {
                 const key = serverToolKey(toolId, name, args);
-                if (!(sender.tab?.id != null && pendingGrants.get(sender.tab.id)?.serverTools.has(key))) {
+                if (!(sender.tab?.id != null && tabGrants(sender.tab.id)?.serverTools.has(key))) {
                     sendResponse({ error: "Refused: running a server-side tool needs approval on this page — run it through an agent and approve it, or add this site to the approval whitelist." });
                     return;
                 }
@@ -607,7 +607,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             const url = message.payload?.url || "";
             if (await senderTrust(sender) === "untrusted") {
                 const id = googleSheetId(url);
-                if (!(id && sender.tab?.id != null && pendingGrants.get(sender.tab.id)?.sheets.has(id))) {
+                if (!(id && sender.tab?.id != null && tabGrants(sender.tab.id)?.sheets.has(id))) {
                     sendResponse({ error: "Refused: this sheet hasn't been approved for this page — run it through an agent and approve it, or add this site to the approval whitelist." });
                     return;
                 }

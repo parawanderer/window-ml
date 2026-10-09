@@ -1112,3 +1112,47 @@ test("a sheet joined with a table pointer runs in the worker: a `@tool:` source 
     assert.equal(reads, 1, `the approved call read the sheet once (reads ${reads})`);
     assert.ok(asked >= 1, `positive control: the sheet was asked for (asked ${asked})`);
 });
+
+// --- two runs on one tab: each call's grants are its own ---
+
+test("a call's grants are its own: another run's call ending on the same tab does not take them away mid-call", T, async () => {
+    const NAMED = "https://other.example/named";
+    const scripts = { "run A": `window.a = 1; return (await ml.fetch("${NAMED}")).status`, "run B": "window.b = 1; return 2" };
+    const turns = { "run A": 0, "run B": 0 };
+    let bg, fetchedInA, bAnswered;
+    const bDone = new Promise((r) => { bAnswered = r; });
+    bg = loadBackground({
+        config: { ...config, autoApproveReadonly: false, cdp: false }, openTabs: [SITE], local: SITE_APPROVED, siteGate: true,
+        onFetch: (call) => {
+            if (call.url.startsWith("https://other.example/")) return { ok: true, status: 200, url: call.url, headers: { get: (h) => (/content-type/i.test(h) ? "text/plain" : null) }, text: async () => "named", arrayBuffer: async () => new TextEncoder().encode("named").buffer, body: null };
+            if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            const task = Object.keys(scripts).find((t) => call.body.messages.some((m) => m.role === "user" && String(m.content).includes(t)));
+            if (!task) return jsonResponse({ choices: [{ message: { content: "side" } }] });
+            const js = turns[task]++ === 0 ? scripts[task] : undefined;
+            return js ? jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: `c-${task}`, type: "function", function: { name: "exec", arguments: JSON.stringify({ js }) } }] } }] })
+                : jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (_t, msg) => {
+            if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
+            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+            if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
+            const p = msg.payload;
+            if (p.finish) return { result: "" };
+            if (p.renderOnly || p.precheck || p.readonlyTry) return {};
+            if (String(p.args?.js).includes("window.b")) { setTimeout(bAnswered, 0); return { result: "value: 2" }; }
+            if (String(p.args?.js).includes("window.a")) {
+                // Run A's script is running; run B's call on this tab finishes meanwhile, then A's script fetches.
+                await bDone;
+                await flush(20);
+                fetchedInA = await bg.send({ type: "FETCH_URL", payload: { url: NAMED } }, { tab: { id: 7, url: SITE.url }, url: SITE.url, origin: "https://site.example", frameId: 0 });
+                return { result: "value: 200" };
+            }
+            return {};
+        },
+    });
+    await Promise.all(["run A", "run B"].map((task) => bg.context.__mlStartUserRunForTest(7, { task, surface: "hud" })));
+    for (let i = 0; i < 600 && (turns["run A"] < 2 || turns["run B"] < 2); i++) await new Promise((r) => setTimeout(r, 0));
+    await flush(30);
+    assert.ok(fetchedInA !== undefined, "positive control: run A's script ran while run B's call finished, and fetched");
+    assert.equal(JSON.parse(JSON.stringify(fetchedInA))?.data?.status, 200, `run A's approved fetch was refused after run B's call ended: ${JSON.stringify(fetchedInA).slice(0, 200)}`);
+});

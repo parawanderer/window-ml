@@ -3,7 +3,7 @@
 import { isSelfSourceUrl } from "../agent/self-source";
 import { BUILD_INFO } from "../build-info.gen";
 import { isCurrentPage } from "../dom/dom";
-import { senderTrust, takeCredFetch, pendingGrants, fetchConsent } from "./sw-consent";
+import { senderTrust, takeCredFetch, tabGrants, fetchConsent } from "./sw-consent";
 import { fetchRenderedContent, fetchUrlContent } from "./sw-fetch";
 import { getConfig } from "./sw-llm";
 import type { FetchResult } from "../contract";
@@ -101,20 +101,20 @@ export async function fetchUrlFor(payload: unknown, caller: FetchCaller): Promis
             // FREE (no grant) — including a same-origin RENDER (it renders in your own session, no more than a
             // free same-origin navigate). A CROSS-origin uncredentialed render runs in INCOGNITO (no session) and
             // takes the rememberable consent path, same as a raw cross-origin GET.
-            const execOpen = tabId != null && !!pendingGrants.get(tabId)?.fetchUrls?.has(url);
+            const execOpen = tabId != null && !!tabGrants(tabId)?.fetchUrls?.has(url);
             // SELF-SOURCE: an uncredentialed, non-rendered read of the agent's OWN repo source (committed files
             // / structural API, NOT a prose endpoint) is allowed WITHOUT a per-URL grant, gated on the config
             // flag. Enforced HERE, trusted-side (the client autoApprove only skips the prompt; the background is
             // the authority — a forged "self-source" can't make this true for a non-self URL). See self-source.ts.
             const selfSrc = !!cfg.autoApproveSelfSource && !rendered && isSelfSourceUrl(url, BUILD_INFO.repoUrl);
             if (untrusted && !sameOriginAsSender && !execOpen && !selfSrc && !(caller.consented ? caller.consented(url) : tabId != null && !!fetchConsent.get(tabId)?.has(url))) {
-                const inExec = tabId != null && !!pendingGrants.get(tabId)?.fetchUrls;
+                const inExec = tabId != null && !!tabGrants(tabId)?.fetchUrls;
                 return { error: inExec
                     ? `Refused: "${url}" is not spelled out in the approved script, so it was not approved. Write the URL as a string literal in ml.fetch("…"), or fetch it with the fetch_url tool.`
                     : `Refused: "${url}" hasn't been approved for fetching on this page. Use the fetch_url tool (each new URL is approved once, then remembered for the session), or call ml.fetch("…") with the URL spelled out inside an approved exec.` };
             }
         }
-        const execOpen = tabId != null && !!pendingGrants.get(tabId)?.fetchUrls?.has(url);
+        const execOpen = tabId != null && !!tabGrants(tabId)?.fetchUrls?.has(url);
         try {
             // rendered: an uncredentialed render is INCOGNITO (session-less — a safe read, which is why a
             // same-origin one is free); a credentialed render uses the SESSION tab (as-you → always prompts).
