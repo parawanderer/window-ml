@@ -39,8 +39,9 @@ function AnswerCell({ r, turn, base, live, mode, onMark }: { r: RunState; turn: 
             <div class="meta">
                 <Tip tip="The tools the model called during this turn, in order.">{t.tools.length} call{t.tools.length === 1 ? "" : "s"}{t.tools.length ? `: ${t.tools.join(", ")}` : ""}</Tip>
                 {t.capped ? <span class="badge warn tt" data-tip="The turn ran out of steps before it answered: what is shown is where it stopped.">step cap</span> : null}
+                {t.expect != null ? <span class={`badge tt ${t.expect ? "ok" : "bad"}`} data-tip={`${t.expect ? "As the interview expected" : "Not as the interview expected"}${t.why ? `: ${t.why}` : ""}.${t.expectError ? ` The check threw: ${t.expectError}` : ""} (its \`expect\`)`}>{t.expect ? "as expected" : "not as expected"}</span> : null}
                 <span class="sp" />
-                {dir ? <><a class="view tt" href={`${dir}/run.md.html`} data-title={who} data-tip="The whole run's transcript, every turn.">run</a><a class="view tt" href={`${dir}/outbox/turn-${turn}.md`} data-title={who} data-tip="This turn's report as the bench saved it (outbox/turn-N.md).">turn</a></> : null}
+                {dir ? <><a class="view tt" href={`${dir}/run.md.html`} data-title={who} data-tip="The whole run's transcript, every turn.">run</a><a class="view tt" href={`${dir}/outbox/turn-${t.n ?? turn}.md`} data-title={who} data-tip="This turn's report as the bench saved it (outbox/turn-N.md).">turn</a></> : null}
                 {live && r.state === "done"
                     ? <button class="btn small danger" onMouseDown={() => { picked.current = selectionIn(txt.current); }}
                         onClick={() => onMark({ taskId: r.taskId, who: r.who, turn, hash: r.hash ?? null }, picked.current)}>mark wrong</button>
@@ -50,6 +51,15 @@ function AnswerCell({ r, turn, base, live, mode, onMark }: { r: RunState; turn: 
                 // The panel's renderer: it escapes the text before formatting it, so markup a model wrote is shown, never run.
                 ? <div class="txt md tt from" data-tip={`What ${r.who} answered at turn ${turn}, rendered as markdown (raw: the toggle above).`} ref={txt} dangerouslySetInnerHTML={{ __html: markdown(t.answer) }} />
                 : <div class="txt tt from" data-tip={`What ${r.who} answered at turn ${turn}, verbatim.`} ref={txt}>{t.answer || "(no answer)"}</div>}
+            {(r.followUps || []).filter((f) => f.after === turn).map((f) => (
+                <div key={`f${f.n}`} class="fup">
+                    <div class="fup-q tt" data-tip={`Asked because this answer called for it (the interview's \`followUps\`): turn ${f.n} of this run, not one every model was asked.`}><span class="turn">follow-up</span>{f.ask.length > 300 ? `${f.ask.slice(0, 300)} …` : f.ask}</div>
+                    {mode === "md" && f.answer
+                        ? <div class="txt md" dangerouslySetInnerHTML={{ __html: markdown(f.answer) }} />
+                        : <div class="txt">{f.answer || "(no answer)"}</div>}
+                    {dir ? <a class="view tt" href={`${dir}/outbox/turn-${f.n}.md`} data-tip="This turn's report (outbox/turn-N.md).">turn</a> : null}
+                </div>
+            ))}
             {(r.checks || []).filter((c) => c.turn === turn && c.still != null).map((c) => (
                 <div key={c.id} class={`flag ${c.here ? "here" : c.still ? "still" : "gone"}`}>
                     <b>{c.here ? "marked wrong" : c.still ? "still says a line marked wrong" : "no longer says a line marked wrong"}</b>

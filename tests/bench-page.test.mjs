@@ -246,6 +246,23 @@ test("a run the backend refused for a rate limit says so, with the fix, instead 
     assert.match([...doc.querySelectorAll(".badge.bad")].find((b) => b.textContent === "rate-limited").dataset.tip, /--jobs|--lanes/);
 });
 
+test("an interview's checked answers say whether they were as expected, and a follow-up sits under the answer it followed", async () => {
+    const r = (who, turns, extra = {}) => ({ combo: { model: who }, who, taskId: "iv", repeat: 0, state: "done", ok: true, path: `iv/${who}/r0`, turns, ...extra });
+    const doc = await dashboard({ dims: ["model"], interviews: { iv: ["find it", "which tool?"] }, runs: [
+        r("a", [{ answer: "found", tools: [], capped: false }, { answer: "findByText", tools: [], capped: false, expect: true, why: "names the tool" }],
+            { followUps: [{ after: 2, n: 3, ask: "Why not exec?", answer: "It was enough.", tools: [], capped: false }], expects: { passed: 1, total: 1 } }),
+        r("b", [{ answer: "found", tools: [], capped: false }, { answer: "exec", tools: [], capped: false, expect: false, why: "names the tool", n: 2 }], { expects: { passed: 0, total: 1 } }),
+    ] });
+    const ans = card(doc, "Answers");
+    const badges = [...ans.querySelectorAll(".badge")].filter((b) => /expected/.test(b.textContent));
+    assert.deepEqual(badges.map((b) => [b.textContent, b.classList.contains("ok"), b.classList.contains("bad")]), [["as expected", true, false], ["not as expected", false, true]]);
+    assert.match(badges[1].dataset.tip, /Not as the interview expected: names the tool/);
+    const fup = ans.querySelectorAll(".fup");
+    assert.equal(fup.length, 1, "only the run whose answer called for it");
+    assert.match(fup[0].textContent, /follow-up.*Why not exec\?.*It was enough\./s);
+    assert.ok(fup[0].querySelector('a[href$="outbox/turn-3.md"]'), "the follow-up's own report");
+});
+
 test("a run held open after the sweep is badged, and its tip is the command that talks to it", async () => {
     const attach = 'node tests/e2e/converse.mjs --attach tests/e2e/artifacts/bench/s/t/x/r0 "<message>"';
     const doc = await dashboard({ dims: ["m"], runs: [{ combo: { m: "a" }, who: "a", taskId: "t", repeat: 0, state: "done", ok: true, path: "t/x/r0", held: attach }] });

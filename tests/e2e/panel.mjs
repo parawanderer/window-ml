@@ -5,7 +5,8 @@
 //       --models deepseek.deepseek-v4-pro,litellm.google/gemini-flash-latest,openrouter.anthropic/claude-sonnet-5.5
 //
 // An interview file (tests/e2e/panel/*.json) is { task, asks?: string[], surface?, sharedWatches?, watchNotes? }: the
-// first message, then each follow-up, sent once the turn before it has ended. Before anything starts every model is
+// first message, then each follow-up, sent once the turn before it has ended. `<name>.interview.ts` (`defineInterview`,
+// bench/spec.ts) is the same as code, with checks on the answers (`expect`) and conditional `followUps`. Before anything starts every model is
 // PROBED with one tool call through the configured backend, and one that cannot make it is reported and skipped (a
 // misconfigured connection otherwise looks like a model that ignored the task). The result is <out>/summary.md: per
 // model, the calls each turn took and how it ended, then every answer side by side, turn by turn. Each model's whole
@@ -23,7 +24,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runOnce, resolveBackendFromEnv } from "./run-once.mjs";
-import { loadInterview, probe, interviewDriver, readTurns, promptChars, panelSummary, modelSlug } from "./interview.mjs";
+import { loadInterviewFile, probe, driverFor, readTurns, readFollowUps, askText, promptChars, panelSummary, modelSlug } from "./interview.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -50,12 +51,12 @@ async function interview(model, iv, opts, outDir, backend) {
     fs.rmSync(dir, { recursive: true, force: true });
     fs.mkdirSync(dir, { recursive: true });
     const log = fs.openSync(path.join(dir, "run.log"), "w");
-    const { nextTurn, statuses } = interviewDriver({ asks: iv.asks, dir });
+    const { nextTurn, statuses } = driverFor({ ...iv, task: askText(iv.task), ...(typeof iv.task === "object" ? { expect: iv.task.expect, why: iv.task.why } : {}) }, dir, model);
     const surface = opts.surface ?? iv.surface ?? null;
     let error = null;
     try {
         const r = await runOnce({
-            task: iv.task, start: "/step3",
+            task: askText(iv.task), start: iv.start ?? "/step3",
             sharedWatches: iv.sharedWatches ?? [], watchNotes: iv.watchNotes ?? {},
             surface: surface && surface !== "console" ? surface : null,
             backend: { ...backend, model }, artDir: dir, approve: "auto", nextTurn,
@@ -69,12 +70,12 @@ async function interview(model, iv, opts, outDir, backend) {
     fs.closeSync(log);
     if (error && !statuses.length) statuses.push(`failed: ${error.slice(0, 200)}`);
     const expected = iv.asks.length + 1;
-    return { model, dir, turns: readTurns(dir, expected), statuses, prompt: promptChars(dir), expected };
+    return { model, dir, turns: readTurns(dir, expected), followUps: readFollowUps(dir), statuses, prompt: promptChars(dir), expected };
 }
 
 async function main() {
     const opts = parseArgs(process.argv.slice(2));
-    const iv = loadInterview(opts.file);
+    const iv = await loadInterviewFile(opts.file);
     const outDir = path.resolve(opts.out || path.join(HERE, "artifacts", `panel-${iv.name}-${Date.now()}`));
     fs.mkdirSync(outDir, { recursive: true });
     const backend = await resolveBackendFromEnv({ ...process.env, USE_ENV: process.env.E2E_BACKEND ? "" : "1" });

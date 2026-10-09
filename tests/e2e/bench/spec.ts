@@ -65,7 +65,13 @@ export interface BenchTask {
      * (tests/e2e/panel/*.json) is a spec of one such task over a `model` dimension, usually with no predicate: a model
      * there is a reader asked what it makes of the tools, not a subject scored. Not combined with `followup`.
      */
-    asks?: string[];
+    asks?: (string | AskDef)[];
+    /** turn 1's own check, as an ask's `expect` (see AskDef) */
+    expect?: Expect;
+    /** what turn 1's `expect` looks for, in words: shown beside its result */
+    why?: string;
+    /** turns asked only when an answer calls for one (see FollowUp), apart from the fixed `asks` */
+    followUps?: FollowUp[];
     /** start the run as a person does from that UI ("hud", "overlay", "chat"); null/absent is a console `ml.agent` run */
     surface?: string | null;
     /** watch expressions shared with the model through `ml.current` (and the person's note on each, by expression) */
@@ -107,6 +113,69 @@ export interface BenchTask {
      * is not the question being asked.
      */
     succeeded?: (outcome: TaskOutcome) => boolean;
+}
+
+/** One turn of an interview as a check sees it: what was asked, the answer, and the tool steps taken during it. */
+export interface TurnView {
+    /** the turn's number in the session (1 is the task) */
+    n: number;
+    ask: string;
+    answer: string;
+    /** whether the turn finished with an answer (a timed-out turn did not) */
+    answered: boolean;
+    /** the tools called during the turn, in order */
+    tools: string[];
+    /** it stopped at the step cap */
+    capped: boolean;
+    steps: { tool: string; arguments?: unknown; result?: unknown }[];
+}
+
+/** The interview so far, as a check sees it: which model, and every turn up to this one. */
+export interface RunView { model: string | null; turns: TurnView[] }
+
+/** A check on one turn's answer: true when it is what the interview expected. Its result lands in rows.json,
+ *  summary.md and the page, so a before/after is a diff of two sweeps. A check that throws counts as false. */
+export type Expect = (turn: TurnView, run: RunView) => boolean;
+
+/** An ask with a check: the text sent, and what a right answer does (`why`, in words, shown beside the result). */
+export interface AskDef { ask: string; expect?: Expect; why?: string }
+
+/**
+ * A turn asked only when an answer calls for it: after fixed turn `after` (1 is the task; absent: after any fixed turn),
+ * when `when` holds for that turn. Each is asked at most once, and never counts as one of the interview's turns: models
+ * answer different follow-ups, so they are shown under the answer they followed, not side by side.
+ */
+export interface FollowUp {
+    after?: number;
+    when: (turn: TurnView, run: RunView) => boolean;
+    ask: string | ((turn: TurnView, run: RunView) => string);
+}
+
+/** An interview written as code (`<name>.interview.ts`, default export): what a `tests/e2e/panel/*.json` file says,
+ *  plus checks on the answers and conditional follow-ups. */
+export interface InterviewDef {
+    kind: "interview";
+    /** what the interview is for: the page's and summary.md's description */
+    about?: string;
+    task: string | AskDef;
+    asks?: (string | AskDef)[];
+    followUps?: FollowUp[];
+    /** "hud", "overlay", "chat", or "console" (the default: a console ml.agent run); `--surface` overrides it */
+    surface?: string | null;
+    start?: string;
+    sharedWatches?: string[];
+    watchNotes?: Record<string, string>;
+    hold?: boolean | "failures";
+    holdIdleMinutes?: number;
+}
+
+/** An interview file's default export, checked: a task, and asks that are text or `{ ask }`. */
+export function defineInterview(def: Omit<InterviewDef, "kind">): InterviewDef {
+    const text = (a: string | AskDef) => (typeof a === "string" ? a : a?.ask);
+    if (!text(def.task)?.trim()) throw new Error("defineInterview: no task");
+    for (const a of def.asks ?? []) if (!text(a)?.trim()) throw new Error("defineInterview: an ask with no text");
+    for (const f of def.followUps ?? []) if (typeof f.when !== "function" || !f.ask) throw new Error("defineInterview: a follow-up needs `when` and `ask`");
+    return { kind: "interview", ...def };
 }
 
 /** What a combination of dimension values DOES to a run. Returned by the spec's `apply`. */

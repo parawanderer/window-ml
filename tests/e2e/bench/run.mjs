@@ -69,7 +69,7 @@ import { openScores, modelInfo, runRow, logRuns, readRuns, scoreboard, sweepScor
 import { watch as watchFs } from "node:fs";
 // The sweep's timeline: each run's events as the resource panel derives them; the page draws them with its lane.
 const { eventsFrom } = await import("../../../src/sidebar/resource/model-stats.ts");
-import { loadInterview, interviewDriver, readTurns, followContinued, probe, panelSummary, promptChars, checkMarks, validMark } from "../interview.mjs";
+import { isInterviewFile, loadInterviewFile, driverFor, isInterviewTask, readFollowUps, expectTally, askText, readTurns, followContinued, probe, panelSummary, promptChars, checkMarks, validMark } from "../interview.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../../..");
@@ -205,7 +205,7 @@ async function runCell(cell, ctx, index) {
 
     // An interview: each ask is sent once the turn before it ends, and every turn's answer lands in outbox/, read
     // back as the run goes so the page fills in turn by turn rather than at the end.
-    const driver = !hold && t.asks?.length ? interviewDriver({ asks: t.asks, dir }) : null;
+    const driver = !hold && isInterviewTask(t) ? driverFor(t, dir, cell.effects.backend?.model ?? ctx.backend?.model ?? null) : null;
     const onTurns = () => ctx.report?.(index, "running", { turns: readTurns(dir) });
     const nextTurn = driver && (async (info) => {
         const next = await driver.nextTurn(info);
@@ -256,7 +256,10 @@ async function runCell(cell, ctx, index) {
     if (entry) ctx.held.runs.push(entry);
     ctx.finalSession?.(index, run.session ?? null, run.events ?? []);
     // An interview's answers, turn by turn, kept with the cell so a cached one still sets them side by side.
-    const turns = t.asks?.length ? readTurns(dir, t.asks.length + 1) : null;
+    const turns = isInterviewTask(t) ? readTurns(dir, (t.asks?.length ?? 0) + 1) : null;
+    // Turns asked only because an answer called for them, under the turn they followed, and how the checks came out.
+    const followUps = turns ? readFollowUps(dir) : [];
+    const expects = turns ? expectTally(turns) : null;
     // Best-effort: a failed render must not lose the cell's measurement, which is the expensive part.
     if (ctx.pdf && run.session) {
         await renderPdf(run.session, dir, `${slug(ctx.spec.name)}-${t.id}-r${cell.repeat}`)
@@ -271,7 +274,7 @@ async function runCell(cell, ctx, index) {
         // not, "which model was this run against" is the first question asked of any result and was
         // previously answerable only by reading a run.md. Saved with the cell so a cached one keeps it.
         backend: run.backendLabel ?? null, models: run.models ?? null,
-        ...(turns ? { turns, prompt: promptChars(dir), statuses } : {}) };
+        ...(turns ? { turns, prompt: promptChars(dir), statuses, ...(followUps.length ? { followUps } : {}), ...(expects ? { expects } : {}) } : {}) };
     await writeFile(cacheFile, JSON.stringify(saved, null, 2));
     // Into the scores log, once, as it lands (scores.mjs): a sweep that dies half way still leaves its runs counted.
     const row = ctx.scores && runRow({ ...saved, fromCache: false }, t, ctx.scoreSweep);
@@ -279,7 +282,7 @@ async function runCell(cell, ctx, index) {
     ctx.ran++;
     ctx.report?.(index, "done", { ...saved, dir, fromCache: false, held: entry || null });
     if (entry) ctx.log(`  ⏸ ${label} is held open: ${entry.attach}`);
-    ctx.log(`  ${measurement.ok ? "✔" : "✖"} ${label} — ${measurement.steps} steps, ${(measurement.runMs / 1000).toFixed(1)}s${measurement.succeeded === null ? "" : measurement.succeeded ? ", correct" : ", WRONG"}${measurement.error ? ` — ${String(measurement.error).slice(0, 80)}` : ""}${measurement.stream?.asked && measurement.stream.turns && !measurement.stream.streamed ? " — asked to stream, but nothing streamed" : ""}`);
+    ctx.log(`  ${measurement.ok ? "✔" : "✖"} ${label} — ${measurement.steps} steps, ${(measurement.runMs / 1000).toFixed(1)}s${measurement.succeeded === null ? "" : measurement.succeeded ? ", correct" : ", WRONG"}${expects ? `, ${expects.passed}/${expects.total} as expected` : ""}${followUps.length ? `, ${followUps.length} follow-up${followUps.length === 1 ? "" : "s"}` : ""}${measurement.error ? ` — ${String(measurement.error).slice(0, 80)}` : ""}${measurement.stream?.asked && measurement.stream.turns && !measurement.stream.streamed ? " — asked to stream, but nothing streamed" : ""}`);
     return { ...saved, dir, fromCache: false };
 }
 
@@ -334,8 +337,8 @@ const main = async () => {
     // does, and one that cannot make a tool call is listed as skipped instead of read later as a model that ignored
     // the task.
     let spec, skipped = [];
-    if (args.specPath.endsWith(".json")) {
-        const iv = loadInterview(args.specPath);
+    if (isInterviewFile(args.specPath)) {
+        await loadInterviewFile(args.specPath);   // checked before any model is probed
         if (!args.models.length) throw new Error("an interview file needs --models a,b,c (or PANEL_MODELS)");
         let models = args.models;
         if (!args.dry) {
@@ -460,7 +463,7 @@ const main = async () => {
     let liveScores = dash ? scoreLines("/scores") : null;
     const started = Date.now();
     // The question each turn of each interview asked, for the answers view's row headings.
-    const interviews = Object.fromEntries(spec.tasks.filter((t) => t.asks?.length).map((t) => [t.id, [t.task, ...t.asks]]));
+    const interviews = Object.fromEntries(spec.tasks.filter(isInterviewTask).map((t) => [t.id, [t.task, ...(t.asks ?? []).map(askText)]]));
 
     // The sweep timeline (page/timeline.tsx): every run on one clock, each its own event lane, so a sweep shows where the
     // time went and which runs overlapped. A finished cell's events come from its final session; a running one's from
@@ -514,7 +517,7 @@ const main = async () => {
                 hash: info.hash ?? null, backend: info.backend ?? null, models: info.models ?? null,
                 stream: m.stream ?? null,
                 ...(info.held ? { held: info.held.attach } : {}),
-                ...(info.turns ? { turns: info.turns, statuses: info.statuses ?? [] } : {}),
+                ...(info.turns ? { turns: info.turns, statuses: info.statuses ?? [], ...(info.followUps ? { followUps: info.followUps } : {}), ...(info.expects ? { expects: info.expects } : {}) } : {}),
             });
             recheck(r);
             results[i] = info;
@@ -575,7 +578,7 @@ const main = async () => {
         who: runsState[i].who,
         ...(runsState[i].held ? { held: runsState[i].held } : {}),
         ...(runsState[i].continued?.length ? { continued: runsState[i].continued } : {}),
-        ...(runsState[i].turns ? { turns: runsState[i].turns, checks: runsState[i].checks ?? [] } : {}),
+        ...(runsState[i].turns ? { turns: runsState[i].turns, checks: runsState[i].checks ?? [], ...(runsState[i].followUps ? { followUps: runsState[i].followUps } : {}), ...(runsState[i].expects ? { expects: runsState[i].expects } : {}) } : {}),
     }));
 
     const sweep = { spec, rows, runs, fingerprint, dirty, started, finished, sweepDir: path.relative(ROOT, sweepDir), cached: ctx.cached, ran: ctx.ran, jobs: args.jobs, pdf: args.pdf };
@@ -586,13 +589,14 @@ const main = async () => {
     // What the sweep wrote, for the terminal: a model driving the bench reads these rather than the page.
     const files = [["report", "report.md", "the results table, per cell"]];
     // An interview's answers as panel.mjs writes them, so a model reading the sweep reads the same file either way.
-    for (const t of spec.tasks.filter((t) => t.asks?.length)) {
+    for (const t of spec.tasks.filter(isInterviewTask)) {
         const res = runs.flatMap((r, i) => r.taskId === t.id && results[i] ? [{
             model: spec.dimensions?.model && Object.keys(spec.dimensions).length === 1 ? r.combo.model : `${comboLabel(r.combo)}${r.repeat ? ` r${r.repeat}` : ""}`,
-            turns: r.turns ?? [], statuses: results[i].statuses ?? [], prompt: results[i].prompt ?? "?", expected: t.asks.length + 1,
+            turns: r.turns ?? [], statuses: results[i].statuses ?? [], prompt: results[i].prompt ?? "?", expected: (t.asks?.length ?? 0) + 1,
+            followUps: r.followUps ?? [],
             checks: r.checks ?? [],
         }] : []);
-        const iv = { task: t.task, asks: t.asks, about: spec.description };
+        const iv = { task: t.task, asks: (t.asks ?? []).map(askText), about: spec.description };
         const file = spec.tasks.length === 1 ? "summary.md" : `summary-${slug(t.id)}.md`;
         await writeFile(path.join(sweepDir, file), panelSummary(t.id, iv, res, skipped, t.surface));
         files.push([`answers${spec.tasks.length === 1 ? "" : ` (${t.id})`}`, file, "each turn's answers side by side, and the checks of lines marked wrong (add one: bench/mark.mjs)"]);
