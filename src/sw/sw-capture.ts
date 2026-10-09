@@ -33,3 +33,9 @@ export async function captureOwnTab(tabId: number, opts: { format: "png" | "jpeg
         chrome.tabs.onActivated.removeListener(onActivated);
     }
 }
+
+/** How many times a capture that hit captureVisibleTab's quota (about two calls a second) is retried before its error stands. */
+export const CAPTURE_RETRIES = 5;
+
+/** The wait between those retries: just over the quota's one-second window, so the next try clears it. */
+export const CAPTURE_RETRY_MS = 550;

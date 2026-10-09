@@ -179,6 +179,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         setTimeout, clearTimeout, DOMException,   // rate-limit backoff (abortableWait) uses timers + abort
         Response,          // some paths construct/inspect Response
         Blob,              // the value store keeps a fetched body as a Blob
+        atob, btoa,        // a worker realm has both (imageSize reads a capture's PNG header through atob)
         // The value store's database. Absent by default, as in any realm with no IndexedDB, which leaves the store off;
         // a test that exercises it passes a `fake-indexeddb` IDBFactory.
         // A key range is how the store deletes a session's events, so a worker given a database needs it too: without
@@ -202,7 +203,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
             // Only what the worker reads to know which document a tab holds: a commit is fired by bg.commit, never by
             // the harness on its own, so a test that never commits sees no document at all.
             webNavigation: {
-                onCommitted: { addListener: (fn) => committedListeners.push(fn) },
+                onCommitted: { addListener: (fn) => committedListeners.push(fn), removeListener: (fn) => { const i = committedListeners.indexOf(fn); if (i >= 0) committedListeners.splice(i, 1); } },
                 // Like the browser, a live tab always has a top-frame document: the last one committed, else its first.
                 getFrame: async ({ tabId, frameId }) => (frameId === 0 && docOf(tabId) ? { documentId: docOf(tabId), frameId: 0 } : null),
             },
@@ -371,7 +372,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         /** Commit a main-frame document on a tab, the way the browser reports a navigation (webNavigation.onCommitted). */
         commit: (tabId, { documentId, url = "https://page.test/" }) => {
             committedDocs.set(tabId, documentId);
-            for (const fn of committedListeners) fn({ tabId, frameId: 0, documentId, url });
+            for (const fn of [...committedListeners]) fn({ tabId, frameId: 0, documentId, url });
         },
         /** Grant a permission the way the browser's prompt does: held, then permissions.onAdded. */
         grantPermission: (name) => { permsHeld.add(name); for (const fn of permAddedListeners) fn({ permissions: [name] }); },
