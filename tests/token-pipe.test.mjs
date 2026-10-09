@@ -570,7 +570,7 @@ describe("the pipe dialect is described once", () => {
     const dialectish = (s) => /grep PATTERN|chained with/.test(s);
 
     test("no tool PARAMETER carries the dialect verbatim any more", async () => {
-        const files = ["../src/tools/tools.ts", "../src/tools/builtin-tools.ts", "../src/python/python-tool.ts", "../src/injected.ts", "../src/ml/ml-server.ts", "../src/ml/ml-tool-factories.ts", "../src/ml/ml-vision.ts", "../src/ml/ml-python.ts", "../src/ml/ml-chat.ts", "../src/ml/ml-agent-run.ts", "../src/agent/run-assembly.ts", "../src/ml/ml-agent-handle.ts"];
+        const files = ["../src/tools/tools.ts", "../src/tools/api-docs-tool.ts", "../src/tools/builtin-tools.ts", "../src/python/python-tool.ts", "../src/injected.ts", "../src/ml/ml-server.ts", "../src/ml/ml-tool-factories.ts", "../src/ml/ml-vision.ts", "../src/ml/ml-python.ts", "../src/ml/ml-chat.ts", "../src/ml/ml-agent-run.ts", "../src/agent/run-assembly.ts", "../src/ml/ml-agent-handle.ts"];
         for (const f of files) {
             const src = await readFile(new URL(f, import.meta.url), "utf8");
             for (const line of src.split("\n")) {

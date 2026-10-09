@@ -18,8 +18,8 @@ script's promise settles. The streaming port (`LLM_STREAM`) checks the same gate
 
 1. A tab hosting a live background run (`activeRuns`) may send `RUN_TAB_TYPES` (page-relay.ts) from its top frame,
    whatever its origin: what that run's delegated tools send while they still run in the page (a vision tool's model
-   call and screenshot, `fetch_url`, `python_exec`, a sheet, a server tool, a shadow resolve, the config reads of
-   `agent_api_docs`). Never run control, a model change, an unload, a session, an embedding or a dump. The list
+   call and screenshot, `fetch_url`, `python_exec`, a sheet, a server tool, a shadow resolve, the config a vision tool
+   or an exec reads). Never run control, a model change, an unload, a session, an embedding or a dump. The list
    shrinks as slice 2 moves tools to the worker, and goes with the last one. It is also why a run on a local `file:`
    page keeps working.
 2. Otherwise the sender must be grantable (`grantableOrigin`: top frame, http(s), not opaque) and its origin approved
@@ -88,6 +88,12 @@ read-only survey re-reads the run's fetches from the worker's cache (`_fetchCach
 miss defers to the page's. Both caches hold frozen copies (`cacheCopy`), so a survey cannot rewrite what a later
 re-read shows. `RUN_TAB_TYPES` keeps `FETCH_URL` until approved exec is isolated (part 4): an approved script's inline
 `ml.fetch` and a page-built run still send it.
+
+`agent_api_docs` runs there too (`apiDocsTool` in `src/tools/api-docs-tool.ts`, given a `DocsSource`): the worker reads
+the live shortcut (`invocationInfo`, `sw-invocation.ts`) and the config itself, so `GET_INVOCATION` left
+`RUN_TAB_TYPES`. `GET_CONFIG` stays until the vision tools move (part 3). Its within-dig dedup memory is the worker's,
+keyed by the run's local tools, so `runLocalTool` counts each call the page runs towards its streak (`countDocsStreak`),
+which the page's `executeTool` used to do; a read-only try counts on neither side.
 
 ## What the content script sends outside the gate
 

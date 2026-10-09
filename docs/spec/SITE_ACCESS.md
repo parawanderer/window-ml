@@ -385,6 +385,10 @@ Recorded as each slice lands, with the reason.
   `fetch_url` minted its consent, and its one-time as-you grant, on the TAB, so a page on that tab could read the
   approved URL through its own `FETCH_URL`, or spend the as-you grant first and read the private page with the
   person's cookies. A worker-built run's approvals are now the run's.
+- **Slice 2 part 2: `agent_api_docs` of a worker-built run runs in the worker.** The tool is one factory
+  (`apiDocsTool`) given where it reads the shortcut and the config; the worker reads both directly, so `GET_INVOCATION`
+  is no longer a run-tab type. `GET_CONFIG` stays one until part 3, because the vision tools and an exec's
+  `ml.config()` still read it in the page.
 - **An approved exec fetches only the URLs its code spells out (owner's decision).** While an approved exec ran, the
   tab could fetch ANY URL uncredentialed (`fetchOpen`), and the page shares the tab: a hostile page waited for the
   person to approve any exec, then read whatever the browser reaches. The grant is now the script's literal

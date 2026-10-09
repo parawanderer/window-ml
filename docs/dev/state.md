@@ -50,7 +50,7 @@ page-hosted one. Several stores exist once per host.
 | What a worker-built run's `fetch_url` read (the read-only survey's free re-reads) | `runs[runId].cache` (`worker-tools.ts`, worker memory, frozen copies); page-hosted and approved exec: `mlFetchCache` (`injected.ts`, page) | no; the worker's goes with an eviction (a re-read then asks again) | maybe |
 | Execution log | `runLog` (`sw-run-log.ts`) | `ml_run_log` (session storage) | `run.log`, read by the model as `ml.current.log` (no `key`/`tab`/`origin`) |
 | Environment: debugger attached, tab pinned, navigation barrier, hub devices granted this session | `attachedDebuggees`, `ml_pinned_tabs`, `navBarrier`, `SessionPublisher.granted` | partly | `run` (new) |
-| Docs already shown to the model | `docsMemories` (`tool-exec.ts`, page) | no | maybe |
+| Docs already shown to the model | `docsMemories` (`tool-exec.ts`, page; a worker-built run's: worker) | no | maybe |
 | Crops already seen (vision) | `VisionMemory`, made FRESH on every re-adopt | no | maybe |
 | Process-wide run flags: closed-shadow piercing, CDP clicks | `window.__mlPierceClosed`, `cdpEnabled` (page; the last run to start wins) | no | `init` can disagree with what is in effect |
 

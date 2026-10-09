@@ -3,6 +3,7 @@
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
 import { dropAllLocalTools } from "./sw/sw-local-tools";
+import { invocationInfo } from "./sw/sw-invocation";
 import { LOAD_RECORDS_KEY } from "./resource/load-records";
 import type { ApprovalDecision } from "./contract/contract-agent";
 import type { StartRunPayload, SetApprovalPayload, CancelRunPayload, InjectMessagePayload } from "./contract/contract-messages";
@@ -743,25 +744,8 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         return true;
 
     } else if (message.type === "GET_INVOCATION") {
-        // How to open the HUD on THIS install. The shortcut is user-rebindable at
-        // chrome://extensions/shortcuts, so we report what chrome.commands says is bound RIGHT NOW
-        // (and whether that still matches the manifest) rather than letting anything hardcode
-        // "Alt+Space" — a stale answer sends the user to a key that does nothing. Non-secret:
-        // it's the user's own UI affordance, so no sender gating.
-        const manifest = chrome.runtime.getManifest?.() || {} as chrome.runtime.Manifest;
-        const suggested = manifest.commands?.["open-composer"]?.suggested_key;
-        const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent || "");
-        const defaultShortcut = (typeof suggested === "string" ? suggested
-            : (isMac ? suggested?.mac : suggested?.default) || suggested?.default) || "";
-        // contextMenus is a permission-gated API, so the manifest declaring it is a truthful proxy
-        // for "the right-click entry exists" — this line turns itself on when that feature lands.
-        const contextMenu = (manifest.permissions || []).includes("contextMenus");
-        Promise.resolve(chrome.commands?.getAll?.() ?? [])
-            .then((cmds: chrome.commands.Command[]) => {
-                const shortcut = cmds.find(c => c.name === "open-composer")?.shortcut || "";
-                sendResponse({ data: { shortcut, defaultShortcut, isDefault: !!shortcut && shortcut === defaultShortcut, contextMenu } });
-            })
-            .catch(() => sendResponse({ data: { shortcut: "", defaultShortcut, isDefault: false, contextMenu } }));
+        // How to open the HUD on THIS install (sw-invocation.ts). Non-secret, so no sender gating.
+        invocationInfo().then(data => sendResponse({ data }));
         return true;
 
     } else if (message.type === "GET_CONFIG") {
