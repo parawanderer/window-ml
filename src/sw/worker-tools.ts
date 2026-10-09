@@ -7,7 +7,7 @@
 
 import type { FetchResult, MlApi, MlTool, SubcallUsage } from "../contract";
 import { fetchTool, defineTool, pythonTool } from "../ml/ml-tool-factories";
-import { _loadTable, isTableValue } from "../ml/ml-python";
+import { _loadTable, isTableValue, tableSpecs } from "../ml/ml-python";
 import { googleSheetCsvUrl, googleSheetId } from "../dom/dom";
 import { runPython } from "./sw-python";
 import { fetchSheetCsv } from "./sw-fetch";
@@ -177,9 +177,8 @@ async function workerTable(ctx: RunCtx, name: string, src: unknown, raw: boolean
 /** `ml.pythonExec` for a run's python_exec in the worker: its tables loaded here, then `runPython` with the run as the
  *  caller (full mode only for the code this call was approved for), live stdout straight to the call's output. */
 async function workerPython(ctx: RunCtx, code: string, opts: { mode?: "readonly" | "full"; tableRaw?: boolean; tables?: unknown; onStdout?: (chunk: string, ts?: number) => void }) {
-    let t = opts.tables ?? null;
-    if (Array.isArray(t)) t = t.length === 1 ? t[0] : t.length === 0 ? null : t;
-    const specs: [string, unknown][] = t == null ? [] : typeof t === "string" || isTableValue(t) ? [["df", t]] : Object.entries(t as Record<string, unknown>);
+    // The page's shape rule, so `[[url]]` (a list once unwrapped, its key "0" no variable name) is refused as it is there.
+    const specs: [string, unknown][] = tableSpecs(opts.tables ?? null).map(({ name, src }) => [name, src]);
     const loaded = [];
     for (const [name, src] of specs) loaded.push(await workerTable(ctx, name, src, !!opts.tableRaw));
     // Not derived from anything the page knows (the run id reaches it): a stream id it cannot name.

@@ -868,16 +868,17 @@ test("a worker python_exec's live stdout reaches only the run, even when a page 
  * A worker-built run on tab 7 of a host the PERSON put on the approval whitelist (`cfg.pageApprovalDomains`), whose
  * model calls python_exec with `args`. Like `pythonRun`, but it COUNTS how often a person was actually asked (the
  * `awaitingApproval` events the page saw) and how often the sheet itself was fetched with the person's cookies.
- * Returns what the sandbox was given, what went to the page, and the two counts.
+ * Returns what the sandbox was given, what went to the page, the two counts, and the tool results the model was sent.
  */
 async function askedPythonRun(args, cfg) {
-    let turns = 0, bg, asked = 0, reads = 0;
+    let turns = 0, bg, asked = 0, reads = 0, toolResults = [];
     const runs = [];
     bg = loadBackground({
         config: cfg, openTabs: [SITE], siteGate: true,
         onFetch: (call) => {
             if (call.url.startsWith("https://docs.google.com/")) { reads++; return { ok: true, status: 200, url: call.url, headers: { get: () => "text/csv" }, text: async () => "name,salary\nAda,999999\n" }; }
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            toolResults = (call.body?.messages ?? []).filter((m) => m.role === "tool").map((m) => String(m.content ?? ""));
             return ++turns === 1
                 ? jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "python_exec", arguments: JSON.stringify(args) } }] } }] })
                 : jsonResponse({ choices: [{ message: { content: "done" } }] });
@@ -900,7 +901,7 @@ async function askedPythonRun(args, cfg) {
     for (let i = 0; i < 400 && turns < 2; i++) await new Promise((r) => setTimeout(r, 0));
     await flush(30);
     const toPage = bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE" && m.payload.name === "python_exec" && !m.payload.renderOnly).map(([, m]) => m.payload);
-    return { runs, asked, toPage, reads };
+    return { runs, asked, toPage, reads, toolResults };
 }
 
 test("a python_exec reading an external Google Sheet always asks the person, whatever shape `tables` has", T, async () => {
@@ -909,21 +910,20 @@ test("a python_exec reading an external Google Sheet always asks the person, wha
     assert.ok(control.asked >= 1, `positive control: the plain-string form asked the person first (asked ${control.asked})`);
     assert.equal(control.runs.length, 1, "positive control: the approved call ran in the worker");
     assert.match(JSON.stringify(control.runs[0].tables), /Ada/, "positive control: its sheet rows reached the sandbox");
-    for (const [label, tables, workerRefuses] of [
-        ["map-of-array", { s: [SHEET_EDIT] }, true],
-        ["nested-array", [[SHEET_EDIT]], false],   // one-element arrays normalize to the string (as the page loader does)
-        ["array-of-one-array", { s: [[SHEET_EDIT]] }, true],
+    for (const [label, tables, pageError] of [
+        ["map-of-array", { s: [SHEET_EDIT] }, null],
+        // The page unwraps ONE array level, so `[[url]]` is the list `[url]`, whose key "0" is no variable name: the
+        // page refuses it with that, and the worker must say the same rather than load a DataFrame called "0".
+        ["nested-array", [[SHEET_EDIT]], /"0" isn't a valid Python variable name/],
+        ["array-of-one-array", { s: [[SHEET_EDIT]] }, null],
     ]) {
         const r = await askedPythonRun({ code: "return len(df)", tables }, cfg);
         assert.ok(r.asked >= 1, `the ${label} form hid its sheet from the gate (externalSheetIds must see a URL at any depth) and auto-approved without asking`);
-        if (workerRefuses) {
-            // The worker also refuses a source that is neither a string nor a table, so the wrapper never becomes
-            // a read through String(src): even approved, this call loads nothing.
-            assert.equal(r.runs.length, 0, `the ${label} form reached the sandbox anyway: ${JSON.stringify(r.runs).slice(0, 160)}`);
-            assert.equal(r.reads, 0, `the ${label} form fetched the sheet with the person's cookies`);
-        } else {
-            assert.equal(r.reads, 1, `the normalized ${label} form read the sheet ${r.reads} times after the ask`);
-        }
+        // The worker also refuses a source that is neither a string nor a table, so the wrapper never becomes
+        // a read through String(src): even approved, this call loads nothing.
+        assert.equal(r.runs.length, 0, `the ${label} form reached the sandbox anyway: ${JSON.stringify(r.runs).slice(0, 160)}`);
+        assert.equal(r.reads, 0, `the ${label} form fetched the sheet with the person's cookies (${r.reads} reads)`);
+        if (pageError) assert.match(r.toolResults[0] ?? "", pageError, `the worker did not refuse the ${label} form with the page's error: ${JSON.stringify(r.toolResults).slice(0, 200)}`);
     }
 });
 
