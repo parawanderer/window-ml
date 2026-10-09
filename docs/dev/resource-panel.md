@@ -604,7 +604,11 @@ per device, in bytes.
 **The event lane (§4.5 of the spec).** Under the tracks, on the SAME axis: what happened, against
 what memory was doing while it did. Nothing new is collected — `src/sidebar/resource/model-stats.ts` derives it from what
 sessions already record. `usageByModel` is the per-model ledger (attributed to the model that RAN, with
-delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
+delegated sub-calls charged to the READER); `eventsFrom` builds the timeline. **The bars are `LaneBars`
+(`lane-bars.tsx`), painted by `barPaint` (`lane-paint.ts`)**, and the bench draws its runs with the same two
+(its sweep timeline and each run's page, `tests/e2e/bench/page/`), styled by the lane's own rules lifted out of
+sidebar.css (`laneCss`). A change to how a bar looks is made there, once; `EventLane` only adds the panel's wiring
+(hover lineage, brush, click and double-click).
 - **Spans run BACKWARDS from when a call finished** — the timestamp we hold is the end — else every bar sits
   one generation to the right of the memory movement it caused, which defeats the shared axis.
 - **A tool step is ONE block with PHASES**: the model generating the call, the PLUMBING between (parsing it,

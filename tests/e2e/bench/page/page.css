@@ -1,0 +1,133 @@
+/* page.css — the bench page's own layout. Its colours are the extension's tokens (--bg, --panel, --border, --fg,
+   --fg-dim, --fg-faint, --accent, --ok, --err, --warn), lifted from sidebar.css by serve.mjs for both themes, so the
+   page and the lane bars it shows read as one product. */
+
+* { box-sizing: border-box }
+html { color-scheme: dark light }
+:root[data-theme="light"] { color-scheme: light } :root[data-theme="dark"] { color-scheme: dark }
+body { margin: 0; background: var(--bg); color: var(--fg);
+       font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif }
+code, .hash { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace }
+a { color: var(--accent); text-decoration: none } a:hover { text-decoration: underline }
+.dim { color: var(--fg-dim) }
+
+/* The header stays in view: name, progress and counts are what a glance at a long sweep is for. */
+header.top { position: sticky; top: 0; z-index: 20; padding: 14px 24px 10px;
+             background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px);
+             border-bottom: 1px solid var(--border) }
+.titlebar { display: flex; align-items: flex-start; gap: 16px; max-width: 1280px; margin: 0 auto }
+.titlebar .names { flex: 1; min-width: 0 }
+h1 { font-size: 17px; font-weight: 650; margin: 0; letter-spacing: -.01em }
+.desc { margin: 2px 0 0; color: var(--fg-dim) }
+.bar { max-width: 1280px; height: 4px; margin: 10px auto 8px; background: var(--panel); border-radius: 3px; overflow: hidden }
+.bar > i { display: block; height: 100%; background: var(--accent); transition: width .3s ease }
+.counts { display: flex; flex-wrap: wrap; gap: 6px; max-width: 1280px; margin: 0 auto }
+
+main { max-width: 1280px; margin: 0 auto; padding: 18px 24px 60px; display: flex; flex-direction: column; gap: 16px }
+
+/* A CARD per section: a bordered box with a title row (title, then what the section is for) and its content. */
+.card { border: 1px solid var(--border); border-radius: 10px; background: var(--bg); padding: 14px 16px;
+        box-shadow: 0 1px 2px color-mix(in srgb, var(--fg) 6%, transparent) }
+.card > header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0 0 12px }
+.card > header .sp { flex: 1 }
+h2, h3 { margin: 0; font-size: 13px; font-weight: 650 }
+.card > header .sub { color: var(--fg-dim); font-size: 12px; flex: 1 1 320px }
+.empty { color: var(--fg-dim); padding: 6px 0 }
+.note { margin: 0 0 10px; padding: 6px 10px; border-radius: 6px; background: var(--panel); color: var(--fg-dim); font-size: 12px }
+
+/* Stat TILES: small bordered boxes, the number large and its name small. */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px }
+.tile { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--panel) }
+.tile b { display: block; font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums }
+.tile span { color: var(--fg-dim); font-size: 11px; text-transform: uppercase; letter-spacing: .05em }
+.models { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 12px; font-size: 12px }
+.role { margin-right: 12px } .role .rk { color: var(--fg-faint); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; margin-right: 5px }
+.role.none { color: var(--fg-faint); font-style: italic }
+
+/* BADGES: one shape for every status, tinted by what it says. */
+.badge { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border-radius: 999px; font-size: 11.5px;
+         border: 1px solid var(--border); background: var(--panel); color: var(--fg-dim); white-space: nowrap }
+.badge.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, var(--border)); background: color-mix(in srgb, var(--ok) 10%, var(--bg)) }
+.badge.bad { color: var(--err); border-color: color-mix(in srgb, var(--err) 40%, var(--border)); background: color-mix(in srgb, var(--err) 10%, var(--bg)) }
+.badge.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, var(--border)); background: color-mix(in srgb, var(--warn) 10%, var(--bg)) }
+.badge.run { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, var(--bg)) }
+.spin { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: pulse 1s infinite ease-in-out }
+@keyframes pulse { 0%, 100% { opacity: .25 } 50% { opacity: 1 } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none } }
+
+/* Buttons. */
+.btn { font: inherit; font-size: 12px; color: var(--fg); background: var(--panel); border: 1px solid var(--border);
+       border-radius: 6px; padding: 4px 10px; cursor: pointer; white-space: nowrap }
+.btn:hover { border-color: var(--fg-faint) }
+.btn.small { font-size: 11.5px; padding: 1px 8px }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff }
+.btn.danger:hover { color: var(--err); border-color: var(--err) }
+
+/* In flight. */
+.flight { display: flex; flex-direction: column; gap: 6px }
+.frow { display: grid; grid-template-columns: minmax(160px, max-content) max-content 1fr; gap: 12px; align-items: center;
+        padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel) }
+.frow .last { color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0 }
+
+/* Tables, inside their card: scroll sideways rather than push the page wide. */
+.tablewrap { overflow-x: auto; margin: 0 -4px }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums }
+th, td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--border); white-space: nowrap }
+th.l, td.l { text-align: left }
+th { color: var(--fg-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .05em }
+tbody tr:hover { background: var(--panel) }
+tbody tr:last-child td { border-bottom: none }
+tr.live { background: color-mix(in srgb, var(--accent) 8%, transparent) }
+tr.next td:first-child::before { content: "▸ "; color: var(--accent) }
+td.links a { margin-right: 10px }
+.hash { color: var(--fg-faint) }
+a.plain:hover { text-decoration: none } a.plain:hover .badge { border-color: var(--fg-faint) }
+
+/* Answers: a grid, a column per run; each answer its own bordered box. */
+.answers + .answers { margin-top: 16px }
+.answers h3 { margin: 0 0 8px }
+.agrid { display: grid; gap: 8px 12px; align-items: start; overflow-x: auto; padding-bottom: 4px }
+.ah { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 0 0 6px; border-bottom: 1px solid var(--border) }
+.q { grid-column: 1 / -1; margin-top: 10px; color: var(--fg-dim) }
+.q .turn { display: inline-block; margin-right: 8px; padding: 0 7px; border-radius: 999px; background: var(--panel);
+           border: 1px solid var(--border); color: var(--fg); font-size: 11px; font-weight: 600 }
+.ans { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--panel); min-width: 0 }
+.ans .meta { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; color: var(--fg-dim); font-size: 11.5px; margin-bottom: 6px }
+.ans .meta .sp { flex: 1 }
+.ans .txt { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 28em; overflow: auto; color: var(--fg) }
+.ans.none { color: var(--fg-faint); font-style: italic }
+.flag { margin: 8px 0 0; padding: 5px 9px; border-left: 3px solid var(--border); border-radius: 0 6px 6px 0; font-size: 12px;
+        background: var(--bg) }
+.flag b { font-weight: 600; margin-right: 6px }
+.flag.here { border-color: var(--err) } .flag.still { border-color: var(--err); color: var(--err) } .flag.gone { border-color: var(--ok) }
+.flag q { font-style: italic }
+
+/* The sweep timeline: a label column, then each run's lane, all on one axis. */
+.tl { display: grid; grid-template-columns: minmax(120px, max-content) 1fr; gap: 4px 14px; align-items: center }
+.tl .who { font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg-dim); white-space: nowrap;
+           overflow: hidden; text-overflow: ellipsis; max-width: 34ch }
+.tl .wml-lane .rc-lane-rows { padding: 3px 0; border-bottom: 1px dashed var(--border) }
+.wml-lane .rc-lane-rows { overflow: visible; height: auto }
+.wml-lane-axis { position: relative; height: 16px; margin-top: 3px; color: var(--fg-faint); font-size: 11px }
+.wml-lane-axis span { position: absolute; top: 2px; transform: translateX(-50%); white-space: nowrap }
+.wml-lane-axis span:first-child { transform: none }
+
+/* Modals: the run viewer and the mark dialog. */
+.modal { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, .45); display: flex; align-items: center;
+         justify-content: center; padding: 24px clamp(10px, 4vw, 60px) }
+.sheet { display: flex; flex-direction: column; width: 100%; max-width: 1040px; height: 100%; padding: 0; overflow: hidden }
+.sheet > header { margin: 0; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--panel); align-items: center }
+.sheet .otitle { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg-dim); overflow: hidden;
+                 text-overflow: ellipsis; white-space: nowrap; min-width: 0 }
+.sheet iframe { flex: 1; width: 100%; border: 0; background: var(--bg) }
+.dialog { width: min(560px, 94vw) }
+.dialog label { display: block; color: var(--fg-dim); font-size: 12px; margin: 10px 0 4px }
+.dialog textarea, .dialog input { width: 100%; font: inherit; color: var(--fg); background: var(--panel);
+                                   border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px }
+.dialog .err { color: var(--err); font-size: 12px; min-height: 18px; margin-top: 6px }
+.dialog .actions { display: flex; justify-content: flex-end; gap: 8px }
+
+@media (max-width: 640px) {
+  header.top, main { padding-left: 16px; padding-right: 16px }
+  .frow { grid-template-columns: 1fr }
+}

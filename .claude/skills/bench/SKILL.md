@@ -45,6 +45,12 @@ failing step, and pointing at one would send you to an innocent call. It is a SI
 server recomputes the table with the same `aggregate()` the report uses, so the page cannot disagree with
 `report.md`.
 
+The page is a set of cards: progress and timing, what is running now, an interview's Answers, the **Timeline** (every
+run on one clock, each as the resource panel's event lane: which runs overlapped, where the time went; cached runs are
+left out, they ran in an earlier sweep), Results and Runs. A run opened from it reloads as the run moves, keeping your
+place. Each `run.md.html` has the same lane as its own Timeline section. The page follows the system theme; its
+button switches light/dark. It is Preact under `tests/e2e/bench/page/`, bundled in memory each time the bench starts.
+
 ```
 npm run build
 node --import tsx tests/e2e/bench/run.mjs tests/e2e/bench/specs/smoke.bench.ts --repeats 1
@@ -143,7 +149,7 @@ something the next run is held to. For a model reading results, `panel.mjs` is t
 | `--repeats N` | Override the spec's repeat count — use `--repeats 1` while iterating on a spec. |
 | `--dry` | Print the matrix and its cell keys, run nothing. Do this before any long sweep. |
 | `--no-cache` | Re-run cells that are already measured. |
-| `--serve` | Serve the live page and print its URL. Costs nothing when nobody opens it; SSE, no dependency, no build step. |
+| `--serve` | Serve the live page and print its URL. Costs nothing when nobody opens it; SSE, and the page is bundled from source in memory (no dist to rebuild). |
 | `--open` | `--serve` plus launch a browser. |
 | `--port N` | Serve on a specific port. The default (7331) is STABLE on purpose, so a browser tab can just reload between sweeps instead of needing a new URL. Falls back to any free port if taken. |
 | `--models a,b` | With an interview file (`.json`) in place of a spec: the models to put it to (or `PANEL_MODELS`). `--surface hud\|console` and `--turn-minutes N` as `panel.mjs` takes them. |

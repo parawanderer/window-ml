@@ -58,14 +58,17 @@ test("refuses to escape the sweep directory, including through encoded dots", as
     } finally { await d.stop(); }
 });
 
-test("the page is self-contained — no build step, no CDN, no dependency", async () => {
+test("the page is self-contained — no CDN and no external file; its script is bundled from source in memory", async () => {
     const { sweep } = await fixture();
     const d = await startDashboard({ artifactRoot: sweep });
     try {
         const html = await (await fetch(`${d.url}/`)).text();
         assert.match(html, /<!doctype html>/i);
         assert.match(html, /EventSource\("\/events"\)/, "it must subscribe to the stream");
-        assert.doesNotMatch(html, /https?:\/\/(?!127\.0\.0\.1)/, "a local dev view must not fetch from the internet");
+        // A local dev view must not fetch from the internet. (The bundle names XML namespaces, `http://www.w3.org/…`,
+        // which are identifiers, not requests; what would fetch is an element pointing elsewhere.)
+        assert.doesNotMatch(html, /<script[^>]+src=|<link[^>]+href=|<img[^>]+src="?https?:/i, "nothing is loaded from elsewhere");
+        assert.doesNotMatch(html.replace(/https?:\/\/www\.w3\.org\/[\w/.-]*/g, ""), /https?:\/\/(?!127\.0\.0\.1)/, "no other URL at all");
     } finally { await d.stop(); }
 });
 

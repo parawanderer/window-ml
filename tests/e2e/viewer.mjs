@@ -237,6 +237,16 @@ details pre { background:var(--bg) }
 `;
 
 /**
+ * The run page's lane, as a prelude: a mount point and the lane's data as INERT JSON (a `type="application/json"` script
+ * is never run, and `<` is escaped so nothing in the data, a label a model wrote included, can close the tag). The
+ * script that draws it is passed as one of `renderMarkdownPage`'s `scripts`.
+ * @param {{ events: object[], now?: number }} data
+ */
+export function lanePrelude(data) {
+    return `<div id="wml-lane"></div><script type="application/json" id="wml-lane-data">${JSON.stringify(data).replace(/</g, "\\u003c")}</script>`;
+}
+
+/**
  * Render one `run.md` into a standalone page.
  *
  * @param {string} md the markdown, as written by the export sink
@@ -244,13 +254,22 @@ details pre { background:var(--bg) }
  * @param {string} o.title what this run is (shown in the header and the tab)
  * @param {string} o.assetBase prefix applied to relative urls, so image sidecars resolve
  * @param {{label:string,href:string}[]} [o.links] the run's other artifacts, offered beside it
+ * @param {string} [o.prelude] trusted HTML placed above the transcript (the run's event lane), never model text
+ * @param {string} [o.css] its stylesheet
+ * @param {string[]} [o.scripts] trusted scripts the prelude needs, each admitted by its own hash like the page's own
  * @returns {string} a complete HTML document
  */
-export function renderMarkdownPage(md, { title, assetBase, links = [] }) {
+export function renderMarkdownPage(md, { title, assetBase, links = [], prelude = "", css = "", scripts = [] }) {
     // Computed from the exact bytes that ship, so the two can never drift: change the script and the hash
     // changes with it. A mismatch would silently disable the folding rather than error.
     const scriptHash = createHash("sha256").update(SCRIPT).digest("base64");
-    const body = sectionize(makeMarked(assetBase).parse(md));
+    let body = sectionize(makeMarked(assetBase).parse(md));
+    // The prelude is a section of its own, folding like the rest, under the title block and above the first section.
+    if (prelude) {
+        const sec = `<details class="sec" open id="timeline"><summary><h2>Timeline</h2></summary><div class="secbody">${prelude}</div></details>\n`;
+        const at = body.search(/<span class="anchor"|<details class="sec"/);
+        body = at < 0 ? body + sec : body.slice(0, at) + sec + body.slice(at);
+    }
     const nav = links.map((l) => `<a href="${escapeHtml(l.href)}">${escapeHtml(l.label)}</a>`).join("\n");
     return `<!doctype html>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -260,12 +279,12 @@ export function renderMarkdownPage(md, { title, assetBase, links = [] }) {
      This page has no script of its own, so denying script entirely costs nothing and needs no
      sanitizer. Images stay permissive because they are the run's own screenshots and this file is
      opened both over http and straight off the disk, where the origin is opaque. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src * data: blob:; style-src 'unsafe-inline'; script-src 'sha256-${scriptHash}'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src * data: blob:; style-src 'unsafe-inline'; script-src 'sha256-${scriptHash}'${scripts.map((x) => ` 'sha256-${createHash("sha256").update(x).digest("base64")}'`).join("")}; base-uri 'none'; form-action 'none'">
 <title>${escapeHtml(title)}</title>
-<style>${CSS}</style>
+<style>${CSS}${css ? "\n" + css : ""}</style>
 <header><span class="t">${escapeHtml(title)}</span><span class="sp"></span>${nav}
 <span class="foldbar"><button type="button" id="collapse">collapse all</button><button type="button" id="expand">expand all</button></span></header>
 <div class="wrap">${body}</div>
-<script>${SCRIPT}</script>
+<script>${SCRIPT}</script>${scripts.map((x) => `\n<script>${x}</script>`).join("")}
 `;
 }
