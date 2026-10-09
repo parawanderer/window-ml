@@ -50,6 +50,17 @@ export function testLineCounts(diff) {
     return { removed, added };
 }
 
+/**
+ * The TESTS a diff deletes, from `git diff --name-status` over tests/: a `*.test.*` or `*.spec.*` file, or a fixture
+ * under tests/fixtures/. Not every file under tests/: it also holds the harness and the bench's own code (its page, the
+ * e2e drivers), and moving one of those out to src/ is not removing a test. A test whose lines go is caught apart, by
+ * the count of `test(` lines.
+ */
+export function deletedTests(nameStatus) {
+    return nameStatus.split("\n").filter((l) => l.startsWith("D")).map((l) => l.split("\t").pop())
+        .filter((f) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(f) || f.startsWith("tests/fixtures/"));
+}
+
 /** The verdict from the facts gathered about a PR: `{ ok, pending, reason }`. Pure, so the rule is testable. */
 export function judge(f) {
     if (!f.runId) return { ok: false, pending: true, reason: `no tests run for ${f.sha.slice(0, 8)} yet (or the PR conflicts with main: a conflicting PR runs no checks)` };
@@ -107,7 +118,7 @@ function facts(pr) {
     return {
         head, sha, runId, runStatus, badJobs,
         tests: testLineCounts(git("diff", range, "--", "tests")),
-        deletedTestFiles: git("diff", "--name-status", range, "--", "tests").split("\n").filter((l) => l.startsWith("D")).length,
+        deletedTestFiles: deletedTests(git("diff", "--name-status", range, "--", "tests")).length,
         reviews: (view.reviews || []).length + comments.length,
         inlineComments: Number(gh("api", `repos/${REPO}/pulls/${pr}/comments`, "-q", "length")) || 0,
         stacked: Number(gh("pr", "list", "--base", head, "--json", "number", "-q", "length")) || 0,
