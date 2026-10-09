@@ -181,7 +181,7 @@ test("recovery: a fault on the FINAL step is not evidence either way and is excl
 });
 
 test("tokenCost: sums the step usage AND the delegated sub-calls", () => {
-    // `subUsage` as the product sends it: the TURN's running total, on every step after the first sub-call.
+    // `subUsage` as the product sends it: the SESSION's running total, on every step after the first sub-call.
     const sub = (prompt, completion, calls) => ({ subUsage: { prompt, completion, calls } });
     const ev = [
         start(),
@@ -193,17 +193,31 @@ test("tokenCost: sums the step usage AND the delegated sub-calls", () => {
         "a running total repeated on a later step is the same spend, not more");
 });
 
-test("tokenCost: each turn's sub-calls count once, at that turn's last total", () => {
+test("tokenCost: the sub-call total runs across turns, so a later turn is not counted on top of it", () => {
     const sub = (prompt, completion, calls) => ({ subUsage: { prompt, completion, calls } });
     const ev = [
         start(),
         ...step(1, "look", {}, "a", sub(100, 10, 1)),
         ...step(2, "look", {}, "b", sub(250, 20, 2)),
         end("one"),
-        ...step(3, "look", {}, "c", sub(50, 5, 1)),   // the next turn starts again from zero
+        ...step(3, "answer", {}, "c", sub(250, 20, 2)),   // turn two made no sub-call: the total stands
+        ...step(4, "look", {}, "d", sub(300, 25, 3)),
         end("two"),
     ];
-    assert.equal(tokenCost(ev).sub, 270 + 55);
+    assert.equal(tokenCost(ev).sub, 325);
+});
+
+test("tokenCost: a seed turn's sub-calls are not charged to the measured turn", () => {
+    const sub = (prompt, completion, calls) => ({ subUsage: { prompt, completion, calls } });
+    const ev = [
+        start(),
+        ...step(1, "look", {}, "seeded", sub(900, 30, 1)),
+        end("seed"),
+        ...step(2, "answer", {}, "measured", sub(900, 30, 1)),
+        end("done"),
+    ];
+    assert.equal(measureRun({ events: ev, seedBoundaryStep: 1 }).tokens.sub, 0);
+    assert.equal(measureRun({ events: ev }).tokens.sub, 930);
 });
 
 test("afterSeed: the seeded turn's steps are excluded from the measurement", () => {

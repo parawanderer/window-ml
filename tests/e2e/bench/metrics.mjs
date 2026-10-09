@@ -301,25 +301,32 @@ export function recovery(events) {
 }
 
 /**
- * Token cost — the economic bottom line the pointer mechanism exists to lower.
- *
- * A step's `subUsage` (the delegated look/locate/verify calls) is the TURN's running total so far
- * (`{ prompt, completion, calls }`, reset when a turn starts, bus.ts), not that step's own spend, so a turn
- * counts once at its last value: summing it per step would count the first look again on every later step.
+ * The delegated sub-calls' tokens (look/locate/verify asking the vision reader) spent so far. A step's
+ * `subUsage` is the SESSION's running total (`{ prompt, completion, calls }`, reset once when the session
+ * starts: ml-agent-run.ts, and carried across turns on the background path: sw-run-host.ts), not that
+ * step's own spend, so the total is its largest value rather than a sum over steps.
  */
-export function tokenCost(events) {
-    let prompt = 0, completion = 0, sub = 0, turnSub = 0;
+function subTotal(events) {
+    let n = 0;
+    for (const ev of events) {
+        if (ev.kind !== "agent-step" || !ev.subUsage) continue;
+        n = Math.max(n, (ev.subUsage.prompt || 0) + (ev.subUsage.completion || 0));
+    }
+    return n;
+}
+
+/**
+ * Token cost — the economic bottom line the pointer mechanism exists to lower.
+ * @param {object[]} events the measured events
+ * @param {object[]} [before] events of the same session BEFORE them (a seed turn), whose sub-calls the
+ *   running total still carries and which are not this measurement's spend
+ */
+export function tokenCost(events, before = []) {
+    let prompt = 0, completion = 0;
     for (const s of stepsOf(events)) {
         if (s.usage) { prompt += s.usage.promptTokens || 0; completion += s.usage.completionTokens || 0; }
     }
-    for (const ev of events) {
-        if (ev.kind === "agent-result") { sub += turnSub; turnSub = 0; continue; }
-        if (ev.kind !== "agent-step" || !ev.subUsage) continue;
-        const u = ev.subUsage, n = (u.prompt || 0) + (u.completion || 0);
-        if (n < turnSub) sub += turnSub;   // reset without a result between (a turn that never reported one)
-        turnSub = n;
-    }
-    sub += turnSub;
+    const sub = Math.max(0, subTotal(events) - subTotal(before));
     return { prompt, completion, sub, total: prompt + completion + sub };
 }
 
@@ -401,7 +408,7 @@ export function measureRun(run, task = {}, opts = {}) {
         denied: approvals.filter((a) => a.decision === "denied").length,
         answer,
         finalAnswer,
-        tokens: tokenCost(events),
+        tokens: tokenCost(events, events === run.events ? [] : (run.events || []).filter((e) => !events.includes(e))),
         reEmission: reEmission(events, k),
         pointers: pointerUse(events),
         recovery: recovery(events),

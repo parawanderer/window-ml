@@ -369,8 +369,9 @@ export const agent = async function(this: MlApi, task: string, { tools = null, e
             approval: ev.approval, usage: (ev.usage as TokenUsage | null) || undefined,
             streamOutput: ev.streamOutput,   // LIVE tool output delta (ctx.stream) — patches the pending row's Out
 
-            // Running tally of delegated look/locate/verify token spend so far this turn (metered in
-            // bus.ts). Rides every step so the UI bar can show it live; omitted when nothing delegated.
+            // Running tally of delegated look/locate/verify token spend so far this SESSION (metered in
+            // bus.ts, reset once on the first turn above). Rides every step so the UI bar can show it live;
+            // omitted when nothing delegated.
             subUsage: (() => { const s = subcallUsage(); return s.calls ? s : undefined; })(),
         });
         if (!onStep || ev.pending) return;

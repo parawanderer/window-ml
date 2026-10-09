@@ -311,8 +311,9 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
         const event = {
             kind: "agent-step", id: runId, ts: Date.now(), save: false,
             session: { hash: runId, turn: step }, ...ev, step, localStep: rawStep, seq,
-            // Running per-turn delegated-sub-call tally so the UI "+N sub" chip works on the background
-            // path too (the page path attaches subcallUsage() the same way). Omit when nothing delegated.
+            // Running delegated-sub-call tally for the SESSION (seeded from the stored run's, so it carries across
+            // turns), so the UI "+N sub" chip works on the background path too (the page path attaches
+            // subcallUsage() the same way). Omit when nothing delegated.
             ...(subTally.calls ? { subUsage: snapSub() } : {}),
         };
         // Always fan to the PAGE (overlay / off card). For devtools ALSO fan to the panel — and the
