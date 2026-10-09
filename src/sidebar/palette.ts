@@ -44,8 +44,14 @@ export const colorFor = (name: string) => {
     // A CLOUD model shares the eight hues with the local ones, so on its own a hue cannot say which it is. Mixed
     // toward the text colour it is a lighter shade on a dark theme and a darker one on a light theme: the same family,
     // never mistaken for the local model that hashed to the same hue.
+    if (scriptedModels.value.has(name)) return "var(--fg-faint)";
     return cloudModels.value.has(name) ? `color-mix(in srgb, ${base} 55%, var(--fg))` : base;
 };
+
+/** Names that are a SCRIPT standing in for a model, not a model (the bench's seeded history, replayed from its spec by
+ *  the fake LLM): `colorFor` draws them in the faint text colour, so they never read as one more model's hue. Set by
+ *  whoever knows, like `cloudModels`. */
+export const scriptedModels = signal<ReadonlySet<string>>(new Set());   // state: cache
 
 /** Models known to run OFF the box (a cloud API), which `colorFor` draws in their own shade. Set by whoever knows: the
  *  panel from the server's model list (`fetchModels`, the same rule as its "cloud" chip), the bench's pages from the
