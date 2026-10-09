@@ -4,6 +4,7 @@
 // shared contract types.
 import { dropAllLocalTools } from "./sw/sw-local-tools";
 import { invocationInfo } from "./sw/sw-invocation";
+import { onIsolatedStream } from "./sw/sw-isolated-exec";
 import { LOAD_RECORDS_KEY } from "./resource/load-records";
 import type { ApprovalDecision } from "./contract/contract-agent";
 import type { StartRunPayload, SetApprovalPayload, CancelRunPayload, InjectMessagePayload } from "./contract/contract-messages";
@@ -174,6 +175,10 @@ function dropPrintDoc(key: string): void {
 // THE ORIGIN GATE (docs/spec/SITE_ACCESS.md). Every message a PAGE can start (page-relay.ts) is checked against the
 // sender's origin before any handler runs: the browser sets `sender`, a page cannot. A refused request is answered
 // with the refusal; a fire-and-forget one is simply dropped. Everything else goes straight to the router.
+// A user-script world's live console lines for an isolated exec (sw-isolated-exec.ts). Only worlds this extension
+// configured can send here; the page's cannot.
+(chrome.runtime as unknown as { onUserScriptMessage?: chrome.events.Event<(m: unknown, s: chrome.runtime.MessageSender) => void> }).onUserScriptMessage?.addListener((m, s) => onIsolatedStream(m, s));
+
 chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     housekeeping.beat();   // a message is the worker being alive: the heartbeat an eviction is inferred from (throttled)
     if (!PAGE_STARTED_TYPES.has(message?.type) || isExtensionSender(sender) || sender.tab == null) return route(message, sender, sendResponse);

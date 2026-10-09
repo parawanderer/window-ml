@@ -116,7 +116,7 @@ function streamResponse(lines, { status = 200 } = {}) {
 // `commandShortcut` is what chrome.commands reports as CURRENTLY bound for the HUD
 // (null = the API is unavailable, "" = the user cleared the binding); `manifestPermissions`
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
-function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false }) {
+function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, userScripts }) {
     const calls = [];
     const captures = [];        // captureVisibleTab arg lists, for screenshot tests
     const tabMessages = [];     // chrome.tabs.sendMessage arg lists, for reverse-channel tests
@@ -126,6 +126,10 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const htmlToMd = [];        // HTML the worker asked the offscreen document to convert to Markdown
     const debuggerCalls = [];   // chrome.debugger attach/sendCommand/detach, for CDP_CLICK tests
     const debuggerEventListeners = new Set();   // chrome.debugger.onEvent listeners (CDP streaming)
+    // chrome.userScripts, present only when a test passes `userScripts: { execute(injection) }` (an isolated exec's world).
+    // `available: false` makes it throw on use, as Chrome does while the person's "Allow User Scripts" toggle is off.
+    const userScriptCalls = [];
+    const userScriptListeners = [];
     let permsHeld = new Set(debuggerPermission ? ["debugger"] : []);
     const permAddedListeners = [];
     const committedListeners = [];   // chrome.webNavigation.onCommitted listeners; fired by bg.commit(tabId, …)
@@ -233,6 +237,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 }),
                 onMessage: { addListener: (fn) => listeners.push(fn) },
                 onConnect: { addListener: (fn) => connectListeners.push(fn) },
+                onUserScriptMessage: { addListener: (fn) => userScriptListeners.push(fn) },
                 // The PYTHON_EXEC handler relays PY_RUN to the offscreen doc via runtime.sendMessage —
                 // capture the payload (esp. `hardened`) so tests can assert what the sandbox is told to run.
                 sendMessage: async (msg) => {
@@ -264,6 +269,11 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
             },
             // CDP surface for reserved-element clicks. Records attach/sendCommand/detach so tests assert the
             // press+release sequence and that we always detach.
+            ...(userScripts ? { userScripts: {
+                getWorldConfigurations: async () => { if (userScripts.available === false) throw new Error("The userScripts API is not available"); return []; },
+                configureWorld: async (props) => { userScriptCalls.push(["configureWorld", props]); },
+                execute: async (injection) => { userScriptCalls.push(["execute", injection]); return [{ frameId: 0, result: await userScripts.execute(injection) }]; },
+            } } : {}),
             debugger: {
                 attach: async (target, version) => { debuggerCalls.push(["attach", target, version]); },
                 // `onDebuggerCommand(method, params)` lets a test script the reply (e.g. Runtime.evaluate's
@@ -326,6 +336,8 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         debuggerCalls,
         debuggerEventListeners,
         /** Fire a CDP event at every listener the SW registered (e.g. Runtime.bindingCalled). */
+        userScriptCalls,
+        emitUserScriptMessage: (msg, sender) => { userScriptListeners.forEach(fn => fn(msg, sender)); },
         emitDebuggerEvent: (target, method, params) => { [...debuggerEventListeners].forEach(fn => fn(target, method, params)); },
         /** Change synced settings the way the settings panel does: stored, then storage.onChanged with area "sync". */
         setSync: (obj) => {

@@ -32,6 +32,8 @@ import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels
 import { noteRunMechanic } from "./sw-runs";
 import { ensureLocalTools, runLocalTool, runsInWorker } from "./sw-local-tools";
 import { withUserWatches } from "./sw-shared-watches";
+import { routeExec, execNames } from "./exec-routing";
+import { isolationAvailable, pageApproved, runIsolatedExec } from "./sw-isolated-exec";
 import { grantRunFetch, runFetchConsented } from "./worker-tools";
 import { navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
@@ -445,6 +447,24 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 return { content: r.content, tool_calls: r.tool_calls, reasoning: r.reasoning, usage: r.usage };
             },
             delegateTool: async (name, args, onStream) => {
+                // Where an approved exec of a run the worker built runs (exec-routing.ts): the page's world, an isolated
+                // world on the same tab (sw-isolated-exec.ts), or nowhere. Decided before any grant is minted on the tab.
+                const js = name === "exec" && p.builtBy === "worker" && typeof (args as { js?: unknown }).js === "string" ? (args as { js: string }).js : undefined;
+                let execNote: string | undefined;
+                if (js !== undefined) {
+                    const route = routeExec(js, await pageApproved(tabPageUrl.get(tabId) || p.pageUrl || ""), await isolationAvailable(!!(await getConfig()).cdp));
+                    recordRunLog(runId, { subsystem: "routing", kind: `exec-${route.where}`, reason: route.reason, detail: { tool: name, ...(route.where === "isolated" ? { how: route.how } : {}) } });
+                    if (route.where === "refused") return { result: route.result, renderIn: execCodeIn(js) };
+                    if (route.where === "isolated") {
+                        const snap = p.selfIntrospection === false ? undefined : contextByRun.get(runId);
+                        return runIsolatedExec({
+                            tabId, runId, js, how: route.how, reason: route.reason, reads: preReadsFor(runId, js), onStream,
+                            // Made only for a script that names it, as a survey's is (tryReadonly below).
+                            ...(snap && execNames(js).current ? { current: async () => withUserWatches(snap({ model: modelNow(), log: eventsForRun(await runLog.all(), runId) })) } : {}),
+                        });
+                    }
+                    execNote = route.note;
+                }
                 // Live output: register this call's stream sink under the runId so a PAGE_TOOL_STREAM chunk
                 // the page posts mid-run reaches the loop's throttled fan. Cleared in the finally below.
                 if (onStream) delegateStreams.set(runId, onStream);
@@ -660,7 +680,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                     // The page already computed the rendered In/Out slots (descriptorFor) — forward them so
                     // the sidebar shows the rich view. `image` rides along for INLINE VISION (native look):
                     // the loop injects it into the model's next turn (pushToolImages).
-                    return { result: env?.result || `Error: the page returned nothing for tool "${name}".`, renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel, images: env?.images, remoteMs: env?.remoteMs };
+                    return { result: (env?.result || `Error: the page returned nothing for tool "${name}".`) + (execNote ? `\n\n${execNote}` : ""), renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel, images: env?.images, remoteMs: env?.remoteMs };
                 } finally {
                     pendingGrants.delete(tabId);   // grants were for THIS approved call's sub-ops only
                     if (reads) execReads.delete(runId);

@@ -12,7 +12,7 @@ import { noteRunMechanic } from "./sw-runs";
  *  specified in the manifest may be requested"). So this always holds once the extension is loaded + its
  *  permissions accepted; the defensive check just degrades gracefully (actionable error) if it's somehow
  *  absent (e.g. an update pending re-approval). The `cdpClick` config flag is the actual on/off. */
-async function hasDebuggerPermission(): Promise<boolean> {
+export async function hasDebuggerPermission(): Promise<boolean> {
     try { return await chrome.permissions.contains({ permissions: ["debugger"] }); } catch { return false; }
 }
 
@@ -68,7 +68,7 @@ export function releaseDebugger(tabId: number): void {
 }
 /** Reset the idle-detach timer after a CDP op — a run detaches eagerly in its finally, but a standalone
  *  CDP_CLICK (no run) relies on this so the debugger doesn't stay attached forever. */
-function touchDebugger(tabId: number): void {
+export function touchDebugger(tabId: number): void {
     const prev = debuggerIdleTimers.get(tabId);
     if (prev) clearTimeout(prev);
     debuggerIdleTimers.set(tabId, setTimeout(() => { debuggerIdleTimers.delete(tabId); releaseDebugger(tabId); }, DEBUGGER_IDLE_MS));
