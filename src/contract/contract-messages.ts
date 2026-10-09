@@ -276,6 +276,10 @@ export interface PageToolEnvelope {
     elementCount?: number;
     /** answer's serialized element visuals (data URLs) — cross the bus to the background → the HUD card */
     answerMedia?: AnswerMedia[];
+    /** what an exec of a worker-built run changed in its answer set, for the worker to replay (worker-answer.ts) */
+    answerOps?: import("../pointers/answer-set").AnswerOp[];
+    /** a selector the worker's `answer` tool asked the page to resolve (`answerSelect`), without its nodes */
+    answerSelection?: { count: number; preview?: string; media?: AnswerMedia[] };
     /** screenshot data-URL (inline vision — reserved for the parity work) */
     image?: string;
     imageLabel?: string;

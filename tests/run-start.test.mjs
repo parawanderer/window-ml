@@ -158,18 +158,18 @@ test("a run a page built is not the worker's to drive: the action falls back to 
     assert.equal(r.data, null);
 });
 
-test("the turn's curated answer comes from the page's answer set when the turn ends", T, async () => {
-    // A page-built run's own caller assembled the answer page-side; a worker-built run has no such caller, so the
-    // worker asks for it (`finish`) and the agent-result carries it to every surface.
-    const { bg } = world({ answer: "| price |\n| --- |\n| €4 |" });
+test("the turn's curated answer is the worker's set; what the page says at the end of the turn is not the answer", T, async () => {
+    // A worker-built run keeps its answer set in the worker (worker-answer.ts). The page is still told the turn ended
+    // (`finish` ends its registration), but an answer it sends back, forged or stale, is not what the person is handed.
+    const { bg } = world({ reply: "done", answer: "FORGED BY THE PAGE" });
     const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "what does it cost?", surface: "hud" });
     await flush(20);
     const fin = bg.tabMessages.find(([, m]) => m.type === "RUN_TOOL_IN_PAGE" && m.payload.finish);
-    assert.ok(fin, "the worker asked the page to finish the turn");
+    assert.ok(fin, "positive control: the worker told the page the turn ended");
     assert.equal(fin[1].payload.runId, hash);
     const result = bg.tabMessages.map(([, m]) => m).find((m) => m.type === "ML_DEBUG_TO_PAGE" && m.event.kind === "agent-result");
     assert.ok(result, "the worker emitted the result itself");
-    assert.equal(result.event.answer, "| price |\n| --- |\n| €4 |");
+    assert.equal(result.event.answer, undefined, "nothing was designated, so there is no curated answer");
 });
 
 test("a page cannot start, resume or steer a turn in a run the worker built, even knowing its id", T, async () => {

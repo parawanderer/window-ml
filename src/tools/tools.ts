@@ -27,12 +27,8 @@ import { pageContext, agentState } from "../util";
 import { resolveOutputCap, outputCapPrecheck, OUTPUT_CAP } from "../contract/contract-pointers";
 import { UI_OUT_CAP } from "../contract/contract-chat";
 import { clipHeadTail, panelHead, boundedLines, ceilingNote } from "../agent/output-clip";
-import { answerItemFromString, type AnswerSet } from "../pointers/answer-set";
+import { answerCall, type AnswerArgs, type AnswerSelection } from "../pointers/answer-set";
 
-/** A compact, model-facing echo of the current answer set (indexed, clamped previews — never the
- *  heavy media/nodes). Shown after every `answer` op so the model can see what it's curating. */
-const answerEcho = (set: AnswerSet): string =>
-    set.length ? set.dump().map(d => `  [${d.i}] ${d.kind}: ${d.preview}`).join("\n") : "  (empty)";
 import { apiDocsTool, pageDocsSource } from "./api-docs-tool";
 
 /**
@@ -84,6 +80,18 @@ const shadowScanNote = (ctx?: ToolContext): string => {
 // tool returns a short string; observations never balloon into raw HTML.
 export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, verifyArea?: VerifyArea, captureAnswer?: CaptureAnswer, shadowResolve?: ShadowResolve): MlTool[] => {
     const T = defineTool;
+    /** Resolve an `answer` designation in this page's DOM: the matches (the first 50 kept), their preview, and a
+     *  screenshot crop of each for the HUD card (best effort: a failed capture omits the media, the answer stands).
+     *  The page's `answer` tool uses it, and so does a worker-built run's, asking the page (run-delegation.ts). */
+    const selectAnswer = async (selector: string, index: number | undefined, note: string | undefined, show: AnswerArgs["show"]): Promise<AnswerSelection> => {
+        let els = queryAll(selector);
+        if (index != null) els = els[index] ? [els[index]] : [];
+        if (!els.length) return { count: 0 };
+        const kept = els.slice(0, 50);
+        let media: AnswerMedia[] | undefined;
+        if (captureAnswer) { try { media = await captureAnswer(kept, note, show); } catch { /* no media */ } }
+        return { count: els.length, nodes: kept, preview: kept.slice(0, 5).map(elLine).join("; "), media };
+    };
     return [
         T({
             name: "findByText",
@@ -794,7 +802,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 return withVerify(`Waited ${dur}ms.${verify ? "" : " Re-run look/findByText to see any updates."}`);
             }
         }),
-        T({
+        Object.assign(T({
             name: "answer",
             summary: "Curates the run's user-facing result.",
             capabilities: ["answer"],
@@ -818,60 +826,23 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     clear: { type: "boolean", description: "Empty the answer set first; with `text` or `selector`, replace it with that." }
                 }
             },
-            run: async (
-                { selector, index, note, show, text, remove, clear }:
-                    { selector?: string; index?: number; note?: string; show?: "inline" | "highlight"; text?: string; remove?: number | number[]; clear?: boolean },
-                ctx?: ToolContext
-            ): Promise<string | ToolResult> => {
+            run: async (args: AnswerArgs, ctx?: ToolContext): Promise<string | ToolResult> => {
                 const set = ctx?.answer;
                 if (!set) return "Error: no active run to answer into.";
-                // `clear` first, then whatever else the call carries: `{ clear: true, text }` is "replace the answer
-                // with this". It used to return here, and Gemini Flash's text was dropped on two turns running.
-                if (clear) set.clear();
-                if (clear && text == null && selector == null) return "Answer cleared.\n  (empty)";
-
-                // Apply every op the call carries, in order — models naturally send `{ text, selector }` to add
-                // BOTH at once, so don't make them do two round-trips. A bad selector is NOTED, not fatal (any
-                // text still lands).
-                const notes: string[] = clear ? ["cleared"] : [];
-                if (remove != null) {
-                    const idxs = Array.isArray(remove) ? remove : [remove];
-                    let removed = 0;
-                    for (const i of idxs.slice().sort((a, b) => b - a)) removed += set.remove(i);   // high→low: indices stay valid
-                    notes.push(`removed ${removed}`);
-                }
-                if (text != null) {
-                    // A `@tool:` string → a token designation (its output renders at the BOTTOM of the answer);
-                    // `note` becomes its caption there. Anything else → a literal text line.
-                    set.add(answerItemFromString(text, note));
-                    notes.push(text.startsWith("@tool:") ? "added output" : "added text");
-                }
-                let elements: Element[] | undefined, media: AnswerMedia[] | undefined;
-                if (selector != null) {
-                    let els: Element[] | null = null;
-                    try { els = queryAll(selector); } catch (e) { notes.push(`selector error: ${(e as Error).message}`); }
-                    if (els) {
-                        if (index != null) els = els[index] ? [els[index]] : [];
-                        if (!els.length) notes.push(`"${selector}" matched nothing`);
-                        else {
-                            const kept = els.slice(0, 50);
-                            const preview = kept.slice(0, 5).map(elLine).join("; ");
-                            // Screenshot-crop each designated element for the HUD card. Best-effort — a failed
-                            // capture just omits the media; the answer still stands.
-                            if (captureAnswer) { try { media = await captureAnswer(kept, note, show); } catch { /* no media */ } }
-                            set.add({ kind: "element", nodes: kept, preview, ...(media && media.length ? { media } : {}), ...(note ? { note } : {}) });
-                            elements = kept;
-                            notes.push(`added ${els.length} element(s)${note ? ` — ${note}` : ""}`);
-                        }
-                    }
-                }
-                const content = `${notes.length ? notes.join("; ") + ". " : ""}Answer set (${set.length}):\n${answerEcho(set)}`;
+                // The page resolves a selector in its own DOM; the call's other parts are the shared core (answer-set.ts),
+                // which the worker runs too for a run it built (worker-answer.ts).
+                let elements: Element[] | undefined;
+                const r = await answerCall(set, args, async (...a) => {
+                    const found = await selectAnswer(...a);
+                    if (found.count) elements = found.nodes as Element[];
+                    return found;
+                });
                 // Return the element(s)/media only when a selector added them: the debug render shows them and the
                 // delegation crosses the media to the HUD card; `answerManaged` tells the loop not to re-accumulate.
-                if (elements) return { content, elements, ...(media && media.length ? { answerMedia: media } : {}), answerManaged: true };
-                return content;
+                if (elements) return { content: r.content, elements, ...(r.media && r.media.length ? { answerMedia: r.media } : {}), answerManaged: true };
+                return r.content;
             }
-        })
+        }), { selectAnswer })
     ];
 };
 
