@@ -276,6 +276,21 @@ test("measureRun: a one-turn run that errored with no answer is an error, never 
     assert.deepEqual([d.errors, d.wrong], [1, 1], "the error counts once, as an error; only the answered run is wrong");
 });
 
+test("measureRun: a run whose last turn ended in the backend's error is unscored, with or without steps before it", () => {
+    // How the extension ends such a turn: an agent-result carrying the error (here after two steps, or at once).
+    const refused = (pre) => [start(), ...pre, { kind: "agent-result", ts: 99, error: 'HTTP 400 {"detail":"Model not found"}', summary: 'HTTP 400 {"detail":"Model not found"}' }];
+    const task = { succeeded: ({ answer }) => answer === "42" };
+    for (const events of [refused([]), refused([...step(1, "look", {}, "ok"), ...step(2, "exec", {}, "1")])]) {
+        const m = measureRun({ events }, task);
+        assert.equal(m.ok, false);
+        assert.equal(m.succeeded, null, "an error, never WRONG");
+    }
+    // A turn that answered and a later one that errored: the answered one is still the task's answer.
+    const two = [start(), ...step(1, "answer", {}, "ok"), end("42"), { kind: "agent-result", ts: 120, error: "HTTP 500" }];
+    assert.equal(measureRun({ events: two }, { followup: "again", succeeded: task.succeeded }).succeeded, null, "the follow-up never answered");
+    assert.equal(measureRun({ events: two }, task).succeeded, true, "one turn asked, one answered; the error after it does not unmake that");
+});
+
 test("spread / rate: nulls are skipped, never counted as zero", () => {
     assert.deepEqual(spread([2, 4, 6]), { mean: 4, sd: 2, n: 3 });
     assert.deepEqual(spread([]), { mean: null, sd: null, n: 0 });
