@@ -142,7 +142,7 @@ USE_ENV=1 node --import tsx tests/e2e/bench/run.mjs tests/e2e/panel/bloat.json \
 One run per model, all at once (`--jobs` overrides), each model PROBED first exactly as `panel.mjs` does, and
 `summary.md` in the sweep directory is the file `panel.mjs` writes. On the live page a person selects a wrong line in
 an answer and presses **mark wrong**; marks are kept in the sweep's `marks.jsonl` (an append-only log, each record saying who made it), and every later run of that model
-and turn is CHECKED: does its answer still contain the marked line (case and spacing folded)? The page and
+and turn is CHECKED: does its answer still contain the marked line (case, spacing and markdown syntax folded, so a line selected from the rendered answer matches the raw text)? Answers show as markdown, rendered as the panel renders one, or raw (the toggle on the Answers card). The page and
 `summary.md` say "still says" or "no longer says". A verbatim match is crude, but it turns a person's reading into
 something the next run is held to. For a model reading results, `panel.mjs` is the same thing without a page.
 

@@ -7,6 +7,13 @@ import type { BenchState, RunState } from "./state";
 import { Outcome, runDir } from "./runs";
 import { Hash } from "../../../../src/sidebar/copy-hash";
 import { FromSpec, specSource } from "./from-spec";
+import { markdown } from "../../../../src/sidebar/format";
+
+/** How answers are shown: rendered as the panel renders an answer, or the exact text the model sent. */
+type Mode = "md" | "raw";
+const MODE_KEY = "benchAnswerMode";
+/** Remembered per browser; guarded, since a saved report opened from file:// can throw on localStorage. */
+const readMode = (): Mode => { try { return localStorage.getItem(MODE_KEY) === "raw" ? "raw" : "md"; } catch { return "md"; } };
 
 type Target = { taskId: string; who: string; turn: number; hash: string | null };
 
@@ -17,7 +24,7 @@ function selectionIn(box: Element | null): string {
 }
 
 /** One answer: what the turn called, the answer itself, the marks on it, and (live) the button that adds one. */
-function AnswerCell({ r, turn, base, live, onMark }: { r: RunState; turn: number; base: string; live: boolean; onMark: (t: Target, quote: string) => void }) {
+function AnswerCell({ r, turn, base, live, mode, onMark }: { r: RunState; turn: number; base: string; live: boolean; mode: Mode; onMark: (t: Target, quote: string) => void }) {
     const t = r.turns?.[turn - 1];
     const txt = useRef<HTMLDivElement>(null);
     // Taken on mousedown, before the click can move the selection.
@@ -37,7 +44,10 @@ function AnswerCell({ r, turn, base, live, onMark }: { r: RunState; turn: number
                         onClick={() => onMark({ taskId: r.taskId, who: r.who, turn, hash: r.hash ?? null }, picked.current)}>mark wrong</button>
                     : null}
             </div>
-            <div class="txt tt from" data-tip={`What ${r.who} answered at turn ${turn}, verbatim.`} ref={txt}>{t.answer || "(no answer)"}</div>
+            {mode === "md" && t.answer
+                // The panel's renderer: it escapes the text before formatting it, so markup a model wrote is shown, never run.
+                ? <div class="txt md tt from" data-tip={`What ${r.who} answered at turn ${turn}, rendered as markdown (raw: the toggle above).`} ref={txt} dangerouslySetInnerHTML={{ __html: markdown(t.answer) }} />
+                : <div class="txt tt from" data-tip={`What ${r.who} answered at turn ${turn}, verbatim.`} ref={txt}>{t.answer || "(no answer)"}</div>}
             {(r.checks || []).filter((c) => c.turn === turn && c.still != null).map((c) => (
                 <div key={c.id} class={`flag ${c.here ? "here" : c.still ? "still" : "gone"}`}>
                     <b>{c.here ? "marked wrong" : c.still ? "still says a line marked wrong" : "no longer says a line marked wrong"}</b>
@@ -80,6 +90,8 @@ function MarkDialog({ target, quote, onClose }: { target: Target; quote: string;
 /** Every interview of the sweep, each as a grid: a header per run, then per turn the question and each run's answer. */
 export function Answers({ s, base, live }: { s: BenchState; base: string; live: boolean }) {
     const [marking, setMarking] = useState<{ target: Target; quote: string } | null>(null);
+    const [mode, setModeState] = useState<Mode>(readMode);
+    const setMode = (m: Mode) => { setModeState(m); try { localStorage.setItem(MODE_KEY, m); } catch { /* not remembered */ } };
     const ivs = s.interviews || {};
     const ids = Object.keys(ivs);
     if (!ids.length) return null;
@@ -89,6 +101,9 @@ export function Answers({ s, base, live }: { s: BenchState; base: string; live: 
             <header>
                 <h2>Answers</h2>
                 <span class="sub">{live ? "Select a line in an answer and press mark wrong; every later run of that model is checked for it." : "Each turn's answers, side by side."}</span>
+                <span class="seg" role="group" aria-label="how answers are shown">
+                    {(["md", "raw"] as const).map((m) => <button key={m} class={`btn small${mode === m ? " on" : ""}`} aria-pressed={mode === m} onClick={() => setMode(m)}>{m === "md" ? "markdown" : "raw"}</button>)}
+                </span>
             </header>
             {s.skipped?.length ? <div class="note">Skipped (failed the tool-call probe): {s.skipped.map((k) => <span key={k.model}><code>{k.model}</code> {k.why}; </span>)}</div> : null}
             {ids.map((id) => {
@@ -101,7 +116,7 @@ export function Answers({ s, base, live }: { s: BenchState; base: string; live: 
                             {ivs[id].map((q, n) => [
                                 <div key={`q${n}`} class="q"><span class="turn">Turn {n + 1}</span>
                                     <FromSpec class="asked" tip={`What the bench sent each model as turn ${n + 1}, verbatim, from ${specSource(s)}.${q.length > 600 ? " Cut at 600 characters here; the whole of it is in the spec." : ""}`}>{q.length > 600 ? `${q.slice(0, 600)} …` : q}</FromSpec></div>,
-                                ...runs.map((r) => <AnswerCell key={`a${n}${r.who}${r.repeat}`} r={r} turn={n + 1} base={base} live={live} onMark={(target, quote) => setMarking({ target, quote })} />),
+                                ...runs.map((r) => <AnswerCell key={`a${n}${r.who}${r.repeat}`} r={r} turn={n + 1} base={base} live={live} mode={mode} onMark={(target, quote) => setMarking({ target, quote })} />),
                             ])}
                         </div>
                     </div>

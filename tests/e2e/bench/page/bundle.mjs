@@ -40,6 +40,7 @@ export const pageSources = () => [
     path.join(ROOT, "src/sidebar/sidebar.css"),
     path.join(ROOT, "src/sidebar/palette.ts"),
     path.join(ROOT, "src/sidebar/copy-hash.tsx"),
+    path.join(ROOT, "src/sidebar/format.ts"),
     path.join(ROOT, "src/sidebar/tooltip-layer.ts"),
     path.join(ROOT, "src/sidebar/tip.ts"),
 ];
@@ -67,6 +68,8 @@ export async function appCss() {
         laneCss(css, { scoped: false }),
         // The panel's click-to-copy hash chip and the tooltip layer it shows its tip in (page/app.tsx installs it).
         sidebarRules(css, /\.hash\b|\.tt\b|\.tt-pop\b|\.tt-layer\b/),
+        // An answer rendered as markdown, styled as the panel styles one (format.ts `markdown`).
+        sidebarRules(css, /\.md\b|\.md-|(^|[\s,])\.code\b|pre\.code|\.hljs/),
         readFileSync(path.join(HERE, "page.css"), "utf8"),
     ].join("\n");
 }

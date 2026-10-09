@@ -70,9 +70,10 @@ test("the page is self-contained — no CDN and no external file; its script is 
         assert.match(html, /<!doctype html>/i);
         assert.match(html, /EventSource\("\/events"\)/, "it must subscribe to the stream");
         // A local dev view must not fetch from the internet. (The bundle names XML namespaces, `http://www.w3.org/…`,
-        // which are identifiers, not requests; what would fetch is an element pointing elsewhere.)
+        // which are identifiers, not requests, and highlight.js's deprecation warnings link its own GitHub pages in
+        // text it only ever prints; what would fetch is an element pointing elsewhere.)
         assert.doesNotMatch(html, /<script[^>]+src=|<link[^>]+href=|<img[^>]+src="?https?:/i, "nothing is loaded from elsewhere");
-        assert.doesNotMatch(html.replace(/https?:\/\/www\.w3\.org\/[\w/.-]*/g, ""), /https?:\/\/(?!127\.0\.0\.1)/, "no other URL at all");
+        assert.doesNotMatch(html.replace(/https?:\/\/www\.w3\.org\/[\w/.-]*|https:\/\/github\.com\/highlightjs\/highlight\.js\/[\w/.-]*/g, ""), /https?:\/\/(?!127\.0\.0\.1)/, "no other URL at all");
     } finally { await d.stop(); }
 });
 

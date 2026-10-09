@@ -174,3 +174,10 @@ h1.from, p.from { width: fit-content; max-width: 100% }
 .q .asked { color: var(--fg) }
 .q .asked::before { content: "“"; color: var(--fg-faint) }
 .q .asked::after { content: "”"; color: var(--fg-faint) }
+
+/* The answers' markdown / raw toggle, and a rendered answer (the panel's `.md` rules, lifted, do the rest). */
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; overflow: hidden }
+.seg .btn { border: none; border-radius: 0; background: transparent; color: var(--fg-dim) }
+.seg .btn.on { background: var(--panel); color: var(--fg); font-weight: 600 }
+.ans .txt.md { white-space: normal }
+.ans .txt.md > :last-child { margin-bottom: 0 }

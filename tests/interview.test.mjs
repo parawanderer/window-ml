@@ -117,6 +117,20 @@ test("a mark is checked against the same model's later answer at the same turn, 
     assert.deepEqual(checkMarks({ ...run("h6", "excludes"), taskId: "u" }, [mark]), [], "nor another interview's");
 });
 
+test("a quote selected from the RENDERED answer matches the raw markdown the model sent, and an old raw quote still does", () => {
+    const answer = "1. **Cut** the `title` clause: see [the docs](https://x.test/a_b).\n2. | col | _two_ |";
+    const run = { taskId: "t", who: "a", hash: "h", turns: [{ answer }] };
+    const mark = (quote) => ({ id: quote, taskId: "t", who: "a", turn: 1, quote, hash: null });
+    // What a browser's selection gives from the markdown view: no list number, no `**`, no backticks, the link's text.
+    const rendered = mark("Cut the title clause: see the docs.");
+    // UPGRADE: a mark made before answers rendered as markdown quoted the raw text, syntax and all.
+    const raw = mark("**Cut** the `title` clause");
+    const table = mark("col two");
+    const wrong = mark("Keep the title clause");
+    assert.deepEqual(checkMarks(run, [rendered, raw, table, wrong]).map((c) => [c.id, c.still]),
+        [[rendered.id, true], [raw.id, true], [table.id, true], [wrong.id, false]]);
+});
+
 test("a mark from the page is accepted only with its fields typed and bounded", () => {
     const ok = { taskId: "t", who: "a", turn: 1, quote: "q" };
     assert.deepEqual(validMark(ok), { taskId: "t", who: "a", turn: 1, quote: "q", note: "", hash: null });

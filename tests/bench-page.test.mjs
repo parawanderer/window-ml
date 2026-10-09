@@ -33,7 +33,7 @@ test("the answers card sets each turn's answers side by side, models as columns,
     assert.ok(answers);
     assert.deepEqual([...answers.querySelectorAll(".ans .txt")].map((e) => e.textContent), ["a did it", "b did it", "a reviewed", "b reviewed"], "row by turn, column by model");
     assert.ok(answers.querySelector('a.view[href="rev/model-a/r0/run.md.html"]'), "each answer opens its run in the viewer");
-    assert.equal(answers.querySelectorAll("button").length, 0, "a saved page cannot store a mark, so it offers none");
+    assert.equal(answers.querySelectorAll("button.danger").length, 0, "a saved page cannot store a mark, so it offers none");
 });
 
 test("an answer is text: markup a model wrote (or copied off a hostile page) is shown, never run", async () => {
@@ -54,6 +54,26 @@ test("a sweep with no interview has no Answers card, and one with nothing run sh
     const doc = await dashboard({ runs: [{ combo: {}, who: "x", taskId: "t", repeat: 0, state: "pending" }] });
     assert.equal(card(doc, "Answers"), null);
     assert.match(card(doc, "Runs").textContent, /queued/);
+});
+
+test("an answer renders as markdown with the panel's renderer, and the toggle shows the exact text the model sent", async () => {
+    const answer = "**Cut** the `title` clause:\n\n- it repeats\n- <script>window.__pwned=1</script>";
+    const doc = await dashboard({
+        dims: ["model"], interviews: { rev: ["q"] },
+        runs: [{ combo: { model: "a" }, who: "a", taskId: "rev", repeat: 0, state: "done", ok: true, path: "p", turns: [{ answer, tools: [], capped: false }], checks: [] }],
+    });
+    const txt = () => card(doc, "Answers").querySelector(".ans .txt");
+    assert.ok(txt().classList.contains("md"), "markdown is the default");
+    assert.equal(txt().querySelector("strong").textContent, "Cut");
+    assert.equal(txt().querySelector("code").textContent, "title");
+    assert.equal(txt().querySelectorAll("li").length, 2);
+    assert.equal(txt().querySelectorAll("script").length, 0, "markup a model wrote is escaped, never run");
+    assert.equal(doc.defaultView.__pwned, undefined);
+    const raw = [...card(doc, "Answers").querySelectorAll(".seg button")].find((b) => b.textContent === "raw");
+    raw.click();
+    await new Promise((r) => setTimeout(r, 0));
+    assert.ok(!txt().classList.contains("md"));
+    assert.equal(txt().textContent, answer, "raw is the answer verbatim");
 });
 
 // --- the dashboard's run identity: models and hash ---
@@ -86,7 +106,7 @@ test("text the page did not write says where it came from: the sweep's name and 
     assert.equal(asked[0].textContent, "What code is shown?");
     assert.match(tip(asked[0]), /sent each model as turn 1, verbatim/);
     assert.match(tip(asked[1]), /Cut at 600 characters here/);
-    assert.match(tip(doc.querySelector(".ans .txt")), /What a answered at turn 1, verbatim/);
+    assert.match(tip(doc.querySelector(".ans .txt")), /What a answered at turn 1, rendered as markdown/);
 });
 
 // --- the dashboard's Timeline card ---
