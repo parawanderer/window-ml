@@ -1134,7 +1134,7 @@ test("toolTokens OFF (default): NO `token` param on any tool schema, and NO toke
     const payload = world.runtimeCalls.find(c => c.payload && c.payload.tools).payload;
     for (const t of payload.tools) assert.ok(!t.function.parameters?.properties?.token, `${t.function.name} must NOT expose a token param when tokens are off`);
     const sys = payload.messages.find(m => m.role === "system")?.content || "";
-    assert.doesNotMatch(sys, /@tool:|SHOWING TOOL OUTPUTS/, "no token-feature text in the system prompt when off");
+    assert.doesNotMatch(sys, /@tool:|TOOL OUTPUT TOKENS/, "no token-feature text in the system prompt when off");
 });
 
 test("toolTokens ON: the CITABLE tools expose a `token` param + the system prompt carries the clause", async () => {
@@ -1144,7 +1144,7 @@ test("toolTokens ON: the CITABLE tools expose a `token` param + the system promp
     const payload = world.runtimeCalls.find(c => c.payload && c.payload.tools).payload;
     const pyTool = payload.tools.find(t => t.function.name === "python_exec");
     assert.ok(pyTool.function.parameters.properties.token, "python_exec exposes the token param when on");
-    assert.match(payload.messages.find(m => m.role === "system").content, /SHOWING TOOL OUTPUTS/, "the clause is in the prompt when on");
+    assert.match(payload.messages.find(m => m.role === "system").content, /TOOL OUTPUT TOKENS\./, "the clause is in the prompt when on");
 });
 
 test("toolTokens OFF: passing token:true is a harmless NO-OP (no token minted, no outputs)", async () => {

@@ -21,7 +21,7 @@ const task = (spec, id) => {
 const scores = (t, answer) => t.succeeded({ answer, steps: [], events: [], result: null });
 
 test("every spec is well formed, and every task id is unique", async () => {
-    for (const name of ["smoke", "pointer-ids", "prompt-budget-tooltokens"]) {
+    for (const name of ["smoke", "pointer-ids"]) {
         const spec = await load(name);
         assert.ok(spec.name && spec.tasks.length, `${name} must declare a name and tasks`);
         const ids = spec.tasks.map((t) => t.id);

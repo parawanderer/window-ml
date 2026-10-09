@@ -1,7 +1,8 @@
 # Prompt budget: trimming the system prompt and tool schemas, and measuring it
 
-Status: **steps 1 and 2 done (#448, #451); of step 3, the `ml.current` cut shipped unmeasured (#450) and `answer` left
-the default kit (#464); the rest of step 3 needs the bench.** Started 2026-10-08, updated 2026-10-09.
+Status: **steps 1 and 2 done (#448, #451); of step 3, the `ml.current` cut shipped unmeasured (#450), `answer` left
+the default kit (#464), and the tool-output-tokens cut shipped measured (below); the rest of step 3 needs the bench.**
+Started 2026-10-08, updated 2026-10-09.
 
 Every model call carries the system prompt and every tool's schema. This is the plan for making that smaller
 without making runs worse, and the record of what has been measured so far. It is here, not in `tmp/`, so whoever
@@ -70,7 +71,7 @@ These change what the model knows without asking, so each is a bet that it looks
 | Pipe dialect worked examples | the dialect grammar stays; examples to `agent_api_docs` |
 | `fetch_url`'s table details (pandas dtypes, `df.head()`) | the table result itself, which already prints them |
 | `exec`'s description repeating `ml.fetch`, `ml.a11y`, `ml.state` | `agent_api_docs` |
-| Tool-output-tokens clause (2,669 chars in a UI run) | shorter clause; the citation grammar to `dereference` |
+| Tool-output-tokens clause (2,669 chars in a UI run) | SHIPPED, measured: 3,738 → ~1,470 chars with `DEREF_CLAUSE` |
 
 **The `ml.current` one shipped without the bench (#450)**, on the owner's call: when `agent_api_docs` is in the
 toolset, which it is whenever `exec` is (#456), the clause is one sentence and the signature is in the docs; the long
@@ -101,6 +102,27 @@ run's own artifact, never from what the model says it did (the pointer pilot sco
 **Dimensions**: variant (current vs one cut) × model (the panel models) × repeats (3). Report pass rate, calls per
 task and input tokens per call, with spread. **Decision rule**: a cut ships when pass rate does not drop on any model
 and tokens per call fall; a cut that costs one model a task it used to pass is reworked, not shipped.
+
+## Step 3 result: the tool-output-tokens cut (2026-10-09)
+
+Measured as this doc prescribes, with `__ML_PROMPT_VARIANT__` builds and a sweep spec over the pointer A/B's two
+tasks (`cite-or-retype`, `read-back`), both deleted once the cut won (git history has them, branch
+`feat/prompt-variant-tooltokens`). The clause plus `DEREF_CLAUSE` went from 3,738 characters to about 1,470.
+
+- **The first cut lost.** On DeepSeek V4 Pro, re-emission on `cite-or-retype` rose in all three sweeps, to 0.46
+  ±0.28 against 0.17 ±0.20 at 8 repeats: the model wrote the rows out as a markdown table instead of embedding the
+  pointer. Pass rate held, so the decision rule's other half was the one that caught it.
+- **One sentence fixed it** ("Asked to show rows, a table or a value a tool returned, embed its pointer: never write
+  it out again as a markdown table or a list"): 0.19 ±0.28 on V4 Pro, against 0.17 for the current text.
+- **That version held on 12 models**, pass rate at or above the current text on every one: gemma4:31b, gemma4:26b,
+  qwen3.5:9b (3 repeats); DeepSeek V4 Pro (8), DeepSeek Flash, Gemini Flash (5); Claude Sonnet 5.5, GPT-6 Luna,
+  Kimi K3, GLM-5.3 Flash, Gemini 3.6 Flash, MiniMax M3 (3). Re-emission was equal or within one standard deviation
+  everywhere; Kimi K3's rise (0.00 → 0.20) is numbers typed into its own exec code, and its answers embedded.
+- **What the sweeps found on the way**, all fixed: a follow-up turn lost when turn 1 navigated (#483); the read-back
+  seed typed its data as a literal and never forced a `dereference` (#487, which also fixed two exec-output bugs);
+  OpenWebUI relays OpenRouter's rate limit as a 400, which the extension did not back off (#498).
+- **Not covered**: streamed runs (the bench gained `stream` in #491 after these sweeps; wording should not depend on
+  it), and repeats beyond 3 on most models. The decision rule was met; a small effect on one model would not show.
 
 ## Where the bench was left (check before step 3)
 
