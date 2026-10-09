@@ -1619,7 +1619,10 @@ details.io[open] > summary .io-preview { display: none; }
 .r-action-note { color: var(--fg-dim); }
 /* fetch `ask` mode: the question on its own line, then a dim "Answered by … · N tokens" meta line. */
 .r-action-ask { margin-top: 5px; color: var(--fg); }
-.r-action-ask b { font-weight: 700; }
+/* "Model asked:" and the question as the model's own words: quoted and italic, the way a call's title is shown, so it
+   does not read as the user's question. The label carries a tip on who asked whom. */
+.r-action-ask-lbl { font-weight: 600; cursor: help; text-decoration: underline dotted var(--fg-faint); text-underline-offset: 3px; }
+.r-action-ask-q { font-style: italic; color: var(--fg-dim); }
 .r-action-meta { margin-top: 3px; font-size: 0.88em; color: var(--fg-dim); }
 
 /* The Markdown ladder (fetch_url's In slot): a resolution TREE — what was tried, what worked, what was never
