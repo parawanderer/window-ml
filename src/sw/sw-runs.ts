@@ -99,8 +99,10 @@ export function isWorkerRun(runId: unknown): boolean {
  * @returns the payload, its hint's session dropped when it names a worker-built run
  */
 export function withoutWorkerSession<T extends { hint?: { session?: unknown } | null }>(payload: T): T {
-    const s = payload?.hint?.session;
-    if (typeof s !== "string" || !s.startsWith("wml-") || !isWorkerRun(s.slice(4))) return payload;
+    // Read the session as `wireHint` will send it (trimmed, capped), so padding cannot slip a run's session past this.
+    const raw = payload?.hint?.session;
+    const s = typeof raw === "string" ? raw.trim().slice(0, 128) : undefined;
+    if (!s || !s.startsWith("wml-") || !isWorkerRun(s.slice(4))) return payload;
     const { session: _dropped, ...hint } = payload.hint!;
     return { ...payload, hint };
 }

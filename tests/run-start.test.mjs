@@ -332,6 +332,11 @@ test("a page's model call cannot file its generation under a run the worker buil
     await ask(`wml-${hash}`);
     await ask("wml-pagerun1");
     const hints = chats().slice(-2).map((c) => c.body.hint);
+    // Padding the wire trims away cannot slip the run's session past the check either.
+    for (const padded of [` wml-${hash}`, `wml-${hash}\t`, `\n wml-${hash} `]) {
+        await ask(padded);
+        assert.equal(chats().at(-1).body.hint?.session, undefined, `padded ${JSON.stringify(padded)} was dropped; got ${JSON.stringify(chats().at(-1).body.hint)}`);
+    }
     assert.equal(hints[0]?.session, undefined, `the worker-built run's session was dropped; got ${JSON.stringify(hints[0])}`);
     assert.equal(hints[0]?.use, "agent", "the rest of the hint passes");
     assert.equal(hints[1]?.session, "wml-pagerun1", "a session that is not a worker-built run's passes as it came");
