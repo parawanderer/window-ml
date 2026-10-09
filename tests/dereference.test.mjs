@@ -512,6 +512,15 @@ test("a cut output tells the model where the rest is and how to read it, on the 
     assert.doesNotMatch(out, / {2}/, "model-facing text never pads");
 });
 
+test("a cut RETURN value (nothing printed) is cut the same way: its pointer holds the fuller value, and the note says so", async () => {
+    const full = Array.from({ length: 30 }, (_, i) => `rep ${i + 1},${i * 10}`).join("\n");
+    const { results } = await drive(
+        [call("exec", { js: "x", maxChars: 120 })],
+        () => ({ result: full.slice(0, 120) + "… [first 120 of " + full.length + " chars]", renderOut: { type: "exec-out", value: full, valueSeen: 120 } }));
+    const out = results.find((r) => r.name === "exec").result;
+    assert.match(out, new RegExp(`\\[your copy is cut: @tool:[0-9a-f]{7} holds ${full.length} chars of this output\\.`));
+});
+
 test("an output the model got whole carries no cut note", async () => {
     const { results } = await drive([call("exec", { js: "x" })], () => ({ result: "short", renderOut: { type: "exec-out", stdout: "short" } }));
     assert.equal(results.find((r) => r.name === "exec").result, "short");

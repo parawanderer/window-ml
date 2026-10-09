@@ -73,3 +73,14 @@ test("every place that STATES a cap reads it from OUTPUT_CAP, so changing the ta
     assert.match(formatReadonlyExec("x".repeat(d + 100), []).result, new RegExp(`^x{${d}}… \\[first ${d} of ${d + 100} chars\\]$`));
     assert.match(formatReadonlyExec(null, ["y".repeat(d + 7)]).result, new RegExp(`… \\[first ${d} of ${d + 7} chars\\]`));
 });
+
+test("the read-only path honours a SMALLER maxChars, as the approved path does; a larger one stays at the default", async () => {
+    // A tighter cap is always allowed (resolveOutputCap). The read-only formatter ignored the call's maxChars, so the
+    // same exec cut at 120 when approved came back whole when its code happened to be read-only.
+    const { formatReadonlyExec } = await import("../src/agent/approval.ts");
+    const d = OUTPUT_CAP.exec.default;
+    assert.match(formatReadonlyExec("x".repeat(300), [], undefined, 0, 120).result, /^x{120}… \[first 120 of 300 chars\]$/);
+    assert.match(formatReadonlyExec(null, ["y".repeat(300)], undefined, 0, 50).result, /… \[first 50 of 300 chars\]/);
+    assert.match(formatReadonlyExec("x".repeat(d + 100), [], undefined, 0, d * 4).result, new RegExp(`^x{${d}}… \\[first ${d} of`), "never above the default here");
+    assert.match(formatReadonlyExec("x".repeat(d + 100), [], undefined, 0, "nonsense").result, new RegExp(`^x{${d}}…`), "an invalid value is the default");
+});

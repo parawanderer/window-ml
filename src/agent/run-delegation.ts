@@ -233,7 +233,7 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
                 // Each line as it prints, stamped here (the executor) like an approved exec's. A refused try's lines
                 // are discarded by the loop, which owns the stream.
                 onLog: opts.onStream ? (line) => opts.onStream!(line + "\n", Date.now()) : undefined }));
-            const { result, elements, render } = formatReadonlyExec(ro.value, ro.logs, undefined, ro.dropped);
+            const { result, elements, render } = formatReadonlyExec(ro.value, ro.logs, undefined, ro.dropped, (args as { maxChars?: unknown }).maxChars);
             const { in: renderIn, out: renderOut } = descriptorFor(tool, { result, elements, render }, args);
             const urls = [...new Set(ro.reused)];   // cached ml.fetch URLs this survey reused → the "reused a grant" note
             return { result, elementCount: elements ? elements.length : undefined, renderIn, renderOut, readonly: true, reused: urls.length ? urls.map(u => ({ kind: "fetch-url" as const, detail: u })) : undefined, ...(log?.ops.length ? { answerOps: log.ops } : {}) };

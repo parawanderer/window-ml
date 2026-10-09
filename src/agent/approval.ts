@@ -7,7 +7,7 @@ import type { ApprovalRequest, ApprovalDecision } from "../contract/contract-age
 import type { RenderDescriptor } from "../contract/contract-render";
 import { UI_OUT_CAP } from "../contract/contract-chat";
 import { clipHeadTail, panelHead, ceilingNote } from "./output-clip";
-import { OUTPUT_CAP } from "../contract/contract-pointers";
+import { OUTPUT_CAP, resolveOutputCap } from "../contract/contract-pointers";
 import { NotInDialect, Denied, describeSwaps, type PrintSwap } from "../readonly-exec";
 import { clipOut, clipValue, elPath } from "../dom/dom";
 import { suspiciousArgsWarning } from "./security";
@@ -124,7 +124,10 @@ export function formatReadonlyExec(result: unknown, logs: string[],
      *  cut, so the cut can never remove the sentence saying the part is a view. */
     prints?: { console?: readonly PrintSwap[]; value?: readonly PrintSwap[] },
     /** Characters printed past OUTPUT_CEILING and not kept (`evalReadonly`'s `dropped`). */
-    dropped = 0): { result: string; elements?: Node[]; render?: RenderDescriptor } {
+    dropped = 0,
+    /** The call's own `maxChars`. A SMALLER cap is honoured here as the approved path honours it; a larger one never
+     *  reaches this path (a raise is refused the read-only try, so it goes to the human), and is held at the default. */
+    maxChars?: unknown): { result: string; elements?: Node[]; render?: RenderDescriptor } {
     const after = (lines?: string[]) => lines?.length ? `\n${lines.join("\n")}` : "";
     /** The notes for the substitutions that START inside the first `cut` characters of `text`: each is found by its own
      *  JSON, in print order, so the same view printed twice is two places, not one. */
@@ -140,7 +143,7 @@ export function formatReadonlyExec(result: unknown, logs: string[],
     };
     // The SAME default the approved path reads through `resolveOutputCap`: this was its own literal 500, so a change
     // to the table would have moved approved runs and left every read-only survey (the common path) where it was.
-    const MODEL_CAP = OUTPUT_CAP.exec.default;
+    const MODEL_CAP = Math.min(resolveOutputCap("exec", maxChars).cap, OUTPUT_CAP.exec.default);
     const kept = logs.join("\n");
     // Past the ceiling the model is told AFTER its clip, and the panel's last line says the same (output-clip.ts).
     const overNote = dropped ? ceilingNote(dropped) : "";
