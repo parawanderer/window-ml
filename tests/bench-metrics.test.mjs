@@ -266,6 +266,16 @@ test("measureRun: a task with a follow-up whose run errored before the follow-up
     assert.equal(measureRun({ events: one, error: "x" }, { asks: ["q2"], succeeded: task.succeeded }).succeeded, null);
 });
 
+test("measureRun: a one-turn run that errored with no answer is an error, never a wrong answer", async () => {
+    const { doneSummary } = await import("../tests/e2e/bench/sinks.mjs");
+    // A provider's 400 before the first step: nothing to judge, so a predicate must not call it wrong.
+    const m = measureRun({ events: [], error: "HTTP 400: This request would exceed your available credits" }, { succeeded: ({ answer }) => answer === "42" });
+    assert.equal(m.ok, false);
+    assert.equal(m.succeeded, null);
+    const d = doneSummary("s", [{ state: "done", ok: m.ok, succeeded: m.succeeded }, { state: "done", ok: true, succeeded: false }], { report: "r" });
+    assert.deepEqual([d.errors, d.wrong], [1, 1], "the error counts once, as an error; only the answered run is wrong");
+});
+
 test("spread / rate: nulls are skipped, never counted as zero", () => {
     assert.deepEqual(spread([2, 4, 6]), { mean: 4, sd: 2, n: 3 });
     assert.deepEqual(spread([]), { mean: null, sd: null, n: 0 });

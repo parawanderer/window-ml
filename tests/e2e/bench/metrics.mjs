@@ -417,10 +417,11 @@ export function measureRun(run, task = {}, opts = {}) {
     const answer = answers[0] ?? result?.summary ?? "";
     const finalAnswer = answers[answers.length - 1] ?? answer;
     let succeeded = null;
-    // A task of several turns (a follow-up, an interview's asks) is about its LATER turns too, so a run that errored
-    // before they all answered is not scored at all: its first answer passing says nothing about what the task measures.
+    // A run that ERRORED before every turn answered is not scored at all: an error, never a wrong answer. With no answer
+    // there is nothing to judge (a provider's 400 read as the model failing the task), and a task of several turns (a
+    // follow-up, an interview's asks) is about its later turns too, which its first answer passing says nothing about.
     const turnsExpected = 1 + (task.followup ? 1 : 0) + (task.asks?.length ?? 0);
-    const unfinished = !!(error || done?.error) && answers.length < turnsExpected && turnsExpected > 1;
+    const unfinished = !!(error || done?.error) && answers.length < turnsExpected;
     if (typeof task.succeeded === "function" && !unfinished) {
         try { succeeded = !!task.succeeded({ answer, finalAnswer, answers, events, result, steps }); }
         catch { succeeded = false; }   // a predicate that throws is a failed run, not a broken bench
