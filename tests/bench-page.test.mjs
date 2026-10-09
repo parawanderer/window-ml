@@ -246,6 +246,19 @@ test("a run the backend refused for a rate limit says so, with the fix, instead 
     assert.match([...doc.querySelectorAll(".badge.bad")].find((b) => b.textContent === "rate-limited").dataset.tip, /--jobs|--lanes/);
 });
 
+test("one running run's badges count together: the Running card, the Answers header and the Runs table", async (t) => {
+    const runs = [{ combo: { model: "m" }, who: "m", taskId: "iv", repeat: 0, state: "running", startedAt: Date.now() - 130_000, path: "iv/m/r0", live: { step: 8, maxSteps: 10, tool: "exec" } }];
+    const doc = await dashboard({ dims: ["model"], runs, finished: null, interviews: { iv: ["q1"] } });
+    t.after(() => doc.defaultView.close());   // the page's clock is an interval
+    const read = () => [...doc.querySelectorAll(".badge.run")].map((b) => b.textContent);
+    assert.equal(read().length, 3);
+    // The Answers card has hooks and unchanged props on a tick, so a clock carried by re-rendering the page froze it there.
+    await new Promise((r) => setTimeout(r, 2200));
+    const after = read();
+    assert.equal(new Set(after).size, 1, after.join(" | "));
+    assert.match(after[0], /2m1[2-9]s/);
+});
+
 // --- a run's own page ---
 
 test("a run page draws its lane from inert data, with its script admitted by hash and nothing else", () => {
