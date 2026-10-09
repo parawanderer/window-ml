@@ -28,7 +28,7 @@ const { jsonResponse, loadBackground } = require("./helpers");
 
 const T = { timeout: 20000 };
 const DIST = path.join(path.dirname(new URL(import.meta.url).pathname), "..", "dist");
-const SITE = { id: 7, windowId: 3, url: "https://site.example/page", title: "Site" };
+const SITE = { id: 7, windowId: 3, active: true, url: "https://site.example/page", title: "Site" };
 const VIEWPORT = "data:image/png;base64,VIEWPORTCAPTURE";
 
 // --- the fake canvas: every image is a token with a recipe ---
@@ -285,10 +285,10 @@ test("native look of the viewport: the page sends one CAPTURE_TAB and no model c
     } finally { w.page.close(); }
 });
 
-test("with CDP off, the page's CAPTURE_TAB is a captureVisibleTab of the sender tab's window", T, async () => {
+test("with CDP off, the page's CAPTURE_TAB is a captureVisibleTab of the sender tab's window, taken while that tab is the one showing", T, async () => {
     const w = await startVisionRun({ model: "vlm-driver", cfg: { cdp: false }, turns: [{ name: "look", args: {} }] });
     try {
-        assert.deepEqual(plain(w.bg.captures), [[SITE.windowId, { format: "png" }]], "whatever tab is visible in that window, not the run's tab by id");
+        assert.deepEqual(plain(w.bg.captures), [[SITE.windowId, { format: "png" }]], "the window's capture, which is the run's tab because it is showing (#479 refuses otherwise)");
         assert.deepEqual(seenByDriver(w).images, [VIEWPORT]);
     } finally { w.page.close(); }
 });
