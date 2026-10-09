@@ -22,7 +22,8 @@
 //   … --hold all | failures | k=v   keep those cells' runs open after their last turn, each in a detached process, to go
 //                         on talking to (`failures`: only a run that errored or was wrong). The sweep still exits; the
 //                         attach lines are printed above BENCH DONE (bench/hold.mjs lists and releases them).
-//                         `--hold-idle 60` releases one after that many minutes with no message (default 30)
+//                         `--hold-idle 60` releases one after that many minutes with no message (default 30). A held
+//                         run's browser is a minimised window (`hold.mjs --show` brings it up); `--hold-headless` not
 //   … --port 7400         serve on a specific port (the default is stable, so a browser tab can just
 //                         reload between sweeps — in VS Code, cmd-click the URL and pick "Simple
 //                         Browser" to dock the page as an editor tab)
@@ -52,7 +53,7 @@ import { fileURLToPath } from "node:url";
 import { runOnce, resolveBackendFromEnv, renderRun, FAKE_MODEL } from "../run-once.mjs";
 import { measureRun, aggregate, isRateLimit } from "./metrics.mjs";
 import { expandCells, cellKey, cellPath, comboLabel, buildGroups, parseSelector, slug, cellStream, runConfig } from "./cells.mjs";
-import { holdMode, loadSpec, startHeld, HOLD_IDLE_MIN } from "./hold.mjs";
+import { holdMode, loadSpec, startHeld, canShow, HOLD_IDLE_MIN } from "./hold.mjs";
 import { writeReport, mdSink, terminalSink, doneSummary, doneLine } from "./sinks.mjs";
 import { startDashboard, staticPage, servedSweep } from "./serve.mjs";
 import { pageSources } from "./page/bundle.mjs";
@@ -68,7 +69,7 @@ import { openScores, modelInfo, runRow, logRuns, readRuns, scoreboard, sweepScor
 import { watch as watchFs } from "node:fs";
 // The sweep's timeline: each run's events as the resource panel derives them; the page draws them with its lane.
 const { eventsFrom } = await import("../../../src/sidebar/resource/model-stats.ts");
-import { loadInterview, interviewDriver, readTurns, probe, panelSummary, promptChars, checkMarks, validMark } from "../interview.mjs";
+import { loadInterview, interviewDriver, readTurns, followContinued, probe, panelSummary, promptChars, checkMarks, validMark } from "../interview.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../../..");
@@ -87,6 +88,7 @@ function parseArgv(argv) {
         else if (a === "--skip") args.skip.push(argv[++i]);
         else if (a === "--hold") args.hold.push(argv[++i]);
         else if (a === "--hold-idle") args.holdIdle = Number(argv[++i]) || undefined;
+        else if (a === "--hold-headless") args.holdHeadless = true;
         else if (a === "--repeats") args.repeats = Math.max(1, Number(argv[++i]) || 1);
         else if (a === "--dry") args.dry = true;
         else if (a === "--no-cache") args.cache = false;
@@ -241,7 +243,7 @@ async function runCell(cell, ctx, index) {
         if (hold) {
             // Its own detached process (hold.mjs), which hands the run back here to be measured and can outlive the sweep.
             held = startHeld({ ...ctx.held.job, index, key, fingerprint: ctx.fingerprint, dir, env, sweep: ctx.spec.name, label,
-                idleMs: (ctx.held.idleMin ?? t.holdIdleMinutes ?? HOLD_IDLE_MIN) * 60_000 }, { onEvent, onTurns });
+                window: ctx.held.window, idleMs: (ctx.held.idleMin ?? t.holdIdleMinutes ?? HOLD_IDLE_MIN) * 60_000 }, { onEvent, onTurns });
             ({ run, statuses } = await held.ran);
         } else run = await runOnce(runConfig(cell, env, dir, { ...(nextTurn ? { nextTurn } : {}), onEvent }));
     } catch (err) {
@@ -410,7 +412,9 @@ const main = async () => {
         // What a held cell's own process needs to find the same cell in the same spec (hold.mjs), and the runs kept open.
         holdCli: args.hold,
         held: { job: { specPath: path.resolve(args.specPath), load: { models: args.models, surface: args.surface, turnMinutes: args.turnMinutes }, select: { only: parseSelector(args.only), skip: parseSelector(args.skip), repeats: args.repeats } },
-            idleMin: args.holdIdle, runs: [] },
+            idleMin: args.holdIdle, runs: [],
+            // A minimised real window, so a person can bring it up later (hold.mjs --show); headless where there is no screen.
+            window: args.holdHeadless || !canShow() ? null : "minimized" },
         // CLI beats the spec: a sweep you are debugging wants `--capture always` without editing the file.
         capture: args.capture || spec.capture || "failure",
         log: (s) => console.log(s),
@@ -530,6 +534,8 @@ const main = async () => {
         }
     }
     push();
+    // A run held open mid-sweep can be talked to before the sweep ends: its added turns go on the page as they come.
+    const unfollow = dash ? followContinued(sweepDir, () => runsState, push) : () => {};
 
     // Per-model LANES (lanes.mjs): each model's cells in turn, different models at once when the box says the next one
     // fits beside what is loaded. Without a real backend every cell is the fake's, so it is one lane.
@@ -543,6 +549,7 @@ const main = async () => {
         });
     } else await pool(cells, args.jobs, (cell, i) => runCell(cell, ctx, i));
     const finished = Date.now();
+    unfollow();
     resPoll?.stop();
     if (pdfBrowser) await (await pdfBrowser).close().catch(() => {});
 
@@ -567,6 +574,7 @@ const main = async () => {
         repoPath: results[i] ? path.relative(ROOT, results[i].dir) : "",
         who: runsState[i].who,
         ...(runsState[i].held ? { held: runsState[i].held } : {}),
+        ...(runsState[i].continued?.length ? { continued: runsState[i].continued } : {}),
         ...(runsState[i].turns ? { turns: runsState[i].turns, checks: runsState[i].checks ?? [] } : {}),
     }));
 

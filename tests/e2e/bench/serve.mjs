@@ -259,7 +259,7 @@ export const scoresPage = (board) => pageHtml(board, { script: scoresScript, tit
  */
 export async function serveSweep(dir, { port = DEFAULT_PORT } = {}) {
     const { readMarks, addMark } = await import("./mark.mjs");
-    const { checkMarks, validMark } = await import("../interview.mjs");
+    const { checkMarks, validMark, followContinued } = await import("../interview.mjs");
     const { pageSources } = await import("./page/bundle.mjs");
     const { openScores, readRuns, scoreboard } = await import("./scores.mjs");
     const sweepDir = resolve(dir);
@@ -284,6 +284,17 @@ export async function serveSweep(dir, { port = DEFAULT_PORT } = {}) {
         },
     });
     await recheck();
+    // Turns someone sends a run held open after the sweep (bench/hold.mjs): onto the open page, and into page.json and
+    // report.html, so the saved copy shows them too.
+    let saveTimer = null;
+    const unfollow = followContinued(sweepDir, () => state.runs, () => {
+        dash?.update(state);
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(async () => {
+            await writeFile(join(sweepDir, "page.json"), JSON.stringify({ ...state, ...(state.scores ? { scores: { ...state.scores, href: "../scores.html" } } : {}) }, null, 2)).catch(() => {});
+            await writeFile(join(sweepDir, "report.html"), await staticPage({ ...state, ...(state.scores ? { scores: { ...state.scores, href: "../scores.html" } } : {}) })).catch(() => {});
+        }, 500);
+    });
     let marksTimer = null;
     const marksWatch = (() => {
         try { return fsWatch(sweepDir, (_, f) => { if (f === "marks.jsonl") { clearTimeout(marksTimer); marksTimer = setTimeout(recheck, 100); } }); }
@@ -293,6 +304,7 @@ export async function serveSweep(dir, { port = DEFAULT_PORT } = {}) {
     await mkdir(dirname(SERVER_FILE), { recursive: true });
     await writeFile(SERVER_FILE, JSON.stringify({ pid: process.pid, port: Number(new URL(url).port), url, dir: sweepDir, at: new Date().toISOString() }));
     const stop = async () => {
+        unfollow();
         clearTimeout(marksTimer);
         marksWatch?.close();
         await dash.stop();

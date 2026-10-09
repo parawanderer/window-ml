@@ -91,6 +91,8 @@ a.plain:hover { text-decoration: none } a.plain:hover .badge { border-color: var
 /* Answers: a grid, a column per run; each answer its own bordered box. */
 .answers + .answers { margin-top: 16px }
 .answers h3 { margin: 0 0 8px }
+/* A run's added turns (Continued): one column, the run named once above them. */
+.answers.continued { display: grid; gap: 8px; align-items: start }
 .agrid { display: grid; gap: 8px 12px; align-items: start; overflow-x: auto; padding-bottom: 4px }
 .ah { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 0 0 6px; border-bottom: 1px solid var(--border) }
 .q { grid-column: 1 / -1; margin-top: 10px; color: var(--fg-dim) }

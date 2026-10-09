@@ -75,6 +75,49 @@ export function readTurns(dir, max = Infinity) {
 }
 
 /**
+ * The turns someone added to a run after its own (a held bench run, bench/hold.mjs, logs each in `continued.jsonl`): what
+ * was asked and when, with the turn's answer read back from its outbox report. [] when there are none.
+ * @returns {{ turn: number, ask: string, at: string, answer: string, tools: string[], capped: boolean }[]}
+ */
+export function readContinued(dir) {
+    let lines;
+    try { lines = fs.readFileSync(path.join(dir, "continued.jsonl"), "utf8").split("\n").filter(Boolean); } catch { return []; }
+    return lines.flatMap((l) => {
+        let c; try { c = JSON.parse(l); } catch { return []; }
+        const p = path.join(dir, "outbox", `turn-${c.turn}.md`);
+        const t = fs.existsSync(p) ? parseTurnReport(fs.readFileSync(p, "utf8")) : { answer: "", tools: [], capped: false };
+        return [{ turn: c.turn, ask: String(c.ask ?? ""), at: c.at ?? null, ...t }];
+    });
+}
+
+/**
+ * Keep each run's added turns (`continued`, readContinued) current: read now for every run with a directory, then every
+ * `ms` for the runs held open, calling `onChange` when one changed. `runs` are page run states (`path` relative to
+ * `sweepDir`, `held` set while held); the list is read afresh each time, so a run held later is followed too.
+ * @returns {() => void} stops following
+ */
+export function followContinued(sweepDir, runs, onChange, ms = 1500) {
+    const seen = new Map();
+    const look = (all) => {
+        let changed = false;
+        for (const r of runs()) {
+            if (!r.path || (!all && !r.held)) continue;
+            const dir = path.join(sweepDir, r.path);
+            let m = 0; try { m = fs.statSync(path.join(dir, "continued.jsonl")).mtimeMs; } catch { /* none yet */ }
+            if (seen.get(dir) === m) continue;
+            seen.set(dir, m);
+            const c = readContinued(dir);
+            if (c.length || r.continued) { r.continued = c; changed = true; }
+        }
+        if (changed) onChange();
+    };
+    look(true);
+    const timer = setInterval(() => look(false), ms);
+    timer.unref?.();
+    return () => clearInterval(timer);
+}
+
+/**
  * The follow-up driver: a runOnce `nextTurn` that writes `outbox/turn-<n>.md` and `status` after each turn and answers
  * with the next of `asks`, then null. A turn that produced no answer of its own (it timed out) ends the interview,
  * since asking the next question of a model still busy with the last measures nothing.

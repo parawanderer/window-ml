@@ -2,6 +2,7 @@
 //
 //   node --import tsx tests/e2e/bench/hold.mjs                list the held runs and how to attach to each
 //   node --import tsx tests/e2e/bench/hold.mjs --stop [x]     release them all (or those whose pid, cell or directory has x)
+//   node --import tsx tests/e2e/bench/hold.mjs --show [x]     bring a held run's browser window up (--hide minimises it again)
 //   node tests/e2e/converse.mjs --attach <cell dir> "…"       the next message to one (converse's inbox/outbox protocol)
 //
 // A sweep started with `--hold` (run.mjs), or over a task that says `hold`, runs each held cell through `startHeld`: a
@@ -9,7 +10,10 @@
 // any other. When the sweep says to keep it, the child stays up after the sweep exits, with the session, its pointers,
 // `ml.current` and the page exactly as the run left them, which a re-seeded run cannot give back (a seed runs its tools
 // again). Each held run is an entry in HELD_FILE while it lives, and goes on `/end`, after its idle minutes with no
-// message, or on SIGTERM (what `--stop` and merge-when-green send), closing its browser.
+// message, or on SIGTERM (what `--stop` and merge-when-green send), closing its browser. Where there is a screen, a held
+// run's browser is a real window kept minimised, so a person can look at it on demand (`--show`); a headless browser
+// cannot become one later. Each turn sent after the run's own is logged in `continued.jsonl` beside its outbox report,
+// which the page shows under that run's answers, apart from the scripted ones.
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -19,8 +23,13 @@ import { parseSelector, selected } from "./cells.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../../..");
-/** The runs held open right now, a list of `{ pid, cell, sweep, dir, attach, expiresAt }` (merge-when-green reads it). */
+/** The runs held open right now, a list of `{ pid, cell, sweep, dir, attach, expiresAt, window }` (merge-when-green reads it). */
 export const HELD_FILE = process.env.BENCH_HELD_FILE || path.join(ROOT, "tests/e2e/artifacts/bench/held.json");   // the env: tests only
+/** Whether a held run's browser can be a window here: not on a Linux box with no display, where only headless runs. */
+export const canShow = (env = process.env, platform = process.platform) => platform !== "linux" || !!(env.DISPLAY || env.WAYLAND_DISPLAY);
+/** The file a held run's process watches for `show` or `hide` (hold.mjs --show / --hide write it). */
+const WINDOW_FILE = "window";
+
 /** How long a held run waits for a message before it lets go: a local model's hold keeps its memory on the box. */
 export const HOLD_IDLE_MIN = 30;
 
@@ -143,7 +152,7 @@ async function child() {
         const cell = expandCells(spec, job.select)[job.index];
         if (!cell || cellKey(cell, job.fingerprint) !== job.key) throw new Error(`${job.specPath} changed since the sweep started: cell ${job.index} is not the one it asked for`);
         const driver = cell.task.asks?.length ? interviewDriver({ asks: cell.task.asks, dir }) : null;
-        const keep = async (run, talk) => {
+        const keep = async (run, talk, ctl) => {
             handed = true;
             send({ type: "run", run: JSON.parse(JSON.stringify(run)), statuses: driver?.statuses ?? [] });
             if (await decided !== "hold" || why) return;
@@ -151,8 +160,24 @@ async function child() {
             for (const d of [inbox, outbox]) fs.mkdirSync(d, { recursive: true });
             const rel = path.relative(ROOT, dir);
             let expiresAt = Date.now() + job.idleMs;
-            const entry = () => ({ pid: process.pid, cell: job.label, sweep: job.sweep, dir: rel, attach: `node tests/e2e/converse.mjs --attach ${rel} "<message>"`, expiresAt: new Date(expiresAt).toISOString() });
+            let shown = job.window ? "minimized" : "headless";
+            const entry = () => ({ pid: process.pid, cell: job.label, sweep: job.sweep, dir: rel, attach: `node tests/e2e/converse.mjs --attach ${rel} "<message>"`, expiresAt: new Date(expiresAt).toISOString(), window: shown });
             putHeld(entry());
+            // Show or hide the window when asked, also while a turn runs (a person wants to watch it work).
+            const winFile = path.join(dir, WINDOW_FILE);
+            let busy = false;
+            const watchWindow = setInterval(async () => {
+                if (busy || !fs.existsSync(winFile)) return;
+                busy = true;
+                const want = fs.readFileSync(winFile, "utf8").trim();
+                fs.rmSync(winFile, { force: true });
+                if (shown === "headless") console.log(`asked to ${want} the window, but this run is headless`);
+                else if (want === "show" || want === "hide") {
+                    try { await ctl.window(want === "show" ? "normal" : "minimized"); shown = want === "show" ? "shown" : "minimized"; putHeld(entry()); }
+                    catch (e) { console.log(`could not ${want} the window: ${e}`); }
+                }
+                busy = false;
+            }, 500);
             send({ type: "held", entry: entry() });
             const idle = `${Math.round(job.idleMs / 60_000)} idle minutes`;
             status(`held; waiting for inbox (released by /end, after ${idle}, or hold.mjs --stop)`);
@@ -165,11 +190,14 @@ async function child() {
                 const t = await talk(msg);
                 events = t.events;
                 fs.writeFileSync(path.join(outbox, `turn-${t.turn}.md`), turnReport(t.turn, events, fromTs, t.answered ? t.result : null));
+                // Not the interview's: a turn someone added, kept apart so the side-by-side and the scores never count it.
+                fs.appendFileSync(path.join(dir, "continued.jsonl"), JSON.stringify({ turn: t.turn, ask: msg, at: new Date().toISOString(), answered: t.answered }) + "\n");
                 expiresAt = Date.now() + job.idleMs;
                 if (why) break;
                 putHeld(entry());
                 status(`turn ${t.turn} done (outbox/turn-${t.turn}.md); waiting for inbox`);
             }
+            clearInterval(watchWindow);
             dropHeld(process.pid);
             status(`done: released (${why})`);
         };
@@ -177,6 +205,7 @@ async function child() {
             onEvent: (ev) => send({ type: "event", ev }),
             ...(driver ? { nextTurn: async (info) => { const next = await driver.nextTurn(info); send({ type: "turns" }); return next; } } : {}),
             keep,
+            ...(job.window ? { window: job.window } : {}),
         }));
     } catch (e) {
         console.error(e);
@@ -189,7 +218,16 @@ async function child() {
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
     const argv = process.argv.slice(2);
     if (argv[0] === "--child") await child();
-    else if (argv[0] === "--stop") {
+    else if (argv[0] === "--show" || argv[0] === "--hide") {
+        const want = argv[0].slice(2);
+        const which = heldRuns().filter((h) => !argv[1] || [String(h.pid), h.cell, h.dir].some((s) => String(s).includes(argv[1])));
+        for (const h of which) {
+            if (h.window === "headless") { console.log(`${h.cell}: headless (no screen when it started), so there is no window to ${want}`); continue; }
+            fs.writeFileSync(path.join(ROOT, h.dir, WINDOW_FILE), want + "\n");
+            console.log(`${want === "show" ? "showing" : "minimising"} ${h.cell} of ${h.sweep} (pid ${h.pid})`);
+        }
+        if (!which.length) console.log("no held run matches");
+    } else if (argv[0] === "--stop") {
         const which = heldRuns().filter((h) => !argv[1] || [String(h.pid), h.cell, h.dir].some((s) => String(s).includes(argv[1])));
         for (const h of which) try { process.kill(h.pid, "SIGTERM"); } catch { /* already gone */ }
         for (const until = Date.now() + 20_000; Date.now() < until && which.some((h) => alive(h.pid));) await new Promise((r) => setTimeout(r, 200));
@@ -199,9 +237,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     } else if (!argv.length) {
         const list = heldRuns();
         if (!list.length) console.log("no runs are held open");
-        for (const h of list) console.log(`${h.cell} of ${h.sweep} (pid ${h.pid}, until ${h.expiresAt} unless spoken to)\n  ${h.attach}`);
+        for (const h of list) console.log(`${h.cell} of ${h.sweep} (pid ${h.pid}, window ${h.window ?? "?"}, until ${h.expiresAt} unless spoken to)\n  ${h.attach}`);
     } else {
-        console.log("usage: hold.mjs [--stop [pid|cell|dir]]");
+        console.log("usage: hold.mjs [--show | --hide | --stop [pid|cell|dir]]");
         process.exit(2);
     }
 }
