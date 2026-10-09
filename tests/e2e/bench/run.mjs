@@ -45,6 +45,7 @@ import { pageSources } from "./page/bundle.mjs";
 import { addMark, readMarks, defaultBy } from "./mark.mjs";
 import { recordSweep, specProvenance, specText } from "./sweeps.mjs";
 import { timelineText } from "./timeline-text.mjs";
+import { startResourcePoll, memoryText } from "./resource-poll.mjs";
 import { openScores, modelInfo, runRow, logRuns, readRuns, scoreboard, sweepScores, writeScoreFiles, unscoredTasks, SCORES_DB } from "./scores.mjs";
 import { watch as watchFs } from "node:fs";
 // The sweep's timeline: each run's events as the resource panel derives them; the page draws them with its lane.
@@ -364,6 +365,9 @@ const main = async () => {
 
     const backend = await resolveBackendFromEnv();
     const sweepDir = path.join(ARTROOT, slug(spec.name));
+    // The box's memory over the sweep, read as the resource panel reads it, for the page's memory chart and memory.md. Only
+    // against a real backend; one that serves no `/api/info` stops being asked after a few tries.
+    const resPoll = backend ? startResourcePoll(backend) : null;
     await mkdir(sweepDir, { recursive: true });
     // Which spec this sweep ran and who started it, appended to the sweep's log; the page's Spec card, spec.md and
     // page.json show it beside the diff against the sweep before (sweeps.mjs).
@@ -453,6 +457,7 @@ const main = async () => {
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
         runs: runsState, rows: aggregateRows(cells, results),
         started, finished: null, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: liveScores,
+        resources: resPoll?.samples() ?? null,
     });
     ctx.liveOf = (i) => runsState[i].live;
     ctx.report = (i, state, info) => {
@@ -491,6 +496,7 @@ const main = async () => {
 
     await pool(cells, args.jobs, (cell, i) => runCell(cell, ctx, i));
     const finished = Date.now();
+    resPoll?.stop();
     if (pdfBrowser) await (await pdfBrowser).close().catch(() => {});
 
     const rows = aggregateRows(cells, results);
@@ -543,6 +549,7 @@ const main = async () => {
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
         runs, rows, started, finished, jobs: args.jobs, dirty, fingerprint, pdf: args.pdf, interviews, skipped, spec: provenance,
         scores: scoreLines("../scores.html"),
+        resources: resPoll?.samples() ?? null,
         timeline: (ganttAt = 0, sweepTimeline()),
     };
     // report.html — the live page with the final state baked in. Written ALWAYS, not only with --serve:
@@ -553,9 +560,11 @@ const main = async () => {
     const nameOf = (i) => [runs[i].taskId, ...Object.keys(spec.dimensions || {}).map((d) => runs[i].combo[d]), `r${runs[i].repeat}`].join(" · ");
     await writeFile(path.join(sweepDir, "timeline.md"), timelineText(pageState.timeline, nameOf, { cached: runs.filter((r) => r.cached).length }));
     await writeFile(path.join(sweepDir, "spec.md"), specText(provenance));
+    await writeFile(path.join(sweepDir, "memory.md"), memoryText(pageState.resources));
     await writeFile(path.join(sweepDir, "rows.json"), JSON.stringify({ fingerprint, dirty, started, finished, rows, runs }, null, 2));
     files.push(
         ["timeline", "timeline.md", "every run on one clock: spans, overlaps, model loads"],
+        ["memory", "memory.md", "the box's memory during the sweep: each pool's peak and mean, each model's stretch in memory"],
         ["spec", "spec.md", "which spec version ran, who started the sweep, the diff against the sweep before (log: sweeps.jsonl)"],
         ["page data", "page.json", "everything the page shows, as JSON"],
         ["page", "report.html", "the same, for a person (opens from disk)"],
@@ -578,6 +587,7 @@ const main = async () => {
         dash.update({
             name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
             runs: runsState, rows, started, finished, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: scoreLines("/scores"),
+            resources: pageState.resources,
         });
         // Held open on purpose: the page IS the result when you ran with --serve, and tearing the server
         // down the instant the last cell lands would blank it exactly when you look.

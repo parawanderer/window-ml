@@ -106,6 +106,8 @@ export async function appCss() {
         // The shared pieces the pages are built from: a label with a tip (help-tip.tsx), an estimate on its interval
         // (interval-bar.tsx), and the fold (disclosure.tsx).
         sidebarRules(css, /\.help\b|\.ival\b|\.disc\b|\.disc-|\.rc-lane-chip\b|\.rc-lane-filter\b/),
+        // The resource panel's memory chart, which the timeline draws when the harness read the box (timeline.tsx).
+        sidebarRules(css, /\.rc\b|\.rc-|\.vram-/),
         // An answer rendered as markdown, styled as the panel styles one (format.ts `markdown`).
         sidebarRules(css, /\.md\b|\.md-|(^|[\s,])\.code\b|pre\.code|\.hljs|\.cline\b/),
         readFileSync(path.join(HERE, "page.css"), "utf8"),

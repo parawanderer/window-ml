@@ -21,6 +21,7 @@ lines in the terminal list them:
 | Results | `report.md`, `rows.json` |
 | Answers | `summary.md` |
 | Timeline | `timeline.md` |
+| Memory (above the timeline) | `memory.md` |
 | Spec | `spec.md` (log: `sweeps.jsonl`) |
 | marks and their checks | `marks.jsonl`, and each check in `summary.md` |
 | all of it | `page.json` |

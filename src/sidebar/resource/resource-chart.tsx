@@ -15,16 +15,16 @@
 // resource-overlays, resource-tips and chart-paint; the strip under them is resource-scrub; and what the pointer
 // and keyboard are on is chart-interaction.
 
-import { Fragment } from "preact";
+import { Fragment, type ComponentChildren } from "preact";
 import { useMemo, useState, useEffect } from "preact/hooks";
 import { ceilingsFor, isCpuResident, type ResourceSample } from "../../resource/resource-model";
 import { type ResourceEvent } from "../../resource/resource-timeline";
 import { type Capacity } from "../../resource/resource-capacity";
 import { presetsFor, type TrackDef } from "../../resource/resource-presets";
-import { chartWindow, axisOf, scrubExtent, scrubPinch, windowSamples, scrubNudge, wheelScrubFraction, runWeight, runGap } from "../../resource/resource-axis";
+import { type Axis, segments, chartWindow, axisOf, scrubExtent, scrubPinch, windowSamples, scrubNudge, wheelScrubFraction, runWeight, runGap } from "../../resource/resource-axis";
 import { scopeToSpan, filterEvents, sessionWindow } from "../../resource/resource-lane";
 import { deviceBands, hostBands, residualRank } from "../../resource/resource-bands";
-import { editLayout, VRAM_POLL_MS, laneFilter, layout } from "./panel-state";
+import { editLayout, VRAM_POLL_MS, laneFilter, layout, sampleGapMs } from "./panel-state";
 import { chartHeld, HOLD_LAPSE_MS, holdAxis, holdKey, hoverAt, lastPointerAt, live, releaseAxis, tipMuted } from "./chart-interaction";
 import { scopedHash, resWindowS, zoomRange, laneScoped, laneEnabled } from "../store";
 import { EventLane } from "./resource-lane-ui";
@@ -117,7 +117,16 @@ if (typeof document !== "undefined") document.addEventListener("pointermove", (e
 /** THE CHART itself: one track per memory pool on a shared segmented axis, the scrub strip above and the
  *  event lane below. Drawing only — placement, packing, bands and windows are the pure functions in
  *  resource-model.ts, which is what makes the picture testable without a browser. */
-export function ResourceTracks({ samples, capacity, hidden, layout, events = [] }: { samples: ResourceSample[]; capacity: Capacity | null; hidden: Set<string>; layout?: TrackDef[] | null; events?: ResourceEvent[] }) {
+/** What a surface drawing its OWN lane under the chart is handed: the axis the tracks were drawn on this render (zoom,
+ *  scrub, the rolling window and the hold all applied), the readings in it, and their runs between gaps, which a drag
+ *  to select (`startBrush`) snaps against. */
+export interface LaneContext { axis: Axis; samples: ResourceSample[]; runs: ResourceSample[][] }
+
+/**
+ * @param lane draws the lane in place of the panel's `EventLane`, on the chart's axis: a page with no panel (the bench's
+ *   sweep, one lane per run) keeps its own rows and still moves with every zoom, scrub and selection made on the chart
+ */
+export function ResourceTracks({ samples, capacity, hidden, layout, events = [], lane }: { samples: ResourceSample[]; capacity: Capacity | null; hidden: Set<string>; layout?: TrackDef[] | null; events?: ResourceEvent[]; lane?: (ctx: LaneContext) => ComponentChildren }) {
     // Capacity is fetched once per open and arrives AFTER the first ps poll, so the earliest samples carry
     // none — see the note on `filled` below.
     //
@@ -281,7 +290,9 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
                 along. Its rows scroll VERTICALLY inside their own box; horizontally there is nothing to
                 scroll, because the lane is a window onto the session rather than a wide strip, and moving
                 that window is exactly what this does. */}
-            {laneEnabled.value
+            {lane && live.axis
+                ? <div onWheel={wheelLane}>{lane({ axis: live.axis, samples: filled, runs: segments(filled, sampleGapMs()).filter((r) => r.length > 1) })}</div>
+                : laneEnabled.value
                 ? <div onWheel={wheelLane}><EventLane samples={filled} events={shown} session={samples} /></div>
                 : null}
         </>

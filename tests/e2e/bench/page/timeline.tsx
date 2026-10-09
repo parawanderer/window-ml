@@ -3,11 +3,16 @@
 // model). The events are the resource panel's derivation (`eventsFrom`), sent by the harness; the layout and the bars
 // are the panel's too (lane-view.tsx).
 
-import { useState } from "preact/hooks";
+import { useState, useMemo } from "preact/hooks";
+import type { ComponentChildren } from "preact";
 import { Tip } from "../../../../src/sidebar/help-tip";
 import { colorFor } from "../../../../src/sidebar/palette";
 import { FilterChips } from "../../../../src/sidebar/filter-chips";
-import type { BenchState } from "./state";
+import type { BenchState, PackedSamples } from "./state";
+import { ResourceTracks } from "../../../../src/sidebar/resource/resource-chart";
+import { startBrush, BrushOverlay } from "../../../../src/sidebar/resource/resource-lane-ui";
+import type { ResourceSample } from "../../../../src/resource/resource-model";
+import type { ResourceEvent } from "../../../../src/resource/resource-timeline";
 import { LaneRows, LaneAxis, laneWindow } from "./lane-view";
 import { runName } from "./runs";
 
@@ -43,6 +48,8 @@ function TimelineFilter({ values, hidden, toggle }: { values: Map<string, Map<st
 
 export function SweepTimeline({ s }: { s: BenchState }) {
     const [hiddenList, setHidden] = useState<string[]>(() => readHidden(s.name));
+    // The box's memory, when the harness read it (unpacked once per new state, before any early return: a hook).
+    const mem = useMemo(() => unpackSamples(s.resources), [s.resources]);
     const t = s.timeline;
     if (!t?.runs.length) return null;
     const hidden = new Set(hiddenList);
@@ -61,26 +68,46 @@ export function SweepTimeline({ s }: { s: BenchState }) {
     for (const [d, vals] of values) if (vals.size < 2) values.delete(d);
     const shown = t.runs.filter(({ index }) => !s.dims.some((d) => hidden.has(`${d}=${String(s.runs[index].combo[d])}`)));
     const axis = laneWindow(shown.flatMap((r) => r.events), t.now);
+    // With memory readings, the panel's own chart, these lanes drawn under it on ITS axis, so a zoom, a scrub or a drag to
+    // select on either moves both. A hidden model is hidden in the chart's bands too.
+    const hiddenModels = new Set([...hidden].filter((k) => k.startsWith("model=")).map((k) => k.slice(6)));
+    const shownEvents: ResourceEvent[] = shown.flatMap((r) => r.events);
+    /** Each shown run's lane, labelled, on `axis`; with the time axis under them when no chart draws one. Called, never
+     *  mounted as a component: a component defined here would be a new type each render and remount its rows. */
+    const lanes = ({ axis, withAxis, rowAttrs, rowPrefix }: { axis: { from: number; to: number }; withAxis?: boolean; rowAttrs?: Parameters<typeof LaneRows>[0]["rowAttrs"]; rowPrefix?: () => ComponentChildren }) => (
+        <div class="tl">
+            {shown.map(({ index, events }) => {
+                const r = s.runs[index];
+                const name = runName(r, s.dims);
+                return [
+                    <div key={`w${index}`} class="who"><Tip tip={name}>{name}</Tip></div>,
+                    <section key={`l${index}`} class="wml-lane"><LaneRows events={events} axis={axis} now={t.now} maxRows={4} maxTotal={6} rowAttrs={rowAttrs} rowPrefix={rowPrefix} /></section>,
+                ];
+            })}
+            {withAxis ? <><div /><section class="wml-lane"><LaneAxis axis={axis} /></section></> : null}
+        </div>
+    );
     const cached = s.runs.filter((r) => r.cached).length;
     return (
         <section class="card">
             <header>
-                <h2><Tip tip="Each run's model calls, tool steps and model loads on one clock. Rows that overlap ran at the same time; on one GPU that is contention. Hover a bar for what it was. Also as text in timeline.md.">Timeline</Tip></h2>
+                <h2><Tip tip="Each run's model calls, tool steps and model loads on one clock, under the box's memory when the harness could read it (the resource panel's chart: drag on it or on a lane to select a stretch, scroll or drag the strip to move along). Rows that overlap ran at the same time; on one GPU that is contention. Hover a bar for what it was. Also as text in timeline.md and memory.md.">Timeline</Tip></h2>
                 {cached ? <span class="sub">{cached} cached run(s) are not drawn: they ran in an earlier sweep.</span> : null}
             </header>
             {values.size ? <TimelineFilter values={values} hidden={hidden} toggle={toggle} /> : null}
-            {!axis ? <div class="empty">Every run is hidden: click a struck-out value to show it again.</div> : <div class="tl">
-                {shown.map(({ index, events }) => {
-                    const r = s.runs[index];
-                    const name = runName(r, s.dims);
-                    return [
-                        <div key={`w${index}`} class="who"><Tip tip={name}>{name}</Tip></div>,
-                        <section key={`l${index}`} class="wml-lane"><LaneRows events={events} axis={axis} now={t.now} maxRows={4} maxTotal={6} /></section>,
-                    ];
-                })}
-                <div />
-                <section class="wml-lane"><LaneAxis axis={axis} /></section>
-            </div>}
+            {!axis ? <div class="empty">Every run is hidden: click a struck-out value to show it again.</div>
+                : mem ? <div class="tlchart">
+                    <ResourceTracks samples={mem.samples} capacity={mem.samples.at(-1)!.capacity} hidden={hiddenModels} events={shownEvents}
+                        lane={({ axis: chartAxis, runs }) => lanes({ axis: chartAxis, rowAttrs: { onPointerDown: startBrush(runs) }, rowPrefix: () => <BrushOverlay runs={runs} /> })} />
+                </div>
+                : lanes({ axis, withAxis: true })}
         </section>
     );
+}
+
+/** The harness's packed samples (resource-poll.mjs `packSamples`) back into the panel's `ResourceSample`s; null without
+ *  any, or with too few to draw a line. */
+export function unpackSamples(p: PackedSamples | null | undefined): { samples: ResourceSample[] } | null {
+    if (!p || p.samples.length < 2) return null;
+    return { samples: p.samples.map(({ c, ...rest }) => ({ ...rest, capacity: p.capacities[c] }) as ResourceSample) };
 }
