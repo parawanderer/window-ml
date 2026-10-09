@@ -37,8 +37,15 @@ stops it, and `serve.mjs <sweep dir>` serves any finished sweep again.
 **A run is never deleted by a later one.** When a cell runs again in place (the spec or the build changed its key,
 `--no-cache`, an errored run retried), the run already there moves to `history/<cell path>/<when>-<key>/` in the sweep
 directory (`↪ … kept in` in the log, `kept` in `done.json`), and `sync.mjs push` sends it too, beside the run that
-replaced it. Reusing a sweep's name for a changed spec therefore no longer loses its baseline; `report.md` and
-`summary.md` still describe only the cells this sweep ran.
+replaced it. Reusing a sweep's name for a changed spec therefore no longer loses its baseline.
+
+**The report is the whole sweep on disk, of one version.** `report.md`, `summary.md`, `rows.json` and the page include
+every cell in the sweep directory whose cache key is the current spec and build's, whether or not this invocation's
+`--only`/`--models` selected it (`N already on disk` on the page, `(on disk)` in the Runs table). So a sweep built up a
+model or a task at a time reads as one. Cells from an earlier spec or build are not counted: they are listed under "Also
+on disk, from an earlier version" (`older` in `rows.json`). `BENCH DONE` and `done.json` count only what this invocation
+ran or read. A deliberate before/after (a reworded prompt, a tool change) is TWO sweep names, compared by diffing their
+`rows.json` or on the scoreboard; one name for both leaves the "before" listed, not compared.
 
 **A run that ERRORED is not cached as done.** The next sweep runs it again (`↻ … running it again`, `retried` in
 `done.json`); a finished run, right or wrong, stays cached. A backend's rate limit is named as one (`rate-limited` on

@@ -7,7 +7,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { JSDOM } from "jsdom";
-import { recordSweep, readSweeps, specProvenance, specText, specHash, keepEarlierRun, historyRuns } from "../tests/e2e/bench/sweeps.mjs";
+import { recordSweep, readSweeps, specProvenance, specText, specHash, keepEarlierRun, historyRuns, cellsOnDisk, sortOnDisk } from "../tests/e2e/bench/sweeps.mjs";
+import { expandCells, cellKey, cellPath } from "../tests/e2e/bench/cells.mjs";
+import { writeReport, mdSink } from "../tests/e2e/bench/sinks.mjs";
 import { staticPage } from "../tests/e2e/bench/serve.mjs";
 
 const SPEC_A = 'export default {\n  name: "x",\n  tasks: [{ id: "t", task: "count the links" }],\n};\n';
@@ -125,4 +127,50 @@ test("a cell run again moves its earlier run to history/, finished or not, and a
     assert.equal(await keepEarlierRun(sweep, "iv/m-c/r0"), null);
     assert.equal(await keepEarlierRun(sweep, "iv/none/r0"), null);
     assert.deepEqual((await historyRuns(sweep)).map((h) => h.cellPath), ["iv/m-a/r0", "iv/m-b/r0"]);
+});
+
+// --- the report is the whole sweep on disk ---
+
+const SPEC = { name: "x", dimensions: { model: ["a", "b"] }, tasks: [{ id: "t", task: "count the links" }] };
+const writeCell = (sweep, rel, saved) => { fs.mkdirSync(path.join(sweep, rel), { recursive: true }); fs.writeFileSync(path.join(sweep, rel, "cell.json"), JSON.stringify(saved)); };
+const savedOf = (cell, fp, extra = {}) => ({ key: cellKey(cell, fp), combo: cell.combo, taskId: cell.task.id, repeat: cell.repeat, measurement: { ok: true, succeeded: true, steps: 2, runMs: 1000 }, ...extra });
+
+test("a cell this invocation did not select is in the report when its key is this spec and build's, listed only when it is an earlier version's", async () => {
+    const sweep = fs.mkdtempSync(path.join(os.tmpdir(), "ondisk-"));
+    const all = expandCells(SPEC, { repeats: 2 });
+    const [a0, a1, b0, b1] = ["model=a", "model=a", "model=b", "model=b"].map((_, i) => all[i]);
+    writeCell(sweep, cellPath(a0), savedOf(a0, "fp2"));                       // selected now: neither
+    writeCell(sweep, cellPath(b0), savedOf(b0, "fp2"));                       // same build, not selected: counted
+    writeCell(sweep, cellPath(b1), savedOf(b1, "fp1"));                       // an earlier build: listed
+    writeCell(sweep, "t/model-gone/r0", { key: "k", combo: { model: "gone" }, taskId: "t", repeat: 0, measurement: { ok: true } });   // a model no longer in the spec
+    writeCell(sweep, "history/t/model-b/r1/2026-old", savedOf(b1, "fp2"));    // history is never the sweep's result
+    const disk = await cellsOnDisk(sweep);
+    assert.deepEqual(disk.map((d) => d.rel), ["t/model-a/r0", "t/model-b/r0", "t/model-b/r1", "t/model-gone/r0"]);
+    const { same, older } = sortOnDisk(disk, { base: expandCells(SPEC, { repeats: 1 }), selected: new Set([a0, a1].map(cellPath)), fingerprint: "fp2" });
+    assert.deepEqual(same.map((s) => [s.rel, s.cell.combo.model, s.cell.repeat]), [["t/model-b/r0", "b", 0]]);
+    assert.equal(cellKey(same[0].cell, "fp2"), same[0].saved.key, "the cell rebuilt from the spec is the one that ran");
+    assert.deepEqual(older.map((o) => o.path), ["t/model-b/r1", "t/model-gone/r0"]);
+});
+
+test("the report counts a run already on disk apart from those run and cached, and names the earlier version's by path", () => {
+    const run = (extra) => ({ combo: { model: "a" }, taskId: "t", repeat: 0, state: "done", ok: true, succeeded: true, steps: 2, secs: 1, path: "t/model-a/r0", ...extra });
+    const md = writeReport({ spec: SPEC, rows: [], runs: [run({}), run({ cached: true, onDisk: true, combo: { model: "b" }, path: "t/model-b/r0" })], fingerprint: "fp2", started: 0, finished: 60000, ran: 1, cached: 0, onDisk: 1,
+        older: [{ path: "t/model-b/r1", taskId: "t", combo: { model: "b" }, repeat: 1 }] }, mdSink());
+    assert.match(md, /2 runs \(1 run, 0 cached, 1 not selected this time but already on disk/);
+    assert.match(md, /\| b \| t \| r0 \(on disk\) \|/);
+    assert.match(md, /## Also on disk, from an earlier version\n\n.*\n\n- model=b · t · r1: \[t\/model-b\/r1\]\(t\/model-b\/r1\/run\.md\)/);
+    assert.doesNotMatch(writeReport({ spec: SPEC, rows: [], runs: [], fingerprint: "f", started: 0, finished: 0 }, mdSink()), /earlier version/);
+});
+
+test("the page counts runs already on disk in their own badge and lists the earlier version's by path, linked to the transcript", async () => {
+    const run = (extra) => ({ combo: { model: "a" }, taskId: "t", repeat: 0, state: "done", ok: true, succeeded: true, steps: 2, secs: 1, path: "t/model-a/r0", who: "a", ...extra });
+    const html = await staticPage({ name: "x", dims: ["model"], runs: [run({}), run({ cached: true, onDisk: true, combo: { model: "b" }, path: "t/model-b/r0", who: "b" })], rows: [], jobs: 1, started: 0, finished: 1,
+        older: [{ path: "t/model-b/r1", taskId: "t", combo: { model: "b" }, repeat: 1 }] });
+    const doc = new JSDOM(html, { runScripts: "dangerously", pretendToBeVisual: true }).window.document;
+    const badges = [...doc.querySelectorAll(".counts .badge")].map((b) => b.textContent);
+    assert.ok(badges.includes("1 already on disk"), badges.join(" | "));
+    assert.ok(!badges.some((b) => /cached/.test(b)), "a run from disk is not also counted as cached");
+    const link = [...doc.querySelectorAll("a")].find((a) => a.textContent === "t/model-b/r1");
+    assert.equal(link?.getAttribute("href"), "t/model-b/r1/run.md.html");
+    assert.match(link.closest("section").textContent, /Also on disk, from an earlier version/);
 });

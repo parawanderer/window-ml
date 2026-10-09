@@ -12,6 +12,7 @@ import { readFile, appendFile, readdir, rename, mkdir, stat } from "node:fs/prom
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { codeDiff, diffStat } from "../../../src/diff.ts";
+import { cellPath, cellKey } from "./cells.mjs";
 
 /** Short content hash of a spec's text: equal hashes mean the same question was asked. */
 export const specHash = (source) => createHash("sha256").update(source).digest("hex").slice(0, 12);
@@ -134,4 +135,39 @@ export async function historyRuns(sweepDir) {
     };
     await walk(HISTORY);
     return out.sort((a, b) => a.rel.localeCompare(b.rel));
+}
+
+/** Every finished cell in a sweep directory, outside its history: `{ rel, saved }`, `rel` its directory relative to the sweep and `saved` its cell.json. */
+export async function cellsOnDisk(sweepDir) {
+    const out = [];
+    const walk = async (rel) => {
+        let entries;
+        try { entries = await readdir(path.join(sweepDir, rel), { withFileTypes: true }); } catch { return; }
+        if (entries.some((e) => e.isFile() && e.name === "cell.json")) {
+            try { out.push({ rel, saved: JSON.parse(await readFile(path.join(sweepDir, rel, "cell.json"), "utf8")) }); } catch { /* unreadable: not a result */ }
+            return;
+        }
+        for (const e of entries) if (e.isDirectory() && !(rel === "" && e.name === HISTORY)) await walk(rel ? `${rel}/${e.name}` : e.name);
+    };
+    await walk("");
+    return out.sort((a, b) => a.rel.localeCompare(b.rel));
+}
+
+/**
+ * Sort the cells on disk that this invocation did not select (`--only`, `--skip`, `--models`): `same` are of the current
+ * spec and build (the cache key matches), each with the cell it is, and go into the report as if this sweep had read them
+ * from the cache; `older` are of an earlier version, listed by path and never counted. `base` is every cell of the spec at
+ * any one repeat (`expandCells(spec, { repeats: 1 })`), `selected` the paths this invocation ran or read.
+ */
+export function sortOnDisk(disk, { base, selected, fingerprint }) {
+    const byDir = new Map(base.map((c) => [path.posix.dirname(cellPath(c)), c]));
+    const same = [], older = [];
+    for (const { rel, saved } of disk) {
+        if (selected.has(rel)) continue;
+        const b = byDir.get(path.posix.dirname(rel));
+        const cell = b && Number.isInteger(saved.repeat) ? { ...b, repeat: saved.repeat } : null;
+        if (cell && saved.measurement && cellPath(cell) === rel && saved.key === cellKey(cell, fingerprint)) same.push({ rel, cell, saved });
+        else older.push({ path: rel, taskId: saved.taskId ?? null, combo: saved.combo ?? null, repeat: saved.repeat ?? null });
+    }
+    return { same, older };
 }
