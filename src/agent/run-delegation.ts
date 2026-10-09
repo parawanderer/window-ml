@@ -21,6 +21,7 @@ import { expandPointers } from "../pointers/pointer-macro";
 import { columnsViaBackground } from "../tools/deref-read";
 import { preResolvedDeref, type PreRead } from "../pointers/named-reads";
 import { captureVerify, captureVerifyElement } from "../tools/builtin-tools";
+import { pageVisionHost } from "../dom/page-geometry";
 import { htmlToMarkdown } from "../dom/html-to-md";
 import { clipOut, elLine, errText } from "../dom/dom";
 import { makeAnswerFacade, finalizeAnswer, AnswerLog, type AnswerShapeItem, type AnswerArgs, type AnswerSelection } from "../pointers/answer-set";
@@ -159,7 +160,7 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
         const ml = (typeof window !== "undefined" ? window.ml : null) as unknown as import("../contract").MlApi;
         if (!ml) return { result: "" };
         return withSubUsage(async () => {
-            const v = await captureVerify(ml, ctx, null, "navigated");
+            const v = await captureVerify(pageVisionHost(ml), ctx, null, "navigated");
             return { result: v.content || "", image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };
         });
     }
@@ -171,14 +172,14 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
         const ml = (typeof window !== "undefined" ? window.ml : null) as unknown as import("../contract").MlApi;
         if (!ml) return { result: "" };
         return withSubUsage(async () => {
+            const host = pageVisionHost(ml);
             if (opts.verifyElement) {
-                const v = await captureVerifyElement(ml, ctx, opts.verifyElement!, "typed");
+                const v = await captureVerifyElement(host, ctx, opts.verifyElement!, "typed");
                 return { result: v.content || "", image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };
             }
-            const ae = typeof document !== "undefined" ? document.activeElement : null;
-            const focusable = ae && ae !== document.body && ae !== document.documentElement;
-            const v = focusable ? await captureVerifyElement(ml, ctx, ae as Element, "typed", `the focused element ${elLine(ae as Element)}`)
-                : await captureVerify(ml, ctx, null, "typed");
+            const focused = await host.geo.focus();
+            const v = focused ? await captureVerifyElement(host, ctx, { focus: true }, "typed", `the focused element ${focused.line}`)
+                : await captureVerify(host, ctx, null, "typed");
             return { result: v.content || "", image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };
         });
     }
@@ -191,7 +192,7 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
         if (!ml) return { result: "" };
         // captureVerify makes a delegated describe sub-call for a text-only driver → meter its spend.
         return withSubUsage(async () => {
-            const v = await captureVerify(ml, ctx, { x: opts.verifyAt!.x, y: opts.verifyAt!.y }, "clicked");
+            const v = await captureVerify(pageVisionHost(ml), ctx, { x: opts.verifyAt!.x, y: opts.verifyAt!.y }, "clicked");
             return { result: v.content || "", image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };
         });
     }

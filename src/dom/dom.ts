@@ -1078,7 +1078,7 @@ export const nonEmptyTables = (root: Document | Element): HTMLTableElement[] =>
  *  the two probes, so it's NOT pinned and is left alone — it legitimately appears in one tile.)
  *  ANCHOR = which end of the stitch it belongs at (a top header vs a bottom footer), by its
  *  vertical centre. Pure (no DOM) so it's unit-testable; the rect-measuring + scroll probing +
- *  visibility toggling stay in injected.ts's browser-only `_stitchFullPage`. */
+ *  visibility toggling are the page geometry's `stitchBegin`/`stitchTile` (page-geometry.ts). */
 export function classifyOverlay(
     r0: { top: number; height: number },
     r1: { top: number },

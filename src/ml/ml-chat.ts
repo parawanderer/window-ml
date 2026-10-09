@@ -110,7 +110,7 @@ export const createChat = function(this: MlApi, { system = null, model = null, e
             const runSession = currentRunSession();
             const hint: RequestHint = runSession ? { use: "agent", session: runSession }
                 : { ...(use ? { use } : {}), ...(oneShotChats.has(this) ? {} : { session: hintSession(this.hash) }) };
-            const requestPayload: FetchLlmPayload = { "messages": [...this.messages, userMessage], "think": think, "model": model, "extend": extend, "numCtx": numCtx, "numGpu": numGpu, "schema": schema, "toolIds": toolIds, "maxTokens": maxTokens, "hint": hint };
+            const requestPayload = chatRequest([...this.messages, userMessage], { think, model, extend, numCtx, numGpu, schema, toolIds, maxTokens }, hint);
             // Debug sidebar: announce the request (no-op unless the sidebar is on).
             const debug = debugId();
             // Group turns of THIS conversation by the session hash; `turn` is
@@ -181,6 +181,34 @@ export const createChat = function(this: MlApi, { system = null, model = null, e
     sessionRegistry.set(history.hash, history);   // same-tab resume by hash
     return history;
 };
+
+/**
+ * The FETCH_LLM payload of one chat turn: the messages so far plus the new one, the turn's options, and what the request
+ * is for. Every turn `createChat` sends is built here, and so is `oneShotRequest`'s, so the two cannot drift apart.
+ * @param messages the conversation, ending with the new user message
+ * @param o the turn's options, as `history.chat` resolved them
+ * @param hint what the request is for (RequestHint)
+ * @returns the FETCH_LLM payload
+ */
+export function chatRequest(messages: NeutralMessage[], o: { think: boolean | null; model: string | null; extend: ExtendProfile | null; numCtx: number | null; numGpu: number | null; schema: JsonSchema | null; toolIds: string[] | null; maxTokens: number | null }, hint: RequestHint): FetchLlmPayload {
+    return { "messages": messages, "think": o.think, "model": o.model, "extend": o.extend, "numCtx": o.numCtx, "numGpu": o.numGpu, "schema": o.schema, "toolIds": o.toolIds, "maxTokens": o.maxTokens, "hint": hint };
+}
+
+/**
+ * The FETCH_LLM payload of a one-shot vision call: what `ml.chat(prompt, { images, model, maxTokens, numCtx })` sends
+ * from a tool of a run (look's reader, locate's grounding, badge and grid picks, verify's describe). Shared with a host
+ * that calls the model itself, so its request is the page's, byte for byte, as `ocrRequest` is for `read`.
+ * @param prompt the prompt
+ * @param o the images (data URLs), the model, the generation cap, the context size, and the run's hint session (none
+ *   outside a run)
+ * @returns the FETCH_LLM payload
+ */
+export function oneShotRequest(prompt: string, { images, model, maxTokens, numCtx, session = null }: { images: string[]; model: string | null; maxTokens: number | null; numCtx: number | null; session?: string | null }): FetchLlmPayload {
+    const userMessage: NeutralMessage = { role: "user", content: prompt };
+    if (images.length) userMessage.images = images;
+    return chatRequest([userMessage], { think: false, model, extend: null, numCtx, numGpu: null, schema: null, toolIds: null, maxTokens },
+        session ? { use: "agent", session } : {});
+}
 
 /**
  * Resume a chat by its session hash (shown/copied in the debug sidebar).

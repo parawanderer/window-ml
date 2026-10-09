@@ -101,13 +101,23 @@ inline image; text-only → a delegated describe + `CLICK_MARK_NOTE`), as a `Too
 action** (re-resolve misses → the page mutated: a button that removed itself, a form that navigated), it
 falls back to the element's **pre-action centre** and annotates the crop "the element you acted on is
 GONE — the page changed" (`elementCenter` captures the centre BEFORE the action for exactly this). The
-shared helper is `captureVerify(ml, ctx, center, verb, mutated?)` — **`center: null` → a whole-VIEWPORT
+shared helper is `captureVerify(host, ctx, center, verb, mutated?)` — **`center: null` → a whole-VIEWPORT
 shot** (no click-mark, no `CLICK_MARK_NOTE`) instead of a crop. `wait` (a PURE domTool in tools.ts, no
 `ml`) also takes `verify` and is **area-first** (you verify the settled page, not the element you waited
 on): it can't reach `captureVerify` directly, so `makeDomTools(defineTool, verifyArea?)` receives an
 ml-backed `VerifyArea` closure (built in injected.ts) — keeping the domTools ml-free. Tested in
 `tests/agent.test.js` (click/type native / delegated / mutated / no-vision; wait viewport native /
 delegated-no-mark).
+
+**The vision host.** `look` (native and delegated), `locate` and the verify helpers reach the page, the tab and
+the model only through a `VisionHost` (`src/tools/vision-host.ts`): `geo` answers layout questions (where a
+selector or token is, the Set-of-Marks sweep, a grounding box or grid cell snapped to the DOM, a minted token, the
+legend under a box, the stitch's scroll steps) in plain JSON-able data, `capture` shoots the viewport, `shoot` is
+`ml.screenshot`'s crop of a target (`shootVia` in ml-vision.ts builds it from `geo` + `capture` + `raster`), and
+`chat` is the one-shot model call (`oneShotRequest`, ml-chat.ts, is its FETCH_LLM payload). Today every body runs
+on `pageVisionHost` (`src/dom/page-geometry.ts`), which answers from the DOM, CAPTURE_TAB and `ml.chat` exactly as
+before; the seam is what lets a worker host ask the same geometry of the page over a message instead
+(`tests/vision-host.test.mjs` drives the bodies over a fake host with no DOM in the process).
 
 **Agent self-knowledge (`agent_api_docs`).** The agent had none: asked "how do I call you
 from the console?" it answered from pre-training ("try typing `window`…"), because nothing in

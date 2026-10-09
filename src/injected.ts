@@ -25,6 +25,7 @@ import { makeDynamicTools } from "./ml/dynamic-tools";
 import type { DynamicToolNamespace } from "./ml/dynamic-tools";
 import { renderArgs, logStep } from "./agent/approval";
 import { captureVerify } from "./tools/builtin-tools";
+import { pageVisionHost } from "./dom/page-geometry";
 import { currentAnswer, currentDeref, currentServerAllow, currentHasTool, currentHiddenMember } from "./tools/tool-exec";
 import { installToolDelegation, registerRun, endRun } from "./agent/run-delegation";
 import { models, serverTools, execServerTool, info, capabilities, getModel, embed, config, setModel, ps, unload } from "./ml/ml-server";
@@ -474,7 +475,7 @@ import { derivedFetchFields, cacheCopy } from "./ml/fetch-result";
     // Pass a `verifyArea` capability (closes over ml) so the pure `wait` domTool can `verify` too — the
     // domTools stay ml-free; they just receive this function. center=null → a viewport shot (wait is area-first).
     window.ml.domTools = makeDomTools(window.ml.defineTool,
-        (ctx, center, verb, mutated) => captureVerify(window.ml as unknown as MlApi, ctx, center, verb, mutated),
+        (ctx, center, verb, mutated) => captureVerify(pageVisionHost(window.ml as unknown as MlApi), ctx, center, verb, mutated),
         // captureAnswer: serialize each element an `answer` designates, for the HUD completion card (user-facing
         // output — NOT the debug sidebar). ml-backed, so the domTools stay ml-free. Capped + per-element failures
         // swallowed; the answer still stands without the media. An <img> → its FULL-RES src (crop fallback); any

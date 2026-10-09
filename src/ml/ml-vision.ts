@@ -12,16 +12,18 @@
 // Images reach the model as data URLs built in the BACKGROUND, not on a canvas: a cross-origin `<img>` without
 // CORS taints the canvas, so pixel readback fails even for something already rendered on screen.
 
-import { makeBackgroundTaskPromise, hideSidebarForShot } from "../bridge";
+import { makeBackgroundTaskPromise } from "../bridge";
 import { VIEWS_PARAM, targetRender, lookViews, BOX_OVER_TEXT_TIP, legendFor } from "../tools/builtin-tools";
 import type { MlApi } from "../contract";
 import type { MlPublicConfig } from "../contract/contract-config";
 import type { MlTool, ToolResult } from "../contract/contract-agent";
 import type { ShotBox, VisionMemory } from "../contract/contract-render";
-import { queryAll, isElement, viewportRect, classifyOverlay, errText } from "../dom/dom";
+import { queryAll, isElement, viewportRect, errText } from "../dom/dom";
 import { pickAccentColorForTarget, annotate } from "../dom/locate";
 import { POINT_RE, resolvePoint, PT_LOOK_RADIUS, cropDataUrl, BOX_RE, resolveBox, MIN_SHOT_PX, markSeen } from "../util";
 import { pageRaster, type Raster } from "../raster";
+import { pageCapture, pageGeometry, pageVisionHost, measureElement } from "../dom/page-geometry";
+import type { ShotHost, ShotTarget, ShotOpts, VisionHost } from "../tools/vision-host";
 
 /**
  * OCR: transcribe baked-in text from an image to a plain string, using
@@ -94,80 +96,100 @@ export const screenshot = async function(this: MlApi, target: string | Element |
     // sidebar is off (no #ml-sb-root) — it's a no-op then.
     // `capture` (a pre-taken viewport data-URL) SHORT-CIRCUITS this: `look`'s two-view mode
     // (overlay + no-overlay) crops both from ONE capture instead of re-screenshotting the tab.
-    const viewport = async (): Promise<string> => {
-        if (capture) return capture;
-        await hideSidebarForShot();
-        try { return await makeBackgroundTaskPromise<string>("CAPTURE_TAB_REQUEST", "CAPTURE_TAB_RESPONSE", {}); }
-        finally { window.postMessage({ __mlSidebarShot: "show" }, "*"); }
-    };
+    const host: ShotHost = { capture: pageCapture, geo: pageGeometry(), raster: pageRaster };
+    const viewport = async (): Promise<string> => capture || (await host.capture()).dataUrl;
     if (target == null) return fullPage ? this._stitchFullPage(viewport) : viewport();
-
-    // An `@pt:` point token (a canvas coordinate from locate) → a cropped view around
-    // the point with a MARK on the exact click spot, so look() can VERIFY what a click
-    // will hit (a canvas has no DOM node to screenshot). Works for both look paths.
-    if (typeof target === "string" && POINT_RE.test(target.trim())) {
-        const pt = resolvePoint(target);
-        if (!pt) throw new Error(`Unknown point token "${target}" — re-run locate for a fresh one.`);
-        const dpr = window.devicePixelRatio || 1, R = margin > 0 ? margin : PT_LOOK_RADIUS;
-        const left = Math.max(0, pt.x - R), top = Math.max(0, pt.y - R);
-        const rect = { left, top, width: Math.min(window.innerWidth, pt.x + R) - left, height: Math.min(window.innerHeight, pt.y + R) - top };
-        const cropped = await cropDataUrl(await viewport(), rect, dpr);
-        if (raw || noOverlay) return cropped;   // raw: pythonExec pixels · noOverlay: look's clean copy (same crop, no marker)
-        const marker = { left: pt.x - left - 12, top: pt.y - top - 12, width: 24, height: 24 };
-        // Contrast the marker with the background AND the target under it (in image px).
-        const color = await pickAccentColorForTarget(cropped, { left: marker.left * dpr, top: marker.top * dpr, width: marker.width * dpr, height: marker.height * dpr });
-        return annotate(cropped, [{ rect: marker, color, label: "click point", float: true }], dpr);
-    }
-
-    // An `@box:` container token (a canvas region from locate({ container: true })) →
-    // a padded crop with the region OUTLINED, so look() can VERIFY what you scoped to
-    // before operating inside it. The canvas analogue of screenshotting a container.
-    if (typeof target === "string" && BOX_RE.test(target.trim())) {
-        const bx = resolveBox(target);
-        if (!bx) throw new Error(`Unknown container token "${target}" — re-run locate({ container: true }) for a fresh one.`);
-        // raw (pythonExec): the EXACT box content — no padding, no outline — so the
-        // pixels the sandbox sees are the container's, not the marker's. Non-raw
-        // (look verify): pad + outline so the driver can see what it scoped to.
-        const dpr = window.devicePixelRatio || 1, pad = raw ? 0 : 16;
-        const left = Math.max(0, bx.left - pad), top = Math.max(0, bx.top - pad);
-        const rect = { left, top, width: Math.min(window.innerWidth, bx.right + pad) - left, height: Math.min(window.innerHeight, bx.bottom + pad) - top };
-        const cropped = await cropDataUrl(await viewport(), rect, dpr);
-        if (raw) return cropped;
-        if (noOverlay) return cropped;   // look's clean copy: same PADDED framing as the marked one, just no outline
-        const outline = { left: bx.left - left, top: bx.top - top, width: bx.right - bx.left, height: bx.bottom - bx.top };
-        const color = await pickAccentColorForTarget(cropped, { left: outline.left * dpr, top: outline.top * dpr, width: outline.width * dpr, height: outline.height * dpr });
-        return annotate(cropped, [{ rect: outline, color, label: "container" }], dpr);
-    }
-
-    let el = target;
-    if (typeof target === "string") {
-        el = queryAll(target)[index];   // Nth match (queryAll adds :contains + `>>>` shadow/iframe crossing)
-        if (!el) throw new Error(`No element matches "${target}"${index ? ` at index ${index}` : ""}.`);
-    }
+    if (typeof target === "string") return shootVia(host, target, { scroll, index, raw, margin, noOverlay, capture });
+    // An Element is the one target plain data cannot name, so it is measured here rather than through `geo`.
     // isElement = cross-realm nodeType check (dom.ts) — a `>>>` iframe-inner element is in the frame's
-    // realm, so `instanceof Element` fails. Type guard → `el` narrows to Element below (no casts).
-    if (!isElement(el)) throw new Error("ml.screenshot needs a CSS selector, an Element, or nothing.");
-    if (scroll) {
-        el.scrollIntoView({ block: "center", inline: "center" });
-        // Let the scroll paint before we capture.
-        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-    }
-    // viewportRect (not getBoundingClientRect) — an element inside a same-origin iframe reports a
-    // FRAME-LOCAL rect, but the captured tab image is the TOP viewport, so the crop must be composed
-    // across the frame offset (else it crops the wrong region — the page's top-left).
-    const rect = viewportRect(el);
-    // A zero- or sliver-sized element (e.g. a 1px-tall spacer/rule, or a
-    // collapsed container) crops to a degenerate 1px-by-N image the vision
-    // model just hallucinates over. Reject it with an actionable message
-    // rather than sending the sliver off (roadmap #10).
+    // realm, so `instanceof Element` fails.
+    if (!isElement(target)) throw new Error("ml.screenshot needs a CSS selector, an Element, or nothing.");
+    const rect = await measureElement(target, scroll);
+    tooSmall(rect);
+    return cropDataUrl(await viewport(), rect, window.devicePixelRatio || 1);
+};
+
+/**
+ * Refuse a zero- or sliver-sized element (e.g. a 1px-tall spacer/rule, or a collapsed container): it crops to a
+ * degenerate 1px-by-N image the vision model just hallucinates over, so the caller gets an actionable message rather
+ * than the sliver (roadmap #10).
+ */
+function tooSmall(rect: { width: number; height: number }): void {
     if (rect.width < MIN_SHOT_PX || rect.height < MIN_SHOT_PX) {
         throw new Error(
             `element is ${Math.round(rect.width)}×${Math.round(rect.height)}px — too small to ` +
             `screenshot (hidden, collapsed, or a 1px spacer?). Target a parent container with real size.`
         );
     }
-    return cropDataUrl(await viewport(), rect, window.devicePixelRatio || 1);
-};
+}
+
+/**
+ * `ml.screenshot` over any host: the viewport, a full-page stitch, an `@pt`/`@box` token's marked crop, or an
+ * element's crop (a selector, or the focused element). The host answers where the target is (`geo`), captures, and
+ * draws (`raster`); the cropping and marking here are the same whichever host it is.
+ * @param host the capture, geometry and raster to use
+ * @param target the viewport (null), a selector or token, or the focused element
+ * @param opts `ml.screenshot`'s options
+ * @returns the screenshot as a PNG data URL
+ */
+export async function shootVia(host: ShotHost, target: ShotTarget, { scroll = true, fullPage = false, index = 0, raw = false, margin = 0, noOverlay = false, capture = null }: ShotOpts = {}): Promise<string> {
+    const viewport = async (): Promise<string> => capture || (await host.capture()).dataUrl;
+    if (target == null) return fullPage ? stitchVia(host, () => host.capture().then((s) => s.dataUrl)) : viewport();
+
+    // An `@pt:` point token (a canvas coordinate from locate) → a cropped view around
+    // the point with a MARK on the exact click spot, so look() can VERIFY what a click
+    // will hit (a canvas has no DOM node to screenshot). Works for both look paths.
+    if (typeof target === "string" && POINT_RE.test(target.trim())) {
+        const t = await host.geo.target({ token: target });
+        if (!("point" in t)) throw new Error(`Unknown point token "${target}" — re-run locate for a fresh one.`);
+        const pt = t.point, view = await host.geo.view();
+        const dpr = view.dpr, R = margin > 0 ? margin : PT_LOOK_RADIUS;
+        const left = Math.max(0, pt.x - R), top = Math.max(0, pt.y - R);
+        const rect = { left, top, width: Math.min(view.w, pt.x + R) - left, height: Math.min(view.h, pt.y + R) - top };
+        const cropped = await cropDataUrl(await viewport(), rect, dpr, host.raster);
+        if (raw || noOverlay) return cropped;   // raw: pythonExec pixels · noOverlay: look's clean copy (same crop, no marker)
+        const marker = { left: pt.x - left - 12, top: pt.y - top - 12, width: 24, height: 24 };
+        // Contrast the marker with the background AND the target under it (in image px).
+        const color = await pickAccentColorForTarget(cropped, { left: marker.left * dpr, top: marker.top * dpr, width: marker.width * dpr, height: marker.height * dpr }, [], host.raster);
+        return annotate(cropped, [{ rect: marker, color, label: "click point", float: true }], dpr, host.raster);
+    }
+
+    // An `@box:` container token (a canvas region from locate({ container: true })) →
+    // a padded crop with the region OUTLINED, so look() can VERIFY what you scoped to
+    // before operating inside it. The canvas analogue of screenshotting a container.
+    if (typeof target === "string" && BOX_RE.test(target.trim())) {
+        const t = await host.geo.target({ token: target });
+        if (!("box" in t)) throw new Error(`Unknown container token "${target}" — re-run locate({ container: true }) for a fresh one.`);
+        const bx = t.box, view = await host.geo.view();
+        // raw (pythonExec): the EXACT box content — no padding, no outline — so the
+        // pixels the sandbox sees are the container's, not the marker's. Non-raw
+        // (look verify): pad + outline so the driver can see what it scoped to.
+        const dpr = view.dpr, pad = raw ? 0 : 16;
+        const left = Math.max(0, bx.left - pad), top = Math.max(0, bx.top - pad);
+        const rect = { left, top, width: Math.min(view.w, bx.right + pad) - left, height: Math.min(view.h, bx.bottom + pad) - top };
+        const cropped = await cropDataUrl(await viewport(), rect, dpr, host.raster);
+        if (raw) return cropped;
+        if (noOverlay) return cropped;   // look's clean copy: same PADDED framing as the marked one, just no outline
+        const outline = { left: bx.left - left, top: bx.top - top, width: bx.right - bx.left, height: bx.bottom - bx.top };
+        const color = await pickAccentColorForTarget(cropped, { left: outline.left * dpr, top: outline.top * dpr, width: outline.width * dpr, height: outline.height * dpr }, [], host.raster);
+        return annotate(cropped, [{ rect: outline, color, label: "container" }], dpr, host.raster);
+    }
+
+    // An element: the Nth match of a selector (queryAll adds :contains + `>>>` shadow/iframe crossing), or the focused
+    // one, scrolled into view and measured in the TOP viewport — an element inside a same-origin iframe reports a
+    // FRAME-LOCAL rect, but the captured tab image is the top viewport, so the crop must be composed across the frame
+    // offset (else it crops the wrong region — the page's top-left).
+    const t = await host.geo.target(typeof target === "string" ? { selector: target, index, scroll } : { focus: true, scroll });
+    if ("err" in t) {
+        if (t.err === "selector") throw new Error(t.msg);
+        if (t.err === "nofocus") throw new Error("Nothing is focused.");
+        throw new Error(`No element matches "${target}"${index ? ` at index ${index}` : ""}.`);
+    }
+    if (!("rect" in t)) throw new Error("ml.screenshot needs a CSS selector, an Element, or nothing.");
+    tooSmall(t.rect);
+    const { dpr } = await host.geo.view();
+    return cropDataUrl(await viewport(), t.rect, dpr, host.raster);
+}
 
 /**
  * The crop transform of a raw ml.screenshot({ raw:true }) of `target`: the crop's viewport
@@ -205,51 +227,23 @@ export const _shotBox = function(target: string | Element, margin = 0): ShotBox 
  * @returns {Promise<string>} The stitched full-page screenshot as a PNG data URL.
  */
 export const _stitchFullPage = async function(capture: () => Promise<string>): Promise<string> {
-    const dpr = window.devicePixelRatio || 1;
-    const vh = window.innerHeight;
-    // Cap at ~8 screens so the image stays sane
-    const total = Math.min(document.documentElement.scrollHeight, vh * 8);
-    const startY = window.scrollY;
+    return stitchVia({ geo: pageGeometry(), raster: pageRaster }, capture);
+};
+
+/**
+ * The full-page stitch over any host: the host scrolls the page a viewport at a time and reports where it landed
+ * (`geo.stitchBegin`/`stitchTile`/`stitchEnd`), `capture` shoots each tile, paced under captureVisibleTab's two calls a
+ * second with backoff retries, and the tiles are composed with the host's raster.
+ * @param host the geometry that scrolls and the raster that composes
+ * @param capture the viewport capture for each tile
+ * @returns the stitched image as a PNG data URL
+ */
+export async function stitchVia(host: Pick<ShotHost, "geo" | "raster">, capture: () => Promise<string>): Promise<string> {
+    const { total, vh, dpr } = await host.geo.stitchBegin();
     const shots: { y: number; url: string }[] = [];
-    const paint = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-
-    // Detect PINNED overlays (position:fixed, or a currently-STUCK sticky) so we can stop
-    // them being stamped into every tile: a fixed nav bar / footer is on screen in every
-    // viewport, so a naive scroll+stitch repeats it down the whole image. We probe each
-    // candidate's viewport rect at two scroll positions — an invariant top ⇒ pinned
-    // (classifyOverlay) — and later show it on exactly ONE tile (a top header on the first,
-    // a bottom footer on the last), hiding it on the rest so the content behind shows
-    // through. Skipped for a single-viewport page (nothing can repeat). getComputedStyle
-    // over the DOM is a one-time cost, negligible beside the paced 600ms/tile captures.
-    const overlays: { el: HTMLElement; anchor: "top" | "bottom"; vis: string }[] = [];
-    if (total > vh) {
-        const cands = ([...document.querySelectorAll("*")] as HTMLElement[])
-            .filter(el => { const p = getComputedStyle(el).position; return p === "fixed" || p === "sticky"; });
-        window.scrollTo(0, 0); await paint();
-        const r0 = cands.map(el => el.getBoundingClientRect());
-        window.scrollTo(0, Math.min(vh, Math.max(1, total - vh))); await paint();
-        cands.forEach((el, i) => {
-            const c = classifyOverlay(r0[i], el.getBoundingClientRect(), vh);
-            if (c.pinned) overlays.push({ el, anchor: c.anchor, vis: el.style.visibility });
-        });
-    }
-
     try {
         for (let y = 0; y < total; y += vh) {
-            window.scrollTo(0, y);
-            // Wait for the browser to actually paint the new scroll position
-            await paint();
-            // Record where we ACTUALLY landed, not where we asked to go: scrollTo clamps at the
-            // page's max scroll, so the last step captures the bottom viewport (which overlaps the
-            // previous tile) but at a SMALLER offset than `y`. Drawing at the requested `y` painted
-            // that overlap band twice — the duplicated "Ridiculous mode"/torn-row seam. Drawing at
-            // the real scrollY makes the clamped tile overwrite the overlap with identical pixels.
-            const actualY = window.scrollY;
-            const isLast = actualY + vh >= total;
-            // Show each pinned overlay on ONLY its home tile (header→first, footer→last), hidden
-            // elsewhere. Drawn at actualY, the header lands at y≈0 and the footer at ≈page-bottom —
-            // each appearing exactly once instead of on every tile.
-            for (const o of overlays) o.el.style.visibility = (o.anchor === "top" ? y === 0 : isLast) ? o.vis : "hidden";
+            const { actualY, isLast } = await host.geo.stitchTile({ y });
 
             let url: string | null = null;
             let retries = 3;
@@ -277,13 +271,11 @@ export const _stitchFullPage = async function(capture: () => Promise<string>): P
             if (isLast) break;
         }
     } finally {
-        // Restore every overlay's visibility (even on a capture throw) and the scroll position.
-        for (const o of overlays) o.el.style.visibility = o.vis;
-        window.scrollTo(0, startY);
+        await host.geo.stitchEnd();
     }
 
-    return composeStitch(shots, total, dpr);
-};
+    return composeStitch(shots, total, dpr, host.raster);
+}
 
 /**
  * Compose a full-page stitch's viewport captures into one tall PNG data URL: each tile drawn at its scroll offset
@@ -369,7 +361,18 @@ export const _modelSees = async function(this: MlApi, model: string | null): Pro
  *   `{ content, image, imageLabel, elements }` for inline vision.
  */
 export const _nativeLookTool = function(this: MlApi, memory?: VisionMemory): MlTool {
-    const ml = this;
+    return buildNativeLookTool(this, { memory });
+};
+
+/**
+ * The native `look` tool over a VisionHost: `host` when given, else the page's (`pageVisionHost`), made when the tool
+ * runs, so a tool built where there is no page (the worker assembling a run) still runs against the page that hosts it.
+ * @param ml the `ml` whose `defineTool` builds it
+ * @param opts the run's near-area memory, and the host to run against
+ * @returns the `look` tool
+ */
+export function buildNativeLookTool(ml: Pick<MlApi, "defineTool"> & Partial<MlApi>, { memory, host }: { memory?: VisionMemory; host?: VisionHost } = {}): MlTool {
+    const hostOf = (): VisionHost => host || pageVisionHost(ml as MlApi, memory || null);
     return ml.defineTool({
         name: "look",
         summary: "Screenshots the page so the agent can see it.",
@@ -400,17 +403,18 @@ export const _nativeLookTool = function(this: MlApi, memory?: VisionMemory): MlT
         // In: the target as a hoverable ref (hover → outline it on the page). No selector → raw args.
         render: (_input, args) => targetRender(args),
         run: async ({ selector, scope, index, margin, views }: { selector?: string; scope?: "viewport" | "page"; index?: number; margin?: number; views?: string[] } = {}): Promise<string | ToolResult> => {
+            const host = hostOf();
             const fullPage = scope === "page" && !selector;
             const isPoint = !!selector && POINT_RE.test(selector.trim());
             const isMarked = !!selector && (isPoint || BOX_RE.test(selector.trim()));
             // Looking at an @pt marks it SEEN → locate's snap-feedback won't re-inject its crop.
-            if (isPoint) { const p = resolvePoint(selector!); if (p) markSeen(memory, p.x, p.y); }
+            if (isPoint) { const t = await host.geo.target({ token: selector! }); if ("point" in t) markSeen(host.memory, t.point.x, t.point.y); }
             // A marked target honours `views` (overlay / no-overlay / both, ONE capture); the driver sees
             // each crop as its own inline image. Everything else is the usual single shot.
             let shots: { image: string; label: string }[], crossesText = false;
             try {
-                if (isMarked) { const v = await lookViews(ml, selector!, margin as number, views); shots = v.images; crossesText = v.crossesText; }
-                else { const shot = await ml.screenshot(selector || null, { fullPage, index: index || 0, margin: typeof margin === "number" ? margin : 0 }); shots = [{ image: shot, label: selector ? `element "${selector}"${index ? ` #${index}` : ""}` : (fullPage ? "full page" : "viewport") }]; }
+                if (isMarked) { const v = await lookViews(host, selector!, margin as number, views); shots = v.images; crossesText = v.crossesText; }
+                else { const shot = await host.shoot(selector || null, { fullPage, index: index || 0, margin: typeof margin === "number" ? margin : 0 }); shots = [{ image: shot, label: selector ? `element "${selector}"${index ? ` #${index}` : ""}` : (fullPage ? "full page" : "viewport") }]; }
             }
             catch (e) { return `Error: ${errText(e)}`; }
             const label = shots[0].label;
@@ -428,12 +432,12 @@ export const _nativeLookTool = function(this: MlApi, memory?: VisionMemory): MlT
             const multi = shots.length > 1 ? ` (${shots.length} crops: ${shots.map(s => s.label).join(" · ")})` : "";
             // DOM legend of what's IN this crop — actionable selectors beside the pixels. Skip for a
             // downscaled full-page overview (the model shouldn't act on tiny elements from it).
-            const legend = fullPage ? "" : legendFor(selector || null, typeof margin === "number" ? margin : 0);
+            const legend = fullPage ? "" : await legendFor(host, selector || null, typeof margin === "number" ? margin : 0);
             // Hand the screenshotted element back on the elements side-channel
             // so it's hoverable in `logDebug`/`onStep` (never sent to the model).
             // Guarded: a bad/stub-DOM selector just yields no node.
             let elements;
-            if (selector) { try { const el = queryAll(selector)[index || 0]; if (el) elements = [el]; } catch {} }
+            if (selector && host.elements) { const els = host.elements([{ selector, index: index || 0 }]); if (els.length) elements = els; }
             return {
                 content: `Screenshot of the ${subject}${multi} captured — shown to you in the next message.${pointTip}${overTextTip}${legend}`,
                 // One view → the single `image` shortcut; two → `images` (each injected as its own turn).
@@ -442,7 +446,7 @@ export const _nativeLookTool = function(this: MlApi, memory?: VisionMemory): MlT
             };
         }
     });
-};
+}
 
 /**
  * Convert an image to a data URL.
