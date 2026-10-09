@@ -65,7 +65,7 @@ const GENRES = {
         about: "the extension's own worlds — background, relay, CDP, the page loop",
         files: ["background.test.js", "relay.test.js", "agent.test.js", "cdp-stream.test.mjs",
             "delegation.test.mjs", "redteam.test.js", "redteam-answer.test.mjs", "trusted-input.test.mjs", "dom-query.test.mjs",
-            "tools-shadow.test.mjs", "bgrun.test.mjs", "replay.test.mjs"],
+            "tools-shadow.test.mjs", "bgrun.test.mjs", "replay.test.mjs", "vision-characterize.test.mjs"],
     },
     // The chat page's own logic (the client store, the view prefs, the local host) and the check that its web build
     // never reaches `chrome`. Its browser half is Playwright: `npm run test:chat` runs both.
