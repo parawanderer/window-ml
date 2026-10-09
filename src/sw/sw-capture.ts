@@ -7,10 +7,11 @@ export const NOT_SHOWING = "Can't screenshot this tab: it isn't the one showing 
  * `captureVisibleTab` for one tab. It takes a WINDOW and shoots the tab that window shows, so it is taken only while
  * `tabId` is that tab, and thrown away if the window showed another tab at any point while it was taken.
  * @param tabId the tab the screenshot is for (the sender's own)
- * @returns the PNG as a data URL
+ * @param opts the image format (PNG by default)
+ * @returns the image as a data URL
  * @throws {@link NOT_SHOWING} when the tab is not the one showing, before or during the capture; or the browser's error
  */
-export async function captureOwnTab(tabId: number): Promise<string> {
+export async function captureOwnTab(tabId: number, opts: { format: "png" | "jpeg"; quality?: number } = { format: "png" }): Promise<string> {
     const before = await chrome.tabs.get(tabId);
     if (!before.active) throw new Error(NOT_SHOWING);
     let switched = false;
@@ -19,7 +20,7 @@ export async function captureOwnTab(tabId: number): Promise<string> {
     try {
         let shot: string;
         // A capture that fails while the window shows another tab fails about THAT tab: its error is not the page's to read.
-        try { shot = await chrome.tabs.captureVisibleTab(before.windowId, { format: "png" }); }
+        try { shot = await chrome.tabs.captureVisibleTab(before.windowId, opts); }
         catch (e) {
             const now = switched ? null : await chrome.tabs.get(tabId).catch(() => null);
             if (switched || !now?.active || now.windowId !== before.windowId) throw new Error(NOT_SHOWING);

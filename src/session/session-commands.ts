@@ -105,8 +105,9 @@ export interface CommandDeps {
     /** The session's ONE title: the runtime's own, or asked for once and kept. A `title` side call goes here so every
      *  client shows the same name; absent, it is an ordinary side call. */
     title?(hash: string, messages: NeutralMessage[]): Promise<string | null>;
-    /** capture a window's visible tab as a data URL */
-    captureVisible(windowId: number, opts: { format: "png" | "jpeg"; quality?: number }): Promise<string>;
+    /** capture a tab as a data URL, only while it is the one its window shows; null when it is not, or stopped being
+     *  while the capture was taken (`captureOwnTab`, sw-capture.ts) */
+    captureTab(tabId: number, opts: { format: "png" | "jpeg"; quality?: number }): Promise<string | null>;
     now(): number;
 }
 
@@ -650,9 +651,10 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
             const ceiling = Math.min(Number.isFinite(c.maxBytes) && (c.maxBytes as number) > 0 ? (c.maxBytes as number) : SCREENSHOT_MAX_BYTES, SCREENSHOT_MAX_BYTES);
             const attempts: { format: "png" | "jpeg"; quality?: number }[] = [{ format: "png" }, { format: "jpeg", quality: 80 }, { format: "jpeg", quality: 60 }, { format: "jpeg", quality: 40 }];
             for (const a of attempts) {
-                let image: string;
-                try { image = await deps.captureVisible(tab.windowId, a); }
+                let image: string | null;
+                try { image = await deps.captureTab(tabId, a); }
                 catch (err) { return fail("failed", (err as Error)?.message || String(err)); }
+                if (image === null) return fail("conflict", "that tab is not in front in its window, so it cannot be captured");
                 if (dataUrlBytes(image) > ceiling) continue;
                 const size = imageSize(image);
                 if (!size) return fail("failed", "the capture was not a readable image");

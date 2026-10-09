@@ -27,6 +27,7 @@ import { recordHousekeeping, senderOrigin } from "./sw-housekeeping";
 import { archiveCall, lastFolderReport, onFolderChange, scheduleFolderSync } from "./sw-archive";
 import { attentionCodes, recomputeAttention, refreshBackendAttention, watchAttention } from "./sw-attention";
 import { appendSnapshot, measureEvents, summarizeStore, type StorageReport, type StorageSnapshot, type StoreBytes } from "../session/session-storage-stats";
+import { captureOwnTab, NOT_SHOWING } from "./sw-capture";
 
 /**
  * Ask a tab's page something, PUTTING THE CONTENT SCRIPT BACK if it is not there.
@@ -444,10 +445,11 @@ export function configureSessionCommands(run: RunDeps): void {
         utilityConfigured: () => utilityModelSet,
         sideCall: utilityCall,
         title: titleSession,
-        captureVisible: async (windowId, opts) => {
+        captureTab: async (tabId, opts) => {
             for (let attempt = 0; ; attempt++) {
-                try { return await chrome.tabs.captureVisibleTab(windowId, opts); }
+                try { return await captureOwnTab(tabId, opts); }
                 catch (err) {
+                    if ((err as Error)?.message === NOT_SHOWING) return null;
                     if (/MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND/i.test((err as Error)?.message || "") && attempt < CAPTURE_RETRIES) {
                         await new Promise((r) => setTimeout(r, CAPTURE_RETRY_MS));
                         continue;
