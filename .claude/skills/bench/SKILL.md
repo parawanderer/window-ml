@@ -52,6 +52,24 @@ ran or read. A deliberate before/after (a reworded prompt, a tool change) is TWO
 the page, `rate_limited=` in the final line), however it arrives: Open WebUI passes OpenRouter's as a 400. Its fix is
 fewer at once: a lower `--jobs`, or `--lanes`, which runs a cloud model one run at a time.
 
+**Memory: what the bench may hold, and what happens at the limit.** Every bench process on the machine (each clone,
+each session) writes one shared ledger, `~/.cache/window-ml-bench/ledger.json` (locked; a dead pid's entry goes on the next
+read): the sweep runner, each running or held cell's own process, and each page server, each measured every 5 s as the
+summed resident memory of its process tree (`memory-budget.mjs`; shared pages count once per process, so it over-states).
+A sweep that holds runs or uses a real model checks it before each cell starts and before it keeps a failed run open:
+the bench's total plus one more browser must fit under `--memory-limit` (default half the RAM) AND leave a quarter of the
+RAM free by the machine's own live account (macOS's `kern.memorystatus_level`, Linux's `MemAvailable`). One more
+browser is predicted as the p90 of the peaks measured for that task (`footprints` in scores.sqlite, from every cell that
+ran in its own process), else of every task's, else 1 GB. At the start it says what to expect ("about 3 failed runs can
+be held this sweep …"). At the limit, `--when-full pause` (the default) starts nothing more, keeps nothing more (a
+failure it would have kept is listed as "not held"), lets the running cells finish and EXITS 75 (`paused=memory-budget`
+on the last line, `paused` and `resume` in `done.json`), leaving what it holds alive; the same command resumes from the
+cache. `--when-full stop-holding` goes on (overnight) and only stops keeping failures; a cell then waits for room. On
+exit, paused or not, it prints the MENU: every clone's held runs grouped by model · task · failure, each group with a
+command to paste for attach, keep one and release the rest, release all, plus how to resume and what to do with them.
+The page has the same as its Memory card. Any time: `hold.mjs --menu` (the menu), `hold.mjs --ledger` (every entry and
+its memory), `hold.mjs --stop <pid> <pid> …`.
+
 **Keep a run open to go on talking to it: `--hold`.** `--hold all`, `--hold failures` (only a run that errored or was
 wrong) or `--hold k=v` (cells as `--only` picks them), or `hold: true | "failures"` on a task or an interview file. A
 held cell runs in a DETACHED process of its own (`bench/hold.mjs`) that hands the finished run back to be measured as

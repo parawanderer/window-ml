@@ -240,3 +240,11 @@ td > a.view + .badge, td > .badge + .badge { margin-left: 4px }
 /* spend.tsx: the sweep's spend in the header and on each model's pill */
 .role.spend b, .badge.spend b { font-weight: 600; font-variant-numeric: tabular-nums }
 .badge.spend.partial b::after { content: "+"; color: var(--fg-faint); margin-left: 1px }
+/* memory.tsx: the memory budget and the held-run menu */
+.memory h3 { font-size: 12px; margin: 12px 0 6px }
+.memory .mkinds, .memory .mhints { margin: 8px 0; padding-left: 18px }
+.memory .mgroup { margin: 8px 0; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px }
+.memory .mcmd { display: flex; gap: 8px; align-items: baseline; margin-top: 4px; min-width: 0 }
+.memory .mcmd span { flex: none; width: 180px }
+.memory .mcmd code { user-select: all; overflow-x: auto; white-space: nowrap; min-width: 0 }
+.memory .mpaused { margin: 8px 0; padding: 6px 8px; border-radius: 6px; background: color-mix(in srgb, var(--warn, #c80) 15%, transparent) }

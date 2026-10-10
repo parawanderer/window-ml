@@ -105,7 +105,7 @@ export function writeReport(sweep, sink) {
             ...dimCols.map((d) => String(r.combo[d])),
             r.taskId,
             `r${r.repeat}${r.onDisk ? " (on disk)" : ""}`,
-            !r.ok ? "FAILED" : r.succeeded === null ? "ok" : r.succeeded ? "ok · correct" : "ok · WRONG",
+            r.state === "pending" ? "not run" : !r.ok ? "FAILED" : r.succeeded === null ? "ok" : r.succeeded ? "ok · correct" : "ok · WRONG",
             String(r.steps),
             r.secs != null ? r.secs.toFixed(1) : "—",
             // Sweep-RELATIVE, because that is where this file lives, so the links resolve when it is
@@ -151,4 +151,4 @@ export function doneSummary(name, runs, { report, page = null, retried = 0, held
 }
 
 /** The final line: `BENCH DONE <name> key=value …`, stable so a poller can grep for `^BENCH DONE`. */
-export const doneLine = (d) => `BENCH DONE ${d.name} runs=${d.runs} ran=${d.ran} cached=${d.cached} ok=${d.ok} errors=${d.errors} rate_limited=${d.rateLimited ?? 0} correct=${d.correct} wrong=${d.wrong} held=${d.held?.length ?? 0} report=${d.report} page=${d.page ?? "none"}`;
+export const doneLine = (d) => `BENCH DONE ${d.name} runs=${d.runs} ran=${d.ran} cached=${d.cached} ok=${d.ok} errors=${d.errors} rate_limited=${d.rateLimited ?? 0} correct=${d.correct} wrong=${d.wrong} held=${d.held?.length ?? 0} report=${d.report} page=${d.page ?? "none"}${d.paused ? " paused=memory-budget" : ""}`;

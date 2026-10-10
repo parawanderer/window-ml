@@ -25,6 +25,12 @@
 //                         `--hold-idle 60` releases one after that many minutes with no message (default 30). A held
 //                         run's browser is headless, as every bench browser is; `--hold-window` makes it a minimised real
 //                         window instead (`hold.mjs --show` brings it up), at the cost of one window popping up per held cell
+//   … --memory-limit 12G  the most the bench may hold in this machine's memory (browsers held open, its own processes),
+//                         across every bench process here (memory-budget.mjs; default half the RAM). A quarter of the RAM
+//                         is also kept free, checked live before each cell starts and before a failed run is kept open.
+//   … --when-full pause | stop-holding   at the budget: `pause` (the default) starts no more cells, holds nothing more, and
+//                         exits 75 once the running cells end, printing what is held and the command that resumes;
+//                         `stop-holding` goes on running and records each later failure as "would have held" (overnight)
 //   … --port 7400         serve on a specific port (the default is stable, so a browser tab can just
 //                         reload between sweeps — in VS Code, cmd-click the URL and pick "Simple
 //                         Browser" to dock the page as an editor tab)
@@ -34,7 +40,8 @@
 // `--serve` prints the URL as a banner rather than a log line, so the assistant can hand it over.
 //
 // The last line a sweep prints is `BENCH DONE <name> runs=… ok=… errors=… report=… page=…` (also done.json in the sweep
-// directory), and it exits 0 when no run errored, 2 when some did, 1 when the runner itself failed.
+// directory), and it exits 0 when no run errored, 2 when some did, 1 when the runner itself failed, 75 when it paused at
+// the memory budget (run the same command again to go on).
 //
 // The sweep is RESUMABLE: each cell's measurement is written under a content-addressed key covering the
 // cell's configuration AND the build it ran against, so a six-hour sweep that dies at hour five resumes
@@ -71,6 +78,8 @@ import { openScores, modelInfo, runRow, logRuns, readRuns, scoreboard, sweepScor
 import { plannedPower } from "./regress.mjs";
 import { callsOf, logCalls, logSnapshot, missingSnapshots } from "./spend.mjs";
 import { liveSpend, fetchFromPriceService, spendLine } from "./live-spend.mjs";
+import { startBudget, autoLimit, parseSize, register, update, unregister, openFootprints, logFootprint, ledger, PAUSED_EXIT } from "./memory-budget.mjs";
+import { failureShape, menuText, groupHeld, groupCommands, shellLine, HOLD_HINTS } from "./hold-menu.mjs";
 import { fitRasch } from "./rasch.mjs";
 import { watch as watchFs } from "node:fs";
 // The sweep's timeline: each run's events as the resource panel derives them; the page draws them with its lane.
@@ -85,7 +94,7 @@ const BUILDROOT = path.join(ROOT, "tests/e2e/artifacts/builds");
 const REGRESSION_SPEC = path.join(HERE, "specs/regression.bench.ts");
 
 function parseArgv(argv) {
-    const args = { specPath: null, models: (process.env.PANEL_MODELS || "").split(",").map((m) => m.trim()).filter(Boolean), surface: undefined, turnMinutes: 15, jobs: 1, jobsSet: false, lanes: false, only: [], skip: [], repeats: undefined, dry: false, cache: true, pdf: false, serve: false, open: false, port: undefined, capture: undefined, hold: [], holdIdle: undefined };
+    const args = { specPath: null, models: (process.env.PANEL_MODELS || "").split(",").map((m) => m.trim()).filter(Boolean), surface: undefined, turnMinutes: 15, jobs: 1, jobsSet: false, lanes: false, only: [], skip: [], repeats: undefined, dry: false, cache: true, pdf: false, serve: false, open: false, port: undefined, capture: undefined, hold: [], holdIdle: undefined, memoryLimit: undefined, whenFull: "pause" };
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
         if (a === "--jobs") { args.jobs = Math.max(1, Number(argv[++i]) || 1); args.jobsSet = true; }
@@ -98,6 +107,13 @@ function parseArgv(argv) {
         else if (a === "--hold") args.hold.push(argv[++i]);
         else if (a === "--hold-idle") args.holdIdle = Number(argv[++i]) || undefined;
         else if (a === "--hold-window") args.holdWindow = true;
+        else if (a === "--memory-limit") {
+            args.memoryLimit = parseSize(argv[++i]);
+            if (args.memoryLimit == null) throw new Error(`--memory-limit takes a size such as 12G or 512M, not ${argv[i]}`);
+        } else if (a === "--when-full") {
+            args.whenFull = argv[++i];
+            if (!["pause", "stop-holding"].includes(args.whenFull)) throw new Error(`--when-full takes pause or stop-holding, not ${args.whenFull}`);
+        }
         else if (a === "--hold-headless") args.holdWindow = false;   // the default now; kept so an old command line still parses
         else if (a === "--repeats") args.repeats = Math.max(1, Number(argv[++i]) || 1);
         else if (a === "--dry") args.dry = true;
@@ -203,6 +219,8 @@ async function runCell(cell, ctx, index) {
             }
         } catch { /* unreadable cache → re-run */ }
     }
+    // The memory budget (memory-budget.mjs): no cell starts once the sweep paused at it, nor while its browser would not fit.
+    if (!(await memoryLets(cell, ctx))) return null;
     // Where its artifacts land is known now, so the page can open a run WHILE it runs: they are rewritten on every
     // event, and the open viewer reloads as the run moves.
     ctx.report?.(index, "running", { path: path.relative(ctx.sweepDir, dir) });
@@ -262,6 +280,8 @@ async function runCell(cell, ctx, index) {
             // Its own detached process (hold.mjs), which hands the run back here to be measured and can outlive the sweep.
             held = startHeld({ ...ctx.held.job, index, key, fingerprint: ctx.fingerprint, dir, env, sweep: ctx.spec.name, label,
                 window: ctx.held.window, idleMs: (ctx.held.idleMin ?? t.holdIdleMinutes ?? HOLD_IDLE_MIN) * 60_000 }, { onEvent, onTurns });
+            // In the ledger while it runs, so the budget counts its browser (a detached child is not the runner's).
+            try { register({ kind: "running", pid: held.pid, sweep: ctx.spec.name, repo: ROOT, cell: label, task: t.id, model: driverModel(cell, ctx) }); } catch { /* the budget then counts it under the runner */ }
             ({ run, statuses } = await held.ran);
         } else run = await runOnce(runConfig(cell, env, dir, { ...(nextTurn ? { nextTurn } : {}), onEvent,
             havePrice: ctx.scores ? (h) => !missingSnapshots(ctx.scores, [h]).length : null }));
@@ -270,8 +290,9 @@ async function runCell(cell, ctx, index) {
     }
 
     const measurement = measureRun({ ...run, stream: run.stream ?? cellStream(cell) }, t);
-    // Kept open when asked to, or (`failures`) when the run errored or got it wrong; else its process lets go now.
-    const entry = held && await held.decide(hold === "always" || !measurement.ok || measurement.succeeded === false);
+    // Kept open when asked to, or (`failures`) when the run errored or got it wrong, while the budget has room; else its
+    // process lets go now.
+    const entry = held && await keepOrRelease(held, { want: hold === "always" || !measurement.ok || measurement.succeeded === false, measurement, run, cell, label, dir, ctx });
     if (entry) ctx.held.runs.push(entry);
     ctx.finalSession?.(index, run.session ?? null, run.events ?? []);
     // An interview's answers, turn by turn, kept with the cell so a cached one still sets them side by side.
@@ -344,6 +365,58 @@ function whoOf(combo) {
 }
 
 /** Run `cells` with at most `jobs` in flight, preserving nothing about order beyond scheduling fairness. */
+/** The driver a cell runs on. */
+const driverModel = (cell, ctx) => cell.effects.backend?.model ?? ctx.backend?.model ?? FAKE_MODEL;
+
+/**
+ * Whether a cell may start under the memory budget: false once the sweep paused at it. At the limit, `pause` pauses the
+ * sweep (no more cells; it exits PAUSED_EXIT once the running ones end); `stop-holding` waits for room, which a held run
+ * released or an app closed gives back.
+ */
+async function memoryLets(cell, ctx) {
+    if (ctx.paused) return false;
+    if (!ctx.budget?.active) return true;
+    let said = null;
+    for (;;) {
+        const a = ctx.budget.canStart(cell.task.id);
+        if (a.ok) return true;
+        if (ctx.budget.whenFull === "pause") { ctx.pause(a.why); return false; }
+        if (a.why !== said) ctx.log(`  ⏸ ${cellPath(cell)} waits for memory: ${a.why}`);
+        said = a.why;
+        await new Promise((r) => setTimeout(r, 15_000));
+        if (ctx.paused) return false;
+    }
+}
+
+/**
+ * Keep a finished held run open, or let it go: kept when wanted and the budget has room for one more cell after it; when
+ * it has none, recorded as "would have held" (and with `pause`, the sweep pauses). Its browser's measured peak goes into
+ * the scores log either way, for the next prediction. Returns the held entry, or null.
+ */
+async function keepOrRelease(held, { want, measurement, run, cell, label, dir, ctx }) {
+    const failure = failureShape(measurement);
+    let keep = want;
+    if (keep && ctx.budget?.active) {
+        const a = ctx.paused ? { ok: false, why: ctx.paused } : ctx.budget.canKeep(cell.task.id);
+        if (!a.ok) {
+            keep = false;
+            ctx.wouldHold.push({ cell: label, task: cell.task.id, model: driverModel(cell, ctx), failure, dir: path.relative(ROOT, dir), why: a.why });
+            ctx.log(`  ⊘ ${label}: not held (${a.why})`);
+            if (ctx.budget.whenFull === "pause") ctx.pause(a.why);
+        }
+    }
+    const peak = ctx.budget?.peakOf(held.pid);
+    if (peak && ctx.scores && run.session?.hash) {
+        try { logFootprint(ctx.scores, { run: run.session.hash, task: cell.task.id, model: driverModel(cell, ctx), peak, held: keep }); } catch { /* a prediction is the worse for it, nothing else */ }
+    }
+    const entry = await held.decide(keep);
+    try {
+        if (entry) update(held.pid, { kind: "held", cell: label, task: cell.task.id, model: driverModel(cell, ctx), failure, dir: entry.dir, attach: entry.attach, expiresAt: entry.expiresAt });
+        else unregister(held.pid);
+    } catch { /* the ledger drops a dead pid on its next read */ }
+    return entry;
+}
+
 async function pool(cells, jobs, fn) {
     const out = new Array(cells.length);
     let next = 0;
@@ -453,6 +526,14 @@ const main = async () => {
         if (power.length) console.log(`  regression suite: the smallest shift each task would show 80% of the time, in log-odds (from earlier regression runs):\n${power.map((p) => `    ${p.task.split("#")[0].padEnd(20)} ${p.detectable == null ? "unknown" : p.detectable.toFixed(1)}`).join("\n")}\n`);
         else console.log("  regression suite: no earlier regression run, so this one is the baseline; the next build is compared with it.\n");
     }
+    // The memory budget (memory-budget.mjs), shared with every bench process on this machine through its ledger. It says
+    // no only to a sweep that can hold runs or runs a real model; a fake-model sweep is measured and never stopped.
+    if (scores) openFootprints(scores);
+    // The command that goes on from here: this one, less `--no-cache`, so the cells already done come from the cache.
+    const resume = `cd ${shellLine([process.cwd()])} && ${shellLine(["node", ...process.execArgv, path.relative(process.cwd(), process.argv[1]), ...process.argv.slice(2).filter((a) => a !== "--no-cache")])}`;
+    const holding = cells.some((c) => holdMode(c, args.hold));
+    const budget = startBudget({ limit: args.memoryLimit ?? autoLimit(), whenFull: args.whenFull, db: scores, active: !!backend || holding, sweep: spec.name, repo: ROOT, cmd: resume });
+    if (holding) console.log(`  memory: ${budget.expect([...new Set(cells.map((c) => c.task.id))], args.jobs).text}\n`);
     const scoreSweep = { name: spec.name, spec: specRel, specHash: provenance?.specHash ?? null, fingerprint, dirty, backend, info, by: defaultBy(), suite: spec.suite ?? null };
     const ctx = {
         spec, fingerprint, sweepDir, backend, buildDirs, cache: args.cache, scores, scoreSweep, logged: 0,
@@ -469,6 +550,8 @@ const main = async () => {
         // CLI beats the spec: a sweep you are debugging wants `--capture always` without editing the file.
         capture: args.capture || spec.capture || "failure",
         log: (s) => console.log(s),
+        budget, paused: null, wouldHold: [],
+        pause(why) { if (!this.paused) { this.paused = why; console.log(`  ⏸ PAUSED at the memory budget (${why}): no new cell starts and nothing more is held; the sweep ends once the running cells do`); } },
     };
     // The live page, when asked for. Every cell is seeded as QUEUED so the whole matrix is visible from the
     // start — what is running, what is next, and what is left is the question a long sweep actually raises.
@@ -549,9 +632,19 @@ const main = async () => {
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
         runs: runsState, rows: aggregateRows(cells, results), older,
         started, finished: null, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: liveScores, cloud, scripted, repo,
-        resources: resPoll?.resources() ?? null, spend: spent?.summary(driverOf) ?? null,
+        resources: resPoll?.resources() ?? null, spend: spent?.summary(driverOf) ?? null, memory: memoryView(),
     });
     ctx.liveOf = (i) => runsState[i].live;
+    // What the bench holds in memory, for the page: the budget, what each kind of process uses, the held runs grouped
+    // with their commands, and what the budget turned away (hold-menu.mjs).
+    const memoryView = () => {
+        const st = budget.state();
+        const entries = budget.entries();
+        return { ...st, active: budget.active, whenFull: budget.whenFull, paused: ctx.paused, resume, hints: HOLD_HINTS,
+            runner: entries.find((e) => e.pid === process.pid) ?? null,
+            groups: groupHeld(entries).map((g) => ({ key: g.key, count: g.runs.length, rss: g.rss, sweeps: [...new Set(g.runs.map((r) => r.sweep))], commands: groupCommands(g) })),
+            wouldHold: ctx.wouldHold };
+    };
     // What this invocation's runs have spent so far, priced as their calls come in (live-spend.mjs): a snapshot body
     // the scores log lacks is fetched from the price service by its hash and kept there. Only against a real backend.
     const driverOf = (i) => cells[i].effects.backend?.model ?? backend?.model ?? null;
@@ -683,7 +776,7 @@ const main = async () => {
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
         runs, rows, older, started, finished, jobs: args.jobs, dirty, fingerprint, pdf: args.pdf, interviews, skipped, spec: provenance,
         scores: scoreLines("../scores.html"), cloud, scripted, repo,
-        resources: resPoll?.resources() ?? null, spend: spent?.summary(driverOf) ?? null,
+        resources: resPoll?.resources() ?? null, spend: spent?.summary(driverOf) ?? null, memory: memoryView(),
         // What may leave this machine for the bench store (sync.mjs): nothing when the spec says `sync: false`, and no
         // run of a task that says so.
         ...(spec.sync === false || spec.tasks.some((t) => t.sync === false)
@@ -728,7 +821,7 @@ const main = async () => {
         dash.update({
             name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
             runs: runsState, rows, older, started, finished, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: scoreLines("/scores"), cloud, scripted, repo,
-            resources: pageState.resources, spend: pageState.spend,
+            resources: pageState.resources, spend: pageState.spend, memory: pageState.memory,
         });
         // The page outlives the sweep, the sweep's PROCESS does not: a caller that started it in the background (an
         // agent's background task, a `&` and a wait) learns it finished by its exit, which a held-open server never gave.
@@ -743,6 +836,8 @@ const main = async () => {
     // About what THIS invocation did: a run already on disk is in the report, not in the exit status.
     const done = doneSummary(spec.name, runs.filter((r) => !r.onDisk), { report: path.relative(ROOT, reportPath), page, retried: ctx.retried,
         held: ctx.held.runs.map(({ pid, cell, dir, attach, expiresAt }) => ({ pid, cell, dir, attach, expiresAt })), kept: ctx.kept });
+    if (ctx.paused) Object.assign(done, { paused: ctx.paused, exit: PAUSED_EXIT, resume });
+    if (ctx.wouldHold.length) done.wouldHold = ctx.wouldHold;
     await writeFile(path.join(sweepDir, "done.json"), JSON.stringify(done, null, 2));
     // Into the bench store, when one is configured (sync.mjs; off by default). Never the sweep's failure: what did not
     // go now goes on the next push.
@@ -753,10 +848,11 @@ const main = async () => {
     }
     if (page) console.log(`  the page stays up at ${page}; stop it with: node --import tsx tests/e2e/bench/serve.mjs --stop`);
     if (ctx.kept.length) console.log(`  ${ctx.kept.length} earlier run${ctx.kept.length === 1 ? "" : "s"} of re-run cells kept in ${path.relative(ROOT, path.join(sweepDir, "history"))}/ (the run each replaced, with its cell.json)`);
-    if (done.held.length) {
-        console.log(`  ${done.held.length} run${done.held.length === 1 ? " is" : "s are"} held open (each until /end, ${ctx.held.idleMin ?? HOLD_IDLE_MIN} idle minutes, or \`node --import tsx tests/e2e/bench/hold.mjs --stop\`):`);
-        for (const h of done.held) console.log(`    ${h.cell}: ${h.attach}`);
-    }
+    // What the bench holds open on this machine now (every clone's), grouped, with what to paste for each.
+    if (done.held.length) console.log(`  ${done.held.length} run${done.held.length === 1 ? "" : "s"} of this sweep held open (each until /end, ${ctx.held.idleMin ?? HOLD_IDLE_MIN} idle minutes, or released below).`);
+    const menu = menuText(budget.refresh() && budget.entries(), { resume: ctx.paused ? resume : null, wouldHold: ctx.wouldHold, paused: ctx.paused });
+    if (menu.length) console.log(menu.join("\n"));
+    budget.stop();
     console.log(doneLine(done));
     // Exit, rather than wait for every handle to close: everything is written, and the exit IS the signal.
     process.exit(done.exit);
@@ -772,7 +868,11 @@ async function handOffPage(sweepDir, port) {
     child.unref();
     for (const until = Date.now() + 20_000; Date.now() < until;) {
         const s = servedSweep();
-        if (s?.pid === child.pid) return s.url;
+        if (s?.pid === child.pid) {
+            // In the ledger with the bench's other processes: a page server lives on after its sweep.
+            try { register({ kind: "page", pid: child.pid, sweep: path.basename(sweepDir), repo: ROOT }); } catch { /* not counted, nothing worse */ }
+            return s.url;
+        }
         await new Promise((r) => setTimeout(r, 200));
     }
     console.log("  (the page server did not come up; report.html in the sweep directory is the same page, from disk)");

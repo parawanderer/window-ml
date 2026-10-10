@@ -24,6 +24,7 @@ import { laneScoped, resWindowS, resWindowPref } from "../../../../src/sidebar/s
 import { installChartKeys } from "../../../../src/sidebar/resource/resource-chart";
 import { cloudModels, scriptedModels } from "../../../../src/sidebar/palette";
 import { SpendBadge, SpendRole } from "./spend";
+import { MemoryCard } from "./memory";
 
 declare global { interface Window { __BENCH_STATE__?: BenchState } }
 
@@ -94,6 +95,7 @@ function Head({ s, disconnected }: { s: BenchState; disconnected: boolean }) {
                 {s.finished ? <span class="badge ok">done</span> : <span class="badge tt" data-tip="Runs going at once, each in its own browser (--jobs).">{s.jobs} job{s.jobs > 1 ? "s" : ""}</span>}
                 {s.spec?.changed ? <a class="badge warn tt" href="#spec" data-tip="The spec differs from the sweep before: see the Spec card.">spec changed</a> : null}
                 {s.dirty ? <span class="badge warn tt" data-tip="Built with uncommitted changes: these numbers are not reproducible from a commit.">dirty tree</span> : null}
+                {s.memory?.paused ? <a class="badge warn tt" href="#memory" data-tip={`Paused at the memory budget: ${s.memory.paused}`}>paused: memory</a> : null}
                 {disconnected ? <span class="badge bad">disconnected</span> : null}
             </div>
         </header>
@@ -158,6 +160,7 @@ function App() {
                     </section>
                 ) : null}
                 <section class="card"><Stats s={s} /><Models s={s} /></section>
+                <MemoryCard m={s.memory} />
                 <Flight s={s} />
                 <Answers s={s} base={base} live={!baked} />
                 <Continued s={s} base={base} />
