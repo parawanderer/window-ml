@@ -44,6 +44,10 @@ const asBoxList = (v: unknown): Box[] | null =>
  *  nowhere a click looks. The page's `ml` has none, and mints in its own realm (`mintPoint`/`mintBox`). */
 export type MintToken = (q: { pt: { x: number; y: number } } | { box: { left: number; top: number; right: number; bottom: number } }, documentId: string | null) => Promise<string>;
 
+/** The result for a `cast` over an image whose crop transform is unknown: its coordinates are the image's pixels, and
+ *  minting them as viewport coordinates would point somewhere else on the page. */
+export const CAST_NO_TRANSFORM = "cast refused: where the image was cropped from is not known, so its pixel coordinates cannot be turned into a point on the page. Run it again.";
+
 export const buildPythonTool = (ml: MlApi): MlTool => {
     const mintVia = (ml as MlApi & { _mintToken?: MintToken })._mintToken;
     // `current` is only advertised when it actually resolves to something — the page is a Google Sheet,
@@ -198,6 +202,9 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             if (parts.image) return done(`${pre}Returned an image.`, parts);
             // Coordinates are opt-in via `cast` (auto-detecting [x,y] would mangle a general
             // script that returns two numbers). A mismatch is an honest error, not a guess.
+            // A cast over an image projects through the rect that was cropped; with none, nothing is minted (checked once
+            // the return is a well-formed point or box, so a malformed one still gets its own message).
+            const noTransform = typeof image === "string" && image.trim().length > 0 && !r.imageBox;
             if (cast === "pt") {
                 const raw = asPoint(v);
                 if (!raw) {
@@ -208,6 +215,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 }
                 // The script computed the point in the input IMAGE's pixels; project it back to viewport
                 // coords (crop offset + dpr) so the @pt clicks the right spot. No image → already viewport.
+                if (noTransform) return done(`${pre}${CAST_NO_TRANSFORM}`, valueOut(v));
                 const pt = r.imageBox ? projectShotPoint(raw, r.imageBox) : raw;
                 let t: string;
                 try { t = mintVia ? await mintVia({ pt: { x: pt.x, y: pt.y } }, (r as { imageDocument?: string }).imageDocument ?? null) : mintPoint(pt.x, pt.y); }
@@ -224,6 +232,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                     const why = list ? `it's a LIST of ${list.length} boxes — return the SINGLE best one` : `the return isn't a box ([x1,y1,x2,y2] or {left,top,right,bottom})`;
                     return done(`${pre}cast:'box' but ${why}: ${stringify(v)}`, valueOut(v));
                 }
+                if (noTransform) return done(`${pre}${CAST_NO_TRANSFORM}`, valueOut(v));
                 const bx = r.imageBox ? projectShotBox(raw, r.imageBox) : raw;   // image px → viewport
                 let t: string;
                 try { t = mintVia ? await mintVia({ box: { left: bx.left, top: bx.top, right: bx.right, bottom: bx.bottom } }, (r as { imageDocument?: string }).imageDocument ?? null) : mintBox(bx); }

@@ -144,9 +144,23 @@ function offScreen(rect: { left: number; top: number; width: number; height: num
  * @param opts `ml.screenshot`'s options
  * @returns the screenshot as a PNG data URL
  */
-export async function shootVia(host: ShotHost, target: ShotTarget, { scroll = true, fullPage = false, index = 0, raw = false, margin = 0, noOverlay = false, capture = null }: ShotOpts = {}): Promise<string> {
+export async function shootVia(host: ShotHost, target: ShotTarget, opts: ShotOpts = {}): Promise<string> {
+    return (await shootWithBox(host, target, opts)).dataUrl;
+}
+
+/**
+ * {@link shootVia}, with the crop transform of the crop it made: the cropped rect's viewport top-left (CSS px) and the
+ * pixel ratio it was cropped at, so a python_exec coordinate in the image's pixels projects back to the viewport through
+ * the very rect that was cropped (worker-media.ts), never a second answer from the page. Null for the viewport or a
+ * full-page stitch. The same boxes the page's `_shotBox` gives for a raw shot.
+ * @param host the capture, geometry and raster to use
+ * @param target the viewport (null), a selector or token, or the focused element
+ * @param opts `ml.screenshot`'s options
+ * @returns the PNG data URL and its crop transform
+ */
+export async function shootWithBox(host: ShotHost, target: ShotTarget, { scroll = true, fullPage = false, index = 0, raw = false, margin = 0, noOverlay = false, capture = null }: ShotOpts = {}): Promise<{ dataUrl: string; box: ShotBox | null }> {
     const viewport = async (): Promise<string> => capture || (await host.capture()).dataUrl;
-    if (target == null) return fullPage ? stitchVia(host, () => host.capture().then((s) => s.dataUrl)) : viewport();
+    if (target == null) return { dataUrl: fullPage ? await stitchVia(host, () => host.capture().then((s) => s.dataUrl)) : await viewport(), box: null };
 
     // An `@pt:` point token (a canvas coordinate from locate) → a cropped view around
     // the point with a MARK on the exact click spot, so look() can VERIFY what a click
@@ -159,11 +173,12 @@ export async function shootVia(host: ShotHost, target: ShotTarget, { scroll = tr
         const left = Math.max(0, pt.x - R), top = Math.max(0, pt.y - R);
         const rect = { left, top, width: Math.min(view.w, pt.x + R) - left, height: Math.min(view.h, pt.y + R) - top };
         const cropped = await cropDataUrl(await viewport(), rect, dpr, host.raster);
-        if (raw || noOverlay) return cropped;   // raw: pythonExec pixels · noOverlay: look's clean copy (same crop, no marker)
+        const box = { left: rect.left, top: rect.top, dpr };
+        if (raw || noOverlay) return { dataUrl: cropped, box };   // raw: pythonExec pixels · noOverlay: look's clean copy (same crop, no marker)
         const marker = { left: pt.x - left - 12, top: pt.y - top - 12, width: 24, height: 24 };
         // Contrast the marker with the background AND the target under it (in image px).
         const color = await pickAccentColorForTarget(cropped, { left: marker.left * dpr, top: marker.top * dpr, width: marker.width * dpr, height: marker.height * dpr }, [], host.raster);
-        return annotate(cropped, [{ rect: marker, color, label: "click point", float: true }], dpr, host.raster);
+        return { dataUrl: await annotate(cropped, [{ rect: marker, color, label: "click point", float: true }], dpr, host.raster), box };
     }
 
     // An `@box:` container token (a canvas region from locate({ container: true })) →
@@ -180,11 +195,12 @@ export async function shootVia(host: ShotHost, target: ShotTarget, { scroll = tr
         const left = Math.max(0, bx.left - pad), top = Math.max(0, bx.top - pad);
         const rect = { left, top, width: Math.min(view.w, bx.right + pad) - left, height: Math.min(view.h, bx.bottom + pad) - top };
         const cropped = await cropDataUrl(await viewport(), rect, dpr, host.raster);
-        if (raw) return cropped;
-        if (noOverlay) return cropped;   // look's clean copy: same PADDED framing as the marked one, just no outline
+        const box = { left: rect.left, top: rect.top, dpr };
+        if (raw) return { dataUrl: cropped, box };
+        if (noOverlay) return { dataUrl: cropped, box };   // look's clean copy: same PADDED framing as the marked one, just no outline
         const outline = { left: bx.left - left, top: bx.top - top, width: bx.right - bx.left, height: bx.bottom - bx.top };
         const color = await pickAccentColorForTarget(cropped, { left: outline.left * dpr, top: outline.top * dpr, width: outline.width * dpr, height: outline.height * dpr }, [], host.raster);
-        return annotate(cropped, [{ rect: outline, color, label: "container" }], dpr, host.raster);
+        return { dataUrl: await annotate(cropped, [{ rect: outline, color, label: "container" }], dpr, host.raster), box };
     }
 
     // An element: the Nth match of a selector (queryAll adds :contains + `>>>` shadow/iframe crossing), or the focused
@@ -201,7 +217,7 @@ export async function shootVia(host: ShotHost, target: ShotTarget, { scroll = tr
     tooSmall(t.rect);
     const view = await host.geo.view();
     offScreen(t.rect, view);
-    return cropDataUrl(await viewport(), t.rect, view.dpr, host.raster);
+    return { dataUrl: await cropDataUrl(await viewport(), t.rect, view.dpr, host.raster), box: { left: t.rect.left, top: t.rect.top, dpr: view.dpr } };
 }
 
 /**
@@ -230,33 +246,6 @@ export const _shotBox = function(target: string | Element, margin = 0): ShotBox 
     const r = viewportRect(el);   // top-viewport (composes iframe offsets)
     return { left: r.left, top: r.top, dpr };
 };
-
-/**
- * `_shotBox` over any host: the crop transform of a raw `shootVia` of `target`, from the host's geometry, so a
- * python_exec run in the worker (worker-media.ts) projects its image-pixel coordinates the way the page's does. The
- * same boxes: an `@pt` the {@link PT_LOOK_RADIUS} (or `margin`) square's top-left, an `@box` its own top-left, a
- * selector its first match's top-viewport top-left; the pixel ratio is the host's (the worker's is the one its crop
- * used). Call it after the shot, which scrolled the element into view.
- * @param host the geometry to ask
- * @param target a selector or an `@pt`/`@box` token
- * @param margin the `@pt` crop radius (0: the default)
- * @returns the box, or null when the target does not resolve
- */
-export async function shotBoxVia(host: Pick<ShotHost, "geo">, target: string, margin = 0): Promise<ShotBox | null> {
-    const { dpr } = await host.geo.view();
-    if (POINT_RE.test(target.trim())) {
-        const t = await host.geo.target({ token: target });
-        if (!("point" in t)) return null;
-        const R = margin > 0 ? margin : PT_LOOK_RADIUS;
-        return { left: Math.max(0, t.point.x - R), top: Math.max(0, t.point.y - R), dpr };
-    }
-    if (BOX_RE.test(target.trim())) {
-        const t = await host.geo.target({ token: target });
-        return "box" in t ? { left: Math.max(0, t.box.left), top: Math.max(0, t.box.top), dpr } : null;
-    }
-    const t = await host.geo.target({ selector: target, index: 0, scroll: false });
-    return "rect" in t ? { left: t.rect.left, top: t.rect.top, dpr } : null;
-}
 
 /**
  * Scroll the page in viewport-height steps, capture each, and stitch them

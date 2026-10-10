@@ -260,6 +260,21 @@ test("the page is asked to resolve a selector with mediaInWorker, and only for t
     }
 });
 
+test("a page that answers a call naming an index with more than one media item is refused whole; without an index it may name up to its count", T, async () => {
+    const shape = { image: "", kind: "element", mode: "highlight" };
+    const run = async (args, selection) => {
+        const { toolResults, hashes, resultOf } = await answerRuns([{ task: "pick by index", calls: [{ name: "answer", args }] }],
+            { page: (p) => (p.answerSelect ? { result: "", answerSelection: selection } : undefined) });
+        return { echo: toolResults("pick by index")[0] ?? "", result: resultOf(hashes[0]) };
+    };
+    const indexed = await run({ selector: "h1", index: 0 }, { count: 3, preview: "h1", media: [shape, shape] });
+    assert.match(indexed.echo, /malformed selection/, "two items for one element");
+    const one = await run({ selector: "h1", index: 0 }, { count: 3, preview: "h1", media: [shape] });
+    assert.equal(one.result?.answerMedia?.length, 1, "positive control: one item for an index");
+    const all = await run({ selector: "h1" }, { count: 3, preview: "h1", media: [shape, shape] });
+    assert.equal(all.result?.answerMedia?.length, 2, "without an index, up to its count");
+});
+
 test("a page that answers the selector with images of its own while the worker crops is refused whole: nothing it drew reaches the card", T, async () => {
     const own = "data:image/png;base64,iVBORw0KGgo=";
     const forged = await selectRun({ count: 1, preview: "h1", media: [{ image: own, kind: "image", mode: "inline" }] });

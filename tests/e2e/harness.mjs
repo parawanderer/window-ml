@@ -199,7 +199,8 @@ export async function waitForMl(page, { approve = true } = {}) {
  * The worker's events for a run never reach the page's window (docs/spec/SITE_ACCESS.md, attack 15), so a spec that
  * listened there for a background run's steps listens here instead. The worker fans a run's events to this port
  * whatever the debug mode. The page's OWN events (a run or chat the page hosts) still go to its window, and come here
- * too only in `debugMode: "devtools"`.
+ * too only in `debugMode: "devtools"`. The watcher is a popup page in a window of its own, so a capture of the run's
+ * window never shows it.
  * @param {any} ext the launched extension (`launchExtension`'s result)
  * @param {any} page the page whose tab to watch; resolved to its tab by URL, so call it once the page has loaded
  * @param {(ev: any) => void} onEvent called once per event: the tab's buffered events first, then each new one
@@ -209,9 +210,15 @@ export async function watchRunEvents(ext, page, onEvent) {
     const url = page.url();
     const tabId = await ext.sw.evaluate(async (/** @type {string} */ u) => (await chrome.tabs.query({})).find((t) => t.url === u)?.id ?? null, url);
     if (tabId == null) throw new Error(`no tab is on ${url}`);
-    const watcher = await ext.context.newPage();
+    // The watcher gets a WINDOW of its own, unfocused, never a tab beside the run's: a headless capture of the run's
+    // window (captureVisibleTab) can show the most recently opened page there whatever chrome.tabs says is active, so
+    // every look, locate, verify and answer crop of a watched run was of the watcher's popup (review of #571).
+    const popup = `chrome-extension://${ext.extensionId}/popup.html`;
+    const opened = ext.context.waitForEvent("page", { predicate: (/** @type {any} */ p) => p.url().startsWith(popup) });
+    await ext.sw.evaluate((/** @type {string} */ u) => chrome.windows.create({ url: u, focused: false }), popup);
+    const watcher = await opened;
+    await watcher.waitForLoadState();
     await watcher.exposeFunction("__onRunEvent", (/** @type {any} */ ev) => onEvent(ev));
-    await watcher.goto(`chrome-extension://${ext.extensionId}/popup.html`);
     await watcher.evaluate((/** @type {number} */ id) => new Promise((resolve) => {
         const w = /** @type {any} */ (window);
         const port = chrome.runtime.connect({ name: "ml-devtools" });

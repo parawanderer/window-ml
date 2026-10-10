@@ -210,7 +210,7 @@ test("a worker-built answer of six elements gets six crops, each of its own elem
 // existing spec asserts pixels under watchRunEvents (answer.spec.mjs's selector answer is cropped from the watcher
 // silently; cross-page.spec.mjs's "answer → HUD" run is page-built and checks only a data: prefix), but run-once.mjs
 // (observe) watches every run with it, so a headless observe run's look, locate and verify see the watcher.
-test.fixme("with watchRunEvents watching (the harness's watcher tab beside the run's), a worker-built answer's crop is of the run's tab", async () => {
+test("with watchRunEvents watching (the harness's watcher tab beside the run's), a worker-built answer's crop is of the run's tab", async () => {
     test.setTimeout(120000);
     const r = await setup();
     try {

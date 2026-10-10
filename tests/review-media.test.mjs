@@ -13,7 +13,7 @@ import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import { JSDOM } from "jsdom";
 import { pageGeometry, answerGeometry } from "../src/dom/page-geometry.ts";
-import { _shotBox, shotBoxVia } from "../src/ml/ml-vision.ts";
+import { _shotBox } from "../src/ml/ml-vision.ts";
 import { mintPoint, mintBox } from "../src/util.ts";
 import { answerMediaShape } from "../src/tools/tools.ts";
 import { pageOnlyPython, mixedPythonRefusalFor } from "../src/sw/worker-tools.ts";
@@ -187,7 +187,7 @@ test("the worker crops the MODEL's selector at item i; the selector string the p
     });
 });
 
-test.todo("the card gets no more media items than the selection's count, and one for a call with an index, as the page-built path makes", T, async () => {
+test("the card gets no more media items than the selection's count, and one for a call with an index, as the page-built path makes", T, async () => {
     await onPage(async (doc) => {
         const six = Array.from({ length: 6 }, () => ({ image: "", selector: "body > button#save", kind: "element", mode: "highlight" }));
         const withIndex = await mediaRun(doc, {
@@ -285,7 +285,7 @@ test("an element that moves between the shape reply and the capture is cropped w
     });
 });
 
-// --- python_exec's image: shotBoxVia against _shotBox, over every target shape ---
+// --- python_exec's image: the crop transform against _shotBox, over every target shape ---
 
 /** The worker's vision host over the jsdom page, as worker-media.test.mjs wires it. */
 function hostWorld(page) {
@@ -322,15 +322,16 @@ test("python's crop transform in the worker equals the page's `_shotBox` for eve
         ];
         for (const [target, margin] of shapes) {
             const { wv } = hostWorld();
-            const host = wv.workerVisionHost("run-1", 3, "doc-3", {});
-            const via = plain(await shotBoxVia(host, target, margin));
-            host.end();
-            assert.deepEqual(via, plain(_shotBox(target, margin)), `${JSON.stringify(target)} m${margin}`);
+            // The worker's transform is the rect its shot cropped (worker-media.ts `shootWithBox`); an unknown token has
+            // none on either side (the page's `_shotBox` is null, the worker's shot refuses).
+            const page = plain(_shotBox(target, margin));
+            const via = await wv.workerPythonImage("run-1", 3, target, margin).then((r) => plain(r.imageBox), () => null);
+            assert.deepEqual(via, page, `${JSON.stringify(target)} m${margin}`);
         }
     });
 });
 
-test.todo("the cast's crop transform is the rect the worker cropped, not a second answer from the page: a page that moves or drops the element after the shot does not move the cast", T, async () => {
+test("the cast's crop transform is the rect the worker cropped, not a second answer from the page: a page that moves or drops the element after the shot does not move the cast", T, async () => {
     await onPage(async () => {
         // The shot's target (scroll: true) is answered honestly; the transform's (scroll: false) moves, then refuses.
         for (const later of [{ rect: rect({ left: 0, top: 0, width: 120, height: 40 }) }, { err: "nomatch", count: 0 }]) {
@@ -429,7 +430,7 @@ test("the ratchet's RUN_TAB_TYPES, read from the source by regex, is exactly the
     assert.ok(SPEC.includes("export const RUN_TAB_TYPES[^[]*\\[([^\\]]*)\\]"), "the spec uses this regex");
 });
 
-test.todo("the ratchet is held against every page-started type, so a new HANDLE_MAP type the page sends for a worker-built run fails it", T, () => {
+test("the ratchet is held against every page-started type, so a new HANDLE_MAP type the page sends for a worker-built run fails it", T, () => {
     const uncounted = [...PAGE_STARTED_TYPES].filter((t) => !RUN_TAB_TYPES.has(t) && !["CAPTURE_TAB", "FETCH_LLM", "MODEL_CAPS", "GET_CONFIG", "FETCH_IMAGE_B64"].includes(t));
     assert.ok(uncounted.length > 0, "positive control: some page-started types are outside RUN_TAB_TYPES");
     assert.ok(/PAGE_STARTED_TYPES|HANDLE_MAP/.test(SPEC), `the ratchet does not notice a page sending any of: ${uncounted.join(", ")}`);

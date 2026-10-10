@@ -8,12 +8,13 @@
 // shows the image as the page drew it, at its drawn size, not its source file.
 //
 // A python_exec with `image` runs in the worker (worker-tools.ts): its image is shot here as the page's `ml.pythonExec`
-// shoots it (`raw`, with `margin` for an `@pt`), with the crop transform its `cast` projects through (`shotBoxVia`), and
+// shoots it (`raw`, with `margin` for an `@pt`), with the crop transform its `cast` projects through: the rect it cropped
+// (`shootWithBox`), never a second answer from the page, and
 // a `cast` mints its `@pt`/`@box` in the PAGE's registry through the `mint` geometry op, pinned to the document the
 // image came from, so a click on the token resolves where the image was taken.
 
 import type { AnswerMedia, ShotBox } from "../contract";
-import { shotBoxVia } from "../ml/ml-vision";
+import { shootWithBox } from "../ml/ml-vision";
 import { MAX_IMAGE } from "./worker-answer";
 import { onWorkerHost, workerVisionHost, type WorkerVisionHostOpts } from "./worker-vision-host";
 import { topDocument } from "./worker-vision";
@@ -66,7 +67,7 @@ export async function workerAnswerMedia(runId: string, tabId: number, documentId
  * @param image the call's `image`
  * @param margin the call's `margin` (an `@pt`'s crop radius)
  * @param opts the host's test seams
- * @returns the PNG data URL, its crop transform (null when the target did not resolve after the shot), and the document
+ * @returns the PNG data URL, its crop transform (the rect it cropped), and the document
  * @throws the shot's error (no match, too small) or the host's refusal, as the page's pythonExec throws its screenshot's
  */
 export async function workerPythonImage(runId: string, tabId: number, image: string, margin: number, opts: WorkerVisionHostOpts = {}): Promise<{ image: string; imageBox: ShotBox | null; documentId: string }> {
@@ -74,8 +75,8 @@ export async function workerPythonImage(runId: string, tabId: number, image: str
     if (!documentId) throw new Error(PY_IMAGE_NO_DOCUMENT);
     const host = workerVisionHost(runId, tabId, documentId, opts);
     const r = await onWorkerHost(host, async () => {
-        const shot = await host.shoot(image, { raw: true, margin });
-        return { image: shot, imageBox: await shotBoxVia(host, image, margin) };
+        const shot = await shootWithBox(host, image, { raw: true, margin });
+        return { image: shot.dataUrl, imageBox: shot.box };
     });
     if (typeof r === "string") throw new Error(r);
     return { ...r, documentId };

@@ -434,7 +434,7 @@ Recorded as each slice lands, with the reason.
   token in the page's registry through the `mint` geometry op; a python_exec with both an `image` and a page table is
   refused with a two-call steer. Found while building it: a worker-run python_exec with `cast` minted its token in the
   worker's own registry, where no click resolves it. The ratchet (`tests/e2e/media-in-worker.spec.mjs`): a full run,
-  worker-built and handed over, sends nothing in `RUN_TAB_TYPES` from its page.
+  worker-built and handed over, has its page send nothing during the run (an in-run probe proves the counter counts).
 - **Part 4 (first part): an approved exec of a worker-built run runs isolated where it must** (`exec-routing.ts`,
   `sw-isolated-exec.ts`). Isolated when the page is not approved, or when the script names `ml.current` or a pointer;
   otherwise the page's main world, as before. The mechanism is a user-script world of the run's own

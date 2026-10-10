@@ -413,6 +413,10 @@ thing. The parts:
   left) — not merely for one step to land, or the test opens a step while the next is still arriving and the
   sidebar re-renders under it, which only shows once CPU is contended. A test whose time is the same on a
   laptop and on CI is waiting on a timer.
+- **A headless capture of a window shows its newest page, whatever `chrome.tabs` says is active.** `watchRunEvents`
+  therefore opens its watcher in an unfocused window of its own (`chrome.windows.create`); a helper that opens any
+  extra page beside a run's tab makes every worker capture, crop and verify of that run a picture of the extra page
+  (found by the review of #571: the answer's crop was the watcher's popup).
 - **A `page.evaluate` whose document navigates away never settles, and wedges the calls queued behind it.** A test
   that arms each navigation with an un-awaited `page.evaluate` and races worker calls from the runner reports calls
   that "never answer" (3 of 6 worker shots in the shot-mask pass), while the same calls fired inside the worker

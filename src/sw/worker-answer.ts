@@ -76,16 +76,19 @@ export const MAX_MEDIA = 6, MAX_IMAGE = 4_000_000;
  * size it builds, and at most six crops, each an image data URL (or none, when its capture failed), rebuilt field by
  * field. The page may still lie about its DOM, as it can by changing the DOM; it cannot make the answer larger or
  * point the HUD card at a remote image. With `mediaInWorker` (the worker crops the media itself) the page names no image
- * at all: one that does is refused, so nothing it drew can reach the HUD card.
+ * at all: one that does is refused, so nothing it drew can reach the HUD card. Each item is a crop the worker takes, so
+ * the page may name no more items than its own resolution makes: one for a call with an index, else min(count, 6). A
+ * reply with more is refused whole (not cut), as any other malformed part is.
  * @param got the page's answer
- * @param o `mediaInWorker`: every image must be empty
+ * @param o `mediaInWorker`: every image must be empty, and the items bounded; `indexed`: the call named an index
  * @returns the selection, or null when any part is malformed
  */
-export function checkSelection(got: unknown, o: { mediaInWorker?: boolean } = {}): AnswerSelection | null {
+export function checkSelection(got: unknown, o: { mediaInWorker?: boolean; indexed?: boolean } = {}): AnswerSelection | null {
     const g = got as { count?: unknown; preview?: unknown; media?: unknown } | null;
     if (!g || typeof g !== "object" || !Number.isSafeInteger(g.count) || (g.count as number) < 0) return null;
     if (g.preview !== undefined && typeof g.preview !== "string") return null;
     if (g.media !== undefined && (!Array.isArray(g.media) || g.media.length > MAX_MEDIA)) return null;
+    if (o.mediaInWorker && Array.isArray(g.media) && g.media.length > (o.indexed ? Math.min(1, g.count as number) : Math.min(g.count as number, MAX_MEDIA))) return null;
     const media: AnswerMedia[] = [];
     for (const m of (g.media as unknown[] | undefined) ?? []) {
         const x = m as Record<string, unknown> | null;
@@ -140,7 +143,7 @@ export function workerAnswerTool(runId: string, page: MlTool): MlTool {
                 // labelled with it after (the page's own resolution used it only as that label).
                 const got = await sel.ask({ selector, index, show });
                 if (got.error) throw new Error(String(got.error).slice(0, 500));
-                const clean = checkSelection(got, { mediaInWorker: !!sel.crop });
+                const clean = checkSelection(got, { mediaInWorker: !!sel.crop, indexed: index != null });
                 if (!clean) throw new Error("the page returned a malformed selection");
                 // The crops are the worker's, of the document the page answered in.
                 const media = clean.media && sel.crop ? await sel.crop(got.documentId ?? null, selector, index, clean.media) : clean.media;

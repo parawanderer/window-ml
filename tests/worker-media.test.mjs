@@ -421,3 +421,25 @@ test("a worker-built run's python_exec with an image and a cast: the sandbox get
         assert.ok(sends.some((p) => p.geometry?.op === "mint"), "positive control: the mint was asked of the page");
     });
 });
+
+// --- python_exec's cast with no crop transform ---
+
+test("a cast over an image whose crop transform is unknown is refused with a fixed sentence, and nothing is minted; with one it is projected and minted", T, async () => {
+    const { buildPythonTool, CAST_NO_TRANSFORM } = await import("../src/python/python-tool.ts");
+    const { defineTool } = await import("../src/ml/ml-tool-factories.ts");
+    const minted = [];
+    const tool = (imageBox, value = [10, 5]) => buildPythonTool({
+        defineTool, _queryAll: () => [],
+        pythonExec: async () => ({ ok: true, value, stdout: "", inputImage: "data:image/png;base64,AAAA", ...(imageBox ? { imageBox } : {}) }),
+        _mintToken: async (q) => { minted.push(q); return "@pt:abcdef12"; },
+    });
+    const text = (r) => (typeof r === "string" ? r : r.content);
+    for (const cast of ["pt", "box"]) {
+        const r = text(await tool(null, cast === "box" ? [1, 2, 30, 40] : [10, 5]).run({ code: "x", image: "#save", cast }));
+        assert.ok(r.includes(CAST_NO_TRANSFORM), r);
+    }
+    assert.deepEqual(minted, [], "nothing minted from raw image pixels");
+    const ok = text(await tool({ left: 300, top: 200, dpr: 1 }).run({ code: "x", image: "#save", cast: "pt" }));
+    assert.match(ok, /@pt:abcdef12 at \(310, 205\)/, "positive control");
+    assert.deepEqual(minted, [{ pt: { x: 310, y: 205 } }]);
+});

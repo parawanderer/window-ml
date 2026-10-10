@@ -1,9 +1,10 @@
 // media-in-worker.spec.mjs — the ratchet of site-access part 3 (the vision split): a run whose vision is the worker's
-// sends nothing vision-shaped from its page. A full run (look, locate, a click and a type each with `verify`, an answer
-// with media, python_exec with an `image`) on a real tab, counted at the worker's router by sender: the run's page sent
-// ZERO of CAPTURE_TAB, FETCH_LLM, MODEL_CAPS, GET_CONFIG and FETCH_IMAGE_B64, nor opened a model stream. Once for a run the
-// worker built, once for a page-built run after it was handed to the worker (an eviction's durable resume,
-// `makeWorkerRun`). Any later change that has the page capture, call a model or read the config for such a run fails here.
+// has its page send NOTHING. A full run (look, locate, a click and a type each with `verify`, an answer with media,
+// python_exec with an `image` and a `cast`) on a real tab, counted at the worker's router by sender: during the run the
+// page sent no message and opened no port, apart from an in-run probe the test has it send (the counter's positive
+// control) and, for a reloaded page, the two messages of its own named in PAGE_OWN. Once for a run the worker built, once
+// for a page-built run after it was handed to the worker (an eviction's durable resume, `makeWorkerRun`). Any later
+// change that has the page capture, call a model, read the config or send anything else for such a run fails here.
 //
 // The answer's media and python's image are cropped from the worker's own masked capture (src/sw/worker-media.ts), never
 // fetched from a page-supplied src: the <img> here is a flat green PNG the page draws at 120×80, and the HUD card's crop is
@@ -12,7 +13,8 @@ import { test, expect } from "@playwright/test";
 import http from "node:http";
 import zlib from "node:zlib";
 import fs from "node:fs";
-import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, watchRunEvents } from "./harness.mjs";
+import { PAGE_STARTED_TYPES } from "../../src/page-relay.ts";
 import { startFakeLlm } from "./fake-llm.mjs";
 
 test.describe.configure({ mode: "default" });
@@ -97,10 +99,11 @@ const centre = (page, src) => page.evaluate(async (src) => {
  * read its pixels, once to `cast` a point in it and click the token that comes back), and the answer of an `<img>` and of
  * a button.
  */
-const SCRIPT = [
+const script = (probe) => [
     { tool: "look", args: {} },
     { tool: "locate", args: { description: "a red rectangle", strategy: "marks" } },
-    { tool: "click", args: { selector: "#a", verify: true } },
+    // The in-run positive control: the page sends one known message while the run is live (see PROBE).
+    () => { probe(); return { tool: "click", args: { selector: "#a", verify: true } }; },
     { tool: "type", args: { selector: "#f", text: "hello", verify: true } },
     { tool: "python_exec", args: { code: "return [int(x) for x in img_np.shape] + [int(v) for v in img_np[50, 100]]", image: "#b" } },
     { tool: "python_exec", args: { code: "return [100, 50]", image: "#b", cast: "pt" } },
@@ -113,6 +116,21 @@ const SCRIPT = [
     { tool: "answer", args: { selector: "#a" } },
     { content: "done" },
 ];
+const SCRIPT_LENGTH = script(() => {}).length;
+
+/** The in-run positive control: a message the test has the page send mid-run (`ml.models()`, a read of the model list,
+ *  harmless and refused on an unapproved page), which the counter must see exactly once. A counter that stopped (a worker
+ *  restart drops its listener and its record) or never counted fails here instead of passing on an empty list. */
+const PROBE = "LIST_MODELS";
+const sendProbe = (page) => () => { void page.evaluate(() => window.ml.models().catch(() => null)).catch(() => {}); };
+
+/** What a run's page may send on its own account during a run, by name, each with why: none for a run the worker built
+ *  on a page already open. A handed-over run's page is reloaded (that is the hand-over), so it announces its new document
+ *  and acknowledges the re-adopt; neither is a tool's, and neither carries anything of the run. */
+const PAGE_OWN = {
+    CONTENT_READY: "the reloaded page's content script announces its document, so the worker re-adopts the run there",
+    RUN_READOPTED: "the reloaded page acknowledges the re-adopt, releasing the navigation barrier",
+};
 
 /** Every gate approved as it opens, the way an approver outside the browser does. */
 function approveAll(ext) {
@@ -146,28 +164,6 @@ async function setup() {
     return { fake, site, ext, subs, close: async () => { await ext.close(); fake.stop?.(); await site.close(); } };
 }
 
-/**
- * Watch a tab's run events from an extension page in a WINDOW OF ITS OWN, as the DevTools panel does. Not
- * `watchRunEvents`, which opens its page as a tab beside the run's: a headless capture of the run's window can show that
- * most recently opened page whatever `chrome.tabs` says is active, and every crop would be of the watcher.
- */
-async function watchInOwnWindow(ext, tabId, onEvent) {
-    const opened = ext.context.waitForEvent("page");
-    await ext.sw.evaluate(() => chrome.windows.create({ url: chrome.runtime.getURL("popup.html"), focused: false }));
-    const watcher = await opened;
-    await watcher.waitForLoadState();
-    await watcher.exposeFunction("__onRunEvent", (ev) => onEvent(ev));
-    await watcher.evaluate((id) => new Promise((resolve) => {
-        const port = chrome.runtime.connect({ name: "ml-devtools" });
-        port.onMessage.addListener((m) => {
-            if (Array.isArray(m.replay)) { for (const ev of m.replay) window.__onRunEvent(ev); resolve(undefined); }
-            else if (m.__mlDebug) window.__onRunEvent(m.__mlDebug);
-        });
-        port.postMessage({ type: "ml-devtools-init", tabId: id });
-    }), tabId);
-    return { close: () => watcher.close() };
-}
-
 /** The run's `n`th agent-result, as the worker fanned it. */
 async function untilResult(events, n = 1, ms = 90000) {
     for (let i = 0; i < ms / 100 && events.filter((e) => e.kind === "agent-result").length < n; i++) await sleep(100);
@@ -194,7 +190,7 @@ async function expectTheRun(r, page, result) {
     expect(result, "the run finished").toBeTruthy();
     expect(result.error, "the run did not fail").toBeFalsy();
     const out = toolResults(r.fake);
-    expect(out.length, JSON.stringify(out)).toBe(SCRIPT.length - 1);
+    expect(out.length, JSON.stringify(out)).toBe(SCRIPT_LENGTH - 1);
     expect(out[0]).toContain("Screenshot of the viewport captured");
     expect(out[1]).toContain('Matched "a red rectangle" → #1 [button] "Red" → #a');
     expect(out[2]).toContain("Here's the area where you clicked");
@@ -216,25 +212,34 @@ async function expectTheRun(r, page, result) {
     expect(btn).toEqual({ w: 200, h: 100, at: [255, 0, 0] });
 }
 
-/** The ratchet itself: the tab sent none of FORBIDDEN, and nothing of RUN_TAB_TYPES at all. */
-function expectNothingSent(sent) {
-    expect(forbidden(sent), `the run's page sent a vision message: ${JSON.stringify(sent.map((m) => m.type))}`).toEqual([]);
-    expect(sent.filter((m) => RUN_TAB_TYPES.includes(m.type)).map((m) => m.type), "the run's page needed none of what a run tab may send").toEqual([]);
+/**
+ * The ratchet itself: during the run the tab sent NOTHING (no message, no port) but the probe and what `own` names as
+ * the page's own. Nothing of the five vision types, of `RUN_TAB_TYPES`, or of any page-started type (`PAGE_STARTED_TYPES`,
+ * every `HANDLE_MAP` type) but the probe; those are asserted on their own too, so a failure names the class.
+ * @param sent what the counter saw from the tab during the run
+ * @param own the page's own types allowed for this variant (keys of {@link PAGE_OWN})
+ */
+function expectNothingSent(sent, own = []) {
+    const types = sent.map((m) => m.type);
+    expect(types.filter((t) => t === PROBE).length, `the in-run probe was counted once: ${JSON.stringify(types)}`).toBe(1);
+    expect(forbidden(sent), `the run's page sent a vision message: ${JSON.stringify(types)}`).toEqual([]);
+    expect(types.filter((t) => RUN_TAB_TYPES.includes(t)), "the run's page needed none of what a run tab may send").toEqual([]);
+    expect(types.filter((t) => t !== PROBE && PAGE_STARTED_TYPES.has(t)), "the run's page started nothing").toEqual([]);
+    expect(types.filter((t) => t !== PROBE && !own.includes(t)), "the run's page sent nothing at all").toEqual([]);
 }
 
 // --- the ratchet: a run the worker built ---
 
-test("a worker-built run's look, locate, verified click and type, answer media and python image: its page sends no capture, model call, capability or config read, and no image fetch", async () => {
+test("a worker-built run's look, locate, verified click and type, answer media and python image and cast: its page sends nothing during the run but the in-run probe", async () => {
     test.setTimeout(150000);
     const r = await setup();
     const stopApprover = approveAll(r.ext);
     try {
         const { page, tabId } = await openPage(r, false);
         const events = [];
-        const watch = await watchInOwnWindow(r.ext, tabId, (ev) => events.push(ev));
-        await page.bringToFront();
+        const watch = await watchRunEvents(r.ext, page, (ev) => events.push(ev));
         await startCounting(r.ext.sw);
-        r.fake.setScript(SCRIPT);
+        r.fake.setScript(script(sendProbe(page)));
         await r.ext.sw.evaluate((id) => globalThis.__mlStartUserRunForTest(id, { task: "look around and hand me the picture", hud: "quiet", surface: "hud" }, { approvalRouting: "both", answer: true }), tabId);
         const result = await untilResult(events);
         await watch.close();
@@ -245,21 +250,20 @@ test("a worker-built run's look, locate, verified click and type, answer media a
 
 // --- the ratchet: a page-built run, once it is handed to the worker ---
 
-test("a page-built run handed to the worker (an eviction's durable resume): after the hand-over its page sends no capture, model call, capability or config read, and no image fetch", async () => {
+test("a page-built run handed to the worker (an eviction's durable resume): after the hand-over its page sends nothing but the in-run probe and its reload's own two messages", async () => {
     test.setTimeout(150000);
     const r = await setup();
     let stopApprover = null;
     try {
         const { page, tabId } = await openPage(r, true);
         // The page builds the run, which pauses at its first gate (an exec that writes).
-        r.fake.setScript([{ tool: "exec", args: { js: "document.title = 'X'; 'ok'" } }, ...SCRIPT]);
+        r.fake.setScript([{ tool: "exec", args: { js: "document.title = 'X'; 'ok'" } }, ...script(sendProbe(page))]);
         await page.evaluate(() => { window.ml.agent("look around and hand me the picture", { env: false, approvalRouting: "external", answer: true, extraTools: [window.ml.pythonTool()] }); return true; });
         await expect.poll(async () => (await r.ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 20000 }).toBe(1);
         // The worker restarts; the run is the worker's from here (`makeWorkerRun`), and continues once its page re-adopts it.
         await r.ext.sw.evaluate(() => globalThis.__mlEvictForTest());
         const events = [];
-        const watch = await watchInOwnWindow(r.ext, tabId, (ev) => events.push(ev));
-        await page.bringToFront();
+        const watch = await watchRunEvents(r.ext, page, (ev) => events.push(ev));
         stopApprover = approveAll(r.ext);
         await startCounting(r.ext.sw);
         const before = (await counted(r.ext.sw, tabId)).length;
@@ -268,6 +272,6 @@ test("a page-built run handed to the worker (an eviction's durable resume): afte
         const result = await untilResult(events);
         await watch.close();
         await expectTheRun(r, page, result);
-        expectNothingSent((await counted(r.ext.sw, tabId)).slice(before));
+        expectNothingSent((await counted(r.ext.sw, tabId)).slice(before), ["CONTENT_READY", "RUN_READOPTED"]);
     } finally { await stopApprover?.(); await r.close(); }
 });
