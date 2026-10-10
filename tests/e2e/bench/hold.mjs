@@ -10,9 +10,9 @@
 // any other. When the sweep says to keep it, the child stays up after the sweep exits, with the session, its pointers,
 // `ml.current` and the page exactly as the run left them, which a re-seeded run cannot give back (a seed runs its tools
 // again). Each held run is an entry in HELD_FILE while it lives, and goes on `/end`, after its idle minutes with no
-// message, or on SIGTERM (what `--stop` and merge-when-green send), closing its browser. Where there is a screen, a held
-// run's browser is a real window kept minimised, so a person can look at it on demand (`--show`); a headless browser
-// cannot become one later. Each turn sent after the run's own is logged in `continued.jsonl` beside its outbox report,
+// message, or on SIGTERM (what `--stop` and merge-when-green send), closing its browser. A held run's browser is headless, as
+// every bench browser is; `--hold-window` makes it a minimised real window a person can bring up (`--show`), opt-in because
+// on macOS each one takes the screen as it opens. Each turn sent after the run's own is logged in `continued.jsonl` beside its outbox report,
 // which the page shows under that run's answers, apart from the scripted ones.
 
 import { spawn } from "node:child_process";
@@ -27,6 +27,9 @@ const ROOT = path.resolve(HERE, "../../..");
 export const HELD_FILE = process.env.BENCH_HELD_FILE || path.join(ROOT, "tests/e2e/artifacts/bench/held.json");   // the env: tests only
 /** Whether a held run's browser can be a window here: not on a Linux box with no display, where only headless runs. */
 export const canShow = (env = process.env, platform = process.platform) => platform !== "linux" || !!(env.DISPLAY || env.WAYLAND_DISPLAY);
+/** How a held run's browser starts: a minimised real window only when asked for (`--hold-window`) and there is a screen,
+ *  else headless (null), the default. */
+export const heldWindow = (asked, screen = canShow()) => (asked && screen ? "minimized" : null);
 /** The file a held run's process watches for `show` or `hide` (hold.mjs --show / --hide write it). */
 const WINDOW_FILE = "window";
 
