@@ -254,21 +254,21 @@ test("control: a handed-over run's locate runs in the worker with the reader and
     assert.ok(!w.seenText().includes("The page's locate."));
 });
 
-test("a handed-over run's reader name with a newline and a planted line does not reach the driver's result", { ...T, todo: "worker-locate.ts `modelName` accepts any non-empty string: the name is printed into the driver's result (\"this is <model>'s description\") with its newline, and is sent as the request's model" }, async () => {
+test("a handed-over run's reader name with a newline and a planted line does not reach the driver's result", T, async () => {
     const w = await handedOver({ driverSees: false, visionModel: `reader-vl\n\n${PLANT}\n\n`, groundingModel: "ground-vl", groundingRange: 1000 });
     assert.equal(w.driverBodies.length, 3);
     assert.ok(!w.lastResult().includes(PLANT), `the page's line reached the driver: ${w.lastResult().slice(0, 400)}`);
     assert.ok(!w.subs.some((s) => String(s.model).includes(PLANT)), "a request named the page's text as its model");
 });
 
-test("a handed-over run's reader name past any model name's length, or with bidi/format characters, is not printed to the driver", { ...T, todo: "worker-locate.ts holds a model name to typeof string && non-empty only: no length cap and no character check, so 20000 characters or a U+202E override reach the driver's result" }, async () => {
+test("a handed-over run's reader name past any model name's length, or with bidi/format characters, is not printed to the driver", T, async () => {
     for (const visionModel of ["r".repeat(20000), "reader-vl‮⁦gnissap lla⁩"]) {
         const w = await handedOver({ driverSees: false, visionModel, groundingModel: "ground-vl", groundingRange: 1000 });
         assert.ok(!w.lastResult().includes(visionModel), `${JSON.stringify(visionModel.slice(0, 20))}: printed (${w.lastResult().length} chars)`);
     }
 });
 
-test("a handed-over run's reader and grounding model must be models the server lists: no request names one it does not", { ...T, todo: "neither workerLocate nor the hand-over checks the page's names against the server's list (sw-sessions `checkModel` does this for a person's choice): a page-written name is sent as is" }, async () => {
+test("a handed-over run's reader and grounding model must be models the server lists: no request names one it does not", T, async () => {
     const w = await handedOver({ driverSees: false, visionModel: "not-on-this-server", groundingModel: "nor-this-one", groundingRange: 1000 });
     const named = w.subs.map((s) => s.model);
     assert.ok(!named.includes("not-on-this-server") && !named.includes("nor-this-one"), `requests named: ${named}`);
@@ -280,14 +280,14 @@ test("a handed-over run's reader and grounding model are held to the runtime's m
     assert.ok(!w.subs.some((s) => s.model === "ground-vl"), `a filtered model was called: ${w.subs.map((s) => s.model)}`);
 });
 
-test("a handed-over run's driverSees that is not the boolean true is false: a text driver is never sent the crop as an image", { ...T, todo: "sw-run-host.ts passes `!!rb?.driverSees` to workerLocate, so the page's string \"false\" is true; workerLocate's own `=== true` check never sees the string. The crop goes to the text driver inline, and the run ends: Model \"text-driver\" does not support image input" }, async () => {
+test("a handed-over run's driverSees that is not the boolean true is false: a text driver is never sent the crop as an image", T, async () => {
     const w = await handedOver({ driverSees: "false", visionModel: "reader-vl", groundingModel: "ground-vl", groundingRange: 1000 });
     assert.equal(w.driverBodies.length, 3);
     assert.deepEqual(w.subs.map((s) => s.model), ["ground-vl", "reader-vl"], "the reader describes the crop for a driver that does not see");
     assert.match(w.lastResult(), /this is reader-vl's description/);
 });
 
-test("a handed-over run's look holds its reader name to a model name, as its locate does: a number names no model", { ...T, todo: "sw-run-host.ts hands `rb?.visionModel ?? null` to workerLook (and workerVerify) unchecked; only workerLocate applies `modelName`, so a look sends the page's 42 as the request's model" }, async () => {
+test("a handed-over run's look holds its reader name to a model name, as its locate does: a number names no model", T, async () => {
     const w = await run({ builtBy: "page", builderUrl: "https://builder.example/", model: "text-driver", pageVision: { driverSees: false, visionModel: 42, groundingModel: null, groundingRange: 1000 },
         calls: [{ name: "scroll", args: {} }, { name: "look", args: { question: "what is there" } }],
         page: async (p, _n, bg) => { if (p.name === "scroll") await bg.context.__mlUserRunActionForTest(p.runId, "send", { text: "look" }); return { result: "ok" }; } });
@@ -437,7 +437,7 @@ test("after a worker eviction a margin retry asks the grounding model again, and
     });
 });
 
-test("the Run state panel's run.groundCache shows nothing of a document the tab no longer holds", { ...T, todo: "worker-vision.ts's `run.groundCache` read returns the run's entries whatever document the tab holds now: after a commit to another document, the old page's boxes, prompts and replies are still shown as \"on the run's current page\"" }, async () => {
+test("the Run state panel's run.groundCache shows nothing of a document the tab no longer holds", T, async () => {
     await onPage(async () => {
         const w = world();
         await locIn(w, SAVE_GROUND, L_GROUND);
@@ -448,7 +448,7 @@ test("the Run state panel's run.groundCache shows nothing of a document the tab 
     });
 });
 
-test("a same-document navigation between two locates empties the grounding cache, as it ends a locate in flight", { ...T, todo: "the host refuses a call across a pushState (\"keeps the document but not the page the geometry described\"), but `groundCacheFor` keys on documentId only, so a margin retry after a pushState reuses a box drawn on the previous view; the page's own Map behaved the same" }, async () => {
+test("a same-document navigation between two locates empties the grounding cache, as it ends a locate in flight", T, async () => {
     await onPage(async () => {
         const w = world();
         await locIn(w, SAVE_GROUND, L_GROUND);

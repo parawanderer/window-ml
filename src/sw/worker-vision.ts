@@ -187,31 +187,48 @@ export function visionMemoryFor(runId: string, documentId: string): VisionMemory
  *  oldest goes first past this; a `margin` retry of an evicted one asks the grounding model again. */
 export const GROUND_CACHE_MAX = 8;
 
-/** Each run's locate grounding calls in the worker, for the one document they were made on, so a `margin` retry reuses
- *  the box instead of asking the grounding model again (builtin-tools.ts `buildLocateTool`). A new document starts it
- *  empty. Worker memory only: an eviction forgets it, and the next retry asks the model again. */
-const groundCaches = new Map<string, { documentId: string; cache: Map<string, GroundCache | null> }>();   // see the defineState below
+/** Each run's locate grounding calls in the worker, for the one document they were made on and the one view of it: a
+ *  `margin` retry reuses the box instead of asking the grounding model again (builtin-tools.ts `buildLocateTool`). A new
+ *  document starts it empty, and so does a same-document navigation of the tab (pushState, a fragment), which keeps the
+ *  document but not the page the box was drawn on, as it ends a locate in flight (worker-vision-host.ts). Worker memory
+ *  only: an eviction forgets it, and the next retry asks the model again. */
+const groundCaches = new Map<string, { documentId: string; tabId?: number; cache: Map<string, GroundCache | null> }>();   // see the defineState below
 
 defineState({
     id: "run.groundCache", scope: "run", realm: "worker", audience: "human", lostOn: ["worker-eviction", "navigation"], heldOnly: true,
     describe: "The grounding model's boxes locate already asked for on the run's current page, so a retry with a margin reuses one instead of asking again.",
-    read: ({ runId }) => {
-        const c = runId ? groundCaches.get(runId)?.cache : undefined;
-        return c ? [...c.values()].map((g) => (g ? { box: g.nums, prompt: g.prompt, answer: g.answer } : null)) : undefined;
+    // Only what is about the page the tab holds now: a cache of another document (or of a tab the worker cannot ask) is not shown.
+    read: async ({ runId }) => {
+        const c = runId ? groundCaches.get(runId) : undefined;
+        if (!c || c.tabId === undefined || !c.cache.size || (await topDocument(c.tabId).catch(() => null)) !== c.documentId) return undefined;
+        return [...c.cache.values()].map((g) => (g ? { box: g.nums, prompt: g.prompt, answer: g.answer } : null));
     },
 });
 
-/** A copy of a run's grounding cache for `documentId` (empty for a new document), for one locate call to read and add
- *  to; what it adds is kept only through {@link keepGroundCache}, once the call completes. */
+// A same-document navigation of a tab's top frame empties every grounding cache kept for that tab's document.
+{
+    const sameDoc = (d: { tabId: number; frameId: number; documentId?: string }): void => {
+        if (d.frameId !== 0) return;
+        for (const [runId, c] of groundCaches) if (c.tabId === d.tabId || (d.documentId !== undefined && c.documentId === d.documentId)) groundCaches.delete(runId);
+    };
+    const nav = (globalThis as { chrome?: typeof chrome }).chrome?.webNavigation;
+    nav?.onHistoryStateUpdated?.addListener(sameDoc);
+    nav?.onReferenceFragmentUpdated?.addListener(sameDoc);
+}
+
+/** A copy of a run's grounding cache for `documentId` (empty for a new document or view), for one locate call to read
+ *  and add to; what it adds is kept only through {@link keepGroundCache}, once the call completes. */
 export function groundCacheFor(runId: string, documentId: string): Map<string, GroundCache | null> {
     const c = groundCaches.get(runId);
     return new Map(c && c.documentId === documentId ? c.cache : []);
 }
 
-/** Keep what a completed locate call added to its copy of the run's grounding cache, the newest {@link GROUND_CACHE_MAX}. */
-export function keepGroundCache(runId: string, documentId: string, call: Map<string, GroundCache | null>): void {
+/** Keep what a completed locate call on `tabId` added to its copy of the run's grounding cache, the newest
+ *  {@link GROUND_CACHE_MAX}. */
+export function keepGroundCache(runId: string, documentId: string, call: Map<string, GroundCache | null>, tabId?: number): void {
     let c = groundCaches.get(runId);
-    if (!c || c.documentId !== documentId) { c = { documentId, cache: new Map() }; groundCaches.set(runId, c); }
+    if (!c || c.documentId !== documentId) { c = { documentId, tabId, cache: new Map() }; groundCaches.set(runId, c); }
+    if (tabId !== undefined) c.tabId = tabId;
     for (const [k, v] of call) { if (!c.cache.has(k)) c.cache.set(k, v); }
     while (c.cache.size > GROUND_CACHE_MAX) c.cache.delete(c.cache.keys().next().value!);
 }

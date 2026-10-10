@@ -127,6 +127,8 @@ async function run({ calls, page = () => undefined, previews = false, model = "v
         config: config({ model, ...cfg }), openTabs: [SITE],
         onCaptureTab: async () => SHOT,
         onFetch: async (call) => {
+            // The server's model list: a handed-over run's reader is used only when the server offers it (run-vision.ts).
+            if (call.url.endsWith("/api/models")) return jsonResponse({ data: Object.keys(CAPS).map((id) => ({ id })) });
             if (call.url.endsWith("/api/show")) { const caps = CAPS[call.body?.model]; return caps ? jsonResponse({ capabilities: caps, model_info: {} }) : jsonResponse({}, 404); }
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
             if (!(Array.isArray(call.body?.tools) && call.body.tools.length)) { subs.push(call.body); return jsonResponse({ model: call.body?.model, choices: [{ message: { content: READER_SAYS } }], usage: { prompt_tokens: 50, completion_tokens: 5 } }); }

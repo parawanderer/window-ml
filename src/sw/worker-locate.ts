@@ -13,11 +13,11 @@
 import type { MlApi, PageToolEnvelope } from "../contract";
 import { buildLocateTool } from "../tools/builtin-tools";
 import { defineTool } from "../ml/ml-tool-factories";
-import { DEFAULT_GROUNDING_RANGE } from "../contract/contract-render";
 import type { VisionHost } from "../tools/vision-host";
 import type { WorkerVisionHostOpts } from "./worker-vision-host";
 import { groundCacheFor, keepGroundCache } from "./worker-vision";
 import { runOnWorkerVision } from "./worker-look";
+import { modelName, rangeOf } from "./run-vision";
 
 /** The result for a locate with no document to pin it to: the browser does not say which page the tab holds. */
 export const LOCATE_NO_DOCUMENT = "Error: the browser does not say which page the tab holds now, so nothing was located. Locate again.";
@@ -36,15 +36,6 @@ export interface LocateVision {
     /** The grounding model's coordinate range. */
     groundingRange?: number;
 }
-
-/** The largest grounding coordinate range accepted from a run's facts; past it (or not a whole number from 1) the
- *  default is used. */
-export const GROUNDING_RANGE_MAX = 100_000;
-
-/** A model name from a run's facts: a non-empty string, else none. */
-const modelName = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
-/** A grounding range from a run's facts: a whole number from 1 to {@link GROUNDING_RANGE_MAX}, else the default. */
-const rangeOf = (v: unknown): number => (Number.isInteger(v) && (v as number) >= 1 && (v as number) <= GROUNDING_RANGE_MAX ? v as number : DEFAULT_GROUNDING_RANGE);
 
 /**
  * Run one `locate` call of a run in the worker, over a vision host pinned to `documentId`.
@@ -73,5 +64,5 @@ export async function workerLocate(runId: string, tabId: number, documentId: str
     const build = (host: VisionHost) =>
         buildLocateTool(ml, { model: vision.visionModel, groundingModel: vision.groundingModel, groundingRange: vision.groundingRange, host, groundCache });
     return runOnWorkerVision(runId, tabId, documentId, args, build, tabUrl, opts, { driverSees: vision.driverSees, visionModel: vision.visionModel },
-        (refused) => { if (!refused) keepGroundCache(runId, documentId, groundCache); });
+        (refused) => { if (!refused) keepGroundCache(runId, documentId, groundCache, tabId); });
 }

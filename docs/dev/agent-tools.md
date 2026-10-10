@@ -159,8 +159,14 @@ nine tiles, a 65536 px canvas, each tile correlated to its stitch and question).
 
 **The `locate` of a worker-built run is the worker's** (`src/sw/worker-locate.ts`), the same way and through the same
 runner (`runOnWorkerVision`, worker-look.ts): the page's own `buildLocateTool`, with the run's reader, grounding model
-and range from the worker's copy of its rebuild (a handed-over page-built run's facts held to their kind: a model is a
-non-empty string, a range a whole number up to 100000, else the default), run with `ctx.driverSees`. The capture, the
+and range, run with `ctx.driverSees`. **The vision facts of look, locate and the verify come from one place,
+`runVision` (`src/sw/run-vision.ts`).** A run the worker assembled (`noteWorkerVision`, sw-run-start.ts; never set from
+a message) uses its own facts. A page-built run handed to the worker carries facts its page wrote, so each model name
+is used only when the server lists it and `modelFilter` lets it through (as sw-sessions `checkModel`); otherwise it is
+dropped and the run has no such model (look and locate refuse with their fixed no-vision sentence; no configured default
+is substituted). `driverSees` is never the page's: it is the worker's `_modelSees` for the driver model, the capability
+source the worker-built path resolves its reader with, and a driver that sees is its own reader; a delegated reader must
+also positively see. So the name printed in "<model>'s description" is a listed model or the worker's own choice. The capture, the
 SoM badges, the grid, the letterbox and the highlights are drawn by the worker's raster; the reader's and grounding
 model's prompts and replies stay in the worker. The page answers `view`, `target` (the scope), `marks`, `snap`, `cell`,
 `mint` (the `@pt`/`@box` registry stays in the page) and `legend`. No page answer reaches a reader or grounding prompt:
@@ -168,7 +174,8 @@ those carry the model's description, its scope argument and the worker's numbers
 selectors, the legend) reaches the DRIVER's result as it always did, held to geometry-check's caps. The grounding cache
 is the run's per document in the worker (`groundCacheFor`/`keepGroundCache`, worker-vision.ts, state `run.groundCache`):
 a call reads a copy and its additions are kept only when it completes, at most the newest eight (each holds a 1000 px
-square), lost on eviction. The preview is sent the target only (`lookPreviewArgs`), never the description. Tests:
+square), lost on eviction, and emptied by a same-document navigation of the tab (pushState, a fragment), as a locate in
+flight is refused by one. The Run state panel shows it only while the tab holds that document. The preview is sent the target only (`lookPreviewArgs`), never the description. Tests:
 `tests/worker-vision-host.test.mjs` (the locate sections), `tests/vision-characterize.test.mjs`, `tests/worker-verify.test.mjs`.
 
 **The verify of a worker-built run is the worker's** (`src/sw/worker-verify.ts`). For a run the worker built or was

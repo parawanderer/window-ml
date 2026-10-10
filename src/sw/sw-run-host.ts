@@ -29,6 +29,7 @@ import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels
 import { ensureLocalTools, noteLocalStep, runLocalTool, runsInWorker } from "./sw-local-tools";
 import { lookPreviewArgs, workerLook } from "./worker-look";
 import { workerLocate } from "./worker-locate";
+import { runVision, workerWroteVision, type RunVision } from "./run-vision";
 import { withUserWatches } from "./sw-shared-watches";
 import { routeExec, execNames } from "./exec-routing";
 import { answerFor, answerShapeFor, applyAnswerOps, resetAnswer, setAnswerSelector } from "./worker-answer";
@@ -180,8 +181,16 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     const workerVision = (): boolean => p.builtBy === "worker" || isWorkerRun(runId) || runRebuilds.get(runId)?.builtBy === "worker";
     const tabUrlNow = (): string => tabPageUrl.get(tabId) || p.pageUrl || "";
     /** Take a verify in the worker, pinned to `doc`, with the run's vision facts (carried in its rebuild config). */
-    const verifyHere = (doc: string | null | undefined, req: WorkerVerify, verb: string): Promise<VerifyOutcome> =>
-        workerVerify(runId, tabId, doc, req, verb, { driverSees: !!p.rebuild?.driverSees, visionModel: p.rebuild?.visionModel ?? null }, tabUrlNow);
+    /** The run's vision facts for the worker's look, locate and verify: the worker's own for a run it built, a handed-over
+     *  page-built run's held to what the runtime offers (run-vision.ts). Asked once per driver model. */
+    let visionMemo: { model: string | null; facts: Promise<RunVision> } | null = null;
+    const visionFacts = (): Promise<RunVision> => {
+        const model = modelNow();
+        if (!visionMemo || visionMemo.model !== model) visionMemo = { model, facts: runVision(p.rebuild, workerWroteVision(runId), model) };
+        return visionMemo.facts;
+    };
+    const verifyHere = async (doc: string | null | undefined, req: WorkerVerify, verb: string): Promise<VerifyOutcome> =>
+        workerVerify(runId, tabId, doc, req, verb, await visionFacts(), tabUrlNow);
     const sendTool = async (payload: { runId: string; name: string; args: Record<string, unknown>; stream?: boolean; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[] }, onStream?: (chunk: string, ts?: number) => void, documentId?: string): Promise<unknown> => {
         // A worker-built run's REMOTE tool never goes to the page, which has no such tool. If this worker does not hold
         // it (rehydrated after an eviction, or a resumed session), it is rebuilt first.
@@ -198,10 +207,10 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                 noteLocalStep(runId, payload.name);
                 await navBarrier.whenReady(tabId);
                 const doc = await topDocument(tabId);
-                const rb = p.rebuild;
+                const vision = await visionFacts();
                 return payload.name === "look"
-                    ? workerLook(runId, tabId, doc, payload.args, { driverSees: !!rb?.driverSees, visionModel: rb?.visionModel ?? null }, tabUrl)
-                    : workerLocate(runId, tabId, doc, payload.args, { driverSees: !!rb?.driverSees, visionModel: rb?.visionModel ?? null, groundingModel: rb?.groundingModel ?? null, groundingRange: rb?.groundingRange }, tabUrl);
+                    ? workerLook(runId, tabId, doc, payload.args, vision, tabUrl)
+                    : workerLocate(runId, tabId, doc, payload.args, vision, tabUrl);
             }
         }
         // To the page. The call itself of a run whose vision is the worker's is told so (its verify comes back as a
