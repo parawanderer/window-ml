@@ -35,6 +35,13 @@ export interface ToolCall {
     arguments: Record<string, unknown> | string;
 }
 
+/** A price snapshot from the box's price service, by reference: when it was fetched, and each source's sha256 (its
+ *  body is kept once in the worker, `sw-prices.ts`). */
+export interface PriceRef {
+    fetchedAt: string;
+    sources: Record<string, string>;
+}
+
 /** Token accounting for ONE request, when the server reports it (OpenWebUI returns a
  *  `usage` block; Ollama-native returns prompt_eval_count/eval_count).
  *
@@ -54,6 +61,9 @@ export interface TokenUsage {
      *  else the server put beside the counts (an ollama-native reply's message, its model name) is left out. Read
      *  it for spend; never compute a count from it that a named field already gives. */
     raw?: Record<string, number | Record<string, number>>;
+    /** The price snapshot this call ran under, when spend tracking is on (`priceSnapshotUrl`): each source's sha256,
+     *  so a cost can be worked out later against exactly those prices. Absent when it is off. */
+    prices?: PriceRef;
     /** How much of the prompt the server's prefix cache served — OpenAI's standard
      *  `usage.prompt_tokens_details.cached_tokens` (ollama's own OpenAI route, and OpenWebUI's once its fork is
      *  deployed), ollama-native `prompt_eval_cached_count`, or the protobuf `End.cached_tokens`. `0` is a COLD

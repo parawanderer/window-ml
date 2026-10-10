@@ -121,6 +121,9 @@ export interface MlConfig {
     /** The page a run started "on a blank tab" opens, when the client names no URL of its own. Empty falls back to
      *  `AGENT_START_PAGE`, since the extension cannot run on the browser's own new-tab page. */
     agentStartPage: string;
+    /** The base URL of the box's price service (port 3002 on mlbox), for spend: each model call records which price snapshot it ran
+     *  under, and the worker keeps each snapshot's bodies once. Empty (the default) turns it off, and nothing is fetched. */
+    priceSnapshotUrl: string;
     /** Small "utility" model for cheap side tasks (e.g. session-title summaries).
      *  Empty → fall back to the main `model`. numCtx/forceCpu apply only when set. */
     utilityModel: string;
@@ -274,6 +277,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     sessionStoreBudgetMB: 256,
     sessionArchive: false,
     agentStartPage: "",
+    priceSnapshotUrl: "",
     utilityModel: "",
     utilityNumCtx: 4096,
     utilityForceCpu: false,

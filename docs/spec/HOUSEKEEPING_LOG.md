@@ -39,7 +39,7 @@ Structured, never free text:
 ```ts
 interface HousekeepingEvent {
     t: number;                       // epoch ms
-    subsystem: "sw" | "offscreen" | "pyodide" | "fetch-cache" | "value-store" | "grants" | "quota";
+    subsystem: "sw" | "offscreen" | "pyodide" | "fetch-cache" | "value-store" | "grants" | "quota" | "prices";
     kind: string;                    // "evict" | "sweep" | "start" | "evicted-inferred" | "prewarm" | "cold-start" | "kill" | "expire" | "estimate" | …
     reason?: string;                 // "budget" | "idle" | "session-end" | "timeout" | "browser" | …
     key?: string;                    // what it acted on: a URL, a pointer id, a session hash
