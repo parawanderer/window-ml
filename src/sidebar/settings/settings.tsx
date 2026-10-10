@@ -267,6 +267,7 @@ const TIP = {
     embeddingModel: "Model used for ml.embed — comparing text by MEANING rather than spelling. Only models reporting the `embedding` capability are offered; an embedding model cannot generate text, so it never appears in the chat/utility/vision pickers either.",
     embeddingKeepAlive: "Keep the embedding model loaded with no expiry. ON by default because of the ACCESS PATTERN, not the size: a cold embed measured 2726ms against 95ms warm, and a model used rarely and unpredictably would sit past Ollama's 5-minute expiry almost every time, so it would be cold nearly always. Evicting it from the VRAM panel still works — the next call simply loads it again and re-pins it.",
     embeddingForceCpu: "Run the embedding model on CPU instead of the GPU. ON by default: measured 33ms slower warm (128 vs 95), FASTER cold (1628 vs 2726, since nothing is copied to VRAM), and it uses no VRAM at all — which the chat model wants. Turn it off only if you pick an embedding model large enough that CPU inference stops being cheap.",
+    priceSnapshotUrl: "Your model box's price service, for spend. Empty (the default) fetches nothing. Set, each model call records the price snapshot it ran under (by hash), and the worker keeps each snapshot once for up to 30 days after its last use.",
     valueStoreBudgetMB: "Disk for fetched tables too large to show whole. The table a pointer names is kept on disk, so a later step can read every row rather than the preview. Past this size, the one read longest ago is dropped first, and a step that then reads it is told to fetch it again. A value no one has read in a day is dropped regardless, and the browser's own storage quota caps this further (at most half of it). 0 stores nothing.",
     labelMatch: "How a pointer LABEL is matched when it isn't recalled exactly. A near match is only ever used when it clearly beats the runner-up, and is always reported — but WHICH metric ranks the candidates is genuinely undecided, so it is exposed here. hybrid (default): the better of trigram and word-overlap; handles both rewording and typos. tokenset: word overlap only — perfect on reordering, blind to typos. trigram: character-level, survives both without excelling. edit: Levenshtein — best on typos, but it ranks a DIFFERENT label above the correct one reworded, so it is here to be measured against, not recommended.",
     autoApproveReadonly: "Experimental. Run read-only exec surveys (querySelectorAll → filter → map, no mutation) without an approval prompt, via a mediated interpreter that can't reach window/fetch and never eval()s a string. Anything that mutates or isn't recognised still asks. Also lets these surveys run on Trusted-Types pages where eval is blocked. The agent can likewise read its own setup without asking — ml.getModel/config/models/capabilities/ps/serverTools, the same non-secret values any page can read; every other ml method still prompts.",
@@ -1347,6 +1348,14 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                         onChange={(e: any) => setField("agentStartPage", e.target.value.trim())} />
                 </label>
                 <div class="set-hint">Where a run started from the chat page “on a blank tab” begins. The browser's own new-tab page cannot be used: the extension is not allowed to run there, so an agent would open on a page it cannot see. Leave it empty and runs begin on a blank page published with this project, which holds nothing and links nowhere — set this to keep them on a page of your own instead.</div>
+                </Section>
+
+                <Section id="spend" title="Spend">
+                <label class="set-field"><Lbl tip={TIP.priceSnapshotUrl}>Price service</Lbl>
+                    <input type="url" placeholder="http://box:3002" value={c.priceSnapshotUrl}
+                        onChange={(e: any) => setField("priceSnapshotUrl", e.target.value.trim())} />
+                </label>
+                <div class="set-hint">Off unless set. A price service on your model box (it serves <code>/latest</code> and <code>/raw/&lt;hash&gt;</code>): about once an hour the extension fetches its price tables, keeps each one once, and notes on every model call which tables it ran under, so a run's cost can be worked out later. The tables are never shown to pages.</div>
                 </Section>
 
                 <Section id="storage" title="Storage">

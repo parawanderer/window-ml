@@ -250,6 +250,17 @@ test("FETCH_LLM surfaces token usage — OpenWebUI `usage` block and Ollama-nati
     assert.equal(rD.usage.evalMs, 3000);
 });
 
+test("FETCH_LLM makes no price-service request by default, and its usage names no prices", async () => {
+    const urls = [];
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (url) => { urls.push(String(url)); return jsonResponse({ choices: [{ message: { content: "42" } }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }); },
+    });
+    const r = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "q" }] } });
+    assert.equal(r.usage.prices, undefined);
+    assert.ok(urls.every((u) => !/\/latest$|\/raw\//.test(u)), `only the model was asked: ${urls.join(", ")}`);
+});
+
 test("FETCH_LLM raw returns reasoning_content (the agent path) — a tool-call turn with empty content", async () => {
     // The observed case: content:"" + reasoning_content has the thinking + a tool_call. The raw path
     // (agent loop) must surface `reasoning` alongside tool_calls, not drop it like it used to.
