@@ -654,6 +654,23 @@
         "totalTokens": {
           "type": "number"
         },
+        "raw": {
+          "description": "The server's usage block AS SENT, for what the named fields do not carry (a provider's `cost`, `cost_details`, cache-write counts): its numeric fields, and objects of numbers one level down. Whatever else the server put beside the counts (an ollama-native reply's message, its model name) is left out. Read it for spend; never compute a count from it that a named field already gives.",
+          "type": "object",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "number"
+                }
+              }
+            ]
+          }
+        },
         "cachedTokens": {
           "description": "How much of the prompt the server's prefix cache served — OpenAI's standard `usage.prompt_tokens_details.cached_tokens` (ollama's own OpenAI route, and OpenWebUI's once its fork is deployed), ollama-native `prompt_eval_cached_count`, or the protobuf `End.cached_tokens`. `0` is a COLD prefill; ABSENT is \"not reported\" — never collapsed, since a count of 0 is a measurement. A cache hit is invisible in `promptTokens`, which is the same either way; this and the prefill's duration are the evidence. Cheap in TIME, never in tokens — do not fold it into a spend figure.",
           "type": "number"

@@ -135,7 +135,24 @@ export const normalizeUsage = (u: any): TokenUsage | null => {
     // Only a POSITIVE count: ollama and OpenWebUI report 0 reasoning tokens for a model that thought for a page.
     const thought = n(u.completion_tokens_details?.reasoning_tokens) ?? n(u.reasoning_tokens);
     if (thought != null && thought > 0) out.reasoningTokens = thought;
+    const raw = rawUsage(u);
+    if (raw) out.raw = raw;
     return out;
+};
+
+/** The numeric part of a server's usage block, verbatim (`TokenUsage.raw`): numbers, and objects of numbers one
+ *  level down; null when there are none. */
+const rawUsage = (u: Record<string, unknown>): TokenUsage["raw"] | null => {
+    const num = (v: unknown): v is number => typeof v === "number" && isFinite(v);
+    const out: NonNullable<TokenUsage["raw"]> = {};
+    for (const [k, v] of Object.entries(u)) {
+        if (num(v)) out[k] = v;
+        else if (v && typeof v === "object" && !Array.isArray(v)) {
+            const inner = Object.fromEntries(Object.entries(v).filter(([, x]) => num(x))) as Record<string, number>;
+            if (Object.keys(inner).length) out[k] = inner;
+        }
+    }
+    return Object.keys(out).length ? out : null;
 };
 
 // Stamp the measured wall-clock of a model call onto its usage (source-side timing the server doesn't report),
