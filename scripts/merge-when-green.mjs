@@ -189,8 +189,13 @@ export async function keepBench(from, to, { sweeps, scoreDbs }) {
         const db = new DatabaseSync(path.join(dst, name));
         db.exec(`ATTACH DATABASE '${path.join(src, name).replaceAll("'", "''")}' AS wt`);
         for (const { name: table } of db.prepare("SELECT name FROM wt.sqlite_master WHERE type = 'table'").all()) {
-            const cols = db.prepare(`PRAGMA wt.table_info(${table})`).all().map((c) => c.name).filter((c) => c !== "id");
+            const info = db.prepare(`PRAGMA wt.table_info(${table})`).all();
+            const cols = info.map((c) => c.name).filter((c) => c !== "id");
             db.exec(`CREATE TABLE IF NOT EXISTS main.${table} AS SELECT * FROM wt.${table} WHERE 0`);
+            // The main clone's scoreboard may predate a column the worktree's has (a newer bench added it): add it,
+            // empty for the old rows, rather than fail the merge or drop the new rows' value.
+            const have = new Set(db.prepare(`PRAGMA main.table_info(${table})`).all().map((c) => c.name));
+            for (const c of info) if (!have.has(c.name)) db.exec(`ALTER TABLE main.${table} ADD COLUMN "${c.name}" ${c.type || ""}`);
             db.exec(`INSERT OR IGNORE INTO main.${table} (${cols.join(",")}) SELECT ${cols.join(",")} FROM wt.${table}`);
         }
         db.exec("DETACH DATABASE wt");
