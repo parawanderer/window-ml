@@ -17,6 +17,7 @@ import { UI_OUT_CAP } from "../contract/contract-chat";
 import { clipHeadTail, panelHead, ceilingNote } from "../agent/output-clip";
 import type { ApprovalDecision } from "../contract/contract-agent";
 import { stepBudget } from "../agent/step-budget";
+import { grantableOrigin, originOf } from "../site-access";
 import type { StartRunPayload, ResumeRunPayload } from "../contract/contract-messages";
 import { type RequestHint, hintSession } from "../contract/contract-run";
 import { externalSheetIds, clipOut, isCurrentPage } from "../dom/dom";
@@ -83,24 +84,31 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
     // sender.tab.id is the delegation + debug-fanout target.
     const tabId = sender.tab?.id;
     if (tabId == null) { sendResponse({ error: `${message.type} must come from a tab (content script).` }); return; }
-    hostRun(message.type === "START_RUN" ? { ...message, payload: pageStartPayload(message.payload) } : message, tabId, sendResponse);
+    hostRun(message.type === "START_RUN" ? { ...message, payload: pageStartPayload(message.payload, sender) } : message, tabId, sendResponse);
 }
 
 /**
- * A page's START_RUN payload without the fields only the worker sets: `builtBy`, `rebuild.builtBy` and `display`. Only the
- * worker's own `hostRun` call (sw-run-start.ts) marks a run worker-built, and `makeWorkerRun` hands one over; a page's
- * claim would give its run the worker's tool routing, grants, vision and answer, and lock the run as the person's.
+ * A page's START_RUN payload as the worker may trust it. The fields only the worker sets are removed: `builtBy`,
+ * `rebuild.builtBy` and `display`; only the worker's own `hostRun` call (sw-run-start.ts) marks a run worker-built, and
+ * `makeWorkerRun` hands one over, since a page's claim would give its run the worker's tool routing, grants, vision and
+ * answer, and lock the run as the person's. `pageOrigin` and `pageUrl` are the sender's, as the browser stamped it (the
+ * origin the origin gate read): the origin seeds the run's consented origins and the URL is "the page you are on", so a
+ * page naming another would get that site's navigations and reads without a gate. Absent when the sender has none.
  * @param payload what the page sent
- * @returns a copy without those fields; anything that is not an object, as it came
+ * @param sender the message's sender
+ * @returns a copy; anything that is not an object, as it came
  */
-export function pageStartPayload(payload: unknown): unknown {
+export function pageStartPayload(payload: unknown, sender: chrome.runtime.MessageSender): unknown {
     if (!payload || typeof payload !== "object") return payload;
-    const { builtBy: _b, display: _d, ...rest } = payload as StartRunPayload;
+    const { builtBy: _b, display: _d, pageOrigin: _o, pageUrl: _u, ...rest } = payload as StartRunPayload;
     if (rest.rebuild && typeof rest.rebuild === "object") {
         const { builtBy: _rb, ...rebuild } = rest.rebuild;
         rest.rebuild = rebuild;
     }
-    return rest;
+    const url = sender.url ?? sender.tab?.url;
+    const g = grantableOrigin({ origin: sender.origin, url, frameId: sender.frameId });
+    if (!("origin" in g)) return rest;
+    return { ...rest, pageOrigin: g.origin, ...(url && originOf(url) === g.origin ? { pageUrl: url } : {}) };
 }
 
 /** Host a START_RUN / RESUME_RUN on `tabId`: the body of `startBackgroundRun`, callable by the worker itself for a run
