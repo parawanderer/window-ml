@@ -46,6 +46,15 @@ test("the usage is kept as recorded (raw, prices, electricity), less the phase m
     assert.deepEqual([calls[1].model, calls[1].step, JSON.parse(calls[1].usage).promptTokens], ["qwen-vl", 1, 900]);
 });
 
+test("a delegated call keeps what it recorded beyond its counts, and its snapshot is collected too", () => {
+    const s = withSpend();
+    const other = { fetchedAt: "x", sources: { litellm_map: sha("map-body") } };
+    Object.assign(s.steps[1].subUsage.calls_[0], { raw: { cost: 0.002 }, prices: other, electricity: { perKwh: 0.31, currency: "EUR" } });
+    const u = JSON.parse(callsOf(s)[1].usage);
+    assert.deepEqual([u.raw.cost, u.prices, u.electricity.perKwh], [0.002, other, 0.31]);
+    assert.equal(priceHashes(s).get(sha("map-body")), "litellm_map");
+});
+
 test("a turn no gen event matches has no model (null), never the session's guessed in", () => {
     const s = structuredClone(SESSION);
     s.events = s.events.filter((e) => e.kind !== "gen");
@@ -110,4 +119,24 @@ test("spend settings come from the environment over .env, and each absent one st
     assert.deepEqual(spendFromEnv({ ELECTRICITY_PER_KWH: "abc" }), {});
     assert.equal(backendFromDotenv({ OPENWEBUI_URL: "http://h", PRICE_SNAPSHOT_URL: "http://box:3002" }).priceSnapshotUrl, "http://box:3002");
     assert.equal("priceSnapshotUrl" in backendFromDotenv({ OPENWEBUI_URL: "http://h" }), false);
+});
+
+// --- the spend section of scores.md ---
+
+test("spend per model: computed and reported apart, unpriced counted with why, older runs said to have no per-call data", async () => {
+    const { spendReport, spendText } = await import("../tests/e2e/bench/spend.mjs");
+    const db = await tmpDb();
+    assert.equal(spendReport(db, [], (r) => r.model), null, "no calls, no section");
+    logCalls(db, callsOf(withSpend()));
+    const rows = [{ run: SESSION.hash, model: "deepseek.deepseek-flash" }, { run: "older", model: "deepseek.deepseek-flash" }];
+    const spend = spendReport(db, rows, (r) => r.model);
+    assert.deepEqual([spend.calls, spend.runsWithCalls, spend.runsWithout], [4, 1, 1]);
+    const [m] = spend.models;
+    // The snapshot's bodies were never stored: the call that names it has no model list to join through.
+    assert.deepEqual([m.reported, m.reportedCalls, m.computedCalls, m.unpriced], [0.0012, 1, 0, 3], "the reported call is priced by the provider; the other three by nothing");
+    const text = spendText(spend).join("\n");
+    assert.match(text, /## Spend/);
+    assert.match(text, /1 run logged before calls were recorded has no per-call data/);
+    assert.match(text, /0\.0012 USD \(1\)/);
+    db.close();
 });

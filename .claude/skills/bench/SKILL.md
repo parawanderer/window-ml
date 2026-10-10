@@ -307,7 +307,7 @@ set then). `kind` is `turn` (the driver's) or `sub` (a delegated look, locate or
 model is read from the run's `gen` event with the same counts, and is null when none matches. Each price snapshot body a
 call names is kept once in `snapshots`, by its sha256, fetched from the extension's worker (`__mlPriceBody`) at the end
 of the run only when the log lacks it, and refused when it does not hash to its name. Nothing is priced on write: a cost
-is computed when read. Set `PRICE_SNAPSHOT_URL`, `ELECTRICITY_PER_KWH` and `ELECTRICITY_CURRENCY` (env or `.env`) for a
+is computed when read (`cost.mjs`): `scores.md` and `scores.json` carry a Spend section per model, `computed` (tokens x the snapshot's per-token rates, joined through the box's model list to the box's LiteLLM routes, OpenRouter's list, then LiteLLM's map; a long-context tier when the prompt is past it) beside `reported` (the provider's own `cost`), local calls apart (electricity), and calls neither prices counted with the reason. Set `PRICE_SNAPSHOT_URL`, `ELECTRICITY_PER_KWH` and `ELECTRICITY_CURRENCY` (env or `.env`) for a
 real run to record them; unset records nothing, never zero. Runs logged before this have no calls, which means "no
 per-call data". Both tables sync with the store (views `calls`, `price_snapshots`).
 `sqlite3 tests/e2e/artifacts/bench/scores.sqlite "SELECT run, call, model, json_extract(usage,'$.raw.cost') FROM calls ORDER BY id DESC LIMIT 20"`

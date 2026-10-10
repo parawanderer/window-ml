@@ -1,0 +1,134 @@
+{
+  "owui_models": {
+    "data": [
+      {
+        "id": "litellm.google/gemini-pro-latest",
+        "connection_type": "external",
+        "owned_by": "openai"
+      },
+      {
+        "id": "deepseek.deepseek-flash",
+        "connection_type": "external",
+        "owned_by": "openai"
+      },
+      {
+        "id": "moonshot.kimi-k3",
+        "connection_type": "external",
+        "owned_by": "openai"
+      },
+      {
+        "id": "openrouter.z-ai/glm-5.3-flash",
+        "connection_type": "external",
+        "owned_by": "openai"
+      },
+      {
+        "id": "glm-4.7-flash:latest",
+        "connection_type": "local",
+        "owned_by": "ollama",
+        "ollama": {}
+      }
+    ]
+  },
+  "litellm_model_info": {
+    "data": [
+      {
+        "model_name": "google/gemini-pro-latest",
+        "litellm_params": {
+          "model": "gemini/gemini-pro-latest"
+        },
+        "model_info": {
+          "input_cost_per_token": 0.000002,
+          "input_cost_per_token_flex": 0.000001,
+          "input_cost_per_token_priority": 0.0000036,
+          "cache_read_input_token_cost": 2e-7,
+          "cache_read_input_token_cost_above_200k_tokens": 4e-7,
+          "cache_read_input_token_cost_above_200k_tokens_priority": 7.2e-7,
+          "cache_read_input_token_cost_flex": 2e-7,
+          "cache_read_input_token_cost_priority": 3.6e-7,
+          "input_cost_per_token_above_200k_tokens": 0.000004,
+          "input_cost_per_token_above_200k_tokens_priority": 0.0000072,
+          "input_cost_per_token_batches": 0.000001,
+          "output_cost_per_token_batches": 0.000006,
+          "output_cost_per_token": 0.000012,
+          "output_cost_per_token_flex": 0.000006,
+          "output_cost_per_token_priority": 0.0000216,
+          "output_cost_per_token_above_200k_tokens": 0.000018,
+          "output_cost_per_token_above_200k_tokens_priority": 0.0000324,
+          "search_context_cost_per_query": {
+            "search_context_size_low": 0.014,
+            "search_context_size_medium": 0.014,
+            "search_context_size_high": 0.014
+          }
+        }
+      }
+    ]
+  },
+  "openrouter": {
+    "data": [
+      {
+        "id": "z-ai/glm-5.3-flash",
+        "pricing": {
+          "prompt": "0.00000015",
+          "completion": "0.0000005",
+          "input_cache_read": "0.00000003"
+        }
+      }
+    ]
+  },
+  "litellm_map": {
+    "deepseek-flash": {
+      "cache_creation_input_token_cost": 0,
+      "cache_read_input_token_cost": 6e-9,
+      "input_cost_per_token": 3e-7,
+      "input_cost_per_token_cache_hit": 6e-9,
+      "litellm_provider": "deepseek",
+      "max_input_tokens": 1000000,
+      "max_output_tokens": 393216,
+      "max_tokens": 393216,
+      "mode": "chat",
+      "off_peak_pricing": {
+        "cache_read_input_token_cost": 3e-9,
+        "input_cost_per_token": 1.5e-7,
+        "output_cost_per_token": 6e-7,
+        "windows": [
+          {
+            "hours_utc": [
+              "00:00-01:00",
+              "04:00-06:00",
+              "10:00-00:00"
+            ],
+            "weekdays": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ]
+          },
+          {
+            "hours_utc": "00:00-00:00",
+            "weekdays": [
+              6,
+              7
+            ]
+          }
+        ]
+      },
+      "output_cost_per_token": 0.0000012,
+      "source": "https://api-docs.deepseek.com/quick_start/pricing",
+      "supported_endpoints": [
+        "/v1/chat/completions"
+      ],
+      "supports_assistant_prefill": true,
+      "supports_function_calling": true,
+      "supports_native_streaming": true,
+      "supports_parallel_function_calling": true,
+      "supports_prompt_caching": true,
+      "supports_reasoning": true,
+      "supports_response_schema": true,
+      "supports_system_messages": true,
+      "supports_tool_choice": true,
+      "supports_vision": true
+    }
+  }
+}

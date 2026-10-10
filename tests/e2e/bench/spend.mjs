@@ -5,10 +5,11 @@
 //
 // Where a run's calls are (run.json, docs/spec/export.schema.json): the driver's calls are `steps[].usage`, one per model
 // turn, on the step that holds the turn's thought; the calls a run made on its own behalf (a delegated look, locate or
-// verify) are `steps[].subUsage.calls_`, which carry counts only. A step does not name its model; the run's `gen`
+// verify) are `steps[].subUsage.calls_`, which carry counts, and since #554 raw, prices and electricity as well. A step does not name its model; the run's `gen`
 // events do, with the same token counts, so the model is read from the matching event, and is null when none matches.
 
 import { createHash } from "node:crypto";
+import { priceCalls, spendByModel, PRICE_CURRENCY } from "./cost.mjs";
 
 export const SPEND_SCHEMA = `
 CREATE TABLE IF NOT EXISTS calls (
@@ -64,7 +65,9 @@ export function callsOf(session, run = session?.hash) {
         }
         for (const c of s.subUsage?.calls_ ?? []) {
             out.push({ run, call: out.length, at: Number.isFinite(c.ts) ? new Date(c.ts).toISOString() : null, kind: "sub", step: s.step ?? null,
-                model: c.model ?? null, usage: JSON.stringify({ promptTokens: c.prompt, completionTokens: c.completion, totalTokens: (c.prompt ?? 0) + (c.completion ?? 0), genMs: c.ms }) });
+                model: c.model ?? null, usage: JSON.stringify({ promptTokens: c.prompt, completionTokens: c.completion, totalTokens: (c.prompt ?? 0) + (c.completion ?? 0), genMs: c.ms,
+                    // What a sub-call recorded beyond its counts, once the extension keeps it (#554): kept as recorded.
+                    ...(c.raw ? { raw: c.raw } : {}), ...(c.prices ? { prices: c.prices } : {}), ...(c.electricity ? { electricity: c.electricity } : {}) }) });
         }
     }
     return out;
@@ -74,7 +77,9 @@ export function callsOf(session, run = session?.hash) {
 export function priceHashes(session) {
     const out = new Map();
     for (const s of session?.steps ?? []) {
-        for (const [kind, hash] of Object.entries(s.usage?.prices?.sources ?? {})) if (typeof hash === "string") out.set(hash, kind);
+        for (const u of [s.usage, ...(s.subUsage?.calls_ ?? [])]) {
+            for (const [kind, hash] of Object.entries(u?.prices?.sources ?? {})) if (typeof hash === "string") out.set(hash, kind);
+        }
     }
     return out;
 }
@@ -111,3 +116,44 @@ export function logSnapshot(db, { hash, kind, body, at = new Date().toISOString(
 
 /** Every call row, oldest first, with `usage` parsed. */
 export const readCalls = (db) => db.prepare("SELECT * FROM calls ORDER BY id").all().map((r) => ({ ...r, usage: JSON.parse(r.usage) }));
+
+/**
+ * Spend per driver model over every logged call, priced on read (cost.mjs), for scores.md and scores.json. `rows` are
+ * the runs (readRuns) and `keyOf(row)` the scoreboard's model key. Runs logged before calls were have none and are
+ * counted apart: "no per-call data", never zero. Null when no run has calls.
+ */
+export function spendReport(db, rows, keyOf) {
+    const calls = readCalls(db);
+    if (!calls.length) return null;
+    const body = db.prepare("SELECT body FROM snapshots WHERE hash = ?");
+    const priced = priceCalls(calls, (h) => body.get(h)?.body ?? null);
+    const byRun = new Map(rows.map((r) => [r.run, keyOf(r)]));
+    const withCalls = new Set(calls.map((c) => c.run));
+    return {
+        currency: PRICE_CURRENCY,
+        calls: calls.length,
+        runsWithCalls: withCalls.size,
+        runsWithout: rows.filter((r) => !withCalls.has(r.run)).length,
+        models: spendByModel(priced, (run) => byRun.get(run) ?? null),
+    };
+}
+
+/** What each spend column means: scores.md's notes. */
+export const SPEND_ABOUT = {
+    computed: "The calls' tokens priced from the price snapshot each call ran under (uncached prompt, cache reads, cache writes and output at their own per-token rates, a long-context tier when the prompt is past it), joined to a price through the box's model list. A call whose model nothing prices, or whose token class has no rate, is left out of this sum and counted as unpriced.",
+    reported: "What the provider itself said the calls cost (`cost` in its usage block), summed over the calls that carried it. Beside computed, never instead: their ratio over the same calls measures the price table's error.",
+    local: "Calls served by a local model: their cost is electricity, not tokens, and is not in either sum.",
+    unpriced: "Calls neither figure covers, with the most common reason.",
+};
+
+/** The spend section of scores.md. */
+export function spendText(spend) {
+    if (!spend) return [];
+    const money = (x, n) => (n ? `${x.toFixed(4)} ${spend.currency} (${n})` : "");
+    const out = ["## Spend", "", `${spend.calls} model call${spend.calls === 1 ? "" : "s"} over ${spend.runsWithCalls} run${spend.runsWithCalls === 1 ? "" : "s"}, from the \`calls\` table, priced when this was written.${spend.runsWithout ? ` ${spend.runsWithout} run${spend.runsWithout === 1 ? "" : "s"} logged before calls were recorded ha${spend.runsWithout === 1 ? "s" : "ve"} no per-call data and ${spend.runsWithout === 1 ? "is" : "are"} not here.` : ""}`, "",
+        "| model | runs | calls | computed (calls) | reported (calls) | local | unpriced | why |", "| --- | --- | --- | --- | --- | --- | --- | --- |"];
+    for (const m of spend.models) out.push(`| ${m.model} | ${m.runs} | ${m.calls} | ${money(m.computed, m.computedCalls)} | ${money(m.reported, m.reportedCalls)} | ${m.local || ""} | ${m.unpriced || ""} | ${m.unpriced ? m.why : ""} |`);
+    out.push("");
+    for (const [k, v] of Object.entries(SPEND_ABOUT)) out.push(`- **${k}**: ${v}`);
+    return out.concat([""]);
+}
