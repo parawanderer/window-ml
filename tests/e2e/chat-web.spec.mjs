@@ -1016,7 +1016,7 @@ test("a run of the same tool folds into one row, and opens again", async () => {
     // points at to be rid of it — and it was a `border`, which takes no clicks.
     await streak.locator(".astreak-head").click();
     await expect(page.locator('[data-astep-seq="303"]')).toHaveCount(1);
-    await streak.locator(".astreak-rail").click();
+    await streak.locator(".astreak-body > .fold-rail").click();
     await expect(page.locator('[data-astep-seq="303"]')).toHaveCount(0);
 
     // AND NONE OF IT REACHES THE BUSY VIEW. That is the developer's whole trace, where a collapsed row shows the
@@ -3164,6 +3164,65 @@ test("the send hint, once typed past, keeps its line's height and gives up its w
     // What follows the hint on its line (the run's token figures) must start the line, not wait where the hint ended.
     await expect.poll(() => hint.evaluate((el) => el.getBoundingClientRect().width)).toBe(0);
     expect(await foot.evaluate((el) => el.getBoundingClientRect().height)).toBe(before);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// --- the fold rail: the line down an open call or an embedded output closes it, as an open group's does ---
+
+test("an open call's rail says what it does and closes it, through the same eased close", async () => {
+    const { page, errors } = await open(DESKTOP, "#s=laptop%3A3f9a0c21");
+    const step = page.locator('[data-astep-seq="1"]');
+    await step.locator(".astep-head").click();
+    await expect(step).toHaveClass(/open/);
+    const rail = step.locator(".astep-body > .fold-rail");
+    await rail.hover();
+    await expect(page.locator(".cursor-tip")).toHaveText("Collapse this call");
+    await rail.click();
+    // The body is held for the close animation, then goes: the same two beats the header's own toggle has.
+    await expect(step.locator(".astep-body.closing")).toHaveCount(1);
+    await expect(step.locator(".astep-body")).toHaveCount(0);
+    await expect(step).not.toHaveClass(/open/);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("an embedded output's rail folds it to one row naming it, without jumping to its step, and the row opens it again", async () => {
+    const { page, errors } = await open(DESKTOP, "#s=laptop%3A5e6f7a80");
+    const answer = page.locator(".answer-rendered").first();
+    const embed = answer.locator(".tok-block").filter({ has: page.locator(".r-df-table") });
+    await expect(embed).toHaveCount(1);
+    await embed.scrollIntoViewIfNeeded();
+    const rail = embed.locator(".fold-rail");
+    await rail.hover();
+    await expect(page.locator(".cursor-tip")).toHaveText("Collapse this output");
+    await rail.click();
+    await expect(answer.locator(".tok-body.closing")).toHaveCount(1);
+    const folded = answer.locator(".tok-folded");
+    await expect(folded).toHaveText("Every fare, cheapest first");
+    await expect(answer.locator(".r-df-table")).toHaveCount(0);
+    // Folding is not following: the row is still in front of the reader, and no step was opened for them. (Not the
+    // scroll offset: a transcript pinned to its bottom moves up by itself when the answer gets shorter.)
+    await expect(folded).toBeInViewport();
+    await expect(page.locator(".astep.tool.open")).toHaveCount(0);
+
+    await folded.click();
+    await expect(answer.locator(".r-df-table")).toHaveCount(1);
+    await expect(answer.locator(".tok-body.opening")).toHaveCount(1);
+    // …and by keyboard, which the rail is not: the folded row is a button of its own.
+    await answer.locator(".tok-block .fold-rail").first().click();
+    await answer.locator(".tok-folded").focus();
+    await page.keyboard.press("Enter");
+    await expect(answer.locator(".tok-folded")).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("the busy view draws no fold rails: it keeps the panel's own disclosures", async () => {
+    const { page, errors } = await open(DESKTOP, "#s=laptop%3A5e6f7a80", { "view.calm": false });
+    await page.locator('[data-astep-seq="1"] .astep-head').click();
+    await expect(page.locator('[data-astep-seq="1"]')).toHaveClass(/open/);
+    await expect(page.locator(".fold-rail")).toHaveCount(0);
     expect(errors).toEqual([]);
     await page.close();
 });

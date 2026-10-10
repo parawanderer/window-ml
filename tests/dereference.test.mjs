@@ -525,3 +525,27 @@ test("an output the model got whole carries no cut note", async () => {
     const { results } = await drive([call("exec", { js: "x" })], () => ({ result: "short", renderOut: { type: "exec-out", stdout: "short" } }));
     assert.equal(results.find((r) => r.name === "exec").result, "short");
 });
+
+// --- what a dereference step DRAWS: the value, not the notes addressed to the model ---
+
+test("dereference: the step renders the value alone, and the model still gets the header and the citing note", async () => {
+    const rows = ["q1 1455", "q2 1590", "TOTAL 3045"].join("\n");
+    const emitted = [], results = [];
+    let i = 0;
+    const turns = [call("python_exec", { code: "df", token: true }), call("dereference", { token: "python_exec", pipe: "grep TOTAL" })];
+    await runAgentLoop("t", { tools: TOOLS, maxSteps: () => 6, toolTokens: true, runHash: "abcdef" }, {
+        callModel: async () => turns[i++] || { content: "done", tool_calls: [] },
+        runTool: async (name) => name === "python_exec" ? { result: rows } : { result: "" },
+        autoApprove: () => null,
+        buildMessages: (task) => [{ role: "user", content: task }],
+        pushAssistant: (m, msg) => m.push({ role: "assistant", ...msg }),
+        pushToolResult: (m, c, result) => { results.push({ name: c.name, result }); m.push({ role: "tool", content: result }); },
+        emit: (e) => emitted.push(e),
+    });
+    const done = emitted.filter((e) => e.tool === "dereference" && e.result != null).at(-1);
+    assert.deepEqual(done.renderOut, { type: "exec-out", value: "TOTAL 3045" });
+    // The raw result, which the step's raw view and both exports show, is still everything the model read.
+    assert.match(done.result, /^@tool:[0-9a-f]{7} \(/);
+    assert.match(done.result, /\[this view is @tool:/);
+    assert.equal(results.find((r) => r.name === "dereference").result, done.result);
+});
