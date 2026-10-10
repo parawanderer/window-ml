@@ -121,6 +121,28 @@ export interface ScoreBoard {
     models: ScoreModel[];
     tasks: { key: string; task: string; taskHash: string; shown: string | null; text: string; variant: string; scored: boolean; runs: number; models: number; passed: number; scoredRuns: number;
         difficulty: { b: number; se: number; lo: number; hi: number } | null; medianTokens: number | null }[];
+    /** the regression suite's verdict on the newest build and μ over builds (regress.mjs); null without two builds' runs */
+    regression?: RegressionReport | null;
+}
+
+/** A posterior from the regression fit: the estimate, its spread and interval, P(> 0), and P(> the smallest counted shift). */
+export interface Shift { v: number; sd: number; lo: number; hi: number; pUp: number; pReal?: number }
+
+/** One task's line in a regression verdict. */
+export interface RegressionTask {
+    key: string; task: string; taskHash: string; text: string; delta: Shift; detectable: number | null;
+    models: { model: string; base: { passed: number; runs: number }; now: { passed: number; runs: number } }[];
+    fell: string[]; flagged: boolean; oneModel: boolean;
+}
+
+/** The regression suite on the scoreboard (regress.mjs `regressionReport`). */
+export interface RegressionReport {
+    verdict: {
+        build: string; baseline: string[]; builds: string[]; mu: Shift; flagged: boolean; tasks: RegressionTask[];
+        unmatched: { key: string; side: "now" | "base" }[]; runs: { now: number; base: number };
+        method: { minShift: number; tau: number; tauSd: number; priorSd: number; z: number; q: number; buildP: number; power: number; alpha: number; converged: boolean };
+    };
+    history: { build: string; at: string; mu: Shift; flagged: boolean; tasks: { key: string; task: string; delta: Shift; flagged: boolean }[] }[];
 }
 
 /** The sweep page's view of the scoreboard: each driver model's line, and where the scoreboard is. */

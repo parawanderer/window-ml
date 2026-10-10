@@ -4,7 +4,7 @@
 // saying where it comes from, so a reader never needs the code to know what they are looking at.
 
 import { render, Fragment } from "preact";
-import type { ScoreBoard, ScoreModel } from "./state";
+import type { ScoreBoard, ScoreModel, RegressionReport } from "./state";
 import { Tip } from "../../../../src/sidebar/help-tip";
 import { ThemeToggle, applyTheme, readTheme } from "./theme";
 import { Hash } from "../../../../src/sidebar/copy-hash";
@@ -121,6 +121,61 @@ function Tasks({ b }: { b: ScoreBoard }) {
     );
 }
 
+/** The regression suite: whether the newest build made the suite's tasks harder (μ, the headline), each task's shift with
+ *  the flagged ones first and which models moved, and μ over earlier builds. Above everything else: it asks for action. */
+function Regression({ r }: { r: RegressionReport }) {
+    const v = r.verdict, m = v.method;
+    const p = (x: number) => `${Math.round(x * 100)}%`;
+    const muTip = `μ = ${signed(v.mu.v)}, interval ${signed(v.mu.lo)} to ${signed(v.mu.hi)}; P(harder) = ${p(v.mu.pUp)}. How much harder build ${v.build.slice(0, 12)} made the suite's tasks on the whole, in log-odds, against ${v.baseline.length} earlier build(s): ${v.runs.now} runs now, ${v.runs.base} before. The build is flagged at P ≥ ${p(m.buildP)}.`;
+    return (
+        <section class="card">
+            <header>
+                <h2><Tip tip="The regression suite (`run.mjs --regression`): every task a spec marks `regression.included`, run over a model list, and fitted with each model's ability and each task's difficulty held across builds, so what is left is the build's own shift.">Regression suite</Tip></h2>
+                <span class="sub">build <code>{v.build.slice(0, 12)}</code> against {v.baseline.length} earlier build{v.baseline.length === 1 ? "" : "s"}</span>
+                <span class={`badge${v.flagged ? " warn" : ""}`}>{v.flagged ? "flagged: harder overall" : "not flagged"}</span>
+            </header>
+            <p class="regress-mu">μ <Interval lo={v.mu.lo} hi={v.mu.hi} v={v.mu.v} tip={muTip} /> <span class="dim">P(harder) {p(v.mu.pUp)}</span></p>
+            <div class="tablewrap">
+                <table class="scores">
+                    <thead><tr>
+                        <th class="l"><Tip tip="The task, from its spec (hover for its text); flagged ones first.">task</Tip></th>
+                        <th class="l"><Tip tip={`δ: how much harder this build made the task, in log-odds, pulled toward μ. Flagged by the false discovery rate at ${p(m.q)} on P(δ > ${m.minShift}).`}>shift δ</Tip></th>
+                        <th><Tip tip="P(δ > 0): the chance the task got harder at all.">P(&gt; 0)</Tip></th>
+                        <th><Tip tip={`P(δ > ${m.minShift}): the chance it got at least the smallest shift counted as a regression. The flag reads this.`}>P(&gt; {m.minShift})</Tip></th>
+                        <th><Tip tip={`The smallest δ this build's runs of the task would show ${p(m.power)} of the time. More repeats or models make it smaller.`}>detectable</Tip></th>
+                        <th class="l"><Tip tip="Each model's passes before (earlier builds' regression runs) and now. A flag only one model's drop carries is marked: a cloud model can change behind the same name.">passes, before → now</Tip></th>
+                    </tr></thead>
+                    <tbody>{v.tasks.map((t) => (
+                        <tr key={t.key} class={t.flagged ? "flagged" : ""}>
+                            <td class="l"><span class="tt from" data-tip={`The task, from its spec: ${t.text}`}>{t.task}</span>{t.flagged ? <span class="badge warn">{t.oneModel ? "harder, one model" : "harder"}</span> : null}</td>
+                            <td class="l"><Interval lo={t.delta.lo} hi={t.delta.hi} v={t.delta.v} tip={`δ = ${signed(t.delta.v)}, interval ${signed(t.delta.lo)} to ${signed(t.delta.hi)}.`} /></td>
+                            <td>{p(t.delta.pUp)}</td>
+                            <td>{p(t.delta.pReal ?? 0)}</td>
+                            <td>{t.detectable == null ? "" : t.detectable.toFixed(1)}</td>
+                            <td class="l dim">{t.models.map((x) => <span key={x.model} class={t.fell.includes(x.model) ? "fell" : ""}>{x.model} {x.base.passed}/{x.base.runs} → {x.now.passed}/{x.now.runs}<br /></span>)}</td>
+                        </tr>
+                    ))}</tbody>
+                </table>
+            </div>
+            {r.history.length > 1 ? (
+                <div class="tablewrap">
+                    <table class="scores">
+                        <thead><tr><th class="l">build</th><th class="l">first run</th><th class="l"><Tip tip="μ for each build against every build before it.">μ</Tip></th><th class="l">flagged tasks</th></tr></thead>
+                        <tbody>{r.history.slice().reverse().map((h) => (
+                            <tr key={h.build}>
+                                <td class="l"><code>{h.build.slice(0, 12)}</code></td>
+                                <td class="l dim">{when(h.at)}</td>
+                                <td class="l"><Interval lo={h.mu.lo} hi={h.mu.hi} v={h.mu.v} tip={`μ = ${signed(h.mu.v)}, P(harder) ${p(h.mu.pUp)}${h.flagged ? "; flagged" : ""}.`} /></td>
+                                <td class="l">{h.tasks.filter((t) => t.flagged).map((t) => t.task).join(", ")}</td>
+                            </tr>
+                        ))}</tbody>
+                    </table>
+                </div>
+            ) : null}
+        </section>
+    );
+}
+
 /** How every number is computed, and where the raw data is: folded away until asked for. */
 function Method({ b }: { b: ScoreBoard }) {
     const query = `sqlite3 ${b.db} "SELECT model, task, passed, tokens, at, by FROM runs ORDER BY at DESC LIMIT 20"`;
@@ -159,7 +214,7 @@ function Board({ b }: { b: ScoreBoard }) {
                 </div>
             </header>
             <main>
-                {t.runs ? <><Models b={b} /><Tasks b={b} /></> : <section class="card"><div class="empty">Nothing logged yet: a sweep against a real model logs every run it makes.</div></section>}
+                {t.runs ? <>{b.regression ? <Regression r={b.regression} /> : null}<Models b={b} /><Tasks b={b} /></> : <section class="card"><div class="empty">Nothing logged yet: a sweep against a real model logs every run it makes.</div></section>}
                 <Method b={b} />
             </main>
         </>

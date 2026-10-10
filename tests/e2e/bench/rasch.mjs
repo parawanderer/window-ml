@@ -23,17 +23,26 @@
 /** σ(x), without overflow for large |x|. */
 export const sigmoid = (x) => (x >= 0 ? 1 / (1 + Math.exp(-x)) : Math.exp(x) / (1 + Math.exp(x)));
 
-/** The inverse of a symmetric positive definite matrix (row arrays), by Cholesky. */
-function spdInverse(a) {
+/** The Cholesky factor L (A = L Lᵀ) of a symmetric positive definite matrix (row arrays), and log det A. */
+export function cholesky(a) {
     const n = a.length;
     const l = a.map(() => new Array(n).fill(0));
+    let logDet = 0;
     for (let i = 0; i < n; i++) {
         for (let j = 0; j <= i; j++) {
             let s = a[i][j];
             for (let k = 0; k < j; k++) s -= l[i][k] * l[j][k];
             l[i][j] = i === j ? Math.sqrt(s) : s / l[j][j];
         }
+        logDet += 2 * Math.log(l[i][i]);
     }
+    return { l, logDet };
+}
+
+/** The inverse of a symmetric positive definite matrix (row arrays), by Cholesky. */
+export function spdInverse(a) {
+    const n = a.length;
+    const { l } = cholesky(a);
     // L⁻¹ by forward substitution, then A⁻¹ = L⁻ᵀ L⁻¹.
     const li = l.map(() => new Array(n).fill(0));
     for (let i = 0; i < n; i++) {

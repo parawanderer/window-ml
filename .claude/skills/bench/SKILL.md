@@ -277,6 +277,27 @@ bloat is each run's tokens over the median run of the same task, averaged per mo
 `scores.md` under "How these numbers are computed", and in the page's tooltips. Ask the log anything else directly:
 `sqlite3 tests/e2e/artifacts/bench/scores.sqlite "SELECT model, task, passed, tokens FROM runs ORDER BY at DESC LIMIT 20"`.
 
+### The regression suite (can models still do it with our tools)
+
+Every task in every spec MUST say `regression: { included, reason }` (the type requires it, `defineBench` refuses an
+empty reason, and `tests/bench-regress.test.mjs` loads every spec here). Include a task only when it is scored from the
+run itself, uses local fixtures only, has a fixed answer, does not depend on its spec's other dimensions, and some model
+in the list neither always passes nor always fails it (`RegressionChoice` in spec.ts). Run the suite by hand, never
+automatically, over any model list:
+
+```bash
+npm run build
+USE_ENV=1 node --import tsx tests/e2e/bench/run.mjs --regression --models a,b,c --repeats 3 --lanes --serve
+```
+
+It prints first how small a shift each task could show with that list and repeat count. Its runs are logged with
+`suite = 'regression'`. `regress.mjs` reads them: P(pass) = σ(θ − b − δ) with θ per model and b per task fixed across
+builds, δ the build's shift of each task, Student-t around a build-wide μ. μ is the headline (flagged at P(μ > 0) ≥ 95%);
+a task is flagged by the false discovery rate at 10% on P(δ > 0.5). Here a regression item is the task id plus its own
+hash, never `shown`: the prompt is part of the build being compared. The verdict tops `scores.md` and the scoreboard
+page, with which models fell on each flagged task, and μ for every earlier build. With 3 models × 3 repeats a single
+task must get about 2 logits harder to be caught most of the time; more repeats is the lever.
+
 `tests/e2e/artifacts/bench/<spec>/` (gitignored) holds `report.md`, `rows.json` (the aggregate AND every
 individual run, for further analysis), and one directory per RUN at
 `<task>/<combo>/r<N>/`, each containing that run's full observe-style artifacts:

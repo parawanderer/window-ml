@@ -67,7 +67,9 @@ import { timelineText, labelSeed, seedEndOf, SEED_LABEL } from "./timeline-text.
 import { memoryText } from "./resource-poll.mjs";
 import { startBox, openBoxLog, BOX_DB } from "./box-stream.mjs";
 import { repoUrl } from "../../../scripts/gen-build-info.mjs";
-import { openScores, modelInfo, runRow, logRuns, readRuns, scoreboard, sweepScores, writeScoreFiles, unscoredTasks, SCORES_DB } from "./scores.mjs";
+import { openScores, modelInfo, runRow, logRuns, readRuns, scoreboard, sweepScores, writeScoreFiles, unscoredTasks, modelKey, SCORES_DB } from "./scores.mjs";
+import { plannedPower } from "./regress.mjs";
+import { fitRasch } from "./rasch.mjs";
 import { watch as watchFs } from "node:fs";
 // The sweep's timeline: each run's events as the resource panel derives them; the page draws them with its lane.
 const { eventsFrom } = await import("../../../src/sidebar/resource/model-stats.ts");
@@ -77,6 +79,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../../..");
 const ARTROOT = path.join(ROOT, "tests/e2e/artifacts/bench");
 const BUILDROOT = path.join(ROOT, "tests/e2e/artifacts/builds");
+/** The regression suite's spec (`--regression`): every included task of every spec, over `--models`. */
+const REGRESSION_SPEC = path.join(HERE, "specs/regression.bench.ts");
 
 function parseArgv(argv) {
     const args = { specPath: null, models: (process.env.PANEL_MODELS || "").split(",").map((m) => m.trim()).filter(Boolean), surface: undefined, turnMinutes: 15, jobs: 1, jobsSet: false, lanes: false, only: [], skip: [], repeats: undefined, dry: false, cache: true, pdf: false, serve: false, open: false, port: undefined, capture: undefined, hold: [], holdIdle: undefined };
@@ -84,6 +88,7 @@ function parseArgv(argv) {
         const a = argv[i];
         if (a === "--jobs") { args.jobs = Math.max(1, Number(argv[++i]) || 1); args.jobsSet = true; }
         else if (a === "--lanes") args.lanes = true;
+        else if (a === "--regression") args.specPath = REGRESSION_SPEC;
         else if (a === "--no-sync") args.sync = false;
         else if (a === "--only-db") args.onlyDb = true;
         else if (a === "--only") args.only.push(argv[++i]);
@@ -365,7 +370,7 @@ const main = async () => {
         // One browser per model, as panel.mjs runs them, unless --jobs says otherwise.
         if (!args.jobsSet) args.lanes = true;
     } else {
-        spec = await loadSpec(args.specPath);
+        spec = await loadSpec(args.specPath, { models: args.models, surface: args.surface, turnMinutes: args.turnMinutes });
         if (!spec?.name || !spec?.tasks?.length) throw new Error(`${args.specPath} does not export a bench spec (default export with name + tasks)`);
     }
 
@@ -426,7 +431,14 @@ const main = async () => {
     // The repository the build came from (origin's URL, as the extension's own build stamp reads it), so the page can
     // link the build to its commit and the spec to its file there. "" without a remote: no links.
     const repo = repoUrl() || null;
-    const scoreSweep = { name: spec.name, spec: specRel, specHash: provenance?.specHash ?? null, fingerprint, dirty, backend, info, by: defaultBy() };
+    // The regression suite says up front how small a shift it could see with this model list and repeat count, so a run
+    // too small to tell anything is known before it is paid for.
+    if (spec.suite === "regression" && scores) {
+        const power = plannedPower(readRuns(scores), { models: args.models, repeats: args.repeats ?? spec.repeats ?? 1, modelKey, fitRasch });
+        if (power.length) console.log(`  regression suite: the smallest shift each task would show 80% of the time, in log-odds (from earlier regression runs):\n${power.map((p) => `    ${p.task.split("#")[0].padEnd(20)} ${p.detectable == null ? "unknown" : p.detectable.toFixed(1)}`).join("\n")}\n`);
+        else console.log("  regression suite: no earlier regression run, so this one is the baseline; the next build is compared with it.\n");
+    }
+    const scoreSweep = { name: spec.name, spec: specRel, specHash: provenance?.specHash ?? null, fingerprint, dirty, backend, info, by: defaultBy(), suite: spec.suite ?? null };
     const ctx = {
         spec, fingerprint, sweepDir, backend, buildDirs, cache: args.cache, scores, scoreSweep, logged: 0,
         // Warming is a VRAM concern for a local model, and pointless against a hosted API or the fake.

@@ -171,6 +171,12 @@ h1.from, p.from { width: fit-content; max-width: 100% }
 .mname { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap }
 .mname .kind { font-size: 11.5px }
 td .hot { color: var(--warn); font-weight: 600 }
+/* The scoreboard's regression card (scores.tsx `Regression`): μ as the headline line, a flagged task's row tinted, the
+   models whose pass rate fell in the warning colour. */
+.regress-mu { display: flex; align-items: center; gap: 10px; margin: 8px 0 }
+tr.flagged td { background: color-mix(in srgb, var(--warn) 7%, transparent) }
+tr.flagged .badge { margin-left: 6px }
+td .fell { color: var(--warn) }
 .method dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 10px 0 }
 .method dt { font-weight: 600; white-space: nowrap }
 .method dd { margin: 0; color: var(--fg-dim) }

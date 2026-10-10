@@ -44,9 +44,25 @@ export interface BenchSeed {
     script: unknown[];
 }
 
+/**
+ * Whether a task belongs to the REGRESSION SUITE (`run.mjs --regression`, regress.mjs), and why or why not. Required on
+ * every task, so a spec that forgets to decide fails the type check. Include a task only when all of these hold:
+ * it is scored from the run itself (its answer and steps, never what the model says it did); it uses local fixtures
+ * only (no live web); its right answer does not change; it does not depend on its spec's other dimensions (the suite
+ * runs the default build, over a model list given at run time); and its pass rate sits away from 0 and 1 for at least
+ * one model in the list, since a task every model always passes can only show a total break.
+ */
+export interface RegressionChoice {
+    included: boolean;
+    /** why, in a sentence: shown in the suite's report beside the task */
+    reason: string;
+}
+
 export interface BenchTask {
     /** stable id — it names the cell's artifact directory, so changing it discards that cell's cache */
     id: string;
+    /** whether the regression suite runs it, and why (see RegressionChoice) */
+    regression: RegressionChoice;
     /** the task given to the model */
     task: string;
     /** start route on the test site (e.g. "/spreadsheet"); see `GET /examples` for the list */
@@ -210,6 +226,8 @@ export type ApprovePolicy = "auto" | "deny" | "readonly" | "hold";
 export interface BenchSpec<D extends Dimensions = Dimensions> {
     /** names the sweep, and its artifact directory */
     name: string;
+    /** the suite its runs are logged under in scores.sqlite (`suite`): "regression" for the regression suite's sweep */
+    suite?: string;
     description?: string;
     /**
      * Runs per cell. Models are stochastic: one run per cell measures sampling, not the thing under test.
@@ -248,5 +266,17 @@ export interface BenchSpec<D extends Dimensions = Dimensions> {
  * The `const` type parameter is what makes `["hex", "words"]` infer as that union rather than `string[]`.
  */
 export function defineBench<const D extends Dimensions>(spec: BenchSpec<D>): BenchSpec<D> {
+    checkRegression(spec.tasks, spec.name);
     return spec;
+}
+
+/** Throw unless every task decided whether it is in the regression suite, with a reason that says something. The type
+ *  makes the field required; this catches a `reason: ""` and a spec written in plain JS. */
+export function checkRegression(tasks: readonly Partial<BenchTask>[], where: string): void {
+    for (const t of tasks) {
+        const r = t.regression;
+        if (!r || typeof r.included !== "boolean" || typeof r.reason !== "string" || !r.reason.trim()) {
+            throw new Error(`${where}: task ${t.id ?? "(no id)"} needs \`regression: { included, reason }\` with a reason (see RegressionChoice in bench/spec.ts)`);
+        }
+    }
 }
