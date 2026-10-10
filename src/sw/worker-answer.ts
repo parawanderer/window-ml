@@ -21,11 +21,24 @@ defineState({
     read: ({ runId }) => (runId ? sets.get(runId)?.dump() : undefined),
 });
 
-/** How a run's worker tools ask its page to resolve a selector, set by the run's host when the run is hosted (sw-run-host.ts). */
-const selectors = new Map<string, (args: AnswerArgs) => Promise<AnswerSelection & { error?: string }>>();   // state: plumbing — re-set by the host each turn
+/** What a run's page answered for a selector, with the document the worker asked it in (the worker's own word, set after
+ *  the page's answer is spread, so the page cannot name one). */
+export type PageSelection = AnswerSelection & { error?: string; documentId?: string | null };
 
-/** Let a run's `answer` tool ask its page for a selector's elements. */
-export function setAnswerSelector(runId: string, fn: (args: AnswerArgs) => Promise<AnswerSelection & { error?: string }>): void { selectors.set(runId, fn); }
+/** Crop each media item of a selection from the worker's own capture of `documentId` (worker-media.ts). */
+export type AnswerCropper = (documentId: string | null, selector: string, index: number | undefined, media: AnswerMedia[]) => Promise<AnswerMedia[]>;
+
+/** How a run's worker tools ask its page to resolve a selector, and crop its media, set by the run's host when the run is
+ *  hosted (sw-run-host.ts). */
+const selectors = new Map<string, { ask: (args: AnswerArgs) => Promise<PageSelection>; crop?: AnswerCropper }>();   // state: plumbing — re-set by the host each turn
+
+/**
+ * Let a run's `answer` tool ask its page for a selector's elements.
+ * @param runId the run
+ * @param fn asks the page (with `mediaInWorker`, so it captures nothing)
+ * @param crop crops the media in the worker; with it, a page that sends an image of its own is refused
+ */
+export function setAnswerSelector(runId: string, fn: (args: AnswerArgs) => Promise<PageSelection>, crop?: AnswerCropper): void { selectors.set(runId, { ask: fn, ...(crop ? { crop } : {}) }); }
 
 /** The run's set: in memory, else restored from session storage (after an eviction), else a new one. */
 export async function answerFor(runId: string): Promise<AnswerSet> {
@@ -54,17 +67,21 @@ export function resetAnswer(runId: string): void {
     void save(runId, set);
 }
 
-/** The most crops the page's own resolution makes (injected.ts `captureAnswer`), and the longest one we keep. */
-const MAX_MEDIA = 6, MAX_IMAGE = 4_000_000;
+/** The most crops the page's own resolution makes (injected.ts `captureAnswer`, `ANSWER_MEDIA_MAX`), and the longest one
+ *  we keep. */
+export const MAX_MEDIA = 6, MAX_IMAGE = 4_000_000;
 
 /**
  * What the page answered for a selector, as its own resolution could have made it: a whole count, a preview of the
  * size it builds, and at most six crops, each an image data URL (or none, when its capture failed), rebuilt field by
  * field. The page may still lie about its DOM, as it can by changing the DOM; it cannot make the answer larger or
- * point the HUD card at a remote image.
+ * point the HUD card at a remote image. With `mediaInWorker` (the worker crops the media itself) the page names no image
+ * at all: one that does is refused, so nothing it drew can reach the HUD card.
+ * @param got the page's answer
+ * @param o `mediaInWorker`: every image must be empty
  * @returns the selection, or null when any part is malformed
  */
-export function checkSelection(got: unknown): AnswerSelection | null {
+export function checkSelection(got: unknown, o: { mediaInWorker?: boolean } = {}): AnswerSelection | null {
     const g = got as { count?: unknown; preview?: unknown; media?: unknown } | null;
     if (!g || typeof g !== "object" || !Number.isSafeInteger(g.count) || (g.count as number) < 0) return null;
     if (g.preview !== undefined && typeof g.preview !== "string") return null;
@@ -73,6 +90,7 @@ export function checkSelection(got: unknown): AnswerSelection | null {
     for (const m of (g.media as unknown[] | undefined) ?? []) {
         const x = m as Record<string, unknown> | null;
         if (!x || typeof x.image !== "string" || x.image.length > MAX_IMAGE || (x.image && !/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(x.image))) return null;
+        if (o.mediaInWorker && x.image !== "") return null;
         if (x.selector !== undefined && (typeof x.selector !== "string" || x.selector.length > 1_000)) return null;
         if (x.kind !== undefined && x.kind !== "image" && x.kind !== "element") return null;
         if (x.mode !== undefined && x.mode !== "inline" && x.mode !== "highlight") return null;
@@ -116,15 +134,17 @@ export function workerAnswerTool(runId: string, page: MlTool): MlTool {
         run: async (args: AnswerArgs = {}) => {
             const set = await answerFor(runId);
             const r = await answerCall(set, args, async (selector, index, note, show) => {
-                const ask = selectors.get(runId);
-                if (!ask) throw new Error("the page cannot be asked for elements right now");
+                const sel = selectors.get(runId);
+                if (!sel) throw new Error("the page cannot be asked for elements right now");
                 // The note is the model's, so it stays here: the page resolves the selector without it, and the crops are
                 // labelled with it after (the page's own resolution used it only as that label).
-                const got = await ask({ selector, index, show });
+                const got = await sel.ask({ selector, index, show });
                 if (got.error) throw new Error(String(got.error).slice(0, 500));
-                const clean = checkSelection(got);
+                const clean = checkSelection(got, { mediaInWorker: !!sel.crop });
                 if (!clean) throw new Error("the page returned a malformed selection");
-                return { ...clean, ...(clean.media ? { media: clean.media.map((m) => ({ ...m, ...(note ? { label: note } : {}) })) } : {}) };
+                // The crops are the worker's, of the document the page answered in.
+                const media = clean.media && sel.crop ? await sel.crop(got.documentId ?? null, selector, index, clean.media) : clean.media;
+                return { ...clean, ...(media ? { media: media.map((m) => ({ ...m, ...(note ? { label: note } : {}) })) } : {}) };
             });
             await save(runId, set);
             return r.media ? { content: r.content, answerMedia: r.media, answerManaged: true } : r.content;

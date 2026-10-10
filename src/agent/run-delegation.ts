@@ -119,12 +119,14 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
     if (!run) return { result: `Error: no active agent run "${runId}" on this page (it may have ended).` };
     // A worker-built run's `answer` tool runs in the worker, and asks the page only for a selector's elements: this
     // page's DOM, its preview and its crops. The nodes stay here; the set they join is the worker's (worker-answer.ts).
+    // `mediaInWorker`: the worker crops each element's media from its own capture (worker-media.ts), so the page captures
+    // nothing and answers each item's shape only.
     if (opts.answerSelect) {
-        const select = (run.byName.answer as { selectAnswer?: (s: string, i: number | undefined, n: string | undefined, sh: AnswerArgs["show"]) => Promise<AnswerSelection> } | undefined)?.selectAnswer;
-        const a = opts.answerSelect;
+        const select = (run.byName.answer as { selectAnswer?: (s: string, i: number | undefined, n: string | undefined, sh: AnswerArgs["show"], capture?: boolean) => Promise<AnswerSelection> } | undefined)?.selectAnswer;
+        const a = opts.answerSelect as AnswerArgs & { mediaInWorker?: unknown };
         if (!select || typeof a.selector !== "string") return { result: "Error: this page cannot resolve an answer selector." };
         try {
-            const got = await select(a.selector, typeof a.index === "number" ? a.index : undefined, typeof a.note === "string" ? a.note : undefined, a.show);
+            const got = await select(a.selector, typeof a.index === "number" ? a.index : undefined, typeof a.note === "string" ? a.note : undefined, a.show, a.mediaInWorker !== true);
             return { result: "", answerSelection: { count: got.count, ...(got.preview ? { preview: got.preview } : {}), ...(got.media?.length ? { media: got.media } : {}) } };
         } catch (e) { return { result: `Error: ${errText(e)}` }; }
     }

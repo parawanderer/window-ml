@@ -985,7 +985,7 @@ test("full-mode python_exec run in the worker: the page cannot run that approved
     assert.match(stolen?.error || "", /Refused/, `the page ran full-mode Python on the run's grant: ${JSON.stringify(stolen).slice(0, 160)}`);
 });
 
-test("a python_exec that needs the page (a selector, an image) still runs there", T, async () => {
+test("a python_exec that needs the page (a page table by selector) still runs there; an image alone does not (tests/worker-media.test.mjs)", T, async () => {
     const { runs, toPage } = await pythonRun({ code: "return 1", tables: { t: "table#sales" } });
     assert.equal(toPage.length, 1);
     assert.equal(runs.length, 0, "not run in the worker");

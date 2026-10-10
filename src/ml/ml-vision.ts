@@ -232,6 +232,33 @@ export const _shotBox = function(target: string | Element, margin = 0): ShotBox 
 };
 
 /**
+ * `_shotBox` over any host: the crop transform of a raw `shootVia` of `target`, from the host's geometry, so a
+ * python_exec run in the worker (worker-media.ts) projects its image-pixel coordinates the way the page's does. The
+ * same boxes: an `@pt` the {@link PT_LOOK_RADIUS} (or `margin`) square's top-left, an `@box` its own top-left, a
+ * selector its first match's top-viewport top-left; the pixel ratio is the host's (the worker's is the one its crop
+ * used). Call it after the shot, which scrolled the element into view.
+ * @param host the geometry to ask
+ * @param target a selector or an `@pt`/`@box` token
+ * @param margin the `@pt` crop radius (0: the default)
+ * @returns the box, or null when the target does not resolve
+ */
+export async function shotBoxVia(host: Pick<ShotHost, "geo">, target: string, margin = 0): Promise<ShotBox | null> {
+    const { dpr } = await host.geo.view();
+    if (POINT_RE.test(target.trim())) {
+        const t = await host.geo.target({ token: target });
+        if (!("point" in t)) return null;
+        const R = margin > 0 ? margin : PT_LOOK_RADIUS;
+        return { left: Math.max(0, t.point.x - R), top: Math.max(0, t.point.y - R), dpr };
+    }
+    if (BOX_RE.test(target.trim())) {
+        const t = await host.geo.target({ token: target });
+        return "box" in t ? { left: Math.max(0, t.box.left), top: Math.max(0, t.box.top), dpr } : null;
+    }
+    const t = await host.geo.target({ selector: target, index: 0, scroll: false });
+    return "rect" in t ? { left: t.rect.left, top: t.rect.top, dpr } : null;
+}
+
+/**
  * Scroll the page in viewport-height steps, capture each, and stitch them
  * vertically into one tall PNG data URL. Browser-only (canvas). Paces
  * captures to respect captureVisibleTab's 2/sec limit, with backoff retries.
