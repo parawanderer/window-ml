@@ -497,6 +497,41 @@ test("spend chip: a session's priced calls are summed beside the gauge, and its 
     assert.ok(!chip.querySelector(".spend-warn"), "no warning with no local calls");
 });
 
+test("spend chip: a call that lands while the session is OPEN is priced and summed (regression: stuck at 1 call)", async () => {
+    const asked = [];
+    const w = await loadSidebarWorld({ priceCalls: (calls) => { asked.push(calls.length); return priceLikeWorker(calls); } });
+    await w.dispatch(chatStart("liv", 0, "hi", { model: "or.acme/m1" }));
+    await w.dispatch(chatResult("liv", 0, "a", { model: "or.acme/m1", usage: { promptTokens: 80, completionTokens: 20, totalTokens: 100, raw: { cost: 0.25 } } }));
+    w.shadow.querySelector(".row").click();
+    await w.tick(); await w.flush(); await w.tick();
+    assert.match(w.shadow.querySelector(".usage-spend").textContent, /^\$0\.25/);
+    // Each later call, as it lands, with the chip on screen.
+    for (const [turn, total, n] of [[1, /^\$0\.75/, 2], [2, /^\$1\.25/, 3]]) {
+        await w.dispatch(chatStart("liv", turn, "more", { model: "or.acme/m1" }));
+        await w.dispatch(chatResult("liv", turn, "b", { model: "or.acme/m1", usage: { promptTokens: 200, completionTokens: 20, totalTokens: 220, raw: { cost: 0.5 } } }));
+        await w.tick(); await w.flush(); await w.tick();
+        const chip = w.shadow.querySelector(".usage-spend");
+        assert.match(chip.textContent, total, `after call ${n}`);
+        assert.match(chip.querySelector(".tt-pop").textContent, new RegExp(`${n} model calls`));
+    }
+    assert.deepEqual(asked, [1, 2, 3], "the worker is asked once per new call, with the whole session");
+});
+
+test("spend chip: an agent run's steps, landing one by one while it is open, are each counted", async () => {
+    const w = await loadSidebarWorld({ priceCalls: priceLikeWorker });
+    await w.dispatch(agentStart("agl", "do it", "or.acme/m1"));
+    await w.dispatch(agentStep("agl", 1, { tool: "pageInfo", arguments: {}, result: "x", usage: { promptTokens: 100, completionTokens: 10, totalTokens: 110, raw: { cost: 0.1 } } }));
+    w.shadow.querySelector(".row").click();
+    await w.tick(); await w.flush(); await w.tick();
+    assert.match(w.shadow.querySelector(".usage-spend").textContent, /^\$0\.10/);
+    for (const step of [2, 3]) {
+        await w.dispatch(agentStep("agl", step, { tool: "pageInfo", arguments: {}, result: "x", usage: { promptTokens: 100, completionTokens: 10, totalTokens: 110, raw: { cost: 0.1 } } }));
+        await w.tick(); await w.flush(); await w.tick();
+        assert.match(w.shadow.querySelector(".usage-spend .tt-pop").textContent, new RegExp(`${step} model calls`), `after step ${step}`);
+    }
+    assert.match(w.shadow.querySelector(".usage-spend").textContent, /^\$0\.30/);
+});
+
 test("spend chip: absent where the host cannot price calls, and where nothing was priced and nothing is missing", async () => {
     const w = await loadSidebarWorld();   // the worker answers PRICE_CALLS with nothing
     await w.dispatch(chatStart("np", 0, "hi", { model: "or.acme/m1" }));
