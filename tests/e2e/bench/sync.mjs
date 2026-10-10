@@ -153,7 +153,7 @@ async function filesUnder(dir, rel = "") {
  * before it had one), so a re-run lands beside the old one. None when the spec said `sync: false`; a task that said so
  * keeps its runs here.
  */
-export async function syncableRuns(sweepDir) {
+export async function syncableRuns(sweepDir) {   // never a run against the fake model: see `isFake`
     let page;
     try { page = JSON.parse(await readFile(path.join(sweepDir, "page.json"), "utf8")); } catch { return []; }   // in flight, or before page.json
     if (page.sync?.off) return [];
@@ -164,6 +164,7 @@ export async function syncableRuns(sweepDir) {
         if (r.state !== "done" || !r.path || tasksOff.has(r.taskId)) continue;
         let cell;
         try { cell = JSON.parse(await readFile(path.join(sweepDir, r.path, "cell.json"), "utf8")); } catch { continue; }
+        if (isFake(cell)) continue;
         const id = cell.hash ?? `key-${cell.key}`;
         out.push({ dir: path.join(sweepDir, r.path), prefix: `traces/${sweep}/${r.path}/${id}/` });
     }
@@ -174,11 +175,18 @@ export async function syncableRuns(sweepDir) {
         if (tasksOff.has(h.cellPath.split(path.sep)[0])) continue;
         let cell;
         try { cell = JSON.parse(await readFile(path.join(sweepDir, h.rel, "cell.json"), "utf8")); } catch { continue; }
-        if (tasksOff.has(cell.taskId)) continue;
+        if (tasksOff.has(cell.taskId) || isFake(cell)) continue;
         out.push({ dir: path.join(sweepDir, h.rel), prefix: `traces/${sweep}/${h.cellPath}/${cell.hash ?? `key-${cell.key}`}/` });
     }
     return out;
 }
+
+/**
+ * A run against the fake LLM (run-once's `backendLabel`): a check of the harness, never a measurement, so it stays off the
+ * store as it stays off the scoreboard, whatever flags its sweep was started with. A run from before `backend` was saved
+ * is unknown, not fake, and is sent.
+ */
+export const isFake = (cell) => cell?.backend === "fake-LLM";
 
 /** The runs of a sweep the store has not got (a run is there once its cell.json is: it goes last). */
 async function missingRuns(store, sweepDir) {
@@ -197,7 +205,8 @@ async function pushSweep(store, sweepDir, clone) {
     }
     let page = null;
     try { page = JSON.parse(await readFile(path.join(sweepDir, "page.json"), "utf8")); } catch { /* nothing to describe it */ }
-    if (page && !page.sync?.off) {
+    // The sweep's own files describe its runs: a sweep with none to send (every one the fake's) sends no index either.
+    if (page && !page.sync?.off && (await syncableRuns(sweepDir)).length) {
         for (const d of await readdir(sweepDir, { withFileTypes: true })) {
             if (d.isFile()) await store.put(`traces/${path.basename(sweepDir)}/_sweep/${clone}/${d.name}`, await readFile(path.join(sweepDir, d.name)));
         }

@@ -82,7 +82,8 @@ once: the box has one generation slot per model, so they take turns.
 **The bench store pools results off the laptop (`sync.mjs`), opt-in.** With `BENCH_STORE_URL`, `BENCH_STORE_KEY_ID` and
 `BENCH_STORE_SECRET` in `.env`, a sweep ends by pushing its new scoreboard rows and box frames (Parquet) and its run
 directories to the bucket; `--no-sync` skips that once, `--only-db` sends rows only, and `sync: false` on a spec or a task
-keeps run directories (screenshots, page text, logged-in pages included) on this machine. `sync.mjs push | pull |
+keeps run directories (screenshots, page text, logged-in pages included) on this machine. A run against the fake LLM
+never goes (`isFake`), as it never reaches the scoreboard, so a throwaway check needs no flag. `sync.mjs push | pull |
 status [--json]` by hand; `pull` fills `artifacts/bench-pool/`, deduped. The store is AT-LEAST-ONCE: read it through
 `pull` or the `views.sql` views, never the raw objects. The pool and pulled copies are the only copies.
 
