@@ -27,13 +27,16 @@ export function toHost(msg: unknown): void {
     else outbox.push(msg);
 }
 
-/** Receive the host's messages with `fn`. Called once, at mount: it also opens the channel on a web page. */
-export function onHostMessage(fn: Handler): void {
-    handler = fn;
-    if (parentIsTrusted()) {
-        window.addEventListener("message", (e) => { if (e.source === window.parent && e.data) handler(e.data); });
-        return;
-    }
+/** Whether the channel to the shell has been opened (its hello sent). */
+let opened = false;   // state: plumbing — this frame's hello to the shell, sent once
+/** Called once the shell's port arrives. */
+let onPort: () => void = () => { /* set by awaitHost */ };
+
+/** Open the channel on a web page: send the shell a nonce through the extension's messaging, and take the port only
+ *  from a window message carrying it. */
+function openChannel(): void {
+    if (opened) return;
+    opened = true;
     const nonce = crypto.randomUUID();
     window.addEventListener("message", (e) => {
         // Only the shell knows the nonce, so a port carrying it is the shell's. Every other window message, the
@@ -42,6 +45,7 @@ export function onHostMessage(fn: Handler): void {
         port = e.ports[0];
         port.onmessage = (m) => { if (m.data) handler(m.data); };
         for (const msg of outbox.splice(0)) port.postMessage(msg);
+        onPort();
     });
     // The nonce goes to the shell through the extension's messaging, which reaches the tab's content scripts and never
     // the page. The shell runs in the top frame only.
@@ -49,4 +53,27 @@ export function onHostMessage(fn: Handler): void {
         if (tab?.id == null) return;
         chrome.tabs.sendMessage(tab.id, { type: "ML_HOST_HELLO", nonce }, { frameId: 0 }).catch(() => { /* the shell is gone */ });
     });
+}
+
+/**
+ * Run `ready` once this frame is known to be the shell's: at once under a trusted parent (the DevTools panel, or no
+ * parent), and on a web page only when the shell's port arrives. The shell hands its port to the frame IT mounted and
+ * no other, so sidebar.html framed by a page itself (it is web-accessible: in the page's own shadow root, an <object>,
+ * an <embed>, a frame navigated to it) never runs `ready`, and shows nothing of the sessions it would otherwise load.
+ * @param ready what to run once hosted (the app's mount)
+ */
+export function awaitHost(ready: () => void): void {
+    if (parentIsTrusted() || port) { ready(); return; }
+    onPort = () => { onPort = () => {}; ready(); };
+    openChannel();
+}
+
+/** Receive the host's messages with `fn`. Called once, at mount: it also opens the channel on a web page. */
+export function onHostMessage(fn: Handler): void {
+    handler = fn;
+    if (parentIsTrusted()) {
+        window.addEventListener("message", (e) => { if (e.source === window.parent && e.data) handler(e.data); });
+        return;
+    }
+    openChannel();
 }

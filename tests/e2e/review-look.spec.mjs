@@ -3,8 +3,9 @@
 // at the rects the shell reports (src/sidebar/shell-shot.ts `extensionRects`, masked by src/sw/shot-mask.ts). Here the
 // page's CSS and script do what a hostile page can to OUR elements and their ancestors (the shadow hosts are styled
 // `all: initial` inline, which a page's `!important` beats, and their shadow roots are open), and each test asks whether
-// the pixels the extension paints still fall inside what was masked. A `test.fixme` shows a gap: it asserts the correct
-// behaviour and fails if un-fixme'd until the gap is fixed.
+// the pixels the extension paints still fall inside what was masked, or the shot is refused with a fixed sentence: what
+// the shell cannot bound (a stylesheet of the page's in our root, a reflection, a filter, a host moved into a frame) is
+// refused as TAMPERED, never under-covered.
 //
 // The oracle is tests/e2e/worker-shot.spec.mjs's: the page is one flat green and the mask one flat grey (MASK_FILL), so
 // any other pixel in the worker's shot is the extension's UI. Each test first shows, on a bare capture, that the
@@ -12,6 +13,7 @@
 import { test, expect } from "@playwright/test";
 import http from "node:http";
 import { launchExtension, configureExtension } from "./harness.mjs";
+import { TAMPERED, RESTYLED_COVERS, MOVED_COVERS } from "../../src/sw/shot-mask.ts";
 
 /** A page that is one flat green with a transparent target box at (300,300) 200×100, on a local http server. */
 async function greenSite() {
@@ -78,6 +80,11 @@ async function withShell(fn) {
 
 /** Put `text` in a stylesheet inside our open shadow root, as a page can. */
 const shadowCss = (page, text) => page.evaluate((t) => { const st = document.createElement("style"); st.textContent = t; document.getElementById("ml-sb-root").shadowRoot.append(st); }, text);
+/** Set `decls` as `!important` inline styles on the element `id` inside our open shadow root, as a page can. */
+const inlineCss = (page, id, decls) => page.evaluate(({ id, decls }) => {
+    const e = document.getElementById("ml-sb-root").shadowRoot.getElementById(id) ?? document.getElementById("ml-sb-root").shadowRoot.querySelector(`#${id}`);
+    for (const [k, v] of Object.entries(decls)) e.style.setProperty(k, v, "important");
+}, { id, decls });
 
 // --- control: the open sidebar is in a bare capture and not in the worker's shot ---
 
@@ -111,14 +118,16 @@ for (const [what, rule] of [
     });
 }
 
-for (const [what, rule] of [
-    ["the individual transform properties on our panel (through the open shadow root)", "#ml-sb-host{scale:1.2 !important;translate:-300px 20px !important;rotate:5deg !important}"],
-    ["zoom on our panel (through the open shadow root)", "#ml-sb-host{zoom:1.3 !important}"],
-    ["content-visibility: hidden on our panel's body", "#ml-sb-body{content-visibility:hidden !important}"],
+// Inline on our elements (a stylesheet of the page's in our root is refused outright, below), so what is tested is the
+// measurement: getBoundingClientRect follows each of these.
+for (const [what, id, decls] of [
+    ["the individual transform properties on our panel (through the open shadow root)", "ml-sb-host", { scale: "1.2", translate: "-300px 20px", rotate: "5deg" }],
+    ["zoom on our panel (through the open shadow root)", "ml-sb-host", { zoom: "1.3" }],
+    ["content-visibility: hidden on our panel's body", "ml-sb-body", { "content-visibility": "hidden" }],
 ]) {
     test(`${what}: the extension's pixels stay inside the mask`, async () => {
         await withShell(async (s) => {
-            await shadowCss(s.page, rule);
+            await inlineCss(s.page, id, decls);
             await s.page.waitForTimeout(150);
             expect(await offGreen(s.page, (await s.bare()).dataUrl), "the UI still paints somewhere").toBeGreaterThan(500);
             const shot = await s.shoot();
@@ -130,45 +139,68 @@ for (const [what, rule] of [
 
 // --- the page's CSS that paints our pixels where no rect says ---
 
-// A filter or a reflection on the HOST makes it the containing block of the fixed panel, which then lays out against a
-// zero-size inline box (the UI moves, and getBoundingClientRect follows it); on the html element a filter changes
-// nothing. Both are confirmed below. The panel inside the shadow root is the page's to style too (the root is open), and
-// there a filter or a reflection paints past the panel's box; `paintsBeyond` adds at most 64 px for a filter.
-for (const [what, rule] of [
-    ["-webkit-box-reflect on our host", "#ml-sb-root{-webkit-box-reflect:left 0px !important}"],
-    ["filter: drop-shadow on an ancestor (html)", "html{filter:drop-shadow(-300px 0 0 #000) !important}"],
-]) {
-    test(`${what}: the extension's pixels stay inside the mask`, async () => {
+// A filter on the html element is bounded (a drop shadow's offset and blur) and masked round every rect. A reflection
+// on our HOST copies the UI where no box says (to the left of a zero-size host here, off screen; mirrored to its right it
+// would be on it), so any reflection is refused rather than bounded.
+test("filter: drop-shadow on an ancestor (html): the extension's pixels stay inside the mask", async () => {
+    await withShell(async (s) => {
+        await s.css("html{filter:drop-shadow(-300px 0 0 #000) !important}");
+        expect(await offGreen(s.page, (await s.bare()).dataUrl), "the UI still paints somewhere").toBeGreaterThan(500);
+        const shot = await s.shoot();
+        expect(shot.error).toBeUndefined();
+        expect(await offGreen(s.page, shot.dataUrl)).toBe(0);
+    });
+});
+
+for (const side of ["left", "right"]) {
+    test(`-webkit-box-reflect ${side} on our host: the shot is refused, not under-covered`, async () => {
         await withShell(async (s) => {
-            await s.css(rule);
+            await s.css(`#ml-sb-root{-webkit-box-reflect:${side} 0px !important}`);
             expect(await offGreen(s.page, (await s.bare()).dataUrl), "the UI still paints somewhere").toBeGreaterThan(500);
-            const shot = await s.shoot();
-            expect(shot.error).toBeUndefined();
-            expect(await offGreen(s.page, shot.dataUrl)).toBe(0);
+            expect((await s.shoot()).error).toBe(TAMPERED);
         });
     });
 }
 
-
-for (const [what, rule] of [
-    ["-webkit-box-reflect on our panel (a mirrored copy of the sidebar to its left)", "#ml-sb-host{-webkit-box-reflect:left 0px !important}"],
-    ["filter: blur(100px) on our panel (the sidebar smeared past the 64 px the shell allows a filter)", "#ml-sb-host{filter:blur(100px) !important}"],
-    ["filter: drop-shadow 300 px to the left of our panel (its silhouette past the 64 px the shell allows)", "#ml-sb-host{filter:drop-shadow(-300px 0 0 #000) !important}"],
+// The panel inside the shadow root is the page's to style too (the root is open), and there a filter or a reflection
+// paints copies of it past its box. Our own styles use neither, so the shell reports either as `tampered`, whether a
+// stylesheet the page put in our root (refused for being one) or an inline style on our element sets it.
+for (const [what, decls] of [
+    ["-webkit-box-reflect on our panel (a mirrored copy of the sidebar to its left)", { "-webkit-box-reflect": "left 0px" }],
+    ["filter: blur(100px) on our panel (the sidebar smeared far past its box)", { filter: "blur(100px)" }],
+    ["filter: drop-shadow 300 px to the left of our panel (its silhouette)", { filter: "drop-shadow(-300px 0 0 #000)" }],
+    ["text-shadow 500 px to the left of our panel's text", { "text-shadow": "-500px 0 0 #000" }],
 ]) {
-    // GAP: paintsBeyond caps a filter at 64 px and knows nothing of -webkit-box-reflect; the page reaches the panel's
-    // style because the shadow root is open (measured: 21k-160k unmasked px).
-    test.fixme(`${what}: the extension's pixels stay inside the mask`, async () => {
-        await withShell(async (s) => {
-            const plain = await offGreen(s.page, (await s.bare()).dataUrl);
-            await shadowCss(s.page, rule);
-            await s.page.waitForTimeout(150);
-            expect(await offGreen(s.page, (await s.bare()).dataUrl), "the rule paints more than the panel did").toBeGreaterThan(plain);
-            const shot = await s.shoot();
-            expect(shot.error).toBeUndefined();
-            expect(await offGreen(s.page, shot.dataUrl)).toBe(0);
+    for (const how of ["a stylesheet in our root", "an inline style on our panel"]) {
+        test(`${what}, by ${how}: the shot is refused, not under-covered`, async () => {
+            await withShell(async (s) => {
+                const plain = await offGreen(s.page, (await s.bare()).dataUrl);
+                if (how === "an inline style on our panel") await inlineCss(s.page, "ml-sb-host", decls);
+                else await shadowCss(s.page, `#ml-sb-host{${Object.entries(decls).map(([k, v]) => `${k}:${v} !important`).join(";")}}`);
+                await s.page.waitForTimeout(150);
+                if (!("text-shadow" in decls)) expect(await offGreen(s.page, (await s.bare()).dataUrl), "the rule paints more than the panel did").toBeGreaterThan(plain);
+                const shot = await s.shoot();
+                expect(shot.error).toBe(TAMPERED);
+            });
         });
-    });
+    }
 }
+
+test("a rule the page edits into our own stylesheet through the CSSOM (no DOM mutation, no new stylesheet) is refused", async () => {
+    await withShell(async (s) => {
+        await s.page.evaluate(() => { const st = document.getElementById("ml-sb-root").shadowRoot.querySelector("style"); st.sheet.insertRule("#ml-sb-host{translate:-600px 0 !important}", st.sheet.cssRules.length); });
+        await s.page.waitForTimeout(150);
+        expect((await s.shoot()).error).toBe(TAMPERED);
+    });
+});
+
+test("our panel carried by the page out of our shadow root into its own document is refused (nothing measures it there)", async () => {
+    await withShell(async (s) => {
+        await s.page.evaluate(() => { const p = document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-host"); const d = document.createElement("div"); document.body.append(d); d.append(p); });
+        await s.page.waitForTimeout(800);
+        expect((await s.shoot()).error).toBe(TAMPERED);
+    });
+});
 
 // --- the top layer ---
 
@@ -186,11 +218,9 @@ test("our host put in the top layer by the page (popover) is still masked where 
 
 test("the skip rule: a page hiding our panel (visibility, opacity 0) through the open shadow root while its frame stays visible leaves no frame pixels unmasked", async () => {
     await withShell(async (s) => {
-        await s.page.evaluate(() => {
-            const st = document.createElement("style");
-            st.textContent = "#ml-sb-host{visibility:hidden !important} #ml-sb-frame{visibility:visible !important} #ml-sb-body{opacity:0 !important}";
-            document.getElementById("ml-sb-root").shadowRoot.append(st);
-        });
+        await inlineCss(s.page, "ml-sb-host", { visibility: "hidden" });
+        await inlineCss(s.page, "ml-sb-frame", { visibility: "visible" });
+        await inlineCss(s.page, "ml-sb-body", { opacity: "0" });
         await s.page.waitForTimeout(150);
         const shot = await s.shoot();
         expect(shot.error).toBeUndefined();
@@ -214,9 +244,9 @@ test("the hover highlight's outline stays inside its strips", async () => {
     });
 });
 
-// GAP: the highlight element is reported as strips 4 px either side of its edge and skips paintsBeyond, so the approve
-// variant's own box-shadow pulse (out to 13 px) paints past them (measured ~1.5k unmasked px), with no page involved.
-test.fixme("the approval highlight's pulse (a box-shadow animating out to 13 px) stays inside the highlight's strips", async () => {
+// The approve variant's own box-shadow pulse goes out to 13 px: its band is measured at the furthest any running
+// animation takes it, not at the instant read.
+test("the approval highlight's pulse (a box-shadow animating out to 13 px) stays inside the highlight's strips", async () => {
     await withShell(async (s, ext) => {
         await highlight(ext, s.tabId, "approve");
         await s.page.waitForTimeout(300);
@@ -232,23 +262,38 @@ test.fixme("the approval highlight's pulse (a box-shadow animating out to 13 px)
     });
 });
 
-// GAP: the same strips ignore the highlight's outline-offset, which the page can set through the open shadow root
-// (measured ~1k unmasked px).
-test.fixme("a page-set outline-offset on the highlight (through the open shadow root) stays inside the highlight's strips", async () => {
+// The page can set the highlight's outline-offset through the open shadow root: inline, the band follows the outline
+// out (or in) to wherever it is drawn; as a stylesheet in our root, the shot is refused.
+for (const offset of ["40px", "-30px"]) {
+    test(`a page-set outline-offset of ${offset} on the highlight (an inline style through the open shadow root) stays inside the highlight's band`, async () => {
+        await withShell(async (s, ext) => {
+            await highlight(ext, s.tabId);
+            await s.page.waitForTimeout(300);
+            await inlineCss(s.page, "ml-highlight", { "outline-offset": offset });
+            await s.page.waitForTimeout(150);
+            const inner = { left: 300 + 35, top: 300 + 35, width: 200 - 70, height: 100 - 70 };   // left unmasked by design; the -30px ring is outside it
+            expect(await offGreen(s.page, (await s.bare()).dataUrl, offset === "40px" ? TARGET : inner), "the ring paints").toBeGreaterThan(0);
+            const shot = await s.shoot();
+            expect(shot.error).toBeUndefined();
+            expect(await offGreen(s.page, shot.dataUrl, offset === "40px" ? TARGET : inner), "an outline-offset ring outside the band").toBe(0);
+        });
+    });
+}
+
+test("a page-set outline-offset on the highlight by a stylesheet in our root refuses the shot", async () => {
     await withShell(async (s, ext) => {
         await highlight(ext, s.tabId);
         await shadowCss(s.page, "#ml-highlight{outline-offset:40px !important}");
         await s.page.waitForTimeout(300);
-        expect(await offGreen(s.page, (await s.shoot()).dataUrl, TARGET), "an outline-offset ring outside the strips").toBe(0);
+        expect((await s.shoot()).error).toBe(TAMPERED);
     });
 });
 
 // --- our host moved by the page ---
 
-// GAP: extensionRects keeps reading a host the page adopted into one of its own frames: its rects are in that frame's
-// viewport, not the top one, so the mask lands 300,200 px off the UI (measured ~156k unmasked px; the extension's
-// sidebar frame reloads there and paints).
-test.fixme("our host moved by the page into a same-origin iframe it placed at (300,200): its UI is masked where it now paints", async () => {
+// A host the page adopted into one of its own frames has rects in that frame's viewport, not the top one (the mask would
+// land 300,200 px off the UI): a host off the root element the shell mounted it on is refused.
+test("our host moved by the page into a same-origin iframe it placed at (300,200): its UI is masked where it now paints", async () => {
     await withShell(async (s) => {
         await s.page.evaluate(async () => {
             const f = document.createElement("iframe");
@@ -260,43 +305,90 @@ test.fixme("our host moved by the page into a same-origin iframe it placed at (3
         });
         await s.page.waitForTimeout(800);
         expect(await offGreen(s.page, (await s.bare()).dataUrl), "the UI paints inside the page's iframe").toBeGreaterThan(500);
-        const shot = await s.shoot();
-        if (shot.error) return;   // refusing the shot is also correct
-        expect(await offGreen(s.page, shot.dataUrl)).toBe(0);
+        expect((await s.shoot()).error).toBe(TAMPERED);
     });
 });
 
-// GAP: the mask is the union of two reads (before and after the capture); a panel the page moves every frame is captured
-// at a position neither read saw (measured up to ~205k unmasked px).
-test.fixme("our panel moved by the page between the shell's two reads and the capture (a position cycling every frame) is never left unmasked", async () => {
+// The shell watches the UI from before the capture to after it: a read on every frame, and one right after every write the
+// page makes to our hosts and roots (a MutationObserver runs before the next paint, so a write undone before the next
+// frame is still seen). The mask is every place it was seen: a panel cycling across most of the page is refused with a
+// sentence saying it moved, and a smaller cycle is masked everywhere it went.
+/** Move our panel by the page every frame through `xs` (px), as an inline translate. */
+const cycle = (page, xs) => page.evaluate((xs) => {
+    const p = document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-host");
+    let i = 0;
+    const tick = () => { p.style.setProperty("translate", `${xs[i++ % xs.length]}px 0`, "important"); requestAnimationFrame(tick); };
+    tick();
+}, xs);
+
+test("our panel moved by the page every frame across most of the page (0, -300, -600 px) is never left unmasked: each shot is refused as moving, or masked where it went", async () => {
     await withShell(async (s) => {
-        await s.page.evaluate(() => {
-            const p = document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-host");
-            let i = 0;
-            const tick = () => { p.style.setProperty("translate", `${[0, -300, -600][i++ % 3]}px 0`, "important"); requestAnimationFrame(tick); };
-            tick();
-        });
+        await cycle(s.page, [0, -300, -600]);
         expect(await offGreen(s.page, (await s.bare()).dataUrl), "the panel paints").toBeGreaterThan(500);
         let leaked = 0, taken = 0;
         for (let k = 0; k < 10; k++) {
+            const shot = await s.shoot();
+            if (shot.error) { expect([MOVED_COVERS, RESTYLED_COVERS]).toContain(shot.error); continue; }
+            taken++;
+            leaked = Math.max(leaked, await offGreen(s.page, shot.dataUrl));
+        }
+        test.info().annotations.push({ type: "shots", description: `${taken} of 10 taken, the rest refused` });
+        expect(leaked).toBe(0);
+    });
+});
+
+test("our panel moved by the page every frame within a bound (0, -40, -80 px) is masked at every place it went, and the shots are taken", async () => {
+    await withShell(async (s) => {
+        await cycle(s.page, [0, -40, -80]);
+        let leaked = 0, taken = 0;
+        for (let k = 0; k < 6; k++) {
             const shot = await s.shoot();
             if (shot.error) continue;
             taken++;
             leaked = Math.max(leaked, await offGreen(s.page, shot.dataUrl));
         }
-        test.info().annotations.push({ type: "shots", description: `${taken} of 10 taken, the rest refused` });
-        expect(taken, "some shots were taken (a refusal is not a pass)").toBeGreaterThan(0);
+        expect(taken, "a bounded move is masked, not refused").toBe(6);
+        expect(leaked).toBe(0);
+    });
+});
+
+test("our panel moved by the page after every frame read and put back before the next (a move no once-per-frame read sees) is still masked where it was painted", async () => {
+    await withShell(async (s) => {
+        await s.page.evaluate(() => {
+            const p = document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-host");
+            // A ResizeObserver callback runs after every frame callback and layout, just before the paint: the panel is
+            // painted at -80 px, and a task puts it back before the next frame's callbacks run.
+            const probe = document.createElement("div");
+            probe.style.cssText = "position:absolute;left:0;top:0;height:1px;width:1px";
+            document.body.append(probe);
+            let w = 1;
+            new ResizeObserver(() => { p.style.setProperty("translate", "-80px 0", "important"); setTimeout(() => p.style.removeProperty("translate"), 0); }).observe(probe);
+            const tick = () => { probe.style.width = `${(w = 3 - w)}px`; requestAnimationFrame(tick); };
+            requestAnimationFrame(tick);
+        });
+        await s.page.waitForTimeout(200);
+        expect(await offGreen(s.page, (await s.bare()).dataUrl), "the panel paints").toBeGreaterThan(500);
+        let leaked = 0, taken = 0;
+        for (let k = 0; k < 6; k++) {
+            const shot = await s.shoot();
+            if (shot.error) continue;
+            taken++;
+            leaked = Math.max(leaked, await offGreen(s.page, shot.dataUrl));
+        }
+        expect(taken).toBeGreaterThan(0);
         expect(leaked).toBe(0);
     });
 });
 
 // --- extension frames the page embeds itself ---
 
-// GAP: sidebar.html is web-accessible to every site; inside a page's own (closed) shadow root it is not found by
-// document.querySelectorAll("iframe") and goes into the shot whole (measured 160k px: the Sessions list and the
-// configured server URL, which the page itself cannot read, put in front of the model).
-test.fixme("the extension's sidebar.html embedded by the page inside its own shadow root is masked like a frame in the document", async () => {
+// sidebar.html is web-accessible to every site, and a page can frame it where the shell's search for extension frames
+// does not look (its own closed shadow root here). The app mounts only once the shell that framed IT hands it a port
+// (parent-channel.ts `awaitHost`), so the page's frame of it is empty and transparent: nothing of the Sessions list or
+// the configured server URL is in the shot, or on the page at all.
+test("the extension's sidebar.html embedded by the page inside its own shadow root shows nothing: not in a bare capture, not in the worker's shot", async () => {
     await withShell(async (s, ext) => {
+        const plain = await offGreen(s.page, (await s.bare()).dataUrl);
         await s.page.evaluate((id) => {
             const h = document.createElement("div");
             h.style.cssText = "position:fixed;left:40px;top:40px;width:400px;height:400px";
@@ -307,11 +399,29 @@ test.fixme("the extension's sidebar.html embedded by the page inside its own sha
             h.attachShadow({ mode: "closed" }).append(f);
         }, ext.extensionId);
         await s.page.waitForTimeout(1500);
-        const bare = await s.bare();
-        expect(await offGreen(s.page, bare.dataUrl), "the embedded extension page paints").toBeGreaterThan(500);
+        const sb = s.page.frames().filter((f) => f.url().includes("sidebar.html"));
+        expect(sb.length, "ours and the page's").toBe(2);
+        const mounted = await Promise.all(sb.map((f) => f.evaluate(() => document.getElementById("root")?.childElementCount ?? -1)));
+        expect(mounted.filter((n) => n > 0).length, "our own sidebar mounted; the page's frame of sidebar.html did not").toBe(1);
+        // The page's frame sits at (40,40) 400x400, clear of our sidebar on the right: nothing off-green there.
+        const SIDEBAR = { left: 800, top: 0, width: 480, height: 720 };
+        expect(plain, "our own sidebar paints").toBeGreaterThan(1000);
+        expect(await offGreen(s.page, (await s.bare()).dataUrl, SIDEBAR), "the page's frame paints nothing").toBe(0);
         const shot = await s.shoot();
         expect(shot.error).toBeUndefined();
         expect(await offGreen(s.page, shot.dataUrl)).toBe(0);
+    });
+});
+
+// Top-level, the app is its own window and mounts (no shell frames it there), so it is the worker that must not shoot it:
+// the browser reports no document for an extension page, which workerShot already refuses.
+test("a run tab the page sends to the extension's own sidebar.html (a top-level navigation) is not screenshot", async () => {
+    await withShell(async (s, ext) => {
+        await s.page.goto(`chrome-extension://${ext.extensionId}/sidebar.html`);
+        await s.page.waitForTimeout(500);
+        const shot = await s.shoot();
+        expect(shot.dataUrl).toBeUndefined();
+        expect(shot.error).toMatch(/^Can't screenshot this tab: the browser does not say which page it holds\.$/);
     });
 });
 
@@ -326,14 +436,15 @@ test("a page that holds its main thread past the shell's bound gets a refusal th
     });
 });
 
-// GAP: `zoom:4 !important` on our host (the page's rule beats the inline `all: initial`) gets the refusal "the window.ml
-// sidebar covers most of the page: narrow or collapse it": the person is told to fix what the page did.
-test.fixme("a page that enlarges our sidebar past the refusal share gets a refusal that does not tell the person to narrow a sidebar they never widened", async () => {
+// `zoom:4 !important` on our host (the page's rule beats the inline `all: initial`): the refusal names the page's styles,
+// not a sidebar the person never widened.
+test("a page that enlarges our sidebar past the refusal share gets a refusal that does not tell the person to narrow a sidebar they never widened", async () => {
     await withShell(async (s) => {
         await s.css("#ml-sb-root{zoom:4 !important}");
         const shot = await s.shoot();
         expect(shot.error, "the shot is refused").toBeDefined();
         expect(shot.error).not.toMatch(/narrow or collapse it/);
+        expect(shot.error).toBe(RESTYLED_COVERS);
     });
 });
 

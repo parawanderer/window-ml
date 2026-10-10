@@ -4,7 +4,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { coverage, deviceRects, maskShot, MASK_FILL, MASK_REFUSE_SHARE } from "../src/sw/shot-mask.ts";
+import { coverage, deviceRects, maskShot, MASK_FILL, MASK_REFUSE_SHARE, TAMPERED, RESTYLED_COVERS, MOVED_COVERS } from "../src/sw/shot-mask.ts";
 
 /** A Raster that records what is drawn and filled, and encodes to a fixed URL. */
 function fakeRaster() {
@@ -75,6 +75,33 @@ test(`just under ${MASK_REFUSE_SHARE * 100}% is masked; at it, refused`, async (
     assert.equal((await maskShot(SHOT, [under], fakeRaster())).dataUrl, "data:image/png;base64,MASKED");
     const at = answer([{ x: 0, y: 0, w: 800 * (MASK_REFUSE_SHARE + 0.01), h: 600, kind: "card" }]);
     await assert.rejects(maskShot(SHOT, [at], fakeRaster()), /run card covers most/);
+});
+
+// --- what the page did, named in the refusal ---
+
+test("an answer saying the page tampered with the UI refuses the shot with the fixed sentence, whatever its rects, and nothing is drawn", async () => {
+    const raster = fakeRaster();
+    for (const rects of [[], [{ x: 700, y: 0, w: 100, h: 600, kind: "sidebar" }]]) {
+        await assert.rejects(maskShot(SHOT, [answer(rects), { ...answer([]), tampered: true }], raster), (e) => e.message === TAMPERED);
+    }
+    assert.equal(raster.log.decoded.length, 0);
+});
+
+test("a mask past the share names why: the page's styles (never 'narrow or collapse it'), the UI moving during the shot, and only otherwise the surface to put away", async () => {
+    const big = [{ x: 0, y: 0, w: 800 * (MASK_REFUSE_SHARE + 0.05), h: 600, kind: "sidebar" }];
+    await assert.rejects(maskShot(SHOT, [{ ...answer(big), restyled: true }], fakeRaster()), (e) => e.message === RESTYLED_COVERS && !/narrow or collapse/.test(e.message));
+    await assert.rejects(maskShot(SHOT, [answer([]), { ...answer(big), restyled: true, moved: true }], fakeRaster()), (e) => e.message === RESTYLED_COVERS);
+    await assert.rejects(maskShot(SHOT, [{ ...answer(big), moved: true }], fakeRaster()), (e) => e.message === MOVED_COVERS);
+    await assert.rejects(maskShot(SHOT, [answer(big)], fakeRaster()), /sidebar covers most of the page: narrow or collapse it/);
+    // Under the share the flags change nothing: restyled or moved UI is masked where it was seen.
+    const small = [{ x: 700, y: 0, w: 100, h: 600, kind: "sidebar" }];
+    assert.equal((await maskShot(SHOT, [{ ...answer(small), restyled: true, moved: true }], fakeRaster())).dataUrl, "data:image/png;base64,MASKED");
+});
+
+test("a flag that is not a boolean is an answer that can't be read", () => {
+    for (const f of ["tampered", "restyled", "moved"]) {
+        for (const v of ["yes", 1, null, {}]) assert.throws(() => deviceRects([{ ...answer([]), [f]: v }], 1600, 1200), /can't be read/, `${f}: ${JSON.stringify(v)}`);
+    }
 });
 
 // --- painting ---

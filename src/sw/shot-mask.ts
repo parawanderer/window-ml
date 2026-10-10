@@ -1,8 +1,8 @@
 // shot-mask.ts — painting the extension's own UI out of a screenshot the worker took: the shell's viewport rects scaled to the capture, checked, and filled opaque.
 
 // Pure apart from the `Raster` it draws with, so it is tested without a worker. The rects come from the shell
-// (shell-shot.ts `extensionRects`), asked before and after the capture; the union of both is painted, since the UI may
-// have moved in between.
+// (shell-shot.ts `extensionRects`), watched from before the capture to after it; every place the UI was seen in between is
+// painted, since it may have moved.
 
 import type { Raster } from "../raster";
 import type { ShotRectKind, ShotRects } from "../sidebar/shell-shot";
@@ -33,6 +33,15 @@ const PUT_AWAY: Record<ShotRectKind, string> = {
     frame: "a window.ml frame the page embedded covers most of it",
 };
 
+/** The refusal for a page that has done something to the extension's UI that leaves where it paints unknown (moved a
+ *  host into a frame of its own, put a stylesheet into a root, reflected or filtered a panel). */
+export const TAMPERED = "Can't screenshot this tab: the page has moved or restyled window.ml's own panels so that where they paint can't be told, and they would be in the shot. It was not taken.";
+/** The refusal for a mask past the share when the page's own styles enlarged or moved the extension's UI: the person
+ *  did not widen anything, so the sentence does not tell them to narrow it. */
+export const RESTYLED_COVERS = "Can't take a useful screenshot of this page: the page has enlarged or moved window.ml's own panels so that they cover most of it.";
+/** The refusal for a mask past the share made of every place the UI was seen while it moved during the shot. */
+export const MOVED_COVERS = "Can't take a useful screenshot of this page: window.ml's own panels moved while it was taken, and every place they were covers most of it. Retry once they settle.";
+
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const KINDS = new Set<string>(Object.keys(PUT_AWAY));
 
@@ -52,7 +61,7 @@ export function deviceRects(answers: (ShotRects | null)[], W: number, H: number)
     const out: DeviceRect[] = [];
     for (const a of answers) {
         if (a === null) continue;
-        if (!a || !finite(a.vw) || !finite(a.vh) || a.vw < 1 || a.vh < 1 || !Array.isArray(a.rects)) throw new Error("the page's window.ml frame gave an answer about its layout that can't be read, so the screenshot was not taken.");
+        if (!a || !finite(a.vw) || !finite(a.vh) || a.vw < 1 || a.vh < 1 || !Array.isArray(a.rects) || [a.tampered, a.restyled, a.moved].some((f) => f !== undefined && typeof f !== "boolean")) throw new Error("the page's window.ml frame gave an answer about its layout that can't be read, so the screenshot was not taken.");
         const sx = W / a.vw, sy = sx;
         if (H > a.vh * sx * 1.02 + 2) throw new Error("the screenshot does not match the page's viewport, so the extension's own panels can't be found in it; it was not used.");
         for (const r of a.rects) {
@@ -91,8 +100,9 @@ export function coverage(rects: DeviceRect[], W: number, H: number): { share: nu
 }
 
 /**
- * Paint the extension's UI out of a capture. Nothing to paint returns the capture as it is; a mask covering
- * {@link MASK_REFUSE_SHARE} or more of it is refused with a sentence saying what to put away.
+ * Paint the extension's UI out of a capture. Nothing to paint returns the capture as it is; an answer saying the page
+ * tampered with the UI is refused ({@link TAMPERED}); a mask covering {@link MASK_REFUSE_SHARE} or more of it is refused
+ * with a sentence naming why: the page's styles, the UI moving, or the surface the person can put away.
  * @param shot the capture and its size
  * @param answers the shell's answers before and after the capture (null where there was no content script)
  * @param raster the worker's raster
@@ -101,9 +111,15 @@ export function coverage(rects: DeviceRect[], W: number, H: number): { share: nu
  */
 export async function maskShot(shot: { dataUrl: string; w: number; h: number }, answers: (ShotRects | null)[], raster: Raster): Promise<{ dataUrl: string; w: number; h: number }> {
     const rects = deviceRects(answers, shot.w, shot.h);
+    if (answers.some((a) => a?.tampered)) throw new Error(TAMPERED);
     if (!rects.length) return shot;
     const { share, largest } = coverage(rects, shot.w, shot.h);
-    if (share >= MASK_REFUSE_SHARE) throw new Error(`Can't take a useful screenshot of this page: ${PUT_AWAY[largest ?? "sidebar"]}, then retry.`);
+    if (share >= MASK_REFUSE_SHARE) {
+        // Say what made it so: the page's styles, the UI moving, or (only when neither) the surface the person can put away.
+        if (answers.some((a) => a?.restyled)) throw new Error(RESTYLED_COVERS);
+        if (answers.some((a) => a?.moved)) throw new Error(MOVED_COVERS);
+        throw new Error(`Can't take a useful screenshot of this page: ${PUT_AWAY[largest ?? "sidebar"]}, then retry.`);
+    }
     let img;
     try { img = await raster.decode(shot.dataUrl); } catch { throw new Error("the screenshot could not be decoded to mask the extension's own UI out of it, so it was not used."); }
     try {

@@ -112,7 +112,10 @@ test("the shell is asked where the extension's UI is before and after the captur
     assert.deepEqual({ ...shot }, { dataUrl: dataUrl(OWN_PNG), w: 800, h: 600 });
     assert.deepEqual(order, ["SHOT_RECTS", "capture", "SHOT_RECTS"]);
     const sent = bg.tabMessages.map((a) => JSON.parse(JSON.stringify(a)));
-    assert.deepEqual(sent.map((a) => a[1]), [{ type: "SHOT_RECTS" }, { type: "SHOT_RECTS" }], "a read, and nothing that changes the page");
+    // A read that starts the shell's watch, and the one that ends it, both for this shot's id: nothing that changes the page.
+    const id = sent[0][1].id;
+    assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    assert.deepEqual(sent.map((a) => a[1]), [{ type: "SHOT_RECTS", watch: "begin", id }, { type: "SHOT_RECTS", watch: "end", id }], "a read, and nothing that changes the page");
     assert.ok(sent.every((a) => a[0] === 3 && a[2]?.frameId === 0 && a[2]?.documentId === "doc-3"), "to the run's tab, top frame, pinned to its document");
 });
 
