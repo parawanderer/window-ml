@@ -111,3 +111,35 @@ test("memory.md lists what the box reported; the timeline draws it as its own ro
     assert.equal(tl.querySelector(".who").textContent, "the box");
     assert.equal(tl.querySelectorAll(".wml-lane")[0].querySelectorAll(".rc-ev-load").length, 2);
 });
+
+// --- whose each model was ---
+
+test("memory.md and the chart's tooltip say whose each model was: loaded for this sweep, or not this sweep's", async (t) => {
+    // The recording's two generations, re-labelled: the first a run of this sweep's, the second Open WebUI's own.
+    const frames = FRAMES.map((f) => (f.kind !== "gen.end" ? f
+        : { ...f, hint: { ...f.hint, session: f.hint.request === "vector-1" ? "wml-abc" : "owui-x" } }));
+    const r = boxReducer();
+    const T0 = 1_700_000_000_000;
+    for (const f of frames) r.push(f, T0 + f.t);
+    const packed = { ...packSamples(r.samples()), events: r.events(T0 + 30_000) };
+    const md = memoryText(packed, new Set(["wml-abc"]));
+    assert.match(md, /\| qwen3\.5:0\.8b \|[^\n]*\| loaded for this sweep \|/);
+    assert.match(md, /\| qwen3\.8-flash-next:vision \|[^\n]*\| not this sweep's \|/);
+    assert.doesNotMatch(memoryText(packed), /loaded for this sweep/, "with no sessions of ours, nothing is ours");
+    assert.doesNotMatch(memoryText({ ...packed, events: packed.events.map(({ hint, ...e }) => e) }, new Set(["wml-abc"])), /\| whose \|/,
+        "a box that names no sessions gets no column, not a column of 'not ours'");
+
+    const runs = [{ combo: { model: "qwen3.5:0.8b" }, taskId: "t", repeat: 0, state: "done", who: "q", ok: true, hash: "abc" }];
+    const timeline = { now: T0 + 30_000, runs: [{ index: 0, events: [{ kind: "run", t: T0 + 4000, until: T0 + 5000, label: "run", model: "qwen3.5:0.8b" }] }] };
+    const w = new JSDOM(await staticPage({ name: "x", dims: ["model"], runs, rows: [], jobs: 1, started: T0, finished: T0 + 30_000, timeline, resources: packed }), { runScripts: "dangerously", pretendToBeVisual: true }).window;
+    t.after(() => w.close());
+    w.Element.prototype.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 100, right: 800, bottom: 100, x: 0, y: 0 });
+    const d = w.document;
+    const hit = d.querySelector(".tlchart .rc .rc-hit");
+    hit.dispatchEvent(new w.PointerEvent("pointerenter", { bubbles: false, clientX: 795, clientY: 50 }));
+    hit.dispatchEvent(new w.PointerEvent("pointermove", { bubbles: true, clientX: 795, clientY: 50 }));
+    await new Promise((res) => w.setTimeout(res, 40));
+    const tags = [...d.querySelectorAll(".tlchart .rc-tip-owner")].map((e) => [e.parentElement.textContent.replace(e.textContent, "").trim(), e.textContent]);
+    assert.ok(tags.length, "the tooltip tags the models it names");
+    assert.ok(tags.some(([, tag]) => tag === "loaded for this sweep"), JSON.stringify(tags));
+});

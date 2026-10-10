@@ -14,6 +14,7 @@ import { WindowChip } from "../../../../src/sidebar/resource/resource-scrub";
 import { startBrush, BrushOverlay, LANE_KINDS } from "../../../../src/sidebar/resource/resource-lane-ui";
 import type { ResourceSample } from "../../../../src/resource/resource-model";
 import type { ResourceEvent } from "../../../../src/resource/resource-timeline";
+import { ownership } from "../../../../src/resource/ownership";
 import { LaneRows, LaneAxis, laneWindow } from "./lane-view";
 import { runName } from "./runs";
 import { Card } from "../../../../src/sidebar/fold-card";
@@ -66,6 +67,13 @@ export function SweepTimeline({ s }: { s: BenchState }) {
     const [hiddenList, setHidden] = useState<string[]>(() => readHidden(s.name));
     // The box's memory, when the harness read it (unpacked once per new state, before any early return: a hook).
     const mem = useMemo(() => unpackSamples(s.resources), [s.resources]);
+    // Whose each model in the chart was: this sweep's runs are the sessions it ran (not a cached or on-disk one, which
+    // ran in an earlier sweep), read against every box event, whatever the filters hide.
+    const owner = useMemo(() => {
+        const ours = new Set(s.runs.filter((r) => r.hash && !r.cached && !r.onDisk).map((r) => `wml-${r.hash}`));
+        const of = ownership(s.resources?.events ?? [], (session) => ours.has(session));
+        return of ? { of, us: "this sweep" } : null;
+    }, [s.resources, s.runs]);
     const t = s.timeline;
     if (!t?.runs.length) return null;
     const hidden = new Set(hiddenList);
@@ -127,7 +135,7 @@ export function SweepTimeline({ s }: { s: BenchState }) {
             {values.size || kinds.size > 1 ? <TimelineFilter values={values} kinds={kinds.size > 1 ? kinds : new Map()} hidden={hidden} toggle={toggle} /> : null}
             {!axis ? <div class="empty">Every run is hidden: click a struck-out value to show it again.</div>
                 : mem ? <div class="tlchart">
-                    <ResourceTracks samples={mem.samples} capacity={mem.samples.at(-1)!.capacity} hidden={hiddenModels} events={shownEvents}
+                    <ResourceTracks samples={mem.samples} capacity={mem.samples.at(-1)!.capacity} hidden={hiddenModels} events={shownEvents} owner={owner}
                         endAt={s.finished ? Math.max(s.finished, mem.samples.at(-1)!.t) : undefined}
                         lane={({ axis: chartAxis, runs }) => lanes({ axis: chartAxis, rowAttrs: { onPointerDown: startBrush(runs) }, rowPrefix: () => <BrushOverlay runs={runs} /> })} />
                 </div>

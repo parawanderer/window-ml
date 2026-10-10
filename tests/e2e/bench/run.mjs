@@ -655,7 +655,7 @@ const main = async () => {
     const nameOf = (i) => [runs[i].taskId, ...Object.keys(spec.dimensions || {}).map((d) => runs[i].combo[d]), `r${runs[i].repeat}`].join(" · ");
     await writeFile(path.join(sweepDir, "timeline.md"), timelineText(pageState.timeline, nameOf, { cached: runs.filter((r) => r.cached).length }));
     await writeFile(path.join(sweepDir, "spec.md"), specText(provenance));
-    await writeFile(path.join(sweepDir, "memory.md"), memoryText(pageState.resources));
+    await writeFile(path.join(sweepDir, "memory.md"), memoryText(pageState.resources, new Set(runsState.filter((r) => r.hash && !r.cached && !r.onDisk).map((r) => `wml-${r.hash}`))));
     await writeFile(path.join(sweepDir, "rows.json"), JSON.stringify({ fingerprint, dirty, started, finished, rows, runs, older }, null, 2));
     files.push(
         ["timeline", "timeline.md", "every run on one clock: spans, overlaps, model loads"],
