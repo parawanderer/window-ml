@@ -239,7 +239,12 @@ export interface SubcallUsageByModel { model: string; prompt: number; completion
 /** ONE delegated sub-call: a vision reader, or (when it lands) a background embedding. `ts` is when it
  *  FINISHED and `ms` how long it took, so it can be drawn as a span nested under the step that spawned it —
  *  a total tells you what the reader cost, but not when, or inside which step. */
-export interface SubcallRecord { model: string; ts: number; ms: number; prompt: number; completion: number; }
+export interface SubcallRecord { model: string; ts: number; ms: number; prompt: number; completion: number;
+    /** What spend needs beyond the counts, as the call's own usage carried it (`TokenUsage`): the server's numbers
+     *  verbatim, the price snapshot and the electricity price. Absent where the call reported none. */
+    raw?: import("./contract-chat").TokenUsage["raw"];
+    prices?: import("./contract-chat").TokenUsage["prices"];
+    electricity?: import("./contract-chat").TokenUsage["electricity"]; }
 
 /** What a run spent on model calls it made on its own behalf (a delegated look, locate or verify), totalled,
  *  and optionally broken down by model and by individual call. Separate from the run's own usage because the

@@ -5,7 +5,8 @@
 // slice 2 part 2). These are the same tools, from the same factories, given an `ml` whose members the worker answers
 // itself: the descriptor the model is shown and the run's approval are unchanged, and only where the body runs moves.
 
-import type { FetchLlmPayload, FetchResult, MlApi, MlTool, SubcallUsage } from "../contract";
+import type { FetchLlmPayload, FetchResult, MlApi, MlTool, SubcallUsage, TokenUsage } from "../contract";
+import { spendOf } from "../contract/contract-chat";
 import { fetchTool, defineTool, pythonTool } from "../ml/ml-tool-factories";
 import { _loadTable, isTableValue, tableSpecs } from "../ml/ml-python";
 import { googleSheetCsvUrl, googleSheetId } from "../dom/dom";
@@ -47,7 +48,7 @@ const runs = new Map<string, RunCtx>();   // state: plumbing — per run, droppe
 /** The sub-call spend of a run's worker tools so far, for the delta a tool call reports (`subUsage`). */
 export function workerSpend(runId: string): SubcallUsage | undefined {
     const s = runs.get(runId)?.spent;
-    return s && { ...s, byModel: s.byModel?.map((m) => ({ ...m })) };
+    return s && { ...s, byModel: s.byModel?.map((m) => ({ ...m })), calls_: s.calls_?.slice() };
 }
 
 /**
@@ -60,7 +61,8 @@ export function spendDelta(before: SubcallUsage | undefined, after: SubcallUsage
     if (!after || after.calls <= (before?.calls ?? 0)) return undefined;
     const prev = new Map((before?.byModel ?? []).map((m) => [m.model, m]));
     const byModel = (after.byModel ?? []).map((m) => ({ model: m.model, prompt: m.prompt - (prev.get(m.model)?.prompt ?? 0), completion: m.completion - (prev.get(m.model)?.completion ?? 0), calls: m.calls - (prev.get(m.model)?.calls ?? 0) })).filter((m) => m.calls > 0);
-    return { prompt: after.prompt - (before?.prompt ?? 0), completion: after.completion - (before?.completion ?? 0), calls: after.calls - (before?.calls ?? 0), ...(byModel.length ? { byModel } : {}) };
+    const calls_ = (after.calls_ ?? []).slice(before?.calls_?.length ?? 0);
+    return { prompt: after.prompt - (before?.prompt ?? 0), completion: after.completion - (before?.completion ?? 0), calls: after.calls - (before?.calls ?? 0), ...(byModel.length ? { byModel } : {}), ...(calls_.length ? { calls_ } : {}) };
 }
 
 /**
@@ -143,13 +145,15 @@ export function pageOnlySend(name: string | undefined, args: Record<string, unkn
  * @returns the reply's text
  */
 async function meteredChat(ctx: RunCtx, payload: FetchLlmPayload): Promise<string> {
-    const r = await fetchLLM(payload) as { content?: string | null; model?: string | null; usage?: { promptTokens?: number; completionTokens?: number } | null };
+    const r = await fetchLLM(payload) as { content?: string | null; model?: string | null; usage?: TokenUsage | null };
     const p = r.usage?.promptTokens || 0, c = r.usage?.completionTokens || 0;
     const s = ctx.spent;
     s.prompt += p; s.completion += c; s.calls += 1;
     const model = r.model || payload.model || "unknown";
     const row = (s.byModel ??= []).find((m) => m.model === model);
     if (row) { row.prompt += p; row.completion += c; row.calls += 1; } else s.byModel.push({ model, prompt: p, completion: c, calls: 1 });
+    // The call itself, as the page's meter keeps it (bus.ts): spend reads its price snapshot and raw usage from here.
+    (s.calls_ ??= []).push({ model, ts: Date.now(), ms: r.usage?.genMs ?? 0, prompt: p, completion: c, ...spendOf(r.usage) });
     return String(r.content ?? "");
 }
 

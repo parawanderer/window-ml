@@ -145,6 +145,8 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     // merge; snapSub() flattens it to a plain SubcallUsage for events/storage (deep — no shared refs).
     const subByModel = new Map<string, { prompt: number; completion: number; calls: number }>();
     for (const bm of priorSub?.byModel || []) subByModel.set(bm.model, { prompt: bm.prompt, completion: bm.completion, calls: bm.calls });
+    // Each sub-call itself (with what spend reads: raw usage, prices, electricity), appended from each delta.
+    const subCalls: import("../contract").SubcallRecord[] = (priorSub?.calls_ || []).map((c) => ({ ...c }));
     const addSub = (s: import("../contract").SubcallUsage | undefined): void => {
         if (!s || !s.calls) return;
         subTally.prompt += s.prompt; subTally.completion += s.completion; subTally.calls += s.calls;
@@ -152,6 +154,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             const cur = subByModel.get(bm.model) || { prompt: 0, completion: 0, calls: 0 };
             cur.prompt += bm.prompt; cur.completion += bm.completion; cur.calls += bm.calls; subByModel.set(bm.model, cur);
         }
+        for (const c of s.calls_ || []) subCalls.push({ ...c });
     };
     // Serialized visuals of `answer`-designated elements (data URLs), accumulated from each delegated
     // answer envelope → attached to the run's result + agent-result for the HUD completion card.
@@ -160,6 +163,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
     const snapSub = (): import("../contract").SubcallUsage => ({
         ...subTally,
         ...(subByModel.size ? { byModel: [...subByModel.entries()].map(([model, u]) => ({ model, ...u })) } : {}),
+        ...(subCalls.length ? { calls_: subCalls.map((c) => ({ ...c })) } : {}),
     });
     // Every tool send that names a tool goes through here. A run the worker built (sw-run-start.ts) runs its REMOTE tools
     // and the builtins that never read the page itself (sw-local-tools.ts, worker-tools.ts); everything else, and every

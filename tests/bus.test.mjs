@@ -68,3 +68,28 @@ test("a chat-result with NO usage still suppresses but contributes nothing", () 
         assert.equal(subcallUsage().calls, 0, "no usage → nothing to add");
     } finally { exitAgentRun(); }
 });
+
+// --- what spend needs from a sub-call ---
+
+test("a metered sub-call keeps what spend reads from its usage: raw numbers, price snapshot, electricity price", () => {
+    resetSubcallUsage();
+    enterAgentRun();
+    try {
+        const prices = { fetchedAt: "2026-10-10T09:07:00Z", sources: { openrouter: "a".repeat(64) } };
+        emitDebug({ kind: "chat-result", ts: 5, model: "reader", usage: { promptTokens: 10, completionTokens: 2, genMs: 40,
+            raw: { prompt_tokens: 10, completion_tokens: 2, cost: 0.0001 }, prices, electricity: { perKwh: 0.3, currency: "EUR" } } });
+        emitDebug(chatResult(5, 1));
+        const [withSpend, plain] = subcallUsage().calls_;
+        assert.deepStrictEqual(withSpend, { model: "reader", ts: 5, ms: 40, prompt: 10, completion: 2,
+            raw: { prompt_tokens: 10, completion_tokens: 2, cost: 0.0001 }, prices, electricity: { perKwh: 0.3, currency: "EUR" } });
+        assert.ok(!("raw" in plain) && !("prices" in plain) && !("electricity" in plain), "nothing reported, nothing added");
+    } finally { exitAgentRun(); }
+});
+
+test("a worker tool's spend delta carries the calls made between the two reads, not the earlier ones", async () => {
+    const { spendDelta } = await import("../src/sw/worker-tools.ts");
+    const call = (ts) => ({ model: "m", ts, ms: 1, prompt: 1, completion: 1, prices: { fetchedAt: "t", sources: {} } });
+    const before = { prompt: 1, completion: 1, calls: 1, byModel: [{ model: "m", prompt: 1, completion: 1, calls: 1 }], calls_: [call(1)] };
+    const after = { prompt: 3, completion: 3, calls: 3, byModel: [{ model: "m", prompt: 3, completion: 3, calls: 3 }], calls_: [call(1), call(2), call(3)] };
+    assert.deepStrictEqual(spendDelta(before, after).calls_.map((c) => c.ts), [2, 3]);
+});

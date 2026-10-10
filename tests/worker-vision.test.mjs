@@ -165,7 +165,9 @@ test("the worker's vision request is the one oneShotRequest builds for the same 
     assert.equal(bodies.length, 2);
     assert.equal(JSON.stringify(noRequestId(bodies[0])), JSON.stringify(noRequestId(bodies[1])));
     assert.ok(JSON.stringify(bodies[0]).includes(OWN_PNG), "the image is in the request");
-    assert.deepEqual(JSON.parse(JSON.stringify(wv.spend("run-1"))), { prompt: 812, completion: 9, calls: 1, byModel: [{ model: "reader-vl", prompt: 812, completion: 9, calls: 1 }] });
+    const { calls_: one, ...total1 } = JSON.parse(JSON.stringify(wv.spend("run-1")));
+    assert.deepEqual(total1, { prompt: 812, completion: 9, calls: 1, byModel: [{ model: "reader-vl", prompt: 812, completion: 9, calls: 1 }] });
+    assert.deepEqual(one.map((c) => [c.model, c.prompt, c.completion]), [["reader-vl", 812, 9]], "the call itself is kept, for spend");
 });
 
 test("a second call adds to the same run's spend; a run the worker holds no state for sends nothing", async () => {
@@ -174,7 +176,9 @@ test("a second call adds to the same run's spend; a run the worker holds no stat
     wv.seedRun("run-1", 3);
     await wv.workerVisionChat("run-1", "a", { images: [], model: "reader-vl", maxTokens: 64, numCtx: null });
     await wv.workerVisionChat("run-1", "b", { images: [], model: "reader-vl", maxTokens: 64, numCtx: null });
-    assert.deepEqual(JSON.parse(JSON.stringify(wv.spend("run-1"))), { prompt: 20, completion: 4, calls: 2, byModel: [{ model: "reader-vl", prompt: 20, completion: 4, calls: 2 }] });
+    const { calls_: two, ...total2 } = JSON.parse(JSON.stringify(wv.spend("run-1")));
+    assert.deepEqual(total2, { prompt: 20, completion: 4, calls: 2, byModel: [{ model: "reader-vl", prompt: 20, completion: 4, calls: 2 }] });
+    assert.equal(two.length, 2);
     await assert.rejects(wv.workerVisionChat("run-unknown", "c", { images: [], model: null, maxTokens: 64, numCtx: null }), /no worker state/);
     assert.equal(n, 2, "the unknown run's call was never sent");
 });
