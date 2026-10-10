@@ -16,11 +16,13 @@ test("each external model is joined through the box's list, by the id after its 
     assert.deepEqual([book("litellm.google/gemini-pro-latest").basis, book("litellm.google/gemini-pro-latest").key], ["litellm_model_info", "google/gemini-pro-latest"]);
     assert.deepEqual([book("openrouter.z-ai/glm-5.3-flash").basis, book("openrouter.z-ai/glm-5.3-flash").key], ["openrouter", "z-ai/glm-5.3-flash"]);
     assert.deepEqual([book("deepseek.deepseek-flash").basis, book("deepseek.deepseek-flash").key], ["litellm_map", "deepseek-flash"]);
+    // The map keys Moonshot's models under the provider, which is what the connection is named.
+    assert.deepEqual([book("moonshot.kimi-k3").basis, book("moonshot.kimi-k3").key], ["litellm_map", "moonshot/kimi-k3"]);
 });
 
 test("a local model is electricity; a model nothing prices, or none at all, says why", () => {
     assert.deepEqual(book("glm-4.7-flash:latest"), { local: true });
-    assert.deepEqual(book("moonshot.kimi-k3"), { none: "no price for kimi-k3" });
+    assert.deepEqual(book("moonshot.kimi-k2.7-code-highspeed"), { none: "no price for kimi-k2.7-code-highspeed" });
     assert.match(book(null).none, /did not say which model/);
     assert.deepEqual(priceBook({ openrouter: asBytes(SNAP.openrouter) })("x"), { none: "the snapshot has no model list" });
 });
@@ -28,6 +30,18 @@ test("a local model is electricity; a model nothing prices, or none at all, says
 test("a source that is not JSON (a pricing page) is no source, not a failure", () => {
     const b = priceBook({ ...SNAP, deepseek_pricing_page: Buffer.from("<!doctype html><html>") });
     assert.equal(b("deepseek.deepseek-flash").basis, "litellm_map");
+});
+
+test("a 0 from LiteLLM is no price (it writes a missing one as 0); a 0 from OpenRouter is free", () => {
+    const zero = { ...SNAP, litellm_map: { ...SNAP.litellm_map, "deepseek-flash": { ...SNAP.litellm_map["deepseek-flash"], output_cost_per_token: 0 } },
+        openrouter: { data: [{ id: "z-ai/glm-5.3-flash", pricing: { prompt: "0", completion: "0" } }] } };
+    const b = priceBook(zero);
+    const ds = callCost({ promptTokens: 100, completionTokens: 10 }, "deepseek.deepseek-flash", b);
+    assert.deepEqual([ds.computed, ds.unpriced], [null, ["output"]]);
+    assert.equal(callCost({ promptTokens: 100, completionTokens: 10 }, "openrouter.z-ai/glm-5.3-flash", b).computed, 0);
+    // A whole entry at 0 is no entry: the model is unpriced, not free.
+    const allZero = priceBook({ ...SNAP, litellm_map: { "moonshot/kimi-k3": { input_cost_per_token: 0, output_cost_per_token: 0 } } });
+    assert.deepEqual(allZero("moonshot.kimi-k3"), { none: "no price for kimi-k3" });
 });
 
 test("a prompt past a long-context threshold is priced at that tier", () => {
@@ -74,15 +88,15 @@ test("calls are priced against their own snapshot and summed per run's model, wi
     const calls = [
         { run: "r1", call: 0, model: "deepseek.deepseek-flash", usage: { promptTokens: 1000, completionTokens: 10, prices: { sources } } },
         { run: "r1", call: 1, model: "deepseek.deepseek-flash", usage: { promptTokens: 2000, completionTokens: 20, prices: { sources } } },
-        { run: "r2", call: 0, model: "moonshot.kimi-k3", usage: { promptTokens: 10, completionTokens: 1, prices: { sources } } },
+        { run: "r2", call: 0, model: "moonshot.kimi-k2.7-code-highspeed", usage: { promptTokens: 10, completionTokens: 1, prices: { sources } } },
         { run: "r3", call: 0, model: "deepseek.deepseek-flash", usage: { promptTokens: 10, completionTokens: 1 } },
     ];
     const seen = [];
     const priced = priceCalls(calls, (h) => (seen.push(h), bodies[h] ?? null));
     assert.equal(seen.length, 4, "one book for the one snapshot set");
-    const byRun = { r1: "deepseek.deepseek-flash", r2: "moonshot.kimi-k3", r3: "deepseek.deepseek-flash" };
+    const byRun = { r1: "deepseek.deepseek-flash", r2: "moonshot.kimi-k2.7-code-highspeed", r3: "deepseek.deepseek-flash" };
     const [ds, moon] = spendByModel(priced, (r) => byRun[r]);
     assert.deepEqual([ds.model, ds.calls, ds.runs, ds.computedCalls, ds.unpriced, ds.why], ["deepseek.deepseek-flash", 3, 2, 2, 1, "no price snapshot recorded"]);
     near(ds.computed, 3000 * 3e-7 + 30 * 0.0000012);
-    assert.deepEqual([moon.computed, moon.unpriced, moon.why], [0, 1, "no price for kimi-k3"]);
+    assert.deepEqual([moon.computed, moon.unpriced, moon.why], [0, 1, "no price for kimi-k2.7-code-highspeed"]);
 });

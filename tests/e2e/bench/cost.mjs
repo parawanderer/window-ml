@@ -6,7 +6,9 @@
 // The join, measured over the box's model list (tmp/BENCH_COST_PLAN.md): an Open WebUI id is `<connection>.<upstream id>`
 // for an external model; a local one (the list entry carries `ollama`) is paid in electricity, not tokens. The upstream id
 // is looked up EXACTLY, in order: the box's LiteLLM routes (`litellm_model_info`, its `model_name`), OpenRouter's list,
-// then LiteLLM's public map. Prices in all three are per token, in USD.
+// then LiteLLM's public map, there also as `<connection>/<id>` (moonshot.kimi-k3 is the map's moonshot/kimi-k3). Prices in
+// all three are per token, in USD. LiteLLM writes a price it does not have as 0, so a 0 from LiteLLM is missing, never
+// free; OpenRouter's 0 is real (its free models).
 
 /** The currency the price sources quote in. */
 export const PRICE_CURRENCY = "USD";
@@ -19,6 +21,8 @@ const parsed = (body) => {
 };
 const list = (j) => (Array.isArray(j) ? j : Array.isArray(j?.data) ? j.data : null);
 const num = (v) => (v == null || v === "" ? null : Number.isFinite(Number(v)) ? Number(v) : null);
+/** A LiteLLM rate: 0 is how it writes "no price", so it is missing. */
+const lnum = (v) => (num(v) ? num(v) : null);
 
 /**
  * LiteLLM's per-token rates for a call of `prompt` tokens: the base rate, or the long-context tier the prompt is past
@@ -26,15 +30,15 @@ const num = (v) => (v == null || v === "" ? null : Number.isFinite(Number(v)) ? 
  */
 function litellmRates(info, prompt) {
     const tiered = (base) => {
-        let best = num(info[base]), at = -1;
+        let best = lnum(info[base]), at = -1;
         for (const [k, v] of Object.entries(info)) {
             const m = new RegExp(`^${base}_above_(\\d+)k_tokens$`).exec(k);
-            if (m && prompt > Number(m[1]) * 1000 && Number(m[1]) > at && num(v) != null) { best = num(v); at = Number(m[1]); }
+            if (m && prompt > Number(m[1]) * 1000 && Number(m[1]) > at && lnum(v) != null) { best = lnum(v); at = Number(m[1]); }
         }
         return best;
     };
     return { input: tiered("input_cost_per_token"), output: tiered("output_cost_per_token"), cacheRead: tiered("cache_read_input_token_cost"),
-        cacheWrite: tiered("cache_creation_input_token_cost"), reasoning: num(info.output_cost_per_reasoning_token) };
+        cacheWrite: tiered("cache_creation_input_token_cost"), reasoning: lnum(info.output_cost_per_reasoning_token) };
 }
 
 /** OpenRouter's per-token rates (strings in its list). */
@@ -55,14 +59,19 @@ export function priceBook(sources) {
         const entry = owui.find((m) => m.id === model);
         if (entry?.ollama) return { local: true };
         // An external model's id carries its connection's prefix; one the list does not know is tried as given too.
-        const ids = entry?.connection_type === "external" && model.includes(".") ? [model.slice(model.indexOf(".") + 1), model] : [model];
+        const external = entry?.connection_type === "external" && model.includes(".");
+        const ids = external ? [model.slice(model.indexOf(".") + 1), model] : [model];
+        // The map also keys a provider's models as `<provider>/<id>`, and a connection is often named for its provider.
+        const mapIds = external ? [...ids, `${model.slice(0, model.indexOf("."))}/${ids[0]}`] : ids;
         for (const id of ids) {
             const r = routes.get(id);
             if (r?.model_info) return { basis: "litellm_model_info", key: id, rates: litellmRates(r.model_info, prompt) };
             const o = openrouter.get(id);
             if (o?.pricing) return { basis: "openrouter", key: id, rates: openrouterRates(o.pricing) };
+        }
+        for (const id of mapIds) {
             const l = litellmMap[id];
-            if (l && typeof l === "object" && num(l.input_cost_per_token) != null) return { basis: "litellm_map", key: id, rates: litellmRates(l, prompt), offPeak: !!l.off_peak_pricing };
+            if (l && typeof l === "object" && lnum(l.input_cost_per_token) != null) return { basis: "litellm_map", key: id, rates: litellmRates(l, prompt), offPeak: !!l.off_peak_pricing };
         }
         if (!owui.length) return { none: "the snapshot has no model list" };
         return { none: `no price for ${ids[0]}` };

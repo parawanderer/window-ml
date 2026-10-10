@@ -26,6 +26,11 @@
         "connection_type": "local",
         "owned_by": "ollama",
         "ollama": {}
+      },
+      {
+        "id": "moonshot.kimi-k2.7-code-highspeed",
+        "connection_type": "external",
+        "owned_by": "openai"
       }
     ]
   },
@@ -129,6 +134,12 @@
       "supports_system_messages": true,
       "supports_tool_choice": true,
       "supports_vision": true
+    },
+    "moonshot/kimi-k3": {
+      "litellm_provider": "moonshot",
+      "input_cost_per_token": 0.000003,
+      "output_cost_per_token": 0.000015,
+      "cache_read_input_token_cost": 3e-7
     }
   }
 }
