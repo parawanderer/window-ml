@@ -268,6 +268,9 @@ const TIP = {
     embeddingKeepAlive: "Keep the embedding model loaded with no expiry. ON by default because of the ACCESS PATTERN, not the size: a cold embed measured 2726ms against 95ms warm, and a model used rarely and unpredictably would sit past Ollama's 5-minute expiry almost every time, so it would be cold nearly always. Evicting it from the VRAM panel still works — the next call simply loads it again and re-pins it.",
     embeddingForceCpu: "Run the embedding model on CPU instead of the GPU. ON by default: measured 33ms slower warm (128 vs 95), FASTER cold (1628 vs 2726, since nothing is copied to VRAM), and it uses no VRAM at all — which the chat model wants. Turn it off only if you pick an embedding model large enough that CPU inference stops being cheap.",
     electricityPerKwh: "What a kWh costs you, for the electricity your LOCAL models use. Empty is unset. Each model call records the price set when it ran, so a change does not reprice old runs.",
+    electricityOffPeakPerKwh: "For a two-rate tariff: the off-peak price per kWh, all-in. Empty is a single rate: the price above always applies. Each call records which rate it ran under.",
+    electricityOffPeakHours: "The off-peak hours on this device's clock, from-to in whole hours; \"23-7\" runs past midnight. Public holidays are not counted.",
+    electricityOffPeakWeekends: "Saturday and Sunday count as off-peak all day, as most two-rate tariffs have it.",
     electricityCurrency: "The currency of the electricity price, as a code (EUR, USD).",
     priceSnapshotUrl: "Your model box's price service, for spend. Empty (the default) fetches nothing. Set, each model call records the price snapshot it ran under (by hash), and the worker keeps each snapshot once for up to 30 days after its last use.",
     valueStoreBudgetMB: "Disk for fetched tables too large to show whole. The table a pointer names is kept on disk, so a later step can read every row rather than the preview. Past this size, the one read longest ago is dropped first, and a step that then reads it is told to fetch it again. A value no one has read in a day is dropped regardless, and the browser's own storage quota caps this further (at most half of it). 0 stores nothing.",
@@ -1368,6 +1371,19 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                 <label class="set-field"><Lbl tip={TIP.electricityPerKwh}>Electricity price (per kWh)</Lbl>
                     <input type="number" min="0" step="0.01" value={c.electricityPerKwh || ""} placeholder="0.30"
                         onChange={(e: any) => { const n = parseFloat(e.target.value); setField("electricityPerKwh", Number.isFinite(n) && n > 0 ? n : 0); }} />
+                </label>
+                <label class="set-field"><Lbl tip={TIP.electricityOffPeakPerKwh}>Off-peak price (per kWh)</Lbl>
+                    <input type="number" min="0" step="0.01" value={c.electricityOffPeakPerKwh || ""} placeholder="none"
+                        onChange={(e: any) => { const n = parseFloat(e.target.value); setField("electricityOffPeakPerKwh", Number.isFinite(n) && n > 0 ? n : 0); }} />
+                </label>
+                <label class="set-field"><Lbl tip={TIP.electricityOffPeakHours}>Off-peak hours</Lbl>
+                    <input type="text" maxLength={7} value={c.electricityOffPeakHours} placeholder="23-7"
+                        onChange={(e: any) => setField("electricityOffPeakHours", e.target.value.trim())} />
+                </label>
+                <label class="set-check">
+                    <input type="checkbox" checked={c.electricityOffPeakWeekends}
+                        onChange={(e: any) => setField("electricityOffPeakWeekends", e.target.checked)} />
+                    <Lbl tip={TIP.electricityOffPeakWeekends}>Weekends are off-peak all day</Lbl>
                 </label>
                 <label class="set-field"><Lbl tip={TIP.electricityCurrency}>Currency</Lbl>
                     <input type="text" maxLength={8} value={c.electricityCurrency} placeholder="EUR"

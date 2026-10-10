@@ -129,6 +129,13 @@ export interface MlConfig {
     electricityPerKwh: number;
     /** The currency `electricityPerKwh` is in, as a code ("EUR", "USD"). */
     electricityCurrency: string;
+    /** A two-rate tariff's OFF-PEAK price per kWh, used inside `electricityOffPeakHours` (and all weekend when
+     *  `electricityOffPeakWeekends`). 0 (the default) is a single-rate tariff: `electricityPerKwh` always applies. */
+    electricityOffPeakPerKwh: number;
+    /** The off-peak hours on this device's clock, "from-to" in whole hours, wrapping past midnight ("23-7"). */
+    electricityOffPeakHours: string;
+    /** Whether all of Saturday and Sunday are off-peak. */
+    electricityOffPeakWeekends: boolean;
     /** Small "utility" model for cheap side tasks (e.g. session-title summaries).
      *  Empty → fall back to the main `model`. numCtx/forceCpu apply only when set. */
     utilityModel: string;
@@ -285,6 +292,9 @@ export const DEFAULT_CONFIG: MlConfig = {
     priceSnapshotUrl: "",
     electricityPerKwh: 0,
     electricityCurrency: "EUR",
+    electricityOffPeakPerKwh: 0,
+    electricityOffPeakHours: "23-7",
+    electricityOffPeakWeekends: true,
     utilityModel: "",
     utilityNumCtx: 4096,
     utilityForceCpu: false,

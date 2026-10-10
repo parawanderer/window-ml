@@ -121,6 +121,15 @@ test("spend settings come from the environment over .env, and each absent one st
     assert.equal("priceSnapshotUrl" in backendFromDotenv({ OPENWEBUI_URL: "http://h" }), false);
 });
 
+test("a two-rate tariff's off-peak half comes from .env only alongside a price, with each part optional", () => {
+    const base = { ELECTRICITY_PER_KWH: "0.26216", ELECTRICITY_OFFPEAK_PER_KWH: "0.22113" };
+    assert.deepEqual(spendFromEnv({ ...base, ELECTRICITY_OFFPEAK_HOURS: "23-7", ELECTRICITY_OFFPEAK_WEEKENDS: "false" }),
+        { electricityPerKwh: 0.26216, electricityCurrency: "EUR", electricityOffPeakPerKwh: 0.22113, electricityOffPeakHours: "23-7", electricityOffPeakWeekends: false });
+    assert.deepEqual(spendFromEnv(base), { electricityPerKwh: 0.26216, electricityCurrency: "EUR", electricityOffPeakPerKwh: 0.22113 }, "unset hours and weekends keep the extension's defaults");
+    assert.deepEqual(spendFromEnv({ ELECTRICITY_OFFPEAK_PER_KWH: "0.22" }), {}, "no off-peak price without a price");
+    assert.equal(spendFromEnv({ ...base, ELECTRICITY_OFFPEAK_WEEKENDS: "true" }).electricityOffPeakWeekends, true);
+});
+
 // --- the spend section of scores.md ---
 
 test("spend per model: computed and reported apart, unpriced counted with why, older runs said to have no per-call data", async () => {
