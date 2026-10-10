@@ -110,8 +110,11 @@ miss defers to the page's. Both caches hold frozen copies (`cacheCopy`), so a su
 re-read shows. `RUN_TAB_TYPES` keeps `FETCH_URL` until approved exec is isolated (part 4): an approved script's inline
 `ml.fetch` and a page-built run still send it.
 
-`python_exec` runs there too, unless it needs the page (`image`, a page table by selector, `current`):
-`pageOnlyPython` sends those to the page as before. In the worker its tables load without a DOM (a table by value, a
+`python_exec` runs there too, unless it needs the page (a page table by selector, `current`): `pageOnlyPython` sends
+those to the page as before. An `image` does not need the page: the worker shoots it from its own capture and mints a
+`cast`'s token in the page's registry through the `mint` geometry op (`src/sw/worker-media.ts`), so a call with an
+image and a page table is refused before the gate with a two-call steer, as one with an external sheet is
+(`mixedPythonRefusalFor`). In the worker its tables load without a DOM (a table by value, a
 URL the run's fetch_url read, an external sheet), and the call goes through `runPython` (`sw-python.ts`) with the run as
 the caller. Its approval is the run's CALL grant (`grantRunPython`: the external sheet ids, the full-mode code), set
 around the one call and never on the tab, so a page cannot read the sheet with the person's cookies or run the approved
@@ -126,7 +129,10 @@ which the page's `executeTool` used to do; a read-only try counts on neither sid
 `answer` runs there too, and the run's curated answer set lives there (`src/sw/worker-answer.ts`, kept in session
 storage, so an eviction or a navigation mid-turn does not lose it). The tool is the page's descriptor with the shared
 core (`answerCall`, `answer-set.ts`); only a `selector` asks the page, which resolves it in its DOM and returns a
-preview and crops (`answerSelect`). An approved exec in the page's world, and a read-only survey that reaches the page,
+preview and each element's media SHAPE with no image (`answerSelect` with `mediaInWorker`, `answerMediaShape`): the
+worker crops each image from its own capture of the document the page answered in (`workerAnswerMedia`,
+`src/sw/worker-media.ts`), and a page that sends an image of its own is refused whole. An `<img>` is cropped like any
+element (its drawn size), never fetched from a src the page names, so `FETCH_IMAGE_B64` is not sent. An approved exec in the page's world, and a read-only survey that reaches the page,
 is sent the set's SHAPE (`answerShape`: kinds and an element's preview, never a text's content or an output's ref or
 caption) and given
 an `AnswerLog`, which answers `.length` and indices at once and records what the script changed; the worker replays it

@@ -18,6 +18,7 @@ import { CAPTURE_RETRIES, CAPTURE_RETRY_MS, captureOwnTab, NOT_SHOWING } from ".
 import { buildWorkerTools, workerSpend } from "./sw/worker-tools";
 import { captureRunTab, workerShot, workerVisionChat, dropAllVisionMemory } from "./sw/worker-vision";   // the worker's vision pieces, test-only until a tool uses them
 import { workerVisionHost, onWorkerHost, useRasterForTest } from "./sw/worker-vision-host";   // the worker's vision host: the verify uses it; the hook below drives it directly
+import { workerAnswerMedia, workerMint, workerPythonImage } from "./sw/worker-media";   // the answer's media and python's image in the worker: the hook below drives them
 import { checkVerifyRequest } from "./sw/worker-verify";
 import { workerLook } from "./sw/worker-look";
 import { workerLocate } from "./sw/worker-locate";
@@ -124,10 +125,11 @@ startValueSweeps();
 // worker's OffscreenCanvas to the page's canvas pixel for pixel.
 (globalThis as unknown as { __mlWorkerCropForTest?: unknown }).__mlWorkerCropForTest = (dataUrl: string, rect: { left: number; top: number; width: number; height: number }, dpr: number) => cropDataUrl(dataUrl, rect, dpr, workerRaster);
 
-// TEST-ONLY (SW realm only): the worker's vision pieces (worker-vision.ts, worker-vision-host.ts, worker-verify.ts, worker-look.ts, worker-locate.ts), so tests/worker-vision.test.mjs, tests/worker-vision-host.test.mjs and tests/e2e/worker-shot.spec.mjs can drive them. `seedRun` gives a run the worker-tool
+// TEST-ONLY (SW realm only): the worker's vision pieces (worker-vision.ts, worker-vision-host.ts, worker-verify.ts, worker-look.ts, worker-locate.ts, worker-media.ts), so tests/worker-vision.test.mjs, tests/worker-vision-host.test.mjs and tests/e2e/worker-shot.spec.mjs can drive them. `seedRun` gives a run the worker-tool
 // state its sub-call spend is counted in; `spend` reads it back.
 (globalThis as unknown as { __mlWorkerVisionForTest?: unknown }).__mlWorkerVisionForTest = {
     captureRunTab, workerShot, workerVisionChat, workerVisionHost, onWorkerHost, spend: workerSpend, checkVerifyRequest, workerLook, workerLocate,
+    workerAnswerMedia, workerPythonImage, workerMint,
     // A vm has no OffscreenCanvas: a test draws the worker's crops with a recorder of its own.
     useRaster: useRasterForTest,
     seedRun: (runId: string, tabId: number) => { buildWorkerTools(runId, tabId, () => "", ["fetch_url"]); },

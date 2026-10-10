@@ -23,7 +23,8 @@ not pre-imported, so a quick coord/table run doesn't pay its import cost). Each 
 **stateless** (the per-run namespace reset, above) — nothing carries between calls. The relay is the usual
 contract — `PYTHON_EXEC_REQUEST` (page) → `PYTHON_EXEC` (bg). `ml.pythonExec(code, { image })`
 screenshots `image` (a selector or `@pt`/`@box`) into the sandbox as `img` (PIL) + `img_np`
-(numpy). **Tabular data → DataFrame(s) via `{ tables }`** — ONE unified param that is either a
+(numpy). In a worker-built run the image is shot by the worker from its own capture, and a `cast` mints its token in
+the page's registry (`src/sw/worker-media.ts`, docs/dev/agent-tools.md). **Tabular data → DataFrame(s) via `{ tables }`** — ONE unified param that is either a
 single source (→ `df`) or a `{ varName: source }` map (→ each loaded under its name so the model
 can `pd.merge` them; keys validated as Python identifiers by `pyVarNameError`, single-sourced in
 `python-env.ts` beside the prelude's reserved names). Each df is bound BOTH under its name AND in a

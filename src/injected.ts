@@ -17,7 +17,7 @@ import { promptSurfaceOf } from "./agent/prompt-surface";
 import { pageContext, resolvePoint, resolveBox, agentState, mlRange } from "./util";
 import { suspiciousChars } from "./agent/security";
 import { emitDebug, sessionRegistry, agentRegistry, handleRegistry } from "./bus";
-import { makeDomTools } from "./tools/tools";
+import { makeDomTools, answerMediaShape } from "./tools/tools";
 import { pipeStages } from "./pointers/token-pipe";
 import { DerefText } from "./tools/deref-read";
 import { makeBackgroundTaskPromise } from "./bridge";
@@ -485,15 +485,16 @@ import { derivedFetchFields, cacheCopy } from "./ml/fetch-result";
         // other element → a screenshot crop. `mode` = show ?? (image → inline, element → highlight).
         async (els: Element[], note?: string, show?: "inline" | "highlight"): Promise<AnswerMedia[]> => {
             const ml = window.ml as unknown as MlApi & { _imageToDataUrl: (el: HTMLImageElement) => Promise<string> };
+            // The page's parts of each item (path, kind, mode) are `answerMediaShape`'s, which a run whose vision is the
+            // worker's sends without an image (the worker crops it, worker-media.ts).
             const out: AnswerMedia[] = [];
-            for (const el of els.slice(0, 6)) {
-                const isImg = el instanceof HTMLImageElement;
-                const kind: AnswerMedia["kind"] = isImg ? "image" : "element";
-                const mode: AnswerMedia["mode"] = show || (isImg ? "inline" : "highlight");
+            for (const [i, { selector, kind, mode }] of answerMediaShape(els, show).entries()) {
+                const el = els[i];
+                const isImg = kind === "image";
                 let image = "";
                 try { image = isImg ? await ml._imageToDataUrl(el as HTMLImageElement) : await ml.screenshot(el, { noOverlay: true }); }
                 catch { try { image = await ml.screenshot(el, { noOverlay: true }); } catch { /* no visual — keep the chip via selector */ image = ""; } }
-                out.push({ image, label: note, selector: elPath(el), kind, mode });
+                out.push({ image, label: note, selector, kind, mode });
             }
             return out;
         },

@@ -18,6 +18,7 @@ import { relayDebugEvent } from "./sw-debug";
 import { getConfig } from "./sw-llm";
 import { dropLocalTools, registerLocalTools } from "./sw-local-tools";
 import { buildWorkerTools } from "./worker-tools";
+import { pyMediaFor } from "./worker-media";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { hostRun } from "./sw-run-host";
 import { delegateSend } from "./delegate-send";
@@ -85,7 +86,7 @@ export async function startUserRun(tabId: number, req: UserRunRequest, opts: { k
     // Remote tools, and the builtins that never read the page, run HERE (sw-local-tools.ts, worker-tools.ts); everything
     // else is registered in the page by the adopt below.
     const names = asm.toolset.map((t) => t.name);
-    registerLocalTools(runId, [...asm.toolset.filter((t) => !!t.remote), ...buildWorkerTools(runId, tabId, () => tabPageUrl.get(tabId) || url, names)],
+    registerLocalTools(runId, [...asm.toolset.filter((t) => !!t.remote), ...buildWorkerTools(runId, tabId, () => tabPageUrl.get(tabId) || url, names, pyMediaFor(runId, tabId))],
         { model: asm.runModel, driverSees: asm.driverSees, visionModel: asm.runVisionModel });
     // Marked worker-built BEFORE its id reaches the page (the push below carries it): from then on a page's own
     // START_RUN, RESUME_RUN or INJECT_MESSAGE naming it is refused, so the page cannot host its own run under the hash

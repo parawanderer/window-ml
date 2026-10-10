@@ -236,14 +236,39 @@ test("a selector's preview in the person's answer is no longer than the page's o
     assert.ok((forged.result?.answer ?? "").length <= 5_000, `the preview is ${(forged.result?.answer ?? "").length} chars`);
 });
 
-test("a selector's media are image data URLs, no more than the page's own resolution keeps (50)", T, async () => {
-    const dataUrl = "data:image/png;base64,iVBORw0KGgo=";
-    const honest = await selectRun({ count: 1, preview: "h1", media: [{ image: dataUrl, kind: "element" }] });
-    assert.equal(honest.result?.answerMedia?.length, 1, "positive control: an honest crop reaches the card");
+test("a selector's media are the page's shape only, no more items than its own resolution makes: the page names no image and no remote URL", T, async () => {
+    const honest = await selectRun({ count: 1, preview: "h1", media: [{ image: "", kind: "element" }] });
+    assert.equal(honest.result?.answerMedia?.length, 1, "positive control: an honest item reaches the card (its crop is the worker's)");
     const forged = await selectRun({ count: 1, preview: "h1", media: Array.from({ length: 500 }, (_, i) => ({ image: `https://tracker.example/b.png?i=${i}`, kind: "element" })) });
     const media = forged.result?.answerMedia ?? [];
-    assert.ok(media.length <= 50, `${media.length} media`);
-    assert.ok(media.every((m) => /^data:image\//.test(m.image)), `a non-data URL reached the card: ${media[0]?.image}`);
+    assert.ok(media.length <= 6, `${media.length} media`);
+    assert.ok(media.every((m) => m.image === "" || /^data:image\//.test(m.image)), `a non-data URL reached the card: ${media[0]?.image}`);
+});
+
+// --- the answer's media are the worker's crops (site-access part 3, PR 8) ---
+
+test("the page is asked to resolve a selector with mediaInWorker, and only for the selector, index and show: no note, image, prompt or model name", T, async () => {
+    const NOTE = "NOTE-FOR-THE-CARD-8812";
+    const { toTab, toolResults } = await answerRuns([{ task: "pick the picture", calls: [{ name: "answer", args: { selector: "img", index: 0, show: "inline", note: NOTE } }] }]);
+    const sends = toTab(7).filter((p) => p.answerSelect);
+    assert.equal(sends.length, 1, "positive control: the page was asked once");
+    assert.deepEqual(sends[0].answerSelect, { selector: "img", index: 0, show: "inline", mediaInWorker: true });
+    assert.match(toolResults("pick the picture")[0] ?? "", /added 1 element/);
+    for (const p of toTab(7)) {
+        const s = JSON.stringify(p);
+        assert.ok(!s.includes(NOTE) && !/data:image|default-model|pick the picture/.test(s), `the page was sent: ${s.slice(0, 300)}`);
+    }
+});
+
+test("a page that answers the selector with images of its own while the worker crops is refused whole: nothing it drew reaches the card", T, async () => {
+    const own = "data:image/png;base64,iVBORw0KGgo=";
+    const forged = await selectRun({ count: 1, preview: "h1", media: [{ image: own, kind: "image", mode: "inline" }] });
+    assert.match(forged.echo, /selector error: the page returned a malformed selection/);
+    assert.equal(forged.result?.answerMedia, undefined, "no media from the page");
+    const honest = await selectRun({ count: 1, preview: "h1", media: [{ image: "", kind: "image", mode: "inline" }] });
+    assert.deepEqual(honest.result?.answerMedia?.map((m) => m.kind), ["image"], "positive control: its shape alone passes");
+    // The crop is the worker's: this page answers no geometry, so the worker could not crop it, and it shows no image.
+    assert.equal(honest.result.answerMedia[0].image, "");
 });
 
 // --- persistence ---

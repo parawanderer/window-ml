@@ -61,6 +61,12 @@ const GENRES = {
         about: "the run's curated answer (answer-set.ts): the set, its designated outputs, and the worker-held set's page-side log",
         files: ["answer-set.test.mjs", "answer-tokens.test.mjs", "answer-dedup.test.mjs", "answer-log.test.mjs"],
     },
+    // The worker's half of a run's vision (site-access part 3): its masked capture, the geometry-only host look and
+    // locate run over, the verify after an action, and the answer's media and python's image cropped there.
+    "worker-vision": {
+        about: "the worker's vision: its capture, its geometry-only host, the verify, and the answer's media and python's image",
+        files: ["worker-vision.test.mjs", "worker-vision-host.test.mjs", "worker-verify.test.mjs", "worker-media.test.mjs"],
+    },
     ext: {
         about: "the extension's own worlds — background, relay, CDP, the page loop",
         files: ["background.test.js", "relay.test.js", "agent.test.js", "cdp-stream.test.mjs",
