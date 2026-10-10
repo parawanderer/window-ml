@@ -219,8 +219,9 @@ test("FETCH_LLM surfaces token usage — OpenWebUI `usage` block and Ollama-nati
     // usage now also carries genMs (the call's wall-clock, stamped source-side for the run's tok/s) — check
     // the token counts by subset and that the timing field is present.
     // …and the request's own id (hint.request), which the panel matches the server's gen.end on.
-    const { genMs: gmO, requestId: ridO, ...tokO } = rO.usage;
+    const { genMs: gmO, requestId: ridO, raw: rawO, ...tokO } = rO.usage;
     assert.deepEqual(tokO, { promptTokens: 18, completionTokens: 70, totalTokens: 88 });
+    assert.deepEqual({ ...rawO }, { prompt_tokens: 18, completion_tokens: 70, total_tokens: 88 }, "the usage block rides along verbatim");
     assert.match(ridO, /^wml-r-/, "the request's id rides the usage back");
     assert.equal(typeof gmO, "number", "the call's wall-clock (genMs) is stamped onto usage");
 
@@ -230,7 +231,8 @@ test("FETCH_LLM surfaces token usage — OpenWebUI `usage` block and Ollama-nati
         onFetch: () => jsonResponse({ message: { content: "42" }, prompt_eval_count: 20, eval_count: 5 })
     });
     const rL = await bgL.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "q" }] } });
-    const { genMs: gmL, requestId: _ridL, ...tokL } = rL.usage;
+    const { genMs: gmL, requestId: _ridL, raw: rawL, ...tokL } = rL.usage;
+    assert.deepEqual({ ...rawL }, { prompt_eval_count: 20, eval_count: 5 }, "a native reply's numbers only, not its message");
     assert.deepEqual(tokL, { promptTokens: 20, completionTokens: 5, totalTokens: 25 }, "total derived when absent");
     assert.equal(typeof gmL, "number", "genMs stamped on the Ollama-native path too");
 
