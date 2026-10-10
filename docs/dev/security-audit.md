@@ -32,13 +32,16 @@ the worker, and the page answers geometry only):
       a page-framed `sidebar.html` stays empty and cannot take the shell's port; second pass by another model: #559.
 - [x] `locate` in the worker; a handed-over run's page-written model names and `driverSees` validated in one place
       (`runVision`): #561.
+- [x] A page's START_RUN can no longer set what only the worker may: `builtBy`, `rebuild.builtBy`, `display` dropped;
+      `pageOrigin`/`pageUrl` taken from the sender; the auto-approve flags and `selfIntrospection` bounded by the
+      worker's config; `requiresApproval` forced on the built-in gated tools and remote tools; another tab's run id
+      refused; `approvalRouting` confirmed unable to resolve a gate. Every START_RUN field is classified in the PR: #566.
+- [x] Answer media and python `image` in the worker; a ratchet e2e that a worker run's page sends nothing at all,
+      with an in-run positive control; the e2e watcher no longer shares the run's window (it captured the watcher): #571.
 
 ## In progress
 
-- [ ] A page's START_RUN cannot claim `builtBy`, `rebuild.builtBy` or `display`; `pageOrigin` taken from the sender,
-      not the payload; `approvalRouting` checked: #566.
-- [ ] Answer media and python `image` in the worker, and the ratchet e2e that a worker run's page sends no capture,
-      model, capability, config or image-fetch message: part 3 PR 8.
+(none)
 
 ## Known open
 
@@ -47,6 +50,13 @@ the worker, and the page answers geometry only):
       in the top layer; closed shadow roots stay a documented gap. Owner decision pending.
 - [ ] A page's `renderOut`/`renderIn` still render in a worker run's sidebar step (human-facing only).
 - [ ] An off-viewport locate scope reports "the vision call errored" instead of saying the scope is off screen.
+- [ ] START_RUN `maxSteps` is not clamped (RESUME_RUN is), and a page can stamp its prompt's `origin` as an
+      extension surface. Proposed: clamp, and drop `origin` for page runs. Owner decision pending.
+- [ ] Part 5 must move or refuse page-built runs never handed to the worker: all their tools still use the page's
+      vision, python and fetch types. Worker runs still send `PYTHON_EXEC`/`FETCH_SHEET` for a page table and
+      `CDP_SHADOW_RESOLVE` from the page.
+- [ ] A run handed to the worker mid-turn would still run `answer` and python with an image in the page (no route
+      does this today).
 - [ ] Site access part 4b, part 5 (drop the run-tab allowance, `RUN_TAB_TYPES`), slice 3 (`requestAccess`, wording
       needs owner approval), slice 4.
 
@@ -56,8 +66,8 @@ The reviews so far were scoped to each PR's change. `builtBy` and `pageOrigin` w
 the page boundary has never been enumerated field by field. The repo's own rule is to enumerate inputs, not sample
 them.
 
-1. [ ] **Trust table.** One table in this file: every page-reachable message type (each `HANDLE_MAP` entry in
-       `src/page-relay.ts`), every window message the content script or shell listens to, and every DOM surface a
+1. [ ] **Trust table.** Started: START_RUN's fields are classified in #566. One table in this file: every
+       page-reachable message type (each `HANDLE_MAP` entry in `src/page-relay.ts`), every window message the content script or shell listens to, and every DOM surface a
        page can reach (shadow hosts, web-accessible pages). For each FIELD: who may set it (page, worker, extension
        page, person), what reads it, what it can change, and the test that proves a page cannot set what it must not.
 2. [ ] **Fix and test** every field the table shows wrong, test first.
