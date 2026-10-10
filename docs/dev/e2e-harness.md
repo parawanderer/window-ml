@@ -412,6 +412,14 @@ thing. The parts:
   left) — not merely for one step to land, or the test opens a step while the next is still arriving and the
   sidebar re-renders under it, which only shows once CPU is contended. A test whose time is the same on a
   laptop and on CI is waiting on a timer.
+- **A `page.evaluate` whose document navigates away never settles, and wedges the calls queued behind it.** A test
+  that arms each navigation with an un-awaited `page.evaluate` and races worker calls from the runner reports calls
+  that "never answer" (3 of 6 worker shots in the shot-mask pass), while the same calls fired inside the worker
+  against the same navigations settle in 20-60 ms. Let the page drive its own navigations on timers and stop itself
+  on a time cap, fire and time the calls in the worker, and read back once after the page settles. Two things this
+  harness cannot produce at all, even with no extension loaded: a real back/forward-cache restore
+  (`pageshow.persisted` stays false under CDP) and a speculation-rules prerender (it never starts headless). Pin
+  those in `node:vm` instead.
 - **`cross-page.spec.mjs`** — a `smoke` (extension loads + one-shot agent) + a `sanity` (agent
   reads a page value via a DOM tool and answers it) that run under BOTH the fake and a real
   backend, plus the skipped cross-page acceptance test (see `tmp/cross-page-agent.md`). Those two
