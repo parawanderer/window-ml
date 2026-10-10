@@ -83,7 +83,24 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
     // sender.tab.id is the delegation + debug-fanout target.
     const tabId = sender.tab?.id;
     if (tabId == null) { sendResponse({ error: `${message.type} must come from a tab (content script).` }); return; }
-    hostRun(message, tabId, sendResponse);
+    hostRun(message.type === "START_RUN" ? { ...message, payload: pageStartPayload(message.payload) } : message, tabId, sendResponse);
+}
+
+/**
+ * A page's START_RUN payload without the fields only the worker sets: `builtBy`, `rebuild.builtBy` and `display`. Only the
+ * worker's own `hostRun` call (sw-run-start.ts) marks a run worker-built, and `makeWorkerRun` hands one over; a page's
+ * claim would give its run the worker's tool routing, grants, vision and answer, and lock the run as the person's.
+ * @param payload what the page sent
+ * @returns a copy without those fields; anything that is not an object, as it came
+ */
+export function pageStartPayload(payload: unknown): unknown {
+    if (!payload || typeof payload !== "object") return payload;
+    const { builtBy: _b, display: _d, ...rest } = payload as StartRunPayload;
+    if (rest.rebuild && typeof rest.rebuild === "object") {
+        const { builtBy: _rb, ...rebuild } = rest.rebuild;
+        rest.rebuild = rebuild;
+    }
+    return rest;
 }
 
 /** Host a START_RUN / RESUME_RUN on `tabId`: the body of `startBackgroundRun`, callable by the worker itself for a run

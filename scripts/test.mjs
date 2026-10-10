@@ -64,7 +64,7 @@ const GENRES = {
     ext: {
         about: "the extension's own worlds — background, relay, CDP, the page loop",
         files: ["background.test.js", "relay.test.js", "agent.test.js", "cdp-stream.test.mjs",
-            "delegation.test.mjs", "redteam.test.js", "redteam-answer.test.mjs", "redteam-capture.test.mjs", "redteam-geometry.test.mjs", "trusted-input.test.mjs", "dom-query.test.mjs",
+            "delegation.test.mjs", "redteam.test.js", "redteam-answer.test.mjs", "redteam-capture.test.mjs", "redteam-geometry.test.mjs", "redteam-page-run-builtby.test.mjs", "trusted-input.test.mjs", "dom-query.test.mjs",
             "tools-shadow.test.mjs", "bgrun.test.mjs", "replay.test.mjs", "vision-characterize.test.mjs", "vision-host.test.mjs"],
     },
     // The chat page's own logic (the client store, the view prefs, the local host) and the check that its web build
