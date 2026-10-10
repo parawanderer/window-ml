@@ -175,6 +175,10 @@ if [ -n "$base" ] && ! node scripts/check-doc-links.mjs --new "$base" --staged; 
     exit 1
 fi
 
+# The prompt review's age, when this commit changes what the model reads: a reminder, never a failure
+# (docs/dev/prompt-review.md).
+node scripts/check-prompt-review.mjs --staged || true
+
 # AGENTS.md's size, when it is being changed: a reminder, never a failure. It is loaded into every session, and it
 # reached 94.8k characters one reasonable paragraph at a time before it was cut back (docs/dev/working-in-the-repo.md).
 if echo "$staged" | grep -qx 'AGENTS.md'; then

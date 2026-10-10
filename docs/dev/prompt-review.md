@@ -11,6 +11,8 @@ each review cut and measured is [`../spec/PROMPT_BUDGET.md`](../spec/PROMPT_BUDG
 After a stretch of work on the agent loop, a tool, `ml.current` or `agent_api_docs`, and at least once a month. The
 date and PR of the last review are in AGENTS.md ("Prompt review"); a review commit carries the trailer
 `Prompt-Review: <date>`, so `git log --grep='^Prompt-Review:'` lists every one. Update both when a review lands.
+`scripts/check-prompt-review.mjs` reminds (pre-commit, on a commit that changes model-facing text, and in CI) once the
+last review is more than 30 days or 25 such commits old. It never fails anything.
 
 ## The method
 
