@@ -377,7 +377,7 @@ function writeAgent(s: Session, d: Sink): void {
         // below carry it verbatim either way, so nothing here is the only copy. Quoted, because it is a claim.
         const said = typeof st.arguments?.[CALL_TITLE] === "string" ? String(st.arguments[CALL_TITLE]).trim() : "";
         d.head(`Step ${st.step} · ${st.tool || "?"}${said ? ` — “${said}”` : ""}`);
-        if (st.approval) d.note(st.approval === "readonly" ? "auto-approved (read-only)" : st.approval === "sandbox" ? "auto-approved (sandboxed python)" : st.approval === "user" ? "approved by user" : st.approval === "skipped" ? "skipped (target didn't resolve — would only fail)" : "denied by user");
+        if (st.approval) d.note(approvalNote(st.approval));
         if (st.reasoning) d.details("Thinking", () => d.prose(st.reasoning!));
         if (st.thought) d.prose(st.thought);
         // In: a rendered view (when the tool supplies one) AND — always — the RAW args
@@ -551,6 +551,29 @@ const writeSession = (s: Session, d: Sink): void => (s.kind === "agent" ? writeA
 
 // Serialise a session to `{ md, images }` — the markdown references each image as
 // `images/…`, and the bytes ride alongside as sidecars for the zip.
+
+/** How each approval decision reads in the export. Keyed by EVERY value, so a new one fails the type check instead of
+ *  falling through to a wrong word (it once did: every same-origin fetch read "denied by user"). */
+export const APPROVAL_NOTE: Record<NonNullable<AgentStep["approval"]>, string> = {
+    readonly: "auto-approved (read-only)",
+    sandbox: "auto-approved (sandboxed python)",
+    "same-origin": "auto-approved (same site)",
+    consented: "auto-approved (already approved this session)",
+    "self-source": "auto-approved (the agent's own source)",
+    user: "approved by user",
+    denied: "denied by user",
+    skipped: "skipped (target didn't resolve — would only fail)",
+    cancelled: "cancelled while awaiting approval (never ran)",
+};
+
+/**
+ * The export's note for an approval decision; a value this build does not know is named as it is, never guessed.
+ * @param approval the step's decision
+ */
+export function approvalNote(approval: string): string {
+    return (APPROVAL_NOTE as Record<string, string>)[approval] ?? `decided: ${approval}`;
+}
+
 export function serializeSession(s: Session): { md: string; images: Sidecar[] } {
     const { sink, done } = mdSink();
     writeSession(s, sink);
