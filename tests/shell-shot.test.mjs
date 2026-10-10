@@ -122,3 +122,182 @@ test("the rect report is answered for the worker only: a sender with a tab, anot
     }
     assert.equal(fromWorker(WORKER), true);
 });
+
+// --- what the page can do to the UI that the rects alone would not show (tampered / restyled), and the shot's watch ---
+
+const { filterReach, beginWatch, endWatch, sheetText } = await import("../src/sidebar/shell-shot.ts");
+
+/** Run `fn` with a document whose root element has the computed style `rootCs`, and a getComputedStyle reading each fake
+ *  element's own `cs` (CSS property names), so the checks see what a page's styles would make them see. */
+function withStyles(fn, rootCs = {}) {
+    const docEl = { cs: rootCs };
+    const saved = { document: globalThis.document, getComputedStyle: globalThis.getComputedStyle };
+    globalThis.document = { documentElement: docEl, querySelectorAll: () => [] };
+    globalThis.getComputedStyle = (e) => { const cs = { visibility: e.visibility ?? "visible", ...(e.cs ?? {}) }; return { ...cs, getPropertyValue: (n) => cs[n] ?? "" }; };
+    try { return fn(docEl); } finally { Object.assign(globalThis, saved); }
+}
+/** A fake element with a computed style. */
+const sel = (rect, cs = {}, extra = {}) => Object.assign(el(rect, extra), { cs });
+/** A fake host mounted on `docEl`, its root holding `children` and `style` (our <style>) plus any `extraStyles`. */
+const mounted = (docEl, children, { style = { tagName: "STYLE" }, extraStyles = [], adopted = [], hostCs = {} } = {}) => {
+    const root = { adoptedStyleSheets: adopted, querySelectorAll: (q) => (q === "style, link" ? [style, ...extraStyles] : [style, ...extraStyles, ...children]) };
+    return { host: { isConnected: true, parentNode: docEl, shadowRoot: root, cs: hostCs }, root, style };
+};
+
+test("an answer is `tampered` when the page has moved a host off the root element, put a stylesheet of its own into a root (an element or an adopted sheet), or given the UI a reflection, a filter or a text shadow", () => {
+    withStyles((docEl) => {
+        const clean = mounted(docEl, [sel([700, 0, 300, 700])]);
+        assert.equal(extensionRects(roots([{ host: clean.host, kind: "sidebar", root: clean.root, style: clean.style }])).tampered, undefined, "the shell's own mount is not tampered");
+        const cases = {
+            "a host moved into another element (a frame of the page's, its own shadow root)": () => { const m = mounted(docEl, [sel([0, 0, 10, 10])]); m.host.parentNode = {}; return m; },
+            "a <style> of the page's in our root": () => mounted(docEl, [sel([0, 0, 10, 10])], { extraStyles: [{ tagName: "STYLE" }] }),
+            "a <link> stylesheet in our root": () => mounted(docEl, [sel([0, 0, 10, 10])], { extraStyles: [{ tagName: "LINK" }] }),
+            "an adopted stylesheet": () => mounted(docEl, [sel([0, 0, 10, 10])], { adopted: [{}] }),
+            "a reflection on our element": () => mounted(docEl, [sel([0, 0, 10, 10], { "-webkit-box-reflect": "left 0px" })]),
+            "a filter on our element": () => mounted(docEl, [sel([0, 0, 10, 10], { filter: "blur(100px)" })]),
+            "an SVG filter reference on our element (an feOffset moves the UI anywhere, with no length to bound)": () => mounted(docEl, [sel([0, 0, 10, 10], { filter: "url(\"#ml-shift\")" })]),
+            "a text shadow on our element": () => mounted(docEl, [sel([0, 0, 10, 10], { "text-shadow": "rgb(0, 0, 0) -500px 0px 0px" })]),
+            "a filter on our host": () => mounted(docEl, [sel([0, 0, 10, 10])], { hostCs: { filter: "drop-shadow(rgb(0, 0, 0) 0px 0px 0px)" } }),
+        };
+        for (const [what, make] of Object.entries(cases)) {
+            const m = make();
+            assert.equal(extensionRects(roots([{ host: m.host, kind: "sidebar", root: m.root, style: m.style }])).tampered, true, what);
+        }
+    });
+});
+
+test("a rule of the shell's own stylesheet the page edited through the CSSOM (no DOM mutation) is `tampered`; the sheet as mounted is not", () => {
+    withStyles((docEl) => {
+        const rules = [{ cssText: "#ml-sb-host { position: fixed; }" }];
+        const style = { tagName: "STYLE", sheet: { cssRules: rules } };
+        const m = mounted(docEl, [sel([0, 0, 10, 10])], { style });
+        const at = sheetText(style);
+        const ask = () => extensionRects(roots([{ host: m.host, kind: "sidebar", root: m.root, style, sheet: at }]));
+        assert.equal(ask().tampered, undefined);
+        rules.push({ cssText: "#ml-sb-host { filter: blur(100px); }" });
+        assert.equal(ask().tampered, true, "an inserted rule");
+        rules.pop(); rules[0] = { cssText: "#ml-sb-host { position: fixed; translate: -300px; }" };
+        assert.equal(ask().tampered, true, "an edited rule");
+    });
+});
+
+test("an element the shell made, carried by the page out of every root it mounted, is `tampered`: nothing measures it there", () => {
+    withStyles((docEl) => {
+        const m = mounted(docEl, [sel([0, 0, 10, 10])]);
+        const inRoot = { isConnected: true, getRootNode: () => m.root }, carried = { isConnected: true, getRootNode: () => globalThis.document }, gone = { isConnected: false, getRootNode: () => ({}) };
+        const ask = (owned) => extensionRects({ ...roots([{ host: m.host, kind: "sidebar", root: m.root, style: m.style }]), owned }).tampered;
+        assert.equal(ask([inRoot, gone, null]), undefined);
+        assert.equal(ask([inRoot, carried]), true);
+    });
+});
+
+test("a filter on the root element is bounded round every rect (a blur's 3 sigma, a drop shadow's offset and blur); a reflection or an SVG filter there is `tampered`", () => {
+    assert.equal(filterReach("blur(10px)"), 30);
+    assert.equal(filterReach("drop-shadow(rgb(0, 0, 0) -300px 4px 2px)"), 310);
+    assert.equal(filterReach("invert(1) hue-rotate(180deg)"), 0);
+    assert.equal(filterReach("blur(2px) drop-shadow(rgba(0, 0, 0, 0.5) 1px 1px 0px)"), 8);
+    withStyles((docEl) => {
+        const m = mounted(docEl, [sel([700, 0, 300, 700])]);
+        assert.deepEqual(extensionRects(roots([{ host: m.host, kind: "sidebar", root: m.root, style: m.style }])).rects, [{ x: 400, y: -300, w: 900, h: 1300, kind: "sidebar" }]);
+    }, { filter: "drop-shadow(rgb(0, 0, 0) -300px 0px 0px)" });
+    for (const rootCs of [{ "-webkit-box-reflect": "below 0px" }, { filter: "url(\"#f\")" }]) {
+        withStyles((docEl) => {
+            const m = mounted(docEl, [sel([700, 0, 300, 700])]);
+            assert.equal(extensionRects(roots([{ host: m.host, kind: "sidebar", root: m.root, style: m.style }])).tampered, true, JSON.stringify(rootCs));
+        }, rootCs);
+    }
+});
+
+test("`restyled` when the page sized or moved our host or an element (zoom, scale, translate, rotate, a host transform), or zoomed the root element; our own styles never are", () => {
+    for (const [cs, onHost, rootCs] of [[{ zoom: "4" }, true], [{ transform: "matrix(2, 0, 0, 2, 0, 0)" }, true], [{ translate: "-300px" }, false], [{ scale: "2" }, false], [{ rotate: "5deg" }, false], [{}, false, { zoom: "1.5" }]]) {
+        withStyles((docEl) => {
+            const m = mounted(docEl, [sel([0, 0, 10, 10], onHost ? {} : cs)], { hostCs: onHost ? cs : {} });
+            const out = extensionRects(roots([{ host: m.host, kind: "sidebar", root: m.root, style: m.style }]));
+            assert.equal(out.restyled, true, JSON.stringify(cs));
+            assert.equal(out.tampered, undefined);
+        }, rootCs);
+    }
+    withStyles((docEl) => {
+        const m = mounted(docEl, [sel([0, 0, 10, 10], { transform: "matrix(1, 0, 0, 1, 18, 0)", zoom: "1" })]);
+        assert.equal(extensionRects(roots([{ host: m.host, kind: "sidebar", root: m.root, style: m.style }])).restyled, undefined, "a transform inside the root is the shell's own (the slide-in)");
+    });
+});
+
+test("the highlight's band reaches its outline wherever its offset puts it, and its box shadow at the largest any running animation takes it (the approval pulse), not only at the instant read", () => {
+    withStyles((docEl) => {
+        const strips = (cs, anims = []) => {
+            const hl = Object.assign(sel([100, 200, 50, 20], cs, { id: "ml-highlight" }), { getAnimations: () => anims.map((frames) => ({ effect: { getKeyframes: () => frames } })) });
+            const m = mounted(docEl, [hl]);
+            return extensionRects(roots([{ host: m.host, kind: "highlight", root: m.root, style: m.style }])).rects;
+        };
+        const covers = (rects, x, y) => rects.some((r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
+        // An outline 1 px wide, 40 px out: its ring runs at 40-41 px past each edge.
+        const off = strips({ "outline-style": "solid", "outline-width": "1px", "outline-offset": "40px" });
+        for (const [x, y] of [[125, 200 - 41], [125, 220 + 40.5], [100 - 40.5, 210], [150 + 40.5, 210]]) assert.ok(covers(off, x, y), `ring at ${x},${y}`);
+        assert.ok(!covers(off, 125, 210), "the outlined element's middle is still left alone");
+        // A negative offset draws the outline inside the box: the band reaches in that far.
+        const inner = strips({ "outline-style": "solid", "outline-width": "3px", "outline-offset": "-12px" });
+        assert.ok(covers(inner, 125, 200 + 11) && covers(inner, 100 + 11, 210) && covers(inner, 150 - 11, 210), "an inset outline (9-12 px inside) is inside the band");
+        // The pulse: read at its rest (no shadow), its keyframes go out to 13 px.
+        const pulse = strips({ "outline-style": "solid", "outline-width": "3px", "box-shadow": "rgba(34, 197, 94, 0.6) 0px 0px 0px 0px" },
+            [[{ boxShadow: "0 0 0 0 rgba(34, 197, 94, .6)" }, { boxShadow: "0 0 0 13px rgba(34, 197, 94, 0)" }, { boxShadow: "0 0 0 0 rgba(34, 197, 94, .6)" }]]);
+        assert.ok(covers(pulse, 125, 200 - 3 - 13 + 0.5), "the pulse's furthest reach above the box");
+        assert.ok(covers(pulse, 150 + 3 + 13 - 0.5, 210), "and to its right");
+    });
+});
+
+test("a shot's watch reports every place the UI was seen from its begin to its end, `moved` when it was ever elsewhere, and an end after the watch ran out is unreadable", async () => {
+    const saved = { requestAnimationFrame: globalThis.requestAnimationFrame };
+    const ticks = [];
+    globalThis.requestAnimationFrame = (fn) => { ticks.push(fn); return ticks.length; };   // frames run when the test says
+    const frameNow = () => { for (const fn of ticks.splice(0)) fn(); };
+    try {
+        let x = 700;
+        const panel = { tagName: "DIV", id: "", getBoundingClientRect: () => ({ left: x, top: 0, width: 300, height: 700, right: x + 300, bottom: 700 }), closest: () => null };
+        const r = () => roots([{ host: host([panel]), kind: "sidebar" }]);
+        const begin = beginWatch("s1", r);
+        assert.deepEqual(begin.rects, [{ x: 700, y: 0, w: 300, h: 700, kind: "sidebar" }]);
+        const still = endWatch("s1", r);
+        assert.equal(still.moved, undefined);
+        assert.deepEqual(still.rects, begin.rects);
+        // The UI somewhere else at the end than at the begin.
+        beginWatch("s2", r);
+        x = 100;
+        endWatch("unknown-id", r);   // an id with no watch answers a read alone and touches no other watch
+        const mid = endWatch("s2", r);
+        assert.equal(mid.moved, true);
+        x = 700;
+        beginWatch("s3", r);
+        x = 100;
+        const seen = endWatch("s3", r);
+        assert.deepEqual(seen.rects.map((q) => q.x).sort((a, b) => a - b), [100, 700], "both places are masked");
+        // A move the page makes and undoes between the begin and the end, seen only by a read on a frame in between.
+        x = 700;
+        beginWatch("s6", r);
+        x = 100;
+        frameNow();
+        x = 700;
+        const between = endWatch("s6", r);
+        assert.equal(between.moved, true, "the frame's read saw it elsewhere");
+        assert.deepEqual(between.rects.map((q) => q.x).sort((a, b) => a - b), [100, 700], "and where it was is masked");
+        beginWatch("s4", r, 20);
+        await new Promise((res) => setTimeout(res, 50));
+        assert.equal(endWatch("s4", r).vw, 0, "a watch that ran out is answered unreadable, not with the end's read alone");
+        // A begin is answered only once two frames have run under the watch (the screen then holds nothing painted before
+        // it), and an end at once.
+        let begun = 0;
+        answerShotRects(WORKER, r, () => { begun++; }, { watch: "begin", id: "s7" });
+        assert.equal(begun, 0, "not before any frame");
+        frameNow();
+        assert.equal(begun, 0, "not after one");
+        frameNow();
+        assert.equal(begun, 1, "after the second");
+        endWatch("s7", r);
+        // Over the worker's channel, with the ids.
+        let got = null;
+        answerShotRects(WORKER, r, (a) => { got = a; }, { watch: "begin", id: "s5" });
+        x = 300;
+        answerShotRects(WORKER, r, (a) => { got = a; }, { watch: "end", id: "s5" });
+        assert.equal(got.moved, true);
+    } finally { Object.assign(globalThis, saved); }
+});

@@ -43,6 +43,11 @@ html, body { height: 100%; margin: 0; }
    a tool result throws at it (a wide child scrolls inside its own box instead). */
 html, body { overflow-x: hidden; }
 html { background: var(--bg); }   /* opaque canvas so the host page never shows through */
+/* Framed by a web page and not (yet) shown the shell's port (parent-channel.ts `awaitHost`): nothing is mounted, and
+   nothing paints, so a page that frames sidebar.html itself gets an empty transparent box. `normal` matches a page
+   that sets no color-scheme, which would otherwise get an opaque canvas behind a frame whose scheme differs. */
+html[data-unhosted], html[data-unhosted] body { background: transparent !important; color-scheme: normal !important; }
+html[data-unhosted] body { visibility: hidden !important; }
 #root { height: 100%; }
 /* Themed scrollbars for the scrolling view (native default ignores the panel theme). */
 .view::-webkit-scrollbar { width: 10px; }

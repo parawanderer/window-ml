@@ -63,15 +63,28 @@ the window handshake (`__mlSidebarShot: hide → hidden → show`), taken only f
 the hide lifts itself after 5 s if no show comes. A shot the WORKER takes (`workerShot`, `sw/worker-vision.ts`) changes
 nothing on the page: it asks the shell over `chrome.tabs.sendMessage` (`SHOT_RECTS`, top frame, pinned to the shot's
 `documentId`; answered only for this extension's id with no `sender.tab`, never page-relayable) for the viewport rects of
-everything the shell paints (every element in its shadow roots, padded by its shadow, outline and filter; the hover
-highlight as four strips round the element, never the element; any extension frame the page embedded), before and
-after the capture, and paints the union opaque grey in the worker (`sw/shot-mask.ts`). Why not hide: an inline hide is
-page-owned DOM, so a stylesheet overrides it, a MutationObserver times every shot, and a page that blocks its main thread
-holds the ack. A shell that does not answer within 1 s is a refusal; a mask over 60% of the shot (the image viewer, a
-near-full sidebar or card) is a refusal naming what to put away. Residual: a page that moves or animates the extension's
-own elements continuously (or reflects them, `-webkit-box-reflect`) can get extension pixels into its OWN screenshot
-for the vision model; it gets no pixels back and no timing signal. The highlight's translucent tint over the outlined
-element stays in the shot.
+everything the shell paints (every element in its shadow roots, padded by its box shadow and outline at the furthest any
+running animation takes them; the hover highlight as a band round the element that follows its outline offset, never
+the element; any extension frame the page embedded). The shell WATCHES from a "begin" to an "end" round the capture: a
+read on every frame and one after every write to its hosts and roots (a MutationObserver runs before the next paint, so
+a move the page undoes between frames is still seen), and the begin answers only after two painted frames, so the
+screen holds nothing painted before the watch. The worker paints every place seen opaque grey (`sw/shot-mask.ts`). Why
+not hide: an inline hide is page-owned DOM, so a stylesheet overrides it, a MutationObserver times every shot, and a page
+that blocks its main thread holds the ack.
+
+The roots are open and the hosts sit in the page's document, so the page can style our UI. What the shell cannot bound
+is `tampered` and refused with one fixed sentence: a host moved off the root element (into a frame of the page's), an
+element of ours carried out of its root, a stylesheet in a root that is not ours (an element or an adopted sheet), a rule
+of ours edited through the CSSOM, and a reflection, filter or text shadow on our UI (our styles use none); on the html
+element a reflection or an SVG filter. A blur or drop shadow on html is bounded and padded round every rect. A shell that
+does not answer within 1 s is a refusal; a mask over 60% of the shot is a refusal naming why: the page's styles (zoom,
+scale, translate, rotate, a host transform), the UI moving during the shot, or only otherwise what the person can put
+away (the image viewer, a near-full sidebar or card). sidebar.html is web-accessible, so a page can frame it anywhere;
+the app mounts only once the shell that framed it hands it its port (`parent-channel.ts` `awaitHost`), so the page's
+frame is empty and transparent. Residual: a page that moves our host or html with CSSOM edits (no DOM mutation), timed
+to land after the shell's frame read and be undone before the next one, is seen by no read; closing that needs our UI
+out of the page's reach (closed roots, the top layer), a product decision. The highlight's translucent tint over the
+outlined element stays in the shot.
 
 **The services seam (`services.ts`): the session views never call `chrome` or the parent frame themselves.**
 The session views (agent runs, chat turns, output cells, code blocks, approvals, the composer) are shared by the

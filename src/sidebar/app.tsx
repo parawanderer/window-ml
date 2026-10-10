@@ -46,7 +46,7 @@ import { IconWarn, IconTimer, IconGear, IconExport, IconVram, IconBench, IconToo
 import { HousekeepingView } from "./housekeeping-log";
 import { Settings, openSettingsAt } from "./settings/settings";
 import { DetailView } from "./transcript/session-detail";
-import { onHostMessage, toHost } from "./parent-channel";
+import { awaitHost, onHostMessage, toHost } from "./parent-channel";
 
 
 /* ------------------------------ components ------------------------------- */
@@ -600,4 +600,7 @@ function mount(): void {
     toHost({ __mlSidebarApp: "ready" });
 }
 
-mount();
+// Framed by a web page, the app mounts only once the shell that framed it has shown it its port (parent-channel.ts):
+// until then the document stays transparent and empty, so the page's own frame of sidebar.html shows nothing.
+if (window.parent !== window) document.documentElement.dataset.unhosted = "";
+awaitHost(() => { delete document.documentElement.dataset.unhosted; mount(); });

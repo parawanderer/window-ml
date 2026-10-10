@@ -130,7 +130,7 @@ function assertOnlyGeometry(bg, forbidden) {
     for (const [tabId, msg, o] of bg.tabMessages) {
         assert.equal(tabId, 3);
         assert.equal(o?.documentId, "doc-3", `pinned to the call's document: ${JSON.stringify(msg)}`);
-        if (msg.type === "SHOT_RECTS") { assert.deepEqual(Object.keys(msg), ["type"]); continue; }
+        if (msg.type === "SHOT_RECTS") { assert.deepEqual(Object.keys(msg).sort(), ["id", "type", "watch"]); assert.ok(["begin", "end"].includes(msg.watch)); continue; }
         assert.equal(msg.type, "RUN_TOOL_IN_PAGE");
         assert.deepEqual(Object.keys(msg.payload).sort(), ["geometry", "runId"]);
         assert.ok(GEOMETRY_OPS.includes(msg.payload.geometry.op), msg.payload.geometry.op);

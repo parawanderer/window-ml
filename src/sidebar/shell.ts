@@ -20,7 +20,7 @@ import { resolveContextContainer, domToContext } from "../dom/dom";   // right-c
 import type { ElementContext } from "../contract/contract-run";
 import type { DebugMode } from "../contract/contract-config";
 import { eventSession, pageMayWrite, type WorkerClaim } from "../event-admission";
-import { answerShotRects, pageShotGate, type ShotRoots } from "./shell-shot";
+import { answerShotRects, pageShotGate, sheetText, type ShotRoots } from "./shell-shot";
 
 const WIDTH_KEY = "ml_debug_width";
 const CARD_W_KEY = "ml_card_width";   // the corner card's dragged width
@@ -271,24 +271,47 @@ let hostPort: MessagePort | null = null;
 /** Send `msg` to the app in `frame`. Dropped while there is no port yet, as a post to a frame still loading was. */
 function toApp(msg: unknown): void { hostPort?.postMessage(msg); }
 
+/** Ports offered to `frame` and not yet taken: each becomes `hostPort` only when the app's first message on it is the
+ *  ack of its own nonce. Capped, oldest dropped. */
+const offeredPorts = new Set<MessagePort>();   // state: ui — ports offered to the app's frame, awaiting its ack
+const MAX_OFFERED = 8;
+
 /**
  * Answer the app's hello with a port. The app sent its nonce through chrome.tabs.sendMessage, which reaches this tab's
  * content scripts and not the page; the port goes back to `frame` alone, with the nonce, by a window post that only
  * that frame receives. The page can neither learn the nonce nor read what crosses the port.
+ *
+ * Any frame of sidebar.html says hello, the page's own included (it is web-accessible), and the hello does not say which
+ * frame sent it. So the current port stays until the new one is TAKEN: the app's first message on it acks the nonce it
+ * was posted with, which only a frame that is `frame` and sent that hello can do. A page's frame of sidebar.html gets
+ * no port (the post goes to `frame`), and `frame` ignores a nonce that is not its own, so the offer lapses and the
+ * card's channel is untouched.
  * @param nonce the app's secret
  * @param sender who sent the hello: the extension's own sidebar page, or it is ignored
  */
 function openHostPort(nonce: string, sender: chrome.runtime.MessageSender): void {
     if (!frame?.contentWindow || sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL("sidebar.html"))) return;
-    closeHostPort();
     const ch = new MessageChannel();
-    hostPort = ch.port1;
-    hostPort.onmessage = (m) => fromApp(m.data);
+    const offered = ch.port1;
+    offeredPorts.add(offered);
+    if (offeredPorts.size > MAX_OFFERED) { const oldest = offeredPorts.values().next().value; if (oldest) { offeredPorts.delete(oldest); try { oldest.close(); } catch { /* closed */ } } }
+    offered.onmessage = (m) => {
+        if (hostPort === offered) { fromApp(m.data); return; }
+        if (!offeredPorts.has(offered) || m.data?.__mlPortAck !== nonce) return;
+        offeredPorts.delete(offered);
+        try { hostPort?.close(); } catch { /* already closed */ }
+        hostPort = offered;
+    };
     frame.contentWindow.postMessage({ __mlHostPort: nonce }, new URL(chrome.runtime.getURL("")).origin, [ch.port2]);
 }
 
-/** Drop the port, when its frame goes. */
-function closeHostPort(): void { try { hostPort?.close(); } catch { /* already closed */ } hostPort = null; }
+/** Drop the port and every offer not yet taken, when their frame goes. */
+function closeHostPort(): void {
+    try { hostPort?.close(); } catch { /* already closed */ }
+    hostPort = null;
+    for (const p of offeredPorts) { try { p.close(); } catch { /* closed */ } }
+    offeredPorts.clear();
+}
 /** The keys the frame's chart would use right now — non-empty only while the pointer is over one of its plots
  *  (the app says so, `__mlSidebarApp: "chartKeys"`). What `relayChartKey` takes from the page. */
 let chartKeys: string[] = [];
@@ -646,6 +669,8 @@ let hlSeq = 0;   // monotonic — a later hover/clear invalidates a still-pendin
 // hover can still outline the page. Torn down with everything else in teardown().
 let hlHost: HTMLElement | null = null;
 let hlRoot: ShadowRoot | null = null;
+/** Each host's own stylesheet and its rules at mount, so a shot can tell the page's edits to them (shell-shot.ts). */
+const ownSheets = new Map<ShadowRoot, { style: Element; sheet: string }>();   // state: ui — the shell's own stylesheets, dropped with their hosts
 function hlContainer(): ShadowRoot {
     if (shadowRoot) return shadowRoot;
     if (hlRoot) return hlRoot;
@@ -657,6 +682,7 @@ function hlContainer(): ShadowRoot {
     style.textContent = HIGHLIGHT_CSS;
     hlRoot.append(style);
     (document.documentElement || document.body).append(hlHost);
+    ownSheets.set(hlRoot, { style, sheet: sheetText(style) });
     return hlRoot;
 }
 let hlKind: "" | "approve" = "";   // "approve" → the pulsing-green variant + report the on-page position
@@ -737,7 +763,9 @@ let scrollPin: { x: number; y: number; onScroll: () => void } | null = null;
 
 /** Where the shell's UI is mounted now, for the worker's mask (shell-shot.ts `extensionRects`). */
 const shotRoots = (): ShotRoots => ({
-    hosts: [{ host: shellHost, kind: "sidebar" }, { host: cardHost, kind: "card" }, { host: hlHost, kind: "highlight" }],
+    hosts: ([[shellHost, shadowRoot, "sidebar"], [cardHost, cardRoot, "card"], [hlHost, hlRoot, "highlight"]] as const).map(([host, root, kind]) =>
+        ({ host, kind, root, style: root ? ownSheets.get(root)?.style ?? null : null, sheet: root ? ownSheets.get(root)?.sheet ?? "" : "" })),
+    owned: [panel, frame, cardWrap, lightbox, highlightEl],
     lightboxId: SB_LIGHTBOX, highlightId: SB_HIGHLIGHT, extensionOrigin: chrome.runtime.getURL(""),
 });
 
@@ -1252,6 +1280,7 @@ function mountOverlay(): void {
     panel.append(tab, body);
     root.append(panel);
     (document.documentElement || document.body).append(shellHost);
+    ownSheets.set(root, { style, sheet: sheetText(style) });
 
     chrome.storage.local.get({ [WIDTH_KEY]: DEFAULT_W }, (d: any) => setWidth(d[WIDTH_KEY] || DEFAULT_W));
 }
@@ -1299,6 +1328,7 @@ function mountCard(): void {
     cardWrap.append(frame, handle, handleX);
     root.append(cardWrap);
     (document.documentElement || document.body).append(cardHost);
+    ownSheets.set(root, { style, sheet: sheetText(style) });
     layoutCard();   // position the (hidden) card at its corner up front, so the first reveal FLIES from there
 }
 function unmountCard(): void {
@@ -1307,6 +1337,7 @@ function unmountCard(): void {
     cardHost.remove();
     closeHostPort();
     cardHost = cardWrap = frame = null;   // `frame` is the card iframe in off mode
+    if (cardRoot) ownSheets.delete(cardRoot);
     cardRoot = null;
     cardReady = false;
     composerPendingOpen = false;
@@ -1360,6 +1391,8 @@ function openComposer(ctx: ElementContext | null = null): void {
 function teardown(): void {
     hideLightbox();
     hideHighlight();
+    if (hlRoot) ownSheets.delete(hlRoot);
+    if (shadowRoot) ownSheets.delete(shadowRoot);
     if (hlHost) { hlHost.remove(); hlHost = hlRoot = null; }   // the devtools-mode highlight-only host
     if (shellHost) { shellHost.remove(); shellHost = panel = frame = shadowRoot = null; closeHostPort(); }
     unmountCard();
@@ -1473,7 +1506,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg?.type === "ML_DEBUG_TO_PAGE") { if (startupQueue) workerStartup.push(msg.event); else feedDebug(msg.event, true); return; }
     // The worker hiding the sidebar for a screenshot it takes itself: answered only for the worker, never the page.
     // Where the extension's UI is, for a screenshot the worker takes and masks itself: read only, for the worker only.
-    if (msg?.type === "SHOT_RECTS") { answerShotRects(sender, shotRoots, sendResponse); return; }
+    if (msg?.type === "SHOT_RECTS") return answerShotRects(sender, shotRoots, sendResponse, msg);   // true: a begin answers after two frames
     // Not ours to answer (content.ts relays them to the page), but they carry a run's id to the page: claim it first.
     if (msg?.type === "ADOPT_RUN_NOW") claimForWorker(msg.payload?.runId, true);
     else if (msg?.type === "RUN_TOOL_IN_PAGE") claimForWorker(msg.payload?.runId, false);

@@ -122,7 +122,8 @@ test("two shots at once each ask the run's tab, top frame only, and neither send
     assert.equal(a.dataUrl, RUN_PNG); assert.equal(b.dataUrl, RUN_PNG);
     const sent = shotMsgs(bg);
     assert.equal(sent.length, 4, "a query before and after per shot");
-    assert.ok(sent.every(([tab, m, opts]) => tab === 3 && m.type === "SHOT_RECTS" && Object.keys(m).length === 1 && opts?.frameId === 0), "a bare read, never another tab or a subframe");
+    assert.ok(sent.every(([tab, m, opts]) => tab === 3 && m.type === "SHOT_RECTS" && Object.keys(m).sort().join() === "id,type,watch" && opts?.frameId === 0), "a read (its watch's begin or end), never another tab or a subframe");
+    assert.equal(new Set(sent.map(([, m]) => m.id)).size, 2, "each shot its own watch");
 });
 
 // --- (b) the sidebar is not in the shot ---

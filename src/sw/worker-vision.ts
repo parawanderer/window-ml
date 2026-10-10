@@ -12,7 +12,7 @@ import { cdpScreenshot } from "./sw-cdp";
 import { CAPTURE_RETRIES, CAPTURE_RETRY_MS, captureOwnTab, NOT_SHOWING } from "./sw-capture";
 import { getConfig } from "./sw-llm";
 import { runChat } from "./worker-tools";
-import { maskShot } from "./shot-mask";
+import { maskShot, TAMPERED } from "./shot-mask";
 import { workerRaster } from "../raster";
 import type { ShotRects } from "../sidebar/shell-shot";
 import type { VisionMemory } from "../contract/contract-render";
@@ -89,16 +89,17 @@ export async function topDocument(tabId: number): Promise<string | null> {
  * @param tabId the run's tab
  * @param documentId the document the shot is of
  * @param ms the bound ({@link SHOT_RECTS_MS})
+ * @param watch "begin" starts the shell watching the UI for this shot; "end" answers every place it saw since
  * @returns the shell's answer, or null for none
  * @throws {@link RECTS_SLOW} when the shell is there and did not answer in time
  */
-async function askRects(tabId: number, documentId: string, ms: number): Promise<ShotRects | null> {
+async function askRects(tabId: number, documentId: string, ms: number, watch: { watch: "begin" | "end"; id: string }): Promise<ShotRects | null> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const SLOW = Symbol("slow");
     const r = await Promise.race([
         // Only "nothing is listening" means no content script. Any other failure (the shell threw, the port closed) is
         // not an answer, and is refused below as one that can't be read rather than read as "no UI".
-        Promise.resolve().then(() => chrome.tabs.sendMessage(tabId, { type: "SHOT_RECTS" }, { frameId: 0, documentId }))
+        Promise.resolve().then(() => chrome.tabs.sendMessage(tabId, { type: "SHOT_RECTS", ...watch }, { frameId: 0, documentId }))
             .then((a) => ({ a: a ?? {} }), (e) => (/Receiving end does not exist/i.test(String((e as Error)?.message ?? e)) ? null : { a: {} })),
         new Promise<typeof SLOW>((res) => { timer = setTimeout(() => res(SLOW), ms); }),
     ]).finally(() => clearTimeout(timer));
@@ -109,7 +110,8 @@ async function askRects(tabId: number, documentId: string, ms: number): Promise<
 /**
  * {@link captureRunTab} of the run's document with the extension's own UI masked out, changing nothing on the page.
  * The shell (the tab's content script) says where the sidebar, the run card, the image viewer, the hover highlight and
- * any extension frame sit, before and after the capture, and the union of both is painted opaque in the worker. Pinned
+ * any extension frame sit, watching them from before the capture to after it, and every place it saw is painted opaque
+ * in the worker. Pinned
  * to the top frame's document: a commit during the shot, or a different document after it, refuses the shot.
  * @param tabId the run's tab
  * @param opts `rectsMs`: the bound on each of the shell's answers ({@link SHOT_RECTS_MS}); `cdpTimeoutMs` as
@@ -122,20 +124,26 @@ export async function workerShot(tabId: number, opts: { rectsMs?: number; cdpTim
     if (!doc) throw new Error("Can't screenshot this tab: the browser does not say which page it holds.");
     // A shot asked for one document (a vision call whose geometry came from it) is of that document or of nothing.
     if (opts.documentId !== undefined && doc !== opts.documentId) throw new Error(NAVIGATED);
-    let moved = false;
+    let moved = false, ended = false;
+    const id = crypto.randomUUID();
     const onCommitted = (d: { tabId: number; frameId: number }): void => { if (d.tabId === tabId && d.frameId === 0) moved = true; };
     chrome.webNavigation.onCommitted.addListener(onCommitted);
     try {
         const ms = opts.rectsMs ?? SHOT_RECTS_MS;
-        const before = await askRects(tabId, doc, ms);
+        const before = await askRects(tabId, doc, ms, { watch: "begin", id });
+        // Refused before the capture when the page has already tampered with the UI: nothing to take.
+        if (before?.tampered) throw new Error(TAMPERED);
         const shot = await captureRunTab(tabId, opts);
-        const after = await askRects(tabId, doc, ms);
+        ended = true;
+        const after = await askRects(tabId, doc, ms, { watch: "end", id });
         // A commit, even one back to the same document from the back-forward cache, means the pixels may be another page's.
         if (moved || (await topDocument(tabId)) !== doc) throw new Error(NAVIGATED);
         const masked = await maskShot(shot, [before, after], workerRaster);
         return { dataUrl: masked.dataUrl, w: masked.w, h: masked.h };
     } finally {
         chrome.webNavigation.onCommitted.removeListener(onCommitted);
+        // A shot that failed before its end still stops the shell's watch, rather than leaving it to run out.
+        if (!ended) void Promise.resolve().then(() => chrome.tabs.sendMessage(tabId, { type: "SHOT_RECTS", watch: "end", id }, { frameId: 0, documentId: doc })).catch(() => {});
     }
 }
 

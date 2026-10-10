@@ -589,13 +589,64 @@ test("an extension frame the page embeds in the document itself is reported for 
     assert.deepEqual(r.rects.map((x) => x.kind), ["frame"]);
 });
 
-test("an extension page the page embeds where `document.querySelectorAll(\"iframe\")` does not look (its own shadow root, an <object>, an <embed>) is still reported for the mask", { ...T, todo: "extensionRects finds extension frames with document.querySelectorAll(\"iframe\") on f.src: sidebar.html is web-accessible to every site, so a page can show it inside its own shadow root, or as an <object>/<embed>, and it is painted into the worker's shot unmasked" }, () => {
-    for (const [what, build] of [
-        ["an iframe in the page's own shadow root", (doc) => { const h = doc.createElement("div"); doc.body.append(h); const f = doc.createElement("iframe"); f.src = `${EXT}sidebar.html`; h.attachShadow({ mode: "closed" }).append(f); }],
-        ["an <object>", (doc) => { const o = doc.createElement("object"); o.data = `${EXT}sidebar.html`; doc.body.append(o); }],
-        ["an <embed>", (doc) => { const e = doc.createElement("embed"); e.src = `${EXT}sidebar.html`; doc.body.append(e); }],
-    ]) {
-        const r = rectsOn(build);
-        assert.ok(r.rects.some((x) => x.kind === "frame"), `${what} was not reported`);
+// sidebar.html is web-accessible, so a page can frame it anywhere the shell's search for extension frames does not look
+// (its own shadow root, an <object>, an <embed>, a frame it navigates after creating it). Finding every such frame is
+// not possible from the page's DOM, so the app itself refuses: framed by a web page, it mounts only once the shell that
+// mounted THAT frame hands it its port, and shows nothing (tests/e2e/review-look.spec.mjs has the pixels).
+
+/**
+ * The app's gate (parent-channel.ts `awaitHost`) in a fresh module, in a frame whose parent is a cross-origin page.
+ * @returns `post(data, ports)` (a window message to the frame), `hello` (what the frame sent the shell), and `ready()`
+ */
+async function framedApp() {
+    const listeners = [];
+    const sent = [];
+    const parent = { get location() { throw new Error("cross-origin"); } };
+    const win = { parent, addEventListener: (t, fn) => { if (t === "message") listeners.push(fn); } };
+    const saved = { window: globalThis.window, chrome: globalThis.chrome, location: globalThis.location };
+    Object.assign(globalThis, {
+        window: win, location: { origin: "chrome-extension://abc" },
+        chrome: { tabs: { getCurrent: (cb) => cb({ id: 7 }), sendMessage: (...a) => { sent.push(a); return Promise.resolve(); } } },
+    });
+    try {
+        const mod = await import(`../src/sidebar/parent-channel.ts?framed=${Math.random()}`);
+        let mounted = 0;
+        mod.awaitHost(() => { mounted++; });
+        return {
+            mounted: () => mounted,
+            hello: sent.find((a) => a[1]?.type === "ML_HOST_HELLO"),
+            post: (data, ports = []) => { for (const fn of listeners) fn({ data, ports, source: parent }); },
+        };
+    } finally { Object.assign(globalThis, saved); }
+}
+
+test("sidebar.html framed by a web page mounts nothing until the shell that framed it sends its port: the page's own posts, with or without a port, never mount it", T, async (t) => {
+    const app = await framedApp();
+    assert.equal(app.mounted(), 0, "nothing renders before the shell answers");
+    assert.ok(app.hello, "the frame asked its tab's shell, over the extension's messaging, for a port");
+    assert.deepEqual(app.hello[2], { frameId: 0 });
+    const { port1 } = new MessageChannel();
+    t.after(() => port1.close());   // an open port keeps the process alive, also when an assertion fails first
+    // What a page can post into a frame it embedded: anything, a port included, but not the nonce it never saw.
+    for (const data of [{ __mlHostPort: "guess" }, { __mlHostPort: true }, { __mlHostPort: null }, { __mlSidebarSurface: "panel" }, { __mlHostPort: app.hello[1].nonce }]) {
+        app.post(data, data.__mlHostPort === app.hello[1].nonce ? [] : [port1]);
+    }
+    assert.equal(app.mounted(), 0, "a page's post never mounts the app (the nonce without a port is not the shell's answer either)");
+    app.post({ __mlHostPort: app.hello[1].nonce }, [port1]);
+    assert.equal(app.mounted(), 1, "the shell's port, carrying the nonce it got over the extension's messaging, mounts it");
+});
+
+test("the gate does not hold a trusted parent: under the DevTools panel (an extension parent) or as its own window the app mounts at once", T, async () => {
+    for (const parentOf of [(w) => w, () => ({ location: { origin: "chrome-extension://abc" } })]) {
+        const win = { addEventListener: () => {} };
+        win.parent = parentOf(win);
+        const saved = { window: globalThis.window, location: globalThis.location };
+        Object.assign(globalThis, { window: win, location: { origin: "chrome-extension://abc" } });
+        try {
+            const mod = await import(`../src/sidebar/parent-channel.ts?trusted=${Math.random()}`);
+            let mounted = 0;
+            mod.awaitHost(() => { mounted++; });
+            assert.equal(mounted, 1);
+        } finally { Object.assign(globalThis, saved); }
     }
 });

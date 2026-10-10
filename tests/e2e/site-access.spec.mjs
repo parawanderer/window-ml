@@ -505,6 +505,32 @@ test.describe("@security attack 16: the page and the extension's own surfaces", 
         } finally { await close(); }
     });
 
+    test("16d: a page that frames the extension's sidebar.html itself cannot cut the card's channel to the shell", async () => {
+        // The page's own frame of sidebar.html sends the shell a hello like the real one. The shell must hand its port
+        // only to the frame it mounted: the card keeps both directions (the person's reply out, the run's answer back).
+        const { fake, site, ext, close } = await setup();
+        try {
+            const page = await open(ext, site.url("evil.test"));
+            await finishedRun(ext, page, fake, [{ content: "second answer" }]);
+            const card = cardFrame(page);
+            await page.evaluate((id) => {
+                for (let i = 0; i < 2; i++) {
+                    const f = document.createElement("iframe");
+                    f.src = `chrome-extension://${id}/sidebar.html`;
+                    f.style.cssText = "position:fixed;left:0;top:0;width:200px;height:200px;border:0";
+                    document.body.append(f);
+                }
+            }, ext.extensionId);
+            await expect.poll(() => page.frames().filter((f) => f.url().includes("sidebar.html")).length).toBe(3);
+            await page.waitForTimeout(1000);   // the page's frames have said hello
+            await card.locator(".card-reply-open").click();
+            await card.locator(".card-reply-in").fill("still connected?");
+            await card.locator(".card-reply-in").press("Enter");
+            await expect.poll(() => JSON.stringify(fake.calls()), { timeout: 15000 }).toContain("still connected?");
+            await expect.poll(async () => card.locator("body").innerText().catch(() => ""), { timeout: 15000 }).toContain("second answer");
+        } finally { await close(); }
+    });
+
     test("16c: a page cannot write into the session of a background run on its own tab", async () => {
         // The shell forwards the page's OWN events to the worker (ML_DEBUG_EVENT in devtools mode, ML_SESSION_EVENT in
         // the others), where they feed the session index the chat page and the phone read. The index refuses a page
