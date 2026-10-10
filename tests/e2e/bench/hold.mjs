@@ -1,7 +1,9 @@
 // hold.mjs — keep a bench cell's run open after its last ask, in a process of its own, so someone can go on talking to it.
 //
 //   node --import tsx tests/e2e/bench/hold.mjs                list the held runs and how to attach to each
-//   node --import tsx tests/e2e/bench/hold.mjs --stop [x]     release them all (or those whose pid, cell or directory has x)
+//   node --import tsx tests/e2e/bench/hold.mjs --stop [x …]   release them all (or those whose pid is x, or whose cell or directory has x)
+//   node --import tsx tests/e2e/bench/hold.mjs --menu         the held runs of every clone, grouped, with what to paste for each (hold-menu.mjs)
+//   node --import tsx tests/e2e/bench/hold.mjs --ledger       everything the bench holds in memory on this machine (memory-budget.mjs)
 //   node --import tsx tests/e2e/bench/hold.mjs --show [x]     bring a held run's browser window up (--hide minimises it again)
 //   node tests/e2e/converse.mjs --attach <cell dir> "…"       the next message to one (converse's inbox/outbox protocol)
 //
@@ -21,6 +23,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseSelector, selected } from "./cells.mjs";
+import { ledger, measureLedger, unregister, fmtBytes, autoLimit, availableMemory, budgetState } from "./memory-budget.mjs";
+import { menuText } from "./hold-menu.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../../..");
@@ -51,7 +55,10 @@ function writeAll(list) {
 /** The held runs whose process is still alive. */
 export const heldRuns = () => readAll().filter((h) => alive(h.pid));
 const putHeld = (entry) => writeAll([...heldRuns().filter((h) => h.pid !== entry.pid), entry]);
-const dropHeld = (pid) => writeAll(heldRuns().filter((h) => h.pid !== pid));
+const dropHeld = (pid) => {
+    writeAll(heldRuns().filter((h) => h.pid !== pid));
+    try { unregister(pid); } catch { /* a dead pid is dropped from the ledger on its next read anyway */ }
+};
 
 /**
  * Whether to hold a cell open: `"always"`, `"failures"` (only a run that errored or was wrong), or null. `cli` is run.mjs's
@@ -111,7 +118,7 @@ export function startHeld(job, { onEvent, onTurns } = {}) {
         onHeld = (entry) => { letGo(); resolve(entry); };
         child.send({ type: "hold" });
     });
-    return { ran, decide };
+    return { ran, decide, pid: child.pid };
 }
 
 /** The next inbox message (files in name order, each removed once read), or null on `/end` or once `stop()` says so. */
@@ -241,18 +248,30 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
         }
         if (!which.length) console.log("no held run matches");
     } else if (argv[0] === "--stop") {
-        const which = heldRuns().filter((h) => !argv[1] || [String(h.pid), h.cell, h.dir].some((s) => String(s).includes(argv[1])));
+        // This clone's held runs, and every clone's from the shared ledger (a pid from `--menu` may be another clone's).
+        const fromLedger = ledger().filter((e) => e.kind === "held" && !heldRuns().some((h) => h.pid === e.pid)).map((e) => ({ ...e, dir: e.dir ?? "" }));
+        const want = argv.slice(1);
+        const which = [...heldRuns(), ...fromLedger].filter((h) => !want.length || want.some((x) => String(h.pid) === x || [h.cell, h.dir].some((s) => String(s ?? "").includes(x))));
         for (const h of which) try { process.kill(h.pid, "SIGTERM"); } catch { /* already gone */ }
         for (const until = Date.now() + 20_000; Date.now() < until && which.some((h) => alive(h.pid));) await new Promise((r) => setTimeout(r, 200));
         writeAll(heldRuns());
         for (const h of which) console.log(`${alive(h.pid) ? "still running" : "released"}: ${h.cell} of ${h.sweep} (pid ${h.pid})`);
         if (!which.length) console.log("no held run matches");
+    } else if (argv[0] === "--menu") {
+        const lines = menuText(measureLedger());
+        console.log(lines.length ? lines.join("\n") : "no runs are held open");
+    } else if (argv[0] === "--ledger") {
+        const l = measureLedger();
+        const st = budgetState({ limit: autoLimit(), entries: l, available: availableMemory() });
+        console.log(`the bench holds ${fmtBytes(st.used)} (auto limit ${fmtBytes(st.limit)}; ${fmtBytes(st.available)} available, ${fmtBytes(st.reserve)} kept free)`);
+        for (const e of l) console.log(`  ${e.kind.padEnd(8)} pid ${String(e.pid).padEnd(7)} ${fmtBytes(e.rss).padStart(8)} (peak ${fmtBytes(e.peak)})${e.heap ? ` heap ${fmtBytes(e.heap)}` : ""}  ${e.cell ?? e.sweep ?? ""}${e.repo ? `  ${e.repo}` : ""}`);
+        if (!l.length) console.log("  (nothing)");
     } else if (!argv.length) {
         const list = heldRuns();
         if (!list.length) console.log("no runs are held open");
         for (const h of list) console.log(`${h.cell} of ${h.sweep} (pid ${h.pid}, window ${h.window ?? "?"}, until ${h.expiresAt} unless spoken to)\n  ${h.attach}`);
     } else {
-        console.log("usage: hold.mjs [--show | --hide | --stop [pid|cell|dir]]");
+        console.log("usage: hold.mjs [--show | --hide | --stop [pid|cell|dir …] | --menu | --ledger]");
         process.exit(2);
     }
 }

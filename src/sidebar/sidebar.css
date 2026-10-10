@@ -3515,6 +3515,11 @@ button.ui-step-now:hover { background: var(--panel-2); color: var(--fg); }
     opacity: 0.35; transition: opacity 0.15s ease;
 }
 .code-block:hover .code-tools, .code-tools:focus-within { opacity: 1; }
+/* A command to paste (CopyableCode): one line, so the copy button sits beside it rather than over its end. */
+.copyable-code .code { padding: 3px 28px 3px 7px; }
+/* Above a code theme's `pre code.hljs { padding: 1em }`, also where a page scopes the theme under `:root:not(…)`. */
+.code-block.copyable-code pre.code code.hljs { padding: 0; background: none; }
+.copyable-code .code-tools { top: 50%; transform: translateY(-50%); }
 /* FIND IN A CODE BLOCK (Ctrl/Cmd+F with the block focused). The block is focusable for the shortcut, so a click
    must not ring it; only keyboard focus does, as on the output cell. The bar takes the toolbar's corner, so the
    toolbar steps aside while it is open. */

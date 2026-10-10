@@ -115,6 +115,10 @@ export async function appCss() {
         sidebarRules(css, /\.md\b|\.md-|(^|[\s,])\.code\b|pre\.code|\.hljs|\.cline\b/),
         // A diff's rows with their gutter (code-diff.tsx), the spec card's "What changed".
         sidebarRules(css, /\.dline\b|\.dline-|\.dno\b|\.dsign\b|\.dtext\b/),
+        // A command to paste with its copy button (code-block.tsx `CopyableCode`): the held-run menu's commands.
+        sidebarRules(css, /\.code-block\b|\.code-tools\b|\.copyable-code\b|\.icon-btn\b/),
+        // The stacked chart over time (time-chart.tsx): the Memory card's history.
+        sidebarRules(css, /\.tc\b|\.tc-|\.rc-tip-/),
         // The standalone page's pieces (cards that fold, tiles, badges, buttons), shared in src/sidebar, then this page's own.
         readFileSync(path.join(ROOT, "src/sidebar/page-kit.css"), "utf8"),
         readFileSync(path.join(HERE, "page.css"), "utf8"),

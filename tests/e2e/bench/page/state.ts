@@ -96,6 +96,21 @@ export interface BenchState {
     resources?: PackedSamples | null;
     /** what this invocation's runs spent so far, priced as their calls came in (live-spend.mjs); null without calls */
     spend?: SweepSpend | null;
+    /** what the bench holds in this machine's memory, against its budget (memory-budget.mjs, hold-menu.mjs) */
+    memory?: MemoryState | null;
+}
+
+/** The memory budget as the page shows it: every figure in bytes. */
+export interface MemoryState {
+    limit: number; used: number; byKind: Record<string, number>; available: number; total: number; reserve: number; room: number;
+    active: boolean; whenFull: "pause" | "stop-holding"; paused: string | null; resume: string; hints: string[];
+    runner: { rss?: number; peak?: number; heap?: number } | null;
+    /** held runs of every clone, grouped by model · task · failure, with the commands for each */
+    groups: { key: string; count: number; rss: number; sweeps: string[]; commands: { attach: string; keepOne?: string; release: string } }[];
+    /** runs this sweep would have kept open had the budget had room */
+    wouldHold: { cell: string; task: string; model: string | null; failure: string; dir: string; why: string }[];
+    /** every reading over the sweep (thinned past 600): what each kind held then, and the room left */
+    history?: { t: number; values: Record<string, number>; room: number }[];
 }
 
 /** Calls priced one way or another (live-spend.mjs): computed from the price snapshot each named, reported by the
