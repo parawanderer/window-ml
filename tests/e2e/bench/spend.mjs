@@ -5,8 +5,10 @@
 //
 // Where a run's calls are (run.json, docs/spec/export.schema.json): the driver's calls are `steps[].usage`, one per model
 // turn, on the step that holds the turn's thought; the calls a run made on its own behalf (a delegated look, locate or
-// verify) are `steps[].subUsage.calls_`, which carry counts, and since #554 raw, prices and electricity as well. A step does not name its model; the run's `gen`
-// events do, with the same token counts, so the model is read from the matching event, and is null when none matches.
+// verify) are `steps[].subUsage.calls_`, which carry counts, and since #554 raw, prices and electricity as well. A step does not name its model. A
+// run's `gen` events do, with the same token counts, but a real run's session keeps few of them (one for a whole run is
+// usual), so a turn's model is the matching event's when there is one, else the driver's: a turn IS the driver's call.
+// Rows logged before that have no model on most turns; `spendReport` reads those as the run's driver.
 
 import { createHash } from "node:crypto";
 import { priceCalls, spendByModel, PRICE_CURRENCY } from "./cost.mjs";
@@ -57,16 +59,18 @@ export const subcallUsage = (c) => ({ promptTokens: c.prompt, completionTokens: 
 /**
  * The model calls of one exported session (run.json's `session`), oldest first: the driver's turns, each followed by
  * the delegated calls made during its step. Calls with no usage recorded are not calls this can say anything about,
- * so they are left out, and a run with none gives [] ("no per-call data", never zero spend).
+ * so they are left out, and a run with none gives [] ("no per-call data", never zero spend). `driver` is the model the
+ * run was measured on; `seedThrough` the last step of a seeded run's scripted first turn (run-once's `seedBoundaryStep`),
+ * whose calls went to the fake LLM and are left out: nobody paid for them.
  */
-export function callsOf(session, run = session?.hash) {
+export function callsOf(session, { run = session?.hash, driver = null, seedThrough = -1 } = {}) {
     if (!session || !run) return [];
     const modelOf = modelReader(session);
-    const steps = [...(session.steps ?? [])].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+    const steps = [...(session.steps ?? [])].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0)).filter((s) => !(seedThrough >= 0 && (s.step ?? Infinity) <= seedThrough));
     const out = [];
     for (const s of steps) {
         if (s.usage) {
-            out.push({ run, call: out.length, at: s.at ?? null, kind: "turn", step: s.step ?? null, model: modelOf(s.usage), usage: JSON.stringify(keptUsage(s.usage)) });
+            out.push({ run, call: out.length, at: s.at ?? null, kind: "turn", step: s.step ?? null, model: modelOf(s.usage) ?? driver, usage: JSON.stringify(keptUsage(s.usage)) });
         }
         for (const c of s.subUsage?.calls_ ?? []) {
             out.push({ run, call: out.length, at: Number.isFinite(c.ts) ? new Date(c.ts).toISOString() : null, kind: "sub", step: s.step ?? null,
@@ -129,7 +133,9 @@ export function spendReport(db, rows, keyOf) {
     const calls = readCalls(db);
     if (!calls.length) return null;
     const body = db.prepare("SELECT body FROM snapshots WHERE hash = ?");
-    const priced = priceCalls(calls, (h) => body.get(h)?.body ?? null);
+    const driverOf = new Map(rows.map((r) => [r.run, r.model]));
+    // A turn logged without its model (before callsOf named the driver) was the driver's.
+    const priced = priceCalls(calls.map((c) => (c.model == null && c.kind === "turn" ? { ...c, model: driverOf.get(c.run) ?? null } : c)), (h) => body.get(h)?.body ?? null);
     const byRun = new Map(rows.map((r) => [r.run, keyOf(r)]));
     const withCalls = new Set(calls.map((c) => c.run));
     return {

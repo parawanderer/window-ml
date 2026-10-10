@@ -303,7 +303,7 @@ async function runCell(cell, ctx, index) {
     if (row) {
         ctx.logged += logRuns(ctx.scores, [row]);
         // What each model call spent, raw, and the price snapshot bodies they name that the log lacks (spend.mjs).
-        logCalls(ctx.scores, callsOf(run.session));
+        logCalls(ctx.scores, callsOf(run.session, { driver: run.models?.driver ?? null, seedThrough: run.seedBoundaryStep ?? -1 }));
         for (const [hash, { kind, b64 }] of Object.entries(run.priceBodies ?? {})) {
             if (logSnapshot(ctx.scores, { hash, kind, body: Buffer.from(b64, "base64") }) === null) ctx.log(`  (price snapshot ${hash.slice(0, 12)} did not match its hash; not kept)`);
         }
@@ -562,7 +562,12 @@ const main = async () => {
         keep: (snap) => scores && logSnapshot(scores, snap),
         changed: () => push(),
     }) : null;
-    ctx.spendOn = (i, ev) => spent?.add(i, ev, driverOf(i)) ?? false;
+    // A seeded cell's first turn runs on the fake LLM (run-once): its calls are nobody's spend, up to its first answer.
+    const inSeed = cells.map((c) => !!c.task.seed);
+    ctx.spendOn = (i, ev) => {
+        if (inSeed[i]) { if (ev.kind === "agent-result") inSeed[i] = false; return false; }
+        return spent?.add(i, ev, driverOf(i)) ?? false;
+    };
     ctx.report = (i, state, info) => {
         const r = runsState[i];
         if (state === "running" && r.state !== "running") r.startedAt = Date.now();   // for the elapsed ticker
