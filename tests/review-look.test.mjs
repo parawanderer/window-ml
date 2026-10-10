@@ -272,20 +272,20 @@ test("a worker-built run's adopt names no driver model to the page, on the start
     assert.equal(w.subs[0]?.model, "reader-vl");
 });
 
-test("a worker-built run's adopt names no reader or grounding model to the page once locate runs in the worker (PR 7)", { ...T, todo: "PR 7: the page's `locate` still reads the reader, the grounding model and whether the driver sees from the rebuild, so `pageRebuild` keeps them for a run that offers locate" }, async () => {
+test("a worker-built run's adopt names no reader or grounding model to the page once locate runs in the worker (PR 7)", T, async () => {
     const w = await run({ model: "text-driver", calls: [{ name: "look", args: {} }] });
     const rb = plain(w.bg.tabMessages.map(([, m]) => m).find((m) => m.type === "ADOPT_RUN_NOW").payload.rebuild);
     assert.equal(rb.visionModel ?? null, null, `reader model reached the page: ${rb.visionModel}`);
     assert.equal(rb.groundingModel ?? null, null, `grounding model reached the page: ${rb.groundingModel}`);
 });
 
-test("what of a rebuild the page is sent: a worker's run without locate names no model at all; a page-built run's comes back as it was", T, async () => {
+test("what of a rebuild the page is sent: a worker's run names no model at all, with or without locate; a page-built run's comes back as it was", T, async () => {
     const { pageRebuild } = await import("../src/agent/run-assembly.ts");
     const full = { toolNames: ["click", "look"], model: "text-driver", driverSees: true, visionModel: "reader-vl", groundingModel: "ground-vl", groundingRange: 1000, pierceClosed: true, cdp: true, crossOrigin: false };
     const worker = pageRebuild({ ...full, builtBy: "worker" });
     assert.deepEqual(worker, { ...full, builtBy: "worker", model: null, driverSees: false, visionModel: null, groundingModel: null });
     const withLocate = pageRebuild({ ...full, toolNames: ["look", "locate"], builtBy: "worker" });
-    assert.deepEqual(withLocate, { ...full, toolNames: ["look", "locate"], builtBy: "worker", model: null }, "locate (the page's until PR 7) keeps the vision facts");
+    assert.deepEqual(withLocate, { ...full, toolNames: ["look", "locate"], builtBy: "worker", model: null, driverSees: false, visionModel: null, groundingModel: null }, "locate is the worker's (PR 7): the page needs no vision fact for it");
     assert.equal(pageRebuild(full), full, "a page-built run's rebuild is the page's own");
 });
 

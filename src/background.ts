@@ -20,6 +20,7 @@ import { captureRunTab, workerShot, workerVisionChat, dropAllVisionMemory } from
 import { workerVisionHost, onWorkerHost, useRasterForTest } from "./sw/worker-vision-host";   // the worker's vision host: the verify uses it; the hook below drives it directly
 import { checkVerifyRequest } from "./sw/worker-verify";
 import { workerLook } from "./sw/worker-look";
+import { workerLocate } from "./sw/worker-locate";
 import { fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw/sw-fetch";   // outbound fetch layer (ml.fetch, rendered fetch, credentialed Google Sheets CSV)
 import { executeServerTool, serverToolResult } from "./sw/sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw/sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
@@ -122,10 +123,10 @@ startValueSweeps();
 // worker's OffscreenCanvas to the page's canvas pixel for pixel.
 (globalThis as unknown as { __mlWorkerCropForTest?: unknown }).__mlWorkerCropForTest = (dataUrl: string, rect: { left: number; top: number; width: number; height: number }, dpr: number) => cropDataUrl(dataUrl, rect, dpr, workerRaster);
 
-// TEST-ONLY (SW realm only): the worker's vision pieces (worker-vision.ts, worker-vision-host.ts, worker-verify.ts, worker-look.ts), so tests/worker-vision.test.mjs, tests/worker-vision-host.test.mjs, tests/worker-look.test.mjs and tests/e2e/worker-shot.spec.mjs can drive them. `seedRun` gives a run the worker-tool
+// TEST-ONLY (SW realm only): the worker's vision pieces (worker-vision.ts, worker-vision-host.ts, worker-verify.ts, worker-look.ts, worker-locate.ts), so tests/worker-vision.test.mjs, tests/worker-vision-host.test.mjs and tests/e2e/worker-shot.spec.mjs can drive them. `seedRun` gives a run the worker-tool
 // state its sub-call spend is counted in; `spend` reads it back.
 (globalThis as unknown as { __mlWorkerVisionForTest?: unknown }).__mlWorkerVisionForTest = {
-    captureRunTab, workerShot, workerVisionChat, workerVisionHost, onWorkerHost, spend: workerSpend, checkVerifyRequest, workerLook,
+    captureRunTab, workerShot, workerVisionChat, workerVisionHost, onWorkerHost, spend: workerSpend, checkVerifyRequest, workerLook, workerLocate,
     // A vm has no OffscreenCanvas: a test draws the worker's crops with a recorder of its own.
     useRaster: useRasterForTest,
     seedRun: (runId: string, tabId: number) => { buildWorkerTools(runId, tabId, () => "", ["fetch_url"]); },

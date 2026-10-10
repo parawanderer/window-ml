@@ -303,6 +303,10 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512, memory
 // doesn't trip it.
 const COORD_IN_DESC = /\(\s*-?\d{1,4}\s*,\s*-?\d{1,4}\s*\)|\b[xy]\s*[=:]\s*-?\d{2,4}\b|\b\d{2,4}\s*,\s+\d{2,4}\b/i;
 
+/** One grounding call of locate, kept so a `margin` retry reuses it: the parsed box (null when the reply held none), the
+ *  letterboxed square the model saw, its prompt and its reply. */
+export type GroundCache = { nums: number[] | null; square: string; prompt: string; answer: string };
+
 // Delegated Set-of-Marks locator (see docs/spec + locate.ts). Screenshots the
 // viewport, hit-test-sweeps for candidate elements (works on non-semantic UIs),
 // draws numbered badges in memory, and asks a VISION model which badge matches the
@@ -310,16 +314,15 @@ const COORD_IN_DESC = /\(\s*-?\d{1,4}\s*,\s*-?\d{1,4}\s*\)|\b[xy]\s*[=:]\s*-?\d{
 // by this sub-call + shown in the sidebar (via the `render` envelope) — it never
 // enters the driver's history, so a text-only driver can still use it. Returns the
 // chosen element's selector (stateless currency) for click/type/answer.
-export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null, groundingRange = DEFAULT_GROUNDING_RANGE, maxTokens = 64, memory = null, host = null }: { model?: string | null; groundingModel?: string | null; groundingRange?: number; maxTokens?: number; memory?: VisionMemory | null; host?: VisionHost | null } = {}): MlTool => {
+export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null, groundingRange = DEFAULT_GROUNDING_RANGE, maxTokens = 64, memory = null, host = null, groundCache = new Map<string, GroundCache | null>() }: { model?: string | null; groundingModel?: string | null; groundingRange?: number; maxTokens?: number; memory?: VisionMemory | null; host?: VisionHost | null; groundCache?: Map<string, GroundCache | null> } = {}): MlTool => {
     // The page's host unless one is given, made when the tool RUNS (see buildLookTool).
     const hostOf = (): VisionHost => host || pageVisionHost(ml, memory);
+    // `groundCache`: the run's cache of the grounding call (undefined = not asked; null = it errored), keyed by what was
+    // asked. The page's tool lives for one ml.agent run on one document, so its own Map is that; a worker's run passes the
+    // run's per-document cache (worker-locate.ts). A `margin` retry reuses the cached coords + prompt/image and re-runs
+    // only the cheap DOM sweep: no 2nd VLM call.
     const listOf = (marks: { id: number; role: string; name: string; selector: string }[]) =>
         marks.map(m => `#${m.id} [${m.role}] ${m.name ? `"${foldDelimiters(truncate(m.name, 50), MARK_DELIMS)}"` : "(no accessible name)"} → ${m.selector}`).join("\n");
-    // Per-run cache of the grounding call (undefined = not asked; null = it errored).
-    // The tool lives for one ml.agent run, so a `margin` retry reuses the cached
-    // coords + prompt/image and re-runs only the cheap DOM sweep — no 2nd VLM call.
-    type GroundCache = { nums: number[] | null; square: string; prompt: string; answer: string };
-    const groundCache = new Map<string, GroundCache | null>();
     return ml.defineTool({
         name: "locate",
         summary: "Finds an on-screen element by describing how it looks.",
