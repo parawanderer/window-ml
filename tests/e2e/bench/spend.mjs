@@ -9,7 +9,8 @@
 // events do, with the same token counts, so the model is read from the matching event, and is null when none matches.
 
 import { createHash } from "node:crypto";
-import { priceCalls, spendByModel, PRICE_CURRENCY } from "./cost.mjs";
+import { priceCalls, spendByModel } from "./cost.mjs";
+import { PRICE_CURRENCY } from "../../../src/spend/price-book.ts";
 
 export const SPEND_SCHEMA = `
 CREATE TABLE IF NOT EXISTS calls (

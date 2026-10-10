@@ -95,6 +95,15 @@ export interface SidebarServices {
     hostAccess: { has(pattern: string): Promise<boolean>; request(pattern: string): Promise<void> } | null;
     /** a Google Sheet's title by id, or null when it cannot be read here */
     sheetTitle(id: string): Promise<string | null>;
+    /**
+     * What each model call cost, priced on READ against the price snapshot it ran under, in the order given. NULL WHERE
+     * NOTHING HERE HOLDS THE SNAPSHOTS: the extension's worker keeps them, so its frames price calls and a remote
+     * client does not. A null answer is "cannot price here", never "free".
+     */
+    priceCalls: ((calls: import("../spend/price-book").CallToPrice[]) => Promise<import("../spend/price-book").CallCost[] | null>) | null;
+    /** Open this client's Settings filtered to a field ("Electricity price"), for a warning that names what to set.
+     *  Null where these settings are not this surface's to change. */
+    findSetting: ((query: string) => void) | null;
     /** persist a display preference (the bench's state, and the like) */
     savePref(key: string, value: unknown): void;
     /** Hand a finished file to the person: a download in a browser, the share sheet on a phone. The EXPORTS go
@@ -159,6 +168,8 @@ const UNAVAILABLE: SidebarServices = {
     openLink() {},
     hostAccess: null,
     sheetTitle: async () => null,
+    priceCalls: null,
+    findSetting: null,
     savePref() {},
     saveFile() {},
     printDoc: null,

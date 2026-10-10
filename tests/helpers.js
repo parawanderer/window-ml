@@ -658,7 +658,7 @@ function closeSidebarWorlds() {
 // document (sidebar.html): renders into #root, no shadow root. In the real
 // extension the content-script shell relays __mlDebug in from the parent window;
 // in jsdom window.parent === window, so dispatch posts with source: win.
-async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), sessionTitle = () => ({ data: null }), vram = [], info = null, holdInfo = null, invocation = null, psError = null, caps = null, pythonExec = null, listModels = null, embed = null, serverTools = null, housekeeping = [], indexedDB = null } = {}) {
+async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), sessionTitle = () => ({ data: null }), vram = [], info = null, holdInfo = null, invocation = null, psError = null, caps = null, pythonExec = null, listModels = null, embed = null, serverTools = null, housekeeping = [], indexedDB = null, priceCalls = null } = {}) {
     const unloadCalls = [];
     const pyCalls = [];   // PYTHON_EXEC payloads the app sent (the bench)
     const hkCalls = [];   // DUMP_HOUSEKEEPING payloads (the Settings → Housekeeping log)
@@ -735,6 +735,8 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
                     else if (serverTools) reply = { data: serverTools };
                     cb(reply);
                 }
+                // The spend chip asks the worker to price a session's calls; `priceCalls(calls)` plays the worker.
+                else if (type === "PRICE_CALLS") cb(priceCalls ? { data: priceCalls(msg.payload.calls) } : { data: null });
                 else if (type === "DUMP_HOUSEKEEPING") { hkCalls.push(msg.payload); cb({ data: hkEvents }); }
                 else if (type === "PYTHON_EXEC") { pyCalls.push(msg.payload); cb({ data: typeof pythonExec === "function" ? pythonExec(msg.payload) : (pythonExec || { ok: true, value: 42, stdout: "" }) }); }   // background wraps: { data: PyResult }
                 else cb({ data: null });

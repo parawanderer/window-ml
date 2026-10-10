@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { eventCalls, liveSpend, spendLine } from "../tests/e2e/bench/live-spend.mjs";
-import { callCost, priceBook } from "../tests/e2e/bench/cost.mjs";
+import { callCost, priceBook } from "../src/spend/price-book.ts";
 
 const SNAP = JSON.parse(readFileSync(new URL("./fixtures/bench/price-snapshot.json", import.meta.url)));
 const BODIES = Object.fromEntries(Object.entries(SNAP).map(([k, v]) => [k, Buffer.from(JSON.stringify(v))]));

@@ -3,7 +3,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { priceBook, callCost, priceCalls, spendByModel } from "../tests/e2e/bench/cost.mjs";
+import { priceCalls, spendByModel } from "../tests/e2e/bench/cost.mjs";
+import { priceBook, callCost } from "../src/spend/price-book.ts";
 
 const SNAP = JSON.parse(readFileSync(new URL("./fixtures/bench/price-snapshot.json", import.meta.url)));
 const asBytes = (o) => Buffer.from(JSON.stringify(o));

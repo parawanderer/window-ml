@@ -10,6 +10,7 @@ import { config, rev } from "../store";
 import type { Session } from "../store";
 import { IconSend, IconStop } from "../icons";
 import { UsageBar } from "./usage";
+import { SpendChip } from "./spend";
 import { RunStatsBar } from "./agent-detail";
 
 /** How tall a multiline composer may grow before it scrolls instead: a box that can take the whole
@@ -170,6 +171,7 @@ export function Composer({ s, multiline, tools }: { s: Session; multiline?: bool
                 <RunStatsBar s={s} />
                 <span class="sp" />
                 <UsageBar s={s} />
+                <SpendChip s={s} />
             </div>
         </div>
     );

@@ -31,6 +31,7 @@ import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, senderO
 import { handleRunLogDump } from "./sw/sw-run-log";
 import { handleRunStateDump } from "./sw/sw-run-state";
 import { releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw/sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
+import { costCalls } from "./sw/sw-prices";
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants, isExtensionSender } from "./sw/sw-consent";
 import { isWorkerRun, withoutWorkerSession, makeWorkerRun, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins } from "./sw/sw-runs";
 import { moveTabKey } from "./sw/tab-replaced";
@@ -870,6 +871,13 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         if (senderOrigin(sender) === "page") { sendResponse({ error: "Refused: storage history is for extension pages." }); return; }
         if (!sessionStore) { sendResponse({ data: null }); return; }
         storageReport().then((data) => sendResponse({ data }), (e) => sendResponse({ error: String((e as Error)?.message || e) }));
+        return true;
+
+    } else if (message.type === "PRICE_CALLS") {
+        // The panel's spend view: what each of a session's calls cost, priced against the snapshot it ran under.
+        // Extension pages only: the snapshot bodies hold the box's raw model list, which `modelFilter` would hide.
+        if (senderOrigin(sender) === "page") { sendResponse({ error: "Refused: spend is for extension pages." }); return; }
+        costCalls((message.payload as { calls?: unknown } | undefined)?.calls).then((data) => sendResponse({ data }), (e) => sendResponse({ error: String((e as Error)?.message || e) }));
         return true;
 
     } else if (message.type === "ARCHIVE_FOLDER") {

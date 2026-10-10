@@ -56,6 +56,7 @@ export type BackgroundMessageType =
     | "ARCHIVE_FOLDER"   // extension pages only: the archive folder's state, or an action after a click (pick, sync, import)
     | "HUB_RUNTIME"   // extension pages only: this browser's hub connection state, or `paired` / `left` from the page that paired it
     | "STORAGE_HISTORY"   // extension pages only: the Storage section's daily history, today's picture and the largest sessions
+    | "PRICE_CALLS"   // extension pages only: what each of a session's model calls cost, priced on read (sw-prices.ts)
     | "HOUSEKEEPING_REPORT"   // another context reporting what it decided; origin is stamped from the sender
     | "PYTHON_PREWARM"   // start Pyodide ahead of a run (run start with python_exec, or the Commander opening)
     | "SAVE_SESSION" | "GET_SESSION" | "PYTHON_EXEC" | "FETCH_SHEET" | "FETCH_SHEET_TITLE" | "FETCH_URL"

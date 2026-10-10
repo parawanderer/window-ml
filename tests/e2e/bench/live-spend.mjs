@@ -8,7 +8,7 @@
 // figure here and scores.md's can differ for a run that died before it was logged.
 
 import { createHash } from "node:crypto";
-import { priceBook, callCost, PRICE_CURRENCY } from "./cost.mjs";
+import { priceBook, callCost, PRICE_CURRENCY } from "../../../src/spend/price-book.ts";
 import { subcallUsage } from "./spend.mjs";
 
 /** An empty tally: calls, what was computed and reported over how many, local ones, unpriced ones, and those waiting on a snapshot. */

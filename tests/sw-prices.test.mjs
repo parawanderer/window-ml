@@ -104,3 +104,45 @@ test("a call records the rate in effect when it ran; with no off-peak price set 
     assert.deepEqual(await spendForCall(cfg, new Date(2026, 9, 5, 23, 30)), { electricity: { perKwh: 0.22113, currency: "EUR", rate: "off-peak", tariff } }, "the whole tariff rides along, so a stretch crossing 23:00 can be split later");
     assert.deepEqual(await spendForCall({ ...cfg, electricityOffPeakPerKwh: 0 }, new Date(2026, 9, 5, 23, 30)), { electricity: { perKwh: 0.26216, currency: "EUR" } });
 });
+
+// --- priced on read, for the panel ---
+
+/** A snapshot with a model list (one local model, one external) and OpenRouter's prices for the external one. */
+const OWUI = Buffer.from(JSON.stringify({ data: [{ id: "qwen3:8b", ollama: {} }, { id: "or.acme/m1", connection_type: "external" }] }));
+const OR = Buffer.from(JSON.stringify({ data: [{ id: "acme/m1", pricing: { prompt: "0.000002", completion: "0.00001" } }] }));
+
+test("each call is priced against the snapshot it ran under: priced, local, reported, or unpriced with the reason", async () => {
+    const svc = service({ bodies: { [sha(OWUI)]: OWUI, [sha(OR)]: OR }, sources: { owui_models: { sha256: sha(OWUI) }, openrouter: { sha256: sha(OR) } } });
+    const { pricesForCall, costCalls } = await fresh(svc.fetch);
+    const prices = await pricesForCall("http://box:3002");
+    const [ext, local, reported, none, gone] = await costCalls([
+        { usage: { promptTokens: 1000, completionTokens: 100, prices }, model: "or.acme/m1" },
+        { usage: { promptTokens: 1000, completionTokens: 100, prices }, model: "qwen3:8b" },
+        { usage: { promptTokens: 10, completionTokens: 1, raw: { cost: 0.5 } }, model: "anything" },
+        { usage: { promptTokens: 10, completionTokens: 1 }, model: "or.acme/m1" },
+        { usage: { promptTokens: 10, completionTokens: 1, prices: { fetchedAt: "x", sources: { owui_models: "0".repeat(64) } } }, model: "or.acme/m1" },
+    ]);
+    assert.ok(Math.abs(ext.computed - (1000 * 0.000002 + 100 * 0.00001)) < 1e-12);
+    assert.equal(ext.basis, "openrouter");
+    assert.equal(local.local, true);
+    assert.equal(local.computed, null, "a local model is never priced in tokens");
+    assert.equal(reported.reported, 0.5, "the provider's own figure needs no snapshot");
+    assert.equal(none.computed, null);
+    assert.equal(none.why, "no price snapshot recorded");
+    assert.equal(gone.computed, null, "a snapshot this browser no longer holds prices nothing");
+    assert.equal(gone.why, "no price snapshot recorded");
+    assert.deepEqual(await costCalls("not a list"), []);
+    assert.deepEqual((await costCalls([null])).map((c) => c.why), ["no price snapshot recorded"], "a malformed call is unpriced, never a throw");
+});
+
+test("PRICE_CALLS answers an extension page and refuses a web page", async () => {
+    const { createRequire } = await import("node:module");
+    const { loadBackground } = createRequire(import.meta.url)("./helpers");
+    const bg = loadBackground({});
+    const calls = [{ usage: { promptTokens: 1, completionTokens: 1, raw: { cost: 0.25 } }, model: "m" }];
+    const refused = await bg.send({ type: "PRICE_CALLS", payload: { calls } }, { tab: { id: 7, url: "https://evil.example/" }, url: "https://evil.example/" });
+    assert.match(refused.error, /Refused/);
+    assert.equal(refused.data, undefined);
+    const reply = await bg.send({ type: "PRICE_CALLS", payload: { calls } }, { url: "chrome-extension://test/sidebar.html", tab: { id: 7, url: "https://evil.example/" } });
+    assert.equal(reply.data[0].reported, 0.25, "the overlay is an extension frame inside a page tab, and is answered");
+});
