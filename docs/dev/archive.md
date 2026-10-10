@@ -28,7 +28,8 @@ here instead. Decided with Shane on 2026-09-19; the design and the probe behind 
   `locateFile` (which the package's types omit), and `build.mjs` copies `sqlite3.wasm` beside `archive-worker.js`.
 - **Images once.** A `data:image/*` string anywhere in an event is stored decoded in `images`, keyed by the SHA-256 of
   the data URL, and replaced by `wml-archive-img:<sha>`; `readArchived` puts it back. `image_refs` lets a remove free
-  images nothing else uses.
+  images nothing else uses. A session compacted in the live store (chat-page.md, "Saved sessions") arrives with WebP
+  images; sessions archived before that keep their PNGs.
 - **A failed move KEEPS the session.** Deleting what someone asked to have archived is the one outcome that cannot be
   undone. It is logged as `sessions/archive-failed` and not retried for an hour (`ARCHIVE_RETRY_MS`).
 - **Nothing starts SQLite unless the archive is on.** A delete, and the Storage report, ask the archive only then.

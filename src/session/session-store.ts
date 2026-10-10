@@ -14,6 +14,7 @@ import type { NeutralMessage } from "../contract/contract-chat";
 import type { StartRunPayload, StoredSession } from "../contract/contract-messages";
 import type { SessionSummary } from "./session-host";
 import { addBytes, emptyBytes, measureEvents, snapshotRows, type SessionBytes, type StorageSnapshot } from "./session-storage-stats";
+import { collectPngs, replaceImages } from "./image-compact";
 
 /** How much of a person's disk the saved sessions may use before the oldest are dropped. */
 export const STORE_BUDGET_BYTES = 256 * 1024 * 1024;
@@ -66,7 +67,28 @@ export interface StoredSessionRow {
      * of reading every event. Absent on a session saved before this existed: its bytes count as unmeasured.
      */
     split?: SessionBytes;
+    /**
+     * How many of its events the image compaction has been over (`compactImages`): those before it hold no PNG it
+     * could still shrink. Absent on a session written before compaction existed, which makes all of it a candidate.
+     */
+    compacted?: number;
 }
+
+/** What one session's image compaction did. */
+export interface CompactResult {
+    /** distinct PNG images found in the events it went over */
+    found: number;
+    /** how many of them are now WebP: the rest stay PNG (not opaque, not smaller, or not pixel-identical) */
+    compacted: number;
+    /** the serialized size of those events before and after */
+    bytesBefore: number;
+    bytesAfter: number;
+    /** the event it started at: above 0, a session gone over before (new events, or a pass that was interrupted) */
+    from: number;
+}
+
+/** How many new images one commit of the image compaction holds at most: what a browser closed mid-session loses. */
+export const COMPACT_CHUNK_IMAGES = 8;
 
 /** Approximate retained size, the same measure the in-memory index uses: a screenshot dominates, and its data URL is
  *  its length. */
@@ -174,6 +196,8 @@ export class SessionStore {
              * what someone asked to have archived is the one outcome here that cannot be undone.
              */
             archive?: { enabled(): boolean; move(row: StoredSessionRow, events: MlDebugEvent[]): Promise<void> };
+            /** Something was written: what schedules the image compaction, which waits for the writes to stop. */
+            onWrite?: () => void;
             onError?: (err: unknown) => void;
         } = {},
     ) {}
@@ -395,6 +419,86 @@ export class SessionStore {
         }
         for (const [row, from, events] of writes) await this.backend.append(row, from, events);
         await this.evict();
+        if (writes.length) this.opts.onWrite?.();
+    }
+
+    /**
+     * Sessions holding stored events the image compaction has not been over, biggest first. A running session waits
+     * until it settles: its events are still arriving.
+     */
+    compactable(): string[] {
+        return [...this.rows.values()]
+            .filter((r) => (r.compacted ?? 0) < r.count && r.summary.status !== "running" && r.summary.status !== "waiting")
+            .sort((a, b) => b.bytes - a.bytes)
+            .map((r) => r.hash);
+    }
+
+    /**
+     * Re-encode the PNG screenshots in a session's stored events as lossless WebP, and rewrite those events in place.
+     * `encode` answers null to keep an image as it is, and throws when it cannot encode at all, which stops the pass
+     * with what was already committed kept.
+     *
+     * Only the EVENTS: they are what a transcript and the exports show. The row's `history` is what a resume sends the
+     * model, and it is the running loop's own array, so it is never touched.
+     *
+     * COMMITTED IN CHUNKS of at most `chunkImages` new images, each one write that also advances `row.compacted`: a
+     * browser closed in the middle of a large session loses one chunk's encoding, and the next pass starts where that
+     * one stopped. The encoding happens outside the write lock, since it takes seconds; each commit happens inside it,
+     * and only if the session is still the one that was read, so a session deleted or evicted meanwhile is not written
+     * back. Null when there was nothing to go over, or the session went away before anything was committed.
+     */
+    async compactImages(hash: string, encode: (url: string) => Promise<string | null>, o: { chunkImages?: number } = {}): Promise<CompactResult | null> {
+        await this.open();
+        await this.flushing;
+        const row = this.rows.get(hash);
+        if (!row) return null;
+        const from = row.compacted ?? 0, to = row.count;
+        if (from >= to) return null;
+        const events = (await this.backend.events(hash)).slice(from, to);
+        const max = Math.max(1, o.chunkImages ?? COMPACT_CHUNK_IMAGES);
+        const swap = new Map<string, string>(), kept = new Set<string>();
+        let result = null as CompactResult | null;
+        for (let i = 0; i < events.length;) {
+            // The chunk: events up to the one that would bring more than `max` images not yet decided. At least one
+            // event, so an event holding more than `max` images is a chunk of its own.
+            const fresh = new Set<string>();
+            let j = i;
+            for (; j < events.length; j++) {
+                const add = collectPngs([events[j]]).filter((u) => !swap.has(u) && !kept.has(u) && !fresh.has(u));
+                if (j > i && fresh.size + add.length > max) break;
+                for (const u of add) fresh.add(u);
+            }
+            for (const url of fresh) {
+                const webp = await encode(url);
+                if (webp) swap.set(url, webp); else kept.add(url);
+            }
+            const before = events.slice(i, j);
+            const after = replaceImages(before, swap);
+            const changed = after.some((e, k) => e !== before[k]);
+            const was = measureEvents(before), now = changed ? measureEvents(after) : was;
+            const at = from + i, end = from + j;
+            let committed = false as boolean;   // set inside the lock, which TypeScript cannot see
+            this.flushing = this.flushing.then(async () => {
+                if (this.rows.get(hash) !== row) return;
+                row.bytes += now.total - was.total;
+                // Only the image bytes move: the rest of each event is unchanged, and so is the number of images.
+                if (row.split) row.split = { ...row.split, total: row.split.total + now.total - was.total, images: row.split.images + now.images - was.images };
+                row.compacted = Math.max(row.compacted ?? 0, end);
+                await this.backend.append({ ...row }, at, changed ? after : []);
+                committed = true;
+            }).catch((err) => this.opts.onError?.(err));
+            await this.flushing;
+            if (!committed) return result;
+            result = {
+                found: (result?.found ?? 0) + fresh.size,
+                compacted: (result?.compacted ?? 0) + [...fresh].filter((u) => swap.has(u)).length,
+                bytesBefore: (result?.bytesBefore ?? 0) + was.total,
+                bytesAfter: (result?.bytesAfter ?? 0) + now.total,
+                from,
+            };
+            i = j;
+        }
+        return result;
     }
 
     /** A session whose events are still arriving would be evicted and immediately written again. */

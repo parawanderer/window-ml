@@ -18,7 +18,8 @@ own way. A third format = a third sink, not a third walker.
 - **Markdown** (`mdSink` → `serializeSession` → `{ md, images }`). **Screenshots
   ship as real PNG sidecars**, because base64 in a text file is unreadable to a
   coding assistant but a `.png` can be opened: the sink decodes each data-URL and
-  the markdown references `images/step-N.png`. A run with images downloads a
+  the markdown references `images/step-N.png` (`.webp` for a saved screenshot the
+  store has compacted: same pixels, see chat-page.md "Saved sessions"). A run with images downloads a
   **`.zip`** (`run.md` + `images/*.png`); a text-only run downloads a bare
   **`.md`**. The zip is written by a tiny dependency-free **store-method**
   `zipStore` (PNGs are already deflated, so no compression — local headers +

@@ -1,6 +1,6 @@
 // sw-offscreen.ts — the extension's ONE offscreen document, created lazily and reused. A service worker cannot run
 // WASM, start a dedicated worker or parse HTML, so what needs one of those lives there: the Python sandbox
-// (python_exec), the session archive's SQLite, and HTML→Markdown for a fetch the worker makes. Chrome allows one
+// (python_exec), the session archive's SQLite, the WebP encoder that shrinks saved screenshots, and HTML→Markdown for a fetch the worker makes. Chrome allows one
 // offscreen document per extension, so they share it rather than each creating its own.
 
 let offscreenReady: Promise<void> | null = null;
@@ -19,7 +19,7 @@ export function ensureOffscreen(): Promise<void> {
             await chrome.offscreen.createDocument({
                 url: "offscreen.html",
                 reasons: [chrome.offscreen.Reason.WORKERS, chrome.offscreen.Reason.DOM_PARSER],
-                justification: "Runs the sandboxed Python (Pyodide/WASM) for python_exec and the SQLite session archive, and converts fetched HTML to Markdown.",
+                justification: "Runs the sandboxed Python (Pyodide/WASM) for python_exec, the SQLite session archive and the WebP compression of saved screenshots, and converts fetched HTML to Markdown.",
             });
         } catch (e) {
             if (!(await chrome.offscreen.hasDocument?.())) throw e;   // tolerate a concurrent create
