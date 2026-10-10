@@ -28,6 +28,7 @@ import { ApprovalBody } from "./card-approval";
 import { ShowWork } from "./card-showwork";
 import { ComposerCard } from "./card-composer";
 import { toHost } from "../parent-channel";
+import { promptLine } from "../../contract/contract-run";
 
 /* ------------------------------ off-mode card ----------------------------
  * The "card" surface. When debug is OFF but a privileged ml.agent run must be
@@ -202,10 +203,10 @@ export function CardTabs({ runs, selected }: { runs: Session[]; selected?: strin
                         : <span class="card-tab-spin" aria-hidden="true" />;
                 return (
                     <div class={`card-tab${s.hash === selected ? " on" : ""}${pend ? " pend" : ""}`} role="tab"
-                        aria-selected={s.hash === selected} title={s.title || s.task || "Agent run"}
+                        aria-selected={s.hash === selected} title={s.title || promptLine(s.task || "", s.taskDisplay) || "Agent run"}
                         onClick={e => { e.stopPropagation(); cardSelectedHash.value = s.hash; }}>
                         {glyph}
-                        <span class="card-tab-label">{s.title || truncate(s.task || "Run", 22)}</span>
+                        <span class="card-tab-label">{s.title || truncate(promptLine(s.task || "", s.taskDisplay) || "Run", 22)}</span>
                         <button class="card-tab-x" aria-label="Dismiss run"
                             onPointerDown={e => { e.stopPropagation(); e.preventDefault(); dismissCardRun(s.hash); }}
                             onClick={e => e.stopPropagation()}>✕</button>
@@ -428,7 +429,7 @@ export function CardApp() {
     if ((state === "orb" || state === "orblabel") && starting) return <Orb icon="💭" label="Starting…" wide={state === "orblabel"} />;
     if (!run) return <div class="card-app" data-rev={r} />;
 
-    const title = run.title || truncate(run.task || "Agent run", 80);
+    const title = run.title || truncate(promptLine(run.task || "", run.taskDisplay) || "Agent run", 80);
     // A backend-UNREACHABLE failure gets its own headline ("Backend unreachable") so a dead box is unmistakable,
     // distinct from a generic run failure (a reachable box that errored).
     const offline = !!run.error && isBackendUnreachable(run.error);

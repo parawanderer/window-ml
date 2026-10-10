@@ -85,6 +85,9 @@ export interface Session {
     kind?: "agent" | "embed";
     task?: string;
     taskImages?: string[];   // composer attachments the user pasted with the initial task (data URLs)
+    /** How `task` is SHOWN when it is not what the person typed (a right-clicked element folded in): their words and
+     *  the element. `task` stays what the model got, the "raw" view. Absent on a plain task and on older sessions. */
+    taskDisplay?: import("../contract/contract-run").PromptDisplay;
     /** Every time this session was picked up again on a different page (`session-resumed`), oldest first. A divider
      *  in the log rather than something anybody said, and a fact the transcript needs: everything before a resume
      *  describes a page that is no longer there. */
@@ -124,7 +127,7 @@ export interface Session {
     // run()'s task, and a mid-run say() — is a `say` (all rendered identically as "you"); every turn's final
     // answer is an `answer`. `atStep` is the cumulative step count when it arrived, so the render interleaves
     // them with the turn step-groups in order. (`summary` still holds the LATEST answer for the title/status.)
-    says?: { text: string; ts: number; atStep: number; images?: string[]; id?: string; seen?: boolean }[];
+    says?: { text: string; ts: number; atStep: number; images?: string[]; id?: string; seen?: boolean; display?: import("../contract/contract-run").PromptDisplay }[];
     answers?: { text: string; ts: number; atStep: number; status: Status; hitCap?: boolean; cancelled?: boolean; error?: string }[];
 }
 

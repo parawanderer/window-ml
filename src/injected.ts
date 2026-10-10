@@ -12,7 +12,7 @@ import { mlJsonPath } from "./json-path";
 import { truncate, elPath, describeSkeleton, queryAll, selectorError, viewportRect, shadowHostReport, clickSelector, elLine, isCurrentPage, typeFromExtension } from "./dom/dom";
 import { makeAnswerFacade } from "./pointers/answer-set";
 import { accessibleName, roleOf, ariaState } from "./dom/a11y";
-import { askAboutTask } from "./agent/prompts";
+import { framePrompt } from "./agent/prompts";
 import { promptSurfaceOf } from "./agent/prompt-surface";
 import { pageContext, resolvePoint, resolveBox, agentState, mlRange } from "./util";
 import { suspiciousChars } from "./agent/security";
@@ -620,10 +620,10 @@ import { derivedFetchFields, cacheCopy } from "./ml/fetch-result";
                 const rawText = String(d.__mlSessionSend.text || "");
                 const images = Array.isArray(d.__mlSessionSend.images) ? d.__mlSessionSend.images : undefined;
                 // Right-click "Add to current run" carries an element context — fold it into the message the
-                // same way a fresh "ask about this" run does (askAboutTask), so an appended turn/steer gets the
+                // same way a fresh "ask about this" run does (framePrompt), so an appended turn/steer gets the
                 // element's clean content + selector. An element-only send (no typed text) is then non-empty.
-                const ec = d.__mlSessionSend.elementContext;
-                const text = (ec && typeof ec.selector === "string") ? askAboutTask(rawText, ec) : rawText;
+                // `display` keeps what was typed and the element, so the bubble shows those, not the framed block.
+                const { text, display } = framePrompt(rawText, d.__mlSessionSend.elementContext);
                 if (!text && !(images && images.length)) { done("none"); return; }   // allow an image-only follow-up
                 const h = handleRegistry.get(hash);
                 // An AGENT handle holds live state: steer a RUNNING loop (say — text only, no image mid-steer),
@@ -633,13 +633,15 @@ import { derivedFetchFields, cacheCopy } from "./ml/fetch-result";
                 // by someone who has stopped looking at the page.
                 const sf = d.__mlSessionSend?.surface;
                 const sayOrigin = promptSurfaceOf(sf) ? { surface: promptSurfaceOf(sf)! } : undefined;
-                if (h) { if (h.running) { h.say(text, sayOrigin); done("steer"); } else { void h.run(text, images); done("turn"); } return; }
+                // `display` is the handle class's internal argument, kept off the contract the model reads.
+                const ah = h as import("./ml/ml-agent").AgentHandle | undefined;
+                if (ah) { if (ah.running) { ah.say(text, sayOrigin, display); done("steer"); } else { void ah.run(text, images, display); done("turn"); } return; }
                 // No local handle — e.g. a HUD run that NAVIGATED (its page-side handle died with the old
                 // document). If it re-adopted as a resumable BACKGROUND run (agentRegistry, keyed by hash),
                 // continue it with a follow-up TURN rather than dropping the message into the chat path.
                 const bg = agentRegistry.get(hash);
                 if (bg) {
-                    emitDebug({ kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text });
+                    emitDebug({ kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text, ...(display ? { display } : {}) });
                     void bg.resume(text);
                     done("turn");
                     return;

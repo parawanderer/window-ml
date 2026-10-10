@@ -5,7 +5,8 @@ import { useState, useEffect, useRef } from "preact/hooks";
 import { models, modelKinds, config, ollamaIds, rev, sessionMap, backendError } from "../store";
 import { generatesText, producesEmbeddings } from "../../contract/contract-server";
 import { IconChevron, IconEye, IconEyeOff } from "../icons";
-import { useImageAttach, ThumbStrip, ElementPill } from "../transcript/composer";
+import { useImageAttach, ThumbStrip } from "../transcript/composer";
+import { ElementPill } from "../transcript/user-text";
 import {
     composerModel, composerModelOpen, composerVision, composerStream, composerMaxSteps, composerResolvedModel,
     composerOpen, composerElement, composerTarget, composerStarting, setDefaultModel,
@@ -14,6 +15,7 @@ import {
 import { isCloudModel } from "../model";
 import { STEP_BUDGETS } from "../../agent/step-budget";
 import { toHost } from "../parent-channel";
+import { promptLine } from "../../contract/contract-run";
 
 // The composer's model control: a chip showing the run's model (the per-call pick, else the default) that
 // opens a dropdown of the allowed models. Picking a row overrides the model FOR THIS RUN; the ★ persists it
@@ -166,7 +168,7 @@ export function ComposerCard() {
         <div class="card-app" data-rev={rev.value}>
             <div class="card-head">
                 <span class="card-bot" aria-hidden="true">🤖</span>
-                <span class="card-head-txt" title={appendRun ? (appendRun.title || appendRun.task || "") : undefined}>
+                <span class="card-head-txt" title={appendRun ? (appendRun.title || promptLine(appendRun.task || "", appendRun.taskDisplay)) : undefined}>
                     {target.mode === "append" ? (appendRun?.status === "pending" ? "Steer this run" : "Add to run") : "New task"}
                 </span>
                 <span class="sp" />

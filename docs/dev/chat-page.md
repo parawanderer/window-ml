@@ -705,6 +705,7 @@ Three rules it follows:
 | | |
 | --- | --- |
 | a tool step | no chevron (the row is the button and its cursor says so), no `In:` / `Out:` labels, no `rendered \| raw` switch, no `Out` at all while it waits on a person, no rail while it is collapsed, room between what ran and what came back, and the pointer and the clock on one line |
+| a message with an element folded in | the typed words and the element's chip, with no `rendered \| raw` switch (`PromptDisplay`; docs/dev/export.md) |
 | a step opening | animates from `height: 0` to `auto` (needs `interpolate-size`), so a long body does not shove the page down in one frame. The close is not animated: the component unmounts the body, and keeping every step's body mounted for a whole run to animate its removal is an expensive way to buy a fifth of a second |
 | a dataframe | its controls appear when the pointer is on the table, bottom right — the top left is where the column names are |
 | a citation | the tip belongs to the CAPTION, not the whole embed: an embed is something you read, and a tip that fires anywhere over it explains the frame on top of the contents. The link form drops the accent colour for the citation green under ordinary text |

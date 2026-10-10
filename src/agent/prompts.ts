@@ -1,6 +1,6 @@
 // The ml.agent system prompt + the tool-aware clauses appended to it. Split out
 // so the prompt is easy to find and tune. Bundled into injected.js.
-import type { ElementContext } from "../contract/contract-run";
+import type { ElementContext, PromptDisplay } from "../contract/contract-run";
 import { CURRENT_SIGNATURE } from "../api-docs.gen";
 
 export const AGENT_SYSTEM = [
@@ -263,3 +263,16 @@ export const askAboutTask = (userTask: string, ctx: ElementContext): string => {
     parts.push(`\nUser's question: ${userTask.trim() || "Tell me about the selected content."}`);
     return parts.join("\n");
 };
+
+/**
+ * A person's message as the model gets it AND as the UI shows it: with a right-clicked element, the text is framed
+ * around it (askAboutTask) and `display` keeps what they typed plus the element, so a transcript draws their words and
+ * an element card instead of the whole framed block. The one place every "ask about this" path frames a message.
+ * @param typed what the person typed
+ * @param ctx the right-clicked element, when there is one
+ * @returns the model-facing text, and how to show it (absent when it is just what they typed)
+ */
+export function framePrompt(typed: string, ctx?: ElementContext | null): { text: string; display?: PromptDisplay } {
+    if (!ctx || typeof ctx.selector !== "string") return { text: typed };
+    return { text: askAboutTask(typed, ctx), display: { typed: typed.trim(), context: [{ kind: "element", element: ctx }] } };
+}

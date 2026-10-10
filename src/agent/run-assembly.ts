@@ -11,11 +11,11 @@
 import { CITABLE_TOOLS, citeParam, withCallTitle } from "../tools/tool-params";
 import { buildServerTools } from "../tools/builtin-tools";
 import { type MlApi, type MlTool, type MlPublicConfig, DEFAULT_GROUNDING_RANGE, type VisionMemory, detectGroundingModel, type LexicalMetric, type ElementContext } from "../contract";
-import type { PromptOrigin } from "../contract/contract-run";
+import type { PromptDisplay, PromptOrigin } from "../contract/contract-run";
 import type { StartRunPayload, RebuildConfig } from "../contract/contract-messages";
 import { promptSurfaceClause, promptSurfaceOf } from "./prompt-surface";
 import { stepBudget } from "./step-budget";
-import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause, DEREF_CLAUSE, shadowClause, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, askAboutTask } from "./prompts";
+import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause, DEREF_CLAUSE, shadowClause, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, framePrompt } from "./prompts";
 import { buildDereferenceTool } from "../tools/tools";
 
 /** The part of `window.ml` assembly reads: config and capability probes, the model and server-tool lists, the tool
@@ -387,19 +387,18 @@ type KitMl = Pick<MlApi, "clickTool" | "typeTool" | "pythonTool" | "chatMetaTool
  * worker assembles every such run from this (sw-run-start.ts).
  * @param ml the host's factories for the kit's extra tools
  * @param req what the person asked for
- * @returns the task (framed around a right-clicked element when there is one), the run's provenance, and the options
- *   to assemble it with
+ * @returns the task (framed around a right-clicked element when there is one) and how to show it, the run's
+ *   provenance, and the options to assemble it with
  */
-export function userRunOptions(ml: KitMl, req: UserRunRequest): { task: string; origin: PromptOrigin; maxSteps?: number; stream: boolean; options: AssemblyOptions } {
-    let task = String(req.task || "").trim();
-    const ctx = req.elementContext;
-    if (ctx && typeof ctx.selector === "string") task = askAboutTask(task, ctx);
+export function userRunOptions(ml: KitMl, req: UserRunRequest): { task: string; display?: PromptDisplay; origin: PromptOrigin; maxSteps?: number; stream: boolean; options: AssemblyOptions } {
+    const { text: task, display } = framePrompt(String(req.task || "").trim(), req.elementContext);
     const origin: PromptOrigin = { surface: promptSurfaceOf(req.surface) ?? "hud" };
     const proseClause = req.hud === "quiet" ? HUD_PROSE_QUIET : HUD_PROSE_PROGRESS;
     const maxSteps = stepBudget(req.maxSteps);
     const model = typeof req.model === "string" && req.model.trim() ? req.model.trim() : undefined;
     return {
         task, origin,
+        ...(display ? { display } : {}),
         ...(maxSteps ? { maxSteps } : {}),
         stream: req.stream === true,
         options: {

@@ -139,6 +139,7 @@ export function onDebug(ev: MlDebugEvent, runtime?: string): void {
             prev.model = ev.model ?? prev.model;
             prev.task = prev.task ?? ev.task;
             prev.taskImages = prev.taskImages ?? ev.images;
+            prev.taskDisplay = prev.taskDisplay ?? ev.display;
             prev.maxSteps = ev.maxSteps ?? prev.maxSteps;
             prev.agentConfig = ev.config ?? prev.agentConfig;
             if (ev.resumed) prev.resumed = true;
@@ -148,7 +149,7 @@ export function onDebug(ev: MlDebugEvent, runtime?: string): void {
         }
         sessionMap.set(key, {
             hash: key, ...(runtime ? { runtime } : {}), model: ev.model, tag: "session", kind: "agent",
-            createdTs: ev.ts, lastTs: ev.ts, status: "pending", turns: [], steps: [], task: ev.task, taskImages: ev.images, pageUrl: ev.pageUrl, pageTitle: ev.pageTitle, maxSteps: ev.maxSteps, agentConfig: ev.config, resumed: ev.resumed,
+            createdTs: ev.ts, lastTs: ev.ts, status: "pending", turns: [], steps: [], task: ev.task, taskImages: ev.images, ...(ev.display ? { taskDisplay: ev.display } : {}), pageUrl: ev.pageUrl, pageTitle: ev.pageTitle, maxSteps: ev.maxSteps, agentConfig: ev.config, resumed: ev.resumed,
             config: { system: null, model: ev.model, think: null, schema: false, toolIds: null, maxTokens: null, save: false },
         });
         drainOrphans(key, runtime);   // apply any step/result that raced ahead of this start (cross-page replay)
@@ -275,7 +276,7 @@ export function onDebug(ev: MlDebugEvent, runtime?: string): void {
         // shows during a follow-up run (harmless for a mid-run steer, which is already pending). `seen` starts
         // from the drained-id set, so a "seen" event that raced ahead of this bubble already counts.
         const seen = !!(ev.sayId && steerSeen.has(ev.sayId));
-        s.says = [...(s.says || []), { text: ev.text, ts: ev.ts, atStep: maxSessionStep(s), images: ev.images, id: ev.sayId, seen }];
+        s.says = [...(s.says || []), { text: ev.text, ts: ev.ts, atStep: maxSessionStep(s), images: ev.images, id: ev.sayId, seen, ...(ev.display ? { display: ev.display } : {}) }];
         s.status = "pending"; s.ended = false; s.lastTs = ev.ts; rev.value++;
         return;
     }
@@ -432,7 +433,8 @@ export function ensureBlockSummary(hash: string, i: number, prompt: string, resu
     });
 }
 export type SayItem = NonNullable<Session["says"]>[number];
-export interface RunTaskBlock { prompt: string; promptImages?: string[]; turns: AgentTurnGroup[]; steers: SayItem[]; answer: NonNullable<Session["answers"]>[number] | null; }
+/** One TASK of a multi-task run, as Show work segments it: the prompt (with its images and display), its turns, its steers and its answer. */
+export interface RunTaskBlock { prompt: string; promptImages?: string[]; promptDisplay?: import("../contract/contract-run").PromptDisplay; turns: AgentTurnGroup[]; steers: SayItem[]; answer: NonNullable<Session["answers"]>[number] | null; }
 // Segment a run into per-task blocks (a prompt → its turns → its answer). null when there's ≤1 task — nothing
 // to segment, so Show-work renders its flat trace as before.
 export function buildRunBlocks(run: Session): RunTaskBlock[] | null {
@@ -452,6 +454,7 @@ export function buildRunBlocks(run: Session): RunTaskBlock[] | null {
         blocks.push({
             prompt: i === 0 ? (run.task || "") : (continuations[i - 1]?.text || ""),
             promptImages: i === 0 ? run.taskImages : continuations[i - 1]?.images,
+            promptDisplay: i === 0 ? run.taskDisplay : continuations[i - 1]?.display,
             turns: turns.filter(t => t.step > prev && t.step <= boundary),
             steers: says.filter(s => s.id && s.atStep > prev && s.atStep <= boundary),   // mid-run messages IN this block
             answer: answers[i],

@@ -90,6 +90,9 @@ export type ContentMessageType =
 export interface StartRunPayload {
     runId: string;
     task: string;
+    /** how `task` is shown when it is not what the person typed (a right-clicked element folded in). Honoured only on
+     *  a run the worker built: a page's run shows its task as the model got it. */
+    display?: import("./contract-run").PromptDisplay;
     systemPrompt: string;
     tools: { name: string; description: string; parameters: JsonSchema; requiresApproval: boolean; capabilities: string[]; precheck?: boolean; summary?: string; remote?: RemoteToolTarget }[];
     model: string | null;

@@ -16,7 +16,7 @@
 // also fans the run's start and result. So the index de-duplicates by meaning (a second start, a repeated result, a
 // repeated "seen", a chat turn's id), which holds whichever copy arrives first.
 import type { MlDebugEvent } from "../contract/contract-debug";
-import { HASH_RE } from "../contract/contract-run";
+import { HASH_RE, promptLine } from "../contract/contract-run";
 import { SESSION_CONTRACT_VERSION, type RuntimeId, type SessionId, type SessionKind, type SessionStatus, type SessionStreamMessage, type SessionSummary, type StreamPosition } from "./session-host";
 
 /** Where one event came from. */
@@ -277,7 +277,7 @@ export class SessionIndex {
             case "agent":
                 s.hasStart = true;
                 s.lastResultKey = null;
-                if (ev.task && !s.summary.task) s.summary.task = ev.task.slice(0, TASK_CAP);
+                if (ev.task && !s.summary.task) s.summary.task = promptLine(ev.task, ev.display).slice(0, TASK_CAP);
                 if (ev.model !== undefined) s.summary.model = ev.model;
                 if (!s.summary.page && ev.pageUrl) s.summary.page = { url: ev.pageUrl, ...(ev.pageTitle ? { title: ev.pageTitle } : {}), ...(s.owner != null ? { tabId: s.owner } : {}) };
                 if (ev.resumed) { s.ended = false; s.interrupted = false; }
@@ -305,7 +305,7 @@ export class SessionIndex {
                 s.lastResultKey = null;
                 s.ended = false;
                 s.interrupted = false;
-                if (!s.summary.task && ev.text) s.summary.task = ev.text.slice(0, TASK_CAP);
+                if (!s.summary.task && ev.text) s.summary.task = promptLine(ev.text, ev.display).slice(0, TASK_CAP);
                 break;
             case "agent-say-seen":
                 s.seenSays.add(ev.sayId);

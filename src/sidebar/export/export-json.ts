@@ -186,7 +186,7 @@ function agentMessages(s: Session): ExportMessage[] {
         pos: x.atStep || 0, ts: x.ts, isSay: true,
         msg: compact<ExportMessage>({
             role: "user" as const, text: x.text, at: iso(x.ts) || new Date(0).toISOString(),
-            atStep: x.atStep, images: x.images?.length ? x.images : undefined,
+            atStep: x.atStep, images: x.images?.length ? x.images : undefined, display: x.display,
         }),
     }));
     const answers = (s.answers || []).map(a => ({
@@ -207,7 +207,7 @@ function agentMessages(s: Session): ExportMessage[] {
             pos: 0, ts: s.createdTs, isSay: true,
             msg: compact<ExportMessage>({
                 role: "user", text: s.task, at: iso(s.createdTs) || new Date(0).toISOString(),
-                atStep: 0, images: s.taskImages?.length ? s.taskImages : undefined,
+                atStep: 0, images: s.taskImages?.length ? s.taskImages : undefined, display: s.taskDisplay,
             }),
         });
     }
@@ -348,6 +348,7 @@ export function sessionToJson(s: Session, prov?: ExportProvenance | string): Exp
         model: s.model ?? undefined,
         config: isAgent ? s.agentConfig : s.config,
         task: s.task,
+        taskDisplay: s.taskDisplay,
         page: isAgent ? pageOf(s) : undefined,
         taskImages: s.taskImages?.length ? s.taskImages : undefined,
         outcome: outcome(s, isAgent),

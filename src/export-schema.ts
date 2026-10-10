@@ -40,6 +40,7 @@ import type { TokenUsage } from "./contract/contract-chat";
 import type { PersistGrant, ReusedGrant } from "./contract/contract-agent";
 import type { RenderDescriptor, ToolFeedback } from "./contract/contract-render";
 import type { SubcallUsage, DebugAgentConfig, DebugSessionConfig } from "./contract/contract-debug";
+import type { PromptDisplay } from "./contract/contract-run";
 
 /** Bumped only on a BREAKING change. Adding an optional field is not breaking. */
 export const EXPORT_SCHEMA_VERSION = 1;
@@ -158,8 +159,11 @@ export interface ExportSession {
     /** The options the session was created with, verbatim: `createChat`'s for a chat,
      *  `ml.agent`'s for a run. */
     config?: DebugSessionConfig | DebugAgentConfig;
-    /** The initial task. Agent runs only. */
+    /** The initial task, exactly as the model got it. Agent runs only. */
     task?: string;
+    /** How {@link ExportSession.task} was SHOWN, when that is not what the person typed: their words and what they
+     *  attached (a right-clicked element, whose content `task` has folded in). Absent on a plain task. */
+    taskDisplay?: PromptDisplay;
     /** The page the run STARTED on. Agent runs only, and absent on a run exported from a build that
      *  predates the field. Close to a primary key when comparing runs — the same task against a
      *  different page is a different experiment — and previously recoverable only by regexing the URL
@@ -276,6 +280,9 @@ export interface ExportMessage {
     atStep?: number;
     /** Attached images, as data URLs. */
     images?: string[];
+    /** User only: how `text` was SHOWN, when that is not what the person typed: their words and what they attached
+     *  (a right-clicked element, whose content `text` has folded in). `text` stays what the model got. */
+    display?: PromptDisplay;
     /** Assistant only: the model that actually produced this, after server-side
      *  resolution. May differ from {@link ExportSession.model}. */
     model?: string;

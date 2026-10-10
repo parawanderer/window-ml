@@ -8,8 +8,11 @@
 
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { IconChevron, IconCheck, IconCompose, IconCopy } from "../icons";
-import { ClickableImg, cursorTipOn, openCtxMenu } from "../ui-kit";
+import { clearHighlight, ClickableImg, cursorTipOn, highlightEl, openCtxMenu } from "../ui-kit";
 import { useCopy } from "../copy-hash";
+import type { ElementContext } from "../../contract";
+import type { PromptContext } from "../../contract/contract-run";
+import { truncate } from "../format";
 
 /** How tall a message may be before it folds, in lines of its own text. Past this it shows `FOLD_LINES` and fades. */
 const FOLD_LINES = 8;
@@ -102,4 +105,25 @@ export function UserActions({ text }: { text: string }) {
             </button>
         </span>
     );
+}
+
+// The right-click "ask about this" reference pill: a chip naming the resolved container (role + the leaf you
+// clicked). Hovering it BOXES that container on the live page (reuses the hover-highlight), so you see exactly
+// what context is captured before sending. Removable in the composer (`onRemove`); read-only under a sent message.
+export function ElementPill({ ctx, onRemove }: { ctx: ElementContext; onRemove?: () => void }) {
+    const label = ctx.anchorText ? `${ctx.role || "element"} · "${truncate(ctx.anchorText, 30)}"` : (ctx.role || "element");
+    return (
+        <div class="el-pill" onPointerEnter={() => highlightEl(ctx.selector)} onPointerLeave={clearHighlight} title={ctx.selector}>
+            <span class="el-pill-ic" aria-hidden="true">📌</span>
+            <span class="el-pill-txt">{label}</span>
+            {onRemove ? <button class="el-pill-x" onClick={onRemove} aria-label="Remove element context" title="Remove">×</button> : null}
+        </div>
+    );
+}
+
+/** What was ATTACHED to a sent message as context rather than typed (a right-clicked element), as chips under its
+ *  images: the rendered half of a message whose model-facing text had it folded in (`PromptDisplay`). */
+export function SentContext({ context }: { context?: readonly PromptContext[] | null }) {
+    if (!context?.length) return null;
+    return <div class="sent-ctx">{context.map((c, i) => c.kind === "element" ? <ElementPill key={i} ctx={c.element} /> : null)}</div>;
 }

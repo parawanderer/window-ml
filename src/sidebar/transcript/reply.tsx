@@ -17,6 +17,7 @@ import { Hash } from "../copy-hash";
 import { STEP_BUDGETS } from "../../agent/step-budget";
 import { aliasOf, AnswerBody, ResultBlock } from "./answer-render";
 import { hasTokens } from "../../pointers/answer-tokens";
+import { promptLine } from "../../contract/contract-run";
 
 // The session's createChat config (not the per-turn request/messages — full
 // message history is a separate export feature).
@@ -271,7 +272,7 @@ export function SessionRow({ s, profile }: { s: Session; profile: "utility" | "d
     // typed, which is the whole reason it read as a chat.
     const title = s.kind === "embed"
         ? `ml.embed() · ${s.turns.length} call${s.turns.length === 1 ? "" : "s"}`
-        : (s.title || s.task || s.turns[0]?.user || "(no prompt)");
+        : (s.title || (s.task && promptLine(s.task, s.taskDisplay)) || s.turns[0]?.user || "(no prompt)");
     return (
         <button class="row" onClick={() => (view.value = { name: "detail", hash: s.hash })}>
             <Dot status={s.status} />

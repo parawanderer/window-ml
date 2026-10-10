@@ -9,8 +9,8 @@
 
 import type { ElementContext } from "../contract";
 import type { StartRunPayload, RebuildConfig } from "../contract/contract-messages";
-import { shortHash, type PromptOrigin } from "../contract/contract-run";
-import { askAboutTask } from "../agent/prompts";
+import { shortHash, type PromptDisplay, type PromptOrigin } from "../contract/contract-run";
+import { framePrompt } from "../agent/prompts";
 import { promptSurfaceOf } from "../agent/prompt-surface";
 import { stepBudget } from "../agent/step-budget";
 import { assembleRun, pageRebuild, rebuildFor, startPayload, userRunOptions, withPageContext, type UserRunRequest } from "../agent/run-assembly";
@@ -109,6 +109,7 @@ export async function startUserRun(tabId: number, req: UserRunRequest, opts: { k
             page: { origin: new URL(url).origin, url, title: tab.title || undefined },
             builtBy: "worker",
         }),
+        ...(recipe.display ? { display: recipe.display } : {}),
     };
     if (opts.keep) keepSession(runId);
     // The run's result reaches every surface through its own lifecycle events (`builtBy: "worker"`), so nobody
@@ -139,14 +140,15 @@ export function announce(tabId: number, event: Record<string, unknown>): void {
  * @param hash the run
  * @param text what the person said
  * @param origin where it was typed, when known
+ * @param display how to show it, when `text` is not what the person typed
  * @returns false when the run is not live in this worker
  */
-export function steerRun(hash: string, text: string, origin?: PromptOrigin): boolean {
+export function steerRun(hash: string, text: string, origin?: PromptOrigin, display?: PromptDisplay): boolean {
     const inbox = runInboxes.get(hash);
     if (!inbox) return false;
     const sayId = `sc_${Date.now().toString(36)}_${++steerSeq}`;
     inbox.queue.push({ id: sayId, text, ...(origin ? { origin } : {}) });
-    announce(inbox.tabId, { kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text, sayId });
+    announce(inbox.tabId, { kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text, sayId, ...(display ? { display } : {}) });
     return true;
 }
 
@@ -176,17 +178,16 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
     }
     const surface = promptSurfaceOf(body.surface);
     const origin: PromptOrigin | undefined = surface ? { surface } : undefined;
-    const ec = body.elementContext;
-    const text = action === "send" ? (ec && typeof ec.selector === "string" ? askAboutTask(String(body.text || ""), ec) : String(body.text || "")) : "";
+    const { text, display } = action === "send" ? framePrompt(String(body.text || ""), body.elementContext) : { text: "", display: undefined };
     if (action === "send" && !text && !(body.images && body.images.length)) return "none";
     if (runControllers.has(hash)) {
         if (action === "continue") return "busy";
-        return steerRun(hash, text, origin) ? "steer" : "busy";
+        return steerRun(hash, text, origin, display) ? "steer" : "busy";
     }
     if (!stored) return "none";
     // Re-register the builtin toolset in the page first: the document may not be the one the last turn ran on.
     if (!stored.p.rebuild || (await adoptOnTab(tabId, hash, stored.p.rebuild)).error) return "none";
-    if (text) announce(tabId, { kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text });
+    if (text) announce(tabId, { kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text, ...(display ? { display } : {}) });
     const steps = stepBudget(body.maxSteps);
     hostRun({ type: "RESUME_RUN", payload: { runId: hash, task: text, ...(steps ? { maxSteps: steps } : {}) } },
         tabId, () => { /* reported through the session's events */ });
