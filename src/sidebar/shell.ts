@@ -271,24 +271,47 @@ let hostPort: MessagePort | null = null;
 /** Send `msg` to the app in `frame`. Dropped while there is no port yet, as a post to a frame still loading was. */
 function toApp(msg: unknown): void { hostPort?.postMessage(msg); }
 
+/** Ports offered to `frame` and not yet taken: each becomes `hostPort` only when the app's first message on it is the
+ *  ack of its own nonce. Capped, oldest dropped. */
+const offeredPorts = new Set<MessagePort>();   // state: ui — ports offered to the app's frame, awaiting its ack
+const MAX_OFFERED = 8;
+
 /**
  * Answer the app's hello with a port. The app sent its nonce through chrome.tabs.sendMessage, which reaches this tab's
  * content scripts and not the page; the port goes back to `frame` alone, with the nonce, by a window post that only
  * that frame receives. The page can neither learn the nonce nor read what crosses the port.
+ *
+ * Any frame of sidebar.html says hello, the page's own included (it is web-accessible), and the hello does not say which
+ * frame sent it. So the current port stays until the new one is TAKEN: the app's first message on it acks the nonce it
+ * was posted with, which only a frame that is `frame` and sent that hello can do. A page's frame of sidebar.html gets
+ * no port (the post goes to `frame`), and `frame` ignores a nonce that is not its own, so the offer lapses and the
+ * card's channel is untouched.
  * @param nonce the app's secret
  * @param sender who sent the hello: the extension's own sidebar page, or it is ignored
  */
 function openHostPort(nonce: string, sender: chrome.runtime.MessageSender): void {
     if (!frame?.contentWindow || sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL("sidebar.html"))) return;
-    closeHostPort();
     const ch = new MessageChannel();
-    hostPort = ch.port1;
-    hostPort.onmessage = (m) => fromApp(m.data);
+    const offered = ch.port1;
+    offeredPorts.add(offered);
+    if (offeredPorts.size > MAX_OFFERED) { const oldest = offeredPorts.values().next().value; if (oldest) { offeredPorts.delete(oldest); try { oldest.close(); } catch { /* closed */ } } }
+    offered.onmessage = (m) => {
+        if (hostPort === offered) { fromApp(m.data); return; }
+        if (!offeredPorts.has(offered) || m.data?.__mlPortAck !== nonce) return;
+        offeredPorts.delete(offered);
+        try { hostPort?.close(); } catch { /* already closed */ }
+        hostPort = offered;
+    };
     frame.contentWindow.postMessage({ __mlHostPort: nonce }, new URL(chrome.runtime.getURL("")).origin, [ch.port2]);
 }
 
-/** Drop the port, when its frame goes. */
-function closeHostPort(): void { try { hostPort?.close(); } catch { /* already closed */ } hostPort = null; }
+/** Drop the port and every offer not yet taken, when their frame goes. */
+function closeHostPort(): void {
+    try { hostPort?.close(); } catch { /* already closed */ }
+    hostPort = null;
+    for (const p of offeredPorts) { try { p.close(); } catch { /* closed */ } }
+    offeredPorts.clear();
+}
 /** The keys the frame's chart would use right now — non-empty only while the pointer is over one of its plots
  *  (the app says so, `__mlSidebarApp: "chartKeys"`). What `relayChartKey` takes from the page. */
 let chartKeys: string[] = [];

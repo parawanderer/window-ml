@@ -44,6 +44,9 @@ function openChannel(): void {
         if (port || !e.data || e.data.__mlHostPort !== nonce || !e.ports[0]) return;
         port = e.ports[0];
         port.onmessage = (m) => { if (m.data) handler(m.data); };
+        // Taking the port: the shell keeps its current one until this ack of the nonce arrives first on the new one, so
+        // a page's own frame of sidebar.html (which says hello too) cannot cut the real channel.
+        port.postMessage({ __mlPortAck: nonce });
         for (const msg of outbox.splice(0)) port.postMessage(msg);
         onPort();
     });
