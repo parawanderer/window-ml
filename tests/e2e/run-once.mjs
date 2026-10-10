@@ -34,7 +34,7 @@ const MANIFEST_VERSION = await import("node:fs/promises")
     .then((fs) => fs.readFile(new URL("../../manifest.json", import.meta.url), "utf8"))
     .then((t) => JSON.parse(t).version).catch(() => undefined);
 
-import { launchExtension, configureExtension, waitForMl, watchRunEvents, setWindow } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, watchRunEvents, setWindow, screencast } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 import { renderMarkdownPage, lanePrelude } from "./viewer.mjs";
@@ -347,10 +347,11 @@ export const FAKE_MODEL = "fake-model";
  *   ANY NUMBER of further turns, decided as the run goes (converse.mjs): asked after each turn, with that turn's
  *   result; a string is the next message, null ends the session. Each turn gets `timeoutMs`.
  * @param {(gate: object) => Promise<boolean>} [cfg.decide] decides each approval gate itself, instead of `approve`
- * @param {(run: object, talk: (text: string) => Promise<{ turn: number, answered: boolean, result: object | null, events: object[] }>, ctl: { window: (state: "minimized" | "normal") => Promise<void> }) => Promise<void>} [cfg.keep]
+ * @param {(run: object, talk: (text: string) => Promise<{ turn: number, answered: boolean, result: object | null, events: object[] }>, ctl: { window: (state: "minimized" | "normal") => Promise<void>, screencast: (onFrame: (jpeg: Buffer, meta: object) => void | Promise<void>) => Promise<() => Promise<void>> }) => Promise<void>} [cfg.keep]
  *   called once the run is over, with what runOnce will return, before the browser closes: the run stays live (its
  *   session, page and gates) until `keep` resolves, and each `talk` sends one more turn into it (bench/hold.mjs);
- *   `ctl.window` minimises or shows the run's window (headful only: see `window`)
+ *   `ctl.window` minimises or shows the run's window (headful only: see `window`); `ctl.screencast(onFrame)` streams what
+ *   it shows as JPEG frames, headless too, and resolves a function that stops it (harness.mjs `screencast`)
  * @param {"minimized"} [cfg.window] run headful with every window minimised, so it can be shown on demand (`ctl.window`)
  * @param {string} [cfg.start] start route on the test site (e.g. "/spreadsheet")
  * @param {string[]|null} [cfg.tools] limit to this subset of domTools (smaller prompt), or null for the full kit
@@ -721,7 +722,7 @@ export async function runOnce(cfg = {}) {
                 await startTurn(text);
                 const answered = await awaitResults(++turnsDone, Date.now() + timeoutMs);
                 return { turn: turnsDone, answered, result: [...events].reverse().find((e) => e.kind === "agent-result") ?? null, events };
-            }, { window: (state) => setWindow(ext.context, page, state) });
+            }, { window: (state) => setWindow(ext.context, page, state), screencast: (onFrame) => screencast(ext.context, onFrame) });
             approvalLoopOn = false; await gates.catch(() => {});
         }
 

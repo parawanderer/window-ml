@@ -70,6 +70,45 @@ export async function setWindow(/** @type {any} */ context, /** @type {any} */ p
     } finally { await cdp.detach().catch(() => {}); }
 }
 
+/**
+ * Stream what a browser shows, as JPEG frames (CDP `Page.startScreencast`), headless or not: for watching a held bench
+ * run on the bench page (bench/hold.mjs). It streams the newest page of `context` that is not the extension's own, and
+ * moves to a page opened later (the agent can open a tab mid-run) and back when that one closes. Chrome sends a frame
+ * when the page repaints and waits for each to be acknowledged, so a page that does not change costs nothing, and
+ * `onFrame` is awaited before the ack: a slow consumer slows the stream rather than queueing frames.
+ * @param {(jpeg: Buffer, meta: { width: number, height: number, url: string }) => void | Promise<void>} onFrame
+ * @returns {Promise<() => Promise<void>>} stops the stream
+ */
+export async function screencast(/** @type {any} */ context, onFrame, { maxWidth = 1280, maxHeight = 900, quality = 60 } = {}) {
+    let /** @type {any} */ cdp = null, stopped = false;
+    const ours = (/** @type {any} */ p) => p.url().startsWith("chrome-extension://");
+    const pick = () => context.pages().filter((/** @type {any} */ p) => !ours(p) && !p.isClosed()).at(-1);
+    const attach = async (/** @type {any} */ page) => {
+        const prev = cdp;
+        cdp = null;
+        if (prev) { await prev.send("Page.stopScreencast").catch(() => {}); await prev.detach().catch(() => {}); }
+        if (!page || stopped) return;
+        const s = await context.newCDPSession(page);
+        cdp = s;
+        s.on("Page.screencastFrame", async (/** @type {any} */ f) => {
+            try { await onFrame(Buffer.from(f.data, "base64"), { width: f.metadata.deviceWidth, height: f.metadata.deviceHeight, url: page.url() }); }
+            catch { /* a consumer's failure must not stop the stream */ }
+            await s.send("Page.screencastFrameAck", { sessionId: f.sessionId }).catch(() => {});
+        });
+        await s.send("Page.startScreencast", { format: "jpeg", quality, maxWidth, maxHeight });
+    };
+    const back = () => { if (!stopped) attach(pick()).catch(() => {}); };
+    const onPage = (/** @type {any} */ p) => { p.once("close", back); if (!ours(p)) attach(p).catch(() => {}); };
+    for (const p of context.pages()) p.once("close", back);
+    context.on("page", onPage);
+    await attach(pick());
+    return async () => {
+        stopped = true;
+        context.off("page", onPage);
+        await attach(null);
+    };
+}
+
 /** Write the extension's non-secret config (chatUrl / apiFormat / model / debugMode …) via the SW. */
 export async function configureExtension(/** @type {any} */ sw, /** @type {Record<string, unknown>} */ config) {
     await sw.evaluate((/** @type {any} */ cfg) => new Promise((r) => chrome.storage.sync.set(cfg, () => r(undefined))), config);

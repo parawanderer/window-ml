@@ -14,6 +14,7 @@ import { SweepTimeline } from "./timeline";
 import { Flight, Stats, Results, Runs } from "./runs";
 import { Viewer } from "./viewer";
 import { SpecCard } from "./spec";
+import { Watch } from "./streams";
 import { FromSpec, specSource } from "./from-spec";
 import { installTooltipLayer } from "../../../../src/sidebar/tooltip-layer";
 import { ThemeToggle, applyTheme, readTheme } from "./theme";
@@ -158,6 +159,7 @@ function App() {
                 <Flight s={s} />
                 <Answers s={s} base={base} live={!baked} />
                 <Continued s={s} base={base} />
+                <Watch live={!baked} />
                 <SweepTimeline s={s} />
                 <Results s={s} />
                 <Runs s={s} base={base} />

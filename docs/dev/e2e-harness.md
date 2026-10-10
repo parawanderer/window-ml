@@ -95,6 +95,9 @@ as in AGENTS.md — they are all under `src/`.
   browser is headless like every bench browser; `--hold-window` makes it a minimised real window instead (`window:
   "minimized"`; `hold.mjs --show`/`--hide`, `setWindow` in harness.mjs), opt-in because on macOS each one takes the screen
   as it opens, and `--hold failures` opens one per cell; added turns go to `continued.jsonl` and the page's Continued card.
+  To look at one, the live page's Watch card streams its screen: the held process serves CDP screencast frames on a local
+  port (`bench/stream.mjs`, `screencast` in harness.mjs, recorded as `stream` in `held.json`) only while a viewer is
+  connected, and serve.mjs passes it through as `/held/<pid>/stream` to the page's tiles (`page/streams.tsx`).
   **`--serve`** prints a banner URL for a live page a human watches — every run's state and what is
   queued, the in-flight run's step against its budget and the tool it is in, elapsed / mean-per-run /
   mean-per-step / ETA, and links to each `run.md`. Served by node:http + SSE; the page is Preact
