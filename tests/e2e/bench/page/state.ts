@@ -94,7 +94,16 @@ export interface BenchState {
     repo?: string | null;
     /** the box's memory over the sweep (resource-poll.mjs), each distinct capacity once; null without readings */
     resources?: PackedSamples | null;
+    /** what this invocation's runs spent so far, priced as their calls came in (live-spend.mjs); null without calls */
+    spend?: SweepSpend | null;
 }
+
+/** Calls priced one way or another (live-spend.mjs): computed from the price snapshot each named, reported by the
+ *  provider, served locally (electricity), priced by neither, or waiting for their snapshot's body. */
+export interface SpendTally { calls: number; computed: number; computedCalls: number; reported: number; reportedCalls: number; local: number; unpriced: number; pending: number }
+
+/** A sweep's live spend: the total, per driver model, and per run (by its place in `runs`). */
+export interface SweepSpend { currency: string; total: SpendTally; models: Record<string, SpendTally>; runs: Record<string, SpendTally> }
 
 /** A model's score on the scoreboard (scores.mjs `scoreboard`): θ relative to the average task, and its chance there. */
 export interface Score { theta: number; se: number; lo: number; hi: number; chance: number; chanceLo: number; chanceHi: number }
@@ -123,6 +132,16 @@ export interface ScoreBoard {
         difficulty: { b: number; se: number; lo: number; hi: number } | null; medianTokens: number | null }[];
     /** the regression suite's verdict on the newest build and μ over builds (regress.mjs); null without two builds' runs */
     regression?: RegressionReport | null;
+    /** every logged call priced on read (spend.mjs `spendReport`); null before any call was logged */
+    spend?: SpendReport | null;
+}
+
+/** The scoreboard's spend per driver model (cost.mjs `spendByModel`), keyed by the scoreboard's model key. */
+export interface SpendReport {
+    currency: string; calls: number; runsWithCalls: number; runsWithout: number;
+    /** what each column means (spend.mjs `SPEND_ABOUT`) */
+    about: Record<string, string>;
+    models: { model: string; runs: number; calls: number; computed: number; computedCalls: number; reported: number; reportedCalls: number; local: number; unpriced: number; why: string | null }[];
 }
 
 /** A posterior from the regression fit: the estimate, its spread and interval, P(> 0), and P(> the smallest counted shift). */

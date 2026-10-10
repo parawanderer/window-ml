@@ -317,6 +317,13 @@ real run to record them; unset records nothing, never zero. Runs logged before t
 per-call data". Both tables sync with the store (views `calls`, `price_snapshots`).
 `sqlite3 tests/e2e/artifacts/bench/scores.sqlite "SELECT run, call, model, json_extract(usage,'$.raw.cost') FROM calls ORDER BY id DESC LIMIT 20"`
 
+While a sweep runs, the same pricing runs live (`live-spend.mjs`): each call's usage is read off the run's event stream
+as it arrives and priced against the snapshot it names, a body the log lacks fetched from `PRICE_SNAPSHOT_URL/raw/<sha256>`,
+checked, and kept in `snapshots`. The page shows it as a `spent` badge in the header (the whole invocation) and a
+`spent` segment on each driver model's pill, computed first and reported in the tip; a `+` means some calls are unpriced
+or still waiting on their snapshot. `page.json` carries it as `spend`, the terminal prints it as one line at the end, and
+`scores.html` has a Spend card from the logged calls.
+
 `tests/e2e/artifacts/bench/<spec>/` (gitignored) holds `report.md`, `rows.json` (the aggregate AND every
 individual run, for further analysis), and one directory per RUN at
 `<task>/<combo>/r<N>/`, each containing that run's full observe-style artifacts:

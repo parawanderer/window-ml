@@ -4,7 +4,8 @@
 // saying where it comes from, so a reader never needs the code to know what they are looking at.
 
 import { render, Fragment } from "preact";
-import type { ScoreBoard, ScoreModel, RegressionReport } from "./state";
+import type { ScoreBoard, ScoreModel, RegressionReport, SpendReport } from "./state";
+import { fmtMoney } from "./format";
 import { Tip } from "../../../../src/sidebar/help-tip";
 import { ThemeToggle, applyTheme, readTheme } from "./theme";
 import { Hash } from "../../../../src/sidebar/copy-hash";
@@ -78,6 +79,46 @@ function Models({ b }: { b: ScoreBoard }) {
                             <td class="l dim">{when(m.last)}</td>
                         </tr>
                     ))}</tbody>
+                </table>
+            </div>
+        </section>
+    );
+}
+
+/** What every logged model call cost, per driver model, priced when this page was written (spend.mjs, cost.mjs). */
+function Spend({ sp, models }: { sp: SpendReport; models: ScoreModel[] }) {
+    const about = sp.about ?? {};
+    const byKey = new Map(models.map((m) => [m.key, m]));
+    const money = (x: number, n: number, of: number) => (n ? <span class="tt" data-tip={`over ${n} of ${of} call${of === 1 ? "" : "s"}`}>{fmtMoney(x, sp.currency)}{n < of ? <span class="dim"> ({n})</span> : null}</span> : <span class="dim">—</span>);
+    return (
+        <section class="card">
+            <header><h2><Tip tip="Each logged model call (the driver's turns and the calls its tools made), priced from the price snapshot it ran under. Nothing is priced by hand: a model is joined to a price through the box's model list.">Spend</Tip></h2>
+                <span class="sub">{sp.calls} call{sp.calls === 1 ? "" : "s"} over {sp.runsWithCalls} run{sp.runsWithCalls === 1 ? "" : "s"}{sp.runsWithout ? `; ${sp.runsWithout} run${sp.runsWithout === 1 ? "" : "s"} logged before calls were recorded ha${sp.runsWithout === 1 ? "s" : "ve"} no per-call data` : ""}.</span></header>
+            <div class="tablewrap">
+                <table class="scores">
+                    <thead><tr>
+                        <th class="l">model</th>
+                        <th><Tip tip={about.computed}>computed</Tip></th>
+                        <th><Tip tip={about.reported}>reported</Tip></th>
+                        <th>runs</th>
+                        <th>calls</th>
+                        <th><Tip tip={about.local}>local</Tip></th>
+                        <th class="l"><Tip tip={about.unpriced}>unpriced</Tip></th>
+                    </tr></thead>
+                    <tbody>{sp.models.map((r) => {
+                        const m = byKey.get(r.model);
+                        return (
+                            <tr key={r.model}>
+                                <td class="l">{m ? <ModelName m={m} /> : <code>{r.model}</code>}</td>
+                                <td>{money(r.computed, r.computedCalls, r.calls)}</td>
+                                <td>{money(r.reported, r.reportedCalls, r.calls)}</td>
+                                <td>{r.runs}</td>
+                                <td>{r.calls}</td>
+                                <td>{r.local || ""}</td>
+                                <td class="l">{r.unpriced ? <span class="tt" data-tip={`Most often: ${r.why ?? "unknown"}`}>{r.unpriced} <span class="dim">{r.why}</span></span> : ""}</td>
+                            </tr>
+                        );
+                    })}</tbody>
                 </table>
             </div>
         </section>
@@ -214,7 +255,7 @@ function Board({ b }: { b: ScoreBoard }) {
                 </div>
             </header>
             <main>
-                {t.runs ? <>{b.regression ? <Regression r={b.regression} /> : null}<Models b={b} /><Tasks b={b} /></> : <section class="card"><div class="empty">Nothing logged yet: a sweep against a real model logs every run it makes.</div></section>}
+                {t.runs ? <>{b.regression ? <Regression r={b.regression} /> : null}<Models b={b} />{b.spend ? <Spend sp={b.spend} models={b.models} /> : null}<Tasks b={b} /></> : <section class="card"><div class="empty">Nothing logged yet: a sweep against a real model logs every run it makes.</div></section>}
                 <Method b={b} />
             </main>
         </>

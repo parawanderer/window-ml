@@ -70,6 +70,7 @@ import { repoUrl } from "../../../scripts/gen-build-info.mjs";
 import { openScores, modelInfo, runRow, logRuns, readRuns, scoreboard, sweepScores, writeScoreFiles, unscoredTasks, modelKey, SCORES_DB } from "./scores.mjs";
 import { plannedPower } from "./regress.mjs";
 import { callsOf, logCalls, logSnapshot, missingSnapshots } from "./spend.mjs";
+import { liveSpend, fetchFromPriceService, spendLine } from "./live-spend.mjs";
 import { fitRasch } from "./rasch.mjs";
 import { watch as watchFs } from "node:fs";
 // The sweep's timeline: each run's events as the resource panel derives them; the page draws them with its lane.
@@ -229,6 +230,8 @@ async function runCell(cell, ctx, index) {
     // running row is a spinner, and a slow step is indistinguishable from a wedged one.
     const onEvent = (ev) => {
         ctx.rawOf?.(index)?.push(ev);
+        // A model call's usage rides the same stream: priced as it comes, for the page's spend (live-spend.mjs).
+        const spent = ctx.spendOn?.(index, ev);
         const live = { ...(ctx.liveOf?.(index) || {}) };
         if (ev.kind === "agent") { live.maxSteps = ev.maxSteps; live.last = "started"; }
         else if (ev.kind === "agent-step" && ev.tool) {
@@ -246,7 +249,10 @@ async function runCell(cell, ctx, index) {
         } else if (ev.kind === "agent-result") {
             live.tool = "answered";
             live.last = String(ev.summary ?? "").replace(/\s+/g, " ").slice(0, 90);
-        } else return;
+        } else {
+            if (spent) ctx.report?.(index, "running", {});
+            return;
+        }
         ctx.report?.(index, "running", { live });
     };
     const env = { backend: ctx.backend, dist: ctx.buildDirs.get(cell) ?? null, approve: ctx.spec.approve, capture: ctx.capture, timeoutMs: ctx.spec.timeoutMs, warm: ctx.warm };
@@ -543,9 +549,20 @@ const main = async () => {
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
         runs: runsState, rows: aggregateRows(cells, results), older,
         started, finished: null, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: liveScores, cloud, scripted, repo,
-        resources: resPoll?.resources() ?? null,
+        resources: resPoll?.resources() ?? null, spend: spent?.summary(driverOf) ?? null,
     });
     ctx.liveOf = (i) => runsState[i].live;
+    // What this invocation's runs have spent so far, priced as their calls come in (live-spend.mjs): a snapshot body
+    // the scores log lacks is fetched from the price service by its hash and kept there. Only against a real backend.
+    const driverOf = (i) => cells[i].effects.backend?.model ?? backend?.model ?? null;
+    const snapshotBody = scores?.prepare("SELECT body FROM snapshots WHERE hash = ?");
+    const spent = backend ? liveSpend({
+        bodyOf: (h) => snapshotBody?.get(h)?.body ?? null,
+        fetchBody: backend.priceSnapshotUrl ? fetchFromPriceService(backend.priceSnapshotUrl) : null,
+        keep: (snap) => scores && logSnapshot(scores, snap),
+        changed: () => push(),
+    }) : null;
+    ctx.spendOn = (i, ev) => spent?.add(i, ev, driverOf(i)) ?? false;
     ctx.report = (i, state, info) => {
         const r = runsState[i];
         if (state === "running" && r.state !== "running") r.startedAt = Date.now();   // for the elapsed ticker
@@ -661,7 +678,7 @@ const main = async () => {
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
         runs, rows, older, started, finished, jobs: args.jobs, dirty, fingerprint, pdf: args.pdf, interviews, skipped, spec: provenance,
         scores: scoreLines("../scores.html"), cloud, scripted, repo,
-        resources: resPoll?.resources() ?? null,
+        resources: resPoll?.resources() ?? null, spend: spent?.summary(driverOf) ?? null,
         // What may leave this machine for the bench store (sync.mjs): nothing when the spec says `sync: false`, and no
         // run of a task that says so.
         ...(spec.sync === false || spec.tasks.some((t) => t.sync === false)
@@ -694,6 +711,7 @@ const main = async () => {
         console.log(`\n  ${path.relative(ROOT, SCORES_DB)}: ${ctx.logged} run${ctx.logged === 1 ? "" : "s"} logged; the scoreboard is scores.md / scores.html beside it (node tests/e2e/bench/scores.mjs).`);
         if (none.length) console.log(`  ${none.length} of ${spec.tasks.length} task${spec.tasks.length === 1 ? "" : "s"} had no \`succeeded\` predicate, so their runs count for tokens but not for any model's score: ${none.join(", ")}`);
     } else if (backend) console.log("\n  (runs not logged for the scoreboard: this Node has no node:sqlite)");
+    if (pageState.spend) console.log(`  spend: ${spendLine(pageState.spend)}`);
     if (resPoll) console.log(`  box: ${resPoll.mode === "stream" ? `its event stream, every frame kept in ${path.relative(ROOT, BOX_DB)}` : "polled memory (the server has no event stream)"}; memory.md says what it did.`);
     console.log("");
     // A live watcher holds the process open: without a page to keep current, stop watching marks.jsonl now.
@@ -705,7 +723,7 @@ const main = async () => {
         dash.update({
             name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
             runs: runsState, rows, older, started, finished, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: scoreLines("/scores"), cloud, scripted, repo,
-            resources: pageState.resources,
+            resources: pageState.resources, spend: pageState.spend,
         });
         // The page outlives the sweep, the sweep's PROCESS does not: a caller that started it in the background (an
         // agent's background task, a `&` and a wait) learns it finished by its exit, which a held-open server never gave.

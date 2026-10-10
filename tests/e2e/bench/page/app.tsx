@@ -23,6 +23,7 @@ import { signed } from "../../../../src/sidebar/interval-bar";
 import { laneScoped, resWindowS, resWindowPref } from "../../../../src/sidebar/store";
 import { installChartKeys } from "../../../../src/sidebar/resource/resource-chart";
 import { cloudModels, scriptedModels } from "../../../../src/sidebar/palette";
+import { SpendBadge, SpendRole } from "./spend";
 
 declare global { interface Window { __BENCH_STATE__?: BenchState } }
 
@@ -62,7 +63,7 @@ function Models({ s }: { s: BenchState }) {
     for (const r of s.runs) if (r.models) seen.set([r.models.driver, r.models.vision, r.models.utility].join(" "), r.models);
     if (!seen.size) return null;
     const role = (k: keyof typeof ROLE_TIP, v?: string | null) => <span class={`role tt${v ? "" : " none"}`} data-tip={ROLE_TIP[k]}><span class="rk">{k}</span>{v ? <code>{v}</code> : "none"}</span>;
-    return <div class="models">{[...seen.values()].map((m, i) => <span key={i} class="mset">{role("driver", m.driver)}<ScoreRole s={s} driver={m.driver} />{role("vision", m.vision)}{role("utility", m.utility)}</span>)}</div>;
+    return <div class="models">{[...seen.values()].map((m, i) => <span key={i} class="mset">{role("driver", m.driver)}<ScoreRole s={s} driver={m.driver} /><SpendRole spend={s.spend} driver={m.driver} />{role("vision", m.vision)}{role("utility", m.utility)}</span>)}</div>;
 }
 
 /** The sweep's name, what it is for, how far along it is, and its counts; sticky, so it stays in view. */
@@ -87,6 +88,7 @@ function Head({ s, disconnected }: { s: BenchState; disconnected: boolean }) {
             <div class="counts">
                 <span class="badge tt" data-tip="Runs finished out of the whole matrix.">{done} / {s.runs.length} runs · {pct}%</span>
                 {failed ? <span class="badge bad">{failed} failed</span> : null}
+                <SpendBadge spend={s.spend} />
                 {cached ? <span class="badge tt" data-tip="Runs not re-run: an earlier sweep of the same build measured them. --no-cache runs them again.">{cached} cached</span> : null}
                 {onDisk ? <span class="badge tt" data-tip="Runs this invocation did not select (--only, --models) that an earlier one of the same spec and build ran: in every figure, as if read from the cache.">{onDisk} already on disk</span> : null}
                 {s.finished ? <span class="badge ok">done</span> : <span class="badge tt" data-tip="Runs going at once, each in its own browser (--jobs).">{s.jobs} job{s.jobs > 1 ? "s" : ""}</span>}
