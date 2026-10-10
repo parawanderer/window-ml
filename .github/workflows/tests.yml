@@ -354,6 +354,10 @@ jobs:
       # past 35k characters, under Claude Code's own 40k warning, while a paragraph can still just be moved out.
       - name: AGENTS.md size (reminder only)
         run: node scripts/check-agents-size.mjs
+      # How long ago the prompt the model reads was last reviewed (docs/dev/prompt-review.md): a warning past 30 days or
+      # 25 commits that changed model-facing text, never a failure.
+      - name: Prompt review age (reminder only)
+        run: node scripts/check-prompt-review.mjs
 
   build:
     # Never skipped on main: `pages` publishes from its artifact.
