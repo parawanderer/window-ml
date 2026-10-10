@@ -65,7 +65,7 @@ const GENRES = {
     // locate run over, the verify after an action, and the answer's media and python's image cropped there.
     "worker-vision": {
         about: "the worker's vision: its capture, its geometry-only host, the verify, and the answer's media and python's image",
-        files: ["worker-vision.test.mjs", "worker-vision-host.test.mjs", "worker-verify.test.mjs", "worker-media.test.mjs"],
+        files: ["worker-vision.test.mjs", "worker-vision-host.test.mjs", "worker-verify.test.mjs", "worker-media.test.mjs", "review-media.test.mjs"],
     },
     ext: {
         about: "the extension's own worlds — background, relay, CDP, the page loop",
