@@ -65,14 +65,17 @@ export function holdMode(cell, cli = []) {
     return cli.includes("failures") ? "failures" : "always";
 }
 
-/** A spec file as run.mjs reads it: a `.bench.ts` module, or an interview (`.json`, `.interview.ts`) over the given models. */
+/** A spec file as run.mjs reads it: a `.bench.ts` module, or an interview (`.json`, `.interview.ts`) over the given models.
+ *  A module whose default export is a FUNCTION is called with the load options (the regression suite, built over the
+ *  models given at run time). */
 export async function loadSpec(specPath, { models = [], surface, turnMinutes } = {}) {
     const { isInterviewFile, loadInterviewFile, interviewBench } = await import("../interview.mjs");
     if (isInterviewFile(specPath)) {
         return interviewBench(await loadInterviewFile(specPath), models, { surface, turnMinutes });
     }
     const mod = await import(pathToFileURL(path.resolve(specPath)).href);
-    return mod.default || mod.spec;
+    const spec = mod.default || mod.spec;
+    return typeof spec === "function" ? await spec({ models, surface, turnMinutes }) : spec;
 }
 
 /**

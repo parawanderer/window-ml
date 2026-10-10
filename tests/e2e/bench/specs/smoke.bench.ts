@@ -59,6 +59,7 @@ export default defineBench({
     tasks: [
         {
             id: "read-code",
+            regression: { included: false, reason: "calibrates the bench against the scripted fake LLM: the outcome is decided in advance" },
             start: "/step3",
             task: "What code is shown on this page? Use findByText to locate it, then answer with just the code.",
             tools: ["findByText", "answer"],
@@ -76,6 +77,7 @@ export default defineBench({
         },
         {
             id: "re-emitter",
+            regression: { included: false, reason: "calibrates the bench against the scripted fake LLM: the outcome is decided in advance" },
             start: "/step3",
             task: "Find the code on this page and report it.",
             tools: ["findByText", "answer"],
@@ -85,6 +87,7 @@ export default defineBench({
         },
         {
             id: "citer",
+            regression: { included: false, reason: "calibrates the bench against the scripted fake LLM: the outcome is decided in advance" },
             start: "/step3",
             task: "Find the code on this page and cite it.",
             tools: ["findByText", "answer"],
@@ -105,6 +108,7 @@ export default defineBench({
             // measuring nothing. So the calibration has to reproduce the SHAPE of the failure, not only
             // its presence.
             id: "reformatter",
+            regression: { included: false, reason: "calibrates the bench against the scripted fake LLM: the outcome is decided in advance" },
             start: "/spreadsheet",
             task: "Read the sales table, then compute over the rows.",
             tools: ["exec", "answer"],
@@ -118,6 +122,7 @@ export default defineBench({
             // An INTERVIEW (a panel's cell): a task, then a follow-up sent once it ends. Each turn's answer must
             // land in outbox/ and in the cell's `turns`, so the page and summary.md can set them side by side.
             id: "interview",
+            regression: { included: false, reason: "calibrates the bench against the scripted fake LLM: the outcome is decided in advance" },
             start: "/step3",
             task: "Find the code on this page and report it.",
             // A check on an answer, and a follow-up only an answer can call for (interviews as code, `defineInterview`).
@@ -133,6 +138,7 @@ export default defineBench({
         },
         {
             id: "seeded",
+            regression: { included: false, reason: "calibrates the bench against the scripted fake LLM: the outcome is decided in advance" },
             start: "/step3",
             task: "Now summarise, without repeating the raw output.",
             tools: ["findByText", "answer"],

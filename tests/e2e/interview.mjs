@@ -304,6 +304,7 @@ export function interviewBench(iv, models, { surface, turnMinutes = 15 } = {}) {
         apply: (combo) => ({ backend: { model: combo.model } }),
         tasks: [{
             id: iv.name, task: askText(iv.task), asks: iv.asks, start: iv.start ?? "/step3",
+            regression: { included: false, reason: "an interview: its answers are read side by side, not scored" },
             ...(typeof iv.task === "object" && iv.task.expect ? { expect: iv.task.expect, why: iv.task.why } : {}),
             ...(iv.followUps?.length ? { followUps: iv.followUps } : {}),
             surface: s && s !== "console" ? s : null,

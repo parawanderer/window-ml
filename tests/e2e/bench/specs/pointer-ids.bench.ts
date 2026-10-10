@@ -60,6 +60,7 @@ export default defineBench({
             // that uses the pointer cites it; one that does not retypes the rows, which is exactly what
             // `reEmission` counts.
             id: "cite-or-retype",
+            regression: { included: false, reason: "this spec turns pointers on for every run (`apply`), which the suite's default build does not" },
             start: "/spreadsheet",
             task: "Read the sales table and tell me which region had the highest revenue.",
             followup: "Now show me the underlying rows you used.",
@@ -81,6 +82,7 @@ export default defineBench({
             // note naming the pointer to the rest. With the whole table in context every model answered in one
             // step without `dereference` (deref 0 across six models and both arms, window-ml-3a's step 3 sweep).
             id: "read-back",
+            regression: { included: false, reason: "its seed and pointer arm come from this spec's idFormat dimension, which the suite does not run" },
             start: "/spreadsheet",
             seed: {
                 task: "Capture the sales table.",

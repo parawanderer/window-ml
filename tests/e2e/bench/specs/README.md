@@ -9,12 +9,16 @@ npm run build
 node --import tsx tests/e2e/bench/run.mjs tests/e2e/bench/specs/<spec>.bench.ts --repeats 2 --dry
 ```
 
-The two specs in this directory are the worked examples, and they are deliberately different kinds:
+The specs in this directory, the first two being the worked examples:
 
 | Spec | What it is |
 | --- | --- |
 | [`smoke.bench.ts`](smoke.bench.ts) | The instrument checking **itself**. Scripted against a fake model so every reading is known before it runs. Read this first — it is the shortest complete spec, and it shows `seed`, per-task `script`, and a `succeeded` predicate. |
 | [`pointer-ids.bench.ts`](pointer-ids.bench.ts) | A real experiment: does the surface form of a pointer id change whether a model cites data instead of retyping it? Shows a build-time `defines` dimension, a multi-turn task, and a seeded history. |
+| [`tool-use.bench.ts`](tool-use.bench.ts) | Everyday tool use: total a big CSV, pierce a shadow root, read a script-rendered page, navigate only when asked. All five tasks are in the regression suite. |
+| [`regression.bench.ts`](regression.bench.ts) | The regression suite: every task marked `regression: { included: true }` here, over `--models` (`run.mjs --regression`). Its default export is a function of the model list. |
+
+Every task says `regression: { included, reason }`: whether the regression suite runs it, and why. The type requires it.
 
 ## Why TypeScript and not JSON
 

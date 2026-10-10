@@ -17,6 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fitRasch, sigmoid, RASCH_DEFAULTS } from "./rasch.mjs";
 import { defaultBy } from "./mark.mjs";
+import { regressionReport, regressionText } from "./regress.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../../..");
@@ -46,6 +47,7 @@ CREATE TABLE IF NOT EXISTS runs (
     backend TEXT,
     build TEXT NOT NULL, dirty INTEGER NOT NULL,
     shown TEXT,                        -- what the model was SHOWN (shownFingerprint); null for a run logged before it was
+    suite TEXT,                        -- the suite the sweep ran as ("regression"); null for any other sweep
     passed INTEGER,                    -- the predicate's verdict; null when unscored
     error TEXT, hit_cap INTEGER NOT NULL,
     prompt_tokens INTEGER, completion_tokens INTEGER, sub_tokens INTEGER,
@@ -68,7 +70,7 @@ export async function openScores(file = SCORES_DB) {
     db.exec(SCHEMA);
     // A log made before a column existed gets it, empty: its runs stay readable and say they predate it.
     const have = new Set(db.prepare("PRAGMA table_info(runs)").all().map((c) => c.name));
-    for (const [col, type] of [["shown", "TEXT"]]) if (!have.has(col)) db.exec(`ALTER TABLE runs ADD COLUMN ${col} ${type}`);
+    for (const [col, type] of [["shown", "TEXT"], ["suite", "TEXT"]]) if (!have.has(col)) db.exec(`ALTER TABLE runs ADD COLUMN ${col} ${type}`);
     return db;
 }
 
@@ -132,7 +134,7 @@ export async function modelInfo(backend, fetchImpl = fetch) {
  *
  * @param {object} saved the cell as run.mjs saves it (`measurement`, `hash`, `models`, `combo`, `fromCache`)
  * @param {object} task the spec's task
- * @param {object} sweep `{ name, spec, specHash, fingerprint, dirty, backend, info, by, at }`
+ * @param {object} sweep `{ name, spec, specHash, fingerprint, dirty, backend, info, by, at, suite }`
  */
 export function runRow(saved, task, sweep) {
     if (!sweep.backend || saved.fromCache || !saved.hash || !saved.models?.driver) return null;
@@ -149,7 +151,7 @@ export function runRow(saved, task, sweep) {
         local: info.local == null ? null : info.local ? 1 : 0,
         vision: saved.models.vision ?? null, utility: saved.models.utility ?? null,
         backend: new URL(sweep.backend.chatUrl).origin,
-        build: sweep.fingerprint, dirty: sweep.dirty ? 1 : 0, shown: saved.shown ?? null,
+        build: sweep.fingerprint, dirty: sweep.dirty ? 1 : 0, shown: saved.shown ?? null, suite: sweep.suite ?? null,
         passed: scored && m.succeeded != null ? (m.succeeded ? 1 : 0) : null,
         error: m.error ? String(m.error).slice(0, 500) : null, hit_cap: m.hitCap ? 1 : 0,
         // tokenCost adds 0 for a step with no usage, so a run whose backend reported none sums to 0: that is unknown.
@@ -160,7 +162,7 @@ export function runRow(saved, task, sweep) {
 }
 
 /** The runs table's columns, in the order a row is written (the store's Parquet files carry the same). */
-export const COLS = ["run", "at", "by", "sweep", "spec", "spec_hash", "task", "task_hash", "task_text", "variant", "scored", "model", "digest", "quant", "params", "local", "vision", "utility", "backend", "build", "dirty", "shown", "passed", "error", "hit_cap", "prompt_tokens", "completion_tokens", "sub_tokens", "tokens", "steps", "secs"];
+export const COLS = ["run", "at", "by", "sweep", "spec", "spec_hash", "task", "task_hash", "task_text", "variant", "scored", "model", "digest", "quant", "params", "local", "vision", "utility", "backend", "build", "dirty", "shown", "passed", "error", "hit_cap", "prompt_tokens", "completion_tokens", "sub_tokens", "tokens", "steps", "secs", "suite"];
 
 /** Insert rows; one already logged (the same run hash) is left as it is. Returns how many were new. */
 export function logRuns(db, rows) {
@@ -268,6 +270,8 @@ export function scoreboard(rows, { db = SCORES_DB, minScored = MIN_SCORED, ...fi
         // What each number is, resolved for these settings: the page's tooltips and scores.md's notes are these strings.
         about: Object.fromEntries(Object.entries(SCORE_ABOUT).map(([k, v]) => [k, typeof v === "function" ? v(method) : v])),
         models, tasks,
+        // The regression suite's verdict on the newest build (regress.mjs), when there are regression runs of two builds.
+        regression: regressionReport(rows, { modelKey }),
     };
 }
 
@@ -297,6 +301,8 @@ export function scoresText(board) {
     const out = [`# Model scoreboard`, "", `From ${board.totals.runs} logged run${board.totals.runs === 1 ? "" : "s"} in \`${board.db}\` (SQLite, table \`runs\`; one row per run, never updated). Generated ${board.generated}.`, ""];
     if (!board.totals.runs) return out.concat(["Nothing logged yet: a sweep against a real model logs every run it makes."]).join("\n") + "\n";
     out.push(`${board.totals.fitted} scored run${board.totals.fitted === 1 ? "" : "s"} over ${board.tasks.filter((t) => t.difficulty).length} task${board.tasks.length === 1 ? "" : "s"} went into the fit. Left out: ${board.totals.unscored} run${board.totals.unscored === 1 ? "" : "s"} of tasks with no predicate (they still count for tokens), ${board.totals.errored} that errored.`, "");
+    // The regression verdict first: a flagged build is the one thing on this page that asks for action.
+    if (board.regression) out.push(...regressionText(board.regression));
     out.push("## Models", "", "| model | quant | score θ [interval] | chance on an average task | scored | passed | tasks | bloat | median tokens | runs | last |", "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
     for (const m of board.models) {
         const s = m.score ? `${num(m.score.theta)} [${num(m.score.lo)}, ${num(m.score.hi)}]` : `too few runs (${m.scored}/${board.method.minScored})`;
