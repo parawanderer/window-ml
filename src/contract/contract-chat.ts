@@ -35,6 +35,25 @@ export interface ToolCall {
     arguments: Record<string, unknown> | string;
 }
 
+/** The electricity price a call ran under: the rate in effect then, and for a two-rate tariff the whole tariff. */
+export interface ElectricityPrice {
+    perKwh: number;
+    currency: string;
+    /** which rate applied, for a two-rate tariff */
+    rate?: "normal" | "off-peak";
+    /** the whole tariff, so energy over a stretch that crosses into off-peak is priced by each moment's own rate */
+    tariff?: ElectricityTariff;
+}
+
+/** A two-rate electricity tariff. The hours are on the clock of `tz`, the device's IANA time zone. */
+export interface ElectricityTariff {
+    normalPerKwh: number;
+    offPeakPerKwh: number;
+    offPeakHours: string;
+    offPeakWeekends: boolean;
+    tz: string;
+}
+
 /** A price snapshot from the box's price service, by reference: when it was fetched, and each source's sha256 (its
  *  body is kept once in the worker, `sw-prices.ts`). */
 export interface PriceRef {
@@ -66,7 +85,7 @@ export interface TokenUsage {
     prices?: PriceRef;
     /** The electricity price set when this call ran (`electricityPerKwh`), so a local model's energy can be costed at
      *  the price of the day. Absent when unset. */
-    electricity?: { perKwh: number; currency: string; rate?: "normal" | "off-peak" };
+    electricity?: ElectricityPrice;
     /** How much of the prompt the server's prefix cache served — OpenAI's standard
      *  `usage.prompt_tokens_details.cached_tokens` (ollama's own OpenAI route, and OpenWebUI's once its fork is
      *  deployed), ollama-native `prompt_eval_cached_count`, or the protobuf `End.cached_tokens`. `0` is a COLD

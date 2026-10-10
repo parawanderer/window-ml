@@ -99,7 +99,8 @@ test("off-peak: the hours wrap past midnight, weekends count all day when set, a
 test("a call records the rate in effect when it ran; with no off-peak price set it records the single rate as before", async () => {
     const { spendForCall } = await fresh(async () => new Response("", { status: 404 }));
     const cfg = { electricityPerKwh: 0.26216, electricityCurrency: "EUR", electricityOffPeakPerKwh: 0.22113, electricityOffPeakHours: "23-7", electricityOffPeakWeekends: true };
-    assert.deepEqual(await spendForCall(cfg, new Date(2026, 9, 5, 14)), { electricity: { perKwh: 0.26216, currency: "EUR", rate: "normal" } });
-    assert.deepEqual(await spendForCall(cfg, new Date(2026, 9, 5, 23, 30)), { electricity: { perKwh: 0.22113, currency: "EUR", rate: "off-peak" } });
+    const tariff = { normalPerKwh: 0.26216, offPeakPerKwh: 0.22113, offPeakHours: "23-7", offPeakWeekends: true, tz: Intl.DateTimeFormat().resolvedOptions().timeZone };
+    assert.deepEqual(await spendForCall(cfg, new Date(2026, 9, 5, 14)), { electricity: { perKwh: 0.26216, currency: "EUR", rate: "normal", tariff } });
+    assert.deepEqual(await spendForCall(cfg, new Date(2026, 9, 5, 23, 30)), { electricity: { perKwh: 0.22113, currency: "EUR", rate: "off-peak", tariff } }, "the whole tariff rides along, so a stretch crossing 23:00 can be split later");
     assert.deepEqual(await spendForCall({ ...cfg, electricityOffPeakPerKwh: 0 }, new Date(2026, 9, 5, 23, 30)), { electricity: { perKwh: 0.26216, currency: "EUR" } });
 });

@@ -69,10 +69,16 @@ const DEFAULT_CHAT_PATH = { openai: "/api/chat/completions", ollama: "/api/chat"
  */
 export function spendFromEnv(dotenv = {}, env = {}) {
     const get = (k) => (env[k] ?? dotenv[k] ?? "").trim();
-    const perKwh = Number(get("ELECTRICITY_PER_KWH"));
+    const perKwh = Number(get("ELECTRICITY_PER_KWH")), offPeak = Number(get("ELECTRICITY_OFFPEAK_PER_KWH"));
     return {
         ...(get("PRICE_SNAPSHOT_URL") ? { priceSnapshotUrl: get("PRICE_SNAPSHOT_URL") } : {}),
         ...(perKwh > 0 ? { electricityPerKwh: perKwh, electricityCurrency: get("ELECTRICITY_CURRENCY") || "EUR" } : {}),
+        // A two-rate tariff's off-peak half: only alongside a price, since the extension ignores it without one.
+        ...(perKwh > 0 && offPeak > 0 ? {
+            electricityOffPeakPerKwh: offPeak,
+            ...(get("ELECTRICITY_OFFPEAK_HOURS") ? { electricityOffPeakHours: get("ELECTRICITY_OFFPEAK_HOURS") } : {}),
+            ...(get("ELECTRICITY_OFFPEAK_WEEKENDS") ? { electricityOffPeakWeekends: !/^(0|false|no|off)$/i.test(get("ELECTRICITY_OFFPEAK_WEEKENDS")) } : {}),
+        } : {}),
     };
 }
 

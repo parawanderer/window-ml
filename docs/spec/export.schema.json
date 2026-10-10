@@ -784,27 +784,7 @@
         },
         "electricity": {
           "description": "The electricity price set when this call ran (`electricityPerKwh`), so a local model's energy can be costed at the price of the day. Absent when unset.",
-          "type": "object",
-          "properties": {
-            "perKwh": {
-              "type": "number"
-            },
-            "currency": {
-              "type": "string"
-            },
-            "rate": {
-              "type": "string",
-              "enum": [
-                "normal",
-                "off-peak"
-              ]
-            }
-          },
-          "required": [
-            "perKwh",
-            "currency"
-          ],
-          "additionalProperties": true
+          "$ref": "#/$defs/ElectricityPrice"
         },
         "cachedTokens": {
           "description": "How much of the prompt the server's prefix cache served — OpenAI's standard `usage.prompt_tokens_details.cached_tokens` (ollama's own OpenAI route, and OpenWebUI's once its fork is deployed), ollama-native `prompt_eval_cached_count`, or the protobuf `End.cached_tokens`. `0` is a COLD prefill; ABSENT is \"not reported\" — never collapsed, since a count of 0 is a measurement. A cache hit is invisible in `promptTokens`, which is the same either way; this and the prefill's duration are the evidence. Cheap in TIME, never in tokens — do not fold it into a spend figure.",
@@ -862,6 +842,64 @@
       "required": [
         "fetchedAt",
         "sources"
+      ],
+      "additionalProperties": true
+    },
+    "ElectricityPrice": {
+      "type": "object",
+      "description": "The electricity price a call ran under: the rate in effect then, and for a two-rate tariff the whole tariff.",
+      "properties": {
+        "perKwh": {
+          "type": "number"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "rate": {
+          "description": "which rate applied, for a two-rate tariff",
+          "type": "string",
+          "enum": [
+            "normal",
+            "off-peak"
+          ]
+        },
+        "tariff": {
+          "description": "the whole tariff, so energy over a stretch that crosses into off-peak is priced by each moment's own rate",
+          "$ref": "#/$defs/ElectricityTariff"
+        }
+      },
+      "required": [
+        "perKwh",
+        "currency"
+      ],
+      "additionalProperties": true
+    },
+    "ElectricityTariff": {
+      "type": "object",
+      "description": "A two-rate electricity tariff. The hours are on the clock of `tz`, the device's IANA time zone.",
+      "properties": {
+        "normalPerKwh": {
+          "type": "number"
+        },
+        "offPeakPerKwh": {
+          "type": "number"
+        },
+        "offPeakHours": {
+          "type": "string"
+        },
+        "offPeakWeekends": {
+          "type": "boolean"
+        },
+        "tz": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "normalPerKwh",
+        "offPeakPerKwh",
+        "offPeakHours",
+        "offPeakWeekends",
+        "tz"
       ],
       "additionalProperties": true
     },

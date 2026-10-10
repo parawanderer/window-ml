@@ -162,10 +162,13 @@ export async function spendForCall(config: { priceSnapshotUrl?: unknown; electri
     if (Number.isFinite(perKwh) && perKwh > 0) {
         const currency = String(config.electricityCurrency || "").trim().toUpperCase();
         const offPeak = Number(config.electricityOffPeakPerKwh);
-        out.electricity = Number.isFinite(offPeak) && offPeak > 0
-            ? (isOffPeak(now, String(config.electricityOffPeakHours ?? ""), config.electricityOffPeakWeekends !== false)
-                ? { perKwh: offPeak, currency, rate: "off-peak" } : { perKwh, currency, rate: "normal" })
-            : { perKwh, currency };
+        if (Number.isFinite(offPeak) && offPeak > 0) {
+            const offPeakHours = String(config.electricityOffPeakHours ?? ""), offPeakWeekends = config.electricityOffPeakWeekends !== false;
+            const off = isOffPeak(now, offPeakHours, offPeakWeekends);
+            const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { return ""; } })();
+            out.electricity = { perKwh: off ? offPeak : perKwh, currency, rate: off ? "off-peak" : "normal",
+                tariff: { normalPerKwh: perKwh, offPeakPerKwh: offPeak, offPeakHours, offPeakWeekends, tz } };
+        } else out.electricity = { perKwh, currency };
     }
     return out;
 }
