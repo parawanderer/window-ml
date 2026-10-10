@@ -78,8 +78,9 @@ import { openScores, modelInfo, runRow, logRuns, readRuns, scoreboard, sweepScor
 import { plannedPower } from "./regress.mjs";
 import { callsOf, logCalls, logSnapshot, missingSnapshots } from "./spend.mjs";
 import { liveSpend, fetchFromPriceService, spendLine } from "./live-spend.mjs";
-import { startBudget, autoLimit, parseSize, register, update, unregister, openFootprints, logFootprint, ledger, PAUSED_EXIT } from "./memory-budget.mjs";
-import { failureShape, menuText, groupHeld, groupCommands, shellLine, HOLD_HINTS } from "./hold-menu.mjs";
+import { statusWriter } from "./status.mjs";
+import { startBudget, autoLimit, tooSmall, RESERVE_FRAC, parseSize, register, update, unregister, openFootprints, logFootprint, ledger, PAUSED_EXIT } from "./memory-budget.mjs";
+import { failureShape, menuText, groupHeld, groupCommands, shellLine, inDir, HOLD_HINTS } from "./hold-menu.mjs";
 import { fitRasch } from "./rasch.mjs";
 import { watch as watchFs } from "node:fs";
 // The sweep's timeline: each run's events as the resource panel derives them; the page draws them with its lane.
@@ -530,10 +531,22 @@ const main = async () => {
     // no only to a sweep that can hold runs or runs a real model; a fake-model sweep is measured and never stopped.
     if (scores) openFootprints(scores);
     // The command that goes on from here: this one, less `--no-cache`, so the cells already done come from the cache.
-    const resume = `cd ${shellLine([process.cwd()])} && ${shellLine(["node", ...process.execArgv, path.relative(process.cwd(), process.argv[1]), ...process.argv.slice(2).filter((a) => a !== "--no-cache")])}`;
+    const resume = inDir(process.cwd(), shellLine(["node", ...process.execArgv, path.relative(process.cwd(), process.argv[1]), ...process.argv.slice(2).filter((a) => a !== "--no-cache")]));
     const holding = cells.some((c) => holdMode(c, args.hold));
-    const budget = startBudget({ limit: args.memoryLimit ?? autoLimit(), whenFull: args.whenFull, db: scores, active: !!backend || holding, sweep: spec.name, repo: ROOT, cmd: resume });
-    if (holding) console.log(`  memory: ${budget.expect([...new Set(cells.map((c) => c.task.id))], args.jobs).text}\n`);
+    // A limit set by hand is the person's call on swap: it drops the free-memory reserve as well.
+    const budget = startBudget({ limit: args.memoryLimit ?? autoLimit(), reserveFrac: args.memoryLimit != null ? 0 : RESERVE_FRAC, whenFull: args.whenFull, db: scores, active: !!backend || holding, sweep: spec.name, repo: ROOT, cmd: resume });
+    if (budget.active) {
+        const expect = budget.expect([...new Set(cells.map((c) => c.task.id))], args.jobs);
+        if (holding) console.log(`  memory: ${expect.text}\n`);
+        const st = budget.state();
+        const small = tooSmall({ room: st.room, per: expect.per.bytes, bench: st.byKind.runner ?? 0, limit: st.limit, reserve: st.reserve, jobs: args.jobs, held: holding ? 3 : 0, limitGiven: args.memoryLimit != null });
+        if (small?.level === "error") {
+            console.log(`  ✖ ${small.text}\n\nBENCH NOT STARTED ${spec.name} paused=memory-budget`);
+            budget.stop();
+            process.exit(PAUSED_EXIT);
+        }
+        if (small) console.log(`  ⚠ ${small.text}\n`);
+    }
     const scoreSweep = { name: spec.name, spec: specRel, specHash: provenance?.specHash ?? null, fingerprint, dirty, backend, info, by: defaultBy(), suite: spec.suite ?? null };
     const ctx = {
         spec, fingerprint, sweepDir, backend, buildDirs, cache: args.cache, scores, scoreSweep, logged: 0,
@@ -628,12 +641,17 @@ const main = async () => {
         gantt = runs.length ? { runs, now } : null;
         return gantt;
     };
-    const push = () => dash?.update({
+    // The page's state, and the same object as status.md/status.json for a model reading the sweep from the CLI (status.mjs).
+    // The state is built only for a reader: the page on each change, the status files at most every 2 s.
+    const push = () => { if (dash) dash.update(liveState()); status.update(liveState); };
+    const liveState = () => ({
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
         runs: runsState, rows: aggregateRows(cells, results), older,
         started, finished: null, jobs: args.jobs, dirty, interviews, skipped, spec: provenance, timeline: sweepTimeline(), scores: liveScores, cloud, scripted, repo,
         resources: resPoll?.resources() ?? null, spend: spent?.summary(driverOf) ?? null, memory: memoryView(),
     });
+    const status = statusWriter(sweepDir);
+    console.log(`  status (for a model reading this from the CLI): ${path.relative(ROOT, sweepDir)}/status.md and status.json, rewritten every few seconds\n`);
     ctx.liveOf = (i) => runsState[i].live;
     // What the bench holds in memory, for the page: the budget, what each kind of process uses, the held runs grouped
     // with their commands, and what the budget turned away (hold-menu.mjs).
@@ -643,7 +661,7 @@ const main = async () => {
         return { ...st, active: budget.active, whenFull: budget.whenFull, paused: ctx.paused, resume, hints: HOLD_HINTS,
             runner: entries.find((e) => e.pid === process.pid) ?? null,
             groups: groupHeld(entries).map((g) => ({ key: g.key, count: g.runs.length, rss: g.rss, sweeps: [...new Set(g.runs.map((r) => r.sweep))], commands: groupCommands(g) })),
-            wouldHold: ctx.wouldHold };
+            wouldHold: ctx.wouldHold, history: budget.history() };
     };
     // What this invocation's runs have spent so far, priced as their calls come in (live-spend.mjs): a snapshot body
     // the scores log lacks is fetched from the price service by its hash and kept there. Only against a real backend.
@@ -788,6 +806,7 @@ const main = async () => {
     // navigable on its own. Links are relative, so it works from disk with no server.
     await writeFile(path.join(sweepDir, "report.html"), await staticPage(pageState));
     await writeFile(path.join(sweepDir, "page.json"), JSON.stringify(pageState, null, 2));
+    status.flush(pageState);
     const nameOf = (i) => [runs[i].taskId, ...Object.keys(spec.dimensions || {}).map((d) => runs[i].combo[d]), `r${runs[i].repeat}`].join(" · ");
     await writeFile(path.join(sweepDir, "timeline.md"), timelineText(pageState.timeline, nameOf, { cached: runs.filter((r) => r.cached).length }));
     await writeFile(path.join(sweepDir, "spec.md"), specText(provenance));
@@ -797,6 +816,7 @@ const main = async () => {
         ["timeline", "timeline.md", "every run on one clock: spans, overlaps, model loads"],
         ["memory", "memory.md", "the box's memory during the sweep: each pool's peak and mean, each model's stretch in memory"],
         ["spec", "spec.md", "which spec version ran, who started the sweep, the diff against the sweep before (log: sweeps.jsonl)"],
+        ["status", "status.md", "spend, the memory budget with its readings over the sweep, held runs and their commands, a pause (status.json: the same as JSON)"],
         ["page data", "page.json", "everything the page shows, as JSON"],
         ["page", "report.html", "the same, for a person (opens from disk)"],
     );

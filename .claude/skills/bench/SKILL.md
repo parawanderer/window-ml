@@ -67,8 +67,15 @@ on the last line, `paused` and `resume` in `done.json`), leaving what it holds a
 cache. `--when-full stop-holding` goes on (overnight) and only stops keeping failures; a cell then waits for room. On
 exit, paused or not, it prints the MENU: every clone's held runs grouped by model · task · failure, each group with a
 command to paste for attach, keep one and release the rest, release all, plus how to resume and what to do with them.
-The page has the same as its Memory card. Any time: `hold.mjs --menu` (the menu), `hold.mjs --ledger` (every entry and
-its memory), `hold.mjs --stop <pid> <pid> …`.
+The page has the same as its Memory card (with a chart of the readings over the sweep, and each group folding). Any
+time: `hold.mjs --menu` (the menu), `hold.mjs --ledger` (every entry and its memory), `hold.mjs --stop <pid> <pid> …`.
+A budget with room for no browser does not start (`BENCH NOT STARTED … paused=memory-budget`, exit 75) and one with room
+for one warns, each naming the `--memory-limit` to pass; a limit set by hand also drops the quarter kept free (it swaps).
+
+**Reading a running sweep from the CLI: `status.md` and `status.json`** in the sweep directory, rewritten at most every
+2 s from the same state the page renders (`status.mjs`) and once more at the end: progress, what runs now, spend per
+driver, the memory budget with the chart's readings as a table, the held groups with every command, what was not held,
+and a pause with its resume command. A model that started the sweep in the background reads these instead of the page.
 
 **Keep a run open to go on talking to it: `--hold`.** `--hold all`, `--hold failures` (only a run that errored or was
 wrong) or `--hold k=v` (cells as `--only` picks them), or `hold: true | "failures"` on a task or an interview file. A

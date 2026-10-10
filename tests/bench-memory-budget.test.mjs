@@ -10,8 +10,8 @@ import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseSize, fmtBytes, autoLimit, parseMemoryLevel, parseVmStat, parseMeminfo, processTable, treeRss, withLedger, ledger, register, update, unregister, measureLedger,
-    budgetState, admits, p90, openFootprints, logFootprint, predictBrowser, startBudget, ASSUMED_BROWSER, PAUSED_EXIT } from "../tests/e2e/bench/memory-budget.mjs";
-import { failureShape, groupHeld, groupCommands, menuText, shellLine, HOLD_HINTS } from "../tests/e2e/bench/hold-menu.mjs";
+    budgetState, admits, tooSmall, p90, openFootprints, logFootprint, predictBrowser, startBudget, ASSUMED_BROWSER, PAUSED_EXIT } from "../tests/e2e/bench/memory-budget.mjs";
+import { failureShape, groupHeld, groupCommands, menuText, shellLine, inDir, HOLD_HINTS } from "../tests/e2e/bench/hold-menu.mjs";
 import { doneLine } from "../tests/e2e/bench/sinks.mjs";
 
 const GB = 1024 ** 3, MB = 1024 ** 2;
@@ -169,7 +169,11 @@ test("each group's commands paste into any terminal: cd into the clone, keep one
     assert.equal(c.keepOne, "cd /Users/x/git/window-ml-bench && node --import tsx tests/e2e/bench/hold.mjs --stop 102 103");
     assert.equal(c.release, "cd /Users/x/git/window-ml-bench && node --import tsx tests/e2e/bench/hold.mjs --stop 101 102 103");
     assert.equal(groupCommands(groupHeld([held(5, "m", "t", "x")])[0]).keepOne, undefined, "one run has no duplicates");
-    assert.equal(shellLine(["cd", "/a b/c", "it's"]), `cd '/a b/c' 'it'\\''s'`);
+    assert.equal(shellLine(["cd", "/a b/c", "it's"], "darwin"), `cd '/a b/c' 'it'\\''s'`);
+    // Written for the shell of the machine the bench runs on: PowerShell on Windows.
+    assert.equal(shellLine(["C:\\git\\window-ml", "it's"], "win32"), `C:\\git\\window-ml 'it''s'`);
+    assert.equal(inDir("C:\\My Repos\\wml", "node x", "win32"), `cd 'C:\\My Repos\\wml'; node x`);
+    assert.equal(inDir("/a b", "node x", "linux"), `cd '/a b' && node x`);
 });
 
 test("the menu: paused first, the groups with their commands, what was not held, how to resume, the hints; nothing when nothing is held", () => {
@@ -190,4 +194,40 @@ test("a paused sweep says so on its last line and exits 75", () => {
     assert.doesNotMatch(doneLine(d), /paused/);
     assert.match(doneLine({ ...d, paused: "x" }), / paused=memory-budget$/);
     assert.equal(PAUSED_EXIT, 75);
+});
+
+test("a budget with room for no browser stops the sweep before it starts; room for one warns; both say what to set instead", () => {
+    const base = { per: GB, bench: 200 * MB, limit: 8 * GB, reserve: 4 * GB, jobs: 1, held: 3 };
+    const none = tooSmall({ ...base, room: 600 * MB });
+    assert.equal(none.level, "error");
+    assert.match(none.text, /room for no browser: 600 MB free under the 8\.0 GB limit with 4\.0 GB of RAM kept free, and one browser takes about 1\.0 GB/);
+    // 200 MB for the bench and 1 GB for each of 1 running and 3 held: 4.2 GB, rounded up.
+    assert.match(none.text, /--memory-limit 5G budgets about 1\.0 GB per browser \(1 running cell and 3 failed runs held open\) and 200 MB for the bench itself/);
+    assert.match(none.text, /goes to swap and every run is slower/);
+    const one = tooSmall({ ...base, room: 1.5 * GB, jobs: 2 });
+    assert.equal(one.level, "warn");
+    assert.match(one.text, /room for one browser only, the running cell's: no failed run can be held, and --jobs 2 runs one at a time/);
+    assert.equal(tooSmall({ ...base, room: 2 * GB }), null);
+    assert.doesNotMatch(tooSmall({ ...base, room: 0, limitGiven: true }).text, /4\.0 GB of RAM kept free/, "a hand-set limit keeps nothing free");
+});
+
+test("a hand-set budget drops the free-memory reserve: the limit alone bounds it", () => {
+    const f = tmpLedger();
+    const b = startBudget({ file: f, total: 16 * GB, avail: () => 3 * GB, everyMs: 60_000, limit: 6 * GB, reserveFrac: 0, measure: () => [{ kind: "runner", pid: process.pid, rss: GB, peak: GB }] });
+    assert.equal(b.state().room, 3 * GB, "min(6 - 1, 3 - 0)");
+    assert.equal(b.canStart("t").ok, true);
+    b.stop();
+});
+
+test("a sweep's budget keeps every reading for the chart, thinned past 600, the first and the latest kept", () => {
+    const f = tmpLedger();
+    let n = 0;
+    const b = startBudget({ file: f, total: 64 * GB, avail: () => 40 * GB, everyMs: 60_000, limit: 8 * GB, measure: () => [{ kind: "held", pid: process.pid, rss: ++n * MB }] });
+    for (let i = 0; i < 700; i++) b.refresh();
+    const h = b.history();
+    assert.ok(h.length <= 600 && h.length > 300, `${h.length}`);
+    assert.equal(h[0].values.held, 1 * MB);
+    assert.equal(h.at(-1).values.held, n * MB);
+    assert.ok(h.every((p, i) => !i || p.t >= h[i - 1].t), "oldest first");
+    b.stop();
 });

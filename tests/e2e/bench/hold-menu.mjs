@@ -2,7 +2,8 @@
 // the same failure read as one line ("6 × glm-4.7-flash · icon-heart · step cap"), each group with a command to paste
 // for every action (attach, keep one and release the rest, release the group, release one, resume the sweep). Printed
 // when a sweep ends with runs held or stops at the memory budget, by `hold.mjs --menu` at any time, and on the page.
-// Every command starts with `cd <clone>`, so it works pasted into any terminal, by a person as well as an agent.
+// Every command starts with `cd <clone>`, so it works pasted into any terminal, by a person as well as an agent, and is
+// written for the shell of the machine it was made on (PowerShell on Windows).
 
 import { fmtBytes } from "./memory-budget.mjs";
 
@@ -27,8 +28,14 @@ export function failureShape(m) {
     return "ok";
 }
 
-/** A word list as a shell command line: each argument quoted only when it must be. */
-export const shellLine = (args) => args.map((a) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${String(a).replace(/'/g, `'\\''`)}'`)).join(" ");
+/** A word list as a command line for the shell of `platform` (the machine the bench runs on, so a command printed here
+ *  pastes there): POSIX quoting, or PowerShell's on Windows. Each argument is quoted only when it must be. */
+export const shellLine = (args, platform = process.platform) => args.map((a) => (platform === "win32"
+    ? (/^[\w%+=:,./\\-]+$/.test(a) ? a : `'${String(a).replace(/'/g, "''")}'`)
+    : (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${String(a).replace(/'/g, `'\\''`)}'`))).join(" ");
+
+/** `cd <dir>` then `cmd`, joined as the shell of `platform` joins two commands (PowerShell's `;` on Windows). */
+export const inDir = (dir, cmd, platform = process.platform) => `cd ${shellLine([dir], platform)}${platform === "win32" ? ";" : " &&"} ${cmd}`;
 
 /** Held entries (the ledger's `held`) grouped by model × task × failure, largest group first. */
 export function groupHeld(entries) {
@@ -41,14 +48,14 @@ export function groupHeld(entries) {
         .sort((a, b) => b.runs.length - a.runs.length || b.rss - a.rss);
 }
 
-const holdCmd = (repo, ...args) => `cd ${shellLine([repo])} && node --import tsx tests/e2e/bench/hold.mjs ${args.join(" ")}`;
+const holdCmd = (repo, ...args) => inDir(repo, `node --import tsx tests/e2e/bench/hold.mjs ${args.join(" ")}`);
 
 /** The commands for one group: `{ attach, keepOne?, release }`, each a line to paste. */
 export function groupCommands(g) {
     const repo = g.runs[0].repo ?? ".";
     const pids = g.runs.map((r) => String(r.pid));
     return {
-        attach: `cd ${shellLine([repo])} && node tests/e2e/converse.mjs --attach ${shellLine([g.runs[0].dir])} "<message>"`,
+        attach: inDir(repo, `node tests/e2e/converse.mjs --attach ${shellLine([g.runs[0].dir])} "<message>"`),
         ...(pids.length > 1 ? { keepOne: holdCmd(repo, "--stop", ...pids.slice(1)) } : {}),
         release: holdCmd(repo, "--stop", ...pids),
     };

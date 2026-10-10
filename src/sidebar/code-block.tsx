@@ -5,6 +5,8 @@
 import { useMemo, useEffect } from "preact/hooks";
 import { lineMapBetween } from "../line-map";
 import { highlight, beautifyJs, htmlLines, mdInline } from "./format";
+import { useCopy } from "./copy-hash";
+import { IconCopy, IconCheck } from "./icons";
 
 /** A span of `text` that was substituted for something the author did not write, with the original for a
  *  tooltip — `exec`'s expanded pointer macros. */
@@ -109,5 +111,22 @@ export const CodeBlock = ({ text, lang, format, marks, lineIds, markLine, markTi
                 notes?.get(i + 1) ? <span class="lnote" key={`n${i}`}><span class="lnote-mark" aria-hidden="true">↳</span><span class="lnote-txt" dangerouslySetInnerHTML={{ __html: mdInline(notes.get(i + 1)!) }} /></span> : null,
             ])}
         </code></pre>
+    );
+};
+
+/** A command or snippet to paste: the code block with a copy button in its corner (the transcript's toolbar corner), for
+ *  pages that hand someone a line to run, such as the bench page's held-run menu. */
+export const CopyableCode = ({ text, lang = "bash" }: { text: string; lang?: string }) => {
+    const { copied, copy } = useCopy();
+    return (
+        <div class="code-block copyable-code">
+            <CodeBlock text={text} lang={lang} />
+            <div class="code-tools">
+                <button class="icon-btn tt" aria-label="copy" onClick={() => copy(text)}>
+                    {copied ? <IconCheck /> : <IconCopy />}
+                    <span class="tt-pop" role="tooltip">{copied ? "copied!" : "copy"}</span>
+                </button>
+            </div>
+        </div>
     );
 };

@@ -22,6 +22,8 @@ export const LEDGER_FILE = process.env.BENCH_LEDGER_FILE || path.join(os.homedir
 export const PAUSED_EXIT = 75;
 /** The share of the machine's RAM always left free, whatever the limit says. */
 export const RESERVE_FRAC = 0.25;
+/** The most readings a sweep's budget keeps for its chart before it thins them. */
+const HISTORY_MAX = 600;
 /** What one browser is assumed to take before any was measured. */
 export const ASSUMED_BROWSER = 1024 ** 3;
 const GB = 1024 ** 3;
@@ -223,14 +225,24 @@ export function predictBrowser(db, task) {
  * already counted, so the question is whether one more cell would still fit after it. `active` false (a fake-model sweep
  * that holds nothing) registers and measures, but never says no.
  */
-export function startBudget({ limit = autoLimit(), whenFull = "pause", db = null, active = true, sweep = null, repo = null, cmd = null, everyMs = 5000, file = LEDGER_FILE, measure = () => measureLedger({ file }), avail = availableMemory, total = os.totalmem() } = {}) {
+export function startBudget({ limit = autoLimit(), reserveFrac = RESERVE_FRAC, whenFull = "pause", db = null, active = true, sweep = null, repo = null, cmd = null, everyMs = 5000, file = LEDGER_FILE, measure = () => measureLedger({ file }), avail = availableMemory, total = os.totalmem() } = {}) {
     register({ kind: "runner", pid: process.pid, sweep, repo, cmd, heap: process.memoryUsage().heapUsed }, file);
     let entries = measure(), available = avail();
+    // Every reading, for the page's chart: what each kind held then, and the room. Halved (every other one dropped)
+    // past HISTORY_MAX, so a sweep of hours stays a few hundred points.
+    const history = [];
+    const record = (st) => {
+        history.push({ t: Date.now(), values: { ...st.byKind }, room: st.room });
+        if (history.length > HISTORY_MAX) for (let i = history.length - 2; i > 0; i -= 2) history.splice(i, 1);
+    };
     const refresh = () => {
         try { update(process.pid, { heap: process.memoryUsage().heapUsed }, file); entries = measure(); available = avail(); } catch { /* keep the last reading */ }
-        return state();
+        const st = state();
+        record(st);
+        return st;
     };
-    const state = () => budgetState({ limit, entries, available, total });
+    const state = () => budgetState({ limit, entries, available, total, reserveFrac });
+    record(state());
     const timer = setInterval(refresh, everyMs);
     timer.unref?.();
     const predict = (task) => predictBrowser(db, task);
@@ -238,6 +250,8 @@ export function startBudget({ limit = autoLimit(), whenFull = "pause", db = null
     return {
         limit, whenFull, active, state, refresh, predict,
         entries: () => entries,
+        /** The readings so far, oldest first: `{ t, values: { <kind>: bytes }, room }`. */
+        history: () => history,
         canStart: ask,
         canKeep: ask,
         /** The peak measured for `pid`'s tree, re-measured now. */
@@ -247,8 +261,26 @@ export function startBudget({ limit = autoLimit(), whenFull = "pause", db = null
             const s = refresh();
             const per = tasks.map(predict).sort((a, b) => b.bytes - a.bytes)[0] ?? predict("");
             const n = Math.max(0, Math.floor((s.room - per.bytes * jobs) / per.bytes));
-            return { n, room: s.room, per, text: `about ${n} failed run${n === 1 ? "" : "s"} can be held this sweep (${fmtBytes(s.room)} free under the ${fmtBytes(limit)} limit with ${fmtBytes(s.reserve)} of RAM kept free, ~${fmtBytes(per.bytes)} per browser: ${per.basis}). The bench holds ${fmtBytes(s.used)} now${Object.keys(s.byKind).length ? ` (${Object.entries(s.byKind).map(([k, v]) => `${k} ${fmtBytes(v)}`).join(", ")})` : ""}.` };
+            return { n, room: s.room, per, text: `about ${n} failed run${n === 1 ? "" : "s"} can be held this sweep (${fmtBytes(s.room)} free under the ${fmtBytes(limit)} limit${s.reserve ? ` with ${fmtBytes(s.reserve)} of RAM kept free` : ""}, ~${fmtBytes(per.bytes)} per browser: ${per.basis}). The bench holds ${fmtBytes(s.used)} now${Object.keys(s.byKind).length ? ` (${Object.entries(s.byKind).map(([k, v]) => `${k} ${fmtBytes(v)}`).join(", ")})` : ""}.` };
         },
         stop() { clearInterval(timer); try { unregister(process.pid, file); } catch { /* dropped on the next read */ } },
     };
+}
+
+/**
+ * When a budget is too small to be worth starting in: room for no browser at all (`error`: the sweep does not start), or
+ * for the running cell's only (`warn`: nothing can be held, and `--jobs` above 1 runs one at a time). The text says what
+ * to set instead: about `per` for each browser (`jobs` running, `held` kept open) and `bench` for the bench's own
+ * processes, and that a limit set by hand drops the free-memory reserve, so past the free RAM it swaps and runs slowly.
+ * Null when there is room for two or more.
+ */
+export function tooSmall({ room, per, bench, limit, reserve, jobs = 1, held = 3, limitGiven = false }) {
+    const fit = Math.floor(room / per);
+    if (fit >= 2) return null;
+    const want = bench + per * (jobs + held);
+    const how = `To run anyway, set the budget by hand: --memory-limit ${Math.ceil(want / GB)}G budgets about ${fmtBytes(per)} per browser (${jobs} running cell${jobs === 1 ? "" : "s"} and ${held} failed run${held === 1 ? "" : "s"} held open) and ${fmtBytes(bench)} for the bench itself. A limit set by hand also drops the ${limitGiven ? "" : `${fmtBytes(reserve)} of `}RAM kept free, so past what this machine has free it goes to swap and every run is slower.`;
+    const where = `${fmtBytes(room)} free under the ${fmtBytes(limit)} limit${limitGiven || !reserve ? "" : ` with ${fmtBytes(reserve)} of RAM kept free`}, and one browser takes about ${fmtBytes(per)}`;
+    return fit === 0
+        ? { level: "error", text: `The memory budget has room for no browser: ${where}. ${how}` }
+        : { level: "warn", text: `The memory budget has room for one browser only, the running cell's: no failed run can be held${jobs > 1 ? `, and --jobs ${jobs} runs one at a time` : ""} (${where}). ${how}` };
 }

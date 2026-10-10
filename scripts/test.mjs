@@ -103,7 +103,7 @@ const GENRES = {
         about: "the benchmark harness (tests/e2e/bench/): its spec matrix, metrics, viewer, server, page, sweep log, scoreboard, memory readings, the box's event stream and the held runs' screens",
         files: ["bench-descriptor.test.mjs", "bench-metrics.test.mjs", "bench-serve.test.mjs",
             "bench-specs.test.mjs", "bench-viewer.test.mjs", "bench-files.test.mjs", "bench-page.test.mjs",
-            "bench-scores.test.mjs", "bench-sweeps.test.mjs", "bench-memory.test.mjs", "bench-box.test.mjs", "bench-lanes.test.mjs", "bench-sync.test.mjs", "bench-stream.test.mjs", "bench-regress.test.mjs", "bench-spend.test.mjs", "bench-cost.test.mjs", "bench-live-spend.test.mjs", "bench-memory-budget.test.mjs"],
+            "bench-scores.test.mjs", "bench-sweeps.test.mjs", "bench-memory.test.mjs", "bench-box.test.mjs", "bench-lanes.test.mjs", "bench-sync.test.mjs", "bench-stream.test.mjs", "bench-regress.test.mjs", "bench-spend.test.mjs", "bench-cost.test.mjs", "bench-live-spend.test.mjs", "bench-memory-budget.test.mjs", "bench-memory-card.test.mjs", "bench-status.test.mjs"],
     },
     python: { about: "real CPython in Pyodide (self-skips without dist/pyodide)", files: ["python.test.mjs"] },
     live: { about: "opt-in, hits the backend in .env", files: ["live.test.js"] },

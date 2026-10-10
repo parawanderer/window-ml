@@ -109,6 +109,8 @@ export interface MemoryState {
     groups: { key: string; count: number; rss: number; sweeps: string[]; commands: { attach: string; keepOne?: string; release: string } }[];
     /** runs this sweep would have kept open had the budget had room */
     wouldHold: { cell: string; task: string; model: string | null; failure: string; dir: string; why: string }[];
+    /** every reading over the sweep (thinned past 600): what each kind held then, and the room left */
+    history?: { t: number; values: Record<string, number>; room: number }[];
 }
 
 /** Calls priced one way or another (live-spend.mjs): computed from the price snapshot each named, reported by the
