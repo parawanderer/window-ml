@@ -67,6 +67,12 @@ image. It says *"find the red guy,"* gets back `@pt:9f3a`, and clicks it. The
 badged/gridded images ride a separate `render` channel to the debug sidebar and
 are never injected into the model's history.
 
+Where it runs: a run the PAGE built runs this tool in the page, as drawn above. A run the WORKER built (or a page-built
+run handed to it) runs the same tool body in the service worker: the worker captures, draws the badges, grid and
+letterbox, and makes the vision sub-calls, and the page only answers layout questions (where the scope is, which
+elements are under a box, minting the `@pt`/`@box` token). The page sees no image, prompt or reply
+(`docs/dev/agent-tools.md`, "The `locate` of a worker-built run is the worker's").
+
 ---
 
 ## The four dialects (`strategy`)

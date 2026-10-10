@@ -1,8 +1,8 @@
 // worker-vision.ts — the worker's half of a vision tool: a screenshot of the run's own tab and document with the extension's own UI masked out, and the vision model's sub-call metered into the run.
 
 // Built for the worker's VisionHost (docs/spec/SITE_ACCESS.md, slice 2 part 3): in a worker-built run the page sees no
-// capture, no change to its DOM around one, and no reader request. The verify after an action (worker-verify.ts) and
-// `look` (worker-look.ts) use them; locate moves onto them in a later PR.
+// capture, no change to its DOM around one, and no reader request. The verify after an action (worker-verify.ts), `look`
+// (worker-look.ts) and `locate` (worker-locate.ts) use them.
 
 import type { Shot } from "../tools/vision-host";
 import { oneShotRequest } from "../ml/ml-chat";
@@ -16,6 +16,7 @@ import { maskShot, TAMPERED } from "./shot-mask";
 import { workerRaster } from "../raster";
 import type { ShotRects } from "../sidebar/shell-shot";
 import type { VisionMemory } from "../contract/contract-render";
+import type { GroundCache } from "../tools/builtin-tools";
 import { defineState } from "../state-registry";
 
 /**
@@ -182,8 +183,58 @@ export function visionMemoryFor(runId: string, documentId: string): VisionMemory
     return m.memory;
 }
 
-/** Forget a run's vision memory, when its worker tools are dropped. */
-export function dropVisionMemory(runId: string): void { memories.delete(runId); }
+/** The most grounding calls a run's locate keeps for one document. Each holds the 1000 px square the model saw, so the
+ *  oldest goes first past this; a `margin` retry of an evicted one asks the grounding model again. */
+export const GROUND_CACHE_MAX = 8;
 
-/** Forget every run's vision memory: what an eviction does (the eviction test hook). */
-export function dropAllVisionMemory(): void { memories.clear(); }
+/** Each run's locate grounding calls in the worker, for the one document they were made on and the one view of it: a
+ *  `margin` retry reuses the box instead of asking the grounding model again (builtin-tools.ts `buildLocateTool`). A new
+ *  document starts it empty, and so does a same-document navigation of the tab (pushState, a fragment), which keeps the
+ *  document but not the page the box was drawn on, as it ends a locate in flight (worker-vision-host.ts). Worker memory
+ *  only: an eviction forgets it, and the next retry asks the model again. */
+const groundCaches = new Map<string, { documentId: string; tabId?: number; cache: Map<string, GroundCache | null> }>();   // see the defineState below
+
+defineState({
+    id: "run.groundCache", scope: "run", realm: "worker", audience: "human", lostOn: ["worker-eviction", "navigation"], heldOnly: true,
+    describe: "The grounding model's boxes locate already asked for on the run's current page, so a retry with a margin reuses one instead of asking again.",
+    // Only what is about the page the tab holds now: a cache of another document (or of a tab the worker cannot ask) is not shown.
+    read: async ({ runId }) => {
+        const c = runId ? groundCaches.get(runId) : undefined;
+        if (!c || c.tabId === undefined || !c.cache.size || (await topDocument(c.tabId).catch(() => null)) !== c.documentId) return undefined;
+        return [...c.cache.values()].map((g) => (g ? { box: g.nums, prompt: g.prompt, answer: g.answer } : null));
+    },
+});
+
+// A same-document navigation of a tab's top frame empties every grounding cache kept for that tab's document.
+{
+    const sameDoc = (d: { tabId: number; frameId: number; documentId?: string }): void => {
+        if (d.frameId !== 0) return;
+        for (const [runId, c] of groundCaches) if (c.tabId === d.tabId || (d.documentId !== undefined && c.documentId === d.documentId)) groundCaches.delete(runId);
+    };
+    const nav = (globalThis as { chrome?: typeof chrome }).chrome?.webNavigation;
+    nav?.onHistoryStateUpdated?.addListener(sameDoc);
+    nav?.onReferenceFragmentUpdated?.addListener(sameDoc);
+}
+
+/** A copy of a run's grounding cache for `documentId` (empty for a new document or view), for one locate call to read
+ *  and add to; what it adds is kept only through {@link keepGroundCache}, once the call completes. */
+export function groundCacheFor(runId: string, documentId: string): Map<string, GroundCache | null> {
+    const c = groundCaches.get(runId);
+    return new Map(c && c.documentId === documentId ? c.cache : []);
+}
+
+/** Keep what a completed locate call on `tabId` added to its copy of the run's grounding cache, the newest
+ *  {@link GROUND_CACHE_MAX}. */
+export function keepGroundCache(runId: string, documentId: string, call: Map<string, GroundCache | null>, tabId?: number): void {
+    let c = groundCaches.get(runId);
+    if (!c || c.documentId !== documentId) { c = { documentId, tabId, cache: new Map() }; groundCaches.set(runId, c); }
+    if (tabId !== undefined) c.tabId = tabId;
+    for (const [k, v] of call) { if (!c.cache.has(k)) c.cache.set(k, v); }
+    while (c.cache.size > GROUND_CACHE_MAX) c.cache.delete(c.cache.keys().next().value!);
+}
+
+/** Forget a run's vision memory and grounding cache, when its worker tools are dropped. */
+export function dropVisionMemory(runId: string): void { memories.delete(runId); groundCaches.delete(runId); }
+
+/** Forget every run's vision memory and grounding cache: what an eviction does (the eviction test hook). */
+export function dropAllVisionMemory(): void { memories.clear(); groundCaches.clear(); }

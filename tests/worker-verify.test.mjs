@@ -69,7 +69,7 @@ function honestGeometry(g, state) {
  * answered honestly.
  * @param opts.builtBy "worker" (a run the person started) or "page" (a console ml.agent's START_RUN, sent from `builderUrl`)
  */
-async function run({ calls, page = () => undefined, model = "vlm-driver", cfg = {}, builtBy = "worker", reader = "It changed.", geometry = honestGeometry, builderUrl = SITE.url } = {}) {
+async function run({ calls, page = () => undefined, model = "vlm-driver", cfg = {}, builtBy = "worker", reader = "It changed.", geometry = honestGeometry, builderUrl = SITE.url, kit = ["click", "type", "wait", "scroll"], pageVision = {} } = {}) {
     const driverBodies = [], subs = [];
     let bg, n = 0;
     const state = {};
@@ -78,6 +78,8 @@ async function run({ calls, page = () => undefined, model = "vlm-driver", cfg = 
         onCaptureTab: async () => SHOT,
         onDebuggerCommand: (m) => (m === "Page.captureScreenshot" ? { data: SHOT.split(",")[1] } : undefined),
         onFetch: async (call) => {
+            // The server's model list: a handed-over run's reader is used only when the server offers it (run-vision.ts).
+            if (call.url.endsWith("/api/models")) return jsonResponse({ data: Object.keys(CAPS).map((id) => ({ id })) });
             if (call.url.endsWith("/api/show")) { const caps = CAPS[call.body?.model]; return caps ? jsonResponse({ capabilities: caps, model_info: {} }) : jsonResponse({}, 404); }
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
             if (!(Array.isArray(call.body?.tools) && call.body.tools.length)) { subs.push(call.body); return jsonResponse({ model: "reader-vl", choices: [{ message: { content: reader } }], usage: { prompt_tokens: 50, completion_tokens: 5 } }); }
@@ -105,8 +107,8 @@ async function run({ calls, page = () => undefined, model = "vlm-driver", cfg = 
     } else {
         hash = "page-run";
         const tool = (name) => ({ name, description: name, parameters: { type: "object", properties: {} }, requiresApproval: false, capabilities: [] });
-        void bg.send({ type: "START_RUN", payload: { runId: hash, task: "do it", systemPrompt: "sys", tools: ["click", "type", "wait", "scroll"].map(tool), model, think: null, maxSteps: 40, surface: "off",
-            rebuild: { toolNames: ["click", "type", "wait", "scroll"], model, driverSees: model === "vlm-driver", visionModel: model === "vlm-driver" ? model : "reader-vl", groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: false } } },
+        void bg.send({ type: "START_RUN", payload: { runId: hash, task: "do it", systemPrompt: "sys", tools: kit.map(tool), model, think: null, maxSteps: 40, surface: "off",
+            rebuild: { toolNames: kit, model, driverSees: model === "vlm-driver", visionModel: model === "vlm-driver" ? model : "reader-vl", groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: false, ...pageVision } } },
             { tab: { id: SITE.id, url: SITE.url }, url: builderUrl, frameId: 0 });
     }
     for (let i = 0; i < 4000 && driverBodies.length <= calls.length; i++) {
@@ -281,10 +283,17 @@ test("a look named in a handed-over run that offers no look is not run in the wo
     assert.equal(w.subs.length, 0);
 });
 
-test("locate still carries the page's picture and spend until it moves to the worker", { ...T, todo: "locate is page-hosted until slice 2 part 3 PR 7: a page can forge its image, feedback and subUsage" }, async () => {
-    const w = await run({ calls: [{ name: "locate", args: { description: "x" } }], page: () => ({ result: "A page.", ...FORGERY }) });
-    assert.equal(w.spend(), 0);
-    assert.ok(!w.seenText().includes(FORGED.split(",")[1]));
+/** The honest page with one Save button for locate's Set-of-Marks sweep. */
+const marksGeometry = (g, st) => (g.op === "marks" ? { total: 1, marks: [{ ref: 1, id: 1, role: "button", name: "Save", selector: "#save", rect: { left: 10, top: 10, right: 210, bottom: 40, width: 200, height: 30 } }], allOpaque: false, opaque: null } : honestGeometry(g, st));
+
+test("locate is the worker's: the page is never sent the call, so a forged picture, feedback or spend has nowhere to go", T, async () => {
+    for (const model of ["vlm-driver", "text-driver"]) {
+        const w = await run({ model, calls: [{ name: "locate", args: { description: "x", strategy: "marks" } }], page: () => ({ result: "A page.", ...FORGERY }), geometry: marksGeometry });
+        assert.ok(!w.runCalls().some((p) => p.name === "locate" && !p.renderOnly), `${model}: the call never reached the page`);
+        assert.ok(!w.seenText().includes(FORGED.split(",")[1]), model);
+        assert.ok(!JSON.stringify(w.steps()).includes(FORGED.split(",")[1]), model);
+        assert.equal(w.spend(), 1, `${model}: only the worker's own reader call is counted, once`);
+    }
 });
 
 test("a page's result cannot carry the verify's 👁 mark: only the worker's block opens with it", T, async () => {
@@ -381,6 +390,58 @@ test("a page-built run handed to the worker takes its verifies in the worker fro
     assert.match(w.toolMessages()[0], /^Clicked\.\n\n Here's the area where you clicked\./);
     assert.ok(!w.seenText().includes(FORGED.split(",")[1]));
     assert.equal(w.bg.captures.length, 1, "the worker's capture");
+});
+
+test("a page-built run handed to the worker runs its locate in the worker from its next turn, with the reader its rebuild named", T, async () => {
+    const w = await run({ builtBy: "page", builderUrl: "https://builder.example/", model: "text-driver", calls: [], kit: ["click", "locate"], geometry: marksGeometry, reader: "1",
+        page: () => ({ result: "The page's own locate.", ...FORGERY }) });
+    const realFetch = w.bg.context.fetch;
+    let asked = 0;
+    w.bg.context.fetch = async (url, opts) => {
+        const body = opts?.body ? JSON.parse(opts.body) : null;
+        if (!String(url).includes("/chat/completions") || !body?.tools?.length) return realFetch(url, opts);
+        w.driverBodies.push(body);
+        return jsonResponse(asked++ === 0 ? { choices: [{ message: { content: null, tool_calls: [{ id: "h1", type: "function", function: { name: "locate", arguments: JSON.stringify({ description: "the save button", strategy: "marks" }) } }] }, finish_reason: "tool_calls" }] } : { choices: [{ message: { content: "done" } }] });
+    };
+    assert.equal(await w.bg.context.__mlUserRunActionForTest(w.hash, "send", { text: "find save" }), "turn");
+    for (let i = 0; i < 2000 && asked < 2; i++) await new Promise((r) => setTimeout(r, 2));
+    await new Promise((r) => setTimeout(r, 30));
+    assert.ok(!w.runCalls().some((p) => p.name === "locate" && !p.renderOnly && !p.precheck), "the call never reached the page");
+    assert.ok(w.runCalls().some((p) => p.geometry?.op === "marks"), "the page was asked for its marks");
+    assert.match(w.toolMessages()[0], /^Matched "the save button" → #1 \[button\] "Save" → #save/);
+    assert.equal(w.subs.at(-1)?.model, "reader-vl", "the reader the page-built run's rebuild named");
+    assert.equal(w.spend(), 1);
+});
+
+/**
+ * A page-built run handed to the worker after its first turn (its stored payload then says the worker built it), whose
+ * next turn calls `call`: the vision facts its page wrote must still be checked (run-vision.ts).
+ */
+async function handedNextTurn(call, pageVision, page) {
+    const w = await run({ builtBy: "page", builderUrl: "https://builder.example/", model: "text-driver", calls: [], kit: ["click", "locate"], geometry: marksGeometry, reader: "1", pageVision, page });
+    const realFetch = w.bg.context.fetch;
+    let asked = 0;
+    w.bg.context.fetch = async (url, opts) => {
+        const body = opts?.body ? JSON.parse(opts.body) : null;
+        if (!String(url).includes("/chat/completions") || !body?.tools?.length) return realFetch(url, opts);
+        w.driverBodies.push(body);
+        return jsonResponse(asked++ === 0 ? { choices: [{ message: { content: null, tool_calls: [{ id: "h1", type: "function", function: { name: call.name, arguments: JSON.stringify(call.args) } }] }, finish_reason: "tool_calls" }] } : { choices: [{ message: { content: "done" } }] });
+    };
+    assert.equal(await w.bg.context.__mlUserRunActionForTest(w.hash, "send", { text: "go on" }), "turn");
+    for (let i = 0; i < 2000 && asked < 2; i++) await new Promise((r) => setTimeout(r, 2));
+    await new Promise((r) => setTimeout(r, 30));
+    return w;
+}
+
+test("a run handed over after its first turn still has its page-written vision facts checked: an unlisted reader is no reader, for locate and for a verify", T, async () => {
+    const loc = await handedNextTurn({ name: "locate", args: { description: "the save button", strategy: "marks" } }, { visionModel: "not-on-this-server", driverSees: true });
+    assert.match(loc.toolMessages()[0], /^Error: this run has no vision model/);
+    assert.ok(!loc.subs.some((s) => s.model === "not-on-this-server"), "no request named the page's model");
+    const ver = await handedNextTurn({ name: "click", args: { selector: "#save", verify: true } }, { visionModel: "not-on-this-server", driverSees: true },
+        () => ({ result: "Clicked.", verifyRequest: { kind: "area", center: { x: 100, y: 25 } } }));
+    assert.ok(!ver.subs.some((s) => s.model === "not-on-this-server"), "no reader request named the page's model");
+    assert.ok(!/data:image/.test(JSON.stringify(ver.driverBodies.at(-1)?.messages ?? [])), "a text driver the page said sees is sent no image");
+    assert.match(ver.toolMessages()[0], /^Clicked\./);
 });
 
 test("a page-built run handed to the worker mid-turn takes its next verify in the worker", T, async () => {

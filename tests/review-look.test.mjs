@@ -127,6 +127,8 @@ async function run({ calls, page = () => undefined, previews = false, model = "v
         config: config({ model, ...cfg }), openTabs: [SITE],
         onCaptureTab: async () => SHOT,
         onFetch: async (call) => {
+            // The server's model list: a handed-over run's reader is used only when the server offers it (run-vision.ts).
+            if (call.url.endsWith("/api/models")) return jsonResponse({ data: Object.keys(CAPS).map((id) => ({ id })) });
             if (call.url.endsWith("/api/show")) { const caps = CAPS[call.body?.model]; return caps ? jsonResponse({ capabilities: caps, model_info: {} }) : jsonResponse({}, 404); }
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
             if (!(Array.isArray(call.body?.tools) && call.body.tools.length)) { subs.push(call.body); return jsonResponse({ model: call.body?.model, choices: [{ message: { content: READER_SAYS } }], usage: { prompt_tokens: 50, completion_tokens: 5 } }); }
@@ -272,20 +274,20 @@ test("a worker-built run's adopt names no driver model to the page, on the start
     assert.equal(w.subs[0]?.model, "reader-vl");
 });
 
-test("a worker-built run's adopt names no reader or grounding model to the page once locate runs in the worker (PR 7)", { ...T, todo: "PR 7: the page's `locate` still reads the reader, the grounding model and whether the driver sees from the rebuild, so `pageRebuild` keeps them for a run that offers locate" }, async () => {
+test("a worker-built run's adopt names no reader or grounding model to the page once locate runs in the worker (PR 7)", T, async () => {
     const w = await run({ model: "text-driver", calls: [{ name: "look", args: {} }] });
     const rb = plain(w.bg.tabMessages.map(([, m]) => m).find((m) => m.type === "ADOPT_RUN_NOW").payload.rebuild);
     assert.equal(rb.visionModel ?? null, null, `reader model reached the page: ${rb.visionModel}`);
     assert.equal(rb.groundingModel ?? null, null, `grounding model reached the page: ${rb.groundingModel}`);
 });
 
-test("what of a rebuild the page is sent: a worker's run without locate names no model at all; a page-built run's comes back as it was", T, async () => {
+test("what of a rebuild the page is sent: a worker's run names no model at all, with or without locate; a page-built run's comes back as it was", T, async () => {
     const { pageRebuild } = await import("../src/agent/run-assembly.ts");
     const full = { toolNames: ["click", "look"], model: "text-driver", driverSees: true, visionModel: "reader-vl", groundingModel: "ground-vl", groundingRange: 1000, pierceClosed: true, cdp: true, crossOrigin: false };
     const worker = pageRebuild({ ...full, builtBy: "worker" });
     assert.deepEqual(worker, { ...full, builtBy: "worker", model: null, driverSees: false, visionModel: null, groundingModel: null });
     const withLocate = pageRebuild({ ...full, toolNames: ["look", "locate"], builtBy: "worker" });
-    assert.deepEqual(withLocate, { ...full, toolNames: ["look", "locate"], builtBy: "worker", model: null }, "locate (the page's until PR 7) keeps the vision facts");
+    assert.deepEqual(withLocate, { ...full, toolNames: ["look", "locate"], builtBy: "worker", model: null, driverSees: false, visionModel: null, groundingModel: null }, "locate is the worker's (PR 7): the page needs no vision fact for it");
     assert.equal(pageRebuild(full), full, "a page-built run's rebuild is the page's own");
 });
 

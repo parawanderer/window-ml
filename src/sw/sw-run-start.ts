@@ -26,6 +26,7 @@ import { originOf } from "../site-access";
 import { siteDecision } from "./sw-site-access";
 import { ingestSessionEvent, keepSession } from "./sw-sessions";
 import { workerMl } from "./worker-ml";
+import { noteWorkerVision } from "./run-vision";
 
 /**
  * Push a run's builtin toolset into a tab and hear its page context: `ADOPT_RUN_NOW`, through `delegateSend` (which
@@ -80,6 +81,7 @@ export async function startUserRun(tabId: number, req: UserRunRequest, opts: { k
     const asm = await assembleRun(ml, recipe.task, { ...recipe.options, ...(opts.answer ? { answer: true } : {}) });
     const runId = shortHash();
     const rebuild = rebuildFor(asm, true, "worker");
+    noteWorkerVision(runId);   // its vision facts are the worker's own (run-vision.ts)
     // Remote tools, and the builtins that never read the page, run HERE (sw-local-tools.ts, worker-tools.ts); everything
     // else is registered in the page by the adopt below.
     const names = asm.toolset.map((t) => t.name);
