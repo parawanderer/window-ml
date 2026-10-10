@@ -41,6 +41,12 @@ const GENRES = {
             "context-container.test.mjs", "sidebar-prompt-display.test.js", "fold-badges.test.mjs", "tooltip-layer.test.mjs", "tip.test.mjs", "code-diff.test.mjs", "views.test.mjs",
             "json-tree.test.mjs", "run-state-view.test.mjs", "run-log-view.test.mjs", "chart-gestures.test.mjs"],
     },
+    // The repo's own checks (scripts/check-*.mjs): broken doc links, JSDoc that contradicts its code, the prompt
+    // review's age, and notebooks committed without the evidence they were run.
+    checks: {
+        about: "the repo's own checks: doc links, JSDoc, the prompt review's age, notebooks run as committed",
+        files: ["check-doc-links.test.mjs", "check-jsdoc.test.mjs", "check-notebooks.test.mjs", "check-prompt-review.test.mjs"],
+    },
     // The session archive: the SQL both surfaces run (src/archive/db.ts), the same statements proven under a second
     // SQLite build, the bridge the phone keeps its copy over, and the Settings section that manages the folder.
     archive: {

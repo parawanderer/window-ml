@@ -44,3 +44,6 @@ coverage/
 # the code index's ctags-style cache (node scripts/index.mjs) — rebuilt from the sources it describes
 .index-cache.tsv
 
+
+# The notebooks environment (notebooks/pyproject.toml, `node scripts/nb.mjs setup`).
+/.venv/
