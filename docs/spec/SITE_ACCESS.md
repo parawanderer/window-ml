@@ -206,6 +206,36 @@ and asserts what a person sees after the upgrade.
 
 - A denial is final, as for plain access.
 
+### Two levels: using `window.ml`, and starting agents (slice 3; decided 2026-10-10, wording for the owner to approve)
+
+Approving a site lets it use `window.ml`: chat, models, fetch and the other primitives. Starting an AGENT is a
+separate level, because it is the most a page can do: a page-started run spends the person's model and budget, acts
+with their tools, and raises approval cards in the extension's own UI for a task the page wrote. A card asking to
+fetch a bank statement looks the same whoever wrote the task.
+
+- **Two levels per approved origin:** "may use `window.ml`" and "may start agents". The second is off unless the
+  person turns it on. Runs the PERSON starts are unaffected: the worker builds them and they work on any page.
+- **What the agent level gates:** START_RUN, RESUME_RUN and INJECT_MESSAGE (`RUN_CONTROL_TYPES` in
+  `src/page-relay.ts`), checked in the background from `sender`, like the origin gate. PAGE_CANCEL_RUN stays allowed:
+  a page may always stop its own run. Without the level, START_RUN resolves with a refusal sentence and nothing runs.
+- **Every page-started agent asks to start, even with the level on.** A card in the extension's UI shows the origin
+  verbatim, the task verbatim and labelled as the site's own words, the tools, the model and the step budget, and
+  "started by this page, not by you". Allow once, always allow agents from this site, or deny. "Always" is today's
+  behaviour, for a person running `ml.agent` from the console on their own page.
+- **One approval per session, not per turn.** A `createAgent` handle sends every turn as a new START_RUN for the same
+  run id; its later turns and INJECT_MESSAGE steering ride on the first approval. A RESUME_RUN of a settled run is
+  the same session, unless it asks for a step budget past the one approved, which asks again.
+- **Nobody watching:** a start while the person is elsewhere shows as a pending card (and on the toolbar badge, as a
+  pending access request does), never a silent start. Unanswered, it times out to deny.
+- **`requestAccess` asks for a level:** `ml.requestAccess({ agents: true, reason })` asks for both. The popup and
+  DevTools Settings show and edit the two levels per origin.
+- **Upgrade:** an origin approved before this keeps the agent level, with start approval on, so nothing breaks
+  silently and the person meets the new card on the first start. Tested with a fixture of the old stored list.
+- **Tests:** an approved origin without the agent level cannot START_RUN, RESUME_RUN or INJECT_MESSAGE, and can
+  cancel; with it, a start waits on the card and runs nothing until allowed; a denied or timed-out card runs
+  nothing; a handle's second turn asks nothing; a resume past the approved budget asks again; the card's task text
+  is escaped and labelled; the old-list fixture keeps agents with start approval.
+
 ### Detection, honestly
 
 Removing `window.ml` is not invisibility. Two other signals exist today, and this spec does not remove them:
@@ -301,7 +331,8 @@ wait is on a run finishing or a state change, never a timer.
    `injected.js` but every call is refused. Red-team enumeration tests.
 2. The run's events and the extension's own iframe out of the page's reach (built first: attacks 15 and 16).
    Delegation tokens, and the vision tools' model calls moved to the background. Tests 9 to 11.
-3. The stub and `requestAccess`, with the badge and popup entry. Tests 3 to 7. The self-approval whitelist moves to
+3. The stub and `requestAccess`, with the badge and popup entry. Tests 3 to 7. The agent level and start approval
+   ([above](#two-levels-using-windowml-and-starting-agents-slice-3-decided-2026-10-10-wording-for-the-owner-to-approve)). The self-approval whitelist moves to
    origins, and an approved site may ask for it ([above](#the-self-approval-whitelist-slice-3-draft-wording-for-the-owner-to-approve)).
 4. Not injecting the full API on unapproved pages, and `use_dynamic_url`.
 
