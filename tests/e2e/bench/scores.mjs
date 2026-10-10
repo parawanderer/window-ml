@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { fitRasch, sigmoid, RASCH_DEFAULTS } from "./rasch.mjs";
 import { defaultBy } from "./mark.mjs";
 import { regressionReport, regressionText } from "./regress.mjs";
+import { openSpend, spendReport, spendText } from "./spend.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../../..");
@@ -68,6 +69,8 @@ export async function openScores(file = SCORES_DB) {
     await mkdir(path.dirname(file), { recursive: true });
     const db = new DatabaseSync(file);
     db.exec(SCHEMA);
+    // Each model call's usage and the price snapshots they name, beside the runs (spend.mjs).
+    openSpend(db);
     // A log made before a column existed gets it, empty: its runs stay readable and say they predate it.
     const have = new Set(db.prepare("PRAGMA table_info(runs)").all().map((c) => c.name));
     for (const [col, type] of [["shown", "TEXT"], ["suite", "TEXT"]]) if (!have.has(col)) db.exec(`ALTER TABLE runs ADD COLUMN ${col} ${type}`);
@@ -309,7 +312,8 @@ export function scoresText(board) {
         const c = m.score ? `${Math.round(m.score.chance * 100)}% [${Math.round(m.score.chanceLo * 100)}, ${Math.round(m.score.chanceHi * 100)}]` : "";
         out.push(`| ${m.key} | ${m.quant ?? (m.local === false ? "cloud" : "")} | ${s} | ${c} | ${m.scored} | ${m.passed} | ${m.tasks} | ${m.bloat ? `×${m.bloat.ratio.toFixed(2)}` : ""} | ${m.medianTokens ?? ""} | ${m.runs} | ${m.last.slice(0, 16).replace("T", " ")} |`);
     }
-    out.push("", "## Tasks", "", "| task | hash | shown | variant | difficulty b [interval] | passed | runs | models | median tokens |", "| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
+    out.push("", ...spendText(board.spend));
+    out.push("## Tasks", "", "| task | hash | shown | variant | difficulty b [interval] | passed | runs | models | median tokens |", "| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
     for (const t of board.tasks) {
         const d = t.difficulty ? `${num(t.difficulty.b)} [${num(t.difficulty.lo)}, ${num(t.difficulty.hi)}]` : t.scored ? "" : "no predicate";
         out.push(`| ${t.task} | ${t.taskHash} | ${t.shown ?? "legacy"} | ${t.variant === "{}" ? "" : t.variant} | ${d} | ${t.scored ? `${t.passed}/${t.scoredRuns}` : ""} | ${t.runs} | ${t.models} | ${t.medianTokens ?? ""} |`);
@@ -339,7 +343,8 @@ export const unscoredTasks = (spec) => spec.tasks.filter((t) => typeof t.succeed
 
 /** Write scores.md, scores.json and scores.html beside the log; returns the board. */
 export async function writeScoreFiles(db, { dir = SCORES_DIR, dbFile = SCORES_DB } = {}) {
-    const board = scoreboard(readRuns(db), { db: dbFile });
+    const rows = readRuns(db);
+    const board = { ...scoreboard(rows, { db: dbFile }), spend: spendReport(db, rows, modelKey) };
     const { scoresPage } = await import("./serve.mjs");
     await writeFile(path.join(dir, "scores.md"), scoresText(board));
     await writeFile(path.join(dir, "scores.json"), JSON.stringify(board, null, 2));

@@ -31,6 +31,7 @@ import { s3Client } from "./s3.mjs";
 import { readDotenv } from "../../../scripts/dotenv.mjs";
 import { openScores, COLS as SCORE_COLS, logRuns, SCORES_DB } from "./scores.mjs";
 import { openBoxLog, BOX_DB } from "./box-stream.mjs";
+import { CALL_COLS, logCalls, logSnapshot } from "./spend.mjs";
 import { historyRuns } from "./sweeps.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -70,11 +71,25 @@ const SCORE_TYPES = Object.fromEntries(SCORE_COLS.map((c) => [c,
  *  events.proto, so flattening them would break on its next change). Times are milliseconds, as DOUBLE. */
 const BOX_TYPES = { box: "STRING", server_at: "DOUBLE", at: "DOUBLE", kind: "STRING", frame: "STRING", digest: "STRING" };
 
-/** The tables the store holds, each with where its rows come from and its dedupe key. */
+/** Each model call's usage as recorded (spend.mjs): the usage stays one JSON text, read on query. */
+const CALL_TYPES = Object.fromEntries(CALL_COLS.map((c) => [c, c === "call" || c === "step" ? "INT32" : "STRING"]));
+/** Price snapshot bodies, the bytes as base64 text so they come back exact. */
+const SNAPSHOT_TYPES = { hash: "STRING", kind: "STRING", at: "STRING", body: "STRING" };
+
+/**
+ * The tables the store holds: which local log each lives in (`log`), the table there (`rows`), the select of rows past
+ * an id, the dedupe key, and how a pulled row goes back in (`insert`, returning how many were new).
+ */
 const TABLES = {
-    scores: { types: SCORE_TYPES, key: ["run"], open: (file) => openScores(file), select: "SELECT id, " + SCORE_COLS.join(", ") + " FROM runs WHERE id > ? ORDER BY id" },
-    box: { types: BOX_TYPES, key: ["box", "server_at", "kind", "digest"], open: (file) => openBoxLog(file), select: "SELECT id, box, server_at, at, kind, frame, digest FROM frames WHERE id > ? ORDER BY id" },
+    scores: { log: "scores", rows: "runs", types: SCORE_TYPES, key: ["run"], select: "SELECT id, " + SCORE_COLS.join(", ") + " FROM runs WHERE id > ? ORDER BY id", insert: logRuns },
+    calls: { log: "scores", rows: "calls", types: CALL_TYPES, key: ["run", "call"], select: "SELECT id, " + CALL_COLS.join(", ") + " FROM calls WHERE id > ? ORDER BY id", insert: logCalls },
+    snapshots: { log: "scores", rows: "snapshots", types: SNAPSHOT_TYPES, key: ["hash"], select: "SELECT id, hash, kind, at, body FROM snapshots WHERE id > ? ORDER BY id",
+        out: (r) => ({ ...r, body: Buffer.from(r.body).toString("base64") }),
+        insert: (db, rows) => rows.reduce((n, r) => n + (logSnapshot(db, { ...r, body: Buffer.from(r.body, "base64") }) ? 1 : 0), 0) },
+    box: { log: "box", rows: "frames", types: BOX_TYPES, key: ["box", "server_at", "kind", "digest"], select: "SELECT id, box, server_at, at, kind, frame, digest FROM frames WHERE id > ? ORDER BY id", insert: (db, rows) => insertFrames(db, rows) },
 };
+/** How to open each local log. */
+const OPEN = { scores: (file) => openScores(file), box: (file) => openBoxLog(file) };
 
 const toParquet = (rows, types) => Buffer.from(parquetWriteBuffer({
     columnData: Object.entries(types).map(([name, type]) => ({ name, type, data: rows.map((r) => (r[name] == null ? null : type === "STRING" ? String(r[name]) : Number(r[name]))) })),
@@ -95,7 +110,7 @@ async function pushTable(store, table, db, clone) {
     const t = TABLES[table];
     let from = await pushedThrough(store, table, clone), sent = 0;
     for (;;) {
-        const rows = db.prepare(t.select + ` LIMIT ${BATCH}`).all(from);
+        const rows = db.prepare(t.select + ` LIMIT ${BATCH}`).all(from).map(t.out ?? ((r) => r));
         if (!rows.length) return sent;
         const first = rows[0].id, last = rows.at(-1).id;
         await store.put(`${table}/${clone}-${first}-${last}.parquet`, toParquet(rows, t.types), "application/vnd.apache.parquet");
@@ -122,6 +137,8 @@ export function viewsSql(bucket, present = Object.keys(TABLES)) {
 -- SET s3_access_key_id = '…'; SET s3_secret_access_key = '…';   -- from the store's key, never committed
 ${view("scores", "scores")}
 ${view("box_frames", "box")}
+${view("calls", "calls")}
+${view("price_snapshots", "snapshots")}
 `;
 }
 
@@ -221,10 +238,11 @@ async function pushSweep(store, sweepDir, clone) {
  * sweep under artifacts/bench by default). Resolves what was sent.
  */
 export async function push(store, { clone = cloneName(), sweeps = null, onlyDb = false, scoresDb = SCORES_DB, boxDb = BOX_DB, log = () => {} } = {}) {
-    const sent = { scores: 0, box: 0, runs: 0 };
-    for (const [table, file] of [["scores", scoresDb], ["box", boxDb]]) {
-        if (!existsSync(file)) continue;
-        const db = await TABLES[table].open(file);
+    const sent = { scores: 0, calls: 0, snapshots: 0, box: 0, runs: 0 };
+    const files = { scores: scoresDb, box: boxDb };
+    for (const [table, t] of Object.entries(TABLES)) {
+        if (!existsSync(files[t.log])) continue;
+        const db = await OPEN[t.log](files[t.log]);
         if (!db) continue;
         try { sent[table] = await pushTable(store, table, db, clone); } finally { db.close(); }
     }
@@ -233,7 +251,7 @@ export async function push(store, { clone = cloneName(), sweeps = null, onlyDb =
     for (const table of Object.keys(TABLES)) if ((await store.list(`${table}/`)).some((o) => o.key.endsWith(".parquet"))) present.push(table);
     await store.put("views.sql", viewsSql(store.bucket ?? "wml-bench", present), "text/plain; charset=utf-8");
     if (!onlyDb) for (const dir of sweeps ?? await sweepDirs()) sent.runs += await pushSweep(store, dir, clone);
-    log(`  store: ${sent.scores} score row(s), ${sent.box} box frame(s), ${sent.runs} run(s) sent`);
+    log(`  store: ${sent.scores} score row(s), ${sent.calls} call(s), ${sent.snapshots} price snapshot(s), ${sent.box} box frame(s), ${sent.runs} run(s) sent`);
     return sent;
 }
 
@@ -244,9 +262,10 @@ export async function push(store, { clone = cloneName(), sweeps = null, onlyDb =
  */
 export async function pull(store, { into = POOL, traces = [], log = () => {} } = {}) {
     await mkdir(into, { recursive: true });
-    const got = { scores: 0, box: 0, files: 0 };
-    for (const [table, file] of [["scores", path.join(into, "scores.sqlite")], ["box", path.join(into, "box.sqlite")]]) {
-        const db = await TABLES[table].open(file);
+    const got = { scores: 0, calls: 0, snapshots: 0, box: 0, files: 0 };
+    const files = { scores: path.join(into, "scores.sqlite"), box: path.join(into, "box.sqlite") };
+    for (const [table, t] of Object.entries(TABLES)) {
+        const db = await OPEN[t.log](files[t.log]);
         if (!db) throw new Error("this Node has no node:sqlite");
         try {
             db.exec("CREATE TABLE IF NOT EXISTS pulled (object TEXT PRIMARY KEY)");
@@ -256,7 +275,7 @@ export async function pull(store, { into = POOL, traces = [], log = () => {} } =
                 const buf = await store.get(o.key);
                 if (!buf) continue;
                 const rows = await parquetReadObjects({ file: buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) });
-                got[table] += table === "scores" ? logRuns(db, rows) : insertFrames(db, rows);
+                got[table] += t.insert(db, rows);
                 db.prepare("INSERT OR IGNORE INTO pulled (object) VALUES (?)").run(o.key);
             }
         } finally { db.close(); }
@@ -272,7 +291,7 @@ export async function pull(store, { into = POOL, traces = [], log = () => {} } =
             got.files++;
         }
     }
-    log(`  pool: ${got.scores} new score row(s), ${got.box} new box frame(s), ${got.files} trace file(s) into ${path.relative(ROOT, into)}`);
+    log(`  pool: ${got.scores} new score row(s), ${got.calls} call(s), ${got.snapshots} price snapshot(s), ${got.box} new box frame(s), ${got.files} trace file(s) into ${path.relative(ROOT, into)}`);
     return got;
 }
 
@@ -291,9 +310,10 @@ function insertFrames(db, rows) {
 export async function status(store, { clone = cloneName(), scoresDb = SCORES_DB, boxDb = BOX_DB, root = ARTROOT } = {}) {
     if (!store) return { configured: false };
     const out = { configured: true, clone, logs: {}, sweeps: [] };
-    for (const [table, file] of [["scores", scoresDb], ["box", boxDb]]) {
-        const db = existsSync(file) ? await TABLES[table].open(file) : null;
-        const local = db ? Number(db.prepare(`SELECT COALESCE(MAX(id), 0) AS n FROM ${table === "scores" ? "runs" : "frames"}`).get().n) : 0;
+    const files = { scores: scoresDb, box: boxDb };
+    for (const [table, t] of Object.entries(TABLES)) {
+        const db = existsSync(files[t.log]) ? await OPEN[t.log](files[t.log]) : null;
+        const local = db ? Number(db.prepare(`SELECT COALESCE(MAX(id), 0) AS n FROM ${t.rows}`).get().n) : 0;
         db?.close();
         const pushed = await pushedThrough(store, table, clone);
         out.logs[table] = { localThrough: local, pushedThrough: pushed, unpushed: Math.max(0, local - pushed) };
