@@ -14,6 +14,8 @@ import { ChatApp } from "./chat/chat-app";
 import type { ChatExtras } from "./chat/extras";
 import { ChatStore } from "./chat/chat-store";
 import { hostServices } from "./chat/host-services";
+import { mainView } from "./chat/nav";
+import { settingsTab } from "./chat/settings-page";
 import { LocalHost } from "./chat/local-host";
 import { webPlatform, type ClientPlatform } from "./chat/platform";
 import { extensionPairing } from "./pairing/extension-pairing";
@@ -148,7 +150,15 @@ host.runtimes((list) => {
     for (const r of list) localRuntimes.add(r.id);
 });
 
-installServices(hostServices(store, extensionPlatform, { modelResident: residentHere }));
+installServices(hostServices(store, extensionPlatform, {
+    modelResident: residentHere,
+    // The spend chip: this page is an extension page, so this browser's worker prices calls for it (PRICE_CALLS).
+    priceCalls: (calls) => new Promise((resolve) => {
+        try { chrome.runtime.sendMessage({ type: "PRICE_CALLS", payload: { calls } }, (resp: { data?: import("./spend/price-book").CallCost[] } | undefined) => resolve(Array.isArray(resp?.data) ? resp.data : null)); }
+        catch { resolve(null); }
+    }),
+    findSetting: (query) => { searchSettings(query); settingsTab.value = "extension"; mainView.value = "settings"; },
+}));
 initThemeStyle();
 applyCodePrefs();
 // This page reads its OWN view preference rather than the panel's `focusMode`: the two surfaces share an origin,

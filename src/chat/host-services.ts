@@ -20,6 +20,11 @@ import type { ClientPlatform } from "./platform";
  */
 export interface HostReadings {
     modelResident?(runtime: RuntimeId, model?: string | null): boolean | undefined;
+    /** Price model calls against the snapshots THIS browser's worker holds (the extension's own chat page). A call
+     *  from another runtime is priced only when this browser fetched the same snapshot; otherwise it says why. */
+    priceCalls?: SidebarServices["priceCalls"];
+    /** Open this page's Settings filtered to a field. */
+    findSetting?: SidebarServices["findSetting"];
 }
 
 /** The services for a chat page over `store`'s host. `readings` is what the entry can tell about a runtime's box. */
@@ -117,9 +122,9 @@ export function hostServices(store: ChatStore, platform: ClientPlatform, reading
         openLink: (url) => platform.openLink(url),
         hostAccess: null,
         sheetTitle: async () => null,
-        // The snapshots a call was priced under live in the runtime's worker, not here.
-        priceCalls: null,
-        findSetting: null,
+        // The snapshots a call ran under live in a runtime's worker: only the extension's own page can ask one.
+        priceCalls: readings.priceCalls ?? null,
+        findSetting: readings.findSetting ?? null,
         savePref: (key, value) => platform.prefs.set(key, value),
         saveFile: (name, data) => platform.saveFile(name, data),
         printDoc: platform.printDoc ?? null,

@@ -459,6 +459,28 @@ test("modelResident asks the entry about the session's OWN runtime, and is not k
     store.dispose();
 });
 
+// --- spend: priced only where a worker holding the snapshots can be asked ---
+
+test("priceCalls and findSetting come from the entry: the extension's own page has them, a web or phone page has none", async () => {
+    const { store } = world();
+    const platform = { kind: "web", prefs: { get: () => undefined, set() {} }, openImage() {}, saveFile() {}, copyText: async () => true };
+    const bare = hostServices(store, platform);
+    assert.equal(bare.priceCalls, null, "no worker to ask: the chip draws nothing, never $0");
+    assert.equal(bare.findSetting, null);
+
+    const asked = [], found = [];
+    const svc = hostServices(store, platform, {
+        priceCalls: async (calls) => { asked.push(calls.length); return calls.map(() => ({ reported: 0.1, computed: null, basis: null, key: null, local: false, why: null, unpriced: [], notes: [] })); },
+        findSetting: (q) => found.push(q),
+    });
+    const costs = await svc.priceCalls([{ usage: { promptTokens: 1, completionTokens: 1 }, model: "m" }]);
+    assert.equal(costs[0].reported, 0.1);
+    assert.deepEqual(asked, [1]);
+    svc.findSetting("Electricity price");
+    assert.deepEqual(found, ["Electricity price"]);
+    store.dispose();
+});
+
 // --- offering a resume: the one thing that works when a run's page has gone (slice 5) ---
 
 test("a resume is offered only where it would DO something, and refused where the composer already works", () => {
