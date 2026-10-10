@@ -99,7 +99,8 @@ test("the page reads frames however the bytes are split, one byte at a time incl
 // --- the page's server ---
 
 test("the page's server lists this sweep's held runs and passes each one's screen through; another sweep's are not its", async (t) => {
-    const sweep = fs.mkdtempSync(path.join(ROOT, "tests/e2e/artifacts/.stream-test-"));
+    // Anywhere: a held run's `dir` is relative to the repository, and one outside it resolves back the same way.
+    const sweep = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "stream-sweep-")));
     t.after(() => fs.rmSync(sweep, { recursive: true, force: true }));
     const cap = fakeCapture();
     const screen = await serveScreen(cap.start);
