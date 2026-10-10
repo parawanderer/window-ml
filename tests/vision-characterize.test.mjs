@@ -7,7 +7,7 @@
 // goes to) and may change WHO sends what (the page today, the worker after). A test here that fails after the move is
 // either a change in what the model sees, which is a regression, or a pinned page-side message that moved, which is the
 // point of the move: update that assertion and say so in the PR. The verify after an action moved first (part 3, PR 5),
-// then look (PR 6): their tests below pin that the page sends no CAPTURE_TAB and no FETCH_LLM for them.
+// then look (PR 6), then locate (PR 7): their tests below pin that the page sends no CAPTURE_TAB and no FETCH_LLM for them.
 //
 // The world is the real thing in node:vm, end to end: the background bundle (loadBackground, the real origin gate) starts
 // a run the person asked for (`__mlStartUserRunForTest`), and its tab is the real content.js + injected.js over a jsdom
@@ -416,57 +416,72 @@ test("a capture that fails: the tool result is the error, and no model call is m
 });
 
 // --- locate ---
+// A worker-built run's locate is the WORKER's too (site-access part 3, PR 7): the run host runs the same tool body over the
+// worker's vision host. These pinned the page's CAPTURE_TAB and the reader's FETCH_LLM before; they now pin that the page
+// sends neither and is asked geometry only, while the grounding model and the reader get the same prompt and the same
+// image, drawn by the worker's raster, and the driver is shown the same text. The legend after a verify:true crop is the
+// page host's too: the page's own locate showed none here only because jsdom's text has no layout (`rangeRects`).
 
-test("locate by grounding: the capture is letterboxed top-left into a 1000 square for the grounding model, and its box is snapped to the DOM in the page", T, async () => {
+test("locate by grounding: the worker letterboxes its capture top-left into a 1000 square for the grounding model, and the page snaps the box to the DOM", T, async () => {
     const box = `${sq(305)},${sq(205)},${sq(415)},${sq(235)}`;   // around #save, in the square's coordinates
-    const w = await startVisionRun({ model: "vlm-driver", html: BTNS, before: placeBtns, cfg: GROUNDING,
+    const w = await startVisionRun({ model: "vlm-driver", capture: () => PNG_VIEWPORT, html: BTNS, before: verifyPage, cfg: GROUNDING,
         turns: [{ name: "locate", args: { description: "a blue button labelled Save", verify: true } }], reader: () => box });
     try {
-        assert.deepEqual(pageSent(w.page), ["CAPTURE_TAB", "FETCH_LLM", "CAPTURE_TAB"], "capture, grounding call, then a second capture for verify:true");
-        const [call] = pageModelCalls(w.page);
-        assert.equal(call.model, "qwen-ground");
-        assert.equal(call.maxTokens, 64);
-        assert.equal(call.messages[0].content, 'Locate "a blue button labelled Save" in this image. Reply with ONLY its bounding box as four numbers x1,y1,x2,y2 — top-left then bottom-right corner, each from 0 to 1000 (x: 0=left→1000=right; y: 0=top→1000=bottom). If it isn\'t visible, reply "NONE".');
-        const square = recipe(w.page.images, call.messages[0].images[0]);
+        assert.deepEqual(pageSent(w.page), [], "the page sends no CAPTURE_TAB and no FETCH_LLM");
+        assert.deepEqual(toolCallsToPage(w.bg).map(sendKind), ["renderOnly", "geometry:view", "geometry:snap", "geometry:target", "geometry:view", "geometry:target", "geometry:legend"],
+            "the preview, the viewport, the snap, then the verify crop's target and its legend: the call itself never reaches the page");
+        assert.equal(w.subs().length, 1);
+        const [call] = w.subs();
+        assert.equal(call.body.model, "qwen-ground");
+        assert.equal(call.body.max_tokens, 64);
+        assert.equal(promptOf(call.body), 'Locate "a blue button labelled Save" in this image. Reply with ONLY its bounding box as four numbers x1,y1,x2,y2 — top-left then bottom-right corner, each from 0 to 1000 (x: 0=left→1000=right; y: 0=top→1000=bottom). If it isn\'t visible, reply "NONE".');
+        const [sent] = imagesIn(call.body);
+        const square = recipe(w.wimages, sent);
         assert.equal(square.w, 1000); assert.equal(square.h, 1000);
         assert.equal(square.draws.length, 1);
         assert.deepEqual(square.draws[0].slice(1), [0, 0, 1000, 750], "the viewport, scaled to fit, at the square's TOP-LEFT (padding below)");
-        assert.deepEqual(recipe(w.page.images, "data:image/png;base64," + square.draws[0][0]).draws, [["VIEWPORT", 0, 0, 1024, 768, 0, 0, 1024, 768]], "drawn from the whole capture, unscoped");
+        assert.deepEqual(recipe(w.wimages, "data:image/png;base64," + square.draws[0][0]).draws, [["VIEWPORT", 0, 0, 1024, 768, 0, 0, 1024, 768]], "drawn from the whole capture, unscoped");
         const seen = seenByDriver(w);
-        assert.equal(seen.text, 'Grounded "a blue button labelled Save" → [button] "Save" → #save\n(verify it with look() first, then click/type/answer with this selector)\n\nOther elements in that region:\n#1 [button] "Save" → #save\n\n Marked crop shown in the next prompt. If it\'s on target, act now (no need to look() first).');
+        assert.equal(seen.text, 'Grounded "a blue button labelled Save" → [button] "Save" → #save\n(verify it with look() first, then click/type/answer with this selector)\n\nOther elements in that region:\n#1 [button] "Save" → #save\n\n Marked crop shown in the next prompt. If it\'s on target, act now (no need to look() first).\n\nDOM in view (use these selectors with click/type/findByText):\n• controls: «Save» `#save`');
         assert.deepEqual(seen.labels, ["[Screenshot: grounded element]"]);
-        assert.deepEqual(recipe(w.page.images, seen.images[0]), { w: 120, h: 40, draws: [["VIEWPORT", 300, 200, 120, 40, 0, 0, 120, 40]], ops: [] },
-            "verify:true on a vision driver: a plain crop of the snapped element, from a fresh capture");
+        assert.deepEqual(recipe(w.wimages, seen.images[0]), { w: 120, h: 40, draws: [["VIEWPORT", 300, 200, 120, 40, 0, 0, 120, 40]], ops: [] },
+            "verify:true on a vision driver: a plain crop of the snapped element, cropped by the worker");
+        assert.doesNotMatch(JSON.stringify(toolCallsToPage(w.bg)), /qwen-ground|a blue button|Locate|data:image/, "neither the prompt, the model, the description nor an image reached the page");
+        assert.equal(w.bg.context.__mlWorkerVisionForTest.spend(w.hash).calls, 1, "the grounding call is counted into the run");
     } finally { w.page.close(); }
 });
 
-test("locate by Set-of-Marks (no grounding model): one capture, numbered badges drawn on it in the page, the reader picks a number, the driver gets the selector", T, async () => {
-    const w = await startVisionRun({ model: "text-driver", html: BTNS, before: placeBtns, turns: [{ name: "locate", args: { description: "a blue button labelled Save" } }], reader: () => "1" });
+test("locate by Set-of-Marks (no grounding model): one worker capture, numbered badges drawn by the worker, the reader picks a number, the driver gets the selector", T, async () => {
+    const w = await startVisionRun({ model: "text-driver", capture: () => PNG_VIEWPORT, html: BTNS, before: verifyPage, turns: [{ name: "locate", args: { description: "a blue button labelled Save" } }], reader: () => "1" });
     try {
-        assert.deepEqual(pageSent(w.page), ["CAPTURE_TAB", "FETCH_LLM"]);
-        const [call] = pageModelCalls(w.page);
-        assert.equal(call.model, "reader-vl");
-        assert.equal(call.maxTokens, 64);
-        assert.equal(call.messages[0].content, 'The screenshot has numbered badges (#1–#2) drawn over candidate elements. Which single badge number best matches this element: "a blue button labelled Save"? Reply with ONLY the number, or "NONE" if none match.');
-        const badged = recipe(w.page.images, call.messages[0].images[0]);
+        assert.deepEqual(pageSent(w.page), []);
+        assert.deepEqual(toolCallsToPage(w.bg).map(sendKind), ["renderOnly", "geometry:view", "geometry:marks"]);
+        assert.equal(w.subs().length, 1);
+        const [call] = w.subs();
+        assert.equal(call.body.model, "reader-vl");
+        assert.equal(call.body.max_tokens, 64);
+        assert.equal(promptOf(call.body), 'The screenshot has numbered badges (#1–#2) drawn over candidate elements. Which single badge number best matches this element: "a blue button labelled Save"? Reply with ONLY the number, or "NONE" if none match.');
+        const [sent] = imagesIn(call.body);
+        const badged = recipe(w.wimages, sent);
         assert.deepEqual(badged.draws, [["VIEWPORT", 0, 0]], "the whole capture, drawn as is");
         assert.deepEqual(badged.ops.sort(), ["fillRect", "fillText", "strokeRect"], "with the badges drawn over it");
-        assert.deepEqual(w.page.images.get(call.messages[0].images[0]).ops.filter((o) => o[0] === "fillText").map((o) => o.slice(1)), [["1", 303, 184], ["2", 503, 184]], "badge 1 on #save, badge 2 on #del");
+        assert.deepEqual(w.wimages.get(sent).ops.filter((o) => o[0] === "fillText").map((o) => o.slice(1)), [["1", 303, 184], ["2", 503, 184]], "badge 1 on #save, badge 2 on #del");
         assert.equal(seenByDriver(w).text, 'Matched "a blue button labelled Save" → #1 [button] "Save" → #save\n(verify it with look() first, then click/type/answer with this selector)\n\nAll candidates:\n#1 [button] "Save" → #save\n#2 [button] "Delete" → #del');
         assert.deepEqual(seenByDriver(w).images, []);
     } finally { w.page.close(); }
 });
 
-test("locate by grid: the reader picks a cell on a gridded capture, and the cell is snapped to the DOM in the page", T, async () => {
-    const w = await startVisionRun({ model: "text-driver", html: BTNS, before: placeBtns, turns: [{ name: "locate", args: { description: "a blue button labelled Save", strategy: "grid" } }], reader: () => "2" });
+test("locate by grid: the reader picks a cell on a grid the worker drew over its capture, and the page snaps the cell to the DOM", T, async () => {
+    const w = await startVisionRun({ model: "text-driver", capture: () => PNG_VIEWPORT, html: BTNS, before: verifyPage, turns: [{ name: "locate", args: { description: "a blue button labelled Save", strategy: "grid" } }], reader: () => "2" });
     try {
-        const [call] = pageModelCalls(w.page);
-        assert.equal(call.model, "reader-vl");
-        assert.equal(call.messages[0].content, 'This image is divided into a 5×3 numbered grid (cells 1–15, numbered left-to-right, top-to-bottom). Which cell contains a blue button labelled Save? If the target sits ON a grid line or spans more than one cell, reply with the 2 adjacent cells (or a 2×2 block of 4) that cover it; otherwise the single cell. Reply with ONLY the cell number(s), comma-separated, or "NONE".');
-        const grid = recipe(w.page.images, call.messages[0].images[0]);
+        const [call] = w.subs();
+        assert.equal(call.body.model, "reader-vl");
+        assert.equal(promptOf(call.body), 'This image is divided into a 5×3 numbered grid (cells 1–15, numbered left-to-right, top-to-bottom). Which cell contains a blue button labelled Save? If the target sits ON a grid line or spans more than one cell, reply with the 2 adjacent cells (or a 2×2 block of 4) that cover it; otherwise the single cell. Reply with ONLY the cell number(s), comma-separated, or "NONE".');
+        const grid = recipe(w.wimages, imagesIn(call.body)[0]);
         assert.equal(grid.w, 1024); assert.equal(grid.h, 768);
-        assert.ok(grid.ops.includes("lineTo") && grid.ops.includes("fillText"), "grid lines and cell numbers drawn in the page");
-        assert.deepEqual(pageSent(w.page), ["CAPTURE_TAB", "FETCH_LLM"], "one capture, one cell pick; the snap to #save is a DOM read in the page");
+        assert.ok(grid.ops.includes("lineTo") && grid.ops.includes("fillText"), "grid lines and cell numbers drawn in the worker");
+        assert.deepEqual(pageSent(w.page), [], "no capture and no cell pick from the page");
+        assert.deepEqual(toolCallsToPage(w.bg).map(sendKind), ["renderOnly", "geometry:view", "geometry:cell"], "the snap to #save is the page's geometry");
         assert.equal(seenByDriver(w).text, 'Grid cell 2 → [button] "Save" → #save\n(verify it with look() first, then click/type/answer with this selector)\n\nzoom in — locate({ description: "a blue button labelled Save", strategy: "grid", cells: [2] }) draws a fresh grid inside that cell. If it\'s actually in a neighbouring cell, try — left 1, right 3, bottom 7 — e.g. locate({ description: "a blue button labelled Save", strategy: "grid", cells: [1] }).\n\nCandidates in that region:\n#1 [button] "Save" → #save');
         assert.deepEqual(seenByDriver(w).images, []);
     } finally { w.page.close(); }
@@ -587,10 +602,17 @@ test("wait verify of a worker-built run, delegated: the reader describes the who
 test("the navigate verify ring-back (verifyViewport), which the page still answers for a PAGE-hosted run: the page captures the whole viewport and the reader gets the after-a-wait prompt", T, async () => {
     // A real navigation cannot be driven in jsdom. A worker-built run's navigate verify no longer rings the page back: the
     // worker takes it (tests/worker-verify.test.mjs). A page-built run's still does (tests/background.test.js,
-    // "navigate({ verify: true })"); here is the page's half of that ring-back, delivered while the run is live.
+    // "navigate({ verify: true })"); here is the page's half of that ring-back, delivered while the run is live. A
+    // worker-built run's adopt names no reader to the page (`pageRebuild`), so the ring-back is for a second run the page
+    // adopts with a page-built run's rebuild, which does.
     let env;
+    const pageBuilt = { toolNames: ["navigate"], model: "text-driver", driverSees: false, visionModel: "reader-vl", groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: false };
     const w = await startVisionRun({ model: "text-driver", turns: [], reader: () => "The new page.",
-        onDriverTurn: async (n, { page, runId }) => { if (n === 0) env = await page.deliver({ type: "RUN_TOOL_IN_PAGE", payload: { runId, verifyViewport: true } }); } });
+        onDriverTurn: async (n, { page }) => {
+            if (n !== 0) return;
+            await page.deliver({ type: "ADOPT_RUN_NOW", payload: { runId: "page-built", rebuild: pageBuilt } });
+            env = await page.deliver({ type: "RUN_TOOL_IN_PAGE", payload: { runId: "page-built", verifyViewport: true } });
+        } });
     try {
         // The ring-back is delivered from the driver's first turn: under load that comes after the run has started.
         for (let i = 0; i < 2000 && env === undefined; i++) await new Promise((r) => setTimeout(r, 1));
@@ -607,29 +629,38 @@ test("the navigate verify ring-back (verifyViewport), which the page still answe
 });
 
 // --- the sidebar is hidden for the shot ---
-// The page's own capture, which locate still takes for a worker-built run until it moves (part 3, PR 7), and every
-// vision tool of a page-built run takes. A worker-built look masks the extension's UI in the worker instead
-// (tests/worker-vision.test.mjs).
+// The page's own capture (`pageCapture`), which every vision tool of a page-built run takes, and `ml.screenshot` called by
+// the page itself while a run lives on its tab. No tool of a worker-built run captures in the page any more (look PR 6,
+// locate PR 7): its shot masks the extension's UI in the worker instead (tests/worker-vision.test.mjs). These drive the
+// page's capture with the page's own `ml.screenshot()`.
 
 /** The window messages around a capture: the sidebar handshake and the capture's request, in order. */
 const shotOrder = (page) => page.posted.map((d) => d.__mlSidebarShot ? `sidebar:${d.__mlSidebarShot}` : d.type).filter((t) => /^sidebar:|^CAPTURE_TAB/.test(t));
-/** A locate by Set-of-Marks, the one vision call of a worker-built run the page still captures for. */
-const LOCATE = { name: "locate", args: { description: "a blue button labelled Save", strategy: "marks" } };
+/** A run whose driver's first turn has the page take its own screenshot; resolves once the screenshot has. */
+async function pageShot(html, before) {
+    let shot;
+    const w = await startVisionRun({ model: "vlm-driver", html, before, turns: [],
+        onDriverTurn: async (n, { page }) => { if (n === 0) { shot = page.win.ml.screenshot(); await shot; } } });
+    await shot;
+    // The run ends after the screenshot: wait for its end, so no send to the page is still open when the page closes.
+    await settle(() => w.bg.tabMessages.some(([, m]) => m.type === "RUN_TOOL_IN_PAGE" && m.payload.finish));
+    return w;
+}
 
 test("with the sidebar mounted, the page posts hide, waits for the shell's hidden, captures, then posts show", T, async () => {
-    const shell = (p) => { placeBtns(p); p.win.addEventListener("message", (e) => { if (e.data && e.data.__mlSidebarShot === "hide") p.win.postMessage({ __mlSidebarShot: "hidden" }, "*"); }); };
-    const w = await startVisionRun({ model: "vlm-driver", html: '<div id="ml-sb-root"></div>' + BTNS, before: shell, turns: [LOCATE], reader: () => "1" });
+    const shell = (p) => { p.win.addEventListener("message", (e) => { if (e.data && e.data.__mlSidebarShot === "hide") p.win.postMessage({ __mlSidebarShot: "hidden" }, "*"); }); };
+    const w = await pageShot('<div id="ml-sb-root"></div>' + BTNS, shell);
     try {
         assert.deepEqual(shotOrder(w.page), ["sidebar:hide", "sidebar:hidden", "CAPTURE_TAB_REQUEST", "CAPTURE_TAB_RESPONSE", "sidebar:show"]);
     } finally { w.page.close(); }
 });
 
 test("with the sidebar mounted and no answer from the shell, the capture still goes after the wait; with none mounted there is no hide, and show is still posted", T, async () => {
-    const silent = await startVisionRun({ model: "vlm-driver", html: '<div id="ml-sb-root"></div>' + BTNS, before: placeBtns, turns: [LOCATE], reader: () => "1" });
+    const silent = await pageShot('<div id="ml-sb-root"></div>' + BTNS);
     try {
         assert.deepEqual(shotOrder(silent.page), ["sidebar:hide", "CAPTURE_TAB_REQUEST", "CAPTURE_TAB_RESPONSE", "sidebar:show"], "the 200 ms safety net, then the capture");
     } finally { silent.page.close(); }
-    const none = await startVisionRun({ model: "vlm-driver", html: BTNS, before: placeBtns, turns: [LOCATE], reader: () => "1" });
+    const none = await pageShot(BTNS);
     try {
         assert.deepEqual(shotOrder(none.page), ["CAPTURE_TAB_REQUEST", "CAPTURE_TAB_RESPONSE", "sidebar:show"]);
     } finally { none.page.close(); }
@@ -646,10 +677,28 @@ test("a worker-built look puts no capture, no reader prompt or reply and no tool
         assert.ok(runs.filter((d) => d.geometry).length > 0, "geometry questions");
         for (const t of ["CAPTURE_TAB_REQUEST", "CAPTURE_TAB_RESPONSE", "LLM_REQUEST", "LLM_RESPONSE"]) assert.equal(byType(t).length, 0, t);
         const posted = JSON.stringify(w.page.posted);
-        // The reader's NAME still reaches the page in the run's rebuild config, which the page's locate needs until PR 7.
-        for (const secret of ["what is the secret", "The secret is 42", "data:image", "Describe"]) assert.ok(!posted.includes(secret), `the page's window saw "${secret}"`);
+        // Nor the reader's name: the run's adopt names no model to the page once locate is the worker's too (PR 7).
+        for (const secret of ["what is the secret", "The secret is 42", "data:image", "Describe", "reader-vl", "text-driver"]) assert.ok(!posted.includes(secret), `the page's window saw "${secret}"`);
         assert.ok(seenByDriver(w).text.startsWith("The secret is 42."), "the driver still gets the reader's words");
     } finally { w.page.close(); }
+});
+
+test("a worker-built locate puts no capture, no reader prompt or reply, no description and no model name in the page's window, and the page sends no vision message", T, async () => {
+    for (const cfg of [{}, GROUNDING]) {
+        const reply = cfg.groundingModel ? `${sq(305)},${sq(205)},${sq(415)},${sq(235)}` : "1";
+        const w = await startVisionRun({ model: "text-driver", capture: () => PNG_VIEWPORT, html: BTNS, before: verifyPage, cfg,
+            turns: [{ name: "locate", args: { description: "the secret blue button", selector: "#bar", verify: true } }], reader: (body) => (promptOf(body).startsWith("Describe") ? "The secret is 42." : reply) });
+        try {
+            assert.deepEqual(pageSent(w.page), [], "no CAPTURE_TAB, FETCH_LLM, MODEL_CAPS, GET_CONFIG or FETCH_IMAGE_B64 from the page");
+            const runs = w.page.posted.filter((d) => d.type === "PAGE_TOOL_RUN");
+            assert.deepEqual(plain(runs.filter((d) => !d.geometry && !d.finish).map((d) => [d.name, !!d.renderOnly, d.args])), [["locate", true, { selector: "#bar" }]], "the preview only, with the target and never the description");
+            for (const t of ["CAPTURE_TAB_REQUEST", "CAPTURE_TAB_RESPONSE", "LLM_REQUEST", "LLM_RESPONSE"]) assert.equal(w.page.posted.filter((d) => d.type === t).length, 0, t);
+            const posted = JSON.stringify(w.page.posted);
+            for (const secret of ["the secret blue button", "The secret is 42", "data:image", "badges", "Locate \"", "reader-vl", "qwen-ground", "text-driver"]) assert.ok(!posted.includes(secret), `the page's window saw "${secret}"`);
+            assert.ok(w.subs().length >= 1, "the worker asked the model");
+            assert.match(seenByDriver(w).text, /\[button\] "Save" → #save/, "the driver still gets the pick");
+        } finally { w.page.close(); }
+    }
 });
 
 test("while the run lives, the page itself may send CAPTURE_TAB and FETCH_LLM from an unapproved origin; once it ends, both are refused", T, async () => {

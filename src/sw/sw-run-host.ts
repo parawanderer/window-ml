@@ -28,6 +28,7 @@ import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
 import { ensureLocalTools, noteLocalStep, runLocalTool, runsInWorker } from "./sw-local-tools";
 import { lookPreviewArgs, workerLook } from "./worker-look";
+import { workerLocate } from "./worker-locate";
 import { withUserWatches } from "./sw-shared-watches";
 import { routeExec, execNames } from "./exec-routing";
 import { answerFor, answerShapeFor, applyAnswerOps, resetAnswer, setAnswerSelector } from "./worker-answer";
@@ -189,12 +190,18 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
         // once any navigation settles; the page is asked geometry only. A preview it still draws (the target's label) is
         // sent the target alone, never the question. A run that does not offer `look` never gets here with a call (the
         // loop answers a name outside its toolset itself); with no vision facts, workerLook captures nothing.
-        if (payload.name === "look" && workerVision()) {
+        // `locate` likewise (worker-locate.ts), with the run's reader and grounding model from the worker's own copy of its
+        // rebuild; its preview is sent the target alone too, never the description.
+        if ((payload.name === "look" || payload.name === "locate") && workerVision()) {
             if (payload.renderOnly || payload.precheck || payload.readonlyTry) payload = { ...payload, args: lookPreviewArgs(payload.args) };
             else {
                 noteLocalStep(runId, payload.name);
                 await navBarrier.whenReady(tabId);
-                return workerLook(runId, tabId, await topDocument(tabId), payload.args, { driverSees: !!p.rebuild?.driverSees, visionModel: p.rebuild?.visionModel ?? null }, tabUrl);
+                const doc = await topDocument(tabId);
+                const rb = p.rebuild;
+                return payload.name === "look"
+                    ? workerLook(runId, tabId, doc, payload.args, { driverSees: !!rb?.driverSees, visionModel: rb?.visionModel ?? null }, tabUrl)
+                    : workerLocate(runId, tabId, doc, payload.args, { driverSees: !!rb?.driverSees, visionModel: rb?.visionModel ?? null, groundingModel: rb?.groundingModel ?? null, groundingRange: rb?.groundingRange }, tabUrl);
             }
         }
         // To the page. The call itself of a run whose vision is the worker's is told so (its verify comes back as a
@@ -204,7 +211,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
             const call = vis && !payload.renderOnly && !payload.precheck && !payload.readonlyTry;
             const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: call ? { ...payload, verifyInWorker: true } : payload }, pin);
             // Asked again on the answer: a run the person took over while the call was in flight is the worker's now.
-            return vis || workerVision() ? withoutPageVision(env, payload.name) : env;
+            return vis || workerVision() ? withoutPageVision(env) : env;
         };
         if (p.builtBy === "worker" && runsInWorker(p, payload.name)) {
             await ensureLocalTools(runId, p, tabId, tabUrl).catch(() => { /* answered below */ });
@@ -612,7 +619,7 @@ export function hostRun(message: any, tabId: number, sendResponse: (r: any) => v
                                 // The Markdown is still the page's, and is all a page answer may carry into this run.
                                 const v = !text && workerVision()
                                     ? await verifyHere(await topDocument(tabId), { kind: "viewport" }, "navigated").then((o) => ({ result: o.content, image: o.image, imageLabel: o.imageLabel, feedback: o.feedback, subUsage: o.subUsage }), () => null)
-                                    : await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload }).then((e) => (workerVision() ? withoutPageVision(e, name) : e), () => null) as Partial<import("../contract").PageToolEnvelope> | null;
+                                    : await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload }).then((e) => (workerVision() ? withoutPageVision(e) : e), () => null) as Partial<import("../contract").PageToolEnvelope> | null;
                                 if (v && (v.image || v.feedback || v.result)) {
                                     if (v.result) env.result = `${env.result || ""}\n\n${v.result}`;
                                     env.image = v.image; env.imageLabel = v.imageLabel; env.feedback = v.feedback;

@@ -134,22 +134,17 @@ export async function workerVerify(runId: string, tabId: number, documentId: str
     return { content: r.content || "", ...(r.image ? { image: r.image, imageLabel: r.imageLabel } : {}), ...(r.feedback ? { feedback: r.feedback } : {}), ...(subUsage ? { subUsage } : {}) };
 }
 
-/** The tools whose vision still runs in the page in a run whose vision is the worker's: their picture, their reader's
- *  description and its spend are still the page's to report, until locate moves (slice 2 part 3, PR 7). `look` runs in
- *  the worker (worker-look.ts), so a page's envelope for it is held to the rule like any other tool's. */
-export const PAGE_VISION_TOOLS: ReadonlySet<string> = new Set(["locate"]);
-
 /**
  * A page's envelope for a run whose vision is the worker's, without the fields through which a capture, a reader's
  * reply or a spend would enter the run: the inline image(s) the model is shown, the feedback the sidebar and the exports
  * show as what the model was fed, and the sub-call spend counted into the run's tally. A verify is the worker's to take
- * (`verifyRequest`); a page that takes one anyway gains nothing by it.
+ * (`verifyRequest`); a page that takes one anyway gains nothing by it. No tool is exempt: `look` and `locate` run in the
+ * worker (worker-look.ts, worker-locate.ts), so a page's envelope for either is held to the rule like any other's.
  * @param env what the page answered
- * @param name the tool the envelope is for
- * @returns the envelope without those fields (as it came, for a tool still in {@link PAGE_VISION_TOOLS})
+ * @returns the envelope without those fields
  */
-export function withoutPageVision<T>(env: T, name: string | undefined): T {
-    if (!env || typeof env !== "object" || (name && PAGE_VISION_TOOLS.has(name))) return env;
+export function withoutPageVision<T>(env: T): T {
+    if (!env || typeof env !== "object") return env;
     const { image: _image, imageLabel: _label, images: _images, feedback: _feedback, subUsage: _sub, ...rest } = env as Partial<PageToolEnvelope>;
     if (typeof rest.result === "string") rest.result = foldVerifyMarks(rest.result);
     return rest as T;
